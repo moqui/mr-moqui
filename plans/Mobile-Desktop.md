@@ -1,13 +1,13 @@
 # Mobile and Desktop Clients
 
-Status 2026-11-02: tentative implementation plan, reviewed against the code, [Edge-Node](Edge-Node.md) and [Comms-Framework](Comms-Framework.md). Build order:
+Status 2026-11-03: tentative implementation plan, reviewed against the code, [Edge-Node](Edge-Node.md) and [Comms-Framework](Comms-Framework.md). MD1 and the first stage of MD2 are built as one app, [crates/moqui-desktop](../crates/moqui-desktop/README.md): Tauri 3 (alpha) on Chromium (CEF), with the node on a loopback port, in the app's process (the default) or as the `moqui` sidecar, switched at run time (`MOQUI_DESKTOP_NODE`, or the tray's node item). What remains of MD1 is its exit evidence on installed apps (§8): pairing with an edge node and with an all-in-one node, mail across a sleep, calls, an upgrade that keeps the data, a backup restore, the startup and memory records, and Linux. Build order:
 
-1. A desktop local node in a Tauri app, in the app's own process (MD2), linked as an Edge Client. A prototype is in [crates/moqui-desktop](../crates/moqui-desktop/README.md): Tauri 3 (alpha) on Chromium (CEF), with the node on a loopback port (MD2, first stage).
-2. The same node with no port, through the app scheme (MD2, second stage). The `moqui` server as a sidecar (MD1) is kept as the fallback, in case the in-process build proves harder to ship.
+1. A desktop local node in a Tauri app, linked as an Edge Client: in the app's own process (MD2, first stage) or as the `moqui` sidecar (MD1), one app with both. Built; the exit checks are open.
+2. The same node with no port, through the app scheme (MD2, second stage).
 3. An offline-capable client of a remote server, with synchronization.
 4. An Android app on that client model, then iOS.
 
-The in-process node came first because `moqui-host` already runs a node inside another program. `start_embedded` boots it on a thread and returns once it listens. Dropping the `Server` stops the listeners, the factory and then Postgres, in order, as `moqui tui --serve` does. That leaves no sidecar packaging, child supervision, readiness polling or signal handling to build. Chromium, which MR Moqui already drives for PDF and the client tests, takes the place of the platform WebViews. It removes the WebKitGTK gaps of §3 (no WebRTC on Linux, slower rendering) and gives one engine on every desktop OS. The costs are an alpha runtime and about 170 MB more in each installer.
+The in-process node came first because `moqui-host` already runs a node inside another program. `start_embedded` boots it on a thread and returns once it listens. Dropping the `Server` stops the listeners, the factory and then Postgres, in order, as `moqui tui --serve` does. Chromium, which MR Moqui already drives for PDF and the client tests, takes the place of the platform WebViews. It removes the WebKitGTK gaps of §3 (no WebRTC on Linux, slower rendering) and gives one engine on every desktop OS. The costs are an alpha runtime and about 170 MB more in each installer. The sidecar was then built beside it, as a switch rather than a fallback: the window, the page bridge, the tray, the OS integration and the backups serve both modes, and the sidecar adds the child supervision, readiness on `/health`, a stop when the app closes the node's stdin, and the takeover of a Postgres a killed node left running.
 
 The mobile host is confirmed at MT5; Capacitor is the alternative. No packaged client or platform performance results are claimed here.
 
@@ -135,13 +135,13 @@ flowchart TB
 
 The app runs MR Moqui itself as the system of record, for a person, household or small business running BOSS on their own machine. It needs no new sync protocol: the node holds the data.
 
-- **Payload.** The app ships the package (Maximal or Enterprise) as a runtime directory, in the layout `./moq archive` makes, with the `moqui` binary as a [Tauri sidecar](https://v2.tauri.app/develop/sidecar/). On first start it places the runtime's writable parts in the OS's app data directory: conf, `.env`, `db` and logs. The installed copy stays read-only. An upgrade replaces the binary and components and keeps the data.
-- **Lifecycle.** The host starts `moqui` bound to loopback, waits until it answers, and shows the node's `/qapps` in the window. On quit or OS shutdown it stops the node gracefully, which stops Postgres. One instance runs per user.
-- **The window is a browser session on the node's own origin.** Sign-in, CSRF and sockets work as on the web, and every app on the node works. This step needs no bundled shell, version handshake or transport work. Through Tauri's remote capability, the node's origin gets a few commands and nothing else: notifications, the tray badge and presence, opening external links, and saving files.
+- **Payload.** The app ships the package (Maximal or Enterprise) as a runtime directory, in the layout `./moq archive` makes, with the `moqui` binary as a [Tauri sidecar](https://v2.tauri.app/develop/sidecar/) (`bundle.externalBin`, built and staged by `./moq desktop build`). As built: the app ships Maximal, and the runtime in the OS's app data directory has its components and conf as links into the app's resources, while `.env` (with the generated secrets), `db` and logs are written there. The installed copy stays read-only. An upgrade replaces the binary and components and keeps the data.
+- **Lifecycle.** The host starts `moqui` bound to loopback, waits until it answers (its `Listening on` line, then `/health` ready), and shows the node's `/qapps` in the window. On quit or OS shutdown it stops the node gracefully, which stops Postgres: the node runs with `moqui_stop_on_stdin_close` and the host holds its stdin, so the host ending in any way stops it, then SIGTERM and a kill. A Postgres whose owner process is gone (`moqui-owner.pid`) is taken over and stopped by the next start. A failed start, or a node that ends by itself, shows its reason on the splash page with a Restart button. One instance runs per user.
+- **The window is a browser session on the node's own origin.** Sign-in, CSRF and sockets work as on the web, and every app on the node works. The window is Chromium (CEF) on every desktop OS, as in configuration 2. This step needs no bundled shell, version handshake or transport work. Through a capability the host adds at run time for the node's exact origin, the node's pages get a few commands and nothing else, through `window.moquiDesktop`: `notify`, `set_counts` (the tray and badge), `set_presence` and `open_external`. Saving files needs no command: a download from the node is Chromium's, with the save dialog.
 - **Desktop features:**
-  - a tray icon with unread counts and presence;
+  - a tray icon with unread counts and presence, and the app's menu: Show, Restart node, the node mode, Start at login, Make default for email and calls, Check for updates, Backups, Quit;
   - closing to the tray, so mail and calls keep arriving;
-  - autostart at login and a single instance;
+  - autostart at login (off until turned on) and a single instance;
   - registration as the `mailto:`, `tel:` and `sip:` handler, opening the node's compose or dialer;
   - native notifications from the node's notification topics;
   - signed packages and updates.
@@ -151,8 +151,8 @@ The app runs MR Moqui itself as the system of record, for a person, household or
   - Calls have their media on the edge node.
   - Phones and other computers reach the node's apps through the edge node's web access. The loopback port is not exposed on the LAN.
 - **The peer** is either an edge node (`node_role=edge`, MoquiEdgeConf.xml) or an all-in-one node (`node_role=all-in-one`, MoquiAllInOneConf.xml): a full server that also runs the edge interfaces for its Edge Clients. On an all-in-one node each name, address, number and bridge belongs to the server or to the paired node and is routed by owner ([Edge-Node §10](Edge-Node.md#10-all-in-one-node-e12), phase E12, built).
-- **Backups.** The computer is the system of record, so schedule `save-db` dumps to a location the user chooses, and prove a restore.
-- **Sleep and network changes.** The edge link reconnects after an address change or a dropped mapping. Check scheduled jobs after a long sleep.
+- **Backups.** The computer is the system of record, so schedule `save-db` dumps to a location the user chooses, and prove a restore. As built: the nightly backup job runs into `MR-Moqui Backups` in the user's Documents, or a folder chosen from the tray's Backups menu, through the properties `embedded_db_backup_scheduled` and `embedded_db_backup_dir`; the menu also has Back up now and Restore, which first backs up the data it replaces, then runs `moqui load-save`.
+- **Sleep and network changes.** The edge link reconnects after an address change or a dropped mapping. Check scheduled jobs after a long sleep: the scheduler runs a missed job once on its next pass, and the host, seeing the clocks part after a sleep, asks the node's `/health` again.
 - **PDF** needs Chromium (`pdf_chromium_path`). Point it at an installed Chrome or Edge; otherwise PDF is unavailable, as on a server without it. With the node in process and CEF in the app (configuration 2), the app could supply the node's PDF engine instead: a `PdfEngine` (`moqui_core::screen::pdf`) on CEF's `PrintToPDF` in a windowless browser. That would ship Chromium with the desktop package, which changes the "not shipped" stance of [License-Review](archive/License-Review.md) for that package; CEF is BSD-licensed. Not built yet.
 
 ### Configuration 2: full node in the app's process
@@ -384,15 +384,22 @@ Before mobile distribution, check the actual remote-application and local-code m
 
 ## 9. Decisions to settle during implementation
 
-**Local node (MD0–MD2):**
+**Local node (MD0–MD2), settled as built:**
 
-- The runtime layout in the app data directory, what the installer carries, and how an app upgrade replaces the binary and components while keeping data and `.env`.
-- Where the node's secrets (`.env`) and the host's login key live: files in the app data directory, as on a server, or the OS key store.
+- The runtime layout: the components and conf are links into the app's resources, so an upgrade replaces them with the binary; the data, `.env` and logs are kept in the app data directory.
+- The node's secrets stay in the runtime's `.env` in the app data directory, as on a server.
+- Close to the tray is the default, with no setting; autostart at login is off until the user turns it on. Scheduled jobs after a long sleep: a missed job runs once on the scheduler's next pass.
+- Backups: nightly, with the framework's retention, to `MR-Moqui Backups` in the user's Documents or a folder chosen from the tray's Backups menu, which also has Back up now and Restore; a restore first takes a backup of the data it replaces (`-before-restore`).
+- The generated crate of the in-process build is a `./moq` build target (`target/moqui-app`).
+
+**Local node, open:**
+
+- Where the host's login key lives (MD2, second stage): a file in the app data directory, or the OS key store.
 - The all-in-one node's one open question ([Edge-Node §10](Edge-Node.md#10-all-in-one-node-e12)): a clustered server, which is Later. Its role is decided (`node_role=all-in-one`).
-- Close-to-tray and autostart defaults, and scheduled jobs after a long sleep.
-- Backups: schedule, destination, and the restore check.
-- Windows: the `moqui` binary and its process handling there.
-- The generated crate of the in-process build: a `./moq` build target, or the Tauri crate naming the components itself.
+- Windows: the `moqui` binary and its process handling there. A restart the sidecar node asks for replaces the process in place only on Unix; elsewhere `moqui` starts a new process and the old one ends, so the host sees its child end while the new node is not its child (`run_again` in `moqui-host`).
+- In sidecar mode the host does not see a `comms_app_root` that a component's conf sets (only the property and the runtime's `.env`), so `mailto:` and `tel:` links go to `/qapps/BasicComms`.
+- The upgrade path for a new Postgres major version in the app data directory.
+- The backup and restore dialogs (`rfd`) need the desktop portal on Linux, or zenity or kdialog.
 
 **Client (MD3–MD5):**
 
@@ -409,4 +416,4 @@ Before mobile distribution, check the actual remote-application and local-code m
 - The Linux call path: the system browser, a native audio client in Rust, or a Chromium runtime for Tauri.
 - The measured latency/memory/startup budgets that define success, and which optional features stay unloaded by default.
 
-The first implementation is MD2 on macOS, then Linux, on CEF: a node in the app's process, its runtime in the app data directory, edge pairing, and the tray, before the app scheme, the remaining desktop features of MD1 and the client of a remote server. MD1's exit evidence applies to it, apart from the sidecar.
+The first implementation is one app on macOS and Linux, on CEF, with both node modes: the in-process node of MD2's first stage and the sidecar of MD1, its runtime in the app data directory, edge pairing through the attach wizard, the page bridge, the tray, the OS integration, backups, and signing and updates from the build's environment. Next are MD1's exit checks on installed apps, in both modes, then the app scheme of MD2's second stage and the client of a remote server.

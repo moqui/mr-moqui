@@ -254,6 +254,24 @@ cargo install tauri-cli --version 3.0.0-alpha.5 --locked
 ./moq desktop build                    # target/release/bundle: .deb and .AppImage on Linux, .app and .dmg on macOS
 ```
 
+A bundle carries the `moqui` binary for the sidecar node: `./moq desktop build` builds the Maximal release binary (the
+package the app links), stages it as `target/desktop-bin/moqui-<host triple>` and passes it as `bundle.externalBin`,
+which puts it beside the app's executable as `moqui`. A development run uses `target/release/moqui` or
+`target/debug/moqui` from `./moq build`.
+
+Signing and updates are on when their variables are set, else the bundles are unsigned with no updater; `./moq help
+desktop` lists them:
+
+- **macOS signing:** `APPLE_SIGNING_IDENTITY`, or `APPLE_CERTIFICATE` and `APPLE_CERTIFICATE_PASSWORD` (a base64
+  .p12). The Tauri CLI signs the app, the sidecar and the CEF helpers with the hardened runtime and
+  `entitlements.plist`.
+- **Notarization:** `APPLE_ID`, `APPLE_PASSWORD` (an app-specific password) and `APPLE_TEAM_ID`, or `APPLE_API_KEY` and
+  `APPLE_API_ISSUER` (and `APPLE_API_KEY_PATH`). `./moq` checks that each set is complete.
+- **Updates:** `MOQUI_DESKTOP_UPDATER_PUBKEY` (the public key of `cargo tauri signer generate`, or its file) and
+  `MOQUI_DESKTOP_UPDATER_ENDPOINT` (https URLs, separated by spaces) add `plugins.updater` and
+  `createUpdaterArtifacts` to the config; both or neither. `TAURI_SIGNING_PRIVATE_KEY` (the key or its file) and
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` sign the artifacts.
+
 On Linux, `./moq desktop build` builds with `cargo tauri build --no-bundle` and then runs `cargo tauri bundle`, with
 these workarounds for tauri-bundler 3.0.0-alpha.4:
 
@@ -271,7 +289,8 @@ these workarounds for tauri-bundler 3.0.0-alpha.4:
   the hook offers on every start to add an AppArmor profile through pkexec. That fails on a path with a space, and
   would not matter anyway: tauri-runtime-cef starts an AppImage with `--no-sandbox` whenever
   `kernel.apparmor_restrict_unprivileged_userns` is 1. The `.deb` keeps Chromium's sandbox through a setuid
-  `chrome-sandbox`.
+  `chrome-sandbox`. With updates on, the remade AppImage is signed again (`cargo tauri signer sign`), since the
+  bundle step's signature is of the image it made.
 
 ## The moq script
 

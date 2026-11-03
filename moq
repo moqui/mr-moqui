@@ -718,15 +718,31 @@ EOF
 help_desktop() {
     cat <<'EOF'
 Runs (dev, the default) or bundles (build) the desktop app in crates/moqui-desktop: Tauri 3 (alpha)
-on Chromium (CEF), with the node in the app's own process (plans/Mobile-Desktop.md, configuration 2).
-It first writes target/moqui-app, the crate that links the framework and the component crates, which
-the app depends on. It needs the Tauri CLI of the same version, from cargo:
+on Chromium (CEF). The node runs in the app's own process, or as the moqui binary in a child process
+(the sidecar) with MOQUI_DESKTOP_NODE=sidecar or the tray's node item (plans/Mobile-Desktop.md,
+configurations 1 and 2). dev's sidecar is target/release/moqui, else target/debug/moqui (./moq build);
+build puts the Maximal binary in the bundle. It first writes target/moqui-app, the crate that links
+the framework and the component crates, which the app depends on. It needs the Tauri CLI of the same
+version, from cargo:
 
     cargo install tauri-cli --version 3.0.0-alpha.5 --locked
 
 The first build downloads CEF (about 1 GB) into the tauri-cef cache (CEF_PATH to use another).
 dev runs on this repository's runtime (MOQUI_RUNTIME to use another); a bundled app keeps its
 runtime in the app data directory. See crates/moqui-desktop/README.md.
+
+build signs the bundles and adds updates when these are set; without them they are unsigned
+and the app has no updates:
+
+    APPLE_SIGNING_IDENTITY        macOS: sign the app, the moqui sidecar and the CEF helpers
+                                  (or APPLE_CERTIFICATE and APPLE_CERTIFICATE_PASSWORD, a .p12)
+    APPLE_ID, APPLE_PASSWORD, APPLE_TEAM_ID
+                                  macOS: notarize the signed app (or APPLE_API_KEY,
+                                  APPLE_API_ISSUER and APPLE_API_KEY_PATH)
+    MOQUI_DESKTOP_UPDATER_PUBKEY    the update feed's public key (cargo tauri signer generate)
+    MOQUI_DESKTOP_UPDATER_ENDPOINT  the feed's https:// URLs, separated by spaces
+    TAURI_SIGNING_PRIVATE_KEY       the key that signs the updates, or its file; with
+                                    TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 
 Options:
       --release        Optimized (build always is)
@@ -1365,7 +1381,12 @@ task_desktop() {
     fi
     if [ "$command" = build ]; then
         stage_desktop_runtime "$ROOT/target/desktop-runtime"
-        tauri_args+=(--config '{"bundle":{"resources":{"../../target/desktop-runtime/":"runtime/"}}}')
+        stage_desktop_sidecar "$ROOT/target/desktop-bin"
+        tauri_args+=(--config '{"bundle":{"resources":{"../../target/desktop-runtime/":"runtime/"},"externalBin":["../../target/desktop-bin/moqui"]}}')
+        local updater
+        updater=$(desktop_updater_config) || exit 1
+        [ -z "$updater" ] || tauri_args+=(--config "$updater")
+        desktop_signing_info
     fi
     # The repository's target directory, so the framework crates are built once for the server and the app.
     export_var CARGO_TARGET_DIR "$ROOT/target"
@@ -1393,6 +1414,62 @@ task_desktop() {
         || die "cargo tauri $command failed"
 }
 
+# The --config of a bundle with an update feed, as JSON: the updater plugin's public key and endpoints, and the
+# updater artifacts. MOQUI_DESKTOP_UPDATER_PUBKEY is the public key of `cargo tauri signer generate` (the .pub file's
+# text, or the file) and MOQUI_DESKTOP_UPDATER_ENDPOINT the feed's HTTPS URLs, separated by spaces, which may use
+# Tauri's {{target}}, {{arch}} and {{current_version}}. The Tauri CLI signs the artifacts with
+# TAURI_SIGNING_PRIVATE_KEY (the key, or its file) and TAURI_SIGNING_PRIVATE_KEY_PASSWORD. Prints nothing when neither
+# variable is set: the app is built without updates (crates/moqui-desktop/src/updates.rs).
+desktop_updater_config() {
+    local pubkey=${MOQUI_DESKTOP_UPDATER_PUBKEY:-} endpoint list=
+    local -a endpoints
+    read -r -a endpoints <<<"${MOQUI_DESKTOP_UPDATER_ENDPOINT:-}"
+    [ -z "$pubkey" ] && [ ${#endpoints[@]} -eq 0 ] && return 0
+    [ -n "$pubkey" ] && [ ${#endpoints[@]} -gt 0 ] \
+        || die "set both MOQUI_DESKTOP_UPDATER_PUBKEY and MOQUI_DESKTOP_UPDATER_ENDPOINT for updates, or neither"
+    [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ] \
+        || die "updates need TAURI_SIGNING_PRIVATE_KEY (and TAURI_SIGNING_PRIVATE_KEY_PASSWORD) to sign the artifacts"
+    if [ -f "$pubkey" ]; then
+        pubkey=$(cat -- "$pubkey") || die "could not read the updater public key $pubkey"
+    fi
+    pubkey=$(printf '%s' "$pubkey" | tr -d '[:space:]')
+    case $pubkey in
+        '' | *[!A-Za-z0-9+/=]*) die "MOQUI_DESKTOP_UPDATER_PUBKEY is not a public key of cargo tauri signer generate (base64)" ;;
+    esac
+    for endpoint in "${endpoints[@]}"; do
+        case $endpoint in
+            *'"'* | *'\'*) die "the updater endpoint $endpoint has a quote or backslash" ;;
+            https://?*) ;;
+            *) die "the updater endpoint $endpoint is not an https:// URL; the updater refuses another scheme" ;;
+        esac
+        list="${list:+$list,}\"$endpoint\""
+    done
+    printf '{"bundle":{"createUpdaterArtifacts":true},"plugins":{"updater":{"pubkey":"%s","endpoints":[%s]}}}\n' \
+        "$pubkey" "$list"
+}
+
+# Say how a macOS bundle is signed. The Tauri CLI reads the variables itself: APPLE_SIGNING_IDENTITY (or
+# APPLE_CERTIFICATE and APPLE_CERTIFICATE_PASSWORD, a base64 .p12 for a keychain of its own) signs the app, the moqui
+# sidecar, the CEF helpers and framework with the hardened runtime and entitlements.plist; APPLE_ID, APPLE_PASSWORD
+# and APPLE_TEAM_ID, or APPLE_API_KEY and APPLE_API_ISSUER (and APPLE_API_KEY_PATH), notarize the signed app.
+desktop_signing_info() {
+    [ "$(uname -s)" = Darwin ] || return 0
+    if [ -z "${APPLE_SIGNING_IDENTITY:-}${APPLE_CERTIFICATE:-}" ]; then
+        info "The app is not signed: APPLE_SIGNING_IDENTITY is not set"
+        return 0
+    fi
+    if [ -n "${APPLE_ID:-}" ]; then
+        [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] \
+            || die "notarizing with APPLE_ID needs APPLE_PASSWORD (an app-specific password) and APPLE_TEAM_ID"
+        info "Signing and notarizing the app (APPLE_ID)"
+    elif [ -n "${APPLE_API_KEY:-}" ]; then
+        [ -n "${APPLE_API_ISSUER:-}" ] || die "notarizing with APPLE_API_KEY needs APPLE_API_ISSUER"
+        info "Signing and notarizing the app (APPLE_API_KEY)"
+    else
+        info "Signing the app; it is not notarized: neither APPLE_ID nor APPLE_API_KEY is set"
+    fi
+}
+
 # Remake the AppImage in $1 from the AppDir the bundler leaves beside it, without fix-namespaces.hook. Tauri adds that
 # hook to every CEF AppImage: where AppArmor restricts unprivileged user namespaces it asks on each start to add an
 # AppArmor profile, and it cannot (its pkexec script breaks on a path with a space and it does not check the result).
@@ -1410,8 +1487,27 @@ remake_appimage_without_namespaces_hook() {
             run_cmd rm -f -- "$appdir/bin/fix-namespaces.hook" "$image" || die "could not remove the namespaces hook"
             (cd "$dir" && APPDIR=$appdir OUTNAME=${image##*/} run_cmd sh "$quick_sharun" --make-appimage) \
                 || die "could not remake $(rel "$image")"
+            # The bundle step signed the image it made, for the updater: sign the remade one.
+            if [ -f "$image.sig" ]; then resign_desktop_update "$image"; fi
         done
     done
+}
+
+# Sign the update artifact $1 again, as the bundle step did before it was remade, with the app's version in the
+# signature: TAURI_SIGNING_PRIVATE_KEY is the key or its file, and TAURI_SIGNING_PRIVATE_KEY_PASSWORD its password.
+resign_desktop_update() {
+    local file=$1 version key=${TAURI_SIGNING_PRIVATE_KEY:-}
+    version=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' "$ROOT/crates/moqui-desktop/tauri.conf.json")
+    [ -n "$version" ] || die "no version in crates/moqui-desktop/tauri.conf.json"
+    [ -n "$key" ] || die "no TAURI_SIGNING_PRIVATE_KEY to sign $(rel "$file") again"
+    run_cmd rm -f -- "$file.sig" || die "could not remove the signature of $(rel "$file")"
+    if [ -f "$key" ]; then
+        # The CLI's signer takes a key file only as TAURI_SIGNING_PRIVATE_KEY_PATH, and not with the key's variable.
+        (unset TAURI_SIGNING_PRIVATE_KEY && export TAURI_SIGNING_PRIVATE_KEY_PATH=$key \
+            && run_cmd cargo tauri signer sign --app-version "$version" "$file")
+    else
+        run_cmd cargo tauri signer sign --app-version "$version" "$file"
+    fi || die "could not sign $(rel "$file") again"
 }
 
 # The CEF distribution the Linux bundles are made from, in $2, printing the CEF_PATH that resolves to it: links to the
@@ -1442,6 +1538,18 @@ stage_desktop_cef() {
         run_cmd cc -shared -nostdlib -o "$dest/$name" -x c /dev/null || die "could not make the stand-in $name"
     done
     printf '%s\n' "$stage"
+}
+
+# The moqui binary a bundled desktop app runs as its sidecar node (crates/moqui-desktop/src/node/sidecar.rs), in $1 as
+# moqui-<host triple>, the name bundle.externalBin looks for; the bundle puts it beside the app's executable as moqui.
+# It is the Maximal package's binary, the package the app links, built first so it is not stale.
+stage_desktop_sidecar() {
+    local stage=$1 bin triple
+    bin=$(moqui_binary release) || exit 1
+    triple=$(rustc -vV | sed -n 's/^host: //p')
+    [ -n "$triple" ] || die "could not get the host target triple from rustc -vV"
+    run_cmd mkdir -p "$stage" || die "could not create $(rel "$stage")"
+    run_cmd cp "$bin" "$stage/moqui-$triple" || die "could not stage $(rel "$bin") for the bundle"
 }
 
 # The runtime a bundled desktop app carries in its resources, in $1: what ./moq archive --no-data puts in, less the

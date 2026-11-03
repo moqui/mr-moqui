@@ -516,11 +516,13 @@ async fn serve(
 
 /// Ctrl-c or SIGTERM ends the binary gracefully. Failed handlers wait on `stop`, used by embedded servers.
 /// The watch tells open notification sockets to close so graceful shutdown can finish. A restart asked for from the
-/// app (`moqui_core::devtools::restart`) ends it the same way.
+/// app (`moqui_core::devtools::restart`) ends it the same way, and so does the end of stdin when
+/// `moqui_stop_on_stdin_close` is true.
 async fn shutdown(mut stop: tokio::sync::oneshot::Receiver<()>, notify: tokio::sync::watch::Sender<bool>) {
     let restart = tokio::select! {
         _ = &mut stop => false,
         _ = termination_signal() => false,
+        () = stdin_closed() => false,
         () = RESTART.notified() => true,
     };
     // A restart execs this binary in the same PID, and its READY=1 ends the reload. STOPPING=1 there would leave
@@ -535,6 +537,38 @@ async fn shutdown(mut stop: tokio::sync::oneshot::Receiver<()>, notify: tokio::s
 
 /// Woken by a restart request: the listeners shut down as on SIGTERM, then the binary runs again (`crate::serve`).
 static RESTART: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
+/// Ends when stdin does, with `moqui_stop_on_stdin_close` true; otherwise never. The desktop app starts its node with
+/// stdin a pipe it holds open, so the node stops when the app closes it or ends, however it ends, also on Windows
+/// where there is no SIGTERM (plans/Mobile-Desktop.md, configuration 1).
+async fn stdin_closed() {
+    if moqui_lib::env::get_prop_or_env("moqui_stop_on_stdin_close") != "true" {
+        return std::future::pending().await;
+    }
+    if read_to_end_on_thread(std::io::stdin()).await.is_err() {
+        // The reading thread did not start: the node keeps running, and the signals still stop it.
+        std::future::pending::<()>().await;
+    }
+    tracing::info!("stdin closed: stopping (moqui_stop_on_stdin_close)");
+}
+
+/// Read `input` to its end on a thread of its own, discarding what it reads; the result is ready at the end, or at a
+/// read error. An error when the thread does not start.
+fn read_to_end_on_thread(
+    mut input: impl std::io::Read + Send + 'static,
+) -> impl std::future::Future<Output = Result<(), tokio::sync::oneshot::error::RecvError>> {
+    let (ended, end) = tokio::sync::oneshot::channel::<()>();
+    let started = std::thread::Builder::new()
+        .name("moqui-stdin-watch".to_string())
+        .spawn(move || {
+            let _ = std::io::copy(&mut input, &mut std::io::sink());
+            let _ = ended.send(());
+        });
+    if let Err(err) = started {
+        tracing::error!("could not start the stdin watch: {err}");
+    }
+    end
+}
 
 async fn termination_signal() {
     let ctrl_c = async {
@@ -1366,6 +1400,80 @@ mod signal_tests {
             assert!(*notified.borrow());
             assert!(moqui_core::devtools::restart::restart_requested());
         });
+    }
+
+    /// A stdin read to its end on a thread is ready only once the writer closes it.
+    #[test]
+    fn the_stdin_watch_ends_when_its_input_closes() {
+        struct Pipe(std::sync::mpsc::Receiver<u8>);
+        impl std::io::Read for Pipe {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                match self.0.recv() {
+                    Ok(byte) if !buf.is_empty() => {
+                        buf[0] = byte;
+                        Ok(1)
+                    }
+                    _ => Ok(0),
+                }
+            }
+        }
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            let (writer, reader) = std::sync::mpsc::channel();
+            let ended = super::read_to_end_on_thread(Pipe(reader));
+            tokio::pin!(ended);
+            writer.send(b'x').unwrap();
+            assert!(tokio::time::timeout(Duration::from_millis(100), &mut ended)
+                .await
+                .is_err());
+            drop(writer);
+            tokio::time::timeout(Duration::from_secs(5), ended)
+                .await
+                .expect("the watch did not see the end")
+                .unwrap();
+        });
+    }
+
+    /// With `moqui_stop_on_stdin_close`, closing the process's stdin shuts it down as a signal does.
+    #[test]
+    fn closing_stdin_shuts_down_with_the_property() {
+        const CHILD: &str = "MOQUI_SHUTDOWN_STDIN_TEST";
+        if std::env::var_os(CHILD).is_some() {
+            moqui_lib::env::set_property("moqui_stop_on_stdin_close", "true".to_string());
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                let (_stop, receiver) = tokio::sync::oneshot::channel();
+                let (notify, notified) = tokio::sync::watch::channel(false);
+                tokio::time::timeout(Duration::from_secs(10), super::shutdown(receiver, notify))
+                    .await
+                    .expect("closing stdin did not shut down");
+                assert!(*notified.borrow());
+            });
+            return;
+        }
+        let mut child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "http::signal_tests::closing_stdin_shuts_down_with_the_property",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .spawn()
+            .unwrap();
+        drop(child.stdin.take());
+        let deadline = std::time::Instant::now() + Duration::from_secs(15);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break Some(status);
+            }
+            if std::time::Instant::now() > deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                break None;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(status.is_some_and(|status| status.success()), "{status:?}");
     }
 
     #[test]

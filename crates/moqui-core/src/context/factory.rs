@@ -514,6 +514,9 @@ impl ExecutionContextFactory {
         let context = self.new_context();
         let _entered = context.enter();
         retire_legacy_monitoring_jobs(&context);
+        if let Some(entity) = self.entity() {
+            crate::service::backup::apply_schedule_property(&entity);
+        }
         self.native_tools.init(self)
     }
 

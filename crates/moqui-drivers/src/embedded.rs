@@ -40,9 +40,14 @@ mod cluster {
         server: std::mem::ManuallyDrop<PostgreSQL>,
         data_dir: PathBuf,
         stopped: bool,
-        /// A postmaster another process started. This handle never stops it.
+        /// A postmaster another live process started. This handle never stops it.
         adopted: bool,
     }
+
+    /// The file beside `postmaster.pid` that names the process owning the postmaster: the one that started it, or took
+    /// over one whose owner was gone. A postmaster outlives a node that was killed, and the next node takes it over
+    /// rather than leaving it running for good (plans/Mobile-Desktop.md, configuration 1).
+    const OWNER_FILE: &str = "moqui-owner.pid";
 
     struct PostmasterLock {
         pid: u32,
@@ -88,7 +93,9 @@ mod cluster {
         /// The client uses `NoTls` either way.
         ///
         /// A live postmaster is adopted when `PG_VERSION` matches this theseus major, and refused
-        /// with that pid when it does not. A dead pid is not live. A stopped data directory whose
+        /// with that pid when it does not. An adopted postmaster keeps running after this handle,
+        /// unless the process that owned it is gone: then it is taken over and stopped as one
+        /// started here. A dead pid is not live. A stopped data directory whose
         /// major differs is an error: this build ships theseus 18.6.0 and does not run `pg_upgrade`.
         /// A second start reloads `pgpass` and skips `CREATE DATABASE` when `moqui` already exists.
         ///
@@ -165,6 +172,7 @@ mod cluster {
                 .stop()
                 .map_err(|err| embedded("stop embedded postgres", &self.data_dir, err))?;
             self.stopped = true;
+            remove_owner(&self.data_dir);
             Ok(())
         }
 
@@ -335,7 +343,53 @@ mod cluster {
                 data_dir.display()
             )));
         }
-        launch(dir, data_dir, options, Some(lock.port))
+        let (mut cluster, driver) = launch(dir, data_dir, options, Some(lock.port))?;
+        let owner = owner_pid(data_dir);
+        if takes_over(owner, std::process::id(), process_live) {
+            tracing::warn!(
+                "Postmaster {} of {} was started by process {}, which is gone; this process takes it over and stops it",
+                lock.pid,
+                data_dir.display(),
+                owner.unwrap_or(0)
+            );
+            cluster.adopted = false;
+            write_owner(&cluster.data_dir);
+        }
+        Ok((cluster, driver))
+    }
+
+    /// Whether a live postmaster whose owner file names `owner` is taken over by process `me`: only when that owner is
+    /// gone. A postmaster with no owner file, or whose owner still runs, is only adopted and keeps running: a server
+    /// whose cluster `save-db` reaches, and a second handle in the owner's own process (a backup run in the server).
+    pub(crate) fn takes_over(owner: Option<u32>, me: u32, live: impl Fn(u32) -> bool) -> bool {
+        owner.is_some_and(|owner| owner != me && !live(owner))
+    }
+
+    /// The owner process named in `data_dir`'s owner file, if there is one that reads.
+    pub(crate) fn owner_pid(data_dir: &Path) -> Option<u32> {
+        std::fs::read_to_string(data_dir.join(OWNER_FILE))
+            .ok()?
+            .trim()
+            .parse()
+            .ok()
+    }
+
+    /// Name this process the owner of the postmaster of `data_dir`. Without the file a postmaster this process leaves
+    /// behind is only adopted by the next start, so a failure is logged and the start goes on.
+    pub(crate) fn write_owner(data_dir: &Path) {
+        let path = data_dir.join(OWNER_FILE);
+        if let Err(err) = std::fs::write(&path, format!("{}\n", std::process::id())) {
+            tracing::error!("could not write {}: {err}", path.display());
+        }
+    }
+
+    fn remove_owner(data_dir: &Path) {
+        let path = data_dir.join(OWNER_FILE);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => tracing::warn!("could not remove {}: {err}", path.display()),
+        }
     }
 
     fn ensure_major_can_start(dir: &Path, install_root: &Path, data_dir: &Path) -> Result<(), Error> {
@@ -389,6 +443,7 @@ mod cluster {
             server
                 .start()
                 .map_err(|err| embedded("start embedded postgres", data_dir, err))?;
+            write_owner(&server.settings().data_dir);
         }
         let data_dir = server.settings().data_dir.clone();
         let exists = server

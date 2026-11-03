@@ -1029,8 +1029,10 @@
         open();
     };
 
-    // Inline screen templates call this helper for chart CSV exports.
+    // Inline screen templates call this helper for chart CSV exports. An app around the page (window.moquiDesktop) saves it.
     const downloadData = (data, filename, type) => {
+        const host = root.moquiDesktop;
+        if (host && host.saveFile) return host.saveFile({name: filename, blob: new root.Blob([data], {type})});
         const url = root.URL.createObjectURL(new root.Blob([data], {type}));
         const link = doc.createElement("a");
         link.href = url;

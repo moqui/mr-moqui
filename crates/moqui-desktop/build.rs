@@ -13,7 +13,20 @@
  */
 
 //! Runs the Tauri build steps: the config, the capabilities and the icons, for tauri::generate_context!.
+//!
+//! The app manifest names the page bridge's commands (src/bridge.rs). With it every app command is checked against
+//! the ACL, also from the app's own pages, and gets an `allow-<command>` permission (`_` as `-`); only the capability
+//! the bridge adds at run time grants them. `restart_node` is the splash page's: `capabilities/splash.json` grants it
+//! to the app's own pages, never to the node's origin.
 
 fn main() {
-    tauri_build::build();
+    let manifest = tauri_build::AppManifest::new().commands(&[
+        "notify",
+        "set_counts",
+        "set_presence",
+        "open_external",
+        "restart_node",
+    ]);
+    tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
+        .expect("the Tauri build steps failed");
 }

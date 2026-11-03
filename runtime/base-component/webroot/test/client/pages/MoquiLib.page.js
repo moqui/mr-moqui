@@ -558,3 +558,47 @@ test("a notification client sends JSON when open, and keeps what is sent while c
         globalThis.setTimeout = savedTimeout;
     }
 });
+
+test("an app around the page (window.moquiDesktop) gets the notifications and the saved files, and a browser keeps its own", async () => {
+    const calls = [];
+    const savedAnchorClick = HTMLAnchorElement.prototype.click;
+    const savedCreate = URL.createObjectURL;
+    const savedRevoke = URL.revokeObjectURL;
+    const shown = [];
+    globalThis.moquiDesktop = {
+        notify: (options) => calls.push(["notify", options]),
+        saveFile: (file) => calls.push(["saveFile", file])
+    };
+    try {
+        let fellBack = false;
+        moqui.notifyNotification({ title: "New mail", link: "/qapps/comms/Inbox", notificationMessageId: "M1" }, () => { fellBack = true; });
+        moqui.notifyNotification({ title: "Topic only", topic: "chat" }, () => { fellBack = true; });
+        assert.ok(!fellBack, "no page toast when the app shows it");
+        assert.deepEqual(calls.slice(0, 2), [
+            ["notify", { title: "New mail", link: "/qapps/comms/Inbox", tag: "M1" }],
+            ["notify", { title: "Topic only", link: null, tag: "chat" }]
+        ]);
+        moqui.downloadData("a,b\n", "x.csv", "text/csv");
+        assert.equal(calls[2][0], "saveFile");
+        assert.equal(calls[2][1].name, "x.csv");
+        assert.equal(await calls[2][1].blob.text(), "a,b\n");
+        assert.equal(calls[2][1].blob.type, "text/csv");
+
+        // without the app: a download link, and the fallback while notifications are not allowed
+        delete globalThis.moquiDesktop;
+        URL.createObjectURL = () => "blob:fixture";
+        URL.revokeObjectURL = () => {};
+        HTMLAnchorElement.prototype.click = function () { shown.push([this.download, this.href]); };
+        moqui.saveBlob("y.txt", new Blob(["y"]));
+        assert.deepEqual(shown, [["y.txt", "blob:fixture"]]);
+        if (!globalThis.Notification || Notification.permission !== "granted") {
+            moqui.notifyNotification({ title: "Plain" }, () => { fellBack = true; });
+            assert.ok(fellBack);
+        }
+    } finally {
+        delete globalThis.moquiDesktop;
+        HTMLAnchorElement.prototype.click = savedAnchorClick;
+        URL.createObjectURL = savedCreate;
+        URL.revokeObjectURL = savedRevoke;
+    }
+});

@@ -507,6 +507,68 @@ fn a_lock_copied_from_another_live_cluster_is_not_adopted() {
     drop(cluster);
 }
 
+/// A postmaster whose owner process is gone, as one a killed node leaves, is taken over: the next start keeps the same
+/// postmaster, names itself the owner and stops it on drop.
+#[test]
+fn a_postmaster_whose_owner_is_gone_is_taken_over_and_stopped() {
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let data_dir = cluster.data_dir().to_path_buf();
+    drop(driver);
+    assert_eq!(owner_pid(&data_dir), Some(std::process::id()));
+    let pid = postmaster_pid(&data_dir);
+    let _kill = KillGuard(pid);
+    std::mem::forget(cluster);
+    std::fs::write(data_dir.join(OWNER_FILE), format!("{}\n", gone_pid())).unwrap();
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    assert_eq!(
+        postmaster_pid(&data_dir),
+        pid,
+        "the postmaster was taken over, not restarted"
+    );
+    assert_eq!(owner_pid(&data_dir), Some(std::process::id()));
+    drop(driver);
+    drop(cluster);
+    assert!(!process_live(pid), "the taken-over postmaster {pid} was not stopped");
+    assert_eq!(owner_pid(&data_dir), None, "the owner file stays after the stop");
+}
+
+#[test]
+fn only_a_gone_owner_hands_its_postmaster_over() {
+    let me = 100;
+    let live = |pid: u32| pid == me || pid == 200;
+    assert!(!takes_over(None, me, live), "no owner file: adopted as before");
+    assert!(!takes_over(Some(200), me, live), "a live owner keeps its postmaster");
+    assert!(
+        !takes_over(Some(me), me, live),
+        "a second handle in the owner's process"
+    );
+    assert!(takes_over(Some(300), me, live), "the owner is gone");
+}
+
+#[test]
+fn the_owner_file_round_trips() {
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    std::fs::create_dir_all(&dir).unwrap();
+    assert_eq!(owner_pid(&dir), None);
+    write_owner(&dir);
+    assert_eq!(owner_pid(&dir), Some(std::process::id()));
+    remove_owner(&dir);
+    assert_eq!(owner_pid(&dir), None);
+    remove_owner(&dir);
+}
+
+/// The id of a process that has ended and been reaped.
+fn gone_pid() -> u32 {
+    let mut child = std::process::Command::new("true").spawn().unwrap();
+    let pid = child.id();
+    child.wait().unwrap();
+    assert!(!process_live(pid));
+    pid
+}
+
 #[test]
 fn clusters_share_one_install_and_an_old_one_moves_there() {
     let root = temp_cluster_dir();

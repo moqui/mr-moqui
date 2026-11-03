@@ -17,9 +17,17 @@
 //! `/qapps` on its loopback port, a browser session on the node's own origin as on the web. Closing the window hides it
 //! to the tray; quitting stops the node and its Postgres before the process ends.
 
+mod backup;
+mod bridge;
 mod node;
+mod os;
 mod runtime_dir;
+mod splash;
+mod updates;
+mod wake;
 
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use node::{Event, Node};
@@ -28,22 +36,49 @@ use tauri::tray::TrayIconBuilder;
 use tauri::webview::NewWindowResponse;
 use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 
-/// The node of this app, until it quits.
+/// The node of this app, until it quits, and what it was started with, for a restart.
 #[derive(Default)]
-struct NodeState(Mutex<Option<Node>>);
+struct NodeState {
+    node: Mutex<Option<Node>>,
+    started_with: Mutex<Option<NodeStart>>,
+    /// The node's `/qapps` once it listens: the window may go to its origin.
+    origin: Arc<OnceLock<Url>>,
+    /// A restart is under way; another one waits for it to end.
+    restarting: AtomicBool,
+}
+
+/// How the node was started: a restart starts it again the same way, on the same port.
+#[derive(Clone)]
+struct NodeStart {
+    mode: node::Mode,
+    runtime: PathBuf,
+    port: u16,
+    /// Beside the listen properties: the backup's (`backup::node_properties`).
+    properties: Vec<(&'static str, String)>,
+}
 
 /// Run the app. Returns when it quits.
 pub fn run() {
-    let builder = tauri::Builder::default().runtime(cef());
+    if !os::single_instance() {
+        return;
+    }
+    let context = tauri::generate_context!();
+    let builder = updates::setup(
+        bridge::setup(tauri::Builder::default().runtime(cef())),
+        context.config(),
+    );
     let app = builder.manage(NodeState::default()).setup(|app| {
         let handle = app.handle().clone();
-        let origin = Arc::new(OnceLock::new());
+        let origin = Arc::clone(&handle.state::<NodeState>().origin);
         main_window(&handle, &origin)?;
         tray(&handle)?;
-        start_node(&handle, origin)?;
+        os::setup(&handle);
+        start_node(&handle)?;
+        backup::refresh_last(&handle);
+        wake::watch(&handle);
         Ok(())
     });
-    let app = match app.build(tauri::generate_context!()) {
+    let app = match app.build(context) {
         Ok(app) => app,
         Err(err) => {
             eprintln!("moqui-desktop: the app did not start: {err}");
@@ -63,8 +98,10 @@ pub fn run() {
         }
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => show_main(app),
+        RunEvent::Opened { urls } => os::opened(app, urls),
         RunEvent::Exit => {
-            let node = moqui_lib::sync::lock(&app.state::<NodeState>().0).take();
+            os::exit();
+            let node = moqui_lib::sync::lock(&app.state::<NodeState>().node).take();
             if let Some(node) = node {
                 tracing::info!("Quitting: stopping the node");
                 node.stop();
@@ -101,10 +138,15 @@ fn cef() -> tauri_runtime_cef::Cef {
 fn main_window(app: &AppHandle, origin: &Arc<OnceLock<Url>>) -> tauri::Result<WebviewWindow> {
     let navigation = Arc::clone(origin);
     let popup = Arc::clone(origin);
-    WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+    // Where the window opens, known before it does: its first navigation is checked against it.
+    splash::init(app.config().build.dev_url.as_ref().filter(|_| tauri::is_dev()));
+    let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("MR Moqui")
         .inner_size(1280.0, 860.0)
         .min_inner_size(400.0, 300.0)
+        .initialization_script(bridge::SCRIPT)
+        .on_download(bridge::on_download)
+        .on_page_load(|window, payload| os::page_loaded(&window, payload))
         .on_navigation(move |url| stays_in_app(url, navigation.get()))
         .on_new_window(move |url, _features| {
             if stays_in_app(&url, popup.get()) {
@@ -113,23 +155,40 @@ fn main_window(app: &AppHandle, origin: &Arc<OnceLock<Url>>) -> tauri::Result<We
                 NewWindowResponse::Deny
             }
         })
-        .build()
+        .build()?;
+    if let Ok(opened) = window.url() {
+        if matches!(opened.scheme(), "http" | "https") && opened.origin() != splash::base().origin() {
+            tracing::warn!(
+                "The window opened on {opened}, not on {}; the splash page may not load",
+                splash::base()
+            );
+        }
+    }
+    Ok(window)
 }
 
 /// Whether the window may go to `url`: the app's own pages and the node's origin. Anything else on the web, and
 /// `mailto:` and `tel:` links, opens in the system browser or the handler the OS has for it, and the window stays.
 fn stays_in_app(url: &Url, node: Option<&Url>) -> bool {
-    let external = match url.scheme() {
-        "http" | "https" => {
-            !matches!(url.host_str(), Some("tauri.localhost")) && node.is_none_or(|node| url.origin() != node.origin())
-        }
-        "mailto" | "tel" | "sip" => true,
-        _ => false,
-    };
+    let external = is_external(url, node, &splash::base());
     if external {
         open_externally(url);
     }
     !external
+}
+
+/// Whether `url` leaves the app: a web page on neither the app's own pages (at `app`, a development run's dev server
+/// or `tauri.localhost`) nor the node's origin, or a `mailto:`, `tel:` or `sip:` link.
+fn is_external(url: &Url, node: Option<&Url>, app: &Url) -> bool {
+    match url.scheme() {
+        "http" | "https" => {
+            !matches!(url.host_str(), Some("tauri.localhost"))
+                && url.origin() != app.origin()
+                && node.is_none_or(|node| url.origin() != node.origin())
+        }
+        "mailto" | "tel" | "sip" => true,
+        _ => false,
+    }
 }
 
 fn open_externally(url: &Url) {
@@ -150,18 +209,29 @@ fn show_main(app: &AppHandle) {
     }
 }
 
-/// The tray icon: Show brings the window back, Quit stops the node and quits.
+/// The tray icon: Show brings the window back, Restart node stops and starts the node, the node item switches its
+/// mode, Quit stops the node and quits.
 fn tray(app: &AppHandle) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show MR Moqui", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show, &quit])?;
+    let restart_node = MenuItem::with_id(app, "restart-node", "Restart node", true, None::<&str>)?;
+    let node_mode = node_mode_item(app)?;
+    let menu = Menu::with_items(app, &[&show, &restart_node, &node_mode, &quit])?;
+    os::add_tray_items(app, &menu)?;
+    updates::add_tray_item(app, &menu)?;
+    backup::add_tray_items(app, &menu)?;
     let mut tray = TrayIconBuilder::with_id("main")
         .tooltip("MR Moqui")
         .menu(&menu)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "show" => show_main(app),
+            "restart-node" => restart(app),
+            "node-mode" => switch_node_mode(app),
+            updates::ITEM => updates::chosen(app),
             "quit" => app.exit(0),
-            _ => {}
+            id => {
+                let _ = os::on_menu_event(app, id) || backup::on_menu_event(app, id);
+            }
         });
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());
@@ -170,8 +240,30 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// The tray item that shows where the node runs, in process or as the `moqui` sidecar; choosing it switches.
+fn node_mode_item<R: tauri::Runtime>(app: &AppHandle<R>) -> tauri::Result<MenuItem<R>> {
+    let mode = node::mode_of_run(&app.path().app_config_dir()?);
+    MenuItem::with_id(app, "node-mode", mode.label(), true, None::<&str>)
+}
+
+/// Keep the other node mode for the next start, and restart the app into it; quitting stops this node first.
+fn switch_node_mode(app: &AppHandle) {
+    let switched = app
+        .path()
+        .app_config_dir()
+        .map_err(|err| err.to_string())
+        .and_then(|dir| node::switch_mode(&dir, node::mode_of_run(&dir)).map_err(|err| err.to_string()));
+    match switched {
+        Ok(mode) => {
+            tracing::info!("Restarting with the node {}", mode.as_str());
+            app.request_restart();
+        }
+        Err(err) => tracing::error!("Could not switch the node mode: {err}"),
+    }
+}
+
 /// Find the runtime, pick the port and boot the node; the window goes to the node once it listens, or shows why not.
-fn start_node(app: &AppHandle, origin: Arc<OnceLock<Url>>) -> Result<(), Box<dyn std::error::Error>> {
+fn start_node(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let paths = app.path();
     let dev = tauri::is_dev();
     let location = runtime_dir::Location::choose(
@@ -204,17 +296,46 @@ fn start_node(app: &AppHandle, origin: Arc<OnceLock<Url>>) -> Result<(), Box<dyn
         );
         return Ok(());
     }
+    os::runtime_chosen(&runtime);
     let port_file = paths.app_config_dir()?.join("node-port");
     let port = node::choose_port(node::saved_port(&port_file))?;
     node::save_port(&port_file, port);
-    tracing::info!("Starting the node on {} at 127.0.0.1:{port}", runtime.display());
+    let mode = node::mode_of_run(&paths.app_config_dir()?);
+    tracing::info!(
+        "Starting the node {} on {} at 127.0.0.1:{port}",
+        mode.as_str(),
+        runtime.display()
+    );
+    let properties = backup::node_properties(app);
+    let start = NodeStart {
+        mode,
+        runtime,
+        port,
+        properties,
+    };
+    *moqui_lib::sync::lock(&app.state::<NodeState>().started_with) = Some(start.clone());
+    launch_node(app, start);
+    Ok(())
+}
+
+/// Start the node as `start` says; the window goes to the node once it listens, or shows why not.
+fn launch_node(app: &AppHandle, start: NodeStart) {
+    let NodeStart {
+        mode,
+        runtime,
+        port,
+        properties,
+    } = start;
+    let origin = Arc::clone(&app.state::<NodeState>().origin);
     let events_app = app.clone();
-    let node = Node::start(runtime, port, move |event| match event {
+    let node = Node::start(mode, runtime, port, properties, move |event| match event {
         Event::Started(address) => {
             let url = format!("http://{address}/qapps");
             match Url::parse(&url) {
                 Ok(url) => {
                     let _ = origin.set(url.clone());
+                    bridge::node_started(&events_app, &url);
+                    let url = os::node_started(url);
                     if let Some(window) = events_app.get_webview_window("main") {
                         if let Err(err) = window.navigate(url) {
                             start_failed(&events_app, &format!("could not open {address}: {err}"));
@@ -227,16 +348,70 @@ fn start_node(app: &AppHandle, origin: Arc<OnceLock<Url>>) -> Result<(), Box<dyn
         Event::Failed(err) => start_failed(&events_app, &err),
         Event::Stopped { restart: true } => events_app.request_restart(),
         Event::Stopped { restart: false } => events_app.exit(0),
-    })?;
-    *moqui_lib::sync::lock(&app.state::<NodeState>().0) = Some(node);
-    Ok(())
+    });
+    // A sidecar binary that is not there is said on the splash page, as other start failures are.
+    let node = match node {
+        Ok(node) => node,
+        Err(err) => {
+            start_failed(app, &err.to_string());
+            return;
+        }
+    };
+    *moqui_lib::sync::lock(&app.state::<NodeState>().node) = Some(node);
 }
 
-/// Show `message` on the splash page.
+/// Restart the node: the tray's Restart node, and the splash page's Restart button. A sidecar is stopped and started
+/// again in the same mode on the same port, on a thread of its own since the stop can take a while. A node in process
+/// that booted, or tried to, is restarted with the app: the framework is booted once per process. A node that never
+/// got as far as starting (no runtime, a server on its port) is looked for again from the start.
+fn restart(app: &AppHandle) {
+    let state = app.state::<NodeState>();
+    if state.restarting.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let started_with = moqui_lib::sync::lock(&state.started_with).clone();
+    if started_with
+        .as_ref()
+        .is_some_and(|start| start.mode == node::Mode::InProcess)
+    {
+        tracing::info!("Restarting the app to restart the node in process");
+        app.request_restart();
+        return;
+    }
+    let app = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("moqui-desktop-restart".to_string())
+        .spawn(move || {
+            tracing::info!("Restarting the node");
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.navigate(splash::url(None));
+            }
+            let node = moqui_lib::sync::lock(&app.state::<NodeState>().node).take();
+            if let Some(node) = node {
+                node.stop();
+            }
+            match started_with {
+                Some(start) => launch_node(&app, start),
+                None => {
+                    if let Err(err) = start_node(&app) {
+                        start_failed(&app, &err.to_string());
+                    }
+                }
+            }
+            app.state::<NodeState>().restarting.store(false, Ordering::SeqCst);
+        });
+    if let Err(err) = spawned {
+        tracing::error!("Could not restart the node: {err}");
+        state.restarting.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Show `message` on the splash page, going back to it from the node's pages when the node fails after it started.
 fn start_failed(app: &AppHandle, message: &str) {
     tracing::error!("The node did not start: {message}");
     if let Some(window) = app.get_webview_window("main") {
-        let quoted = serde_json::to_string(message).unwrap_or_else(|_| "\"\"".to_string());
-        let _ = window.eval(format!("window.moquiStartFailed && window.moquiStartFailed({quoted})"));
+        if let Err(err) = window.navigate(splash::url(Some(message))) {
+            tracing::error!("Could not show the error on the splash page: {err}");
+        }
     }
 }

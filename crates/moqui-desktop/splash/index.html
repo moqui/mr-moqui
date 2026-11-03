@@ -1,5 +1,7 @@
 <!doctype html>
-<!-- The window while the node starts; the host then sends it to the node's /qapps, or shows why the start failed. -->
+<!-- The window while the node starts; the host then sends it to the node's /qapps, or back here with ?failed=<message>
+     when the node does not start or ends (src/splash.rs). Restart calls the host's restart_node, which only this page
+     may call (capabilities/splash.json). -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -16,6 +18,7 @@
     #status { color: var(--muted); }
     #error { display: none; color: var(--err); text-align: left; white-space: pre-wrap; font-family: ui-monospace, monospace;
         font-size: 13px; }
+    #restart { display: none; margin: 16px auto 0; padding: 6px 18px; font: inherit; }
 </style>
 </head>
 <body>
@@ -23,15 +26,27 @@
     <img src="icon.png" alt="">
     <p id="status">Starting the node…</p>
     <pre id="error"></pre>
+    <button id="restart" type="button">Restart</button>
 </main>
 <script>
-    // Called by the host (Window::eval) when the node does not start.
     window.moquiStartFailed = function (message) {
-        document.getElementById('status').textContent = 'The node did not start.';
+        document.getElementById('status').textContent = 'The node did not start, or it stopped.';
         const error = document.getElementById('error');
         error.textContent = message;
         error.style.display = 'block';
+        const ipc = window.__TAURI_INTERNALS__;
+        if (ipc && ipc.invoke) document.getElementById('restart').style.display = 'block';
     };
+    document.getElementById('restart').addEventListener('click', function () {
+        this.disabled = true;
+        document.getElementById('status').textContent = 'Restarting the node…';
+        document.getElementById('error').style.display = 'none';
+        window.__TAURI_INTERNALS__.invoke('restart_node').catch(function (err) {
+            window.moquiStartFailed('Could not restart the node: ' + err);
+        });
+    });
+    const failed = new URLSearchParams(location.search).get('failed');
+    if (failed !== null) window.moquiStartFailed(failed);
 </script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 # Embedded Postgres backup
 
-The job `backup_EmbeddedDatabase_daily` takes a live backup of each embedded Postgres cluster this process runs, rotates the local archives, and can mirror them to SFTP. The schedule is the ServiceJob cron (`0 0 2 * * ?` in the seed). The job is paused. Set `paused` to `N` to run it.
+The job `backup_EmbeddedDatabase_daily` takes a live backup of each embedded Postgres cluster this process runs, rotates the local archives, and can mirror them to SFTP. The schedule is the ServiceJob cron (`0 0 2 * * ?` in the seed). The job is paused. Set `paused` to `N` to run it, or set the property `embedded_db_backup_scheduled` to `true` (`false` pauses it), which the boot applies to the job each start; unset, the job row is left as it is. The desktop app sets it ([Mobile-Desktop](../Mobile-Desktop.md) §4).
 
 The service is `org.moqui.impl.ServerServices.backup#EmbeddedDatabase`. `moqui-core` holds the retention and mirror decisions and the service. `moqui-host` runs `pg_dump` and `pg_basebackup` and registers that runner when a postmaster starts. `moqui-core` does not spawn Postgres tools. With no embedded cluster the service returns `skipped=Y` and does not raise `ServiceJobError`.
 
@@ -38,7 +38,7 @@ A kept incremental keeps its parent full and the incrementals between them. Thos
 
 The new archive is published before anything is pruned. One rename or delete that fails is logged and the rest continue.
 
-`backupDir` empty means `runtime/db/backup`, a sibling of `embedded` and `search`. A directory inside a data directory, or one that contains a data directory, is refused before any tool runs.
+`backupDir` empty means the `embedded_db_backup_dir` property, else `runtime/db/backup`, a sibling of `embedded` and `search`. A directory inside a data directory, or one that contains a data directory, is refused before any tool runs.
 
 ## Parameters
 
@@ -49,7 +49,7 @@ The new archive is published before anything is pruned. One rename or delete tha
 | `monthlyCount` | 12 | Monthlies to keep. |
 | `yearlyCount` | empty | Empty keeps every yearly. |
 | `backupMode` | `dump` | `dump` or `incremental`. |
-| `backupDir` | empty | Empty is `runtime/db/backup`. |
+| `backupDir` | empty | Empty is the property `embedded_db_backup_dir`, and when that is empty too, `runtime/db/backup`. |
 | `fullEvery` | 7 | Archives in one physical generation, including the full, before the next full. Dumps do not count. |
 | `fastCheckpoint` | false | `pg_basebackup --checkpoint=fast`: start after an immediate checkpoint instead of the spread one, which can take minutes. |
 | `timeoutMinutes` | 120 | Kills the tool's process group. The job's `transactionTimeout` of 7200 is recorded and does not bound the work: the service is `transaction="ignore"`. |

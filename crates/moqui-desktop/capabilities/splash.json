@@ -1,0 +1,7 @@
+{
+  "identifier": "splash",
+  "description": "The app's own splash page (splash/index.html) on the main window: its Restart button. Local pages only; the node's origin gets the bridge's commands at run time (src/bridge.rs) and not this one.",
+  "local": true,
+  "windows": ["main"],
+  "permissions": ["allow-restart-node"]
+}

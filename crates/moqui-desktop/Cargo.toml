@@ -32,11 +32,24 @@ moqui-app = { path = "../../target/moqui-app", default-features = false }
 moqui-host = { path = "../moqui-host", default-features = false }
 moqui-lib = { path = "../moqui-lib" }
 moqui-core = { path = "../moqui-core", default-features = false }
+# Backup names and the last backup's time (src/backup.rs), as the framework's.
+jiff = "0.2"
+# The backup folder and restore dialogs (src/backup.rs). Not tauri-plugin-dialog: its script replaces window.alert
+# and window.confirm on every page, the node's too. On Linux the portal, not GTK 3, which the GTK 4 app cannot load.
+rfd = { version = "0.16", default-features = false, features = ["xdg-portal", "wayland", "tokio"] }
 serde_json = "1"
 tauri = { version = "=3.0.0-alpha.5", features = ["unstable", "tray-icon"] }
+# Native notifications for the page bridge (src/bridge.rs), with clicks; notify-rust under it on desktop.
+tauri-plugin-notification = "=3.0.0-alpha.3"
 # The webview runtime: Chromium (CEF) on every desktop OS, in place of the platform WebViews.
 tauri-runtime-cef = "=3.0.0-alpha.6"
+# Updates from the update feed a bundle is built with (src/updates.rs); registered only when it has one.
+tauri-plugin-updater = "=3.0.0-alpha.3"
 tracing = "0.1"
+
+# SIGTERM for a sidecar node that did not stop when its stdin closed (src/node/sidecar.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [build-dependencies]
 tauri-build = { version = "=3.0.0-alpha.4", features = [] }

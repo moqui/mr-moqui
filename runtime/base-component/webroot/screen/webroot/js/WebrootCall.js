@@ -173,10 +173,14 @@
                 const still = view && (view.participants || []).some((p) => p.admission === "waiting");
                 if (!still && state.lobbyNotice && state.lobbyNotice.callSessionId === data.callSessionId) state.lobbyNotice = null;
             }
-            if (data.action === "ring" && root.document && root.document.hidden && root.Notification && root.Notification.permission === "granted") {
-                // a tab in the background shows the ring as a notification too (a closed one gets the Web Push)
+            const host = root.moquiDesktop;
+            if (data.action === "ring" && root.document && root.document.hidden && ((host && host.notify) || (root.Notification && root.Notification.permission === "granted"))) {
+                // a tab in the background shows the ring as a notification too (a closed one gets the Web Push); an app
+                // around the page (window.moquiDesktop) shows a native one
                 try {
-                    new root.Notification(t("Call from") + " " + ((data.from && data.from.name) || ""), { tag: "call-" + data.callSessionId });
+                    const title = t("Call from") + " " + ((data.from && data.from.name) || "");
+                    if (host && host.notify) host.notify({ title, tag: "call-" + data.callSessionId });
+                    else new root.Notification(title, { tag: "call-" + data.callSessionId });
                 } catch (e) {
                     /* not allowed here */
                 }

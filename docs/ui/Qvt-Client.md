@@ -928,6 +928,8 @@ title, link and topic, and the message id as the tag, never the message body. A 
 open `/qapps` window at the link, or opens one. Socket messages (a chat event, a signal) are never pushed.
 
 The desktop notification a page shows for a socket message has the same tag as the push, so the browser shows one.
+In the desktop app, which defines `window.moquiDesktop` ([js README](../../runtime/base-component/webroot/screen/webroot/js/README.md)),
+the client shows it as a native notification instead and does not start Web Push.
 
 **Account switch and logout.** A browser's subscription is one user's:
 

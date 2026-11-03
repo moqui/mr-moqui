@@ -2349,15 +2349,7 @@
             const doc = root.document;
             if (!doc || !root.Blob || !root.URL || !root.URL.createObjectURL) return;
             const file = assist.markdownFile(text, S().convo.title);
-            const url = root.URL.createObjectURL(new root.Blob([file.content], { type: file.type }));
-            const link = doc.createElement("a");
-            link.href = url;
-            link.download = file.fileName;
-            link.style.display = "none";
-            doc.body.appendChild(link);
-            link.click();
-            doc.body.removeChild(link);
-            setTimeout(() => root.URL.revokeObjectURL(url), 1000);
+            moqui.saveBlob(file.fileName, new root.Blob([file.content], { type: file.type }));
         },
 
         // ---- attachments and dictation ----

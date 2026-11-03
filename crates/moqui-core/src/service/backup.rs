@@ -14,9 +14,15 @@
 
 //! `backup#EmbeddedDatabase`. The host takes the local archive. This service mirrors it over SFTP when
 //! the named [`SystemMessageRemote`](https://moqui.org) has a `sendUrl`.
+//!
+//! Two properties let a deployment set the backup up without editing its job row (plans/archive/PostgresBackup.md):
+//! `embedded_db_backup_dir` is the archive directory when the call names no `backupDir`, and
+//! `embedded_db_backup_scheduled` (`true` or `false`) sets the seed job `backup_EmbeddedDatabase_daily` running or
+//! paused at boot ([`apply_schedule_property`]). Unset, neither changes anything; the desktop app sets both
+//! (plans/Mobile-Desktop.md section 4, configuration 1, Backups).
 
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use moqui_lib::error::Error as LibError;
@@ -29,6 +35,13 @@ use crate::entity::{EntityFacade, EntityValue};
 use crate::sftp::SftpClient;
 
 const REMOTE: &str = "moqui.service.message.SystemMessageRemote";
+const SERVICE_JOB: &str = "moqui.service.job.ServiceJob";
+/// The seed data's scheduled backup (MoquiSetupData.xml), paused there.
+pub(crate) const BACKUP_JOB: &str = "backup_EmbeddedDatabase_daily";
+/// The archive directory when the call names none.
+pub(crate) const DIR_PROPERTY: &str = "embedded_db_backup_dir";
+/// `true` runs [`BACKUP_JOB`] on its schedule, `false` pauses it; set at each boot.
+pub(crate) const SCHEDULED_PROPERTY: &str = "embedded_db_backup_scheduled";
 const MESSAGE_TYPE: &str = "moqui.service.message.SystemMessageType";
 
 pub(in crate::service) fn register(
@@ -90,11 +103,14 @@ fn request_from(parameters: &BTreeMap<String, Value>) -> BackupRequest {
     } else {
         BackupMode::Dump
     };
-    let dir = param_text(parameters, "backupDir");
+    let dir = backup_dir(
+        &param_text(parameters, "backupDir"),
+        &moqui_lib::env::get_prop_or_env(DIR_PROPERTY),
+    );
     let minutes = count_param(parameters, "timeoutMinutes", 120).max(1);
     BackupRequest {
         mode,
-        backup_dir: (!dir.is_empty()).then(|| Path::new(&dir).to_path_buf()),
+        backup_dir: dir,
         daily: count_param(parameters, "dailyCount", 7),
         weekly: count_param(parameters, "weeklyCount", 5),
         monthly: count_param(parameters, "monthlyCount", 12),
@@ -104,6 +120,52 @@ fn request_from(parameters: &BTreeMap<String, Value>) -> BackupRequest {
             .get("fastCheckpoint")
             .is_some_and(|value| matches!(basic_convert(value, "Boolean").value, Value::Bool(true))),
         timeout: Duration::from_secs(u64::from(minutes) * 60),
+    }
+}
+
+/// The archive directory: the call's `backupDir`, else the [`DIR_PROPERTY`] property, else none (`runtime/db/backup`).
+pub(crate) fn backup_dir(param: &str, property: &str) -> Option<PathBuf> {
+    [param, property]
+        .into_iter()
+        .map(str::trim)
+        .find(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+}
+
+/// The `paused` value [`SCHEDULED_PROPERTY`]'s text asks for: `N` for true, `Y` for false, none when unset or neither.
+pub(crate) fn paused_for(scheduled: &str) -> Option<&'static str> {
+    match scheduled.trim().to_ascii_lowercase().as_str() {
+        "true" | "y" => Some("N"),
+        "false" | "n" => Some("Y"),
+        _ => None,
+    }
+}
+
+/// At boot: set [`BACKUP_JOB`] running or paused as [`SCHEDULED_PROPERTY`] says, when it is set and the job row is
+/// there (after an empty database's seed load, the boot that follows it). A failure is logged and the boot goes on.
+pub(crate) fn apply_schedule_property(facade: &EntityFacade) {
+    let text = moqui_lib::env::get_prop_or_env(SCHEDULED_PROPERTY);
+    let Some(paused) = paused_for(&text) else {
+        if !text.trim().is_empty() {
+            tracing::warn!("{SCHEDULED_PROPERTY} is {text:?}, not true or false; {BACKUP_JOB} is left as it is");
+        }
+        return;
+    };
+    let updated = facade.transactions_for(SERVICE_JOB).and_then(|tx| {
+        tx.run(crate::transaction::TransactionAttribute::UseOrBegin, None, || {
+            facade
+                .find(SERVICE_JOB)?
+                .disable_authz()
+                .eq("jobName", Value::string(BACKUP_JOB))
+                .update_all([("paused".into(), Value::string(paused))])
+        })
+    });
+    match updated {
+        Ok(_) => tracing::info!(
+            "{BACKUP_JOB} is {} ({SCHEDULED_PROPERTY})",
+            if paused == "N" { "scheduled" } else { "paused" }
+        ),
+        Err(err) => tracing::error!("Could not set {BACKUP_JOB} paused={paused} ({SCHEDULED_PROPERTY}): {err}"),
     }
 }
 
@@ -310,3 +372,7 @@ fn field(row: &EntityValue, name: &str) -> String {
         _ => String::new(),
     }
 }
+
+#[cfg(test)]
+#[path = "backup_tests.rs"]
+mod tests;

@@ -203,12 +203,14 @@
         const location = root.location;
         return !(location && location.origin && (text === location.origin || text.indexOf(location.origin + "/") === 0));
     };
-    // Follow a link of a message or notification: an app link through the shell ($root.setUrl), an external one in a new window.
+    // Follow a link of a message or notification: an app link through the shell ($root.setUrl), an external one in a new window,
+    // or by the system when an app around the page (window.moquiDesktop) opens it.
     moqui.openLink = (link) => {
         if (!link) return;
         const text = String(link).trim();
         if (moqui.isExternalLink(text)) {
-            if (root.open) root.open(text, "_blank", "noopener");
+            if (root.moquiDesktop && root.moquiDesktop.openExternal) root.moquiDesktop.openExternal(text);
+            else if (root.open) root.open(text, "_blank", "noopener");
             return;
         }
         const location = root.location;
@@ -1898,15 +1900,9 @@
                         return response.blob().then((blob) => {
                             const match = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(disposition);
                             const filename = disposition.indexOf("attachment") !== -1 && match && match[1] ? match[1].replace(/['"]/g, "") : "";
+                            if (filename) return moqui.saveBlob(filename, blob);
                             const downloadUrl = root.URL.createObjectURL(blob);
-                            if (filename) {
-                                const a = root.document.createElement("a");
-                                a.href = downloadUrl;
-                                a.download = filename;
-                                root.document.body.appendChild(a);
-                                a.click();
-                                a.remove();
-                            } else root.location.href = downloadUrl;
+                            root.location.href = downloadUrl;
                             setTimeout(() => root.URL.revokeObjectURL(downloadUrl), 100);
                         });
                     }
@@ -8777,7 +8773,7 @@
                 lastNavTime: Date.now(), loading: 0, currentLoadRequest: null, activeContainers: {}, urlListeners: [],
                 moquiSessionToken: config.sessionToken || "", appHost: config.appHost || "", appRootPath: config.appRootPath || "", userId: config.userId || "",
                 username: config.username || "", locale: config.locale || "en", userFullName: config.userFullName || "",
-                terminalUrl: config.terminalUrl || "", pushOn: !!(config.userId && moqui.push),
+                terminalUrl: config.terminalUrl || "", pushOn: !!(config.userId && moqui.push && !root.moquiDesktop),
                 reLoginShow: false, reLoginPassword: null, reLoginMfaData: null, reLoginOtp: null,
                 notificationClient: null, sessionTokenBc: null, qzVue: null, leftOpen: !!config.leftOpen, leftMini: !!config.leftMini,
                 // the m-screen-context registrations, oldest first; formsVersion changes as the forms of the screens come and go
@@ -9498,8 +9494,17 @@
             root.document.addEventListener("keydown", this.onShellKeydown);
             this.shellPollTimer = setInterval(() => this.pollShellCounts(), 5 * 60 * 1000);
             // the PWA's service worker and Web Push (js/WebrootPush.js); notification permission is asked only from the
-            // account menu's toggle, a user's click
+            // account menu's toggle, a user's click. Not in an app around the page (window.moquiDesktop): it shows the
+            // notifications itself, and gets the counts and my presence for its tray and badge.
             if (this.pushOn) moqui.push.start().catch((err) => console.info("Web Push not started", err));
+            const host = root.moquiDesktop;
+            if (host && host.setCounts) this.$watch("shellCounts", (counts) => {
+                const out = {};
+                Object.keys(counts || {}).forEach((key) => { out[key] = this.countOf(key); });
+                host.setCounts(out);
+            }, { immediate: true });
+            if (host && host.setPresence && moqui.chat) this.$watch(() => moqui.chat.myPresence(), (status) => { if (status) host.setPresence(status); },
+                { immediate: true });
             if (config.qz && config.qz.enabled) this.loadQz();
         },
         unmounted() {

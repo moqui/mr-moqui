@@ -398,12 +398,18 @@
             });
         },
 
-        downloadData: (data, filename, type) => {
+        downloadData: (data, filename, type) => moqui.saveBlob(filename, new root.Blob([data], { type })),
+
+        // Save a blob as a file named name: through the host when one defines window.moquiDesktop with saveFile (an app
+        // around the page, plans/Mobile-Desktop.md), else a download link.
+        saveBlob: (name, blob) => {
+            const host = root.moquiDesktop;
+            if (host && host.saveFile) return host.saveFile({ name, blob });
             const doc = root.document;
-            const url = root.URL.createObjectURL(new root.Blob([data], { type }));
+            const url = root.URL.createObjectURL(blob);
             const a = doc.createElement("a");
             a.href = url;
-            a.download = filename;
+            a.download = name;
             doc.body.appendChild(a);
             a.click();
             setTimeout(() => { doc.body.removeChild(a); root.URL.revokeObjectURL(url); }, 0);
@@ -461,13 +467,20 @@
 
         // A desktop notification when the user allowed them (from the account menu's Notifications, js/WebrootPush.js), else the
         // fallback (the page toast). Permission is only asked from a user's click. A stored notification is tagged with its id,
-        // as its Web Push is, so the browser shows it once when both arrive.
+        // as its Web Push is, so the browser shows it once when both arrive. An app around the page (window.moquiDesktop)
+        // shows it as a native notification instead.
         notifyNotification: (jsonObj, fallback) => {
             if (!jsonObj) return;
             const Notification = root.Notification;
             const options = {};
             if (jsonObj.notificationMessageId) options.tag = jsonObj.notificationMessageId;
             else if (jsonObj.topic && jsonObj.topic.length) options.tag = jsonObj.topic;
+            const host = root.moquiDesktop;
+            if (host && host.notify) {
+                host.notify({ title: jsonObj.title, link: jsonObj.link || null, tag: options.tag || null });
+                if (moqui.webrootVue) moqui.webrootVue.addNotify(jsonObj.title, jsonObj.type);
+                return;
+            }
             const show = () => {
                 const notif = new Notification(jsonObj.title, options);
                 if (jsonObj.link && jsonObj.link.length) notif.onclick = () => root.open(jsonObj.link);

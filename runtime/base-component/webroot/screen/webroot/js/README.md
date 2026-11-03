@@ -61,7 +61,7 @@ instead; the two never share a page (both define `window.moqui`). The full refer
 
 | File | What |
 |---|---|
-| `MoquiLib.js` | the `moqui` object: type checks, URLs, `request` (fetch with the session token), `loadScript`, `parseVue`, `NotificationClient`, `LruMap` |
+| `MoquiLib.js` | the `moqui` object: type checks, URLs, `request` (fetch with the session token), `loadScript`, `parseVue`, `NotificationClient`, `LruMap`, `saveBlob` |
 | `MoquiL10n.js` | `moqui.l10n`: number, currency and date formatting, a copy of `moqui-lib`'s `format.rs` and `datefmt.rs` |
 | `WebrootVue.qvt.js` | the `m-*` components and the `/qapps` application |
 | `WebrootPublic.qvt.js` | the public shell of the anonymous token routes (`/s/<token>`) |
@@ -73,6 +73,11 @@ instead; the two never share a page (both define `window.moqui`). The full refer
 | `WebrootAssist.js` | `moqui.assist`: the Assist drawer, its store, transport and follow ([Assist](../../../../../../docs/ai/Assist.md)) |
 | `MoquiQzComponent.js` | QZ Tray printing, loaded only when the user preference `qz.print.enabled` is `true` |
 | `../css/WebrootVue.qvt.css` | the styles of the shell, the div tables and the widgets |
+
+An app around the page (the desktop app, `crates/moqui-desktop/src/bridge.js`) may define `window.moquiDesktop` with
+`notify({title, body, link, tag})`, `setCounts(counts)`, `setPresence(status)`, `openExternal(url)` and
+`saveFile({name, blob})`, each optional. Where it has one, the client calls it instead of a Web Notification, a new
+window or a download link, gives it the shell's counts and the user's presence, and does not start Web Push.
 
 Tests: `moqui test-client webroot --offline` runs the page specs under `test/client/`; what needs a real browser is the
 Gate 3 Chromium smoke (`crates/moqui-host/tests/gate3_browser.rs`).

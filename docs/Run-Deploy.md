@@ -143,6 +143,7 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Public demo server | The apps for anyone to try with the `john.doe` login | Maximal (`--release`) | Embedded Postgres, restored on a schedule | [Public demo server](#public-demo-server) |
 | A local server with an edge node | A server in the office, behind a firewall or a changing address, with a public presence: web access, mail, chat webhooks, public sites | Local: Maximal or Enterprise. Edge node: Maximal | Each its own; the edge node keeps only the link's queue and copies | [A local server with an edge node](#a-local-server-with-an-edge-node) |
 | An all-in-one node | A public server, with its own users, apps and data, that is also the edge node of one local node (a desktop or office node), so no second cloud instance is needed | Server: Maximal. Local: Maximal or Enterprise | Each its own; the server also keeps the local node's queue and copies | [An all-in-one node](#an-all-in-one-node) |
+| The desktop app | A node on a person's own computer, in a window with a tray, paired with an edge or all-in-one node | Maximal, in the app | Embedded Postgres in the app data directory | [moqui-desktop](../crates/moqui-desktop/README.md) |
 
 ## Production checklist
 
@@ -440,8 +441,9 @@ database only; an external database has its own tools.
 ### Backups
 
 The job `backup_EmbeddedDatabase_daily` backs up the embedded clusters while the server runs. It is paused in the seed
-data; set it running on System › Service Jobs. It runs daily at 02:00 and keeps 7 daily, 5 weekly and 12 monthly
-archives, and every yearly one, in `runtime/db/backup`.
+data; set it running on System › Service Jobs, or with `embedded_db_backup_scheduled=true`, which each boot applies
+(`false` pauses it). It runs daily at 02:00 and keeps 7 daily, 5 weekly and 12 monthly archives, and every yearly one,
+in `runtime/db/backup`, or the directory in `embedded_db_backup_dir`.
 
 - **Modes**: `backupMode=dump`, the default, writes one `pg_dump` file. `incremental` takes `pg_basebackup` fulls and
   block incrementals.

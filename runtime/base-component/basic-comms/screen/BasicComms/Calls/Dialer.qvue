@@ -16,7 +16,9 @@ along with this software (see the LICENSE.md file). If not, see
     recipient-source providers, or the framework's users with a number), what the number becomes in E.164 by the deployment's
     rules, recent numbers, the caller ID (the user's numbers and their ring groups') with Hide my number, and Call, which
     places the call (VoiceServices place#PhoneCall) and opens it in the page's call (moqui.call, the LiveCall window). The
-    transitions are the screen's own (template/DialerTransitions.xml), under whichever screen and app mounts it. -->
+    number parameter fills the field (a tel: or sip: link the desktop app opens, plans/Mobile-Desktop.md §4); the user
+    still presses Call. The transitions are the screen's own (template/DialerTransitions.xml), under whichever screen and
+    app mounts it. -->
 <template><div class="m-dialer column q-gutter-sm" :class="compact ? 'q-pa-sm' : 'q-pa-md'" :style="compact ? '' : 'max-width:420px'">
     <div v-if="!compact" class="text-h6">{{t('Dialer')}}</div>
     <q-banner v-if="loaded && !data.phoneActive" dense rounded class="bg-warning text-black">{{t('Phone calls are not available here.')}}</q-banner>
@@ -70,7 +72,11 @@ module.exports = {
             return this.data.callerIdList.map((n) => ({ value: n.phoneNumber, label: n.phoneNumber + (n.description ? ' · ' + n.description : '') }));
         }
     },
-    mounted() { this.load(); },
+    mounted() {
+        this.load();
+        const number = ((this.mScreen && this.mScreen.parameters) || this.$root.currentParameters || {}).number;
+        if (number) { this.text = String(number); this.search(); }
+    },
     beforeUnmount() { if (this.timer) clearTimeout(this.timer); },
     methods: {
         t,

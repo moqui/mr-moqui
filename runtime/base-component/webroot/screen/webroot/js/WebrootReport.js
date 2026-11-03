@@ -1164,12 +1164,10 @@
                 if (!["text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"].some(type => String(result.contentType).startsWith(type))) { this.actionError = "Unsupported export response"; return; }
                 const bytes = root.atob(result.contentBase64 || ""), data = new Uint8Array(bytes.length);
                 for (let at = 0; at < bytes.length; at++) data[at] = bytes.charCodeAt(at);
-                const url = root.URL.createObjectURL(new root.Blob([data], { type: result.contentType })), link = root.document.createElement("a");
-                link.href = url; link.download = result.filename || "panel." + renderMode; link.click(); root.URL.revokeObjectURL(url);
+                moqui.saveBlob(result.filename || "panel." + renderMode, new root.Blob([data], { type: result.contentType }));
             },
             csv() { const blob = new root.Blob([report.csv(this.frames && this.frames[0] || this.frame)], { type: "text/csv;charset=utf-8" });
-                const url = root.URL.createObjectURL(blob), link = root.document.createElement("a"); link.href = url; link.download = (this.title || this.panel.title || "report") + ".csv";
-                link.click(); root.URL.revokeObjectURL(url); }
+                moqui.saveBlob((this.title || this.panel.title || "report") + ".csv", blob); }
         },
         render() {
             const h = root.Vue.h, frame = this.frames && this.frames[0] || this.frame;
