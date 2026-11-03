@@ -2,28 +2,29 @@
 
 The desktop app: an MR Moqui node on this computer, shown in a [Tauri](https://tauri.app) 3 (alpha) window on Chromium
 ([CEF](https://bitbucket.org/chromiumembedded/cef), through `tauri-runtime-cef`) on every desktop OS. It is
-configuration 1 (the `moqui` binary as a sidecar, MD1) and the first stage of configuration 2 (the node in the app's
-process, MD2) in [Mobile-Desktop](../../plans/Mobile-Desktop.md), in one app with a switch at run time, or with no node a
-client of a remote server (the first stage of configuration 3, MD3).
+configuration 1 (the `moqui` binary as a sidecar, MD1) and configuration 2 (the node in the app's process with no port,
+MD2) in [Mobile-Desktop](../../plans/Mobile-Desktop.md), in one app with a switch at run time, or with no node a client of
+a remote server (configuration 3, MD3).
 
-- The node listens on 127.0.0.1 only, on a port kept in `node-port` in the app's config directory, so the origin, and
-  the pages' local storage, stay the same from run to run. The HTTPS listener is off, the cluster listener is on
-  loopback, and search runs on Postgres.
-- The window shows a splash page, then the node's `/qapps`, as a browser session on the node's own origin. Links to
-  other sites, and `mailto:`, `tel:` and `sip:` links, open in the system browser or handler.
+- The node in process has no port: the window reaches it through the app scheme `moqui-node`
+  ([The node in process](#the-node-in-process)). The sidecar listens on 127.0.0.1 only, on a port kept in `node-port`
+  in the app's config directory, so the origin, and the pages' local storage, stay the same from run to run. The
+  HTTPS listener is off, and search runs on Postgres.
+- The window shows a splash page, then the node's `/qapps`. Links to other sites, and `mailto:`, `tel:` and `sip:`
+  links, open in the system browser or handler.
 - Closing the window hides it to the tray. Quit (tray menu or ⌘Q) stops the node and its Postgres.
 
-The second stage of configuration 2, with no port, is not built: the window loads through an app scheme into the
-router, and the node socket is bridged. The `client` mode is configuration 3, a client of a remote server with no node
-here ([Client of a server](#client-of-a-server)).
+The `client` mode is configuration 3, a client of a remote server with no node here
+([Client of a server](#client-of-a-server)). The checks on installed apps that close MD1 to MD3 are in
+[Mobile-Desktop-Exit-Checks](../../plans/Mobile-Desktop-Exit-Checks.md).
 
 The crate is not a member of the repository's workspace, so Tauri and CEF stay out of the server builds. It depends on
 `target/moqui-app`, the crate `./moq` generates to link the framework and the component crates.
 
 ## Node modes and lifecycle
 
-`src/node/`: in process (`in_process.rs`, `moqui_host::start_embedded` on a thread of the app, the default) or the
-sidecar (`sidecar.rs`). The mode is `MOQUI_DESKTOP_NODE` (`sidecar`, `in-process` or `client`), else the `node-mode`
+`src/node/`: in process (`in_process.rs`, `moqui_host::start_embedded_with` on a thread of the app, the default) or
+the sidecar (`sidecar.rs`). The mode is `MOQUI_DESKTOP_NODE` (`sidecar`, `in-process` or `client`), else the `node-mode`
 file in the app's config directory, which the tray's node and client items write before they restart the app, else in
 process.
 
@@ -44,6 +45,31 @@ process.
   port, a node in process with the app (the framework boots once per process). A restart the node asks for replaces
   the sidecar in place on Unix (same pid and pipes).
 
+## The node in process
+
+`src/node/scheme.rs` and `cookies.rs`: the node in process opens no HTTP or cluster port (`moqui_host::start_embedded_with`
+with no ports); the window is on `http://moqui-node.localhost`, an app scheme whose handler serves each request through
+the node's router in this process (`moqui_host::in_process`), on worker threads (`src/scheme.rs`).
+
+- **Cookies:** the host keeps the node's session and visitor cookies for the window, in `node-cookies` in the app's
+  config directory (only the user can read it): `Set-Cookie` is taken out of each answer and `Cookie` put into each
+  request. The pages sign in with the node's own login page and keep a session as on the web (the CSRF token,
+  `/termws`, a person's approvals), never see the cookie, and stay signed in across a restart while the node keeps the
+  session.
+- **Requests:** a page's headers go on but for what only the host may say (cookies, host, forwarded-for, the edge
+  link's, the encodings). A request from another site is refused, but for a window's document `GET` (the splash page
+  going to the node). A redirect to the node's loopback address stays on the scheme.
+- **Sockets:** `/notws`, `/callws` and `/termws` of the node's pages are held by the host (`client/sockets.rs`, as a
+  client's) and opened in process with the window's cookies; the terminal's binary frames cross the page bridge in
+  base64.
+- **Event streams** cannot pass a scheme that answers whole bodies: 503, so the Assist drawer polls its `events.json`.
+- **Ports:** the tray's "Open ports for other devices" (`node-ports` in the config directory) restarts the node with its
+  ports, as `moqui tui --serve` does, for a browser or another device; the window stays on the scheme.
+- **PDF:** where the node finds no Chromium of its own (`pdf_chromium_path`, `runtime/chromium` or one on the `PATH`),
+  it prints on the app's own CEF (`src/pdf.rs`): a hidden window with no capability, driven over the DevTools Protocol
+  with the server's page sequence (`moqui_host::pdf::print_page`), its requests failed. The bundle carries Chromium's
+  notices as `notices/chromium-credits.html`.
+
 ## The page bridge
 
 `src/bridge.rs` and `src/bridge.js`: an initialization script defines `window.moquiDesktop` on the node's loopback
@@ -51,13 +77,21 @@ origin (and on a client's, [Client of a server](#client-of-a-server)), and the w
 
 - **Commands:** `notify` (a native notification; a click shows the window at its link), `set_counts` (the shell's
   counts on the tray and the dock or launcher badge), `set_presence` (the user's presence on the tray), `open_external`
-  (http, https, mailto, tel and sip only, never the node).
+  (http, https, mailto, tel and sip only, never the node), `set_comms_root` (the node's Comms app, `calls.appRoot`,
+  kept in `comms-root` for the `mailto:` and `tel:` links, which a sidecar's conf does not tell the host), and on the
+  node in process the sockets.
 - **ACL:** the commands are in the app manifest (`build.rs`), so each is checked; the only capability that grants them
-  is the one added at run time for the node's exact origin on the main window (in a client, the shell's on it). `restart_node` is granted only to the
-  splash page (`capabilities/splash.json`).
-- **Downloads:** a download link, an export or an attachment from the node is Chromium's download: the save dialog
-  asks where, it streams to disk with the page's cookies, and a notification says when it is done. Other downloads are
-  refused.
+  is the one added at run time for the node's exact origin on the main window (in a client, the shell's on it; the
+  node in process's, whose scheme pages Tauri counts as local, names the main window). `restart_node` is granted only
+  to the app's own pages (`capabilities/splash.json`), and refuses any page but the splash.
+- **Camera and microphone:** granted to the app's own pages (the node's, a client's shell and app windows), where the OS
+  asks once, and refused to any other page (`bridge::on_permission`).
+- **Downloads:** a download link, an export or an attachment from the sidecar node is Chromium's download: the save
+  dialog asks where, it streams to disk with the page's cookies, and a notification says when it is done. Other
+  downloads are refused. From an app scheme (the node in process, a client), an attachment or a file over 16 MB a
+  window opens is saved by the host instead (`src/download.rs`): the save dialog, the body streamed to a `.part` file
+  renamed when whole, a notification, and the page left as it is; a scheme's answer is whole, so Chromium's download
+  would hold it in memory.
 
 ## Client of a server
 
@@ -73,6 +107,10 @@ bundled shell, which opens with no network; each account is a server and a user,
   How the schemes work around Chromium's handling of their HTML is in [Mobile-Desktop](../../plans/Mobile-Desktop.md#one-transport-seam).
 - **Offline:** the shell's `/qapps/clientConfig`, `/shellData` and `/shellCounts` are kept per account and answered,
   marked `X-Moqui-Offline`, when the server cannot be reached.
+- **Renewal:** at start and every six hours, a key with less than a third of its life left is renewed
+  (`client/renewal.rs`, `/qapps/renewClientDevice`), and its pages' sockets open again with the new one; the server
+  ends the old key ten minutes later. The shell says to update the app when the server's `clientApi` is newer than it
+  knows.
 - **Sign-in:** the shell's Sign in (`shell/screens/SignIn.qvue`) has the host post the password once to the server's
   REST login with `createLoginKey` and a `deviceName`, with the second factor's code when it asks. Sign out revokes the
   key (`/rest/logout` with `revokeLoginKey`); a 401, or `/notws` closing for authentication, has the host check the key
@@ -95,8 +133,8 @@ bundled shell, which opens with no network; each account is a server and a user,
 - **Commands:** the main window (the shell) has the shell's commands, the page bridge's and the sockets; an app window
   has the sockets only. Tauri counts the app's scheme pages as local, so the capabilities name the windows, and each window's
   navigation stays on its origin (the web opens in the system browser, a server page from the shell in an app window).
-- **Downloads:** Chromium's, as for a node, from the client's two origins; a scheme's answer is whole, so a large
-  download is held in memory (a streamed native download is not built).
+- **Downloads:** an attachment or a large file is saved by the host, streamed, as for the node in process (above); a
+  small one is Chromium's. An event stream is answered 503, as on the node's scheme.
 - **Bundled screens:** `shell/bundled-screens.txt` lists them (the shell's own and BasicComms' chat panel); they are
   precompiled into `shell/js/bundled-screens.js`, checked by `cargo test -p moqui-core --lib
   bundled_screens_are_precompiled` (`UPDATE_GOLDEN=1` writes it again). A screen not bundled opens in an app window.
@@ -200,6 +238,8 @@ tauri-runtime-cef starts it with `--no-sandbox` ([Build-Test](../../docs/Build-T
 cd crates/moqui-desktop && CARGO_TARGET_DIR=../../target cargo test
 ```
 
-The host side of the stdin-close stop and the Postgres takeover are tested in their crates:
-`cargo test -p moqui-host -p moqui-drivers`; the client's proxy, sockets and accounts in `cargo test -p moqui-client`,
-and the bundled screens in `cargo test -p moqui-core --lib bundled_screens_are_precompiled`.
+The host side of the stdin-close stop, the Postgres takeover, the node in process (`in_process`) and the shared PDF
+page sequence (`pdf`) are tested in their crates: `cargo test -p moqui-host -p moqui-drivers`; the client's proxy,
+sockets, accounts and renewal in `cargo test -p moqui-client`, the device key renewal on the server in
+`cargo test -p moqui-core --lib a_device_`, and the bundled screens in
+`cargo test -p moqui-core --lib bundled_screens_are_precompiled`.
