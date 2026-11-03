@@ -97,7 +97,7 @@ pub(crate) struct DownServe {
 }
 
 /// The HTTP/1.1 connection settings of the listeners, from `limits`.
-pub(super) fn http1_builder(limits: &ListenLimits) -> hyper::server::conn::http1::Builder {
+pub(crate) fn http1_builder(limits: &ListenLimits) -> hyper::server::conn::http1::Builder {
     let mut builder = hyper::server::conn::http1::Builder::new();
     builder
         .timer(TokioTimer::new())
@@ -134,7 +134,7 @@ pub(crate) async fn serve_tunneled<S>(
 }
 
 /// What one connection is served with.
-pub(super) struct Serving {
+pub(crate) struct Serving {
     pub remote: SocketAddr,
     pub web: WebApp,
     pub builder: hyper::server::conn::http1::Builder,
@@ -143,7 +143,7 @@ pub(super) struct Serving {
     pub exporter: Option<Arc<Vec<u8>>>,
 }
 
-pub(super) async fn run_connection<S>(stream: S, secure: bool, serving: Serving)
+pub(crate) async fn run_connection<S>(stream: S, secure: bool, serving: Serving)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {

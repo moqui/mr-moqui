@@ -28,7 +28,7 @@ maximal = ["enterprise", "embedded-postgres"]
 embedded-postgres = ["postgres", "moqui-drivers/embedded-postgres"]
 postgres = ["moqui-drivers/postgres"]
 mysql = ["moqui-drivers/mysql"]
-axum = ["dep:axum", "dep:tower", "dep:tower-http", "dep:hyper", "dep:hyper-util", "dep:futures-util"]
+axum = ["dep:axum", "dep:tower", "dep:tower-http", "dep:hyper", "dep:hyper-util", "dep:futures-util", "dep:tokio-tungstenite"]
 pdf = ["dep:tokio-tungstenite", "dep:futures-util"]
 # SSH and SFTP: the SFTP client of moqui_core::sftp, the built-in SSH server (SFTP, admin shell, git over SSH), and
 # the SSH cluster channel.

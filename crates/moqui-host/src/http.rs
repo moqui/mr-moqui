@@ -39,7 +39,7 @@ use crate::guard::{setting, Event, Guard, GuardConf};
 use crate::notws;
 
 mod serve;
-use serve::{http1_builder, run_connection, Serving};
+pub(crate) use serve::{http1_builder, run_connection, Serving};
 pub(crate) use serve::{DownServe, Forward, Peer, WebApp};
 // the edge link's down connection and its tunnels use these, and the tests
 #[cfg_attr(not(feature = "edge"), allow(unused_imports))]
@@ -151,6 +151,7 @@ pub(crate) struct ListenReport {
     pub cluster: SocketAddr,
     pub factory: Arc<ExecutionContextFactory>,
     pub posts: Arc<std::sync::Mutex<Vec<String>>>,
+    pub in_process: crate::in_process::InProcess,
 }
 
 /// Marks a request that arrived over this process's own TLS listener.
@@ -177,10 +178,11 @@ struct RequestTelemetry {
 }
 
 /// Bind `bind` (and the HTTPS address when there is one), publish the local addresses, and serve until `stop` is
-/// dropped or a ctrl-c arrives.
+/// dropped or a ctrl-c arrives. With no `bind` nothing listens, and the app is reached in process only
+/// ([`crate::in_process::InProcess`], which every server has); `http` is then reported as port 0.
 pub(crate) async fn listen(
     factory: Arc<ExecutionContextFactory>,
-    bind: SocketAddr,
+    bind: Option<SocketAddr>,
     https: Option<crate::tls::HttpsListen>,
     cluster: SocketAddr,
     posts: Arc<std::sync::Mutex<Vec<String>>>,
@@ -191,14 +193,24 @@ pub(crate) async fn listen(
         let _ = ready.send(Err(message.clone()));
         Error::new(message)
     };
-    let listener = TcpListener::bind(bind)
-        .await
-        .map_err(|err| fail(format!("could not bind {bind}: {err}")))?;
-    let address = listener
-        .local_addr()
-        .map_err(|err| fail(format!("bound listener has no address: {err}")))?;
+    let listener = match bind {
+        Some(bind) => Some(
+            TcpListener::bind(bind)
+                .await
+                .map_err(|err| fail(format!("could not bind {bind}: {err}")))?,
+        ),
+        None => None,
+    };
+    let address = match &listener {
+        Some(listener) => listener
+            .local_addr()
+            .map_err(|err| fail(format!("bound listener has no address: {err}")))?,
+        None => SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0)),
+    };
     #[cfg(feature = "grpc")]
-    let grpc = crate::grpc_listen::bind_address(&factory, address, https.is_some())
+    let grpc = listener
+        .as_ref()
+        .and_then(|_| crate::grpc_listen::bind_address(&factory, address, https.is_some()))
         .map(|bind| (bind, https.as_ref().map(|https| Arc::clone(&https.config))));
     let mut certs: Option<Arc<dyn rustls::server::ResolvesServerCert>> = None;
     let tls_config = https.as_ref().map(|https| Arc::clone(&https.config));
@@ -303,6 +315,8 @@ pub(crate) async fn listen(
         ..web
     };
     let edge = started.acceptor;
+    let in_process =
+        crate::in_process::InProcess::new(web.clone(), tokio::runtime::Handle::current(), shutdown_rx.clone());
     // ready once the routes and the edge link have read what they need of the properties: a test may set others for a
     // second server as soon as this one is ready
     let _ = ready.send(Ok(ListenReport {
@@ -311,10 +325,16 @@ pub(crate) async fn listen(
         cluster,
         factory: Arc::clone(&link_factory),
         posts,
+        in_process: in_process.clone(),
     }));
     let https_text = https_address
         .map(|secure| format!(", HTTPS on {secure}"))
         .unwrap_or_default();
+    let address = if listener.is_some() {
+        address.to_string()
+    } else {
+        "no port (in process only)".to_string()
+    };
     tracing::info!(
         "Listening for HTTP on {address}{https_text} and cluster on {cluster}; routes /health, /metrics, /dav, {}{}{}the webapp's servlets; {:.3} seconds since start",
         if notws { "/notws, " } else { "" },
@@ -342,13 +362,15 @@ pub(crate) async fn listen(
         ))
     });
     let permits = Arc::new(tokio::sync::Semaphore::new(limits.connections));
-    let plain = serve(
-        listener,
-        None,
-        web.clone(),
-        Arc::clone(&permits),
-        stopped(shutdown_rx.clone()),
-    );
+    let plain = {
+        let (web, permits, stop) = (web.clone(), Arc::clone(&permits), stopped(shutdown_rx.clone()));
+        async move {
+            match listener {
+                Some(listener) => serve(listener, None, web, permits, stop).await,
+                None => stop.await,
+            }
+        }
+    };
     match secure {
         Some((listener, _, acceptor)) => {
             tokio::join!(
@@ -364,8 +386,9 @@ pub(crate) async fn listen(
         }
         None => plain.await,
     }
-    // the app held for the edge link's down connections holds the factory
+    // the app held for the edge link's down connections, and for the host in process, holds the factory
     crate::edge_link::stopped(&link_factory);
+    in_process.stop();
     #[cfg(feature = "grpc")]
     if let Some(grpc) = grpc {
         let _ = grpc.await;

@@ -124,6 +124,8 @@ mod git_http;
 mod guard;
 #[cfg(feature = "axum")]
 mod http;
+#[cfg(feature = "axum")]
+pub mod in_process;
 #[cfg(all(feature = "axum", feature = "llm"))]
 mod llm;
 #[cfg(feature = "axum")]
@@ -237,6 +239,8 @@ pub struct Server {
     https_address: Option<std::net::SocketAddr>,
     factory: Option<std::sync::Arc<moqui_core::context::ExecutionContextFactory>>,
     posts: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+    in_process: Option<in_process::InProcess>,
     /// Drops the listener shutdown sender. Empty after the first stop.
     stop: Option<Box<dyn FnOnce() + Send>>,
     thread: Option<std::thread::JoinHandle<Result<(), moqui_lib::error::Error>>>,
@@ -343,6 +347,14 @@ impl Server {
         self.https_address
     }
 
+    /// The node's web app in this process, with or without ports: requests and sockets of a program that hosts the
+    /// node ([`start_embedded_with`]), with no TCP between.
+    #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+    #[must_use]
+    pub fn in_process(&self) -> Option<&in_process::InProcess> {
+        self.in_process.as_ref()
+    }
+
     /// The cluster HTTPS listener. Empty `cluster_https_port` binds 8444. `0` is ephemeral, and this
     /// is the address the kernel chose.
     #[must_use]
@@ -432,16 +444,28 @@ pub fn start_server(
 ///
 /// Returns an error when this build has no HTTP server, boot fails, or a port cannot be bound.
 pub fn start_embedded(runtime_dir: &std::path::Path) -> Result<Server, moqui_lib::error::Error> {
+    start_embedded_with(runtime_dir, true)
+}
+
+/// [`start_embedded`], with `ports` false for a node with no HTTP or cluster port at all: the host reaches it in
+/// process only ([`Server::in_process`]), as the desktop app's window does (plans/Mobile-Desktop.md, configuration 2).
+/// The other listeners (SSH, SMTP, calls) open only as their properties ask, as on any node.
+///
+/// # Errors
+///
+/// Returns an error when this build has no HTTP server, boot fails, or a port cannot be bound.
+pub fn start_embedded_with(runtime_dir: &std::path::Path, ports: bool) -> Result<Server, moqui_lib::error::Error> {
     #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
     {
         process_started();
         let framework = framework_from_env(runtime_dir);
         let cluster = runtime_dir.join("db/embedded");
-        start_server_in(runtime_dir.to_path_buf(), framework, cluster, ListenBind::Property)
+        let bind = if ports { ListenBind::Property } else { ListenBind::None };
+        start_server_in(runtime_dir.to_path_buf(), framework, cluster, bind)
     }
     #[cfg(not(all(feature = "axum", any(feature = "postgres", feature = "mysql"))))]
     {
-        let _ = runtime_dir;
+        let _ = (runtime_dir, ports);
         Err(moqui_lib::error::Error::new("http server is not in this build"))
     }
 }
@@ -1218,6 +1242,8 @@ fn load_pool(conf: &moqui_core::transaction::PoolConfig) -> moqui_core::transact
 enum ListenBind {
     Address(std::net::SocketAddr),
     Property,
+    /// No HTTP or cluster port: reached in process only ([`Server::in_process`]).
+    None,
 }
 
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
@@ -1240,6 +1266,7 @@ fn start_server_in(
             cluster_address: bound.cluster,
             factory: Some(bound.factory),
             posts: bound.posts,
+            in_process: Some(bound.in_process),
             stop: Some(Box::new(move || drop(stop_tx))),
             thread: Some(thread),
         }),
@@ -1284,6 +1311,8 @@ fn serve_thread(
             return Err(err);
         }
     };
+    // no port: the addresses a server reports are port 0
+    let unbound = std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0));
     let factory = process
         .factory
         .clone()
@@ -1308,35 +1337,38 @@ fn serve_thread(
             .components()
             .iter()
             .any(|component| component.name == "dev-aide")
-        && !address.ip().is_loopback()
+        && address.is_some_and(|address| !address.ip().is_loopback())
     {
         if factory.conf_setting("dev-aide", "shared") == "true" {
             tracing::info!(
-                "Dev AIDE in shared mode (a team dev server) on {address}: network git commands are off until an admin enables them"
+                "Dev AIDE in shared mode (a team dev server) on {}: network git commands are off until an admin enables them",
+                address.unwrap_or(unbound)
             );
         } else {
             tracing::warn!(
-                "Dev AIDE is loaded and the HTTP listener on {address} is not bound to the loopback address: anyone who \
+                "Dev AIDE is loaded and the HTTP listener on {} is not bound to the loopback address: anyone who \
                  can sign in with a Dev AIDE permission can run code as this server's user. Set webapp_http_bind=127.0.0.1, \
-                 or dev-aide shared=\"true\" for a team dev server"
+                 or dev-aide shared=\"true\" for a team dev server",
+                address.unwrap_or(unbound)
             );
         }
     }
-    let cluster = process
-        .cluster_edge
-        .as_ref()
-        .ok_or_else(|| moqui_lib::error::Error::new("http server has no cluster listener"))?;
-    let cluster_address = cluster.address();
-    let posts = cluster.posts();
+    let (cluster_address, posts) = match process.cluster_edge.as_ref() {
+        Some(cluster) => (cluster.address(), cluster.posts()),
+        None if matches!(bind, ListenBind::None) => (unbound, std::sync::Arc::default()),
+        None => return Err(moqui_lib::error::Error::new("http server has no cluster listener")),
+    };
     let sender = ready.handoff()?;
     let runtime = process
         .runtime
         .as_ref()
         .ok_or_else(|| moqui_lib::error::Error::new("http server has no runtime"))?;
     // After the boot, as for the HTTP port: conf defaults and runtime/.env are read there.
-    let https = match tls::plan(&runtime_dir, address.ip(), matches!(bind, ListenBind::Property)) {
-        Ok(https) => https,
-        Err(err) => {
+    let https = match address.map(|address| tls::plan(&runtime_dir, address.ip(), matches!(bind, ListenBind::Property)))
+    {
+        None => None,
+        Some(Ok(https)) => https,
+        Some(Err(err)) => {
             ready.fail(&err);
             return Err(err);
         }
@@ -1368,9 +1400,10 @@ fn serve_thread(
 }
 
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
-fn listen_address(bind: &ListenBind) -> Result<std::net::SocketAddr, moqui_lib::error::Error> {
+fn listen_address(bind: &ListenBind) -> Result<Option<std::net::SocketAddr>, moqui_lib::error::Error> {
     match bind {
-        ListenBind::Address(address) => Ok(*address),
+        ListenBind::None => Ok(None),
+        ListenBind::Address(address) => Ok(Some(*address)),
         ListenBind::Property => {
             let port = http::http_port(&moqui_lib::env::get_prop_or_env("webapp_http_port"))?;
             // webapp_http_bind: the address to listen on, every address when empty (127.0.0.1 keeps a dev instance local);
@@ -1385,7 +1418,7 @@ fn listen_address(bind: &ListenBind) -> Result<std::net::SocketAddr, moqui_lib::
                     moqui_lib::error::Error::new(format!("webapp_http_bind {host} is not an IP address"))
                 })?
             };
-            Ok(std::net::SocketAddr::new(ip, port))
+            Ok(Some(std::net::SocketAddr::new(ip, port)))
         }
     }
 }
@@ -1398,7 +1431,14 @@ fn boot_server(
     bind: &ListenBind,
 ) -> Result<ServeProcess, moqui_lib::error::Error> {
     let ports = port_check::hook(bind.clone(), runtime_dir.to_path_buf());
-    boot_server_factory(runtime_dir, framework_dir, cluster_dir, true, Listeners::All(ports))
+    let cluster_port = !matches!(bind, ListenBind::None);
+    boot_server_factory(
+        runtime_dir,
+        framework_dir,
+        cluster_dir,
+        true,
+        Listeners::All(ports, cluster_port),
+    )
 }
 
 /// What a boot opens to the network. `moqui tui` on its own runtime opens nothing: no HTTP, SSH, cluster or SMTP port,
@@ -1407,7 +1447,8 @@ fn boot_server(
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
 #[derive(Clone)]
 enum Listeners {
-    All(moqui_core::context::BeforeInit),
+    /// The port check, and whether the cluster listener opens (not for a node reached in process only).
+    All(moqui_core::context::BeforeInit, bool),
     None,
 }
 
@@ -1443,7 +1484,7 @@ fn boot_server_factory(
     tracing::info!("Built as {}", version_text());
     let options = moqui_core::context::BootOptions {
         before_init: match &listeners {
-            Listeners::All(ports) => Some(std::sync::Arc::clone(ports)),
+            Listeners::All(ports, _) => Some(std::sync::Arc::clone(ports)),
             Listeners::None => None,
         },
         test_confs: TEST_CONFS.load(std::sync::atomic::Ordering::Relaxed),
@@ -1634,7 +1675,13 @@ fn boot_server_factory(
             "listener not started, not configured"
         }
     );
-    let cluster_edge = cluster_edge::listen(Arc::clone(&factory), cluster_posts)?;
+    let cluster_edge = match &listeners {
+        Listeners::All(_, true) => Some(cluster_edge::listen(Arc::clone(&factory), cluster_posts)?),
+        _ => {
+            tracing::info!("No cluster listener: this node is reached in process only");
+            None
+        }
+    };
     notws::install_push().map_err(moqui_lib::error::Error::from)?;
     tracing::info!("Cluster, cluster edge listener and notification WebSocket push initialized");
     #[cfg(feature = "ssh")]
@@ -1671,7 +1718,7 @@ fn boot_server_factory(
         smtpd: Some(smtpd),
         #[cfg(feature = "ssh")]
         sshd,
-        cluster_edge: Some(cluster_edge),
+        cluster_edge,
         notify_listener,
         rtc,
         sip,

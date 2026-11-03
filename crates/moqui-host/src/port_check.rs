@@ -44,24 +44,27 @@ pub(crate) fn hook(bind: ListenBind, runtime_dir: PathBuf) -> moqui_core::contex
 /// goes on.
 #[cfg_attr(not(feature = "ssh"), allow(unused_variables))]
 fn targets(bind: &ListenBind, runtime_dir: &Path, conf: &MNode) -> Result<Vec<Target>, Error> {
-    let http = crate::listen_address(bind)?;
-    let mut targets = vec![Target {
-        name: "webapp_http_port",
-        host: http.ip().to_string(),
-        port: http.port(),
-    }];
-    if let Some(port) = crate::tls::planned_port(runtime_dir, matches!(bind, ListenBind::Property))? {
+    let mut targets = Vec::new();
+    // a node reached in process only has no HTTP, HTTPS or cluster port
+    if let Some(http) = crate::listen_address(bind)? {
         targets.push(Target {
-            name: "webapp_https_listen_port",
+            name: "webapp_http_port",
             host: http.ip().to_string(),
-            port,
+            port: http.port(),
+        });
+        if let Some(port) = crate::tls::planned_port(runtime_dir, matches!(bind, ListenBind::Property))? {
+            targets.push(Target {
+                name: "webapp_https_listen_port",
+                host: http.ip().to_string(),
+                port,
+            });
+        }
+        targets.push(Target {
+            name: "cluster_https_port",
+            host: crate::cluster_edge::bind_address()?.to_string(),
+            port: crate::cluster_edge::listen_port(&moqui_lib::env::get_prop_or_env("cluster_https_port"))?,
         });
     }
-    targets.push(Target {
-        name: "cluster_https_port",
-        host: crate::cluster_edge::bind_address()?.to_string(),
-        port: crate::cluster_edge::listen_port(&moqui_lib::env::get_prop_or_env("cluster_https_port"))?,
-    });
     #[cfg(feature = "ssh")]
     if let Some((host, port)) = crate::ssh::server::listen_target(conf)? {
         targets.push(Target {
