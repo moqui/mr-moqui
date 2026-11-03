@@ -41,6 +41,7 @@ pub(in crate::service) fn register(
     rust_service!(map, call_providers)?;
     rust_service!(map, get_providers)?;
     rust_service!(map, get_appearance)?;
+    rust_service!(map, get_appearance_policy)?;
     rust_service!(map, get_color_scheme_css)?;
     Ok(())
 }
@@ -294,6 +295,19 @@ fn get_appearance(
     let appearance = crate::screen::sri::appearance::build_appearance(user_id.as_deref(), &theme_id)
         .map_err(|err| LibError::new(err.to_string()))?;
     Ok(BTreeMap::from([("appearance".to_string(), Value::Map(appearance))]))
+}
+
+/// `get#AppearancePolicy`: the policy of the current user's Quasar theme after its appearance services, as the JSON text
+/// of `{appearance, mode, <a flag per group>, lockedKeys}`, for a screen or service of a component that offers its own
+/// appearance form. Out: `policy`.
+fn get_appearance_policy(
+    _parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let user_id = crate::user::current_user_id().ok().flatten().filter(|id| !id.is_empty());
+    let policy = crate::screen::sri::appearance::appearance_policy_for_user(user_id.as_deref());
+    let text = moqui_lib::json::to_json(&policy.as_value()).to_string();
+    Ok(BTreeMap::from([("policy".to_string(), Value::String(text))]))
 }
 
 /// `get#ColorSchemeCss`: the style sheet of `colorSchemeId`, empty for an unknown scheme. Out: `css`.

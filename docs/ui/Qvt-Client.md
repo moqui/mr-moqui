@@ -494,7 +494,7 @@ and token name without its prefix (`primary`, `page-bg`, ...).
 After the services, the policy is normalized (its `lockedKeys` is every key it locks), the locked values are left out, `schemeId`
 is the user's scheme or else the default, and `links` are the sheets of that scheme and of each role's font (the user's, else the
 scheme's). `ec.user.setPreference` refuses a key the same policy locks, so `/apps/setPreference` answers 403; a locked mode or
-density is the shell's default, and a forced mode is `config.darkMode`. `moqui.appearanceAllowed(key)` is the page's check.
+density is the shell's default, and a forced mode is `config.darkMode`. `moqui.appearanceAllowed(key)` is the page's check. `get#AppearancePolicy` answers the policy alone, as JSON text, for a component's own appearance form.
 
 **At page load:**
 - `includes/QvtConfig.js` (the pre-actions of `qapps.xml` and the `clientConfig` transition) fills `config.appearance` from `get#Appearance`.

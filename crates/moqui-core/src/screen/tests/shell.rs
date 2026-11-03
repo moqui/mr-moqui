@@ -1473,6 +1473,11 @@ fn the_appearance_policy_and_services_of_the_theme_decide_what_a_user_may_change
         ["FIRST", "SECOND"],
         "{appearance}"
     );
+    // the policy alone, as JSON text, is the same
+    let out = crate::service::sync("org.moqui.impl.ShellServices.get#AppearancePolicy", &BTreeMap::new()).unwrap();
+    let text = out.get("policy").map(moqui_lib::object::to_plain_string).unwrap_or_default();
+    let policy: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(policy, appearance["policy"], "{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

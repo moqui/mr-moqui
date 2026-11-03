@@ -95,6 +95,14 @@ along with this software (see the LICENSE.md file). If not, see
             STT_INTERNAL_QUASAR</description></parameter></in-parameters>
         <out-parameters><parameter name="appearance" type="Map"/></out-parameters>
     </service>
+    <service verb="get" noun="AppearancePolicy" type="rust" location="moqui_core::service::shell::get_appearance_policy"
+            authenticate="false" transaction="ignore">
+        <description>The appearance policy of the current user's Quasar theme, after its STRT_APPEARANCE_SERVICE services (what
+            get#Appearance answers as policy), as JSON text: appearance, mode, a flag per group (mode, density, scheme, accent,
+            colors, fonts, sizes, motion) and lockedKeys. For a component's own appearance form; ec.user.setPreference refuses
+            what it locks either way.</description>
+        <out-parameters><parameter name="policy" type="String"/></out-parameters>
+    </service>
     <service verb="get" noun="ColorSchemeCss" type="rust" location="moqui_core::service::shell::get_color_scheme_css"
             authenticate="false" transaction="ignore">
         <description>The style sheet of a color scheme: the brand colors as --q-* !important, the other tokens as --m-*, the dark
