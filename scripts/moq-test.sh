@@ -183,6 +183,15 @@ echo '<entity-facade-xml type="seed">' >"$FIX/data.xml"
 check "load location from other cwd" 0 "location=$FIX/data.xml" -- sh -c "cd '$FIX' && MOQ_DRY_RUN=1 '$M' load -l data.xml"
 check "load location default types" 0 'types=all location=' -- sh -c "cd '$FIX' && MOQ_DRY_RUN=1 '$M' load -l data.xml"
 check "load location missing" 1 'data file nope.xml not found' -- dry "$M" load -l nope.xml
+# autodoc: the caller's directory is the base, as moq runs the binary from the root.
+check "autodoc default out" 0 "moqui autodoc --out $FIX/autodoc$" -- sh -c "cd '$FIX' && MOQ_DRY_RUN=1 '$M' autodoc"
+check "autodoc relative out" 0 "autodoc --out $FIX/docs$" -- sh -c "cd '$FIX' && MOQ_DRY_RUN=1 '$M' autodoc --out docs"
+check "autodoc out=" 0 "autodoc --out $FIX/docs$" -- sh -c "cd '$FIX' && MOQ_DRY_RUN=1 '$M' autodoc --out=docs"
+check "autodoc absolute out" 0 'autodoc --out /x/docs$' -- dry "$M" autodoc --out /x/docs
+check "autodoc paths and pass-through" 0 \
+    "autodoc --templates $FIX/t --project $FIX/p --kinds entity --clean --out $FIX/autodoc$" \
+    -- sh -c "cd '$FIX' && MOQ_DRY_RUN=1 '$M' autodoc --templates t --project=p --kinds entity --clean"
+check "autodoc out needs a value" 1 '--out needs a directory' -- dry "$M" autodoc --out
 check "load-production default" 0 'moqui load$' -- dry "$M" load-production --debug
 check "load-production conf" 0 'MOQUI_CONF=.*MoquiProductionConf.xml' -- dry "$M" load-production --debug seed
 
@@ -207,6 +216,9 @@ check "complete run options" 0 '^--debug$' -- "$M" __complete 2 run --d
 check "complete -D property" 0 '^entity_ds_db_conf=$' -- "$M" __complete 3 run -D ent
 check "complete alias task" 0 '^seed$' -- "$M" __complete 2 lP se
 check "complete help" 0 '^git-status$' -- "$M" __complete 2 help git-s
+check "complete autodoc kinds" 0 '^entity$' -- "$M" __complete 3 autodoc --kinds ''
+check "complete autodoc options" 0 '^--components$' -- "$M" __complete 2 autodoc --c
+check "complete autodoc out" 0 '^@dirs$' -- "$M" __complete 3 autodoc --out ''
 
 # The bash wrapper, driven as readline would.
 out=$(cd "$R" && bash -c '

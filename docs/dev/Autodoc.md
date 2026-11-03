@@ -75,6 +75,9 @@ moqui autodoc --kinds entity,service --packages mantle.order --out /path/to/orde
 moqui autodoc --project ~/src/other-moqui --out ~/src/other-moqui/autodoc
 ```
 
+From a checkout, `./moq autodoc` runs it with the same options (`./moq help autodoc`). It writes into `./autodoc` of the
+directory you run it from, and reads a relative `--out`, `--templates`, `--project` or `--java` from there too.
+
 It boots the model with no database (as `moqui refs` does), reads every component's files and writes the tree.
 `moqui help autodoc` has every option.
 

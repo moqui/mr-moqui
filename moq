@@ -66,6 +66,7 @@ load-production|Run|[types] [name=value] [opts]|Load data with the production co
 test|Run|[component...] [test opts]|Run component tests (moqui test) with the dev conf
 test-client|Run|[component...] [-p N] [opts]|Run component client tests (moqui test-client) against a running server
 test-all|Run|[--slow] [--lite/--debug/--release/--enterprise] [--nobuild]|Run every test suite: cargo, the opt-in cargo tests, moq, moqui test and test-client
+autodoc|Run|[--out dir] [--kinds k,...] [opts]|Markdown docs of the artifacts with Mermaid diagrams, into ./autodoc (moqui autodoc)
 load-save|Run|[-n name] [load args...]|clean-all, load, then save-db
 save-db|Database|[name]|Save the embedded database and OpenSearch data to runtime/save/<name>
 reload-save|Database|[name]|clean-db, then restore a save-db copy
@@ -558,6 +559,24 @@ Options:
   --slow               Also the tests marked slow
 $PACKAGE_OPTIONS_HELP
       --nobuild        Skip the build before moqui test and test-client
+EOF
+}
+
+help_autodoc() {
+    cat <<EOF
+Runs moqui autodoc: the Markdown docs of the artifacts, with Mermaid diagrams, written from a model-only
+boot (no database) into a directory, by default ./autodoc in the directory moq is run from. The paths
+of --out, --templates, --project and --java are read from that directory too; every other option goes
+to moqui autodoc as it is (moqui help autodoc has them all, and docs/dev/Autodoc.md the tree).
+  ./moq autodoc                                   every artifact, into ./autodoc
+  ./moq autodoc --components my-site --clean      one component; --clean removes docs it wrote before
+                                                  whose artifacts are gone
+  ./moq autodoc --kinds entity --packages mantle.order --out order-docs
+
+Options:
+$PACKAGE_OPTIONS_HELP
+      --nobuild        Skip the build (./moq build) that runs first. A binary that is not there is still built
+      --               End of moq options; the rest goes to moqui autodoc, its paths as given
 EOF
 }
 
@@ -1655,6 +1674,50 @@ task_test_client() {
     done
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     exec_cmd "$bin" test-client "${server[@]}" "${OPT_REST[@]}"
+}
+
+# moqui autodoc with the caller's directory as the base: --out defaults to ./autodoc there, and the path options are
+# made absolute from it, since moq runs the binary from ROOT.
+task_autodoc() {
+    local arg flag value has_out='' bin
+    local -a args
+    args=()
+    OPT_PACKAGE=
+    OPT_NOBUILD=
+    while [ $# -gt 0 ]; do
+        arg=$1
+        case $arg in
+            --lite) set_package lite ;;
+            --debug) set_package debug ;;
+            --release) set_package release ;;
+            --enterprise) set_package enterprise ;;
+            --nobuild) OPT_NOBUILD=1 ;;
+            --)
+                shift
+                args+=("$@")
+                break
+                ;;
+            --out | --templates | --project | --java | --out=* | --templates=* | --project=* | --java=*)
+                if [ "$arg" = "${arg#*=}" ]; then
+                    flag=$arg
+                    [ $# -ge 2 ] && [ -n "$2" ] || die "$flag needs a directory"
+                    value=$2
+                    shift
+                else
+                    flag=${arg%%=*}
+                    value=${arg#*=}
+                    [ -n "$value" ] || die "$flag needs a directory"
+                fi
+                [ "$flag" != --out ] || has_out=1
+                args+=("$flag" "$(abs_path "$value")")
+                ;;
+            *) args+=("$arg") ;;
+        esac
+        shift
+    done
+    [ -n "$has_out" ] || args+=(--out "$MOQ_CWD/autodoc")
+    bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
+    exec_cmd "$bin" autodoc "${args[@]}"
 }
 
 # Every suite, each run whatever the last did, then a summary; exits 1 when any failed.
@@ -4105,6 +4168,16 @@ complete_task() {
         chromium-download) filter_prefix "$cur" --latest ;;
         desktop) filter_prefix "$cur" dev build --release ;;
         test-all) filter_prefix "$cur" --slow --lite --debug --release --enterprise --nobuild ;;
+        autodoc)
+            case $prev in
+                --out | --templates | --project | --java) echo @dirs; return ;;
+                --kinds | --kind) filter_prefix "$cur" entity service screen eca rest; return ;;
+                --components | --component) filter_prefix "$cur" $(component_names_local); return ;;
+                --packages | --package) return ;;
+            esac
+            filter_prefix "$cur" --out --kinds --components --packages --include-source --templates --clean --project \
+                --java --lite --debug --release --enterprise --nobuild
+            ;;
         git)
             if [ "$nargs" -eq 1 ]; then
                 filter_prefix "$cur" status pull fetch checkout switch branch tag log diff merge push stash reset rebase \
