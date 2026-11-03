@@ -26,6 +26,7 @@ fn main() {
         "set_counts",
         "set_presence",
         "open_external",
+        "set_comms_root",
         "restart_node",
         "client_state",
         "client_sign_in",

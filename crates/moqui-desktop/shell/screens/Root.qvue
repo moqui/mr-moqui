@@ -23,6 +23,7 @@ along with this software (see the LICENSE.md file). If not, see
             <q-btn flat round dense icon="sym_o_menu" :aria-label="t('Menu')" @click="drawer = !drawer"></q-btn>
             <q-toolbar-title class="ellipsis">{{serverName}}</q-toolbar-title>
             <q-chip v-if="offline" dense square color="warning" text-color="black" icon="sym_o_cloud_off">{{t('Offline: showing what was last seen')}}</q-chip>
+            <q-chip v-if="updateNeeded" dense square color="warning" text-color="black" icon="sym_o_system_update">{{t('The server is newer than this app: update the app')}}</q-chip>
             <q-chip v-else-if="socketState === 'closed'" dense square color="grey-7" text-color="white" icon="sym_o_sync_problem">{{t('Reconnecting')}}</q-chip>
             <q-btn v-for="item in countItems" :key="item.key" flat dense no-caps :icon="item.icon" :aria-label="item.count ? item.label + ': ' + item.count : item.label" @click="setUrl(item.link)">
                 <q-badge v-if="item.count" floating rounded color="red">{{item.count > 99 ? '99+' : item.count}}</q-badge>
@@ -143,6 +144,11 @@ module.exports = {
         accounts() { return (this.state && this.state.accounts) || []; },
         currentId() { return this.state && this.state.current; },
         keyStore() { return this.state && this.state.keyStore; },
+        // the server's clientApi is newer than this app knows (moqui_client::login::CLIENT_API)
+        updateNeeded() {
+            const server = (this.config && this.config.server) || {};
+            return !!(this.state && this.state.clientApi && Number(server.clientApi || 1) > this.state.clientApi);
+        },
         serverName() { return (this.config.server && this.config.server.name) || (this.config.shell && this.config.shell.title) || 'MR Moqui'; },
         userName() { return this.config.userFullName || this.config.username || ''; },
         // the shell's counts as m-qapps-root shows them (its keys chat, email, messages, notifications), each opening its

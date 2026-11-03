@@ -508,6 +508,66 @@ fn a_device_signs_in_by_key_is_listed_and_signs_out_by_revoking_its_key() {
     flow.as_user(None, || assert!(crate::user::login_user_key(&phone).is_err()));
 }
 
+/// A device renews its key before it runs out (plans/Mobile-Desktop.md §4): the new key has the device's name and a
+/// full lifetime, the old one still signs in for the grace minutes, and a key that is not a device's is not renewed.
+#[test]
+fn a_device_renews_its_key_with_the_same_name_and_the_old_key_ends_soon() {
+    let flow = Flow::open();
+    flow.user("ada", "ada@example.com");
+    let response = flow.post(
+        "/rest/login",
+        "username=ada&password=Secret1%21&createLoginKey=true&deviceName=Laptop",
+        &mut Session::default(),
+    );
+    assert_eq!(response.status, 200, "{}", response.body_text());
+    let old = json(&response)["loginKey"].as_str().expect("a device key").to_string();
+    let now = crate::user::now_millis();
+    let (renewed, thru) = flow
+        .as_user(Some("ada"), || crate::user::renew_device_key(&old))
+        .unwrap()
+        .expect("the device's key is renewed");
+    assert_ne!(renewed, old);
+    assert!(thru - now > 89 * 24 * 3_600_000, "a full lifetime: {}", thru - now);
+    flow.as_user(None, || {
+        crate::user::login_user_key(&renewed).expect("the new key signs in");
+        crate::user::login_user_key(&old).expect("the old key still signs in, for a few minutes");
+    });
+    let rows = flow
+        .facade
+        .find("moqui.security.UserLoginKey")
+        .unwrap()
+        .condition(moqui_db::sql::Condition::is_not_null("deviceName"))
+        .list()
+        .unwrap();
+    let rows: Vec<(String, i64)> = rows
+        .iter()
+        .map(|row| {
+            let name = row
+                .get("deviceName")
+                .map(moqui_lib::object::to_plain_string)
+                .unwrap_or_default();
+            let thru = row.get("thruDate").and_then(crate::user::value_millis).unwrap_or(0);
+            (name, thru)
+        })
+        .collect();
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    assert!(rows.iter().all(|(name, _)| name == "Laptop"), "{rows:?}");
+    let ends = rows.iter().map(|(_, thru)| *thru).min().unwrap();
+    assert!(ends - now <= 11 * 60_000, "the old key ends in minutes: {}", ends - now);
+
+    // a session's own key, with no device, is not a device's to renew; nor is another user's
+    let plain = flow.as_user(Some("ada"), || crate::user::get_login_key(None)).unwrap();
+    assert!(flow
+        .as_user(Some("ada"), || crate::user::renew_device_key(&plain))
+        .unwrap()
+        .is_none());
+    flow.user("bob", "bob@example.com");
+    assert!(flow
+        .as_user(Some("bob"), || crate::user::renew_device_key(&renewed))
+        .unwrap()
+        .is_none());
+}
+
 /// An installed app's SSO sign-in ends at `/sso/appToken` (crates/moqui-core/src/service/sso_app.rs): the single-use
 /// code `issue#AppCode` made, with the verifier of its challenge, is a device key once; a wrong verifier, a used code
 /// and an expired one are refused.

@@ -180,9 +180,56 @@ fn the_capability_resolves_against_the_built_acl_to_the_bridge_commands_only() {
             "notify",
             "open_external",
             "plugin:notification|is_permission_granted",
+            "set_comms_root",
             "set_counts",
             "set_presence"
         ]
     );
     assert!(resolved.denied_commands.is_empty());
+}
+
+#[test]
+fn the_camera_and_microphone_are_only_for_the_app_s_own_pages() {
+    let node = Url::parse("http://127.0.0.1:43210/qapps").unwrap();
+    let shell = Url::parse("http://moqui-shell.localhost/").unwrap();
+    let at = |text: &str| Url::parse(text).unwrap();
+    assert!(media_allowed(
+        &at("http://127.0.0.1:43210/qapps/BasicComms/Call"),
+        Some(&node),
+        None
+    ));
+    assert!(!media_allowed(&at("http://127.0.0.1:43211/"), Some(&node), None));
+    assert!(!media_allowed(&at("https://example.com/"), Some(&node), Some(&shell)));
+    assert!(media_allowed(
+        &at("http://moqui-shell.localhost/chat"),
+        Some(&node),
+        Some(&shell)
+    ));
+    assert!(
+        !media_allowed(&at("http://moqui-shell.localhost/chat"), Some(&node), None),
+        "not a client"
+    );
+    assert!(!media_allowed(&at("data:text/html,x"), Some(&node), Some(&shell)));
+    assert!(
+        !media_allowed(&at("http://127.0.0.1:43210/"), None, None),
+        "no node yet"
+    );
+}
+
+#[test]
+fn a_comms_root_is_an_app_path_only() {
+    assert!(comms_root_valid("/qapps/Comms"));
+    assert!(comms_root_valid("/qapps/BasicComms"));
+    assert!(comms_root_valid("/qapps/my-apps/Comms_2"));
+    for bad in [
+        "",
+        "/qapps/",
+        "/apps/Comms",
+        "https://example.com/qapps/x",
+        "/qapps/../x",
+        "/qapps/a//b",
+        "/qapps/a?b",
+    ] {
+        assert!(!comms_root_valid(bad), "{bad}");
+    }
 }

@@ -574,6 +574,22 @@ fn an_app_signs_in_in_the_browser_and_takes_its_code_for_a_device_key() {
     );
     assert_eq!(status, 200, "{config}");
     assert!(config.contains("sso.joe"), "{config}");
+    let parsed: serde_json::Value = serde_json::from_str(&config).unwrap();
+    assert_eq!(parsed["server"]["clientApi"], 2, "{config}");
+    // the app renews its key before it runs out, by the header alone; the new key signs in
+    let (status, _, renewed) = exchange(
+        server,
+        &http_request("POST", "/qapps/renewClientDevice", &[("login_key", key)], ""),
+    );
+    assert_eq!(status, 200, "{renewed}");
+    let renewed: serde_json::Value = serde_json::from_str(&renewed).unwrap();
+    let renewed = renewed["loginKey"].as_str().expect("a renewed key");
+    assert_ne!(renewed, key);
+    let (status, _, config) = exchange(
+        server,
+        &http_request("GET", "/qapps/clientConfig", &[("login_key", renewed)], ""),
+    );
+    assert_eq!(status, 200, "{config}");
     let (status, _, _) = exchange(
         server,
         &http_request(

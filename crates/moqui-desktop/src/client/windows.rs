@@ -158,6 +158,7 @@ pub(crate) fn shell_window(app: &AppHandle) -> tauri::Result<()> {
         .min_inner_size(400.0, 300.0)
         .initialization_script(crate::bridge::SCRIPT)
         .on_download(crate::bridge::on_download)
+        .on_permission_request(crate::bridge::on_permission)
         .on_page_load(|window, payload| {
             if payload.event() == PageLoadEvent::Started {
                 if let Some(client) = window.app_handle().try_state::<Client>() {
@@ -217,6 +218,7 @@ pub(crate) fn open_remote(app: &AppHandle, path: &str) -> Result<(), String> {
         .min_inner_size(400.0, 300.0)
         .initialization_script(script)
         .on_download(crate::bridge::on_download)
+        .on_permission_request(crate::bridge::on_permission)
         .on_page_load(|window, payload| {
             if payload.event() == PageLoadEvent::Started {
                 if let Some(client) = window.app_handle().try_state::<Client>() {

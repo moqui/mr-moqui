@@ -54,3 +54,29 @@ fn a_refused_sign_in_carries_the_servers_reason() {
     let err = signed_in(502, &serde_json::Value::Null, false).unwrap_err();
     assert!(err.to_string().contains("HTTP 502"), "{err}");
 }
+
+#[test]
+fn the_current_device_row_gives_the_key_period_as_millis_or_text() {
+    let list = json!({"deviceList": [
+        {"deviceName": "Phone", "current": false, "fromDate": 1, "thruDate": 2},
+        {"deviceName": "Laptop", "current": true, "fromDate": "1000", "thruDate": 4000},
+    ]});
+    assert_eq!(current_period(&list), Some((1000, 4000)));
+    assert_eq!(current_period(&json!({"deviceList": []})), None);
+}
+
+#[test]
+fn a_key_is_renewed_when_less_than_a_third_of_its_life_is_left() {
+    assert!(!renew_due(0, 90, 59));
+    assert!(renew_due(0, 90, 61));
+    assert!(
+        renew_due(0, 90, 100),
+        "an expired key is due too, though the server will refuse it"
+    );
+}
+
+#[test]
+fn a_server_with_no_client_api_is_the_first() {
+    assert_eq!(server_client_api(&json!({"server": {"name": "x"}})), 1);
+    assert_eq!(server_client_api(&json!({"server": {"clientApi": 3}})), 3);
+}

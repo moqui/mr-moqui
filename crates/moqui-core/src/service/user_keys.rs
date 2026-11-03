@@ -59,6 +59,7 @@ pub(in crate::service) fn register(
     rust_service!(map, get_app_passwords)?;
     rust_service!(map, get_device_keys)?;
     rust_service!(map, revoke_device_key)?;
+    rust_service!(map, renew_device_key)?;
     rust_service!(map, get_scram_credentials)?;
     rust_service!(map, check_plain_password)?;
     Ok(())
@@ -576,6 +577,28 @@ fn revoke_device_key(
         add_error("you have no such device");
     }
     Ok(BTreeMap::new())
+}
+
+/// `renew#UserDeviceKey`: a new key for the device of this request's `login_key` header, with the same name and a full
+/// lifetime, given once as `loginKey` with its `thruDate`; the header's key ends a few minutes later
+/// (`user::renew_device_key`). The desktop client renews before its key runs out.
+fn renew_device_key(
+    _parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let key = crate::web::current_request()
+        .and_then(|request| request.header("login_key").map(str::to_string))
+        .unwrap_or_default();
+    match crate::user::renew_device_key(&key)? {
+        Some((renewed, thru)) => Ok(out([
+            ("loginKey", Value::string(renewed)),
+            ("thruDate", crate::user::stamp_value(thru)),
+        ])),
+        None => {
+            add_error("this request was not signed in by a device key");
+            Ok(BTreeMap::new())
+        }
+    }
 }
 
 #[cfg(test)]

@@ -165,6 +165,7 @@ fn main_window(app: &AppHandle, origin: &Arc<OnceLock<Url>>) -> tauri::Result<We
         .min_inner_size(400.0, 300.0)
         .initialization_script(bridge::SCRIPT)
         .on_download(bridge::on_download)
+        .on_permission_request(bridge::on_permission)
         .on_page_load(|window, payload| os::page_loaded(&window, payload))
         .on_navigation(move |url| stays_in_app(url, navigation.get()))
         .on_new_window(move |url, _features| {

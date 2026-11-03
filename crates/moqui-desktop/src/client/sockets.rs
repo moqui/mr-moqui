@@ -52,6 +52,30 @@ impl Sockets {
         moqui_lib::sync::lock(&self.open).clear();
     }
 
+    /// Have the pages of `account` open their sockets again, with its new key: each hears its socket close, as after a
+    /// drop, and opens another. Answers how many.
+    pub(crate) fn reopen_account(&self, app: &AppHandle, client: &Client, account: &str) -> usize {
+        let ids: Vec<(u64, String)> = moqui_lib::sync::lock(&self.open)
+            .iter()
+            .map(|(id, (label, _))| (*id, label.clone()))
+            .collect();
+        let mut count = 0;
+        for (id, label) in ids {
+            if client.account_of(&label).is_none_or(|(shown, _)| shown.id != account) {
+                continue;
+            }
+            self.remove(id);
+            if let Some(window) = app.get_webview_window(&label) {
+                let closed = event_json(&Event::Closed);
+                let _ = window.eval(format!(
+                    "window.__moquiSocketEvent && window.__moquiSocketEvent({id}, {closed})"
+                ));
+            }
+            count += 1;
+        }
+        count
+    }
+
     fn remove(&self, id: u64) {
         moqui_lib::sync::lock(&self.open).remove(&id);
     }

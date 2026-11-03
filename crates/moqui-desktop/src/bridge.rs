@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use tauri::ipc::CapabilityBuilder;
-use tauri::webview::DownloadEvent;
+use tauri::webview::{DownloadEvent, PermissionKind, PermissionResponse};
 use tauri::{AppHandle, Manager, Url, Webview};
 use tauri_plugin_notification::NotificationExt;
 
@@ -39,11 +39,12 @@ pub(crate) const SCRIPT: &str = include_str!("bridge.js");
 
 /// The permissions of the node's origin: the app commands of `build.rs` (`allow-` and the command with `-` for `_`),
 /// and the notification plugin's permission check, which its `window.Notification` stand-in asks on every page.
-const PERMISSIONS: [&str; 5] = [
+const PERMISSIONS: [&str; 6] = [
     "allow-notify",
     "allow-set-counts",
     "allow-set-presence",
     "allow-open-external",
+    "allow-set-comms-root",
     "notification:allow-is-permission-granted",
 ];
 
@@ -78,6 +79,7 @@ pub(crate) fn setup(builder: tauri::Builder) -> tauri::Builder {
             set_counts,
             set_presence,
             open_external,
+            set_comms_root,
             crate::splash::restart_node,
             crate::client::commands::client_state,
             crate::client::commands::client_sign_in,
@@ -240,6 +242,29 @@ pub(crate) fn open_external(app: AppHandle, url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// The node's Comms app (`calls.appRoot` of its pages' config), which the host cannot read from a sidecar's conf: kept
+/// for the `mailto:`, `tel:` and `sip:` links (`os::comms_root`). Only an app path, `/qapps/<name>`.
+#[tauri::command]
+pub(crate) fn set_comms_root(app: AppHandle, root: String) -> Result<(), String> {
+    if !comms_root_valid(&root) {
+        return Err("Not a Comms app's path".to_string());
+    }
+    crate::os::comms_root_reported(&app, &root);
+    Ok(())
+}
+
+/// `/qapps/` and a path of letters, digits, `_`, `-` and `/`, at most 200 characters.
+pub(crate) fn comms_root_valid(root: &str) -> bool {
+    root.len() <= 200
+        && root.strip_prefix("/qapps/").is_some_and(|rest| {
+            !rest.is_empty()
+                && !rest.contains("//")
+                && rest
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '/'))
+        })
+}
+
 /// The window's downloads: from the node (its URLs, and the page's `blob:` and `data:` links) Chromium asks where with
 /// the save dialog, as the destination is left as it suggests; a notification says when one is saved. Anything else is
 /// refused (the window shows only the node and the splash page).
@@ -275,6 +300,35 @@ pub(crate) fn on_download(webview: Webview, event: DownloadEvent<'_>) -> bool {
         }
         _ => true,
     }
+}
+
+/// The camera and microphone of a page (CEF asks on each `getUserMedia`): granted to the app's own pages (the node's,
+/// or a client's shell and app windows) for calls, where the OS still asks the user once, and refused to any other
+/// page. With no answer CEF's Alloy style (every webview on macOS) would grant them to any page. The other kinds are
+/// left to the runtime.
+pub(crate) fn on_permission(webview: Webview, kind: PermissionKind) -> PermissionResponse {
+    if !matches!(kind, PermissionKind::Camera | PermissionKind::Microphone) {
+        return PermissionResponse::Default;
+    }
+    let app = webview.app_handle();
+    let shell = crate::client::active(app).then(crate::client::shell_origin);
+    match webview.url() {
+        Ok(url) if media_allowed(&url, app.state::<Bridge>().node.get(), shell.as_ref()) => PermissionResponse::Allow,
+        Ok(url) => {
+            tracing::warn!("Camera and microphone refused to {}", clip(url.as_str(), 200));
+            PermissionResponse::Deny
+        }
+        Err(_) => PermissionResponse::Deny,
+    }
+}
+
+/// Whether a page at `url` may have the camera and microphone: on the node's origin, or a client's shell's.
+pub(crate) fn media_allowed(url: &Url, node: Option<&Url>, shell: Option<&Url>) -> bool {
+    matches!(url.scheme(), "http" | "https")
+        && [node, shell]
+            .into_iter()
+            .flatten()
+            .any(|origin| origin.origin() == url.origin())
 }
 
 /// `text` without control characters, trimmed, at most `max` characters.

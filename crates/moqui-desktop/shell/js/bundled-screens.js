@@ -575,6 +575,11 @@ module.exports = {
         accounts() { return (this.state && this.state.accounts) || []; },
         currentId() { return this.state && this.state.current; },
         keyStore() { return this.state && this.state.keyStore; },
+        // the server's clientApi is newer than this app knows (moqui_client::login::CLIENT_API)
+        updateNeeded() {
+            const server = (this.config && this.config.server) || {};
+            return !!(this.state && this.state.clientApi && Number(server.clientApi || 1) > this.state.clientApi);
+        },
         serverName() { return (this.config.server && this.config.server.name) || (this.config.shell && this.config.shell.title) || 'MR Moqui'; },
         userName() { return this.config.userFullName || this.config.username || ''; },
         // the shell's counts as m-qapps-root shows them (its keys chat, email, messages, notifications), each opening its
@@ -749,9 +754,24 @@ module.exports = {
                                     ]),
                                     _: 1
                                   }))
+                                : _createCommentVNode("", true),
+                              (_ctx.updateNeeded)
+                                ? (_openBlock(), _createBlock(_component_q_chip, {
+                                    key: 1,
+                                    dense: "",
+                                    square: "",
+                                    color: "warning",
+                                    "text-color": "black",
+                                    icon: "sym_o_system_update"
+                                  }, {
+                                    default: _withCtx(() => [
+                                      _createTextVNode(_toDisplayString(_ctx.t('The server is newer than this app: update the app')), 1)
+                                    ]),
+                                    _: 1
+                                  }))
                                 : (_ctx.socketState === 'closed')
                                   ? (_openBlock(), _createBlock(_component_q_chip, {
-                                      key: 1,
+                                      key: 2,
                                       dense: "",
                                       square: "",
                                       color: "grey-7",

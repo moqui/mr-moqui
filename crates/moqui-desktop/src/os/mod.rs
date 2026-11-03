@@ -206,11 +206,38 @@ pub(crate) fn node_started(qapps: Url) -> Url {
         .unwrap_or(qapps)
 }
 
-/// The Comms app's root: `comms_app_root` as the node in process has it, else as the runtime's `.env` sets it, else
-/// BasicComms (which a node with BOSS still serves).
+/// The file in the app's config directory with the Comms app's root the node's pages last reported.
+const COMMS_ROOT_FILE: &str = "comms-root";
+
+/// The node's pages reported its Comms app (`bridge::set_comms_root`): kept, so links work before a page loads on later
+/// runs too.
+pub(crate) fn comms_root_reported(app: &AppHandle, root: &str) {
+    let Ok(dir) = app.path().app_config_dir() else {
+        return;
+    };
+    let path = dir.join(COMMS_ROOT_FILE);
+    if std::fs::read_to_string(&path).is_ok_and(|kept| kept.trim() == root) {
+        return;
+    }
+    if let Err(err) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, root)) {
+        tracing::warn!("The Comms app's root was not kept in {}: {err}", path.display());
+    }
+}
+
+/// The Comms app's root: a client's server's; else what the node's pages last reported; else `comms_app_root` as the
+/// node in process has it, or as the runtime's `.env` sets it; else BasicComms (which a node with BOSS still serves).
 fn comms_root() -> String {
     // a client's: its server's, as its client config says
     if let Some(root) = APP.get().and_then(crate::client::comms_root) {
+        return root;
+    }
+    let reported = APP
+        .get()
+        .and_then(|app| app.path().app_config_dir().ok())
+        .and_then(|dir| std::fs::read_to_string(dir.join(COMMS_ROOT_FILE)).ok())
+        .map(|text| text.trim().to_string())
+        .filter(|root| crate::bridge::comms_root_valid(root));
+    if let Some(root) = reported {
         return root;
     }
     let own = moqui_lib::env::get_prop_or_env("comms_app_root");

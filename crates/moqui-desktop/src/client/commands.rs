@@ -35,7 +35,8 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + 
         .map_err(|err| format!("The request did not finish: {err}"))?
 }
 
-/// The accounts, the current one, whether it is signed in, and the key store (`os` or `file`). No key.
+/// The accounts, the current one, whether it is signed in, the key store (`os` or `file`) and the newest `clientApi`
+/// this app knows. No key.
 pub(crate) fn state_json(client: &Client) -> Value {
     // the accounts as they are now, read without holding them while the keys are looked up
     let (current, accounts) = {
@@ -59,7 +60,13 @@ pub(crate) fn state_json(client: &Client) -> Value {
         })
         .collect();
     let signed_in = current.as_ref().is_some_and(|id| client.keys.get(id).is_some());
-    json!({ "accounts": list, "current": current, "signedIn": signed_in, "keyStore": client.keys.kind })
+    json!({
+        "accounts": list,
+        "current": current,
+        "signedIn": signed_in,
+        "keyStore": client.keys.kind,
+        "clientApi": moqui_client::login::CLIENT_API,
+    })
 }
 
 #[tauri::command(async)]
