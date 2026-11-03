@@ -4,7 +4,8 @@
 # has no Tauri, no framework and no async API. Its TLS (rustls on aws-lc, and rustls-platform-verifier) compiles C with
 # the NDK's clang, so this needs:
 #   rustup target add aarch64-linux-android
-#   an Android NDK, in ANDROID_NDK_HOME (else the newest under $ANDROID_HOME/ndk or ~/Library/Android/sdk/ndk), and CMake
+#   an Android NDK, in ANDROID_NDK_HOME (else the newest under $ANDROID_HOME/ndk or ~/Library/Android/sdk/ndk, else
+#   Homebrew's, brew install --cask android-ndk), and CMake
 #   (aws-lc-sys may need libclang for bindgen where it has no pregenerated bindings for the target)
 # A run on an app needs more than this build: rustls-platform-verifier's Android component (crates/moqui-client/README.md).
 #   scripts/check-android.sh [extra clippy args...]
@@ -22,6 +23,12 @@ if [ -z "$ndk" ]; then
         [ -n "$ndk" ] && break
     done
 fi
+# Homebrew's (brew install --cask android-ndk)
+if [ -z "$ndk" ]; then
+    for brewed in /opt/homebrew/share/android-ndk /usr/local/share/android-ndk; do
+        [ -d "$brewed" ] && { ndk=$brewed; break; }
+    done
+fi
 [ -n "$ndk" ] && [ -d "$ndk" ] || { echo "no Android NDK: set ANDROID_NDK_HOME" >&2; exit 1; }
 host=$(uname -s | tr '[:upper:]' '[:lower:]')-x86_64
 bin="$ndk/toolchains/llvm/prebuilt/$host/bin"
@@ -31,4 +38,6 @@ export CC_aarch64_linux_android="$bin/${target}${api}-clang"
 export AR_aarch64_linux_android="$bin/llvm-ar"
 export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$CC_aarch64_linux_android"
 echo "== cargo clippy -p moqui-client --target $target (NDK $(basename "$ndk"), API $api)" >&2
-cargo clippy -p moqui-client --target "$target" --all-targets "$@" -- -D warnings
+# the client's own lints (its dependencies, moqui-lib among them, are linted on the desktops by cargo lint; they are
+# still compiled for the target here)
+cargo clippy -p moqui-client --no-deps --target "$target" --all-targets "$@" -- -D warnings

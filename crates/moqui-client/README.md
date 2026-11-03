@@ -30,4 +30,5 @@ The patterns follow `moqui tui --server` (`crates/moqui-host/src/tui_remote.rs`)
 ```sh
 cargo test -p moqui-client
 scripts/check-android.sh   # clippy for aarch64-linux-android: rustup target add aarch64-linux-android, and an NDK
+                           # (ANDROID_NDK_HOME, an SDK's, or brew install --cask android-ndk)
 ```
