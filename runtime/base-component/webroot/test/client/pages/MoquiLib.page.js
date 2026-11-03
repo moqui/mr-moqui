@@ -559,6 +559,66 @@ test("a notification client sends JSON when open, and keeps what is sent while c
     }
 });
 
+test("a notification client in the desktop client uses the host's socket, with no WebSocket of its own", () => {
+    const saved = Object.getOwnPropertyDescriptor(globalThis, "WebSocket");
+    // no browser socket at all: the page of a desktop client cannot open one to its server
+    Object.defineProperty(globalThis, "WebSocket", { value: () => { throw new Error("no page socket"); }, configurable: true, writable: true });
+    const savedTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = () => 0;
+    const opened = [];
+    globalThis.moquiDesktop = {
+        socket(url) {
+            const socket = { url, readyState: 0, sent: [], send(text) { this.sent.push(text); }, close() { this.readyState = 3; } };
+            opened.push(socket);
+            return socket;
+        }
+    };
+    try {
+        const client = new moqui.NotificationClient("ws://moqui-shell.localhost/notws");
+        const heard = [];
+        client.registerListener("shellCounts", (message) => heard.push(message.counts));
+        assert.equal(opened.length, 1);
+        assert.equal(opened[0].url, "ws://moqui-shell.localhost/notws");
+        assert.equal(client.isOpen(), false);
+        opened[0].readyState = 1;
+        opened[0].onopen();
+        assert.equal(client.isOpen(), true);
+        assert.deepEqual(opened[0].sent, ["subscribe:shellCounts"]);
+        opened[0].onmessage({ data: '{"topic":"shellCounts","counts":{"chat":2}}' });
+        assert.deepEqual(heard, [{ chat: 2 }]);
+        client.registerListener("chatRoom:R1", () => {});
+        assert.equal(opened[0].sent[1], "subscribe:chatRoom:R1");
+        // closed by the host: the page reopens as it would a browser socket, through the host again
+        opened[0].readyState = 3;
+        opened[0].onclose();
+        client.tryReopen();
+        assert.equal(opened.length, 2);
+    } finally {
+        delete globalThis.moquiDesktop;
+        if (saved) Object.defineProperty(globalThis, "WebSocket", saved);
+        else delete globalThis.WebSocket;
+        globalThis.setTimeout = savedTimeout;
+    }
+});
+
+test("storage keys are under the storage scope only when one is set", () => {
+    const saved = moqui.storageScope;
+    try {
+        moqui.storageScope = "";
+        assert.equal(moqui.scopedKey("moqui.chat.outbox.U1"), "moqui.chat.outbox.U1");
+        moqui.storageScope = "erp.example.com-0123abcd";
+        assert.equal(moqui.scopedKey("moqui.chat.outbox.U1"), "erp.example.com-0123abcd:moqui.chat.outbox.U1");
+        // none set here: the desktop host's, read at each use, so a scope the host sets after the page loads still counts
+        moqui.storageScope = null;
+        assert.equal(moqui.scopedKey("k"), "k");
+        globalThis.moquiDesktop = { storageScope: "other.example.com-4567" };
+        assert.equal(moqui.scopedKey("k"), "other.example.com-4567:k");
+    } finally {
+        delete globalThis.moquiDesktop;
+        moqui.storageScope = saved;
+    }
+});
+
 test("an app around the page (window.moquiDesktop) gets the notifications and the saved files, and a browser keeps its own", async () => {
     const calls = [];
     const savedAnchorClick = HTMLAnchorElement.prototype.click;

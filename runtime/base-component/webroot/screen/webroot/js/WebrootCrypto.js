@@ -80,8 +80,10 @@
     const listeners = new Set();
 
     const currentUser = () => (moqui.webrootVue && moqui.webrootVue.userId) || null;
-    const pointerKey = (userId) => "moqui.crypto.device." + userId;
-    const storePrefix = (userId, deviceId) => "moqui-crypto-" + userId + "-" + deviceId;
+    // under the storage scope: in the desktop client every server's pages share one origin (MoquiLib scopedKey); the
+    // store's databases and lock follow its prefix
+    const pointerKey = (userId) => moqui.scopedKey("moqui.crypto.device." + userId);
+    const storePrefix = (userId, deviceId) => moqui.scopedKey("moqui-crypto-" + userId + "-" + deviceId);
 
     function readPointer(userId) {
         try {

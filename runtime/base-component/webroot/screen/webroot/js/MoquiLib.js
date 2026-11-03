@@ -19,6 +19,10 @@
     "use strict";
 
     const toString = Object.prototype.toString;
+    // WebSocket's readyState values, which the host's socket in its place (moqui.openSocket) has too
+    const SOCKET_OPEN = 1;
+    const SOCKET_CLOSING = 2;
+    const SOCKET_CLOSED = 3;
 
     Object.assign(moqui, {
         // Quasar language packs by language, for the locale of the user. The page loads the pack that matches.
@@ -298,6 +302,23 @@
 
         sessionToken: "",
         appRootPath: "",
+        // What browser storage keys of a server's data are put under (scopedKey): none on the web, where the page's origin is
+        // the server's; in the desktop client, whose pages of every server and account share the app's origin, the account
+        // (window.moquiDesktop.storageScope, plans/Mobile-Desktop.md §6), read at each use. A string here is used instead.
+        storageScope: null,
+        scopedKey(key) {
+            const host = root.moquiDesktop;
+            const scope = typeof moqui.storageScope === "string" ? moqui.storageScope : (host && host.storageScope) || "";
+            return scope ? scope + ":" + key : key;
+        },
+        // A WebSocket to url, or the host's in its place: a page of the desktop client cannot open one to its server, whose
+        // socket needs the device key, so the host holds it (window.moquiDesktop.socket returns an object with the same
+        // readyState, send, close and onopen/onmessage/onclose/onerror). The NotificationClient and the call guest use it.
+        openSocket(url) {
+            const host = root.moquiDesktop;
+            if (host && typeof host.socket === "function") return host.socket(url);
+            return new root.WebSocket(url);
+        },
         // the trace id of the page's own request: each later request is a trace of its own that names it
         pageTraceId: "",
         // the preview token of a page that previews proposed screen text (a dev instance's change set or canvas)
@@ -511,7 +532,7 @@
             this.tryReopenCount = 0;
             this.disableDisplay = () => { this.displayEnable = false; };
             this.enableDisplay = () => { this.displayEnable = true; };
-            this.isOpen = () => !!this.webSocket && this.webSocket.readyState === root.WebSocket.OPEN;
+            this.isOpen = () => !!this.webSocket && this.webSocket.readyState === SOCKET_OPEN;
             // Calls fn(state) for each change, "open" or "closed"; returns a function that removes it.
             this.onState = (fn) => {
                 this.stateListeners.push(fn);
@@ -521,7 +542,7 @@
                 try { fn(state, this); } catch (err) { console.error("notification state listener failed", err); }
             });
             this.initWebSocket = () => {
-                const socket = new root.WebSocket(this.webSocketUrl);
+                const socket = moqui.openSocket(this.webSocketUrl);
                 this.webSocket = socket;
                 socket.onopen = () => {
                     this.tryReopenCount = 0;
@@ -545,7 +566,7 @@
             };
             this.tryReopen = () => {
                 const socket = this.webSocket;
-                if ((!socket || socket.readyState === root.WebSocket.CLOSED || socket.readyState === root.WebSocket.CLOSING) && this.tryReopenCount < 6) {
+                if ((!socket || socket.readyState === SOCKET_CLOSED || socket.readyState === SOCKET_CLOSING) && this.tryReopenCount < 6) {
                     this.tryReopenCount++;
                     this.initWebSocket();
                 }
@@ -579,7 +600,7 @@
                 if (!list) {
                     list = [];
                     this.topicListeners[topic] = list;
-                    if (this.webSocket.readyState === root.WebSocket.OPEN) this.webSocket.send("subscribe:" + topic);
+                    if (this.webSocket.readyState === SOCKET_OPEN) this.webSocket.send("subscribe:" + topic);
                 }
                 if (list.indexOf(listener) < 0) list.push(listener);
                 return () => this.unregisterListener(topic, listener);
@@ -595,7 +616,7 @@
                 if (!list.length) {
                     delete this.topicListeners[topic];
                     const socket = this.webSocket;
-                    if (socket && socket.readyState === root.WebSocket.OPEN) socket.send("unsubscribe:" + topic);
+                    if (socket && socket.readyState === SOCKET_OPEN) socket.send("unsubscribe:" + topic);
                 }
                 return true;
             };
@@ -606,7 +627,7 @@
             this.onDataFunction = onDataFunction;
             this.tryReopenCount = 0;
             this.initWebSocket = () => {
-                const socket = new root.WebSocket(this.webSocketUrl);
+                const socket = moqui.openSocket(this.webSocketUrl);
                 this.webSocket = socket;
                 socket.onopen = () => { this.tryReopenCount = 0; };
                 socket.onmessage = (event) => { this.onDataFunction(event.data); };
@@ -615,7 +636,7 @@
             };
             this.tryReopen = () => {
                 const socket = this.webSocket;
-                if ((!socket || socket.readyState === root.WebSocket.CLOSED || socket.readyState === root.WebSocket.CLOSING) && this.tryReopenCount < 6) {
+                if ((!socket || socket.readyState === SOCKET_CLOSED || socket.readyState === SOCKET_CLOSING) && this.tryReopenCount < 6) {
                     this.tryReopenCount++;
                     this.initWebSocket();
                 }

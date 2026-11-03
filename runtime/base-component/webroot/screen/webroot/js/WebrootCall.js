@@ -816,7 +816,7 @@
             let readyReject = null;
             guest.ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject; });
             const connect = () => {
-                const socket = new root.WebSocket(scheme + root.location.host + "/callws");
+                const socket = moqui.openSocket(scheme + root.location.host + "/callws");
                 guest.socket = socket;
                 socket.onopen = () => socket.send(JSON.stringify({ rtc: "guestAuth", credential }));
                 socket.onmessage = (event) => {

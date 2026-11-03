@@ -670,7 +670,8 @@
 
         // ---- the outbox ----
 
-        outboxKey() { return "moqui.chat.outbox." + (chat.me || ""); },
+        // under the storage scope: in the desktop client every server's pages share one origin (MoquiLib scopedKey)
+        outboxKey() { return moqui.scopedKey("moqui.chat.outbox." + (chat.me || "")); },
         // the outbox as stored (another tab may have changed it); the state changes only when it did, so the screens
         // do not draw their pending rows again for nothing
         readOutbox() {

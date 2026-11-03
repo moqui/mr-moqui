@@ -1011,11 +1011,14 @@
     // user. It subscribes to all of the user's topics. A closed socket opens again after a growing delay, up to ten times in a row.
     const connectNotifications = () => {
         const meta = $("meta[name=moqui-notify]");
-        if (!meta || !meta.content || !root.WebSocket) return;
+        // a desktop client's window has the host's socket in place of its own (window.moquiDesktop.socket, as MoquiLib's openSocket)
+        const host = root.moquiDesktop && typeof root.moquiDesktop.socket === "function" ? root.moquiDesktop : null;
+        if (!meta || !meta.content || (!root.WebSocket && !host)) return;
         let delay = 2000;
         let tries = 0;
         const open = () => {
-            const socket = new root.WebSocket((root.location.protocol === "https:" ? "wss://" : "ws://") + root.location.host + meta.content);
+            const url = (root.location.protocol === "https:" ? "wss://" : "ws://") + root.location.host + meta.content;
+            const socket = host ? host.socket(url) : new root.WebSocket(url);
             root.moqui.notificationSocket = socket;
             socket.onopen = () => { delay = 2000; tries = 0; socket.send("subscribe:ALL"); };
             socket.onmessage = (event) => showNotification(parseJson(event.data, null));

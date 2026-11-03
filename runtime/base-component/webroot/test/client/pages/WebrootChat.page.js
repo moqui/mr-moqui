@@ -532,3 +532,18 @@ test("an encrypted room's decrypted files are let go when the room closes: their
         URL.revokeObjectURL = realRevoke;
     }
 });
+
+test("the outbox is kept under the storage scope of a desktop client's account", () => {
+    const savedMe = chat.me;
+    const savedScope = moqui.storageScope;
+    try {
+        chat.me = "U1";
+        moqui.storageScope = "";
+        assert.equal(chat.outboxKey(), "moqui.chat.outbox.U1");
+        moqui.storageScope = "erp.example.com-0123abcd";
+        assert.equal(chat.outboxKey(), "erp.example.com-0123abcd:moqui.chat.outbox.U1");
+    } finally {
+        chat.me = savedMe;
+        moqui.storageScope = savedScope;
+    }
+});

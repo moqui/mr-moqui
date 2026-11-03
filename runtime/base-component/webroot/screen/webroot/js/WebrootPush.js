@@ -40,7 +40,7 @@
     })
 
     function wantedKey() {
-        return "moqui.push.wanted." + ((root.moqui.webrootVue && root.moqui.webrootVue.userId) || "")
+        return root.moqui.scopedKey("moqui.push.wanted.") + ((root.moqui.webrootVue && root.moqui.webrootVue.userId) || "")
     }
     function setWanted(on) {
         try {

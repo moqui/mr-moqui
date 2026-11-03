@@ -281,7 +281,7 @@ module.exports = {
                 { key: 'monday', label: t('Monday morning'), icon: 'sym_o_next_week', at: at(toMonday, 8) }];
         },
         pickerCount() { return Object.keys(this.picker.chosen).filter((key) => this.picker.chosen[key]).length; },
-        draftStorageKey() { return 'ironstone.compose.' + (this.dockKey || ('page.' + (this.query.contactListId || this.query.replyToCommEventId || 'new'))); }
+        draftStorageKey() { return moqui.scopedKey('ironstone.compose.' + (this.dockKey || ('page.' + (this.query.contactListId || this.query.replyToCommEventId || 'new')))); }
     },
     watch: {
         draft: { handler() { this.onChange(); }, deep: true },

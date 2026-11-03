@@ -225,7 +225,8 @@ const CLEAR_LABELS = { '0': "Don't clear", '30': 'Clears in 30 minutes', '60': '
 const ROOM_ICONS = { CrtDirect: 'sym_o_group', CrtPrivate: 'sym_o_lock', CrtPublic: 'sym_o_tag', CrtRecord: 'sym_o_description', CrtExternal: 'sym_o_sms' };
 const LEVELS = [{ value: 'CnlAll', label: 'All messages', icon: 'sym_o_notifications_active' }, { value: 'CnlMentions', label: 'Mentions only', icon: 'sym_o_alternate_email' },
     { value: 'CnlNone', label: 'Nothing', icon: 'sym_o_notifications_off' }];
-const DRAFT_PREFIX = 'boss.chat.draft.';
+// under the storage scope: in the desktop client every server's pages share one origin (MoquiLib scopedKey)
+const draftPrefix = () => moqui.scopedKey('boss.chat.draft.');
 // the drafts of encrypted rooms: in this page only (C7)
 const sealedDrafts = {};
 const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
@@ -555,7 +556,7 @@ const chatComposer = {
         return { uid: composerCount, body: '', files: [], picked: null, sending: false, draftTimer: null };
     },
     computed: {
-        draftKey() { return DRAFT_PREFIX + this.room.roomId + (this.threadRoot ? ':' + this.threadRoot : ''); },
+        draftKey() { return draftPrefix() + this.room.roomId + (this.threadRoot ? ':' + this.threadRoot : ''); },
         uploading() { return this.files.some((file) => file.uploading); },
         canSend() { return !this.sending && !this.uploading && (!isEmptyHtml(this.body) || this.files.some((file) => file.chatAttachmentId)); },
         hint() {
@@ -2398,7 +2399,8 @@ module.exports = {
         },
         readDrafts() {
             const out = {};
-            storage.keys(DRAFT_PREFIX).forEach((key) => { const id = key.slice(DRAFT_PREFIX.length); if (id.indexOf(':') < 0) out[id] = true; });
+            const prefix = draftPrefix();
+            storage.keys(prefix).forEach((key) => { const id = key.slice(prefix.length); if (id.indexOf(':') < 0) out[id] = true; });
             this.drafts = out;
         },
         markAllRead() {

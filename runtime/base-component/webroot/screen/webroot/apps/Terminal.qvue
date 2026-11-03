@@ -145,10 +145,10 @@ module.exports = {
             try { this.fitAddon.fit(); } catch (e) { /* not laid out yet */ }
         },
         send(bytes) {
-            if (this.socket && this.socket.readyState === WebSocket.OPEN) this.socket.send(bytes);
+            if (this.socket && this.socket.readyState === 1) this.socket.send(bytes);
         },
         sendSize(cols, rows) {
-            if (this.socket && this.socket.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify({ type: "resize", cols, rows }));
+            if (this.socket && this.socket.readyState === 1) this.socket.send(JSON.stringify({ type: "resize", cols, rows }));
         },
         connect() {
             const root = moqui.webrootVue || {};
@@ -157,7 +157,8 @@ module.exports = {
             this.closed = false;
             this.reason = "";
             this.term.reset();
-            const socket = new WebSocket(scheme + host + (root.appRootPath || "") + "/termws");
+            // the host's socket in a desktop client (moqui.openSocket); readyState 1 is open in either
+            const socket = moqui.openSocket(scheme + host + (root.appRootPath || "") + "/termws");
             socket.binaryType = "arraybuffer";
             socket.onopen = () => {
                 this.fit();

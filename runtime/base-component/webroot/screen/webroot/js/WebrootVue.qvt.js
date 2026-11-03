@@ -8930,8 +8930,7 @@
                 }, (err) => console.info("shell counts not loaded", err && err.status));
             },
             pollShellCounts() {
-                const socket = this.notificationClient && this.notificationClient.webSocket;
-                if (socket && root.WebSocket && socket.readyState === root.WebSocket.OPEN) return;
+                if (this.notificationClient && this.notificationClient.isOpen()) return;
                 this.loadShellCounts();
                 if (this.trayOpen) this.reloadTrayTab(this.trayTab);
             },
@@ -9462,7 +9461,7 @@
             }
             // the session token is shared between the tabs and windows of the site
             if (root.BroadcastChannel) {
-                this.sessionTokenBc = new root.BroadcastChannel("SessionToken");
+                this.sessionTokenBc = new root.BroadcastChannel(moqui.scopedKey("SessionToken"));
                 this.sessionTokenBc.onmessage = this.receiveBcCsrfToken;
             }
             this.addPluginsWait(this.navPlugins, config.navPlugins, 0);
@@ -9587,11 +9586,12 @@
         return def;
     };
 
-    qvt.start = () => {
+    // config: the settings of the client, or none for those /qapps writes in its page (#moqui-config); a page that has
+    // them otherwise (a desktop client's shell, from clientConfig) passes them.
+    qvt.start = (given) => {
         qvt.applyRenders();
         const doc = root.document;
-        const configEl = doc.getElementById("moqui-config");
-        const config = JSON.parse(configEl.textContent);
+        const config = given || JSON.parse(doc.getElementById("moqui-config").textContent);
         qvt.config = config;
         moqui.config = config;
         // The session token now, not at the mount: the mount waits for the language catalog, and a page script (or a test)
