@@ -22,7 +22,9 @@ path = "src/main.rs"
 default = ["maximal"]
 # The package of the node, as in crates/moqui. Maximal has the edge link and calls.
 maximal = ["moqui-app/maximal"]
-dev = ["moqui-app/dev"]
+# The Dev package, commented out: the release build (Maximal with the dev tools) is the default now; likely to be
+# removed.
+# dev = ["moqui-app/dev"]
 devtools = ["moqui-app/devtools"]
 
 [dependencies]

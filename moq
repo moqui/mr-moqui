@@ -58,7 +58,7 @@ else
 fi
 
 # name|group|arguments|description. Drives the task list, matching, and completion.
-TASKS='build|Run|[--lite/--debug/--release/--enterprise] [cargo args...]|Build the Dev package (target/develop/moqui), or Lite, Debug, Maximal or Enterprise
+TASKS='build|Run|[--lite/--debug/--release/--enterprise] [cargo args...]|Build the Maximal package with the dev tools (target/release/moqui), or Lite, Debug or Enterprise
 run|Run|[opts] [moqui-args...]|Run the binary with the dev conf
 run-production|Run|[opts] [moqui-args...]|Run the binary with the production conf
 load|Run|[types] [name=value] [opts]|Load data, all types by default, with the dev conf
@@ -399,10 +399,10 @@ help_task() {
 PACKAGE_OPTIONS_HELP='      --lite           The Lite package, target/lite/moqui (the web server on embedded Postgres,
                        PDF and SMTP)
       --debug          The Debug package, target/debug/moqui (unoptimized, every feature, dev tools)
-      --release        The Maximal package, target/release/moqui (every feature, Postgres embedded)
-      --enterprise     The Enterprise package, target/enterprise/moqui (every feature, databases external)
-                       With none of these: the Dev package, target/develop/moqui (Lite with git, SSH and
-                       the dev tools). docs/Build-Test.md lists the features of each'
+      --release        The Maximal package, target/release/moqui (every feature, Postgres embedded, the
+                       dev tools); the default, the same as none of these
+      --enterprise     The Enterprise package, target/enterprise/moqui (every feature, databases external).
+                       docs/Build-Test.md lists the features of each'
 
 RUN_OPTIONS_HELP="$PACKAGE_OPTIONS_HELP"'
   -c, --conf FILE      Runtime conf merged over MoquiDefaultConf.xml (sets MOQUI_CONF); relative to
@@ -416,13 +416,13 @@ RUN_OPTIONS_HELP="$PACKAGE_OPTIONS_HELP"'
 
 help_build() {
     cat <<EOF
-Builds a moqui package with cargo in this repo (docs/Build-Test.md): the Dev package by default,
-or Lite, Debug, Maximal or Enterprise. Each has its own cargo profile, features and binary:
-  Dev         cargo build --profile develop --no-default-features -F dev -p moqui      target/develop/moqui
+Builds a moqui package with cargo in this repo (docs/Build-Test.md): the Maximal package with the
+dev tools by default, or Lite, Debug or Enterprise. Each has its own cargo profile, features and binary:
+  Maximal     cargo build --profile release --no-default-features -F maximal,devtools -p moqui
+                                                                                 target/release/moqui
   Lite        cargo build --profile lite --no-default-features -F lite -p moqui        target/lite/moqui
   Debug       cargo build --profile dev --no-default-features -F maximal,devtools -p moqui
                                                                                  target/debug/moqui
-  Maximal     cargo build --profile release --no-default-features -F maximal -p moqui  target/release/moqui
   Enterprise  cargo build --profile enterprise --no-default-features -F enterprise -p moqui
                                                                                  target/enterprise/moqui
 Other words go to cargo as they are. The tasks that run moqui (run, load, test, save-db, ...) build
@@ -431,9 +431,9 @@ the binary they need first, so it is never stale; --nobuild skips that when the 
 A component in runtime/component with a Cargo.toml beside its component.xml is a Rust crate: the
 build generates target/moqui-app, a crate that links those crates with the framework, and builds
 it to the same binary path. See runtime/component/README.md. A crate of a dev component in
-runtime/dev-component is linked only into the packages with the dev tools (Dev and Debug).
+runtime/dev-component is linked only into the packages with the dev tools (Maximal and Debug).
   ./moq build
-  ./moq build --release
+  ./moq build --lite
   ./moq build --enterprise -- --timings
 
 A build for distribution also strips psql from the bundled Postgres first; see README.md
@@ -608,7 +608,7 @@ This saves only the embedded database, not an external one set by entity_ds_db_c
 
 Options:
       --debug, --release
-                       Use the Debug or Maximal binary (default: the Dev package), built first
+                       Use the Debug or Maximal binary (default: Maximal), built first
       --nobuild        Skip that build. A binary that is not there is still built
       --skip-opensearch  Leave out the OpenSearch data
 EOF
@@ -624,7 +624,7 @@ must be stopped. The name defaults to "default".
 
 Options:
       --debug, --release
-                       Use the Debug or Maximal binary (default: the Dev package), built first
+                       Use the Debug or Maximal binary (default: Maximal), built first
       --nobuild        Skip that build. A binary that is not there is still built
       --skip-opensearch  Leave runtime/opensearch/data alone
 EOF
@@ -839,8 +839,8 @@ help_archive() {
     cat <<EOF
 Writes a zip, or with --tgz a gzipped tar, that expands to one directory named for the file
 without .zip or .tgz. That directory is a runtime directory with the binary in it:
-  moqui           the binary of the package asked for (the Dev package unless --lite, --debug,
-                  --release or --enterprise)
+  moqui           the binary of the package asked for (the Maximal package unless --lite, --debug
+                  or --enterprise)
   MoquiConf.xml   the instance conf, merged over the framework defaults: a copy of
                   conf/MoquiProductionConf.xml, or the --conf file
   README.txt      how to run it, the package, and what went in
@@ -1014,13 +1014,15 @@ parse_run_opts() {
     done
 }
 
-# The packages (docs/Build-Test.md): default (the Dev package), and lite, debug, release and enterprise from --lite,
-# --debug, --release and --enterprise. Each builds with its own cargo profile, so their artifacts and binaries stay
-# apart, and with the package feature of crates/moqui (or of the generated crate in target/moqui-app). The Dev
-# package's profile is develop, since dev is cargo's own debug profile, which the Debug package uses.
+# The packages (docs/Build-Test.md): release (the Maximal package with the dev tools, the default and --release), and
+# lite, debug and enterprise from --lite, --debug and --enterprise. Each builds with its own cargo profile, so their
+# artifacts and binaries stay apart, and with the package feature of crates/moqui (or of the generated crate in
+# target/moqui-app). The debug package's profile is dev, cargo's own debug profile.
+# The Dev package (default: the develop profile, -F dev, target/develop/moqui) is commented out: release is the default
+# now, with everything Dev had; likely to be removed.
 package_profile() {
     case $1 in
-        default) echo develop ;;
+        # default) echo develop ;;
         debug) echo dev ;;
         *) echo "$1" ;;
     esac
@@ -1028,10 +1030,10 @@ package_profile() {
 
 package_features() {
     case $1 in
-        default) echo dev ;;
+        # default) echo dev ;;
         lite) echo lite ;;
         debug) echo maximal,devtools ;;
-        release) echo maximal ;;
+        release) echo maximal,devtools ;;
         enterprise) echo enterprise ;;
     esac
 }
@@ -1039,7 +1041,7 @@ package_features() {
 # The profile's directory under target/: cargo puts the dev profile in target/debug.
 package_dir() {
     case $1 in
-        default) echo develop ;;
+        # default) echo develop ;;
         *) echo "$1" ;;
     esac
 }
@@ -1054,7 +1056,7 @@ binary_path() {
     printf '%s\n' "$ROOT/target/$(package_dir "$1")/moqui"
 }
 
-# cargo build for a package ($1: default, debug, release, or enterprise), with any more cargo arguments after it. With
+# cargo build for a package ($1: lite, debug, release, or enterprise), with any more cargo arguments after it. With
 # component crates in runtime/component (a Cargo.toml beside a component.xml) the binary is the generated crate in
 # target/moqui-app, which links them with the framework; without, it is crates/moqui. Either way it lands at
 # binary_path.
@@ -1201,7 +1203,7 @@ path = \"src/main.rs\"
 # The packages, as crates/moqui has them (docs/Build-Test.md). ./moq build picks one with --no-default-features.
 [features]
 default = [\"maximal\", \"devtools\"]
-dev = [\"moqui-host/dev\", \"tui\", \"devtools\"]
+# dev = [\"moqui-host/dev\", \"tui\", \"devtools\"]
 lite = [\"moqui-host/lite\", \"tui\"]
 enterprise = [\"moqui-host/enterprise\", \"tui\"]
 maximal = [\"moqui-host/maximal\", \"tui\"]
@@ -1254,9 +1256,9 @@ moqui_binary() {
     printf '%s\n' "$bin"
 }
 
-# The binary for the package asked for (--lite, --debug, --release, --enterprise), else the Dev package.
+# The binary for the package asked for (--lite, --debug, --release, --enterprise), else the Maximal package.
 any_binary() {
-    moqui_binary "${OPT_PACKAGE:-default}"
+    moqui_binary "${OPT_PACKAGE:-release}"
 }
 
 # MOQUI_CONF as an absolute path. A relative name is tried in the runtime directory, then from the caller's directory.
@@ -1310,7 +1312,7 @@ task_build() {
         esac
         shift
     done
-    build_binary "${OPT_PACKAGE:-default}" "${cargo_args[@]}"
+    build_binary "${OPT_PACKAGE:-release}" "${cargo_args[@]}"
 }
 
 # The Tauri CLI version the desktop app is built with: the tauri crate's version in crates/moqui-desktop/Cargo.toml.
@@ -1463,7 +1465,7 @@ stage_desktop_runtime() {
 task_run() {
     parse_run_opts run "$@"
     local bin
-    bin=$(moqui_binary "${OPT_PACKAGE:-default}") || exit 1
+    bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     apply_run_env ""
     exec_cmd "$bin" "${OPT_REST[@]}"
 }
@@ -1471,7 +1473,7 @@ task_run() {
 task_run_production() {
     parse_run_opts run "$@"
     local bin
-    bin=$(moqui_binary "${OPT_PACKAGE:-default}") || exit 1
+    bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     apply_run_env "$PRODUCTION_CONF"
     exec_cmd "$bin" "${OPT_REST[@]}"
 }
@@ -1479,7 +1481,7 @@ task_run_production() {
 task_test() {
     parse_run_opts test "$@"
     local bin
-    bin=$(moqui_binary "${OPT_PACKAGE:-default}") || exit 1
+    bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     apply_run_env ""
     exec_cmd "$bin" test "${OPT_REST[@]}"
 }
@@ -1495,7 +1497,7 @@ task_test_client() {
             webapp_http_port=*) server=(--server "http://localhost:${prop#webapp_http_port=}") ;;
         esac
     done
-    bin=$(moqui_binary "${OPT_PACKAGE:-default}") || exit 1
+    bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     exec_cmd "$bin" test-client "${server[@]}" "${OPT_REST[@]}"
 }
 
@@ -1587,7 +1589,7 @@ run_load() {
         [ -f "$location" ] || die "data file $OPT_LOCATION not found"
         flags+=("location=$location")
     fi
-    bin=$(moqui_binary "${OPT_PACKAGE:-default}") || exit 1
+    bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     apply_run_env "$conf"
     exec_cmd "$bin" load "${flags[@]}"
 }
@@ -3450,7 +3452,7 @@ archive_path() {
 
 package_name() {
     case $1 in
-        default) echo Default ;;
+        # default) echo Default ;;
         debug) echo Debug ;;
         release) echo Maximal ;;
         enterprise) echo Enterprise ;;
@@ -3575,7 +3577,7 @@ task_archive() {
     conf=$(resolve_conf "$conf") || exit 1
     [ -n "$no_data" ] || require_server_stopped archive
     local bin
-    bin=$(moqui_binary "${OPT_PACKAGE:-default}") || exit 1
+    bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
 
     # The archive's own files take the place of runtime entries with their names.
     local entry base
@@ -3629,7 +3631,7 @@ archive_write() {
         cp "$ROOT/LICENSE.md" "$dir/LICENSE.md" || die "could not stage $name"
         top+=("$name/LICENSE.md")
     fi
-    archive_readme "$dir/README.txt" "$name" "$bin" "${OPT_PACKAGE:-default}" "$conf" "${entries[@]}"
+    archive_readme "$dir/README.txt" "$name" "$bin" "${OPT_PACKAGE:-release}" "$conf" "${entries[@]}"
     local part=$out.part
     rm -f -- "$part"
     if [ -e "$out" ]; then

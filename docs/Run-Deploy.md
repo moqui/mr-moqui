@@ -30,7 +30,7 @@ You need Rust 1.98 or newer (`rustc --version`), git and bash, on Linux or macOS
 git clone https://github.com/moqui/mr-moqui.git
 cd mr-moqui
 ./moq component-get apps   # optional: Marble ERP (mr-marble) and IronStone BOSS (mr-boss), with Mantle (mr-mantle)
-./moq load                 # builds the Dev package the first time, then loads every data type, demo included
+./moq load                 # builds the Maximal package the first time, then loads every data type, demo included
 ./moq run                  # serves http://localhost:8080; ctrl-c stops it
 ```
 
@@ -129,13 +129,13 @@ by the prefix of each part (`./moq r-p` is `run-production`).
 | Run client specs against a server | `./moq test-client framework` | |
 | Archive the runtime with the binary | `./moq archive --release` | `./gradlew addRuntime` |
 | Remove the database, logs and old build output | `./moq clean-all` | `./gradlew cleanAll` |
-| Show the binary's package and features | `target/develop/moqui version` | |
+| Show the binary's package and features | `target/release/moqui version` | |
 
 ## Choose a topology
 
 | Topology | Use it for | Package | Database | Section |
 |---|---|---|---|---|
-| One dev instance | Developing on your machine | Dev (the default) | Embedded Postgres | [Quick start](#develop-on-your-machine) |
+| One dev instance | Developing on your machine | Maximal with the dev tools (the default) | Embedded Postgres | [Quick start](#develop-on-your-machine) |
 | One production server | One business or one site | Maximal (`--release`) | Embedded Postgres, or an external server | [One production server](#one-production-server) |
 | Cluster | More capacity, or a member that can fail | Enterprise (`--enterprise`) | One external Postgres for all members | [Cluster](#cluster) |
 | PASS servers with a BOSS server or cluster | Public sites (forum, members) with no business data on the public machines | PASS: any server package, Lite is the smallest. BOSS: Maximal or Enterprise | Each PASS server its own; BOSS its own | [PASS](#pass-servers-with-a-boss-server-or-cluster) |
@@ -326,7 +326,7 @@ The Java forms `port=N` and `conf=FILE` also work.
 
 `./moq run`, `run-production`, `load` and the other tasks that run the binary pass the arguments after their own
 options to it, so `./moq run lint --screens` is `moqui lint --screens` with the dev conf. Their package flags (`--lite`,
-`--debug`, `--release`, `--enterprise`) pick the binary, and no flag means the Dev package. They build first unless
+`--debug`, `--release`, `--enterprise`) pick the binary, and no flag means the Maximal package (the same as `--release`). They build first unless
 given `--nobuild`.
 
 `moqui load` arguments are `name=value` pairs. `./moq load` also takes bare words as data types.
@@ -1221,5 +1221,5 @@ mr-moqui/
   scripts/            pg-payload.sh, check-packages.sh, wasm-build.sh
   docs/               reference guides
   plans/              designs, status and reviews
-  target/             build output: target/develop/moqui, target/release/moqui, ...
+  target/             build output: target/release/moqui, target/lite/moqui, ...
 ```

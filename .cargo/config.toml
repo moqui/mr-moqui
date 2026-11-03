@@ -34,11 +34,11 @@ split-debuginfo = "unpacked"
 opt-level = 3
 debug = "line-tables-only"
 
-# The Maximal package (`./moq build --release`, docs/Build-Test.md).
+# The Maximal package with the dev tools (`./moq build`, the default, and --release; docs/Build-Test.md).
 [profile.release]
 panic = "unwind"
 
-# The Lite package (`./moq build --lite`), whose settings the Dev package's develop profile takes: optimized, so it serves and deploys as release does, with incremental builds of
+# The Lite package (`./moq build --lite`): optimized, so it serves and deploys as release does, with incremental builds of
 # the workspace and path crates (cargo applies `incremental` to those only) for a quick rebuild after an edit, and more
 # codegen units for them. Dependencies keep the release settings; they are built once.
 [profile.lite]
@@ -49,13 +49,14 @@ codegen-units = 256
 [profile.lite.package."*"]
 codegen-units = 16
 
-# The Dev package (`./moq build`, the default): the Lite package's settings in a profile of its own, so its binary is
-# target/develop/moqui beside Lite's. Named develop since dev is cargo's own debug profile, which the Debug package uses.
-[profile.develop]
-inherits = "lite"
-
-[profile.develop.package."*"]
-codegen-units = 16
+# The Dev package: the Lite package's settings in a profile of its own, so its binary is target/develop/moqui beside
+# Lite's. Named develop since dev is cargo's own debug profile, which the Debug package uses. Commented out: the
+# release build (Maximal with the dev tools) is the default now; likely to be removed.
+# [profile.develop]
+# inherits = "lite"
+#
+# [profile.develop.package."*"]
+# codegen-units = 16
 
 # The Enterprise package (`./moq build --enterprise`): release settings, in its own target/enterprise.
 [profile.enterprise]

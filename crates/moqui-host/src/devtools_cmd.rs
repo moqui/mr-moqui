@@ -692,7 +692,7 @@ mod tests {
         let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let framework = repo.join("runtime/base-component/framework");
         assert_eq!(
-            mr_framework_for(None, Some(&repo.join("target/develop/moqui")))
+            mr_framework_for(None, Some(&repo.join("target/release/moqui")))
                 .map(|dir| std::fs::canonicalize(dir).unwrap()),
             Some(std::fs::canonicalize(&framework).unwrap())
         );

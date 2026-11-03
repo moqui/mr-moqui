@@ -9,30 +9,30 @@ publish.workspace = true
 # The packages of moqui-host (docs/Build-Test.md). `./moq build` picks one with --no-default-features.
 [features]
 default = ["maximal", "devtools"]
-dev = ["moqui-host/dev", "devtools"]
+# The Dev package, commented out: the release build (Maximal with the dev tools) is the default now; likely to be
+# removed.
+# dev = ["moqui-host/dev", "devtools"]
 lite = ["moqui-host/lite"]
 enterprise = ["moqui-host/enterprise"]
 maximal = ["moqui-host/maximal"]
 # The SMTP listener for hosted and shared mail accounts (docs/interfaces/Mail-Inbound.md), in Enterprise and Maximal; for a
-# Default build `./moq build -- --features inbound-smtp`.
+# Lite build `./moq build --lite -- --features inbound-smtp`.
 inbound-smtp = ["moqui-host/inbound-smtp"]
-# Calls (crates/moqui-rtc), in Enterprise, Maximal and Debug; for a Default build `./moq build -- --features rtc`.
+# Calls (crates/moqui-rtc), in Enterprise, Maximal and Debug.
 rtc = ["moqui-host/rtc"]
 # Local speech to text (not built yet; off in every package).
 speech-local = ["moqui-host/speech-local"]
-# Phone calls (crates/moqui-sip), in Enterprise, Maximal and Debug; for a Default build `./moq build -- --features sip`.
+# Phone calls (crates/moqui-sip), in Enterprise, Maximal and Debug.
 sip = ["moqui-host/sip"]
-# Business messaging channels (crates/moqui-channels: SMS on Telnyx), in Enterprise and Maximal; for a Default build
-# `./moq build -- --features channels`.
+# Business messaging channels (crates/moqui-channels: SMS on Telnyx), in Enterprise and Maximal.
 channels = ["moqui-host/channels"]
-# XMPP for local users (crates/moqui-xmpp), in Enterprise, Maximal and Debug; for a Default build
-# `./moq build -- --features xmpp`.
+# XMPP for local users (crates/moqui-xmpp), in Enterprise, Maximal and Debug.
 xmpp = ["moqui-host/xmpp"]
-# The edge link (plans/Edge-Node.md), in Enterprise and Maximal; for a Default build `./moq build -- --features edge`.
+# The edge link (plans/Edge-Node.md), in Enterprise and Maximal.
 edge = ["moqui-host/edge"]
 # The terminal client (`moqui tui`), in every package.
 tui = ["moqui-host/tui"]
-# The dev tools (plans/design-dev-aide.md 3.3), in the Dev and Debug packages: the framework's file watcher and the
+# The dev tools (plans/design-dev-aide.md 3.3), in the Maximal (the `./moq build` default) and Debug packages: the framework's file watcher and the
 # dev-component crates kept in runtime/dev-component.
 devtools = ["moqui-host/devtools", "dep:dev-aide", "dep:example"]
 
