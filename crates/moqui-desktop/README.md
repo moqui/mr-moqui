@@ -77,6 +77,14 @@ bundled shell, which opens with no network; each account is a server and a user,
   REST login with `createLoginKey` and a `deviceName`, with the second factor's code when it asks. Sign out revokes the
   key (`/rest/logout` with `revokeLoginKey`); a 401, or `/notws` closing for authentication, has the host check the key
   and, if it no longer signs in, forget it and show the sign-in.
+- **Single sign-on:** the sign-in's "Single sign-on" lists the server's identity providers; one opens the system
+  browser at the server's `/sso/appLogin`, where the user signs in and lets the app in, and the server hands the browser
+  back to the app's own scheme, `org.moqui.desktop:/sso` (registered with the OS as the app's, beside `mailto:` and the
+  others, and on Linux by an AppImage or development run when it starts a sign-in; not claimed by "Make default"; on
+  macOS the app's bundle registers it, which is checked on the installed app only), with a code the app takes with its PKCE verifier for a device key. A hand-back
+  the app is not waiting for is passed over.
+- **Apps and devices:** the account menu lists the account's apps and devices signed in by a key of their own
+  (`/qapps/clientDevices`), each to sign out; so does My Account's Account page in BOSS.
 - **Key store:** the macOS Keychain or the Secret Service (`keyring`), else a file in `client/keys/` in the app's config
   directory that only the user can read, which the shell's account menu says. A development run uses the file unless
   `MOQUI_DESKTOP_KEY_STORE=os` (each build is a new unsigned binary the Keychain would ask about).
