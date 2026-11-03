@@ -29,6 +29,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
+use base64::Engine;
 use moqui_client::socket::{Event, Socket};
 use moqui_host::in_process::{LocalSocket, SocketEvent};
 use tauri::{AppHandle, Manager, Webview};
@@ -50,6 +51,17 @@ impl Held {
         match self {
             Self::Remote(socket) => socket.send(text),
             Self::Local(socket) => socket.send(text),
+        }
+    }
+
+    /// A binary frame: on the node in process only (the terminal's); a client's sockets carry text.
+    fn send_binary(&self, bytes: Vec<u8>) -> Result<(), String> {
+        match self {
+            Self::Remote(_) => Err("This socket carries text only".to_string()),
+            Self::Local(socket) => {
+                socket.send_binary(bytes);
+                Ok(())
+            }
         }
     }
 }
@@ -192,16 +204,25 @@ fn open_local(app: &AppHandle, local: &Local, webview: &Webview, path: &str) -> 
     }
     let sink_app = app.clone();
     let sink = Box::new(move |event: SocketEvent| {
-        let event = match event {
-            SocketEvent::Open => Event::Open,
-            SocketEvent::Text(text) => Event::Text(text),
-            SocketEvent::Closed => Event::Closed,
-            SocketEvent::Unauthorized => Event::Revoked,
+        let (event, json) = match event {
+            // the terminal's bytes, in base64 for the page
+            SocketEvent::Binary(bytes) => {
+                let data = base64::engine::general_purpose::STANDARD.encode(bytes);
+                (
+                    Event::Text(String::new()),
+                    serde_json::json!({ "kind": "binary", "data": data }),
+                )
+            }
+            SocketEvent::Open => (Event::Open, event_json(&Event::Open)),
+            SocketEvent::Text(text) => {
+                let event = Event::Text(text);
+                let json = event_json(&event);
+                (event, json)
+            }
+            SocketEvent::Closed => (Event::Closed, event_json(&Event::Closed)),
+            SocketEvent::Unauthorized => (Event::Revoked, event_json(&Event::Revoked)),
         };
-        let script = format!(
-            "window.__moquiSocketEvent && window.__moquiSocketEvent({id}, {})",
-            event_json(&event)
-        );
+        let script = format!("window.__moquiSocketEvent && window.__moquiSocketEvent({id}, {json})");
         if let Some(window) = sink_app.get_webview_window("main") {
             let _ = window.eval(script);
         }
@@ -225,19 +246,34 @@ fn with_sockets<T>(app: &AppHandle, work: impl FnOnce(&Sockets) -> T) -> Option<
     app.try_state::<Sockets>().map(|sockets| work(&sockets))
 }
 
-/// Send a text frame on one of the page's sockets.
+/// Send a frame on one of the page's sockets: `text`, or with `binary` its bytes in base64.
 #[tauri::command]
-pub(crate) fn socket_send(app: AppHandle, webview: Webview, id: u64, text: String) -> Result<(), String> {
+pub(crate) fn socket_send(
+    app: AppHandle,
+    webview: Webview,
+    id: u64,
+    text: String,
+    binary: Option<bool>,
+) -> Result<(), String> {
     if text.len() > FRAME_MAX {
         return Err("The frame is too long".to_string());
     }
+    let bytes = if binary == Some(true) {
+        let decoded = base64::engine::general_purpose::STANDARD.decode(text.as_bytes());
+        Some(decoded.map_err(|_| "The frame is not base64".to_string())?)
+    } else {
+        None
+    };
     with_sockets(&app, |sockets| {
         let open = moqui_lib::sync::lock(&sockets.open);
         match open.get(&id) {
-            Some((owner, socket)) if owner == webview.label() => {
-                socket.send(text);
-                Ok(())
-            }
+            Some((owner, socket)) if owner == webview.label() => match bytes {
+                Some(bytes) => socket.send_binary(bytes),
+                None => {
+                    socket.send(text);
+                    Ok(())
+                }
+            },
             _ => Err("No such socket".to_string()),
         }
     })

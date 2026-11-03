@@ -63,6 +63,8 @@ pub struct Answer {
 pub enum SocketEvent {
     Open,
     Text(String),
+    /// A binary frame (the terminal's, `/termws`).
+    Binary(Vec<u8>),
     /// Closed, by the server or because it stopped.
     Closed,
     /// Refused at the handshake (401: no session), or closed for authentication (1008).
@@ -74,14 +76,19 @@ pub type SocketSink = Box<dyn Fn(SocketEvent) + Send + Sync>;
 
 /// A socket held in process. Dropping it closes the socket.
 pub struct LocalSocket {
-    outbox: tokio::sync::mpsc::UnboundedSender<String>,
+    outbox: tokio::sync::mpsc::UnboundedSender<tungstenite::Message>,
     _close: tokio::sync::oneshot::Sender<()>,
 }
 
 impl LocalSocket {
     /// Send a text frame; one sent after the socket closed is dropped.
     pub fn send(&self, text: String) {
-        let _ = self.outbox.send(text);
+        let _ = self.outbox.send(tungstenite::Message::Text(text.into()));
+    }
+
+    /// Send a binary frame; one sent after the socket closed is dropped.
+    pub fn send_binary(&self, bytes: Vec<u8>) {
+        let _ = self.outbox.send(tungstenite::Message::Binary(bytes.into()));
     }
 }
 
@@ -181,7 +188,7 @@ impl InProcess {
             exporter: None,
         };
         live.handle.spawn(run_connection(server, false, serving));
-        let (outbox, mut queued) = tokio::sync::mpsc::unbounded_channel::<String>();
+        let (outbox, mut queued) = tokio::sync::mpsc::unbounded_channel::<tungstenite::Message>();
         let (close, mut closed) = tokio::sync::oneshot::channel::<()>();
         live.handle.spawn(async move {
             let mut socket = match tokio_tungstenite::client_async(request, client).await {
@@ -203,13 +210,14 @@ impl InProcess {
                         let _ = socket.close(None).await;
                         return;
                     }
-                    Some(text) = queued.recv() => {
-                        if socket.send(tungstenite::Message::Text(text.into())).await.is_err() {
+                    Some(message) = queued.recv() => {
+                        if socket.send(message).await.is_err() {
                             break SocketEvent::Closed;
                         }
                     }
                     frame = socket.next() => match frame {
                         Some(Ok(tungstenite::Message::Text(text))) => sink(SocketEvent::Text(text.as_str().to_string())),
+                        Some(Ok(tungstenite::Message::Binary(bytes))) => sink(SocketEvent::Binary(bytes.to_vec())),
                         Some(Ok(tungstenite::Message::Close(frame))) => {
                             let auth = frame.is_some_and(|frame| {
                                 u16::from(frame.code) == 1008 && frame.reason.as_str().contains("authentication")

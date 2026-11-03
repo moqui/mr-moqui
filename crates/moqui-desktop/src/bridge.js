@@ -87,6 +87,12 @@
             if (this.onopen) this.onopen({ type: "open" });
         } else if (event.kind === "text") {
             if (this.onmessage) this.onmessage({ type: "message", data: event.text });
+        } else if (event.kind === "binary") {
+            // the terminal's bytes (the node in process), in base64 from the host; as binaryType arraybuffer
+            const raw = atob(String(event.data || ""));
+            const bytes = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+            if (this.onmessage) this.onmessage({ type: "message", data: bytes.buffer });
         } else this.ended(event.kind === "revoked" ? 1008 : 1006);
     };
     HostSocket.prototype.ended = function (code) {
@@ -97,6 +103,13 @@
     };
     HostSocket.prototype.send = function (data) {
         if (this.readyState !== 1 || this.id === null) throw new Error("The socket is not open");
+        if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+            const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+            let raw = "";
+            for (let i = 0; i < bytes.length; i += 0x8000) raw += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+            invoke("socket_send", { id: this.id, text: btoa(raw), binary: true });
+            return;
+        }
         invoke("socket_send", { id: this.id, text: String(data) });
     };
     HostSocket.prototype.close = function () {

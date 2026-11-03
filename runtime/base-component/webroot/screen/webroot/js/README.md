@@ -85,7 +85,9 @@ the server. So `window.moquiDesktop` may also have:
 
 - `socket(url)`: a socket-like object the host holds for `/notws` and `/callws` (text frames), which
   `moqui.openSocket(url)` returns in place of a WebSocket (the notification client and the call guest use it; the html
-  mode's notification socket calls `moquiDesktop.socket` itself; the terminal's `/termws` does not connect in a client);
+  mode's notification socket calls `moquiDesktop.socket` itself; the terminal's `/termws` does not connect in a client).
+  The node the app runs in its own process, on its app scheme with no port, has `socket` too, for `/notws`, `/callws`
+  and `/termws`, whose binary frames it carries as an `ArrayBuffer` (and takes one, or a typed array, to send);
 - `storageScope`: what `moqui.scopedKey(key)` puts browser storage keys of a server's data under (the chat outbox,
   the crypto device and store, drafts); `moqui.storageScope` set to a string is used instead. Empty on the web.
 

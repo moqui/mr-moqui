@@ -52,12 +52,13 @@ fn app() -> (tokio::runtime::Runtime, InProcess, tokio::sync::watch::Sender<bool
                     return axum::http::StatusCode::UNAUTHORIZED.into_response();
                 }
                 upgrade.on_upgrade(|mut socket| async move {
-                    while let Some(Ok(Message::Text(text))) = socket.recv().await {
-                        if socket
-                            .send(Message::Text(format!("echo {}", text.as_str()).into()))
-                            .await
-                            .is_err()
-                        {
+                    while let Some(Ok(message)) = socket.recv().await {
+                        let echo = match message {
+                            Message::Text(text) => Message::Text(format!("echo {}", text.as_str()).into()),
+                            Message::Binary(bytes) => Message::Binary(bytes),
+                            _ => return,
+                        };
+                        if socket.send(echo).await.is_err() {
                             return;
                         }
                     }
@@ -123,6 +124,8 @@ fn a_socket_in_process_opens_echoes_and_is_refused_without_a_session() {
     assert_eq!(next(), SocketEvent::Open);
     socket.send("hello".to_string());
     assert_eq!(next(), SocketEvent::Text("echo hello".to_string()));
+    socket.send_binary(vec![0, 159, 255]);
+    assert_eq!(next(), SocketEvent::Binary(vec![0, 159, 255]));
     drop(socket);
 
     let (events, heard) = std::sync::mpsc::channel();
