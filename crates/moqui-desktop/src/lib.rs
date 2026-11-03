@@ -23,6 +23,7 @@
 mod backup;
 mod bridge;
 mod client;
+mod download;
 mod node;
 mod os;
 mod runtime_dir;
