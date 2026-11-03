@@ -442,7 +442,7 @@ and token name without its prefix (`primary`, `page-bg`, ...).
   - In dark mode, `panel-bg` and `page-bg` are also `--q-dark` and `--q-dark-page`, which Quasar's dark components use.
   - A name or value with a character that could end its declaration is logged and left out.
 - The scheme's `extraCss` comes after the colors, for what is not a color. An administrator writes it; nothing a user enters goes there.
-- `WebrootQuasarThemeData.xml` seeds Default (no colors), Slate, Forest, Warm, High Contrast, Ocean, Indigo, Crimson, Teal, Graphite, OpenStep (the NeXTSTEP/OpenStep look, with a charcoal dark mode), Windows 11 (the Fluent look, with the dark Mica mode), Plasma (the KDE Plasma/Breeze look, with the Breeze dark mode) and Rainbow (the pride flag, with the flag-over-charcoal dark mode) for `DEFAULT_QUASAR`.
+- `WebrootQuasarThemeData.xml` seeds Default (no colors), Slate, Forest, Warm, High Contrast, Ocean, Indigo, Crimson, Teal, Graphite, OpenStep (the NeXTSTEP/OpenStep look, with a charcoal dark mode), Windows 11 (the Fluent look, with the dark Mica mode), Plasma (the KDE Plasma/Breeze look, with the Breeze dark mode), Rainbow (the pride flag, with the flag-over-charcoal dark mode) and Lab (the Moqui Labs neon look, with the brand's dark header in light mode) for `DEFAULT_QUASAR`.
 - The fonts are `ScreenFontOption` rows: a sans, serif or mono kind, a `font-family` stack and an optional style sheet.
 - The user's per-color overrides are edited in BOSS Preferences › Appearance (the Accent, Surfaces, Text, Lines and Brand colors sections); the framework's Appearance dialog keeps the scheme and the accent colors.
 

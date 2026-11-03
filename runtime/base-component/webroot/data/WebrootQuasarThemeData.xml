@@ -488,6 +488,48 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.screen.ScreenColorSchemeColor colorSchemeId="RAINBOW" colorModeEnumId="SCM_DARK" colorName="border" colorValue="#3d3d44"/>
     <moqui.screen.ScreenColorSchemeColor colorSchemeId="RAINBOW" colorModeEnumId="SCM_DARK" colorName="divider" colorValue="#333338"/>
 
+    <!-- Lab: the Moqui Labs look (moquilabs.com): the near-black surfaces with the hot pink and cyan neon, the dark header with its
+         pink-to-cyan underline and glow, the neon wash on the page, the glowing primary buttons, the pink selection with the cyan
+         focus, and Orbitron headings with Barlow body text (the font options load them); the light mode keeps the brand's dark header. -->
+    <moqui.screen.ScreenColorScheme colorSchemeId="LAB" screenThemeId="DEFAULT_QUASAR" sequenceNum="15" description="Lab"
+            extraCss="body { --m-font-heading:&quot;Orbitron&quot;, &quot;Barlow&quot;, system-ui, sans-serif; --m-font-body:&quot;Barlow&quot;, system-ui, sans-serif; } #top { border-bottom:2px solid transparent; background:linear-gradient(var(--m-header-bg),var(--m-header-bg)) padding-box,linear-gradient(90deg,#ff0080,#b44cff 50%,#00ffff) border-box !important; box-shadow:0 2px 18px rgba(255,0,128,.25) !important; } body:not(.body--dark) { background:radial-gradient(900px 300px at 15% -80px,rgba(212,0,110,.1),transparent),radial-gradient(900px 300px at 85% -80px,rgba(0,143,176,.1),transparent),var(--m-page-bg) !important; } body:not(.body--dark) .q-page { background:radial-gradient(900px 300px at 15% -80px,rgba(212,0,110,.1),transparent),radial-gradient(900px 300px at 85% -80px,rgba(0,143,176,.1),transparent),var(--m-page-bg) !important; } body.body--dark { background:radial-gradient(900px 300px at 15% -80px,rgba(255,0,128,.14),transparent),radial-gradient(900px 300px at 85% -80px,rgba(0,255,255,.1),transparent),var(--m-page-bg) !important; } body:not(.body--dark) :is(.q-btn.bg-primary, .q-btn--primary):not(.q-btn--flat):not(.q-btn--round) { background-image:linear-gradient(135deg,#d4006e,#7b2ff7) !important; box-shadow:0 0 12px rgba(212,0,110,.4) !important; } body.body--dark :is(.q-btn.bg-primary, .q-btn--primary):not(.q-btn--flat):not(.q-btn--round) { background-image:linear-gradient(135deg,#ff0080,#b44cff) !important; box-shadow:0 0 12px rgba(255,0,128,.45) !important; } body .m-drawer &gt; .q-item.m-drawer-current { background:color-mix(in srgb,var(--q-primary) 14%,var(--m-drawer-bg)) !important; box-shadow:inset 3px 0 0 var(--q-primary) !important; } body .m-drawer &gt; .q-item.m-drawer-on-path { background:color-mix(in srgb,var(--q-secondary) 10%,var(--m-drawer-bg)) !important; } body .q-table tbody tr.selected td { background:color-mix(in srgb,var(--q-primary) 12%,var(--m-panel-bg)) !important; } body .q-table tbody tr.selected td:after { content:none !important; } body :is(.q-item.q-item--active, .q-item.q-router-link--active) { background:color-mix(in srgb,var(--q-primary) 12%,var(--m-panel-bg)) !important; } body :focus-visible { outline:2px solid var(--q-secondary) !important; outline-offset:1px; } body :is(h1, .text-h1) { text-shadow:0 0 14px color-mix(in srgb,var(--q-primary) 40%,transparent); }"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="primary" colorValue="#d4006e"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="secondary" colorValue="#0090b0"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="accent" colorValue="#7b2ff7"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="positive" colorValue="#009e60"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="negative" colorValue="#e62449"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="info" colorValue="#0083c9"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="warning" colorValue="#e68a00"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="page-bg" colorValue="#f5f5fa"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="panel-bg" colorValue="#ffffff"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="header-bg" colorValue="#0a0a0f"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="header-fg" colorValue="#ffffff"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="drawer-bg" colorValue="#fbfbfe"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="text" colorValue="#16161e"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="text-muted" colorValue="#5c5c6e"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="link" colorValue="#0087a8"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="negative-text" colorValue="#c21f45"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="border" colorValue="#d8d8e4"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_LIGHT" colorName="divider" colorValue="#e4e4ee"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="primary" colorValue="#ff0080"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="secondary" colorValue="#00c8d8"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="accent" colorValue="#b44cff"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="positive" colorValue="#00e676"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="negative" colorValue="#ff1744"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="info" colorValue="#00b0ff"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="warning" colorValue="#ffab00"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="page-bg" colorValue="#0a0a0f"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="panel-bg" colorValue="#12121a"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="header-bg" colorValue="#0d0d14"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="header-fg" colorValue="#f2f2f7"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="drawer-bg" colorValue="#0e0e15"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="text" colorValue="#f2f2f7"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="text-muted" colorValue="#8a8a99"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="link" colorValue="#00ffff"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="negative-text" colorValue="#ff5c7a"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="border" colorValue="#2a2a38"/>
+    <moqui.screen.ScreenColorSchemeColor colorSchemeId="LAB" colorModeEnumId="SCM_DARK" colorName="divider" colorValue="#22222e"/>
+
     <!-- Fonts a user may choose (THEME_FONT_BODY, THEME_FONT_HEADING, THEME_FONT_MONO); without a choice the style sheet's Roboto
          and system mono stacks. The web fonts load from Google Fonts, as the theme's Roboto does. -->
     <moqui.screen.ScreenFontOption fontOptionId="SYSTEM_SANS" fontKindEnumId="SFK_SANS" sequenceNum="1" description="System"
@@ -504,6 +546,12 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.screen.ScreenFontOption fontOptionId="ATKINSON" fontKindEnumId="SFK_SANS" sequenceNum="5" description="Atkinson Hyperlegible (easy to read)"
             fontFamily="&quot;Atkinson Hyperlegible&quot;, system-ui, sans-serif"
             stylesheetLocation="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400;1,700&amp;display=swap"/>
+    <moqui.screen.ScreenFontOption fontOptionId="ORBITRON" fontKindEnumId="SFK_SANS" sequenceNum="6" description="Orbitron (the Lab scheme's headings)"
+            fontFamily="&quot;Orbitron&quot;, system-ui, sans-serif"
+            stylesheetLocation="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;700;900&amp;display=swap"/>
+    <moqui.screen.ScreenFontOption fontOptionId="BARLOW" fontKindEnumId="SFK_SANS" sequenceNum="7" description="Barlow (the Lab scheme's text)"
+            fontFamily="&quot;Barlow&quot;, system-ui, sans-serif"
+            stylesheetLocation="https://fonts.googleapis.com/css2?family=Barlow:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&amp;display=swap"/>
     <moqui.screen.ScreenFontOption fontOptionId="SYSTEM_SERIF" fontKindEnumId="SFK_SERIF" sequenceNum="11" description="System Serif"
             fontFamily="Georgia, Cambria, &quot;Times New Roman&quot;, serif"/>
     <moqui.screen.ScreenFontOption fontOptionId="MERRIWEATHER" fontKindEnumId="SFK_SERIF" sequenceNum="12" description="Merriweather"
