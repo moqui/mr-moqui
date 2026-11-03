@@ -77,7 +77,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <pre-actions><script><![CDATA[
         // if user not logged in save current path and params then redirect to Login
-        if (!ec.user.userId) { ec.web.saveScreenLastInfo(null, null); sri.sendRedirectAndStopRender('/Login') }
+        if (!ec.user.userId) { ec.web.saveScreenLastInfo(null, null); sri.sendRedirectAndStopRender('/Login'); return }
 
         // The libraries and the client, in the order they load. footer_scripts is written by Footer.html.fancy after the page.
         // vue.global.prod.js is the build with the template compiler, which server-merged qvt and the string templates of the m-* components need
