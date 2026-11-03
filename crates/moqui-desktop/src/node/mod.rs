@@ -41,17 +41,20 @@ pub(crate) enum Mode {
     InProcess,
     /// The `moqui` binary, a child of the app.
     Sidecar,
+    /// No node here: a client of a remote server (`src/client/`, plans/Mobile-Desktop.md configuration 3).
+    Client,
 }
 
 /// The file in the app's config directory that keeps the mode chosen from the tray.
 pub(crate) const MODE_FILE: &str = "node-mode";
 
 impl Mode {
-    /// `sidecar` or `in-process`, as in `MOQUI_DESKTOP_NODE` and the mode file.
+    /// `sidecar`, `in-process` or `client`, as in `MOQUI_DESKTOP_NODE` and the mode file.
     pub(crate) fn parse(text: &str) -> Option<Self> {
         match text.trim() {
             "sidecar" => Some(Self::Sidecar),
             "in-process" => Some(Self::InProcess),
+            "client" => Some(Self::Client),
             _ => None,
         }
     }
@@ -60,14 +63,15 @@ impl Mode {
         match self {
             Self::InProcess => "in-process",
             Self::Sidecar => "sidecar",
+            Self::Client => "client",
         }
     }
 
-    /// The other mode, which the tray item switches to.
+    /// The other node mode, which the tray's node item switches to; from the client, the node in process.
     pub(crate) fn other(self) -> Self {
         match self {
             Self::InProcess => Self::Sidecar,
-            Self::Sidecar => Self::InProcess,
+            Self::Sidecar | Self::Client => Self::InProcess,
         }
     }
 
@@ -76,6 +80,7 @@ impl Mode {
         match self {
             Self::InProcess => "Node: in process",
             Self::Sidecar => "Node: sidecar",
+            Self::Client => "Client of a server",
         }
     }
 
@@ -88,7 +93,7 @@ impl Mode {
             };
             match Self::parse(text) {
                 Some(mode) => return mode,
-                None => tracing::warn!("{source} is {text:?}, not sidecar or in-process; it is passed over"),
+                None => tracing::warn!("{source} is {text:?}, not sidecar, in-process or client; it is passed over"),
             }
         }
         Self::InProcess
@@ -107,7 +112,15 @@ pub(crate) fn mode_of_run(config_dir: &Path) -> Mode {
 ///
 /// Returns an error when the mode file cannot be written.
 pub(crate) fn switch_mode(config_dir: &Path, current: Mode) -> std::io::Result<Mode> {
-    let next = current.other();
+    switch_to(config_dir, current.other())
+}
+
+/// Keep `next` in the mode file in `config_dir`, for the next start: the tray's client item.
+///
+/// # Errors
+///
+/// Returns an error when the mode file cannot be written.
+pub(crate) fn switch_to(config_dir: &Path, next: Mode) -> std::io::Result<Mode> {
     save_mode(&config_dir.join(MODE_FILE), next)?;
     if std::env::var_os("MOQUI_DESKTOP_NODE").is_some_and(|value| !value.is_empty()) {
         tracing::warn!("MOQUI_DESKTOP_NODE is set, and the next start takes it over the {MODE_FILE} file");
@@ -154,6 +167,7 @@ impl Node {
         match mode {
             Mode::InProcess => in_process::Node::start(runtime, port, properties, events).map(Self::InProcess),
             Mode::Sidecar => sidecar::Node::start(&runtime, port, &properties, events).map(Self::Sidecar),
+            Mode::Client => Err(std::io::Error::other("a client of a server runs no node")),
         }
     }
 

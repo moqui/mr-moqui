@@ -31,6 +31,12 @@ devtools = ["moqui-app/devtools"]
 moqui-app = { path = "../../target/moqui-app", default-features = false }
 moqui-host = { path = "../moqui-host", default-features = false }
 moqui-lib = { path = "../moqui-lib" }
+# The client of a remote server (src/client/, plans/Mobile-Desktop.md configuration 3): accounts, sign-in, the proxy and
+# the sockets.
+moqui-client = { path = "../moqui-client" }
+# The client's device keys in the OS key store (src/client/keystore.rs): the Keychain on macOS, the Secret Service on
+# Linux (over zbus with its own executor, async-io, so it answers from any thread, the main one too; no libdbus).
+keyring = { version = "3", features = ["apple-native", "windows-native", "async-secret-service", "async-io", "crypto-rust"] }
 moqui-core = { path = "../moqui-core", default-features = false }
 # Backup names and the last backup's time (src/backup.rs), as the framework's.
 jiff = "0.2"

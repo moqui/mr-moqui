@@ -16,9 +16,13 @@
 //! (plans/Mobile-Desktop.md, configuration 2, first stage). The window opens on a splash page, then goes to the node's
 //! `/qapps` on its loopback port, a browser session on the node's own origin as on the web. Closing the window hides it
 //! to the tray; quitting stops the node and its Postgres before the process ends.
+//!
+//! In the `client` mode (configuration 3, [`client`]) there is no node here: the window is the bundled shell of a
+//! client of a remote server.
 
 mod backup;
 mod bridge;
+mod client;
 mod node;
 mod os;
 mod runtime_dir;
@@ -64,14 +68,24 @@ pub fn run() {
     }
     let context = tauri::generate_context!();
     let builder = updates::setup(
-        bridge::setup(tauri::Builder::default().runtime(cef())),
+        client::register(bridge::setup(tauri::Builder::default().runtime(cef()))),
         context.config(),
     );
     let app = builder.manage(NodeState::default()).setup(|app| {
         let handle = app.handle().clone();
+        let mode = node::mode_of_run(&handle.path().app_config_dir()?);
+        if mode == node::Mode::Client {
+            install_logging();
+            client::start(&handle)?;
+            bridge::client_started(&handle);
+            tray(&handle, mode)?;
+            os::setup(&handle);
+            os::client_started();
+            return Ok(());
+        }
         let origin = Arc::clone(&handle.state::<NodeState>().origin);
         main_window(&handle, &origin)?;
-        tray(&handle)?;
+        tray(&handle, mode)?;
         os::setup(&handle);
         start_node(&handle)?;
         backup::refresh_last(&handle);
@@ -96,6 +110,11 @@ pub fn run() {
                 let _ = window.hide();
             }
         }
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::Destroyed,
+            ..
+        } if label.starts_with("remote-") => client::window_closed(app, &label),
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => show_main(app),
         RunEvent::Opened { urls } => os::opened(app, urls),
@@ -191,7 +210,7 @@ fn is_external(url: &Url, node: Option<&Url>, app: &Url) -> bool {
     }
 }
 
-fn open_externally(url: &Url) {
+pub(crate) fn open_externally(url: &Url) {
     #[cfg(target_os = "macos")]
     let opener = "open";
     #[cfg(not(target_os = "macos"))]
@@ -201,7 +220,7 @@ fn open_externally(url: &Url) {
     }
 }
 
-fn show_main(app: &AppHandle) {
+pub(crate) fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
         let _ = window.unminimize();
@@ -210,16 +229,29 @@ fn show_main(app: &AppHandle) {
 }
 
 /// The tray icon: Show brings the window back, Restart node stops and starts the node, the node item switches its
-/// mode, Quit stops the node and quits.
-fn tray(app: &AppHandle) -> tauri::Result<()> {
+/// mode, the client item makes the app a client of a server (or a node again), Quit stops the node and quits. A client
+/// has no node items and no backups.
+fn tray(app: &AppHandle, mode: node::Mode) -> tauri::Result<()> {
     let show = MenuItem::with_id(app, "show", "Show MR Moqui", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let restart_node = MenuItem::with_id(app, "restart-node", "Restart node", true, None::<&str>)?;
-    let node_mode = node_mode_item(app)?;
-    let menu = Menu::with_items(app, &[&show, &restart_node, &node_mode, &quit])?;
+    let client_label = if mode == node::Mode::Client {
+        "Use the node on this computer"
+    } else {
+        "Use as a client of a server"
+    };
+    let client_mode = MenuItem::with_id(app, "client-mode", client_label, true, None::<&str>)?;
+    let menu = if mode == node::Mode::Client {
+        Menu::with_items(app, &[&show, &client_mode, &quit])?
+    } else {
+        let restart_node = MenuItem::with_id(app, "restart-node", "Restart node", true, None::<&str>)?;
+        let node_mode = node_mode_item(app)?;
+        Menu::with_items(app, &[&show, &restart_node, &node_mode, &client_mode, &quit])?
+    };
     os::add_tray_items(app, &menu)?;
     updates::add_tray_item(app, &menu)?;
-    backup::add_tray_items(app, &menu)?;
+    if mode != node::Mode::Client {
+        backup::add_tray_items(app, &menu)?;
+    }
     let mut tray = TrayIconBuilder::with_id("main")
         .tooltip("MR Moqui")
         .menu(&menu)
@@ -227,6 +259,7 @@ fn tray(app: &AppHandle) -> tauri::Result<()> {
             "show" => show_main(app),
             "restart-node" => restart(app),
             "node-mode" => switch_node_mode(app),
+            "client-mode" => switch_client_mode(app),
             updates::ITEM => updates::chosen(app),
             "quit" => app.exit(0),
             id => {
@@ -262,6 +295,37 @@ fn switch_node_mode(app: &AppHandle) {
     }
 }
 
+/// Make the app a client of a server, or from a client a node in process, from the next start; restart into it.
+fn switch_client_mode(app: &AppHandle) {
+    let switched = app
+        .path()
+        .app_config_dir()
+        .map_err(|err| err.to_string())
+        .and_then(|dir| {
+            let next = match node::mode_of_run(&dir) {
+                node::Mode::Client => node::Mode::InProcess,
+                node::Mode::InProcess | node::Mode::Sidecar => node::Mode::Client,
+            };
+            node::switch_to(&dir, next).map_err(|err| err.to_string())
+        });
+    match switched {
+        Ok(mode) => {
+            tracing::info!("Restarting as {}", mode.as_str());
+            app.request_restart();
+        }
+        Err(err) => tracing::error!("Could not switch to or from the client: {err}"),
+    }
+}
+
+/// The app's log: to the console too in a development run.
+fn install_logging() {
+    if tauri::is_dev() {
+        moqui_host::logging::install();
+    } else {
+        moqui_host::logging::install_without_console();
+    }
+}
+
 /// Find the runtime, pick the port and boot the node; the window goes to the node once it listens, or shows why not.
 fn start_node(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let paths = app.path();
@@ -273,11 +337,7 @@ fn start_node(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         &paths.resource_dir()?,
         &paths.app_data_dir()?,
     );
-    if dev {
-        moqui_host::logging::install();
-    } else {
-        moqui_host::logging::install_without_console();
-    }
+    install_logging();
     let runtime = match location.prepare() {
         Ok(runtime) => runtime,
         Err(err) => {
@@ -365,6 +425,10 @@ fn launch_node(app: &AppHandle, start: NodeStart) {
 /// that booted, or tried to, is restarted with the app: the framework is booted once per process. A node that never
 /// got as far as starting (no runtime, a server on its port) is looked for again from the start.
 fn restart(app: &AppHandle) {
+    // a client of a server has no node (the splash page's command is granted to the main window's local pages)
+    if client::active(app) {
+        return;
+    }
     let state = app.state::<NodeState>();
     if state.restarting.swap(true, Ordering::SeqCst) {
         return;

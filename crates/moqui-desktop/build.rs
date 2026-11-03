@@ -17,7 +17,8 @@
 //! The app manifest names the page bridge's commands (src/bridge.rs). With it every app command is checked against
 //! the ACL, also from the app's own pages, and gets an `allow-<command>` permission (`_` as `-`); only the capability
 //! the bridge adds at run time grants them. `restart_node` is the splash page's: `capabilities/splash.json` grants it
-//! to the app's own pages, never to the node's origin.
+//! to the app's own pages, never to the node's origin. The `client_` and `socket_` commands are the client's
+//! (src/client/): its capabilities grant the shell's origin both and an app window's origin the sockets only.
 
 fn main() {
     let manifest = tauri_build::AppManifest::new().commands(&[
@@ -26,6 +27,17 @@ fn main() {
         "set_presence",
         "open_external",
         "restart_node",
+        "client_state",
+        "client_sign_in",
+        "client_send_code",
+        "client_sign_out",
+        "client_switch_account",
+        "client_add_account",
+        "client_remove_account",
+        "client_open_remote",
+        "socket_open",
+        "socket_send",
+        "socket_close",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("the Tauri build steps failed");

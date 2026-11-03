@@ -59,7 +59,9 @@ fn the_mode_is_the_variable_then_the_file_then_in_process() {
         "a bad variable is passed over"
     );
     assert_eq!(Mode::choose(None, Some("junk")), Mode::InProcess);
-    for mode in [Mode::InProcess, Mode::Sidecar] {
+    assert_eq!(Mode::choose(Some("client"), Some("sidecar")), Mode::Client);
+    assert_eq!(Mode::Client.other(), Mode::InProcess);
+    for mode in [Mode::InProcess, Mode::Sidecar, Mode::Client] {
         assert_eq!(Mode::parse(mode.as_str()), Some(mode));
         assert_ne!(mode.other(), mode);
     }

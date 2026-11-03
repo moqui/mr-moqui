@@ -384,6 +384,8 @@ fn take_backup(app: &AppHandle, start: &NodeStart, kind: &str) -> Result<PathBuf
         Mode::Sidecar => run_moqui(&node::moqui_binary()?, false, &start.runtime, &partial),
         Mode::InProcess => moqui_host::db::embedded::save_db(&start.runtime, &cluster_dir(&start.runtime), &partial)
             .map_err(|err| err.to_string()),
+        // a client has no node and no backups: its tray has no Backups menu
+        Mode::Client => Err("a client of a server has no database to back up".to_string()),
     };
     let published = dumped.and_then(|()| {
         std::fs::rename(&partial, &path).map_err(|err| format!("could not name the dump {}: {err}", path.display()))
@@ -482,6 +484,7 @@ fn folder_chosen(app: &AppHandle, chosen: PathBuf) {
         Mode::InProcess => moqui_lib::env::set_property(DIR_PROPERTY, chosen.display().to_string()),
         // the sidecar has its properties from its command line: it starts again with the new one
         Mode::Sidecar => crate::restart(app),
+        Mode::Client => {}
     }
     notify(app, "Backups go to", Some(&chosen.display().to_string()));
     refresh_last(app);
@@ -605,6 +608,7 @@ fn restore(app: &AppHandle, dump: &Path) {
             Err(_) => moqui_host::db::embedded::load_save(&start.runtime, &cluster_dir(&start.runtime), dump)
                 .map_err(|err| err.to_string()),
         },
+        Mode::Client => Err("a client of a server has no database to restore".to_string()),
     };
     match &restored {
         Ok(()) => {
@@ -627,6 +631,7 @@ fn restore(app: &AppHandle, dump: &Path) {
         }
         // the framework boots once per process: the app starts again
         Mode::InProcess => app.request_restart(),
+        Mode::Client => state.restarting.store(false, Ordering::SeqCst),
     }
 }
 

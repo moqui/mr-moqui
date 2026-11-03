@@ -53,7 +53,7 @@ pub enum Event {
     Revoked,
 }
 
-/// Where the events go: a Tauri channel to the page, in the host. It can be called briefly after the [`Socket`] is
+/// Where the events go: to the page, in the host (the desktop app evaluates each in the page's webview). It can be called briefly after the [`Socket`] is
 /// dropped, so it must take an event for a page that is gone.
 pub type Sink = Box<dyn Fn(Event) + Send>;
 

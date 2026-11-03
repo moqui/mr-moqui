@@ -149,11 +149,29 @@ pub(crate) fn opened(app: &AppHandle, links: Vec<Url>) {
         state.node.clone()
     };
     if let Some(page) = node.and_then(|node| links::route(&link, &node, &comms_root())) {
+        // a client's: the server's Compose or Dialer in an app window
+        if crate::client::active(app) {
+            crate::client::open_link(app, &page);
+            return;
+        }
         if let Some(window) = app.get_webview_window("main") {
             if let Err(err) = window.navigate(page.clone()) {
                 tracing::warn!("Could not open {page} for {link}: {err}");
             }
         }
+    }
+}
+
+/// A client of a server has started: links go to its server's Comms app, in an app window, from now on (one opened
+/// before waits for the account's shell).
+pub(crate) fn client_started() {
+    let pending = {
+        let mut state = state();
+        state.node = Some(crate::client::app_origin());
+        state.pending.take()
+    };
+    if let (Some(link), Some(app)) = (pending, APP.get()) {
+        opened(app, vec![link]);
     }
 }
 
@@ -178,6 +196,10 @@ pub(crate) fn node_started(qapps: Url) -> Url {
 /// The Comms app's root: `comms_app_root` as the node in process has it, else as the runtime's `.env` sets it, else
 /// BasicComms (which a node with BOSS still serves).
 fn comms_root() -> String {
+    // a client's: its server's, as its client config says
+    if let Some(root) = APP.get().and_then(crate::client::comms_root) {
+        return root;
+    }
     let own = moqui_lib::env::get_prop_or_env("comms_app_root");
     if !own.trim().is_empty() {
         return own;

@@ -78,7 +78,18 @@ pub(crate) fn setup(builder: tauri::Builder) -> tauri::Builder {
             set_counts,
             set_presence,
             open_external,
-            crate::splash::restart_node
+            crate::splash::restart_node,
+            crate::client::commands::client_state,
+            crate::client::commands::client_sign_in,
+            crate::client::commands::client_send_code,
+            crate::client::commands::client_sign_out,
+            crate::client::commands::client_switch_account,
+            crate::client::commands::client_add_account,
+            crate::client::commands::client_remove_account,
+            crate::client::commands::client_open_remote,
+            crate::client::sockets::socket_open,
+            crate::client::sockets::socket_send,
+            crate::client::sockets::socket_close
         ])
 }
 
@@ -93,6 +104,18 @@ pub(crate) fn node_started(app: &AppHandle, url: &Url) {
     if let Err(err) = app.add_capability(capability(&origin)) {
         tracing::error!("The page bridge is off: no capability for {origin}: {err}");
     }
+    on_notification_click(app);
+}
+
+/// A client of a server (src/client/): its pages' origin is the app windows', where notification links and downloads
+/// are; the client adds the capabilities of its own origins.
+pub(crate) fn client_started(app: &AppHandle) {
+    let _ = app.state::<Bridge>().node.set(crate::client::app_origin());
+    on_notification_click(app);
+}
+
+/// A click on a notification shows the window and opens the notification's link.
+fn on_notification_click(app: &AppHandle) {
     let handle = app.clone();
     let registered = app.notification().on_action(move |performed| {
         if performed.action_id() != "tap" {
@@ -124,11 +147,15 @@ fn capability(origin: &str) -> CapabilityBuilder {
 }
 
 /// Follow `link` in the main window, through the shell's `moqui.openLink` so the page stays loaded. Only a link on the
-/// node's origin.
+/// node's origin; a client's, on its server, in an app window.
 fn open_in_page(app: &AppHandle, link: &str) {
     let Some(url) = node_link(link, app.state::<Bridge>().node.get()) else {
         return;
     };
+    if crate::client::active(app) {
+        crate::client::open_link(app, &url);
+        return;
+    }
     if let Some(window) = app.get_webview_window("main") {
         let quoted = serde_json::to_string(url.as_str()).unwrap_or_else(|_| "\"/\"".to_string());
         let _ = window.eval(format!(
@@ -217,7 +244,9 @@ pub(crate) fn on_download(webview: Webview, event: DownloadEvent<'_>) -> bool {
     let app = webview.app_handle();
     match event {
         DownloadEvent::Requested { url, .. } => {
-            let allowed = download_allowed(&url, app.state::<Bridge>().node.get());
+            // a client's: from its app windows' origin (the bridge's) or its shell's
+            let allowed = download_allowed(&url, app.state::<Bridge>().node.get())
+                || (crate::client::active(app) && download_allowed(&url, Some(&crate::client::shell_origin())));
             if !allowed {
                 tracing::warn!("Download refused, not from the node: {}", clip(url.as_str(), 200));
             }
@@ -280,6 +309,10 @@ pub(crate) fn external_url(text: &str, node: Option<&Url>) -> Result<Url, String
             }
             if node.is_some_and(|node| node.origin() == url.origin()) {
                 return Err("The URL is on the node; open it in the window".to_string());
+            }
+            // a client's own origins are the app's, not the web's
+            if matches!(url.host_str(), Some("moqui-shell.localhost" | "moqui-app.localhost")) {
+                return Err("The URL is the app's own; open it in the app".to_string());
             }
             Ok(url)
         }
