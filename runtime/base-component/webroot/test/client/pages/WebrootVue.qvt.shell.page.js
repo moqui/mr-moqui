@@ -626,8 +626,8 @@ test("the theme's appearance: its default scheme and the scheme's fonts, the use
         assert.equal(links["m-color-scheme"], undefined);
         assert.equal(htmlProp("--m-font-body"), "");
         // the user's own tokens over the scheme, by the rules of a scheme's sheet
-        moqui.applyPreference("THEME_COLOR_OVERRIDES", JSON.stringify({ light: { primary: "#c00", "header-bg": "linear-gradient(#fff, #eee)", text: "red; }" },
-            dark: { "panel-bg": "#101010", link: "#9cf" } }));
+        moqui.applyPreference("THEME_COLOR_OVERRIDES", JSON.stringify({ primary: { light: "#c00" }, "header-bg": { light: "linear-gradient(#fff, #eee)" },
+            text: { light: "red; }" }, "panel-bg": { dark: "#101010" }, link: { dark: "#9cf" }, page: "#fff" }));
         const overrides = realGet("m-scheme-colors").textContent;
         assert.equal(overrides, "html body:not(.body--dark) { --m-header-bg:linear-gradient(#fff, #eee); --q-primary:#c00 !important; }\n" +
             "html body.body--dark { --m-link:var(--m-accent-dark-link, #9cf); --m-panel-bg:#101010; --q-dark:#101010 !important; }\n");

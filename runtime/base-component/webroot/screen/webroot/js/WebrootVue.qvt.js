@@ -102,7 +102,8 @@
     // its style sheet; with no font of the user's the scheme's own (its fonts) counts. The sizes and line height set tokens there too.
     // The accent colors (THEME_PRIMARY_COLOR, and THEME_PRIMARY_COLOR_DARK for dark mode, the light one when it is empty) are --q-primary
     // in the m-accent style, over the scheme and the Quasar brand, when they are CSS colors. THEME_COLOR_OVERRIDES is JSON of
-    // {light: {token: value}, dark: {...}}: the user's own tokens over the scheme (m-scheme-colors), with the rules of a scheme's sheet.
+    // {token: {light, dark}} (a value per mode, either may be missing): the user's own tokens over the scheme (m-scheme-colors), with
+    // the rules of a scheme's sheet.
     // Motion, links and corners are body classes. An empty or unknown value is the default. A key the policy locks
     // (moqui.appearanceAllowed) has no control in the page, and the server refuses it.
     moqui.appearanceKeys = ["THEME_COLOR_SCHEME", "THEME_FONT_BODY", "THEME_FONT_HEADING", "THEME_FONT_MONO", "THEME_SIZE_SMALL", "THEME_SIZE_LARGE",
@@ -222,8 +223,14 @@
         } else if (key === "THEME_COLOR_OVERRIDES") {
             let overrides = null;
             try { overrides = text ? JSON.parse(text) : null; } catch (e) { console.info("The THEME_COLOR_OVERRIDES preference is not JSON, ignored"); }
-            overrides = moqui.isPlainObject(overrides) ? overrides : {};
-            setStyleText("m-scheme-colors", modeCss(moqui.schemeColorDecls(overrides.light, false), moqui.schemeColorDecls(overrides.dark, true)));
+            const light = {}, dark = {};
+            if (moqui.isPlainObject(overrides)) Object.keys(overrides).forEach((name) => {
+                const entry = overrides[name];
+                if (!moqui.isPlainObject(entry)) return;
+                if (entry.light) light[name] = entry.light;
+                if (entry.dark) dark[name] = entry.dark;
+            });
+            setStyleText("m-scheme-colors", modeCss(moqui.schemeColorDecls(light, false), moqui.schemeColorDecls(dark, true)));
         } else if (body && body.classList) {
             if (key === "THEME_MOTION") {
                 body.classList.toggle("m-motion-reduce", text === "reduce");

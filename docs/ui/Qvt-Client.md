@@ -444,7 +444,7 @@ below): a locked choice has no control, and the dark mode toggle and the menu it
 | `THEME_SIZE_SMALL`, `THEME_SIZE_LARGE` | `0.9`, `1`, `1.1`, `1.25`, `1.4` | `--m-fs-small-scale` (table text, captions, chips, code) and `--m-fs-large-scale` (headings) |
 | `THEME_PRIMARY_COLOR` | a CSS color (`#hex`, `rgb()`, `hsl()`, `oklch()`, ...; checked by `moqui.isCssColor`, else ignored) | `--q-primary` of light mode in the `m-accent` style, `!important`, over the scheme and the Quasar brand; of dark mode too while `THEME_PRIMARY_COLOR_DARK` is empty |
 | `THEME_PRIMARY_COLOR_DARK` | a CSS color | `--q-primary` of dark mode in `m-accent`; the dark link color is mixed from it |
-| `THEME_COLOR_OVERRIDES` | JSON `{"light": {"token": "value"}, "dark": {...}}` | the user's own tokens over the scheme in the `m-scheme-colors` style (`moqui.schemeColorDecls`), with the rules of a scheme's sheet |
+| `THEME_COLOR_OVERRIDES` | JSON `{"token": {"light": "value", "dark": "value"}}`, either mode may be missing | the user's own tokens over the scheme in the `m-scheme-colors` style (`moqui.schemeColorDecls`), with the rules of a scheme's sheet |
 | `THEME_MOTION` | `reduce`, `full`, empty (the system's reduced motion) | the body class `m-motion-reduce` or `m-motion-full` |
 | `THEME_LINE_HEIGHT` | `relaxed` | `--m-line-height` 1.75 |
 | `THEME_LINKS_UNDERLINE` | `true` | the body class `m-links-underline` |
