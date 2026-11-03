@@ -230,8 +230,8 @@ uses them. `cargo build --timings` writes the chart to `target/cargo-timings/`.
 
 ### Desktop app
 
-`./moq desktop` runs, and `./moq desktop build` bundles, the desktop app in `crates/moqui-desktop`: a node in a Tauri 3
-(alpha) window on Chromium (CEF). It is not a workspace member, so the server builds need none of this. What it is and
+`./moq desktop` runs, and `./moq desktop build` bundles, the desktop app in `crates/moqui-desktop`: a node, or a client of a
+remote server, in a Tauri 3 (alpha) window on Chromium (CEF). It is not a workspace member, so the server builds need none of this. What it is and
 how it runs are in its [README](../crates/moqui-desktop/README.md) and [Mobile-Desktop](../plans/Mobile-Desktop.md).
 
 Prerequisites, beyond those of the server build:

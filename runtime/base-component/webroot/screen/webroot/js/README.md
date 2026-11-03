@@ -79,6 +79,20 @@ An app around the page (the desktop app, `crates/moqui-desktop/src/bridge.js`) m
 `saveFile({name, blob})`, each optional. Where it has one, the client calls it instead of a Web Notification, a new
 window or a download link, gives it the shell's counts and the user's presence, and does not start Web Push.
 
+The desktop app as a client of a remote server (configuration 3 of [Mobile-Desktop](../../../../../../plans/Mobile-Desktop.md))
+shows these scripts on its own origins, which every server and account share, and its pages cannot open a socket to
+the server. So `window.moquiDesktop` may also have:
+
+- `socket(url)`: a socket-like object the host holds for `/notws` and `/callws` (text frames), which
+  `moqui.openSocket(url)` returns in place of a WebSocket (the notification client and the call guest use it; the html
+  mode's notification socket calls `moquiDesktop.socket` itself; the terminal's `/termws` does not connect in a client);
+- `storageScope`: what `moqui.scopedKey(key)` puts browser storage keys of a server's data under (the chat outbox,
+  the crypto device and store, drafts); `moqui.storageScope` set to a string is used instead. Empty on the web.
+
+Its bundled shell runs on the runtime build of Vue: `moqui.bundledComponent(name)` answers a screen it bundled
+precompiled (`moqui.qvtBundled`), `loadComponent` answers one without fetching it, and on the runtime build a `.qvue` or
+`.qjs` that is not bundled is none.
+
 Tests: `moqui test-client webroot --offline` runs the page specs under `test/client/`; what needs a real browser is the
 Gate 3 Chromium smoke (`crates/moqui-host/tests/gate3_browser.rs`).
 

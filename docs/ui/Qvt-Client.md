@@ -56,6 +56,12 @@ inline script and no inline event handler, and the settings are a data block:
 | `labels` | text the shell needs localized |
 | `quasar`, `currencies` | optional: Quasar configuration (brand, notify, loading bar), and `{USD: {symbol, fractionDigits}}` for `formatCurrency` |
 
+The settings are built in `includes/QvtConfig.js`, which `qapps.xml` runs. `/qapps/clientConfig` answers the same as JSON
+for a client that signs in by key and has no `/qapps` page (the desktop app's bundled shell,
+[Mobile-Desktop](../../plans/Mobile-Desktop.md#configuration-3-offline-capable-client-of-a-remote-server)): for the runtime build, with no `sessionToken` and an empty `pageTraceId`, and with `server` `{name,
+moquiVersion, clientApi}` (`clientApi` 1 is the version of what that client reads and calls). `qvt.start(config)` takes
+settings given to it in place of the data block.
+
 The catalog of messages for `localize` is fetched from `/apps/l10nCatalog?locale=` once the page starts: `{locale, messages: {original: localized}}`
 with the `default`, language and locale entries merged.
 
@@ -807,7 +813,7 @@ header's Chat badge (`counts.chat`, the app's counts service adding `get#UnreadC
 
 **The outbox.** A screen sends a message with `moqui.chat.send({chatRoomId, url, params, text, threadRootEventSeq, hasFiles})`: `url` is
 its send transition, `params` its other parameters, `text` what its pending row shows. The item is kept first in `localStorage`
-(`moqui.chat.outbox.<userId>`, so it outlives the page and other tabs see it through `storage` events) with a `clientRef`, then posted with
+(`moqui.chat.outbox.<userId>`, under the account's storage scope in a desktop client, so it outlives the page and other tabs see it through `storage` events) with a `clientRef`, then posted with
 it; the server answers a clientRef it has seen with the first message (`duplicate`), so a message is posted once however often it is tried.
 `send` resolves `{sent: true, json}` when answered now, `{queued: true}` when it waits, `{failed: true, error}` when refused, and rejects when
 the outbox cannot keep it (50 items, 64 KB each). A send that did not go is classified by its status (`classify`): no answer, 408, 429 and
@@ -1121,6 +1127,6 @@ level at the path itself (no walk down the default subscreens), which is how the
 
 ## Not here
 
-The `m-*` components and the shell root keep string templates, so only the compiler build of Vue runs them: the runtime build waits for those to be precompiled. A static
+The `m-*` components and the shell root keep string templates; the runtime build of Vue runs them from their precompiled render functions (`WebrootVue.qvt.render.js`), as long as each template's hash matches. A static
 form-list does not write row selection, saved finds, the column picker, first/second/last rows, aggregation, or the csv, text and pdf buttons yet (the
 compatibility report says which screens use them).

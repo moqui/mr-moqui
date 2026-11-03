@@ -1,10 +1,10 @@
 # Mobile and Desktop Clients
 
-Status 2026-11-03: tentative implementation plan, reviewed against the code, [Edge-Node](Edge-Node.md) and [Comms-Framework](Comms-Framework.md). MD1 and the first stage of MD2 are built as one app, [crates/moqui-desktop](../crates/moqui-desktop/README.md): Tauri 3 (alpha) on Chromium (CEF), with the node on a loopback port, in the app's process (the default) or as the `moqui` sidecar, switched at run time (`MOQUI_DESKTOP_NODE`, or the tray's node item). What remains of MD1 is its exit evidence on installed apps (§8): pairing with an edge node and with an all-in-one node, mail across a sleep, calls, an upgrade that keeps the data, a backup restore, the startup and memory records, and Linux. Build order:
+Status 2026-11-03: tentative implementation plan, reviewed against the code, [Edge-Node](Edge-Node.md) and [Comms-Framework](Comms-Framework.md). MD1 and the first stage of MD2 are built as one app, [crates/moqui-desktop](../crates/moqui-desktop/README.md): Tauri 3 (alpha) on Chromium (CEF), with the node on a loopback port, in the app's process (the default) or as the `moqui` sidecar, switched at run time (`MOQUI_DESKTOP_NODE`, or the tray's node item). What remains of MD1 is its exit evidence on installed apps (§8): pairing with an edge node and with an all-in-one node, mail across a sleep, calls, an upgrade that keeps the data, a backup restore, the startup and memory records, and Linux. The first stage of MD3 is built in the same app, as its `client` mode ([moqui-desktop](../crates/moqui-desktop/README.md#client-of-a-server), [moqui-client](../crates/moqui-client/README.md)): device keys, password sign-in, the app-scheme proxy, the host-held sockets, the bundled shell with BasicComms' chat panel, app windows, accounts and the offline start; its second stage (SSO with the deep-link handoff, the device list in My Account, the Android check) and its exit checks on installed apps are open. Build order:
 
 1. A desktop local node in a Tauri app, linked as an Edge Client: in the app's own process (MD2, first stage) or as the `moqui` sidecar (MD1), one app with both. Built; the exit checks are open.
 2. The same node with no port, through the app scheme (MD2, second stage).
-3. An offline-capable client of a remote server, with synchronization.
+3. An offline-capable client of a remote server, with synchronization. The client of a remote server is built (MD3, first stage); offline data and synchronization are MD4 and MD5.
 4. An Android app on that client model, then iOS.
 
 The in-process node came first because `moqui-host` already runs a node inside another program. `start_embedded` boots it on a thread and returns once it listens. Dropping the `Server` stops the listeners, the factory and then Postgres, in order, as `moqui tui --serve` does. Chromium, which MR Moqui already drives for PDF and the client tests, takes the place of the platform WebViews. It removes the WebKitGTK gaps of §3 (no WebRTC on Linux, slower rendering) and gives one engine on every desktop OS. The costs are an alpha runtime and about 170 MB more in each installer. The sidecar was then built beside it, as a switch rather than a fallback: the window, the page bridge, the tray, the OS integration and the backups serve both modes, and the sidecar adds the child supervision, readiness on `/health`, a stop when the app closes the node's stdin, and the takeover of a Postgres a killed node left running.
@@ -139,7 +139,7 @@ The app runs MR Moqui itself as the system of record, for a person, household or
 - **Lifecycle.** The host starts `moqui` bound to loopback, waits until it answers (its `Listening on` line, then `/health` ready), and shows the node's `/qapps` in the window. On quit or OS shutdown it stops the node gracefully, which stops Postgres: the node runs with `moqui_stop_on_stdin_close` and the host holds its stdin, so the host ending in any way stops it, then SIGTERM and a kill. A Postgres whose owner process is gone (`moqui-owner.pid`) is taken over and stopped by the next start. A failed start, or a node that ends by itself, shows its reason on the splash page with a Restart button. One instance runs per user.
 - **The window is a browser session on the node's own origin.** Sign-in, CSRF and sockets work as on the web, and every app on the node works. The window is Chromium (CEF) on every desktop OS, as in configuration 2. This step needs no bundled shell, version handshake or transport work. Through a capability the host adds at run time for the node's exact origin, the node's pages get a few commands and nothing else, through `window.moquiDesktop`: `notify`, `set_counts` (the tray and badge), `set_presence` and `open_external`. Saving files needs no command: a download from the node is Chromium's, with the save dialog.
 - **Desktop features:**
-  - a tray icon with unread counts and presence, and the app's menu: Show, Restart node, the node mode, Start at login, Make default for email and calls, Check for updates, Backups, Quit;
+  - a tray icon with unread counts and presence, and the app's menu: Show, Restart node, the node mode, the client item (a client of a server, configuration 3, which has none of the node's items or Backups), Start at login, Make default for email and calls, Check for updates, Backups, Quit;
   - closing to the tray, so mail and calls keep arriving;
   - autostart at login (off until turned on) and a single instance;
   - registration as the `mailto:`, `tel:` and `sip:` handler, opening the node's compose or dialer;
@@ -170,9 +170,11 @@ From configuration 2 on, the window's pages come through a custom URI scheme of 
 - In configuration 2 the handler calls the in-process router.
 - In configurations 3 and 4 it serves the bundled assets and forwards server requests, adding the account's `login_key` header.
 
-Either way the page has one origin, sends no cookies, needs no CSRF token (header sign-in skips the check), and never holds the credential. In configuration 3 the handler can also answer from the local store without the page changing. [Tauri URI scheme protocols](https://docs.rs/tauri/latest/tauri/struct.Builder.html#method.register_asynchronous_uri_scheme_protocol).
+Either way the page is on the app's own origin, sends no cookies, needs no CSRF token (header sign-in skips the check), and never holds the credential. In configuration 3 the handler can also answer from the local store without the page changing. As built for the client (MD3), there are two origins: the shell's (`moqui-shell`, which takes only the server's data, never its pages or scripts) and the app windows' (`moqui-app`, the server's own pages); the handler answers the shell's settings, apps and counts from what it kept when the server cannot be reached. [Tauri URI scheme protocols](https://docs.rs/tauri/latest/tauri/struct.Builder.html#method.register_asynchronous_uri_scheme_protocol).
 
-WebSockets cannot go through a custom scheme, and a page's WebSocket cannot set the `login_key` header (`api_key` in a query is refused). The host holds the sockets (`/notws`, and in process the collaboration and terminal sockets) and bridges their messages to the page over Tauri channels, behind the socket adapter in MoquiLib.
+WebSockets cannot go through a custom scheme, and a page's WebSocket cannot set the `login_key` header (`api_key` in a query is refused). The host holds the sockets (`/notws` and `/callws`, and in process the collaboration and terminal sockets) and bridges their messages to the page, behind the socket adapter in MoquiLib (`moqui.openSocket`); as built, the frames reach the page as an evaluated call in its webview.
+
+On CEF two things of a scheme's HTML answers need handling, as built: the runtime puts the app's initialization scripts into every `text/html` answer, so HTML a page fetches (a `.qvue`, a fragment) is handed on as text; and it adds those scripts' hashes to a page's CSP, creating a `script-src 'self'` where the server set none, so a server page's CSP with no script policy is not passed on.
 
 Check these on each WebView in MD2:
 
@@ -187,7 +189,7 @@ This is a bundled client of a server the user does not run on this computer: ano
 
 #### Bundled shell and host contracts
 
-Bundle startup, server/account selection, settings, navigation, and an initial BasicComms subset. Keep shell startup independent of network availability. Obtain authorized remote application entries, extension data and the shell settings from the selected server after login. Bundle the runtime-only Vue build and the precompiled component renders (`WebrootVue.qvt.render.js`), and use server-static qvt for bundled screens, so the shell runs under a CSP without `unsafe-eval`.
+Bundle startup, server/account selection, settings, navigation, and an initial BasicComms subset. Keep shell startup independent of network availability. Obtain authorized remote application entries, extension data and the shell settings from the selected server after login. Bundle the runtime-only Vue build and the precompiled component renders (`WebrootVue.qvt.render.js`), and precompile the bundled screens, so the shell runs under a CSP without `unsafe-eval`. As built, the shell's `.qvue` screens and BasicComms' chat panel are compiled into the app (`vue_check::precompiled_qvue`, `moqui.bundledComponent`), and a screen not bundled opens in an app window.
 
 Define a small shared client API for requests, sockets, account identity, persistence, connectivity, notifications, files, deep links, and lifecycle events. Provide browser and Tauri implementations, and allow a Capacitor implementation later. Keep general UI state in Vue; keep durable client records and native operations behind these contracts. Use explicit result/error types and cancellation rather than exposing an arbitrary native service executor to JavaScript. [Calling Rust from Tauri](https://v2.tauri.app/develop/calling-rust/).
 
@@ -199,9 +201,9 @@ Initially, load remote applications with their own server-compatible qvt runtime
 
 Each installed client is a device with its own login key:
 
-- Password sign-in (with MFA) posts through the host to REST `login` with `createLoginKey=true`, as `moqui tui --server` does. The host keeps the key in the OS key store: Keychain, Credential Manager, or Secret Service. Define the policy for a Linux desktop with no Secret Service running.
+- Password sign-in (with MFA) posts through the host to REST `login` with `createLoginKey=true`, as `moqui tui --server` does. The host keeps the key in the OS key store: Keychain, Credential Manager, or Secret Service. As built, with `deviceName` the key is the device's (90 days, its last use noted), and a Linux desktop with no Secret Service keeps it in a file only the user can read, which the shell says.
 - SSO opens the system browser and returns a one-time code to the app by deep link, which the host exchanges for a device key ([RFC 8252](https://www.rfc-editor.org/rfc/rfc8252)). This needs a new server endpoint.
-- The user lists and revokes devices in My Account. Revocation already closes `/notws` within 60 seconds; requests then fail with 401 and the client returns to sign-in.
+- The user lists and revokes devices in My Account (the services `get#UserDeviceKeys` and `revoke#UserDeviceKey` are built; the screens are MD3's second stage). Revocation already closes `/notws` within 60 seconds; requests then fail with 401 and the client returns to sign-in.
 
 Define the remote API base URL, app root (`comms_app_root`), server identity, account identity, and supported client features explicitly. Handle key expiry, revocation, redirects, downloads, and logout.
 
@@ -209,7 +211,7 @@ Remote screens are the server's code, and the server is already trusted with the
 
 - Keep commands few and typed.
 - Never expose the device key, the filesystem, the key store, or a shell to a page.
-- On desktop, give remote applications a window with no command access, using Tauri's capability scopes by window and origin.
+- On desktop, give remote applications a window with no command access, using Tauri's capability scopes by window and origin. As built, an app window has the socket commands only, which reach nothing its requests do not already reach with the key; Tauri counts the schemes' pages as local, so the capabilities name the windows, and each window's navigation stays on its origin.
 - On mobile, where one webview shows both, the command set is the boundary.
 
 [Tauri capabilities](https://v2.tauri.app/security/capabilities/).
@@ -296,7 +298,7 @@ The tentative persistence/sync design should include:
   - Partition it by stable server and account identity.
   - Provide schema migrations, bounded attachment/cache retention, and deliberate sign-out/account-removal behavior.
   - Store credentials and encryption keys through an appropriate protected native store; SQLite alone does not provide an encryption policy.
-  - Browser storage keys in the shared JavaScript assume one server per origin: the chat outbox (`moqui.chat.outbox.<userId>`) and the crypto device pointer are keyed by `userId` alone. In a packaged client every server shares the app's origin, so move the outbox into the host store keyed by server and account, and key the rest by both.
+  - Browser storage keys in the shared JavaScript assume one server per origin: the chat outbox (`moqui.chat.outbox.<userId>`) and the crypto device pointer are keyed by `userId` alone. In a packaged client every server shares the app's origin, so move the outbox into the host store keyed by server and account, and key the rest by both. As built (MD3), they and the drafts are under the account's storage scope (`moqui.scopedKey`); the outbox's move into the host store is MD4.
 - Atomic recording of a local change and its outbox entry. Use stable operation IDs and server-side idempotency so retries after a lost acknowledgement do not duplicate sends or other effects.
 - Explicit queued, sending, acknowledged, retryable-failure, and rejected states. Preserve failed drafts and identify the affected item; one independent failure must not stop unrelated synchronization. Respect real dependencies between operations.
 - Cursor/revision-based incremental synchronization, deletion/tombstone handling, reconnect recovery, and a policy for expired cursors or required resynchronization. Avoid relying on wall-clock timestamps alone.
@@ -356,7 +358,7 @@ Milestones follow the build order of §1 and are ordered by dependencies, not fi
 | **MD0 — Scope and baselines** | Supported OS versions; which package (Maximal or Enterprise) and components ship; the runtime layout in the app data directory and its upgrade; baseline workloads. Edge-Node's E12 (the all-in-one node) is built. | Agreed scope and budgets; a reproducible baseline of the web client against a local node. |
 | **MD1 — Desktop local node, sidecar** | The Tauri app with the `moqui` sidecar and its runtime in the app data directory; start, readiness, and graceful stop; the window on the node's `/qapps` with its few commands; first run with the initial admin and the attach wizard; the desktop features of configuration 1; scheduled backups; signed packages and updates; Linux, then macOS. Pairing with an all-in-one node (Edge-Node's E12, built). | An installed app on a clean machine starts the node and pairs with an edge node, and with an all-in-one node. Mail sent while the computer sleeps arrives in order after it wakes. A call works with media on the edge, on Linux through the system browser. An app upgrade keeps the data. A backup restores. Startup and memory of node, Postgres and WebView together are recorded. |
 | **MD2 — Full node in process** | Link `moqui-host` and the component crates into the app through a generated crate; boot in process; the app scheme to the in-process router; bridged sockets; sign-in with a host-held login key; optional ports, as `moqui tui --serve`. | The MD1 checks pass with no `moqui` process and no port. An MD1 install upgrades in place. The secure-context, download and media checks are recorded for each WebView. Startup and memory are compared with MD1. |
-| **MD3 — Bundled client of a remote server** | The qvt client bundled with a static shell bootstrap and one real BasicComms screen; server selection; device login keys; the app scheme proxy and the host-held `/notws`; remote applications in their own window; SSO with the deep-link handoff; the device list and revocation; shell/app discovery, BasicComms routing/extensions, and account switching. Preserve both qvt modes and HTML navigation where needed. Keep the client host crates building for Android. | The app opens its UI without a network, signs in, and shows server data. The shell runs under a CSP without `unsafe-eval`. Bundled and remote screens work against a real server; account switching, key expiry and revocation, links, downloads, and capability boundaries behave as specified. |
+| **MD3 — Bundled client of a remote server** | First stage, built: the client mode, device keys, password sign-in, the proxy and sockets, the bundled shell, app windows, accounts. Second stage: SSO with the deep-link handoff, the device list in My Account, the Android check. The qvt client bundled with a static shell bootstrap and one real BasicComms screen; server selection; device login keys; the app scheme proxy and the host-held `/notws`; remote applications in their own window; SSO with the deep-link handoff; the device list and revocation; shell/app discovery, BasicComms routing/extensions, and account switching. Preserve both qvt modes and HTML navigation where needed. Keep the client host crates building for Android. | The app opens its UI without a network, signs in, and shows server data. The shell runs under a CSP without `unsafe-eval`. Bundled and remote screens work against a real server; account switching, key expiry and revocation, links, downloads, and capability boundaries behave as specified. |
 | **MD4 — Offline data and bundled Comms** | Add durable client storage and migrations, and move the chat outbox into it. Package the selected chat/inbox/compose views from shared source. Provide local reads/drafts and explicit offline/pending presentation. Decide crypto-state ownership for this scope. | Previously selected content and drafts survive restart without a connection; outbox items queued before the move are kept; account/server separation holds; web and packaged clients still use the shared UI/contracts. |
 | **MD5 — Reliable synchronization** | Add atomic outbox, idempotency/acknowledgements, incremental sync, deletions, conflicts, and rejected-operation handling. Implement necessary server changes. | Lost acknowledgements, disconnect/restart, duplicate events, revocation, and one bad independent item do not cause duplicate effects or block unrelated work. Encryption state survives the supported lifecycle. |
 | **MD6 — Android app** | The MD3–MD5 client on Android through MT1–MT5 (below), then its distribution. | The MT2 call path works on a locked phone; offline reads, drafts and the outbox behave as on desktop; the host is selected from the recorded evidence. |
@@ -401,14 +403,21 @@ Before mobile distribution, check the actual remote-application and local-code m
 - The upgrade path for a new Postgres major version in the app data directory.
 - The backup and restore dialogs (`rfd`) need the desktop portal on Linux, or zenity or kdialog.
 
-**Client (MD3–MD5):**
+**Client (MD3), settled as built:**
 
+- The client is a mode of the same app (`client`), on the crate `moqui-client`.
+- Device keys: the REST login's `createLoginKey` with `deviceName` (90 days, `login-key/@device-expire-hours`), revoked by `logout` with `revokeLoginKey` or `revoke#UserDeviceKey`; the shell's settings from `/qapps/clientConfig`.
+- The key store on a Linux desktop with no Secret Service: a file only the user can read, which the shell says (and a development run's default).
+- Packaged assets: the webroot's scripts and the libraries of `shell/libs.txt` as they are; the bundled screens precompiled from their own `.qvue` files (`shell/bundled-screens.txt`), checked by a golden test, so web and installed clients keep one source.
+- App windows have the socket commands only.
+
+**Client (MD3–MD5), open:**
+
+- The SSO handoff endpoint and the device list in My Account (MD3's second stage).
 - Which BasicComms views and mutations make up the first useful offline release?
-- The device-key and SSO handoff endpoints, the device list in My Account, and the key-store policy on a Linux desktop with no Secret Service.
 - How the chat outbox moves from `localStorage` to the host store without losing queued messages.
-- Which existing assets can be packaged directly, and where is extraction/precompilation needed to keep one source for web and installed clients?
 - What is the durable client schema, crypto-device policy, and treatment of retained offline data?
-- What compatibility handshake covers shell assets, server APIs, remote compiled templates, and local schema migrations?
+- What compatibility handshake covers shell assets, server APIs, remote compiled templates, and local schema migrations? It starts with `clientConfig`'s `server.clientApi` (1).
 
 **Throughout:**
 
@@ -416,4 +425,4 @@ Before mobile distribution, check the actual remote-application and local-code m
 - The Linux call path: the system browser, a native audio client in Rust, or a Chromium runtime for Tauri.
 - The measured latency/memory/startup budgets that define success, and which optional features stay unloaded by default.
 
-The first implementation is one app on macOS and Linux, on CEF, with both node modes: the in-process node of MD2's first stage and the sidecar of MD1, its runtime in the app data directory, edge pairing through the attach wizard, the page bridge, the tray, the OS integration, backups, and signing and updates from the build's environment. Next are MD1's exit checks on installed apps, in both modes, then the app scheme of MD2's second stage and the client of a remote server.
+The first implementation is one app on macOS and Linux, on CEF, with both node modes: the in-process node of MD2's first stage and the sidecar of MD1, its runtime in the app data directory, edge pairing through the attach wizard, the page bridge, the tray, the OS integration, backups, and signing and updates from the build's environment. The client of a remote server's first stage (MD3) is built in the same app. Next are MD1's exit checks on installed apps, in both modes, MD3's second stage and its exit checks, and the app scheme of MD2's second stage.
