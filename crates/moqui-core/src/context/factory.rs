@@ -153,6 +153,10 @@ pub struct ExecutionContextFactory {
     webapp_scripts: std::sync::OnceLock<Arc<crate::web::servlet::WebappScripts>>,
     /// Hit times per `userId@type:name`, for tarpit counting.
     tarpit_hits: std::sync::Mutex<TarpitHits>,
+    /// Live overrides of conf settings by `path@name` (plans/Monitor-Settings.md), read by [`Self::conf_setting`].
+    conf_overlay: RwLock<std::collections::HashMap<String, String>>,
+    /// The overlay has an entry, so [`Self::conf_setting`] looks there.
+    conf_overlaid: AtomicBool,
     property_names: Vec<String>,
     extensions:
         std::sync::Mutex<std::collections::HashMap<std::any::TypeId, std::sync::Arc<dyn std::any::Any + Send + Sync>>>,
@@ -362,6 +366,8 @@ impl ExecutionContextFactory {
             conf_cache: std::sync::OnceLock::new(),
             webapp_scripts: std::sync::OnceLock::new(),
             tarpit_hits: std::sync::Mutex::default(),
+            conf_overlay: RwLock::default(),
+            conf_overlaid: AtomicBool::new(false),
             property_names,
             extensions: std::sync::Mutex::new(std::collections::HashMap::new()),
             entity,
@@ -391,6 +397,7 @@ impl ExecutionContextFactory {
         // The host calls cluster::start after the entity facade is installed.
         install_session_flush(&factory);
         crate::user::session::install_session_end(&factory);
+        crate::live_settings::install(&factory);
         Ok(factory)
     }
 
@@ -795,12 +802,30 @@ impl ExecutionContextFactory {
 
     /// An attribute of the first conf element at `path` (`ssh-server`, `search-facade/cluster`, up to three names) with
     /// `${}` expanded and trimmed; empty when the conf leaves it out.
+    /// A live override of it (Monitor › Settings) comes first while it lasts.
     pub fn conf_setting(&self, path: &str, name: &str) -> String {
+        if self.conf_overlaid.load(std::sync::atomic::Ordering::Acquire) {
+            if let Some(value) = read(&self.conf_overlay).get(&format!("{path}@{name}")) {
+                return value.clone();
+            }
+        }
+        self.conf_setting_on_disk(path, name)
+    }
+
+    /// [`Self::conf_setting`] from the merged conf alone, with no live override.
+    pub fn conf_setting_on_disk(&self, path: &str, name: &str) -> String {
         self.conf()
             .element_attr(path, name)
             .map(|raw| moqui_lib::env::expand(&raw).unwrap_or(raw))
             .map(|value| value.trim().to_string())
             .unwrap_or_default()
+    }
+
+    /// Replace the live overrides of conf settings, by `path@name`.
+    pub(crate) fn set_conf_overlay(&self, overlay: std::collections::HashMap<String, String>) {
+        let any = !overlay.is_empty();
+        *write(&self.conf_overlay) = overlay;
+        self.conf_overlaid.store(any, std::sync::atomic::Ordering::Release);
     }
 
     /// [`Self::conf_setting`] parsed as a number, or `default` when it is empty or not one.
@@ -1672,6 +1697,8 @@ impl ExecutionContextFactory {
             conf_cache: std::sync::OnceLock::new(),
             webapp_scripts: std::sync::OnceLock::new(),
             tarpit_hits: std::sync::Mutex::default(),
+            conf_overlay: RwLock::default(),
+            conf_overlaid: AtomicBool::new(false),
             property_names: Vec::new(),
             extensions: std::sync::Mutex::new(std::collections::HashMap::new()),
             entity,
@@ -1691,6 +1718,7 @@ impl ExecutionContextFactory {
         });
         factory.pools.attach(&factory);
         crate::user::session::install_session_end(&factory);
+        crate::live_settings::install(&factory);
         factory.new_context()
     }
 }

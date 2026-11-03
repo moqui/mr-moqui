@@ -374,6 +374,15 @@ impl Config {
                     )),
                 }
             }
+            if let Some(text) = setting(&node, "slow-root-ms").filter(|text| !text.trim().is_empty()) {
+                match text.trim().parse::<u64>().ok().filter(|millis| *millis >= 1) {
+                    Some(millis) => config.slow_root = Duration::from_millis(millis),
+                    None => config.warnings.push(format!(
+                        "telemetry slow-root-ms [{text}] is not a whole number of at least 1; using {}",
+                        config.slow_root.as_millis()
+                    )),
+                }
+            }
             // A size that is not a whole number, or is below its floor, is warned about and the default kept.
             for (name, slot, floor) in [
                 ("queue-records", &mut config.capacity.queue_records, 64),
@@ -594,7 +603,11 @@ struct Shared {
     counters: Arc<Counters>,
     queued_records: AtomicUsize,
     queued_bytes: AtomicUsize,
+    /// The config the factory started with. `enabled`, the capacity and the interval are read only here.
     config: Config,
+    /// [`Self::config`] with the live overrides of Monitor › Settings (plans/Monitor-Settings.md): what the sampling,
+    /// artifact, metric attribute, operation and slow-root decisions read.
+    live: arc_swap::ArcSwap<Config>,
     resource: Mutex<Resource>,
     stopped: AtomicBool,
     drained: AtomicBool,
@@ -622,6 +635,7 @@ impl Telemetry {
             counters: Arc::default(),
             queued_records: AtomicUsize::new(0),
             queued_bytes: AtomicUsize::new(0),
+            live: arc_swap::ArcSwap::from_pointee(config.clone()),
             config,
             resource: Mutex::new(resource),
             stopped: AtomicBool::new(false),
@@ -658,8 +672,33 @@ impl Telemetry {
         }
     }
 
+    /// The config the factory started with, without the live overrides.
     pub fn config(&self) -> &Config {
         &self.shared.config
+    }
+
+    /// The config now: [`Self::config`] with the live overrides.
+    pub fn live_config(&self) -> Arc<Config> {
+        self.shared.live.load_full()
+    }
+
+    /// Replace the live config (moqui_core::live_settings). What is fixed at start (`enabled`, the capacity, the
+    /// interval) stays as configured. A change of the operations conf forgets the services' resolved operations.
+    pub fn set_live(&self, mut config: Config) {
+        config.enabled = self.shared.config.enabled;
+        config.capacity = self.shared.config.capacity;
+        config.interval = self.shared.config.interval;
+        let previous = self.shared.live.load_full();
+        let operations_changed = previous.operations.record != config.operations.record
+            || previous.operations.max_names != config.operations.max_names;
+        #[cfg(feature = "telemetry")]
+        if let Some(sdk) = &self.sdk {
+            sdk.set_metric_attributes(&config.metric_attributes);
+        }
+        self.shared.live.store(Arc::new(config));
+        if operations_changed {
+            self.shared.operations.clear();
+        }
     }
     pub fn resource(&self) -> Resource {
         lock(&self.shared.resource).clone()
@@ -706,7 +745,7 @@ impl Telemetry {
                     parent.or_else(capture),
                     None,
                     false,
-                    self.shared.config.sample_ratio,
+                    self.shared.live.load().sample_ratio,
                 );
             }
         }
@@ -724,7 +763,7 @@ impl Telemetry {
                 let ratio = match (parent.local, parent.sampled) {
                     (true, true) => 1.0,
                     (true, false) => 0.0,
-                    (false, _) => self.shared.config.sample_ratio,
+                    (false, _) => self.shared.live.load().sample_ratio,
                 };
                 return sdk.start_span(name, kind, Some(parent), None, false, ratio);
             }
@@ -751,7 +790,7 @@ impl Telemetry {
         #[cfg(feature = "telemetry")]
         if self.shared.config.enabled && !is_suppressed() {
             if let Some(sdk) = &self.sdk {
-                let ratio = self.shared.config.artifact_sample_ratio(artifact_type);
+                let ratio = self.shared.live.load().artifact_sample_ratio(artifact_type);
                 return sdk.start_span(name, kind, capture(), None, false, ratio);
             }
         }
@@ -769,7 +808,7 @@ impl Telemetry {
         #[cfg(feature = "telemetry")]
         if self.shared.config.enabled && !is_suppressed() {
             if let Some(sdk) = &self.sdk {
-                let ratio = self.shared.config.sample_ratio;
+                let ratio = self.shared.live.load().sample_ratio;
                 return sdk.start_span(name, SpanKind::Internal, parent, Some(started), true, ratio);
             }
         }
@@ -823,7 +862,7 @@ impl Telemetry {
         }
         self.shared
             .operations
-            .operation(&self.shared.config.operations, service, declared, declared_ref)
+            .operation(&self.shared.live.load().operations, service, declared, declared_ref)
     }
 
     /// One run of an operation: `moqui.operation.runs`, and `moqui.operation.duration` for a run that ended.
@@ -960,7 +999,8 @@ impl Telemetry {
             return (false, false);
         }
         self.shared
-            .config
+            .live
+            .load()
             .artifact_types
             .get(kind)
             .copied()
@@ -1581,7 +1621,7 @@ fn worker(shared: Arc<Shared>, receiver: mpsc::Receiver<Command>) {
                         let root = mandatory_root || string_field(&document, "parent_span_id").is_empty();
                         let sampled = true_field(&document, "sampled");
                         let important = has_exception(&document)
-                            || number(&document, "duration_nano") > shared.config.slow_root.as_nanos() as f64;
+                            || number(&document, "duration_nano") > shared.live.load().slow_root.as_nanos() as f64;
                         if root {
                             let keep = sampled
                                 || important

@@ -31,6 +31,25 @@ pub enum Record {
     None,
 }
 
+impl Record {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default => "default",
+            Self::Declared => "declared",
+            Self::None => "none",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        match text.trim() {
+            "default" => Some(Self::Default),
+            "declared" => Some(Self::Declared),
+            "none" => Some(Self::None),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct Rule {
     service: regex::Regex,
@@ -202,6 +221,13 @@ impl Registry {
         });
         lock(&self.resolved).insert(service.to_string(), resolved.clone());
         resolved
+    }
+
+    /// Forget the resolved operations, after the conf they were resolved by changed. The names recorded stay, so a
+    /// lower `max-names` bounds only the names that come after it.
+    pub(super) fn clear(&self) {
+        lock(&self.resolved).clear();
+        self.warned.store(false, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Whether `name` is among the first `max-names` names, so the series stay bounded.

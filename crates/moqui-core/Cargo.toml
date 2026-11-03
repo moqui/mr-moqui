@@ -20,6 +20,7 @@ moqui-db = { workspace = true }
 moqui-entity = { workspace = true }
 encoding_rs = { workspace = true }
 tracing = { workspace = true }
+arc-swap = { workspace = true }
 regex = { workspace = true }
 opentelemetry = { workspace = true, optional = true }
 # The manual reader behind /metrics (Prometheus text) is the custom-reader API.

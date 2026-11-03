@@ -1,6 +1,6 @@
 # Monitor Settings
 
-Plan, not started: timed runtime overrides of logging and telemetry settings in Monitor › Settings. It extends [Monitoring](Monitoring.md); the guide for what exists is [docs/tools/Monitoring.md](../docs/tools/Monitoring.md).
+Built 2026-11-03 (the live check on a dev server below is still to do): timed runtime overrides of logging and telemetry settings in Monitor › Settings. It extends [Monitoring](Monitoring.md); the guide for what exists is [docs/tools/Monitoring.md](../docs/tools/Monitoring.md).
 
 ## Context
 
@@ -119,8 +119,8 @@ Settings                                                     [Revert all]  (dang
     Sample ratio               0 · conf (roots mode)
     Slow root (ms)             1000 · default
 
-[Artifact types]   form-list, one row per type (AT_SCREEN, AT_SCREEN_CONTENT, AT_TRANSITION, AT_SERVICE,
-                   AT_REST_PATH, AT_ENTITY, AT_LLM):
+[Artifact types]   form-list, one row per type (AT_XML_SCREEN, AT_XML_SCREEN_CONTENT, AT_XML_SCREEN_TRANS,
+                   AT_SERVICE, AT_REST_PATH, AT_ENTITY, AT_LLM):
   Type | Spans (disk → now) | Metrics (disk → now) | Sample ratio (disk → now) | Expires | [Change…] [Revert]
 
 [Metrics]          one row per instrument (http.server.request.duration, moqui.artifact.duration,
@@ -187,6 +187,20 @@ All of these are fast tests; nothing marked slow is run.
   1. Set the global sample ratio to 1 for 15 minutes and see full traces in Monitor › Traces.
   2. Add `moqui_core::service=debug` and see the DEBUG lines in `moqui.log`.
   3. Watch both revert at expiry, with the audit lines and the annotation band on a dashboard panel.
+
+## As built
+
+Where the build differs from the design above:
+- The keys of the logging group are `logging@level`, `logging@console-level` and `logging/target[TARGET]@level`.
+- The log filter is the process's (`live_settings::log_filter`), not a field of `LineSubscriber`: the host installs the
+  levels it started with, and the live settings replace the snapshot. With two factories in one process the last change
+  wins. A console override does nothing on a server started without a console (`moqui tui`), and is refused there.
+- `Telemetry::config()` stays the on-disk config; the overridable reads go through `Shared.live`, and `enabled`, the
+  capacity and the interval are read from the on-disk config only.
+- The screen lists one row per setting in every box (an artifact type is three rows), and there is one Change dialog,
+  opened for a row by a reload with `changeKey` and `_openDialog`. Its value is a drop-down for levels, booleans and
+  choices, and a text line otherwise.
+- Expiry has no annotation of its own: the band of the set already ends there.
 
 ## Not in v1
 

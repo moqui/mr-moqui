@@ -448,7 +448,7 @@ feature("the Browser dashboard and the session replay screens render", {
         page.text().includes("Move telemetry tables into day partitions")
     },
 })
-feature("the Operations dashboard and the Releases, Incidents and Recovery screens render", {
+feature("the Operations dashboard and the Releases, Incidents, Recovery and Settings screens render", {
     expect() {
         const page = monitoringPage()
         page.goto("/qapps/monitor/Operations?from=now-1d&thru=now").status == 200
@@ -464,6 +464,10 @@ feature("the Operations dashboard and the Releases, Incidents and Recovery scree
         page.goto("/apps/monitor/Recovery").status == 200
         page.text().includes("Advisory by default")
         page.text().includes("Escalate major and critical incidents")
+        !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
+        page.goto("/apps/monitor/Settings").status == 200
+        page.text().includes("Requests per minute")
+        page.text().includes("gone on restart")
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
     },
 })

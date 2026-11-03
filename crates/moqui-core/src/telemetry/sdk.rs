@@ -45,8 +45,9 @@ pub(super) struct Runtime {
     gauges: Mutex<Vec<opentelemetry::metrics::ObservableGauge<f64>>>,
     /// The cumulative reader behind [`Self::prometheus_text`], which collects only when asked.
     pull: Arc<opentelemetry_sdk::metrics::ManualReader>,
-    /// The configured attribute allow-lists by instrument (telemetry/metric), in place of [`ALLOWED_ATTRIBUTES`].
-    allowed: HashMap<String, Vec<opentelemetry::Key>>,
+    /// The configured attribute allow-lists by instrument (telemetry/metric), in place of [`ALLOWED_ATTRIBUTES`], with
+    /// the live overrides; a gauge reads it at each observation.
+    allowed: Arc<arc_swap::ArcSwap<AllowedAttributes>>,
 }
 
 /// A reader the meter provider owns that the runtime can still collect from.
@@ -119,18 +120,7 @@ impl Runtime {
             .build();
         use opentelemetry::logs::LoggerProvider;
         let logger = logger_provider.logger("moqui");
-        let allowed = shared
-            .config
-            .metric_attributes
-            .iter()
-            .map(|(name, keys)| {
-                let keys = keys
-                    .iter()
-                    .map(|key| opentelemetry::Key::from(Arc::<str>::from(key.as_str())))
-                    .collect();
-                (name.clone(), keys)
-            })
-            .collect();
+        let allowed = Arc::new(arc_swap::ArcSwap::from_pointee(allowed_keys(&shared.config.metric_attributes)));
         Self {
             provider,
             tracer,
@@ -161,8 +151,13 @@ impl Runtime {
     }
 
     /// The attributes `name` keeps: its configured list, or the global one.
-    fn metric_attributes(&self, name: &str, attributes: Document) -> Vec<KeyValue> {
-        allowed_attributes(self.allowed.get(name).map(Vec::as_slice), attributes)
+    pub(super) fn metric_attributes(&self, name: &str, attributes: Document) -> Vec<KeyValue> {
+        allowed_attributes(self.allowed.load().get(name).map(Vec::as_slice), attributes)
+    }
+
+    /// Replace the attribute lists by instrument, from the live config.
+    pub(super) fn set_metric_attributes(&self, lists: &HashMap<String, Vec<String>>) {
+        self.allowed.store(Arc::new(allowed_keys(lists)));
     }
 
     pub(super) fn start_span(
@@ -300,7 +295,7 @@ impl Runtime {
             return;
         }
         let gauge_name = name.to_string();
-        let allowed = self.allowed.get(name).cloned();
+        let allowed = Arc::clone(&self.allowed);
         let failed = std::sync::atomic::AtomicBool::new(false);
         gauges.push(
             self.meter
@@ -317,7 +312,9 @@ impl Runtime {
                     };
                     for (attributes, value) in series {
                         if value.is_finite() {
-                            observer.observe(value, &allowed_attributes(allowed.as_deref(), attributes));
+                            let lists = allowed.load();
+                            let keys = lists.get(&gauge_name).map(Vec::as_slice);
+                            observer.observe(value, &allowed_attributes(keys, attributes));
                         }
                     }
                 })
@@ -596,6 +593,21 @@ const ALLOWED_ATTRIBUTES: &[&str] = &[
     "moqui.edgelink.direction",
     "moqui.edgelink.set",
 ];
+
+type AllowedAttributes = HashMap<String, Vec<opentelemetry::Key>>;
+
+fn allowed_keys(lists: &HashMap<String, Vec<String>>) -> AllowedAttributes {
+    lists
+        .iter()
+        .map(|(name, keys)| {
+            let keys = keys
+                .iter()
+                .map(|key| opentelemetry::Key::from(Arc::<str>::from(key.as_str())))
+                .collect();
+            (name.clone(), keys)
+        })
+        .collect()
+}
 
 /// The attributes an instrument keeps: those of its configured list (`keys`), or of the global one.
 fn allowed_attributes(keys: Option<&[opentelemetry::Key]>, attributes: Document) -> Vec<KeyValue> {

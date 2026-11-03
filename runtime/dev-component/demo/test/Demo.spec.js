@@ -38,7 +38,7 @@ const viewOnlyAuthz = [
 // ended for ADMIN (data/DemoSecurityData.xml)
 const endedPermissions = [
     "SearchRemote", "DashboardRemote", "ADMIN_PASSWORD", "SSH_SFTP", "SSH_GIT", "MONITOR_INGEST", "REPORT_SAVE_LOCATION",
-    "MONITOR_RECOVER", "MONITOR_RECOVER_ADMIN",
+    "MONITOR_RECOVER", "MONITOR_RECOVER_ADMIN", "MONITOR_SETTINGS",
 ]
 // what john.doe no longer has: those, but SSH_GIT, which BOSS's project groups also grant (SSH is off), and the
 // ADMIN_ADV permissions

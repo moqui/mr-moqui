@@ -35,6 +35,10 @@ pub const SESSION_END: &str = "session-end";
 /// (plans/Comms-Framework.md §6.3), sent to that one member ([`crate::cluster::send_to`]) with its `target` in the body.
 pub const RTC_SIGNAL: &str = "rtc-signal";
 
+/// A timed override of a logging or telemetry setting set, extended or reverted on one server (Monitor › Settings,
+/// plans/Monitor-Settings.md), `{"op": "set"|"revert"|"revertAll", ..}`, so every running server applies it.
+pub const RUNTIME_SETTINGS: &str = "runtime-settings";
+
 const RECENT_IDS: usize = 1024;
 
 /// A published message. `body` is the topic payload. `origin_id` is this process.
@@ -95,6 +99,7 @@ impl Bus {
         self.topics.entry(COLLAB_UPDATE.to_string()).or_default();
         self.topics.entry(SESSION_END.to_string()).or_default();
         self.topics.entry(RTC_SIGNAL.to_string()).or_default();
+        self.topics.entry(RUNTIME_SETTINGS.to_string()).or_default();
     }
 
     /// True the first time `id` is seen. A later publish of the same id is dropped until it ages out.
@@ -131,7 +136,7 @@ pub fn install() {
 }
 
 /// Subscribe to `name`. Only [`ENTITY_CACHE_INVALIDATE`], [`NOTIFICATION_MESSAGE`], [`COLLAB_UPDATE`],
-/// [`SESSION_END`] and [`RTC_SIGNAL`] exist.
+/// [`SESSION_END`], [`RTC_SIGNAL`] and [`RUNTIME_SETTINGS`] exist.
 ///
 /// # Errors
 ///

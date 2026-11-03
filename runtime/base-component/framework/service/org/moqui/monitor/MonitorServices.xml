@@ -118,4 +118,29 @@
             <parameter name="statusUrl"/><parameter name="secretProperty"/><parameter name="headerPropertiesJson" allow-html="any"/>
             <parameter name="allowInternal"/><parameter name="instructions"/></in-parameters>
         <out-parameters><parameter name="adapterId"/></out-parameters></service>
+
+    <!-- Monitor › Settings (plans/Monitor-Settings.md): timed in-memory overrides of logging and telemetry settings,
+         applied to every running instance, expiring on their own and gone on restart. Changing needs MONITOR_SETTINGS. -->
+    <service verb="list" noun="RuntimeSettings" type="rust" location="moqui_core::monitor::list_runtime_settings">
+        <description>Every setting that can be changed for a while, with its on-disk value and source (conf, default, env
+            moqui_log_level, as started), its value now and its override; the active overrides; this instance and the
+            live members of its cluster.</description>
+        <out-parameters><parameter name="settings" type="List"/><parameter name="overrides" type="List"/>
+            <parameter name="instanceId"/><parameter name="memberCount" type="Integer"/>
+            <parameter name="durations" type="List"/></out-parameters></service>
+    <service verb="set" noun="RuntimeSetting" type="rust" location="moqui_core::monitor::set_runtime_setting">
+        <description>Set or extend an override on every running instance. A target rule is named by its target alone.</description>
+        <in-parameters><parameter name="key"><description>The setting, as list#RuntimeSettings names it</description></parameter>
+            <parameter name="target"><description>Instead of key: a log target, for a target rule</description></parameter>
+            <parameter name="value" required="true"/>
+            <parameter name="minutes" type="Integer" required="true"><description>15, 60, 240 or 1440</description></parameter>
+            <parameter name="reason" required="true"/></in-parameters>
+        <out-parameters><parameter name="override" type="Map"/><parameter name="onDisk"/>
+            <parameter name="extended" type="Boolean"/></out-parameters></service>
+    <service verb="revert" noun="RuntimeSetting" type="rust" location="moqui_core::monitor::revert_runtime_setting">
+        <description>Back to the on-disk value on every running instance.</description>
+        <in-parameters><parameter name="key" required="true"/></in-parameters>
+        <out-parameters><parameter name="reverted" type="Boolean"/></out-parameters></service>
+    <service verb="revert" noun="AllRuntimeSettings" type="rust" location="moqui_core::monitor::revert_all_runtime_settings">
+        <out-parameters><parameter name="reverted" type="Integer"/></out-parameters></service>
 </services>

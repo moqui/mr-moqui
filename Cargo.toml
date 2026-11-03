@@ -216,6 +216,9 @@ totp-rs = { version = "6", default-features = false, features = [
     "gen_secret",
 ] }
 tracing = "0.1"
+# The live log filter and telemetry settings read on each span and callsite (plans/Monitor-Settings.md). Already in
+# the graph (MIT OR Apache-2.0).
+arc-swap = "1.9"
 # Direct SDK instrumentation; no tracing bridge. gRPC is only the receiver, under moqui-host's `grpc`.
 opentelemetry = { version = "0.33", default-features = false, features = ["trace", "metrics", "logs"] }
 opentelemetry_sdk = { version = "0.33", default-features = false, features = ["trace", "metrics", "logs"] }
