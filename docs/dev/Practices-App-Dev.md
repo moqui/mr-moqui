@@ -71,7 +71,7 @@ Each component is its own git repository. Commit in each repository that a chang
 | `./moq run` | Start the server on the dev conf. |
 | `./moq test <component> [--spec S] [--feature F]` | Server specs on a fresh database ([Testing](../Build-Test.md#component-specs)). |
 | `./moq test-client <component> --serve -- --spec S` | Client specs against a started server ([Client-Testing](Client-Testing.md)). |
-| `target/develop/moqui lint --screens [report-file]` | Screen expression lint. The argument is the report's **output** file, not a screen to check: passing a screen path overwrites that screen. |
+| `target/release/moqui lint --screens [report-file]` | Screen expression lint. The argument is the report's **output** file, not a screen to check: passing a screen path overwrites that screen. |
 | `moqui lint [service-file]`, `moqui lint --groovy <dir>` | Service expression lint; leftover Groovy. |
 | `moqui tui`, `moqui tui --server` | The terminal UI, to see a screen's `tui` rendering. |
 

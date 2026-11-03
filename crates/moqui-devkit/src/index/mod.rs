@@ -841,14 +841,16 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) {
     }
     listen(factory);
     calls::start(factory);
-    let factory = Arc::clone(factory);
-    let spawned = std::thread::Builder::new()
-        .name("artifact-index".into())
-        .spawn(move || {
-            if let Err(err) = build(&factory) {
-                tracing::error!("Artifact index: the build failed: {err}");
-            }
-        });
+    // the factory's shutdown waits for the build, which stops between batches, before the database stops
+    let weak = Arc::downgrade(factory);
+    let spawned = factory.spawn_background("artifact-index", move || {
+        let Some(factory) = weak.upgrade() else {
+            return;
+        };
+        if let Err(err) = build(&factory) {
+            tracing::error!("Artifact index: the build failed: {err}");
+        }
+    });
     if let Err(err) = spawned {
         tracing::error!("Artifact index: could not start the build: {err}");
     }
@@ -860,7 +862,7 @@ fn listen(factory: &ExecutionContextFactory) {
         return;
     }
     super::reload::on_reload(factory, |factory, report| {
-        if !state(factory).built.load(Ordering::SeqCst) {
+        if factory.is_shutting_down() || !state(factory).built.load(Ordering::SeqCst) {
             return;
         }
         let paths: Vec<PathBuf> = report.files.iter().map(|file| PathBuf::from(&file.path)).collect();
@@ -1020,6 +1022,10 @@ pub fn build_files(
     let mut changes = Vec::new();
     let mut on_disk: HashSet<String> = HashSet::new();
     for file in &files {
+        if factory.is_shutting_down() {
+            tracing::info!("Artifact index: the build stopped for the shutdown; the next build reads the files left");
+            return Ok(report);
+        }
         let path = file.path.display().to_string();
         on_disk.insert(path.clone());
         let Ok(text) = std::fs::read_to_string(&file.path) else {
@@ -1056,6 +1062,10 @@ pub fn build_files(
     }
     report.read_millis = started.elapsed().as_millis();
     apply(factory, &facade, &state, changes, &mut report)?;
+    if factory.is_shutting_down() {
+        // not marked built: what the build did not write is read again at the next start, by its file's hash
+        return Ok(report);
+    }
     state.built.store(true, Ordering::SeqCst);
     report.millis = started.elapsed().as_millis();
     tracing::info!(
@@ -1285,6 +1295,13 @@ fn apply(
             }
         }
     }
+    if factory.is_shutting_down() {
+        tracing::info!(
+            "Artifact index: the rows of {} files were not written for the shutdown",
+            changes.len()
+        );
+        return Ok(());
+    }
     let tx = facade.transactions_for(ARTIFACT)?;
     let writing = std::time::Instant::now();
     // before the files' rows: a file that now defines a derived service's id takes its row
@@ -1313,9 +1330,20 @@ fn apply(
             tx.finish_deferred()
         })
     };
+    let mut left = changes.len();
     for batch in changes.chunks(100) {
+        // between batches, and after one that failed as the database went away: the shutdown waits for this thread
+        // before it stops the database, and the next build reads the files left by their hashes
+        if factory.is_shutting_down() {
+            tracing::info!("Artifact index: the rows of {left} files were not written for the shutdown");
+            return Ok(());
+        }
         let outcomes: Vec<(&Change, Result<(), Error>)> = match run(batch) {
             Ok(()) => batch.iter().map(|change| (change, Ok(()))).collect(),
+            Err(_) if factory.is_shutting_down() => {
+                tracing::info!("Artifact index: the rows of {left} files were not written for the shutdown");
+                return Ok(());
+            }
             Err(_) if batch.len() > 1 => batch
                 .iter()
                 .map(|change| (change, run(std::slice::from_ref(change))))
@@ -1340,6 +1368,7 @@ fn apply(
                 }
             }
         }
+        left -= batch.len();
     }
     unresolve(facade, &tx, &gone, &changed_paths)?;
     resolve_added(factory, facade, state, &tx, &added, &changed_paths)?;

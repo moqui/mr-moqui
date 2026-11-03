@@ -14,13 +14,14 @@ publish.workspace = true
 # and `cargo lint` cover everything.
 [features]
 default = ["maximal", "devtools"]
-# Dev package (`./moq build`, the default): Lite with git hosting, the SSH server and the dev tools.
-dev = ["lite", "git", "ssh", "devtools"]
+# Dev package: Lite with git hosting, the SSH server and the dev tools. Commented out: the release build (Maximal
+# with the dev tools) is the default now; likely to be removed.
+# dev = ["lite", "git", "ssh", "devtools"]
 # Lite package (`./moq build --lite`): the web server on embedded Postgres, PDF, outbound mail, and the terminal client.
 lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm", "test-client", "telemetry", "web-push"]
 # Enterprise package (`./moq build --enterprise`): everything, with the databases external.
 enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc", "web-push", "rtc", "sip", "channels", "xmpp", "edge"]
-# Maximal package (`./moq build --release`, and the debug build): everything, Postgres embedded.
+# Maximal package (`./moq build`, the default, and the debug build), with devtools: everything, Postgres embedded.
 maximal = ["enterprise", "embedded-postgres"]
 
 # The database drivers (crates/moqui-drivers).
@@ -57,29 +58,29 @@ xlsx = ["moqui-core/xlsx", "moqui-report/xlsx"]
 llm = ["dep:moqui-llm"]
 # Calls (crates/moqui-rtc, plans/Comms-Framework.md §6): the media socket and its SFU (src/rtc/), and the call signaling
 # on /notws (src/notws/rtc.rs). The media socket starts only when rtc_media_port is set. In Maximal, Enterprise and
-# Debug; not Lite or Dev.
+# Debug; not Lite.
 rtc = ["axum", "dep:moqui-rtc", "dep:turn-client-proto"]
 # Local speech to text for call captions (Whisper on candle, plans/Comms-Framework.md §6.4): not built yet, off in every
 # package; src/speech_local.rs answers notBuiltIn. Captions go through the moqui-llm endpoint meanwhile.
 speech-local = []
 # Phone calls (crates/moqui-sip, plans/Comms-Framework.md §5.2, docs/interfaces/SIP.md): the SIP engine (src/sip/), its
 # trunks and the RTP of phone legs, joined to the call media. It starts only when sip_port or sip_tls_port is set. In
-# Maximal, Enterprise and Debug; not Lite or Dev.
+# Maximal, Enterprise and Debug; not Lite.
 sip = ["rtc", "dep:moqui-sip"]
 # Business messaging channels (crates/moqui-channels, plans/Comms-Framework.md §4.3, docs/interfaces/SMS.md): the sms chat
 # bridge adapter on Telnyx. The /channels/ routes (src/channels.rs) are in every build with axum and answer only when
-# channels_webhooks_enabled is true; without this feature no adapter answers them. In Maximal and Enterprise; not Lite or Dev.
+# channels_webhooks_enabled is true; without this feature no adapter answers them. In Maximal and Enterprise; not Lite.
 channels = ["dep:moqui-channels"]
 # XMPP for local users (crates/moqui-xmpp, plans/Comms-Framework.md §4.3 C3a, docs/interfaces/XMPP.md): the listeners
 # (src/xmpp/), /xmpp-websocket and /xmpp-upload/ on the HTTP listener. It starts only when xmpp_domain is set. In Maximal,
-# Enterprise and Debug; not Lite or Dev.
+# Enterprise and Debug; not Lite.
 xmpp = ["axum", "dep:moqui-xmpp"]
 telemetry = ["moqui-core/telemetry", "dep:flate2"]
 # The OTLP/gRPC receiver (tonic), opened only when <telemetry><receiver grpc-enabled="true"> is set.
 grpc = ["telemetry", "axum", "moqui-core/grpc", "dep:tonic", "dep:opentelemetry-proto"]
 # The edge link (plans/Edge-Node.md §5.1, src/edge_link/): the local node's dialer when edge_node_url is set, and on an
 # edge node (node_role=edge) the ALPN moqui-edge/1 hand-off on the HTTPS listener; gRPC both ways on HTTP/2. In Maximal
-# and Enterprise, whose graph already has all of it (§5.6); not Lite or Dev.
+# and Enterprise, whose graph already has all of it (§5.6); not Lite.
 edge = [
     "grpc",
     "dep:tonic-prost",
@@ -94,7 +95,7 @@ edge = [
     "dep:sha1",
 ]
 # What only development needs (plans/design-dev-aide.md 3.3): the framework's file watcher, and in the binary crates the
-# dev-component crates. In the Dev and Debug packages; not in Lite, Maximal or Enterprise.
+# dev-component crates. In the Maximal (default) and Debug packages; not in Lite or Enterprise.
 devtools = ["moqui-devkit/watch", "dep:lsp-server", "dep:lsp-types"]
 # The terminal client (`moqui tui`, plans/archive/Screen-TUI-Impl.md 4.6): in every package, so it compiles Revue; lite has it
 # for a quick terminal loop while developing and testing.
@@ -212,7 +213,7 @@ indexmap = { workspace = true }
 moqui-db = { workspace = true }
 # The example component (runtime/dev-component/example) loads on a dev instance and in the gate runtimes
 # (tests/common), and its MoquiConf.xml selects a tool factory, so a test that boots it (tests/it, gate3,
-# gate3_browser, search_logs_postgres) links the crate as the Dev binary does.
+# gate3_browser, search_logs_postgres) links the crate as the default (Maximal) binary does.
 example = { workspace = true }
 # Sign a Telnyx webhook as the provider does (tests/it/edge_chat.rs): the crypto rustls already links.
 aws-lc-rs = { workspace = true }
@@ -247,7 +248,7 @@ name = "search_bench"
 test = false
 
 # Opt-in real-store and transport timings of the monitoring HTTP boundary (plans/Monitoring.md). Not linked by a default
-# `cargo test`. cargo test --profile develop -p moqui-host --test monitor_performance -- --ignored --nocapture
+# `cargo test`. cargo test --profile release -p moqui-host --test monitor_performance -- --ignored --nocapture
 [[test]]
 name = "monitor_performance"
 test = false

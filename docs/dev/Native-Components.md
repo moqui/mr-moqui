@@ -4,7 +4,7 @@ A component is still a directory with `component.xml`, optional `MoquiConf.xml`,
 
 ## Building
 
-**With `./moq build` (the usual way).** Put the component in `runtime/component/<name>`. `./moq build` finds each crate there (a `Cargo.toml` beside a `component.xml`) and generates `target/moqui-app`, a binary crate that names every component crate (`use my_component as _;`) and calls `moqui_host::main()`. The binary is the package's as before (`target/develop/moqui` by default, `target/lite/moqui` with `--lite`, `target/debug/moqui` with `--debug`,
+**With `./moq build` (the usual way).** Put the component in `runtime/component/<name>`. `./moq build` finds each crate there (a `Cargo.toml` beside a `component.xml`) and generates `target/moqui-app`, a binary crate that names every component crate (`use my_component as _;`) and calls `moqui_host::main()`. The binary is the package's as before (`target/release/moqui` by default, `target/lite/moqui` with `--lite`, `target/debug/moqui` with `--debug`,
 `target/release/moqui` with `--release`, `target/enterprise/moqui` with `--enterprise`; [`Build-Test.md`](../Build-Test.md#packages)),
 and the generated crate takes the same package features as `crates/moqui`. Its `Cargo.lock` starts from the repository's. Run `./moq build` again after adding or removing a crate. The crate depends on the framework by path:
 

@@ -22,13 +22,12 @@ Prerequisites: Rust 1.98 or newer (`rustc --version`). A build with embedded Pos
 the archive is missing. Node is not needed to build or test.
 
 ```sh
-./moq build                            # the Dev package, target/develop/moqui; --lite, --debug, --release or
+./moq build                            # Maximal with the dev tools, target/release/moqui; --lite, --debug or
                                        # --enterprise for the others; links any component crates in runtime/component
 scripts/pg-payload.sh strip            # once: the Postgres archive the binary embeds, without psql
 cargo build -p moqui                   # Debug, every feature: target/debug/moqui
-cargo build --profile develop --no-default-features -F dev -p moqui   # Dev: target/develop/moqui
 cargo build --profile lite --no-default-features -F lite -p moqui     # Lite: target/lite/moqui
-cargo build --release -p moqui         # Maximal: target/release/moqui
+cargo build --release -p moqui         # Maximal with the dev tools: target/release/moqui
 scripts/pg-payload.sh check            # before a distribution: no psql or readline in what is embedded
 ```
 
@@ -44,26 +43,27 @@ flag and uses that binary. `moqui version` prints a binary's package and feature
 
 | Package | `./moq` flag | Profile | Binary | What it has |
 |---|---|---|---|---|
-| Dev | (none) | `develop` | `target/develop/moqui` | Lite's features with git hosting (`git`), the SSH server (`ssh`) and the dev tools (`devtools`) |
 | Lite | `--lite` | `lite` | `target/lite/moqui` | The web server on embedded Postgres, PDF (through Chromium), outbound mail (SMTP), the terminal client (`moqui tui`) |
 | Debug | `--debug` | `dev` | `target/debug/moqui` | Every feature and the dev tools, unoptimized framework code with debug info |
-| Maximal | `--release` | `release` | `target/release/moqui` | Every feature, Postgres embedded |
+| Maximal | (none) or `--release` | `release` | `target/release/moqui` | Every feature, Postgres embedded, and the dev tools (`devtools`) |
 | Enterprise | `--enterprise` | `enterprise` | `target/enterprise/moqui` | Every feature, with the databases external (Postgres and MySQL drivers, no embedded Postgres) |
 | Browser | `scripts/wasm-build.sh [--release]` | `dev` / `release` | `target/browser/wasm-pkg/<profile>` | The framework on SQLite in a Web Worker; none of the optional features |
 
 Plain `cargo build -p moqui`, `cargo test` and `cargo lint` use the Maximal feature set with `devtools`, so they cover
 everything.
 
-The Dev package is the default since development wants git and SSH (the dev-aide, the hosting, the SSH apps), which
-Lite leaves out, and the packages a deployment uses should not carry the dev tools. Its profile has Lite's settings
-and is named `develop`, since `dev` is Cargo's own debug profile, which the Debug package uses. A deployment builds
-Lite, Maximal or Enterprise; `./moq build --release -- --features devtools` adds the dev tools to another package.
+Maximal is the default, with the dev tools: development wants git, SSH and the dev-aide, and one default build with
+everything is simpler than a smaller one that saves some build time. The dev tools act only on a dev instance
+([design-dev-aide](../plans/design-dev-aide.md) 3.3); a deployment that wants none builds Lite or Enterprise.
+`./moq build --lite -- --features devtools` adds them to Lite. (A Dev package, Lite with git, SSH and the dev tools on
+a `develop` profile, was the default before; it is commented out in `moq`, `.cargo/config.toml` and the crates'
+features, and likely to be removed.)
 
 ### Features
 
 The framework features are in `crates/moqui-core`; the host features, and the packages, are in `crates/moqui-host`;
 `crates/moqui` (and the crate `./moq build` generates in `target/moqui-app` for add-on component crates) forwards the
-package features `dev`, `lite`, `enterprise` and `maximal`, `devtools`, and `inbound-smtp` for a lite build that wants
+package features `lite`, `enterprise` and `maximal`, `devtools`, and `inbound-smtp` for a lite build that wants
 one. The agents are the `moqui-llm` crate, on `moqui-core`, which the host's `llm` feature links; core reaches them
 through `moqui_core::llm_hooks`, so in a binary without them their services report that `llm` is not built in. The
 framework crates above core ([Crate-Split](../plans/Crate-Split.md): `moqui-git`, `moqui-mail`) are linked the same
@@ -74,34 +74,34 @@ every host build (the host's `xlsx` turns on the report crate's own, for the xls
 and ICalendar tools, elFinder) but not co-editing or the dev kit. The entity facade is the `moqui-entity` crate below core, in every package and in the browser
 build, with no features of its own.
 
-| Feature | Crate | What it gates | Dev | Lite | Enterprise | Maximal |
-|---|---|---|---|---|---|---|
-| `axum` | host | The HTTP server, its listeners and routes | yes | yes | yes | yes |
-| `postgres` | host (`moqui-drivers`) | The Postgres driver | yes | yes | yes | yes |
-| `embedded-postgres` | host (`moqui-drivers`) | The embedded Postgres clusters (entity, search, sim), `save-db`, `load-save`, backups, and `moqui test` when it opens a database (`--db fresh`, `snapshot`, or `existing`). `--db none` does not need it | yes | yes | | yes |
-| `mysql` | host (`moqui-drivers`) | The MySQL driver | | | yes | yes |
-| `pdf` | host | The DevTools client of the external Chromium that prints `html-print` to PDF | yes | yes | yes | yes |
-| `ssh` | host | The SFTP client, the built-in SSH server (SFTP, admin shell, git over SSH, and `apps` with `tui`), the SSH cluster channel | yes | | yes | yes |
-| `sso` | host | OIDC and OAuth 2 logins (`org.moqui.sso.AuthServices`) | | | yes | yes |
-| `print` | host | Network printing over IPP (`moqui-cups`) | | | yes | yes |
-| `tui` | host | `moqui tui`, the terminal client of the `tui` render mode, on Revue ([TUI](ui/TUI.md)), and with `ssh` the SSH `apps` command; in lite too, for a quick terminal loop while developing and testing. Alone (`cargo build -p moqui-host --no-default-features --features tui`) it is the client of a running server, `moqui tui --server <url>`, with no database driver or HTTP server in the build | yes | yes | yes | yes |
-| `test-client` | host | `moqui test-client`: a component's `test/client` specs against a running server, over HTTP, raw TCP or TLS, WebSocket and headless Chromium, with a load runner ([Client-Testing](dev/Client-Testing.md)); it opens no database and binds no listener of its own, so any package can test any server. Its `--serve` starts `moqui test --serve`, which needs `embedded-postgres` | yes | yes | yes | yes |
-| `inbound-smtp` | host | The SMTP listener for hosted and shared mail accounts behind the edge gateway ([Mail-Inbound](interfaces/Mail-Inbound.md); includes `imap`); it starts only when `smtp_listen_port` is set | | | yes | yes |
-| `rtc` | host (`moqui-rtc`) | Calls: the media socket and its SFU on str0m, and the call signaling on `/notws` ([WebRTC](interfaces/WebRTC.md)); the media socket starts only when `rtc_media_port` is set, and the call services run in every build (without it they refuse with `mediaUnavailable`). In Debug too; for a Dev build `./moq build -- --features rtc` | | | yes | yes |
-| `speech-local` | host | Local speech to text for call captions (Whisper on candle, [WebRTC](interfaces/WebRTC.md#captions)): not built yet, so off in every package; with or without it `call_captions_provider=local` answers "not built in". Captions go through the `llm` feature's `transcribe` model meanwhile | | | | |
-| `sip` | host (`moqui-sip`; includes `rtc`) | Phone calls over SIP trunks: the SIP engine on rsipstack, its trunk registration and the RTP of phone legs, joined to the call media ([SIP](interfaces/SIP.md)); it starts only when `sip_port` or `sip_tls_port` is set, and the voice services run in every build (without it `get#VoiceCapabilities` says not supported). In Debug too; for a Dev build `./moq build -- --features sip` | | | yes | yes |
-| `channels` | host (`moqui-channels`) | Business messaging channels: the `sms` chat bridge adapter, SMS and MMS on the Telnyx Messaging API v2 ([SMS](interfaces/SMS.md)). The `/channels/` webhook and media routes are in every build with `axum` and answer only when `channels_webhooks_enabled` is true; without this feature no adapter answers them and an SMS bridge stays not connected. For a Dev build `./moq build -- --features channels` | | | yes | yes |
-| `xmpp` | host (`moqui-xmpp`; includes `axum`) | XMPP for local users: client streams with STARTTLS, direct TLS and WebSocket, SASL2 with SCRAM-SHA-256-PLUS and FAST, rooms as MUC, history, PEP and uploads over Moqui chat ([XMPP](interfaces/XMPP.md)); it starts only when `xmpp_domain` is set. In Debug too; for a Dev build `./moq build -- --features xmpp` | | | yes | yes |
-| `grpc` | host (includes `telemetry`, `axum`) | The host's gRPC listener (tonic): the OTLP/gRPC receiver, opened only when `<telemetry><receiver grpc-enabled="true">` is set, and with `edge` the direct PASS authority ([Edge-Node](../plans/Edge-Node.md) §5.5) | | | yes | yes |
-| `edge` | host (includes `grpc`) | The edge link ([Edge-Node](../plans/Edge-Node.md)): a local node's dialer when `edge_node_url` is set, and on an edge node (`node_role=edge`) the link's hand-off on the HTTPS listener, web access, delegated calls, the queue and replication; the PASS authority over gRPC (direct when `pass_authority_grpc_enabled=true`, and on the link) and scripts' `ec.service.passAuthority` | | | yes | yes |
-| `devtools` | host, moqui-devkit (`watch`) | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the dev-component crates of `runtime/dev-component`; in Dev and Debug | yes | | | |
-| `smtp` | host (`moqui-mail`) | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes | yes |
-| `imap` | host (`moqui-mail`) | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | | yes | yes |
-| `git` | host (`moqui-git`) | `git://` locations, git drives, `org.moqui.impl.GitServices`, the git server over HTTP and SSH, LFS | yes | | yes | yes |
-| `image` | core | `org.moqui.impl.ImageServices` (`convert#Image`) and elFinder thumbnails | | | yes | yes |
-| `xlsx` | core, moqui-report | The `xlsx` render mode, `org.moqui.impl.SpreadsheetServices` and the xlsx format of a scheduled report | | | yes | yes |
-| `llm` | host | The agents and the model providers (the `moqui-llm` crate, `org.moqui.agent.AgentAdminServices`; [LLM-A2A-Assist](../plans/LLM-A2A-Assist.md)) | yes | yes | yes | yes |
-| `http`, `cluster-tls` | core | Remote REST, `http` locations, the OpenSearch client; the cluster certificate | yes | yes | yes | yes |
+| Feature | Crate | What it gates | Lite | Enterprise | Maximal |
+|---|---|---|---|---|---|
+| `axum` | host | The HTTP server, its listeners and routes | yes | yes | yes |
+| `postgres` | host (`moqui-drivers`) | The Postgres driver | yes | yes | yes |
+| `embedded-postgres` | host (`moqui-drivers`) | The embedded Postgres clusters (entity, search, sim), `save-db`, `load-save`, backups, and `moqui test` when it opens a database (`--db fresh`, `snapshot`, or `existing`). `--db none` does not need it | yes | | yes |
+| `mysql` | host (`moqui-drivers`) | The MySQL driver | | yes | yes |
+| `pdf` | host | The DevTools client of the external Chromium that prints `html-print` to PDF | yes | yes | yes |
+| `ssh` | host | The SFTP client, the built-in SSH server (SFTP, admin shell, git over SSH, and `apps` with `tui`), the SSH cluster channel | | yes | yes |
+| `sso` | host | OIDC and OAuth 2 logins (`org.moqui.sso.AuthServices`) | | yes | yes |
+| `print` | host | Network printing over IPP (`moqui-cups`) | | yes | yes |
+| `tui` | host | `moqui tui`, the terminal client of the `tui` render mode, on Revue ([TUI](ui/TUI.md)), and with `ssh` the SSH `apps` command; in lite too, for a quick terminal loop while developing and testing. Alone (`cargo build -p moqui-host --no-default-features --features tui`) it is the client of a running server, `moqui tui --server <url>`, with no database driver or HTTP server in the build | yes | yes | yes |
+| `test-client` | host | `moqui test-client`: a component's `test/client` specs against a running server, over HTTP, raw TCP or TLS, WebSocket and headless Chromium, with a load runner ([Client-Testing](dev/Client-Testing.md)); it opens no database and binds no listener of its own, so any package can test any server. Its `--serve` starts `moqui test --serve`, which needs `embedded-postgres` | yes | yes | yes |
+| `inbound-smtp` | host | The SMTP listener for hosted and shared mail accounts behind the edge gateway ([Mail-Inbound](interfaces/Mail-Inbound.md); includes `imap`); it starts only when `smtp_listen_port` is set | | yes | yes |
+| `rtc` | host (`moqui-rtc`) | Calls: the media socket and its SFU on str0m, and the call signaling on `/notws` ([WebRTC](interfaces/WebRTC.md)); the media socket starts only when `rtc_media_port` is set, and the call services run in every build (without it they refuse with `mediaUnavailable`). In Debug too | | yes | yes |
+| `speech-local` | host | Local speech to text for call captions (Whisper on candle, [WebRTC](interfaces/WebRTC.md#captions)): not built yet, so off in every package; with or without it `call_captions_provider=local` answers "not built in". Captions go through the `llm` feature's `transcribe` model meanwhile | | | |
+| `sip` | host (`moqui-sip`; includes `rtc`) | Phone calls over SIP trunks: the SIP engine on rsipstack, its trunk registration and the RTP of phone legs, joined to the call media ([SIP](interfaces/SIP.md)); it starts only when `sip_port` or `sip_tls_port` is set, and the voice services run in every build (without it `get#VoiceCapabilities` says not supported). In Debug too | | yes | yes |
+| `channels` | host (`moqui-channels`) | Business messaging channels: the `sms` chat bridge adapter, SMS and MMS on the Telnyx Messaging API v2 ([SMS](interfaces/SMS.md)). The `/channels/` webhook and media routes are in every build with `axum` and answer only when `channels_webhooks_enabled` is true; without this feature no adapter answers them and an SMS bridge stays not connected. | | yes | yes |
+| `xmpp` | host (`moqui-xmpp`; includes `axum`) | XMPP for local users: client streams with STARTTLS, direct TLS and WebSocket, SASL2 with SCRAM-SHA-256-PLUS and FAST, rooms as MUC, history, PEP and uploads over Moqui chat ([XMPP](interfaces/XMPP.md)); it starts only when `xmpp_domain` is set. In Debug too | | yes | yes |
+| `grpc` | host (includes `telemetry`, `axum`) | The host's gRPC listener (tonic): the OTLP/gRPC receiver, opened only when `<telemetry><receiver grpc-enabled="true">` is set, and with `edge` the direct PASS authority ([Edge-Node](../plans/Edge-Node.md) §5.5) | | yes | yes |
+| `edge` | host (includes `grpc`) | The edge link ([Edge-Node](../plans/Edge-Node.md)): a local node's dialer when `edge_node_url` is set, and on an edge node (`node_role=edge`) the link's hand-off on the HTTPS listener, web access, delegated calls, the queue and replication; the PASS authority over gRPC (direct when `pass_authority_grpc_enabled=true`, and on the link) and scripts' `ec.service.passAuthority` | | yes | yes |
+| `devtools` | host, moqui-devkit (`watch`) | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the dev-component crates of `runtime/dev-component`; in Maximal (the default) and Debug | | | yes |
+| `smtp` | host (`moqui-mail`) | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes |
+| `imap` | host (`moqui-mail`) | Inbound mail: `poll#EmailServer`, the mail client's sync, IDLE, rules and import (includes `smtp`) | | yes | yes |
+| `git` | host (`moqui-git`) | `git://` locations, git drives, `org.moqui.impl.GitServices`, the git server over HTTP and SSH, LFS | | yes | yes |
+| `image` | core | `org.moqui.impl.ImageServices` (`convert#Image`) and elFinder thumbnails | | yes | yes |
+| `xlsx` | core, moqui-report | The `xlsx` render mode, `org.moqui.impl.SpreadsheetServices` and the xlsx format of a scheduled report | | yes | yes |
+| `llm` | host | The agents and the model providers (the `moqui-llm` crate, `org.moqui.agent.AgentAdminServices`; [LLM-A2A-Assist](../plans/LLM-A2A-Assist.md)) | yes | yes | yes |
+| `http`, `cluster-tls` | core | Remote REST, `http` locations, the OpenSearch client; the cluster certificate | yes | yes | yes |
 
 `mail` is `smtp` and `imap` together. The browser build has none of the core features, and no framework crate.
 
@@ -146,7 +146,6 @@ has its own, so the artifacts of one never replace another's and switching packa
 - `lite` (Lite): `release` with `incremental = true` and 256 codegen units for the workspace and path crates
   (Cargo applies `incremental` only to those), so a rebuild after an edit to the framework is quick; the dependencies
   keep the release settings and are built once.
-- `develop` (Dev): `lite`'s settings in a profile of its own, so its binary is `target/develop/moqui` beside Lite's.
 - `release` (Maximal) and `enterprise`: `panic = "unwind"` (services unwind across the service boundary), otherwise
   Cargo's release defaults.
 
@@ -283,10 +282,10 @@ the tasks, and `./moq help <task>` describes one. Task names match by partial pa
 `./moq runProduction` both mean `run-production`.
 
 ```sh
-./moq build                    # the Dev package, target/develop/moqui (--lite, --debug, --release, --enterprise for
+./moq build                    # Maximal with the dev tools, target/release/moqui (--lite, --debug, --enterprise for
                                # the others), linking any component crates in runtime/component; tasks that
                                # run moqui build a missing binary themselves
-./moq run                      # target/develop/moqui with runtime/conf/MoquiDevConf.xml; --release uses target/release/moqui
+./moq run                      # target/release/moqui with runtime/conf/MoquiDevConf.xml; --lite uses target/lite/moqui
 ./moq run -p 8081 -D entity_ds_db_conf=postgres
 ./moq run lint --screens       # moqui's own commands, with the same conf
 ./moq load                     # all data types; ./moq load seed seed-initial install
@@ -316,7 +315,7 @@ cargo test -p moqui-host --test gate3
 ```
 
 `scripts/check-packages.sh` runs Clippy with warnings denied on each feature set a build uses: the workspace
-(Maximal with the dev tools, as `cargo lint`), the Dev, Lite, Maximal and Enterprise packages, the host with no features
+(Maximal with the dev tools, as `cargo lint`), the Lite, Maximal (with and without the dev tools) and Enterprise packages, the host with no features
 (`cargo lint-min`) and with only the terminal client, and the framework with none (what the browser links). Then it
 runs the scripted TUI screens, which `cargo test` leaves out. A gate that only one package sees still has to compile
 there.
@@ -362,7 +361,7 @@ component's `test/client/`, which `moqui test-client` runs against a running ser
 ### Running
 
 ```sh
-./moq test mr-mantle                                  # the Dev binary and the dev conf
+./moq test mr-mantle                                  # the Maximal binary and the dev conf
 moqui test mr-mantle                                  # every spec, fresh database
 moqui test mr-mantle --db snapshot                    # load once, restore the saved dump on later runs
 moqui test mr-mantle --spec OrderToCashBasicFlow      # one spec and the specs its dependsOn names

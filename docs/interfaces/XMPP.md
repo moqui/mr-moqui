@@ -17,7 +17,7 @@ is C3b, not built. The XMPP view is of the same rooms, messages and presence the
 
 ## Settings
 
-The `xmpp` feature is in the Maximal, Enterprise and Debug packages (for a Dev build, `./moq build -- --features xmpp`).
+The `xmpp` feature is in the Maximal, Enterprise and Debug packages.
 Everything is off until `xmpp_domain` is set; each listener is off until its port is set.
 
 | Property | Default | |

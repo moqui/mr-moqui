@@ -15,6 +15,7 @@
 //! Factory, conf, components, resources, cache, messages, and the artifact stack.
 
 mod artifact;
+mod background;
 mod cache;
 mod component;
 mod conf;

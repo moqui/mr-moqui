@@ -20,8 +20,7 @@ call out as their user.
 
 The engine needs:
 
-- the `sip` feature, in the Maximal, Enterprise and Debug packages (for a Dev build,
-  `./moq build -- --features sip`);
+- the `sip` feature, in the Maximal, Enterprise and Debug packages;
 - call media on the same server (`rtc_media_port`, [WebRTC](WebRTC.md)).
 
 Every listener is off until its setting is set.
