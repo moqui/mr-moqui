@@ -364,6 +364,22 @@
     <default-property name="entity_ds_sslrootcert" value=""/>
     <default-property name="entity_ds_crypt_pass" value="MoquiDefaultPassword:CHANGEME" is-secret="true"/>
     <default-property name="entity_ds_crypt_pass_old" value="MoquiDefaultPassword:CHANGEME" is-secret="true"/>
+    <!-- The content datasource: the stored bytes of the resource schemes (DbResource*, ContentBlob*, and the objects,
+        refs and LFS objects of db kind git repositories; the content group of ResourceEntities.xml), in a database of
+        their own (docs/Run-Deploy.md "Content database"). With content_ds_db_conf empty it is the database
+        content_ds_database in the embedded cluster when the transactional datasource is embedded, and the
+        transactional database itself when that is an external server. postgres, mysql or mysql8 name a server for it:
+        content_ds_host, _port, _user, _password, _sslmode and _sslrootcert, each empty for the entity_ds_ one, so
+        setting only content_ds_db_conf puts it in the database content_ds_database on the transactional server. -->
+    <default-property name="content_ds_db_conf" value=""/>
+    <default-property name="content_ds_host" value=""/>
+    <default-property name="content_ds_port" value=""/>
+    <default-property name="content_ds_database" value="moqui_content"/>
+    <default-property name="content_ds_schema" value=""/>
+    <default-property name="content_ds_user" value=""/>
+    <default-property name="content_ds_password" value="" is-secret="true"/>
+    <default-property name="content_ds_sslmode" value=""/>
+    <default-property name="content_ds_sslrootcert" value=""/>
     <!-- Phase 7 signs the session cookie with this key. Phase 2 generates it. -->
     <default-property name="session_cookie_key" value="CHANGEME" is-secret="true"/>
     <!-- Web Push (VAPID, RFC 8292): the server's P-256 private key, 32 random bytes in base64, generated when unset and
@@ -1282,6 +1298,18 @@
         <datasource group-name="transactional" database-conf-name="${entity_ds_db_conf}" schema-name="${entity_ds_schema}"
                 runtime-add-missing="${entity_add_missing_runtime}" startup-add-missing="${entity_add_missing_startup}">
             <!-- by default no inline-jdbc or jndi-jdbc elements, use default from database conf -->
+        </datasource>
+
+        <!-- The content group's database (the content_ds_* properties above). One transaction spans it and the
+            transactional database, which commits after it, without two-phase commit. pool-maxsize is the
+            transactional pool's: a transaction can hold a connection of each. -->
+        <datasource group-name="content" database-conf-name="${content_ds_db_conf}" schema-name="${content_ds_schema}"
+                runtime-add-missing="${entity_add_missing_runtime}" startup-add-missing="${entity_add_missing_startup}">
+            <inline-jdbc pool-maxsize="90"><xa-properties serverName="${content_ds_host ?: entity_ds_host}"
+                    port="${content_ds_port ?: entity_ds_port}" databaseName="${content_ds_database}"
+                    user="${content_ds_user ?: entity_ds_user}" password="${content_ds_password ?: entity_ds_password}"
+                    sslmode="${content_ds_sslmode ?: entity_ds_sslmode}"
+                    sslrootcert="${content_ds_sslrootcert ?: entity_ds_sslrootcert}"/></inline-jdbc>
         </datasource>
 
         <!-- H2 clone for testing, use same URL as just for testing

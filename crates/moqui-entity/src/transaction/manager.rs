@@ -12,7 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Thread-local transaction stack. Two managers do not share a stack.
+//! Thread-local transaction stack. Two managers do not share a stack, but linked managers (the entity groups on
+//! databases of their own, [`TransactionManager::link`]) begin, suspend and end their frames together.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -20,13 +21,13 @@ use std::marker::PhantomData;
 use std::panic::{AssertUnwindSafe, Location};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 use std::thread::ThreadId;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use moqui_lib::error::Error;
 use moqui_lib::node::MNode;
-use moqui_lib::sync::lock;
+use moqui_lib::sync::{lock, read, write};
 
 use crate::driver::{DbCancel, DbConnection, DbDriver};
 
@@ -116,6 +117,9 @@ struct Inner {
     use_transaction_cache: AtomicBool,
     use_statement_timeout: AtomicBool,
     use_lock_track: AtomicBool,
+    /// The managers one transaction spans, this one among them, in commit order ([`TransactionManager::link`]);
+    /// empty when it spans this one alone. Weak, so linked managers do not keep each other's pools alive.
+    linked: RwLock<Vec<Weak<Inner>>>,
 }
 
 struct LockHit {
@@ -143,6 +147,7 @@ impl TransactionManager {
                 use_transaction_cache: AtomicBool::new(true),
                 use_statement_timeout: AtomicBool::new(false),
                 use_lock_track: AtomicBool::new(false),
+                linked: RwLock::new(Vec::new()),
             }),
         })
     }
@@ -187,6 +192,58 @@ impl TransactionManager {
         self.inner.id == other.inner.id
     }
 
+    /// Link `members` so one transaction spans them all, as Java's JTA transaction spans every datasource, but
+    /// without two-phase commit. A begin, join, force-new, suspend or resume on any of them does the same on the
+    /// others. A frame checks out no connection until a statement runs, so a database the transaction does not
+    /// touch costs a stack entry and nothing else.
+    ///
+    /// The commit (or rollback) of the frames, on whichever manager began them, ends all of them. The commit goes
+    /// in the order of `members`, so the entity facade passes the default group's manager last. Rows of the
+    /// default group refer to the others' (a content location), so a failure between two commits leaves rows
+    /// nothing refers to, never a reference to a row that is not there. A rollback, or a frame of any of them
+    /// marked rollback-only, rolls back all of them.
+    ///
+    /// Managers that share a stack are one member. Fewer than two members unlinks them.
+    pub fn link(members: &[TransactionManager]) {
+        let mut distinct: Vec<&TransactionManager> = Vec::new();
+        for member in members {
+            if !distinct.iter().any(|known| known.shares_stack(member)) {
+                distinct.push(member);
+            }
+        }
+        let order: Vec<Weak<Inner>> = if distinct.len() > 1 {
+            distinct.iter().map(|member| Arc::downgrade(&member.inner)).collect()
+        } else {
+            Vec::new()
+        };
+        for member in distinct {
+            *write(&member.inner.linked) = order.clone();
+        }
+    }
+
+    /// The managers linked with this one ([`Self::link`]), in commit order, this one not among them.
+    #[must_use]
+    pub fn linked(&self) -> Vec<TransactionManager> {
+        self.link_order()
+            .map(|order| order.into_iter().filter(|member| !member.shares_stack(self)).collect())
+            .unwrap_or_default()
+    }
+
+    /// The linked managers in commit order, this one among them; `None` when this one is not linked.
+    fn link_order(&self) -> Option<Vec<TransactionManager>> {
+        let linked = read(&self.inner.linked);
+        if linked.is_empty() {
+            return None;
+        }
+        Some(
+            linked
+                .iter()
+                .filter_map(Weak::upgrade)
+                .map(|inner| TransactionManager { inner })
+                .collect(),
+        )
+    }
+
     pub fn stats(&self) -> PoolStats {
         self.inner.pool.stats()
     }
@@ -214,8 +271,15 @@ impl TransactionManager {
     /// rollback also marks the frame rollback-only, as Java's `rollback(beganTransaction = false)`.
     /// [`Self::scope`] and [`Self::run`] pair the calls. `timeout` defaults to 60 seconds and is not
     /// changed when this call joins.
+    ///
+    /// The linked managers ([`Self::link`]) begin or join a frame too.
     pub fn begin(&self, timeout: Option<Duration>) -> Result<bool, Error> {
-        self.begin_frame(timeout, false)
+        let began_millis = epoch_millis();
+        let began = self.begin_local(timeout, false, began_millis)?;
+        for other in self.linked() {
+            other.begin_local(timeout, false, began_millis)?;
+        }
+        Ok(began)
     }
 
     /// [`Self::begin`] in a guard: dropping the scope without [`TxScope::commit`] rolls back a frame it
@@ -225,7 +289,9 @@ impl TransactionManager {
         self.scope_after(began)
     }
 
-    fn begin_frame(&self, timeout: Option<Duration>, resumes_parent: bool) -> Result<bool, Error> {
+    /// Pushes a frame on this manager's stack, or joins the active one. `began_millis` is the transaction's start,
+    /// which the linked managers' frames share.
+    fn begin_local(&self, timeout: Option<Duration>, resumes_parent: bool, began_millis: i64) -> Result<bool, Error> {
         let timeout = timeout.unwrap_or(DEFAULT_TIMEOUT);
         self.with_frames(|frames| {
             if let Some(frame) = active_mut(frames) {
@@ -246,7 +312,7 @@ impl TransactionManager {
                 cache_hold: false,
                 fired,
                 deadline_token,
-                began_millis: epoch_millis(),
+                began_millis,
                 cache_flush: Vec::new(),
                 feed_insert: Vec::new(),
                 on_commit: Vec::new(),
@@ -278,43 +344,20 @@ impl TransactionManager {
     /// For the call that began the frame: runs the cache-flush and feed-insert hooks, commits, returns the
     /// connection, then runs the on-commit hooks. A frame marked rollback-only rolls back instead, runs the
     /// on-rollback hooks, and returns an error.
+    ///
+    /// The linked managers' frames end with it ([`Self::link`]): they commit in link order, and once one commit
+    /// fails, or when any of the frames is marked rollback-only, the rest roll back. The after hooks run when all
+    /// have ended, and then each manager resumes the frame its `force_new` suspended.
     pub fn commit(&self) -> Result<(), Error> {
-        match self.prepare(None)? {
-            Prepared::Joined => Ok(()),
-            Prepared::Ready {
-                rollback_only: Some(info),
-                phase,
-            } => {
-                let error_text = info.error.as_ref().map(ToString::to_string).unwrap_or_default();
-                let callsite = format!("{}:{}", info.callsite.file(), info.callsite.line());
-                tracing::warn!(
-                    message = %info.message,
-                    error = %error_text,
-                    callsite = %callsite,
-                    "commit marked rollback-only; rolling back"
-                );
-                self.complete(*phase, false)?;
-                Err(rollback_only_error(format!(
-                    "transaction marked rollback-only: {}",
-                    info.message
-                )))
-            }
-            Prepared::Ready {
-                rollback_only: None,
-                phase,
-            } => self.complete(*phase, true),
-        }
+        self.end_frames(None)
     }
 
     /// Ends the innermost `begin` on this thread. For the call that began the frame, rolls back, returns the
     /// connection, and runs the on-rollback hooks. A joined call marks the frame rollback-only and gives its
-    /// join back, so the owner's commit rolls back.
+    /// join back, so the owner's commit rolls back. The linked managers' frames end with it.
     #[track_caller]
     pub fn rollback(&self) -> Result<(), Error> {
-        match self.prepare(Some(Location::caller()))? {
-            Prepared::Joined => Ok(()),
-            Prepared::Ready { phase, .. } => self.complete(*phase, false),
-        }
+        self.end_frames(Some(Location::caller()))
     }
 
     /// A later commit rolls back and logs the message, the cause, and this callsite.
@@ -401,8 +444,21 @@ impl TransactionManager {
         result
     }
 
-    /// Parks the enlisted client on the frame, off the free list. Returns `false` when nothing is active.
+    /// Parks the enlisted client on the frame, off the free list. Returns `false` when nothing is active. The linked
+    /// managers suspend their frames too.
     pub fn suspend(&self) -> Result<bool, Error> {
+        let others = self.linked();
+        if others.iter().any(|other| other.has_active() && other.stream_open()) {
+            return Err(Error::new("an open stream is the enlisted connection"));
+        }
+        let suspended = self.suspend_local()?;
+        for other in others {
+            other.suspend_local()?;
+        }
+        Ok(suspended)
+    }
+
+    fn suspend_local(&self) -> Result<bool, Error> {
         if !self.has_active() {
             return Ok(false);
         }
@@ -420,8 +476,18 @@ impl TransactionManager {
         })
     }
 
-    /// Checks the parked client out again.
+    /// Checks the parked client out again. The linked managers resume their frames too.
     pub fn resume(&self) -> Result<(), Error> {
+        self.resume_local()?;
+        for other in self.linked() {
+            if let Err(err) = other.resume_local() {
+                tracing::warn!(error = %err, "a linked transaction manager had no frame to resume");
+            }
+        }
+        Ok(())
+    }
+
+    fn resume_local(&self) -> Result<(), Error> {
         if self.has_active() {
             return Err(Error::new("cannot resume while a transaction is active"));
         }
@@ -448,7 +514,26 @@ impl TransactionManager {
     ///
     /// The park budget counts this thread's parked clients on this pool, not other threads'.
     /// See [`Self::park_budget`].
+    ///
+    /// The linked managers do the same, each resuming its own frame when the new one ends.
     pub fn force_new(&self, timeout: Option<Duration>) -> Result<bool, Error> {
+        let members = self.link_order().unwrap_or_else(|| vec![self.clone()]);
+        for member in &members {
+            member.check_force_new()?;
+        }
+        let began_millis = epoch_millis();
+        let mut began = false;
+        for member in &members {
+            let suspended = member.has_active() && member.suspend_local()?;
+            let member_began = member.begin_local(timeout, suspended, began_millis)?;
+            if member.shares_stack(self) {
+                began = member_began;
+            }
+        }
+        Ok(began)
+    }
+
+    fn check_force_new(&self) -> Result<(), Error> {
         let parking = usize::from(self.active_conn().is_ok_and(|slot| slot.borrow().is_some()));
         if self.parked_in_thread() + parking > self.park_budget() {
             return Err(Error::new("park budget exceeded"));
@@ -456,8 +541,7 @@ impl TransactionManager {
         if self.stream_open() {
             return Err(Error::new("an open stream is the enlisted connection"));
         }
-        let suspended = self.has_active() && self.suspend()?;
-        self.begin_frame(timeout, suspended)
+        Ok(())
     }
 
     /// Parked clients one thread may hold on this pool: every ordinary connection but the one the
@@ -601,15 +685,28 @@ impl TransactionManager {
         Ok(())
     }
 
-    /// True when the active frame is marked rollback-only, as Java's `STATUS_MARKED_ROLLBACK`.
+    /// True when the active frame is marked rollback-only, as Java's `STATUS_MARKED_ROLLBACK`, or the active frame
+    /// of a linked manager is: the commit then rolls back all of them.
     pub fn is_rollback_only(&self) -> bool {
+        self.is_rollback_only_local() || self.linked().iter().any(TransactionManager::is_rollback_only_local)
+    }
+
+    fn is_rollback_only_local(&self) -> bool {
         self.with_frames(|frames| active(frames).is_some_and(|frame| frame.rollback_only.is_some()))
     }
 
     /// Wait for what the enlisted connection sent without waiting ([`DbConnection::execute_deferred`]) and report the
     /// first that failed, which marks the frame rollback-only as a failed statement does. Nothing when no connection
-    /// is enlisted.
+    /// is enlisted. The linked managers' enlisted connections are waited for too.
     pub fn finish_deferred(&self) -> Result<(), Error> {
+        self.finish_deferred_local()?;
+        for other in self.linked() {
+            other.finish_deferred_local()?;
+        }
+        Ok(())
+    }
+
+    fn finish_deferred_local(&self) -> Result<(), Error> {
         let enlisted = self.has_active() && self.active_conn().is_ok_and(|slot| slot.borrow().is_some());
         if !enlisted {
             return Ok(());
@@ -635,26 +732,111 @@ impl TransactionManager {
         self.with_frames(|frames| active(frames).map(|frame| frame.deadline_token))
     }
 
-    fn complete(&self, mut phase: Phase, commit: bool) -> Result<(), Error> {
-        let result = if commit {
-            try_commit(&mut phase)
-        } else {
-            rollback_enlisted(&phase.conn)
-        };
-        // The deadline slot holds this connection's canceller: clear it before the connection goes back.
-        unregister_deadline(phase.token);
-        return_conn(&phase.conn);
-        let resumes_parent = self.pop_active()?;
-        let _resume = ResumeOnDrop {
-            mgr: self,
-            armed: resumes_parent,
-        };
-        if result.is_ok() && commit {
-            run_after_hooks("commit", phase.on_commit.drain(..));
-        } else {
-            run_after_hooks("rollback", phase.on_rollback.drain(..));
+    /// Ends the innermost `begin` on this manager and, when it began the frames, ends them on the linked managers:
+    /// commits (`rollback_at` is `None`) or rolls back. See [`Self::commit`].
+    fn end_frames(&self, rollback_at: Option<&'static Location<'static>>) -> Result<(), Error> {
+        // This manager first: no frame here is the caller's error, and changes nothing on the others.
+        let mut own = Some(self.prepare(rollback_at)?);
+        let mut ready: Vec<(TransactionManager, Option<RollbackInfo>, Box<Phase>)> = Vec::new();
+        for member in self.link_order().unwrap_or_default() {
+            let prepared = if member.shares_stack(self) {
+                own.take()
+            } else {
+                // a linked manager with no active frame has nothing to end
+                member.prepare(rollback_at).ok()
+            };
+            if let Some(Prepared::Ready { rollback_only, phase }) = prepared {
+                ready.push((member, rollback_only, phase));
+            }
         }
-        result
+        if let Some(Prepared::Ready { rollback_only, phase }) = own {
+            ready.push((self.clone(), rollback_only, phase));
+        }
+        if ready.is_empty() {
+            return Ok(());
+        }
+        // Committing: a frame marked rollback-only, this manager's before the others', rolls back all of them.
+        let mut rollback_only = None;
+        if rollback_at.is_none() {
+            let at = ready
+                .iter()
+                .position(|(member, info, _)| info.is_some() && member.shares_stack(self))
+                .or_else(|| ready.iter().position(|(_, info, _)| info.is_some()));
+            if let Some(info) = at.and_then(|at| ready[at].1.take()) {
+                let error_text = info.error.as_ref().map(ToString::to_string).unwrap_or_default();
+                let callsite = format!("{}:{}", info.callsite.file(), info.callsite.line());
+                tracing::warn!(
+                    message = %info.message,
+                    error = %error_text,
+                    callsite = %callsite,
+                    "commit marked rollback-only; rolling back"
+                );
+                rollback_only = Some(rollback_only_error(format!(
+                    "transaction marked rollback-only: {}",
+                    info.message
+                )));
+            }
+        }
+        let commit = rollback_at.is_none() && rollback_only.is_none();
+        let mut failure: Option<Error> = None;
+        let mut committed = 0usize;
+        let mut ended = Vec::with_capacity(ready.len());
+        for (member, _, mut phase) in ready {
+            let commit = commit && failure.is_none();
+            let enlisted = phase.conn.borrow().is_some();
+            let result = if commit {
+                try_commit(&mut phase)
+            } else {
+                rollback_enlisted(&phase.conn)
+            };
+            // The deadline slot holds this connection's canceller: clear it before the connection goes back.
+            unregister_deadline(phase.token);
+            return_conn(&phase.conn);
+            match result {
+                Ok(()) => {
+                    if commit && enlisted {
+                        committed += 1;
+                    }
+                    ended.push((member, phase, commit));
+                }
+                Err(err) => {
+                    if commit && committed > 0 {
+                        tracing::error!(
+                            error = %err,
+                            committed,
+                            "a commit failed after linked databases committed; their writes stay, with nothing referring to them"
+                        );
+                    }
+                    failure.get_or_insert(err);
+                    ended.push((member, phase, false));
+                }
+            }
+        }
+        let mut resumes = Vec::new();
+        for (member, _, _) in &ended {
+            match member.pop_active() {
+                Ok(true) => resumes.push(member.clone()),
+                Ok(false) => {}
+                Err(err) => {
+                    failure.get_or_insert(err);
+                }
+            }
+        }
+        // The after hooks run with every frame ended, then each manager resumes the frame its `force_new` suspended.
+        for (_, mut phase, committed) in ended {
+            if committed {
+                run_after_hooks("commit", phase.on_commit.drain(..));
+            } else {
+                run_after_hooks("rollback", phase.on_rollback.drain(..));
+            }
+        }
+        for member in resumes {
+            member.resume_parked_parent();
+        }
+        match (failure, rollback_only) {
+            (Some(err), _) | (None, Some(err)) => Err(err),
+            (None, None) => Ok(()),
+        }
     }
 
     /// Takes the active frame's end apart. A joined frame only gives its join back; `rollback_at`, the
@@ -744,7 +926,17 @@ impl TransactionManager {
         })
     }
 
+    /// The message of the active frame's rollback-only mark, or of a linked manager's active frame: a statement then
+    /// fails, as it does on one database.
     fn rollback_message(&self) -> Option<String> {
+        self.rollback_message_local().or_else(|| {
+            self.linked()
+                .iter()
+                .find_map(TransactionManager::rollback_message_local)
+        })
+    }
+
+    fn rollback_message_local(&self) -> Option<String> {
         self.with_frames(|frames| {
             active(frames).and_then(|frame| frame.rollback_only.as_ref().map(|info| info.message.clone()))
         })
@@ -791,7 +983,7 @@ impl TransactionManager {
     fn resume_parked_parent(&self) {
         let suspended = self.with_frames(|frames| matches!(frames.last(), Some(frame) if frame.suspended));
         if suspended {
-            if let Err(err) = self.resume() {
+            if let Err(err) = self.resume_local() {
                 tracing::warn!(error = %err, "resume after completion failed");
             }
         }
@@ -945,11 +1137,13 @@ impl TransactionManager {
                 Some((false, false)) => {
                     misplaced = true;
                     let before = self.depth();
-                    self.with_frames(|frames| {
-                        if let Some(frame) = active_mut(frames) {
-                            frame.join_depth = 0;
-                        }
-                    });
+                    for member in self.link_order().unwrap_or_else(|| vec![self.clone()]) {
+                        member.with_frames(|frames| {
+                            if let Some(frame) = active_mut(frames) {
+                                frame.join_depth = 0;
+                            }
+                        });
+                    }
                     self.store_rollback("transaction begun and not ended inside a scope".to_string(), None)?;
                     if let Err(err) = self.rollback() {
                         tracing::warn!(error = %err, "rollback of a transaction left open failed");
@@ -966,6 +1160,14 @@ impl TransactionManager {
             frame.join_depth = mark.join_depth;
             Some(moved)
         });
+        // the linked managers joined and gave back with this one
+        for other in self.linked() {
+            other.with_frames(|frames| {
+                if let Some(frame) = active_mut(frames) {
+                    frame.join_depth = mark.join_depth;
+                }
+            });
+        }
         if misplaced || joins_moved == Some(true) {
             tracing::error!(
                 began = mark.began,
@@ -1184,20 +1386,6 @@ impl Drop for ResumeGuard<'_> {
             if let Err(err) = self.mgr.resume() {
                 tracing::warn!(error = %err, "resume after ignore failed");
             }
-        }
-    }
-}
-
-/// Resumes the frame a `force_new` frame suspended, after that frame's hooks, even when one panics.
-struct ResumeOnDrop<'a> {
-    mgr: &'a TransactionManager,
-    armed: bool,
-}
-
-impl Drop for ResumeOnDrop<'_> {
-    fn drop(&mut self) {
-        if self.armed {
-            self.mgr.resume_parked_parent();
         }
     }
 }

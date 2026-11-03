@@ -169,16 +169,20 @@ fn read_artifact(
         return Err(missing());
     };
     let facade = facade()?;
+    let factory = apps::factory()
+        .map_err(|_| ToolError::new("unavailable", "The database is not available now. Tell the user."))?;
+    let resources = factory.resource();
     // a file the user attached (F12) is read the same way, by lines
     if artifact.trim().starts_with(['F', 'f']) {
-        let text = crate::run::quietly(|| crate::assist::files::read_text(&facade, &run.conversation_id, artifact))
-            .map_err(|error| ToolError::new("not_text", error.message().to_string()))?
-            .ok_or_else(missing)?;
+        let text =
+            crate::run::quietly(|| crate::assist::files::read_text(resources, &facade, &run.conversation_id, artifact))
+                .map_err(|error| ToolError::new("not_text", error.message().to_string()))?
+                .ok_or_else(missing)?;
         // the file's text is the user's file, or someone else's they attached: data, never instructions
         let lines = spill::read_lines(&text, artifact.trim(), offset, limit, grep);
         return Ok(crate::prompt::untrusted("attachment", &lines));
     }
-    let text = crate::run::quietly(|| spill::read(&facade, &run.conversation_id, artifact))
+    let text = crate::run::quietly(|| spill::read(resources, &facade, &run.conversation_id, artifact))
         .map_err(|error| ToolError::new("read_failed", format!("The artifact could not be read: {error}")))?
         .ok_or_else(missing)?;
     Ok(spill::read_lines(

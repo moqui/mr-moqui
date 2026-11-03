@@ -232,19 +232,19 @@ fn the_stats_count_by_kind_and_the_clean_pass_keeps_what_failed_for_the_retentio
         ..settings()
     };
     let now = now_millis();
-    let cleaned = clean(&facade, &capped, now).unwrap();
+    let cleaned = clean(ctx.factory(), &facade, &capped, now).unwrap();
     assert_eq!(cleaned.expired, 1);
     // fifteen days on, the first (failed fifteen days ago) goes; the other has waited past the retention period and
     // fails now, and stays for inspection the full period from its failure, though it was queued long before
     let later = now + 15 * 86_400_000;
-    let cleaned = clean(&facade, &settings(), later).unwrap();
+    let cleaned = clean(ctx.factory(), &facade, &settings(), later).unwrap();
     assert_eq!((cleaned.removed, cleaned.expired), (1, 1));
-    let cleaned = clean(&facade, &settings(), later + 86_400_000).unwrap();
+    let cleaned = clean(ctx.factory(), &facade, &settings(), later + 86_400_000).unwrap();
     assert_eq!(cleaned.removed, 0, "kept from its failure date");
     let stats = super::stats(&facade, None).unwrap();
     assert_eq!((stats[0].pending, stats[0].failed), (0, 1));
     // fifteen days after its failure, it goes too
-    let cleaned = clean(&facade, &settings(), later + 15 * 86_400_000).unwrap();
+    let cleaned = clean(ctx.factory(), &facade, &settings(), later + 15 * 86_400_000).unwrap();
     assert_eq!(cleaned.removed, 1);
 }
 
@@ -323,13 +323,16 @@ fn content_is_kept_with_its_item_counted_in_the_cap_and_removed_with_it() {
     )
     .unwrap()
     .unwrap();
-    assert_eq!(read_content(&facade, &claimed).unwrap(), Some(body.clone()));
+    assert_eq!(
+        read_content(ctx.factory(), &facade, &claimed).unwrap(),
+        Some(body.clone())
+    );
     // only this node's own copy is read, and too much content is refused at enqueue
     let elsewhere = QueueItem {
         content_location: "dbresource://moqui/rich-text/x.png".to_string(),
         ..claimed.clone()
     };
-    assert!(read_content(&facade, &elsewhere).is_err());
+    assert!(read_content(ctx.factory(), &facade, &elsewhere).is_err());
     let too_big = NewItem {
         content: Some(vec![0; MAX_CONTENT_BYTES + 1]),
         ..item("mail", "m-2")
@@ -337,15 +340,15 @@ fn content_is_kept_with_its_item_counted_in_the_cap_and_removed_with_it() {
     assert!(enqueue(ctx.factory(), &facade, None, &too_big).is_err());
 
     // the receiver's copy: by node and item id, which must be plain names
-    let kept = store_received(&facade, "edge-1", &queued.queue_item_id, &body).unwrap();
+    let kept = store_received(ctx.factory(), &facade, "edge-1", &queued.queue_item_id, &body).unwrap();
     assert!(kept.starts_with(&format!("{CONTENT_IN}edge-1/{}.", queued.queue_item_id)));
     assert!(is_received("edge-1", &queued.queue_item_id, &kept));
-    let again = store_received(&facade, "edge-1", &queued.queue_item_id, &body).unwrap();
+    let again = store_received(ctx.factory(), &facade, "edge-1", &queued.queue_item_id, &body).unwrap();
     assert_ne!(
         again, kept,
         "each upload is its own, so a late apply removes only its own"
     );
-    assert!(store_received(&facade, "edge-1", "../out/x", b"x").is_err());
+    assert!(store_received(ctx.factory(), &facade, "edge-1", "../out/x", b"x").is_err());
     assert!(received_location("..", "x").is_err());
     // a delivery naming content this node did not keep for that item is refused, before any handler runs
     for wrong in [
@@ -367,7 +370,7 @@ fn content_is_kept_with_its_item_counted_in_the_cap_and_removed_with_it() {
             "{wrong}: {refused:?}"
         );
     }
-    assert!(remove_content(&facade, &again, "the test"));
+    assert!(remove_content(ctx.factory().resource(), &facade, &again, "the test"));
 
     // delivered, then past the retention period: the item goes with its content, and the receiver's copy that was
     // never answered goes too
@@ -380,10 +383,10 @@ fn content_is_kept_with_its_item_counted_in_the_cap_and_removed_with_it() {
     )
     .unwrap();
     let later = now_millis() + 15 * 86_400_000;
-    let cleaned = clean(&facade, &settings(), later).unwrap();
+    let cleaned = clean(ctx.factory(), &facade, &settings(), later).unwrap();
     assert_eq!(cleaned.removed, 1);
-    assert_eq!(facade.read_db_resource_bytes(&location).unwrap(), None);
-    assert_eq!(facade.read_db_resource_bytes(&kept).unwrap(), None);
+    assert_eq!(ctx.factory().resource().location_bytes(&location).unwrap(), None);
+    assert_eq!(ctx.factory().resource().location_bytes(&kept).unwrap(), None);
 }
 
 /// An item that fails for good tells its kind's failed-service on the sender, so the failure is not silent.

@@ -18,7 +18,14 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- moqui.resource -->
     <!-- ========================================================= -->
 
-    <entity entity-name="DbResource" package="moqui.resource" use="nontransactional" short-alias="dbResources">
+    <!-- The content group: the stored bytes of the resource schemes (DbResource*, ContentBlob*, and the GitObject,
+        GitRef and GitLfsObject rows of db kind git repositories). Its datasource is a database of its own (the
+        content datasource in MoquiDefaultConf.xml, docs/Run-Deploy.md "Content database"), so no foreign key or
+        view-entity crosses to another group, and only the resource implementations read and write these entities:
+        dbresource:// in moqui-entity, the blob store, the git provider and server in moqui-git, and the framework's
+        maintenance services. Everything else uses ec.resource. One transaction spans both databases, the content
+        database committing first. -->
+    <entity entity-name="DbResource" package="moqui.resource" group="content" use="nontransactional" short-alias="dbResources">
         <field name="resourceId" type="id" is-pk="true"/>
         <field name="parentResourceId" type="id"/>
         <field name="filename" type="text-medium"/>
@@ -29,7 +36,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="DB_RES_PARENT"><index-field name="parentResourceId"/></index>
         <index name="DB_RES_PAR_FN" unique="true"><index-field name="parentResourceId"/><index-field name="filename"/></index>
     </entity>
-    <entity entity-name="DbResourceFile" package="moqui.resource" use="nontransactional">
+    <entity entity-name="DbResourceFile" package="moqui.resource" group="content" use="nontransactional">
         <field name="resourceId" type="id" is-pk="true"/>
         <field name="mimeType" type="text-medium"/>
         <field name="versionName" type="text-short"/>
@@ -48,7 +55,7 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="many" related="moqui.resource.DbResourceFileHistory" short-alias="histories">
             <key-map field-name="resourceId"/></relationship>
     </entity>
-    <entity entity-name="DbResourceFileHistory" package="moqui.resource" use="nontransactional">
+    <entity entity-name="DbResourceFileHistory" package="moqui.resource" group="content" use="nontransactional">
         <field name="resourceId" type="id" is-pk="true"/>
         <field name="versionName" type="text-short" is-pk="true"/>
         <field name="previousVersionName" type="text-short"/>
@@ -109,7 +116,7 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.Enumeration enumId="GmmRebase" enumTypeId="GitMergeMethod" enumCode="rebase" sequenceNum="4" description="Rebase"/>
         </seed-data>
     </entity>
-    <entity entity-name="GitObject" package="moqui.resource" use="nontransactional" cache="never">
+    <entity entity-name="GitObject" package="moqui.resource" group="content" use="nontransactional" cache="never">
         <description>A git object of a db kind repository, keyed by its SHA-1 hex id, stored as storage says.
             lastUpdatedStamp is when it was written or last referenced again: gc#GitRepositories deletes only an
             unreachable object not touched since its cutoff.</description>
@@ -127,7 +134,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="storedBytes" type="number-integer"><description>The size of objectData</description></field>
         <field name="objectData" type="binary-very-long"/>
         <field name="blobId" type="id-long"/>
-        <relationship type="one" related="moqui.resource.GitRepository"/>
+        <!-- GitRepository is in the transactional group, on another database: no foreign key, read separately. -->
+        <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
         <relationship type="one" related="moqui.resource.ContentBlob" short-alias="blob"/>
         <relationship type="one" title="DeltaBase" related="moqui.resource.GitObject" short-alias="deltaBase">
             <key-map field-name="repositoryId"/><key-map field-name="deltaBaseId" related="objectId"/></relationship>
@@ -136,11 +144,12 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="GIT_OBJ_BASE"><index-field name="repositoryId"/><index-field name="deltaBaseId"/></index>
         <index name="GIT_OBJ_BLOB"><index-field name="blobId"/></index>
     </entity>
-    <entity entity-name="GitRef" package="moqui.resource" use="nontransactional" cache="never">
+    <entity entity-name="GitRef" package="moqui.resource" group="content" use="nontransactional" cache="never">
         <field name="repositoryId" type="id" is-pk="true"/>
         <field name="refName" type="text-medium" is-pk="true"><description>refs/heads/branch</description></field>
         <field name="objectId" type="text-short"/>
-        <relationship type="one" related="moqui.resource.GitRepository"/>
+        <!-- GitRepository is in the transactional group, on another database: no foreign key, read separately. -->
+        <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
     </entity>
     <entity entity-name="GitUpdate" package="moqui.resource" use="nontransactional" cache="never">
         <description>One change to the refs of a repository: a push (each one, accepted or not, so this is the push
@@ -327,7 +336,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <!-- Git LFS (crates/moqui-git/src/server/lfs.rs, docs/interfaces/Git-Hosting.md). No Java counterpart. -->
-    <entity entity-name="GitLfsObject" package="moqui.resource" use="nontransactional" cache="never">
+    <entity entity-name="GitLfsObject" package="moqui.resource" group="content" use="nontransactional" cache="never">
         <description>A Git LFS object of a repository, its content the ContentBlob of the same SHA-256. A repository
             has an object only once it was uploaded to it: the same content in another repository is stored once,
             and knowing its oid does not reach it.</description>
@@ -337,7 +346,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="objectSize" type="number-integer"/>
         <field name="uploadedByUserId" type="id"/>
         <field name="uploadedDate" type="date-time"/>
-        <relationship type="one" related="moqui.resource.GitRepository"/>
+        <!-- GitRepository is in the transactional group, on another database: no foreign key, read separately. -->
+        <relationship type="one-nofk" related="moqui.resource.GitRepository"/>
         <relationship type="one" related="moqui.resource.ContentBlob" short-alias="blob">
             <key-map field-name="oid" related="blobId"/></relationship>
     </entity>
@@ -358,7 +368,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Large content by its SHA-256, in chunks (crates/moqui-core/src/resource/blob.rs, docs/interfaces/Git-Hosting.md). No Java
         counterpart. A row that refers to a blob has a relationship to ContentBlob: gc#ContentBlobs deletes the blobs
         no such row refers to. -->
-    <entity entity-name="ContentBlob" package="moqui.resource" use="nontransactional" cache="never">
+    <entity entity-name="ContentBlob" package="moqui.resource" group="content" use="nontransactional" cache="never">
         <field name="blobId" type="id-long" is-pk="true"><description>The SHA-256 of the content, lowercase hex</description></field>
         <field name="blobSize" type="number-integer"/>
         <field name="storageKind" type="text-short"><description>db: ContentBlobChunk rows</description></field>
@@ -368,12 +378,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="createdDate" type="date-time"/>
         <index name="CONTENT_BLOB_KEY"><index-field name="storageKey"/></index>
     </entity>
-    <entity entity-name="ContentBlobChunk" package="moqui.resource" use="nontransactional" cache="never">
+    <entity entity-name="ContentBlobChunk" package="moqui.resource" group="content" use="nontransactional" cache="never">
         <field name="storageKey" type="id-long" is-pk="true"/>
         <field name="chunkSeq" type="number-integer" is-pk="true"/>
         <field name="chunkData" type="binary-very-long"/>
     </entity>
-    <entity entity-name="ContentBlobUpload" package="moqui.resource" use="nontransactional" cache="never">
+    <entity entity-name="ContentBlobUpload" package="moqui.resource" group="content" use="nontransactional" cache="never">
         <description>A blob being written: its chunks are under storageKey until the ContentBlob row is made. One
             whose lastActivityDate is a day old is abandoned, and gc#ContentBlobs deletes its chunks.</description>
         <field name="storageKey" type="id-long" is-pk="true"/>

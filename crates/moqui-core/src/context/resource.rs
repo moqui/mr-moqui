@@ -901,6 +901,13 @@ impl ResourceFacade {
                 return self.read_version(path, version_name);
             }
         }
+        // a missing `dbresource://` file is no reference at all (`get` refuses it), so it is read here
+        if scheme_of(location) == "dbresource" {
+            return self
+                .db_facade()?
+                .read_db_resource_bytes(strip_hash(location))
+                .map_err(Error::from);
+        }
         let resource = self.get(location)?;
         if !resource.exists() || resource.is_directory() {
             return Ok(None);

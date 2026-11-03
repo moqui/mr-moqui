@@ -1224,3 +1224,7 @@ fn db_parts(location: &str) -> Result<Vec<String>, Error> {
 #[cfg(test)]
 #[path = "dbresource_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "content_access_tests.rs"]
+mod content_access_tests;

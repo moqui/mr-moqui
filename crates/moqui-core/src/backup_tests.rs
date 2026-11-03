@@ -171,8 +171,16 @@ fn archive_names_parse_their_prefix_stamp_and_tier_and_reject_the_rest() {
     assert_eq!(parsed.tier, Tier::Weekly);
     assert!(!parsed.dump);
     assert!(parse_archive_name("moqui-20260311T020000Z-d.dump").unwrap().dump);
+    assert_eq!(
+        parse_archive_name("moqui_content-20260311T020000Z-d.dump")
+            .unwrap()
+            .prefix,
+        "moqui_content"
+    );
     for name in [
         "other-20260311T020000Z-d.dump",
+        "moqui_-20260311T020000Z-d.dump",
+        "moqui_x.y-20260311T020000Z-d.dump",
         "moqui-20260311T020000Z-dw.dump",
         "moqui-20260311T020000Z-.dump",
         "moqui-2026031T020000Z-d.dump",

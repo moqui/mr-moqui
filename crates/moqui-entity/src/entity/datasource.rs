@@ -254,7 +254,15 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
             value => value == "true",
         },
     };
-    if kind != DatasourceKind::Embedded {
+    if kind == DatasourceKind::Embedded {
+        // Only the database: a group other than `transactional` has a database of its own in the embedded cluster,
+        // named by the datasource's own `databaseName` (the `database-list` one names the external server's).
+        conf.database = datasource
+            .first_named("inline-jdbc")
+            .and_then(|own| own.first_named("xa-properties"))
+            .map(|xa| expanded(&xa, "databaseName"))
+            .unwrap_or_default();
+    } else {
         if let Some(inline) = &inline {
             connection(&mut conf, inline)?;
         }

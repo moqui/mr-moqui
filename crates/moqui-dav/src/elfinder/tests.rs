@@ -119,9 +119,7 @@ fn a_parent_is_one_level_up_and_none_at_the_top_of_a_scheme() {
 
 #[test]
 fn hashes_are_the_java_hashes() {
-    let setup = setup();
     let connector = Connector {
-        facade: &setup.facade,
         resource_root: "dbresource://mantle/content".to_string(),
         volume_id: "db_".to_string(),
     };

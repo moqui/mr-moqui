@@ -307,6 +307,11 @@ branches and tags by hand; its summary shows them, and the project summary the r
 
 ## Storage of db repositories
 
+The `GitObject`, `GitRef` and `GitLfsObject` rows, and the content blobs, are in the content database
+([Run-Deploy](../Run-Deploy.md#content-database)). The `GitRepository` row and the rest of the hosting rows (updates,
+merge requests, branch rules, LFS locks) are with the business rows, so a repository row and its objects are read with
+queries of their own.
+
 A `GitObject` row holds an object as a pack does (`storage`):
 
 | `storage` | `objectData` |

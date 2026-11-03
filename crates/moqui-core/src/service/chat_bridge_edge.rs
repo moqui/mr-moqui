@@ -738,12 +738,12 @@ fn store_edge_media(
     let content_location = param(parameters, "contentLocation").unwrap_or_default();
     let now = now_millis();
     // the files that ran out first, each in a transaction of its own, so the node's total is what it keeps now
-    sweep_edge_media(facade, now);
+    sweep_edge_media(&factory, facade, now);
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let bytes = if content_location.is_empty() {
         None
     } else {
-        facade.read_db_resource_bytes(&content_location)?
+        factory.resource().location_bytes(&content_location)?
     }
     .ok_or_else(|| LibError::new(format!("chat file item {item} has no file")))?;
     let size = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
@@ -759,7 +759,7 @@ fn store_edge_media(
         return Err(LibError::new(format!("chat file item {item} is refused: {refused}")));
     }
     let minutes = payload["minutes"].as_i64().unwrap_or(60).clamp(1, media_minutes());
-    facade.write_db_resource(&location, &bytes)?;
+    factory.resource().write_bytes(&location, &bytes)?;
     let mut row = facade.make_value(EDGE_MEDIA)?;
     row.set("edgeMediaId", Value::string(&token_hash));
     row.set("pairedNodeId", Value::string(&node));
@@ -783,7 +783,7 @@ fn store_edge_media(
 /// On an edge node, remove the files that ran out before `now` (a page of them), each with its row in a transaction of
 /// its own: one that fails is logged and the rest go on. The count removed. The link's retention pass calls it, and
 /// each store.
-pub fn sweep_edge_media(facade: &EntityFacade, now: i64) -> usize {
+pub fn sweep_edge_media(factory: &ExecutionContextFactory, facade: &EntityFacade, now: i64) -> usize {
     let expired = transaction(facade, EDGE_MEDIA, TransactionAttribute::ForceNew, || {
         facade
             .find(EDGE_MEDIA)?
@@ -806,7 +806,7 @@ pub fn sweep_edge_media(facade: &EntityFacade, now: i64) -> usize {
         let id = text_of(row, "edgeMediaId").unwrap_or_default();
         let location = text_of(row, "location");
         let done = transaction(facade, EDGE_MEDIA, TransactionAttribute::ForceNew, || {
-            remove_media(facade, &id, location.as_deref())
+            remove_media(factory.resource(), facade, &id, location.as_deref())
         });
         match done {
             Ok(()) => removed += 1,
@@ -816,9 +816,14 @@ pub fn sweep_edge_media(facade: &EntityFacade, now: i64) -> usize {
     removed
 }
 
-fn remove_media(facade: &EntityFacade, id: &str, location: Option<&str>) -> Result<(), LibError> {
+fn remove_media(
+    resources: &crate::context::ResourceFacade,
+    facade: &EntityFacade,
+    id: &str,
+    location: Option<&str>,
+) -> Result<(), LibError> {
     if let Some(location) = location {
-        facade.delete_db_resource(location)?;
+        resources.delete(location)?;
     }
     facade
         .find(EDGE_MEDIA)?
@@ -881,7 +886,7 @@ pub(super) fn media(factory: &ExecutionContextFactory, bridge_id: &str, token: &
         .is_none_or(|expiry| expiry < now)
     {
         let removed = transaction(&facade, EDGE_MEDIA, TransactionAttribute::ForceNew, || {
-            remove_media(&facade, &id, location.as_deref())
+            remove_media(factory.resource(), &facade, &id, location.as_deref())
         });
         if let Err(error) = removed {
             tracing::warn!("The chat file {id} that ran out was not removed: {error}");
@@ -889,7 +894,10 @@ pub(super) fn media(factory: &ExecutionContextFactory, bridge_id: &str, token: &
         return None;
     }
     let bytes = transaction(&facade, EDGE_MEDIA, TransactionAttribute::UseOrBegin, || {
-        facade.read_db_resource_bytes(location.as_deref().unwrap_or_default())
+        factory
+            .resource()
+            .location_bytes(location.as_deref().unwrap_or_default())
+            .map_err(LibError::from)
     });
     let bytes = match bytes {
         Ok(Some(bytes)) => bytes,

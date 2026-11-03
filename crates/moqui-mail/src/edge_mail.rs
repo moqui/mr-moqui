@@ -211,7 +211,7 @@ fn on_edge_node(factory: &ExecutionContextFactory) -> bool {
 }
 
 /// The item's content: the message, where the receiver kept it.
-fn content(facade: &EntityFacade, parameters: &BTreeMap<String, Value>) -> Result<Vec<u8>, LibError> {
+fn content(parameters: &BTreeMap<String, Value>) -> Result<Vec<u8>, LibError> {
     let location = param_text(parameters, "contentLocation");
     if location.is_empty() {
         return Err(LibError::new(format!(
@@ -219,8 +219,9 @@ fn content(facade: &EntityFacade, parameters: &BTreeMap<String, Value>) -> Resul
             param_text(parameters, "queueItemId")
         )));
     }
-    facade
-        .read_db_resource_bytes(&location)?
+    current_factory()?
+        .resource()
+        .location_bytes(&location)?
         .ok_or_else(|| LibError::new(format!("the message of an edge queue item, {location}, is not there")))
 }
 
@@ -343,7 +344,7 @@ pub(super) fn deliver_edge_mail(
     }
     let item = param_text(parameters, "queueItemId");
     let payload = payload(parameters)?;
-    let raw = content(facade, parameters)?;
+    let raw = content(parameters)?;
     let envelope = Envelope {
         mail_from: json_text(&payload, "mailFrom"),
         helo: json_text(&payload, "helo"),
@@ -605,7 +606,7 @@ pub(super) fn deliver_edge_outbound_mail(
         return Ok(BTreeMap::new());
     }
     let payload = payload(parameters)?;
-    let raw = content(facade, parameters)?;
+    let raw = content(parameters)?;
     let to: Vec<String> = payload["to"]
         .as_array()
         .map(|list| {
@@ -639,8 +640,7 @@ pub(super) fn deliver_edge_outbound_mail(
             }
         }
         // internal mail: from the paired node's own domain (on a dedicated edge node, whatever it signs for)
-        let internal =
-            !all_in_one || super::auth::from_domain(&raw).is_some_and(|domain| paired.contains(&domain));
+        let internal = !all_in_one || super::auth::from_domain(&raw).is_some_and(|domain| paired.contains(&domain));
         let signed = if internal {
             super::auth::sign_for(raw, |domain| paired.contains(domain))
         } else {
@@ -650,7 +650,16 @@ pub(super) fn deliver_edge_outbound_mail(
         // all-in-one node the server's own accounts are delivered here
         let split = split_local(facade, &factory, &node, &to)?;
         if !split.back.is_empty() {
-            queue_back(&factory, facade, &node, &item, &original_from, &split.back, &signed, internal)?;
+            queue_back(
+                &factory,
+                facade,
+                &node,
+                &item,
+                &original_from,
+                &split.back,
+                &signed,
+                internal,
+            )?;
         }
         let own = if split.own.is_empty() {
             OwnResults::default()
@@ -659,6 +668,7 @@ pub(super) fn deliver_edge_outbound_mail(
         };
         let local: Vec<String> = split.back.iter().chain(&own.stored).cloned().collect();
         let rows = super::mx::record(
+            &factory,
             facade,
             &node,
             &item,
@@ -876,11 +886,7 @@ struct OwnResults {
 /// refusal (`Err`, not mail) for all. An account gone since, or one whose store failed, refuses its recipients; one
 /// with no result is refused as not tried.
 #[cfg(feature = "imap")]
-fn own_results(
-    item: &str,
-    own: &[(String, String)],
-    report: Result<&[super::delivery::Delivery], &str>,
-) -> OwnResults {
+fn own_results(item: &str, own: &[(String, String)], report: Result<&[super::delivery::Delivery], &str>) -> OwnResults {
     use super::delivery::Outcome;
     let mut results = OwnResults::default();
     for (address, account) in own {

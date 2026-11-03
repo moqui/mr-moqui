@@ -105,3 +105,13 @@ Records also name the services moved to `mantle.ext.*`: `moqui.service.message.S
 Positive Pay jobs). Reload the data that defines them, or update the names with SQL as for locations above, for
 example `regexp_replace(consume_service_name, '^mantle\.account\.(Nacha|PositivePay|Bai|Ofx)Services\.',
 'mantle.ext.account.\1Services.')`.
+
+## Files and the content entities
+
+`DbResource`, `DbResourceFile`, `DbResourceFileHistory` and the git and blob storage entities are in a database of
+their own ([Run-Deploy](../Run-Deploy.md#content-database)), so nothing can join them to other entities. A Java
+component that finds or writes these rows directly, or has a view-entity or `type="one"` relationship to them, reads
+and writes the files through `ec.resource.getLocationReference(location)` instead. The test
+`no_service_screen_or_script_uses_the_content_entities` (`cargo test -p moqui-entity content_access`) names any service,
+screen or script of the components that still does. Data files may keep their `DbResource` rows: the data loader writes
+them to the content database.

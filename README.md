@@ -18,6 +18,11 @@ covered, features new to MR Moqui, tests and fixes, and performance. Mantle is c
 with the Commons & Comms groupware and communication apps, and IronStone PASS (`mr-pass`) are being designed and built.
 What is open is in [plans/Remaining-Work.md](plans/Remaining-Work.md).
 
+MR Moqui is in early design and development. Until the first release (the 0.1.0 series) the data model (entities,
+their groups and fields) and the storage layout (databases, schemas, where files are kept) are not stable: they change
+without migrations, and a database from an earlier build may need to be emptied and loaded again (`./moq clean-db`,
+`./moq load`).
+
 The `moq` script replaces our old Gradle tasks, and getting components is similar:
 
 ```sh

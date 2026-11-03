@@ -191,6 +191,11 @@ impl EventSink {
     }
 
     /// The node this sink writes for.
+    /// The factory of the run, while the server runs.
+    pub fn factory(&self) -> Option<Arc<ExecutionContextFactory>> {
+        self.factory.upgrade()
+    }
+
     pub fn node(&self) -> &str {
         &self.node
     }

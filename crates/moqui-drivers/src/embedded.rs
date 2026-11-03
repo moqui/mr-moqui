@@ -138,7 +138,16 @@ mod cluster {
         ///
         /// Returns an error when `pg_dump` is missing or exits non-zero.
         pub fn save_db(&self, dump: &Path) -> Result<(), Error> {
-            let mut args = connect_args(self);
+            self.save_database(DATABASE, dump)
+        }
+
+        /// `pg_dump --format=custom` of one database of the cluster.
+        ///
+        /// # Errors
+        ///
+        /// Returns an error when `pg_dump` is missing or exits non-zero.
+        pub fn save_database(&self, database: &str, dump: &Path) -> Result<(), Error> {
+            let mut args = connect_args(self, database);
             args.push("--format=custom".to_string());
             args.push("--file".to_string());
             args.push(dump.display().to_string());
@@ -151,12 +160,77 @@ mod cluster {
         ///
         /// Returns an error when `pg_restore` is missing or exits non-zero.
         pub fn load_save(&self, dump: &Path) -> Result<(), Error> {
-            let mut args = connect_args(self);
+            self.load_database(DATABASE, dump)
+        }
+
+        /// `pg_restore --format=custom` of a dump from [`Self::save_database`] into `database`, which is created when
+        /// it is missing.
+        ///
+        /// # Errors
+        ///
+        /// Returns an error when the database cannot be created, or `pg_restore` is missing or exits non-zero.
+        pub fn load_database(&self, database: &str, dump: &Path) -> Result<(), Error> {
+            self.ensure_database(database)?;
+            let mut args = connect_args(self, database);
             args.push("--format=custom".to_string());
             args.push("--clean".to_string());
             args.push("--if-exists".to_string());
             args.push(dump.display().to_string());
             run_tool(self, "pg_restore", &args)
+        }
+
+        /// A driver for another database of the cluster than `moqui`, such as the content group's, which is created
+        /// when it is missing.
+        ///
+        /// # Errors
+        ///
+        /// Returns an error when the name is not a plain identifier or the database cannot be created.
+        pub fn database_driver(&self, database: &str) -> Result<PostgresDriver, Error> {
+            self.ensure_database(database)?;
+            Ok(driver_for(&self.server, &self.server.settings().password, database))
+        }
+
+        fn ensure_database(&self, database: &str) -> Result<(), Error> {
+            if database.is_empty() || !database.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_') {
+                return Err(Error::new(format!(
+                    "embedded database name {database:?} is not a plain identifier"
+                )));
+            }
+            let exists = self
+                .server
+                .database_exists(database)
+                .map_err(|err| embedded("check embedded database", &self.data_dir, err))?;
+            if !exists {
+                self.server
+                    .create_database(database)
+                    .map_err(|err| embedded("create embedded database", &self.data_dir, err))?;
+                tracing::info!("Created database {database} in the embedded cluster");
+            }
+            Ok(())
+        }
+
+        /// The databases of the cluster other than `moqui` and Postgres's own, such as the content group's.
+        ///
+        /// # Errors
+        ///
+        /// Returns an error when the cluster cannot be queried.
+        pub fn other_databases(&self) -> Result<Vec<String>, Error> {
+            use moqui_core::driver::DbDriver as _;
+            let driver = driver_for(&self.server, &self.server.settings().password, DATABASE);
+            let mut conn = driver.connect()?;
+            let rows = conn.query(
+                "SELECT datname FROM pg_database WHERE NOT datistemplate AND datname NOT IN ('postgres', 'moqui') \
+                 ORDER BY datname",
+                &[],
+            )?;
+            Ok(rows
+                .iter()
+                .filter_map(|row| {
+                    row.get("datname")
+                        .and_then(moqui_lib::object::Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect())
         }
 
         /// Stop the postmaster. A second call is a no-op, and so is a call on an adopted postmaster.
@@ -197,6 +271,12 @@ mod cluster {
         /// Connection and binary paths for `pg_dump` and `pg_basebackup`. `prefix` is `moqui` or `search`.
         #[must_use]
         pub fn tool_connect(&self, prefix: &str) -> ToolTarget {
+            self.tool_connect_database(prefix, DATABASE)
+        }
+
+        /// [`Self::tool_connect`] for one database of the cluster, such as `content` for the content group's.
+        #[must_use]
+        pub fn tool_connect_database(&self, prefix: &str, database: &str) -> ToolTarget {
             let settings = self.server.settings();
             #[cfg(unix)]
             let host = settings
@@ -214,7 +294,7 @@ mod cluster {
                 password: settings.password.clone(),
                 port: settings.port,
                 host,
-                database: DATABASE.to_string(),
+                database: database.to_string(),
                 data_dir: self.data_dir.clone(),
             }
         }
@@ -245,23 +325,95 @@ mod cluster {
 
     /// Start the cluster, dump it, and stop it. A live postmaster that was adopted keeps running.
     ///
+    /// `dump` is the `moqui` database's. Each other database of the cluster (the content group's) is dumped beside
+    /// it, at [`database_dump_path`].
+    ///
     /// # Errors
     ///
     /// Returns an error when the cluster or `pg_dump` fails.
     pub fn save_db(runtime_dir: &Path, dir: &Path, dump: &Path) -> Result<(), Error> {
         let (cluster, _driver) = EmbeddedCluster::start_with(dir, &cli_options(runtime_dir, dir)?)?;
-        cluster.save_db(dump)
+        cluster.save_db(dump)?;
+        for database in cluster.other_databases()? {
+            let path = database_dump_path(dump, &database);
+            let mut part = path.clone().into_os_string();
+            part.push(".partial");
+            let part = PathBuf::from(part);
+            cluster.save_database(&database, &part)?;
+            std::fs::rename(&part, &path)
+                .map_err(|err| Error::new(format!("move {} into place", part.display())).with_source(err))?;
+            tracing::info!("Saved database {database} to {}", path.display());
+        }
+        Ok(())
+    }
+
+    /// Where [`save_db`] dumps the database `database` beside `dump`, the `moqui` database's: the name of `dump` with
+    /// `database` in place of its leading `moqui` (`moqui.dump` is `moqui_content.dump`, `moqui-<stamp>-manual.dump`
+    /// is `moqui_content-<stamp>-manual.dump`, as the backup job names its archives), or `database` and `-` in front
+    /// of a name that does not start so. A `.part` or `.partial` suffix of a dump being written is left off.
+    #[must_use]
+    pub fn database_dump_path(dump: &Path, database: &str) -> PathBuf {
+        dump.with_file_name(format!("{database}{}", dump_suffix(dump)))
+    }
+
+    /// What follows the database in the names of the dumps of one save ([`database_dump_path`]).
+    fn dump_suffix(dump: &Path) -> String {
+        let name = dump
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let name = name
+            .strip_suffix(".partial")
+            .or_else(|| name.strip_suffix(".part"))
+            .unwrap_or(&name);
+        match name.strip_prefix(DATABASE) {
+            Some(rest) if rest.starts_with(['.', '-']) => rest.to_string(),
+            _ => format!("-{name}"),
+        }
     }
 
     /// Start the cluster, restore a custom-format dump, and stop it. A live postmaster that was
     /// adopted keeps running.
+    ///
+    /// `dump` restores the `moqui` database, and each dump of another database beside it ([`sibling_dumps`]) restores
+    /// that database, created when missing.
     ///
     /// # Errors
     ///
     /// Returns an error when the cluster or `pg_restore` fails.
     pub fn load_save(runtime_dir: &Path, dir: &Path, dump: &Path) -> Result<(), Error> {
         let (cluster, _driver) = EmbeddedCluster::start_with(dir, &cli_options(runtime_dir, dir)?)?;
-        cluster.load_save(dump)
+        cluster.load_save(dump)?;
+        for (database, path) in sibling_dumps(dump) {
+            cluster.load_database(&database, &path)?;
+            tracing::info!("Restored database {database} from {}", path.display());
+        }
+        Ok(())
+    }
+
+    /// The dumps of the other databases beside `dump` that one save wrote with it ([`database_dump_path`]), by
+    /// database name.
+    pub fn sibling_dumps(dump: &Path) -> Vec<(String, PathBuf)> {
+        let Some(dir) = dump.parent() else {
+            return Vec::new();
+        };
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let suffix = dump_suffix(dump);
+        let mut found: Vec<(String, PathBuf)> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.as_path() != dump)
+            .filter_map(|path| {
+                let name = path.file_name()?.to_str()?;
+                let database = name.strip_suffix(suffix.as_str())?.to_string();
+                let plain = !database.is_empty() && database.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+                (plain && database != DATABASE && database != "postgres").then_some((database, path))
+            })
+            .collect();
+        found.sort();
+        found
     }
 
     /// `save-db` and `load-save` use the install the server of `runtime_dir` shares rather than unpacking another one
@@ -460,7 +612,7 @@ mod cluster {
                 .map_err(|err| embedded("create embedded database", &data_dir, err))?;
         }
         let password = server.settings().password.clone();
-        let driver = driver_for(&server, &password);
+        let driver = driver_for(&server, &password, DATABASE);
         Ok((
             EmbeddedCluster {
                 server: std::mem::ManuallyDrop::new(server),
@@ -546,18 +698,18 @@ mod cluster {
         Ok(())
     }
 
-    fn driver_for(server: &PostgreSQL, password: &str) -> PostgresDriver {
+    fn driver_for(server: &PostgreSQL, password: &str, database: &str) -> PostgresDriver {
         let settings = server.settings();
         #[cfg(unix)]
         {
             let socket = settings.socket_dir.clone().unwrap_or_else(|| settings.data_dir.clone());
-            PostgresDriver::unix_socket(BOOTSTRAP_SUPERUSER, DATABASE, socket)
+            PostgresDriver::unix_socket(BOOTSTRAP_SUPERUSER, database, socket)
                 .port(settings.port)
                 .password(password)
         }
         #[cfg(not(unix))]
         {
-            PostgresDriver::tcp_no_tls(BOOTSTRAP_SUPERUSER, DATABASE, settings.host.clone(), settings.port)
+            PostgresDriver::tcp_no_tls(BOOTSTRAP_SUPERUSER, database, settings.host.clone(), settings.port)
                 .password(password)
         }
     }
@@ -798,7 +950,7 @@ mod cluster {
             || bin.join("pg_upgrade.exe").is_file()
     }
 
-    fn connect_args(cluster: &EmbeddedCluster) -> Vec<String> {
+    fn connect_args(cluster: &EmbeddedCluster, database: &str) -> Vec<String> {
         let settings = cluster.server.settings();
         let mut args = vec![
             "--username".to_string(),
@@ -806,7 +958,7 @@ mod cluster {
             "--port".to_string(),
             settings.port.to_string(),
             "--dbname".to_string(),
-            DATABASE.to_string(),
+            database.to_string(),
             "--no-password".to_string(),
         ];
         #[cfg(unix)]
@@ -880,7 +1032,10 @@ mod cluster {
 #[cfg(feature = "embedded-postgres")]
 pub use cluster::process_live;
 #[cfg(feature = "embedded-postgres")]
-pub use cluster::{load_save, save_db, shared_install_dir, ClusterRole, EmbeddedCluster, StartOptions, ToolTarget};
+pub use cluster::{
+    database_dump_path, load_save, save_db, shared_install_dir, sibling_dumps, ClusterRole, EmbeddedCluster,
+    StartOptions, ToolTarget,
+};
 #[cfg(feature = "embedded-postgres")]
 pub(crate) use cluster::{pg_ctl_path, postmaster_live};
 

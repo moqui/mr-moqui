@@ -24,6 +24,7 @@ use moqui_lib::object::Value;
 use serde_json::Value as Json;
 
 use super::format;
+use moqui_core::context::ResourceFacade;
 use moqui_core::entity::EntityFacade;
 
 /// Where the artifacts of the runs are kept.
@@ -116,8 +117,8 @@ impl Artifact {
     /// # Errors
     ///
     /// Returns an error when the artifact or the row cannot be written.
-    pub fn write(&self, facade: &EntityFacade) -> Result<(), Error> {
-        facade.write_db_resource(&self.location, self.text.as_bytes())?;
+    pub fn write(&self, resources: &ResourceFacade, facade: &EntityFacade) -> Result<(), Error> {
+        resources.write_bytes(&self.location, self.text.as_bytes())?;
         facade
             .find("moqui.agent.AgentToolCall")?
             .eq("toolCallId", Value::string(&self.tool_call_id))
@@ -128,8 +129,8 @@ impl Artifact {
 
     /// Remove an artifact whose result was not stored (a content blob of a large one stays for the blob sweep). A
     /// failure is logged.
-    pub fn remove(&self, facade: &EntityFacade) {
-        if let Err(error) = facade.delete_db_resource(&self.location) {
+    pub fn remove(&self, resources: &ResourceFacade) {
+        if let Err(error) = resources.delete(&self.location) {
             tracing::error!(
                 "the artifact {} of a result not stored could not be removed: {error}",
                 self.location
@@ -143,7 +144,12 @@ impl Artifact {
 /// # Errors
 ///
 /// Returns an error when the rows cannot be read.
-pub fn read(facade: &EntityFacade, conversation_id: &str, artifact: &str) -> Result<Option<String>, Error> {
+pub fn read(
+    resources: &ResourceFacade,
+    facade: &EntityFacade,
+    conversation_id: &str,
+    artifact: &str,
+) -> Result<Option<String>, Error> {
     let tool_call_id = tool_call_of(artifact);
     if tool_call_id.is_empty() {
         return Ok(None);
@@ -170,8 +176,8 @@ pub fn read(facade: &EntityFacade, conversation_id: &str, artifact: &str) -> Res
     if !same_conversation || !location.starts_with(ROOT) {
         return Ok(None);
     }
-    Ok(facade
-        .read_db_resource_bytes(&location)?
+    Ok(resources
+        .location_bytes(&location)?
         .map(|bytes| String::from_utf8_lossy(&bytes).into_owned()))
 }
 

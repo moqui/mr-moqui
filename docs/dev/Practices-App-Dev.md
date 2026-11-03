@@ -204,6 +204,11 @@ Each component is its own git repository. Commit in each repository that a chang
 - `makeCondition` takes three arguments for a value: `(field, "equals", value)`. With two, the second is read as the
   operator. And `not-equals "Y"` leaves out rows where the field is null; add an `is-null` alternative when null means
   "not Y".
+- **Files through `ec.resource`, never their storage entities.** `DbResource*`, `ContentBlob*`, `GitObject`, `GitRef`
+  and `GitLfsObject` are the `content` group, in a database of its own
+  ([Run-Deploy](../Run-Deploy.md#content-database)): no view-entity, relationship with a foreign key, or find may join
+  them to an application's entities. Keep a file's location on the row (`contentLocation`) and read and write the file
+  with `ec.resource.getLocationReference(location)`. A test fails when a service, screen or script names them.
 
 ### Failure tolerance and errors
 

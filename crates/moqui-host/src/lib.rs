@@ -1121,7 +1121,8 @@ fn load_embedded(
             pool.max,
             datasource_target(&conf, cluster_dir)
         );
-        crate::db::entity_db::open(conf, cluster_dir, &install, pool.max).map(|db| (db, pool))
+        let connections = pool.max + crate::db::entity_facade::embedded_group_pool_max(&factory);
+        crate::db::entity_db::open(conf, cluster_dir, &install, connections).map(|db| (db, pool))
     });
     if opened.is_ok() {
         tracing::info!(
@@ -1158,12 +1159,7 @@ fn load_with_factory(
     flags: &LoadFlags,
 ) -> Result<LoadReport, moqui_lib::error::Error> {
     let entity_started = std::time::Instant::now();
-    let facade = crate::db::entity_facade::open_entity_facade_for_factory(
-        factory,
-        std::sync::Arc::clone(&db.driver),
-        pool,
-        &db.conf.dialect,
-    )?;
+    let facade = crate::db::entity_facade::open_entity_facade_for_db(factory, db, pool)?;
     crate::db::entity_facade::attach(factory, facade.clone());
     let merged = moqui_lib::node::MNode::parse_shared("moqui-conf", factory.conf_text()).ok();
     crate::db::entity_facade::apply_datasource_conf(&facade, &db.conf, merged.as_ref());
@@ -1507,18 +1503,14 @@ fn boot_server_factory(
         pool.max,
         datasource_target(&conf, &cluster_dir)
     );
-    let db = crate::db::entity_db::open(conf, &cluster_dir, &install, pool.max)?;
+    let connections = pool.max + crate::db::entity_facade::embedded_group_pool_max(&factory);
+    let db = crate::db::entity_db::open(conf, &cluster_dir, &install, connections)?;
     tracing::info!(
         "DataSource transactional opened in {:.3} seconds",
         db_started.elapsed().as_secs_f64()
     );
     let entity_started = std::time::Instant::now();
-    let facade = crate::db::entity_facade::open_entity_facade_for_factory(
-        &factory,
-        Arc::clone(&db.driver),
-        pool,
-        &db.conf.dialect,
-    )?;
+    let facade = crate::db::entity_facade::open_entity_facade_for_db(&factory, &db, pool)?;
     crate::db::entity_facade::attach(&factory, facade.clone());
     let merged = moqui_lib::node::MNode::parse_shared("moqui-conf", factory.conf_text()).ok();
     crate::db::entity_facade::apply_datasource_conf(&facade, &db.conf, merged.as_ref());
@@ -2044,17 +2036,14 @@ fn load_in_context(
     // As Java, `startup-add-missing` checks every table now; without it a table is made on first use when
     // `runtime-add-missing` is on, or is left to the database.
     let test_fts_before_load = if startup_add_missing {
-        let entities = entity_names(framework_dir, &facade.entity_dirs())?;
+        let entities = entity_names(framework_dir, &facade.entity_dirs(), &factory_served_groups())?;
         if !entities.iter().any(|name| name == "moqui.test.TestFts") {
             return Err(moqui_lib::error::Error::new(
                 "framework entity list has no moqui.test.TestFts",
             ));
         }
         let refs: Vec<&str> = entities.iter().map(String::as_str).collect();
-        tracing::info!(
-            "Checking tables for {} framework entities in group transactional",
-            refs.len()
-        );
+        tracing::info!("Checking tables for {} framework entities", refs.len());
         facade.check_tables(&refs)?;
         let test_fts_before_load = facade.table_exists("moqui.test.TestFts")?;
         if !test_fts_before_load {
@@ -2441,11 +2430,32 @@ fn push_unique(
     }
 }
 
-/// The transactional entities of the framework conf's files, then of each component `entity` directory
-/// in `entity_dirs` after the framework's own (the first).
+/// The groups of the conf's datasources with an `object-factory` (`logging`): a store that is not this database, or
+/// none served here.
+fn factory_served_groups() -> Vec<String> {
+    use moqui_core::entity::datasource::{datasource_attribute, datasource_nodes};
+    moqui_core::context::ExecutionContext::with_current(|ec| {
+        moqui_lib::node::MNode::parse_shared("moqui-conf", ec.factory().conf_text())
+            .map(|conf| {
+                datasource_nodes(&conf)
+                    .iter()
+                    .filter(|node| !datasource_attribute(node, "object-factory").is_empty())
+                    .map(|node| datasource_attribute(node, "group-name"))
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+    .unwrap_or_default()
+}
+
+/// The entities of the framework conf's files, then of each component `entity` directory in `entity_dirs` after the
+/// framework's own (the first), but those of the groups `skipped`, whose datasources are not SQL databases
+/// ([`factory_served_groups`]). The other groups have datasources of their own (`content`) or share the transactional
+/// one.
 fn entity_names(
     framework_dir: &std::path::Path,
     entity_dirs: &[std::path::PathBuf],
+    skipped: &[String],
 ) -> Result<Vec<String>, moqui_lib::error::Error> {
     use moqui_lib::node::MNode;
 
@@ -2466,18 +2476,19 @@ fn entity_names(
     }
     for path in paths {
         let root = MNode::parse_file(&path)?;
-        collect_entities(&root, &mut names, &mut seen);
+        collect_entities(&root, skipped, &mut names, &mut seen);
     }
     Ok(names)
 }
 
 fn collect_entities(
     node: &moqui_lib::node::MNode,
+    skipped: &[String],
     names: &mut Vec<String>,
     seen: &mut std::collections::BTreeSet<String>,
 ) {
     if node.has_name("entity") {
-        if transactional_entity(node) {
+        if !node.attribute("group").is_some_and(|group| skipped.contains(&group)) {
             if let Some(full) = full_entity_name(node) {
                 if seen.insert(full.clone()) {
                     names.push(full);
@@ -2490,15 +2501,8 @@ fn collect_entities(
         return;
     }
     for child in node.child_iter() {
-        collect_entities(&child, names, seen);
+        collect_entities(&child, skipped, names, seen);
     }
-}
-
-fn transactional_entity(node: &moqui_lib::node::MNode) -> bool {
-    !matches!(
-        node.attribute("group"),
-        Some(group) if !group.is_empty() && group != "transactional"
-    )
 }
 
 fn full_entity_name(node: &moqui_lib::node::MNode) -> Option<String> {

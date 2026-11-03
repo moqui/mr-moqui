@@ -305,13 +305,9 @@ fn boot(runtime: &Path, framework: &Path) -> Result<Booted, Error> {
     let cluster = runtime.join("db/embedded");
     std::fs::create_dir_all(&cluster).map_err(io("could not create the cluster directory"))?;
     let install = crate::db::embedded::shared_install_dir(runtime, &cluster);
-    let db = crate::db::entity_db::open(conf, &cluster, &install, pool.max)?;
-    let facade = crate::db::entity_facade::open_entity_facade_for_factory(
-        &factory,
-        Arc::clone(&db.driver),
-        pool,
-        &db.conf.dialect,
-    )?;
+    let connections = pool.max + crate::db::entity_facade::embedded_group_pool_max(&factory);
+    let db = crate::db::entity_db::open(conf, &cluster, &install, connections)?;
+    let facade = crate::db::entity_facade::open_entity_facade_for_db(&factory, &db, pool)?;
     crate::db::entity_facade::attach(&factory, facade.clone());
     // the sim overlay starts at the first enter_sim, on the same install, as a server's does
     let sim = crate::db::sim::SimOverlay::install(&facade, &cluster, Some(install));

@@ -244,6 +244,7 @@ fn two_domains(conf: &str) -> (moqui_core::context::ExecutionContext, EntityFaca
         .map(ToString::to_string)
         .collect();
     record(
+        ctx.factory(),
         &facade,
         "node1",
         "item1",
@@ -386,6 +387,7 @@ fn the_servers_own_accounts_refused_are_reported_with_the_rest() {
     let (ctx, facade) = crate::sync_tests::setup_with(STATUS_KIND);
     let _entered = ctx.enter();
     record(
+        ctx.factory(),
         &facade,
         "node1",
         "item2",
