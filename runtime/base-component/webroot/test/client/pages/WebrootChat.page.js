@@ -547,3 +547,153 @@ test("the outbox is kept under the storage scope of a desktop client's account",
         moqui.storageScope = savedScope;
     }
 });
+
+// A host outbox as the desktop client's bridge gives it (moquiDesktop.outbox), kept in memory.
+const fakeHostOutbox = () => {
+    const host = { ops: [], listeners: [], calls: [], failAdd: false };
+    Object.assign(host, {
+        add(kind, payload, files) {
+            host.calls.push(["add", kind]);
+            if (host.failAdd) return Promise.reject(new Error(host.failAdd === true ? "The outbox is full" : host.failAdd));
+            const id = payload.clientRef || "h" + host.ops.length;
+            const kept = host.ops.find((op) => op.id === id);
+            if (kept) return Promise.resolve(kept);
+            const clean = Object.assign({}, payload);
+            ["status", "attempts", "nextDate", "error"].forEach((name) => delete clean[name]);
+            const op = { id, kind, target: payload.chatRoomId || "", state: "queued", attempts: 0, nextMs: 0, createdMs: payload.createdDate || Date.now(),
+                error: null, payload: clean, files: files || [] };
+            host.ops.push(op);
+            return Promise.resolve(op);
+        },
+        list() { return Promise.resolve(host.ops.map((op) => Object.assign({}, op))); },
+        retry(id) { host.calls.push(["retry", id]); host.ops.filter((op) => op.id === id).forEach((op) => { op.state = "retry"; op.error = null; }); return Promise.resolve(true); },
+        discard(id) { host.calls.push(["discard", id]); host.ops = host.ops.filter((op) => op.id !== id); return Promise.resolve(true); },
+        on(fn) { host.listeners.push(fn); return () => {}; },
+        tell(event) { host.listeners.forEach((fn) => fn(event)); }
+    });
+    return host;
+};
+
+test("with the desktop client's host the outbox is the host's: imported once, sent by it, shown here", async () => {
+    const stored = new Map();
+    const realGet = localStorage.getItem.bind(localStorage);
+    const realSet = localStorage.setItem.bind(localStorage);
+    const realRemove = localStorage.removeItem.bind(localStorage);
+    localStorage.getItem = (key) => (stored.has(key) ? stored.get(key) : null);
+    localStorage.setItem = (key, value) => stored.set(key, String(value));
+    localStorage.removeItem = (key) => stored.delete(key);
+    const original = moqui.request;
+    const requests = [];
+    moqui.request = (url, options) => { requests.push(url); return Promise.resolve({ json: { eventSeq: 20, event: { eventSeq: 20 } } }); };
+    const savedScope = moqui.storageScope;
+    const host = fakeHostOutbox();
+    const sent = [];
+    const off = chat.on("sent", (payload) => sent.push(payload));
+    const older = [
+        { clientRef: "c1", chatRoomId: "R1", url: "/apps/chat/send", params: { body: "<p>one</p>" }, text: "one", createdDate: 1000, attempts: 3, status: "failed" },
+        { clientRef: "c2", chatRoomId: "R1", url: "/apps/chat/send", params: { encryptedJson: "{\"ct\":\"x\"}" }, text: "", sealed: true, createdDate: 2000,
+            status: "waiting" }
+    ];
+    try {
+        moqui.storageScope = null;
+        globalThis.moquiDesktop = { storageScope: "acct1", outbox: host };
+        chat.state = freshState();
+        chat.me = "ann";
+        chat.started = true;
+        stored.set("acct1:moqui.chat.outbox.ann", JSON.stringify(older));
+        await chat.startHost(host);
+        // the browser's outbox moved into the host, with its refs, dates and ciphertext, and removed here
+        assert.deepEqual(host.ops.map((op) => op.id), ["c1", "c2"]);
+        assert.equal(stored.has("acct1:moqui.chat.outbox.ann"), false);
+        assert.deepEqual(chat.state.outbox.map((item) => [item.clientRef, item.status, item.createdDate]), [["c1", "waiting", 1000], ["c2", "waiting", 2000]]);
+        assert.equal(chat.state.outbox[1].sealed, true);
+        assert.equal(chat.state.outbox[1].params.encryptedJson, "{\"ct\":\"x\"}");
+        // again (a crash before the list was removed): taken once
+        stored.set("acct1:moqui.chat.outbox.ann", JSON.stringify(older));
+        assert.equal(await chat.importOutbox(host), 2);
+        assert.equal(host.ops.length, 2);
+        assert.equal(stored.has("acct1:moqui.chat.outbox.ann"), false);
+        // one the host cannot take now (its outbox full): the list stays to try again
+        stored.set("acct1:moqui.chat.outbox.ann", JSON.stringify(older));
+        host.failAdd = true;
+        await chat.importOutbox(host);
+        assert.equal(JSON.parse(stored.get("acct1:moqui.chat.outbox.ann")).length, 2);
+        // one refused for good is dropped, and each taken comes off the list on its own
+        const refused = { clientRef: "bad", chatRoomId: "R1", url: "https://elsewhere.example.com/", params: {} };
+        stored.set("acct1:moqui.chat.outbox.ann", JSON.stringify([refused].concat(older)));
+        host.failAdd = false;
+        const realAdd = host.add;
+        host.add = (kind, payload, files) => (payload.clientRef === "bad" ? Promise.reject(new Error("Not the comms app's send")) : realAdd(kind, payload, files));
+        const warn = console.warn;
+        const warned = [];
+        console.warn = (...args) => warned.push(String(args[0]));
+        try { await chat.importOutbox(host); } finally { console.warn = warn; host.add = realAdd; }
+        assert.equal(warned.length, 1, "the one dropped is told");
+        assert.equal(stored.has("acct1:moqui.chat.outbox.ann"), false);
+        assert.equal(host.ops.some((op) => op.id === "bad"), false);
+
+        // a send is kept by the host, which sends it: the page asks nothing itself
+        const outcome = await chat.send({ clientRef: "c3", chatRoomId: "R1", url: "/apps/chat/send", params: { body: "<p>three</p>" }, text: "three" });
+        assert.deepEqual(outcome, { queued: true, clientRef: "c3" });
+        assert.equal(host.ops[2].kind, "chat-send");
+        assert.equal(chat.pendingIn("R1", null).length, 3);
+        await chat.flush(true);
+        assert.deepEqual(requests, [], "the page's own flush is off");
+        // the host's answer comes as the page's sent; its echo takes it off here too
+        host.tell({ kind: "sent", op: "chat-send", clientRef: "c3", chatRoomId: "R1", threadRootEventSeq: null, json: { eventSeq: 9, event: { eventSeq: 9 } } });
+        assert.equal(sent[0].clientRef, "c3");
+        assert.equal(sent[0].json.eventSeq, 9);
+        chat.receive(push("chatRoom:R1", { kind: "event", chatRoomId: "R1", event: event({ eventSeq: 9, senderUserId: "ann", clientRef: "c3" }) }));
+        assert.equal(chat.state.outbox.some((item) => item.clientRef === "c3"), false);
+        // a refusal shows with its message; retry and discard are the host's
+        host.ops[0].state = "failed";
+        host.ops[0].error = "Join the room to post in it";
+        await chat.refreshHost();
+        assert.equal(chat.pendingIn("R1", null)[0].status, "failed");
+        assert.equal(chat.pendingIn("R1", null)[0].error, "Join the room to post in it");
+        await chat.retry("c1");
+        assert.equal(chat.pendingIn("R1", null)[0].status, "waiting");
+        await chat.discard("c2");
+        assert.equal(host.ops.some((op) => op.id === "c2"), false);
+        assert.equal(chat.state.outbox.some((item) => item.clientRef === "c2"), false);
+        // a mark-read waits in the host's outbox with its absolute seq
+        assert.deepEqual(await chat.queueRead("R1", 12), { lastReadEventSeq: 12 });
+        const read = host.ops.find((op) => op.kind === "chat-read");
+        assert.deepEqual(read.payload, { chatRoomId: "R1", lastReadEventSeq: 12 });
+        assert.equal(chat.queueRead("R1", null), null, "no seq: the screen asks the server");
+        // one the host will not keep for another reason goes now while online, as on the web
+        host.failAdd = "Not the comms app's send";
+        const direct = await chat.send({ clientRef: "c5", chatRoomId: "R1", url: "/qapps/x/Chat/send", params: { body: "five" }, text: "five" });
+        assert.equal(direct.sent, true);
+        assert.deepEqual(requests, ["/qapps/x/Chat/send"]);
+        requests.length = 0;
+        // its outbox full: refused, and not shown
+        host.failAdd = true;
+        await assert.rejects(chat.send({ clientRef: "c4", chatRoomId: "R1", url: "/apps/chat/send", params: {}, text: "four" }), (err) => err.outbox === true);
+        assert.equal(chat.state.outbox.some((item) => item.clientRef === "c4"), false);
+        assert.deepEqual(requests, []);
+        // on the web: no host, the screen asks the server itself
+        delete globalThis.moquiDesktop;
+        assert.equal(chat.queueRead("R1", 12), null);
+        assert.equal(chat.host(), null);
+    } finally {
+        off();
+        delete globalThis.moquiDesktop;
+        moqui.storageScope = savedScope;
+        moqui.request = original;
+        chat.started = false;
+        chat.state = freshState();
+        localStorage.getItem = realGet;
+        localStorage.setItem = realSet;
+        localStorage.removeItem = realRemove;
+    }
+});
+
+test("an operation of the host's outbox as an item of the page's", () => {
+    const item = chat.itemOfOp({ id: "c1", kind: "chat-send", state: "retry", attempts: 2, nextMs: 50, createdMs: 10, error: null,
+        payload: { chatRoomId: "R1", text: "hi", threadRootEventSeq: 4 } });
+    assert.deepEqual(item, { chatRoomId: "R1", text: "hi", threadRootEventSeq: 4, clientRef: "c1", createdDate: 10, attempts: 2, nextDate: 50,
+        status: "waiting", error: null });
+    assert.deepEqual(["queued", "sending", "held", "failed", "acked"].map((state) => chat.itemOfOp({ id: "x", state, payload: {} }).status),
+        ["waiting", "sending", "held", "failed", "waiting"]);
+});

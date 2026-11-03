@@ -203,6 +203,8 @@ fn signed_in(
         }
     }
     client.mirror.forget(&id);
+    // what waited for this sign-in goes now
+    super::flush::release_held(&client, &id);
     switched(app, &client);
     Ok(())
 }

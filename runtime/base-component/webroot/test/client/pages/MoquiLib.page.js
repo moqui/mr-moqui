@@ -662,3 +662,102 @@ test("an app around the page (window.moquiDesktop) gets the notifications and th
         URL.revokeObjectURL = savedRevoke;
     }
 });
+
+test("drafts: this browser's storage under the scope on the web", async () => {
+    const savedScope = moqui.storageScope;
+    delete globalThis.moquiDesktop;
+    try {
+        moqui.storageScope = "s1";
+        await moqui.drafts.ready();
+        await moqui.drafts.put("ironstone.compose.t1", "{\"a\":1}");
+        assert.equal(localStorage.getItem("s1:ironstone.compose.t1"), "{\"a\":1}");
+        assert.equal(moqui.drafts.get("ironstone.compose.t1"), "{\"a\":1}");
+        assert.deepEqual(moqui.drafts.keys("ironstone.compose."), ["ironstone.compose.t1"]);
+        assert.deepEqual(moqui.drafts.files("ironstone.compose.t1"), []);
+        await moqui.drafts.put("ironstone.compose.t1", "");
+        assert.equal(localStorage.getItem("s1:ironstone.compose.t1"), null, "an empty draft is removed");
+        await moqui.drafts.put("ironstone.compose.t2", "x");
+        await moqui.drafts.remove("ironstone.compose.t2");
+        assert.equal(moqui.drafts.get("ironstone.compose.t2"), null);
+        assert.equal(await moqui.drafts.saveFile(new Blob(["x"])), null, "no files kept on the web");
+        assert.equal(moqui.hostOutbox(), null);
+    } finally {
+        moqui.storageScope = savedScope;
+        localStorage.removeItem("s1:ironstone.compose.t1");
+        localStorage.removeItem("s1:ironstone.compose.t2");
+    }
+});
+
+test("drafts: the desktop client's store, with this browser's drafts moved in once", async () => {
+    const savedScope = moqui.storageScope;
+    const kept = new Map([["ironstone.compose.x", { value: "{\"newer\":true}", files: [] }]]);
+    const calls = [];
+    const host = {
+        list: (prefix) => Promise.resolve(Array.from(kept.entries()).filter(([key]) => key.indexOf(prefix) === 0)
+            .map(([key, draft]) => ({ key, value: draft.value, files: draft.files, updatedMs: 1000 }))),
+        put: (key, value, files) => {
+            if (key === "ironstone.compose.big") return Promise.reject(new Error("The draft is too large to keep"));
+            calls.push(["put", key]);
+            kept.set(key, { value, files: files || [] });
+            return Promise.resolve();
+        },
+        remove: (key) => { calls.push(["remove", key]); return Promise.resolve(kept.delete(key)); },
+        saveFile: (file, name) => Promise.resolve("ab12-" + name)
+    };
+    try {
+        moqui.storageScope = null;
+        globalThis.moquiDesktop = { storageScope: "acct1", drafts: host, outbox: { add() {} } };
+        moqui.drafts.cache = null;
+        moqui.drafts.loading = null;
+        localStorage.setItem("acct1:boss.chat.draft.R1", "<p>old</p>");
+        localStorage.setItem("acct1:ironstone.compose.x", "{\"older\":true}");
+        localStorage.setItem("acct2:boss.chat.draft.R9", "another account's");
+        // before the host's drafts are read: nothing (the callers wait for ready), never this browser's stale copy
+        assert.equal(moqui.drafts.get("boss.chat.draft.R1"), null);
+        assert.deepEqual(moqui.drafts.keys("boss.chat.draft."), []);
+        // one refused for good is dropped; a newer copy of this browser's (by its time) replaces the host's
+        localStorage.setItem("acct1:ironstone.compose.big", "x".repeat(10));
+        kept.set("ironstone.compose.n", { value: "{\"at\":5}", files: [] });
+        localStorage.setItem("acct1:ironstone.compose.n", JSON.stringify({ at: Date.now() + 1000 }));
+        assert.ok(moqui.hostOutbox(), "the host's outbox");
+        const warn = console.warn;
+        const warned = [];
+        console.warn = (...args) => warned.push(String(args[0]));
+        try { await moqui.drafts.ready(); } finally { console.warn = warn; }
+        assert.equal(warned.length, 1);
+        assert.ok(warned[0].includes("ironstone.compose.big"));
+        assert.equal(kept.get("boss.chat.draft.R1").value, "<p>old</p>", "moved into the host");
+        assert.equal(kept.get("ironstone.compose.x").value, "{\"newer\":true}", "the host's own is kept");
+        assert.equal(localStorage.getItem("acct1:boss.chat.draft.R1"), null);
+        assert.equal(localStorage.getItem("acct1:ironstone.compose.x"), null);
+        assert.equal(localStorage.getItem("acct2:boss.chat.draft.R9"), "another account's", "other scopes stay");
+        assert.equal(localStorage.getItem("acct1:ironstone.compose.big"), null, "refused for good: dropped");
+        assert.ok(JSON.parse(kept.get("ironstone.compose.n").value).at > 5, "this browser's newer copy");
+        assert.deepEqual(calls.map((call) => call[1]).sort(), ["boss.chat.draft.R1", "ironstone.compose.n"]);
+        calls.length = 1;
+        // read once; a key left in this browser again (a crash before it was removed) is only removed
+        assert.equal(moqui.drafts.ready(), moqui.drafts.loading);
+        localStorage.setItem("acct1:boss.chat.draft.R1", "<p>old</p>");
+        assert.equal(await moqui.drafts.importLocal(host), 0);
+        assert.equal(localStorage.getItem("acct1:boss.chat.draft.R1"), null);
+        assert.equal(calls.length, 1);
+        // through the host from now on
+        assert.equal(moqui.drafts.get("boss.chat.draft.R1"), "<p>old</p>");
+        await moqui.drafts.put("ironstone.compose.y", "{}", ["ab12-a.txt"]);
+        assert.deepEqual(kept.get("ironstone.compose.y"), { value: "{}", files: ["ab12-a.txt"] });
+        assert.deepEqual(moqui.drafts.files("ironstone.compose.y"), ["ab12-a.txt"]);
+        assert.deepEqual(moqui.drafts.keys("ironstone.compose.").sort(), ["ironstone.compose.n", "ironstone.compose.x", "ironstone.compose.y"]);
+        assert.equal(localStorage.getItem("acct1:ironstone.compose.y"), null, "not in this browser");
+        await moqui.drafts.remove("ironstone.compose.y");
+        assert.equal(kept.has("ironstone.compose.y"), false);
+        assert.equal(moqui.drafts.get("ironstone.compose.y"), null);
+        assert.equal(await moqui.drafts.saveFile(new File(["x"], "a.txt")), "ab12-a.txt");
+    } finally {
+        delete globalThis.moquiDesktop;
+        moqui.storageScope = savedScope;
+        moqui.drafts.cache = null;
+        moqui.drafts.loading = null;
+        ["acct1:boss.chat.draft.R1", "acct1:ironstone.compose.x", "acct2:boss.chat.draft.R9", "acct1:ironstone.compose.big",
+            "acct1:ironstone.compose.n"].forEach((key) => localStorage.removeItem(key));
+    }
+});

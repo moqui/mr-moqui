@@ -120,6 +120,11 @@ pub(crate) fn mail_base(comms_root: &str) -> String {
     format!("/apps{}/Inbox/Mail", app_path(comms_root))
 }
 
+/// The path of Compose's transitions: `/apps/BasicComms/Inbox/Compose`.
+pub(crate) fn compose_base(comms_root: &str) -> String {
+    format!("/apps{}/Inbox/Compose", app_path(comms_root))
+}
+
 /// The query an answer of `kind` is kept under: none for the shell's, else `query` less its volatile parameters.
 pub(crate) fn kept_query(kind: Kind, query: &str) -> String {
     if kind == Kind::Shell {

@@ -97,7 +97,17 @@ pub(crate) fn setup(builder: tauri::Builder) -> tauri::Builder {
             crate::client::commands::client_sso_cancel,
             crate::client::sockets::socket_open,
             crate::client::sockets::socket_send,
-            crate::client::sockets::socket_close
+            crate::client::sockets::socket_close,
+            crate::client::outbox::outbox_add,
+            crate::client::outbox::outbox_list,
+            crate::client::outbox::outbox_retry,
+            crate::client::outbox::outbox_discard,
+            crate::client::outbox::outbox_unsent,
+            crate::client::outbox::draft_get,
+            crate::client::outbox::draft_list,
+            crate::client::outbox::draft_put,
+            crate::client::outbox::draft_remove,
+            crate::client::outbox::file_save
         ])
 }
 

@@ -557,7 +557,10 @@ fn drafts_are_kept_by_key_with_their_files() {
         .put_draft("boss.chat.draft.R1", "{\"text\":\"hello\"}", &[])
         .unwrap();
     assert_eq!(store.draft("boss.chat.draft.R1").unwrap().value, "{\"text\":\"hello\"}");
-    assert_eq!(store.draft("ironstone.compose.1").unwrap().files, std::slice::from_ref(&file));
+    assert_eq!(
+        store.draft("ironstone.compose.1").unwrap().files,
+        std::slice::from_ref(&file)
+    );
     assert_eq!(store.drafts("boss.chat.").len(), 2);
     assert_eq!(store.drafts("").len(), 3);
     assert!(store.put_draft("x", "{}", &["a/b".to_string()]).is_err());
@@ -726,6 +729,7 @@ fn forget_removes_the_database_and_files() {
         let store = Store::open(&dir, "a", 1 << 20).unwrap();
         let file = store.save_file("f.txt", b"f").unwrap();
         store.put_draft("d", "{}", &[file]).unwrap();
+        store.outbox_add(&OutboxOp::new("c1", "chat-send", "R1", "{}")).unwrap();
         let _other = Store::open(&dir, "b", 1 << 20).unwrap();
     }
     assert!(dir.join("data/a.db").exists() && dir.join("data/a.files").exists());
@@ -743,7 +747,9 @@ fn forget_removes_the_database_and_files() {
     forget(&dir, "a").unwrap();
     assert!(forget(&dir, "..").is_err());
     let store = Store::open(&dir, "a", 1 << 20).unwrap();
+    // a shared device's sign-out (Stores::forget) leaves no draft and nothing to send
     assert!(store.draft("d").is_none());
+    assert!(store.outbox_list().is_empty());
     // the store's own forget closes it first
     Store::open(&dir, "b", 1 << 20).unwrap().forget().unwrap();
     assert!(left("b.").is_empty(), "{:?}", left("b."));
@@ -771,6 +777,27 @@ fn a_folded_push_raises_the_head_and_its_target_is_read_back() {
     store.mark_chat_heads_stale().unwrap();
     assert_eq!(store.chat_head("R1", None), None);
     assert!(store.chat_event("R1", 4).is_none());
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_new_client_ref_is_plain_and_different_each_time() {
+    let one = super::new_client_ref().unwrap();
+    let other = super::new_client_ref().unwrap();
+    assert_ne!(one, other);
+    assert_eq!(one.len(), 33);
+    assert!(one.chars().all(|c| c.is_ascii_alphanumeric()));
+}
+
+#[test]
+fn the_files_bytes_add_up() {
+    let dir = dir("files-bytes");
+    let store = Store::open(&dir, "a", 1 << 20).unwrap();
+    assert_eq!(store.files_bytes(), 0);
+    store.save_file("a.txt", b"abc").unwrap();
+    store.save_file("b.txt", b"de").unwrap();
+    assert_eq!(store.files_bytes(), 5);
     drop(store);
     let _ = std::fs::remove_dir_all(&dir);
 }

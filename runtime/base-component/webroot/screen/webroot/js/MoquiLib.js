@@ -311,6 +311,136 @@
             const scope = typeof moqui.storageScope === "string" ? moqui.storageScope : (host && host.storageScope) || "";
             return scope ? scope + ":" + key : key;
         },
+        // The host's outbox in the desktop client (window.moquiDesktop.outbox: add, list, retry, discard, on), which keeps
+        // what a page sends offline and sends it itself (WebrootChat.js's chat outbox, Compose's queued mail); null on the
+        // web, where a page keeps its own.
+        hostOutbox() {
+            const host = root.moquiDesktop;
+            return host && host.outbox && typeof host.outbox.add === "function" ? host.outbox : null;
+        },
+        // Whether the host refused something for a reason that may pass (its outbox full, the account's data not open, no
+        // account): kept to try again; another reason (too large, not valid) will not pass.
+        hostBusy(err) { return /full|not open|signed in|client of a server/i.test(String((err && err.message) || err || "")); },
+        // Drafts by key (Chat's composers, Compose's internal and offline messages): the host's store in the desktop client
+        // (window.moquiDesktop.drafts, kept with the account's data and its files), else localStorage under scopedKey. get and
+        // keys answer at once from what is read (in the desktop client nothing until ready() resolves: callers wait for it);
+        // ready() resolves once the host's drafts are read, and the drafts this browser kept before (the prefixes of
+        // IMPORTED) moved into the host once. put and remove resolve when kept.
+        drafts: {
+            IMPORTED: ["boss.chat.draft.", "ironstone.compose."],
+            cache: null,
+            loading: null,
+            host() {
+                const host = root.moquiDesktop;
+                return host && host.drafts && typeof host.drafts.put === "function" ? host.drafts : null;
+            },
+            local() { try { return root.localStorage || null; } catch (err) { return null; } },
+            localKeys(prefix) {
+                const out = [];
+                const storage = moqui.drafts.local();
+                if (!storage) return out;
+                const scoped = moqui.scopedKey(prefix);
+                try {
+                    for (let i = 0; i < storage.length; i++) {
+                        const key = storage.key(i);
+                        if (key && key.indexOf(scoped) === 0) out.push(prefix + key.slice(scoped.length));
+                    }
+                } catch (err) { /* no storage */ }
+                return out;
+            },
+            ready() {
+                const host = moqui.drafts.host();
+                if (!host) return Promise.resolve();
+                if (!moqui.drafts.loading) {
+                    moqui.drafts.loading = host.list("").then((list) => {
+                        const cache = new Map();
+                        (Array.isArray(list) ? list : []).forEach((draft) => cache.set(draft.key, { value: draft.value, files: draft.files || [],
+                            updatedMs: Number(draft.updatedMs) || 0 }));
+                        moqui.drafts.cache = cache;
+                        return moqui.drafts.importLocal(host);
+                    }).catch((err) => {
+                        console.info("drafts not read from the app", err);
+                        if (!moqui.drafts.cache) moqui.drafts.cache = new Map();
+                    });
+                }
+                return moqui.drafts.loading;
+            },
+            // The drafts this browser kept before the host did, moved once: each removed here once the host has it, or the
+            // host's own kept when it is newer (a draft's JSON with its time, at, is newer than the host's only after it), or
+            // dropped with a warning when the host refuses it for good.
+            importLocal(host) {
+                const storage = moqui.drafts.local();
+                if (!storage) return Promise.resolve(0);
+                const keys = [].concat(...moqui.drafts.IMPORTED.map((prefix) => moqui.drafts.localKeys(prefix)));
+                return keys.reduce((previous, key) => previous.then((count) => {
+                    let value = null;
+                    try { value = storage.getItem(moqui.scopedKey(key)); } catch (err) { value = null; }
+                    const drop = () => { try { storage.removeItem(moqui.scopedKey(key)); } catch (err) { /* no storage */ } };
+                    if (value === null) return count;
+                    const kept = moqui.drafts.cache.get(key);
+                    if (kept) {
+                        let at = 0;
+                        try { at = Number(JSON.parse(value).at) || 0; } catch (err) { at = 0; }
+                        if (!(at > kept.updatedMs)) { drop(); return count; }
+                    }
+                    return host.put(key, value, []).then(() => { moqui.drafts.cache.set(key, { value, files: [], updatedMs: Date.now() }); drop(); return count + 1; },
+                        (err) => {
+                            if (moqui.hostBusy(err)) { console.info("draft " + key + " not moved to the app yet", err); return count; }
+                            console.warn("draft " + key + " not taken by the app, dropped", err);
+                            drop();
+                            return count;
+                        });
+                }), Promise.resolve(0));
+            },
+            get(key) {
+                if (moqui.drafts.host()) {
+                    const cache = moqui.drafts.cache;
+                    return cache && cache.has(key) ? cache.get(key).value : null;
+                }
+                const storage = moqui.drafts.local();
+                try { return storage ? storage.getItem(moqui.scopedKey(key)) : null; } catch (err) { return null; }
+            },
+            // the store's files kept with a draft (the host only)
+            files(key) {
+                const cache = moqui.drafts.host() ? moqui.drafts.cache : null;
+                return cache && cache.has(key) ? cache.get(key).files.slice() : [];
+            },
+            keys(prefix) {
+                if (moqui.drafts.host()) {
+                    const cache = moqui.drafts.cache;
+                    return cache ? Array.from(cache.keys()).filter((key) => key.indexOf(prefix) === 0) : [];
+                }
+                return moqui.drafts.localKeys(prefix);
+            },
+            // value: text, or empty to remove it
+            put(key, value, files) {
+                if (value === null || value === undefined || value === "") return moqui.drafts.remove(key);
+                const text = String(value);
+                const host = moqui.drafts.host();
+                if (host) {
+                    if (moqui.drafts.cache) moqui.drafts.cache.set(key, { value: text, files: files || [], updatedMs: Date.now() });
+                    return host.put(key, text, files || []).catch((err) => { console.info("draft " + key + " not kept", err); });
+                }
+                const storage = moqui.drafts.local();
+                try { if (storage) storage.setItem(moqui.scopedKey(key), text); } catch (err) { console.info("draft " + key + " not kept", err); }
+                return Promise.resolve();
+            },
+            remove(key) {
+                const host = moqui.drafts.host();
+                if (host) {
+                    if (moqui.drafts.cache) moqui.drafts.cache.delete(key);
+                    return host.remove(key).catch((err) => { console.info("draft " + key + " not removed", err); });
+                }
+                const storage = moqui.drafts.local();
+                try { if (storage) storage.removeItem(moqui.scopedKey(key)); } catch (err) { /* no storage */ }
+                return Promise.resolve();
+            },
+            // a File kept by the host for a draft or a queued send: resolves to its name in the store, or null on the web
+            saveFile(file) {
+                const host = moqui.drafts.host();
+                return host && typeof host.saveFile === "function" ? host.saveFile(file, file && file.name) : Promise.resolve(null);
+            }
+        },
         // A WebSocket to url, or the host's in its place: a page of the desktop client cannot open one to its server, whose
         // socket needs the device key, so the host holds it (window.moquiDesktop.socket returns an object with the same
         // readyState, send, close and onopen/onmessage/onclose/onerror). The NotificationClient and the call guest use it.

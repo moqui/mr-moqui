@@ -25,7 +25,7 @@ use super::Store;
 use moqui_lib::error::Error;
 
 /// How old a file no row refers to must be before [`Store::open`] removes it.
-pub(super) const FILE_GRACE: Duration = Duration::from_secs(10 * 60);
+pub const FILE_GRACE: Duration = Duration::from_secs(10 * 60);
 
 impl Store {
     /// Keep `bytes` as a file of the store, for an outbox operation or a draft to refer to, and give its name: a random
@@ -92,6 +92,19 @@ impl Store {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(err) => Err(Error::new(format!("Client store file {name} not removed: {err}"))),
         }
+    }
+
+    /// The bytes of the store's files, for a cap on what pages keep; files that cannot be read count none.
+    pub fn files_bytes(&self) -> u64 {
+        let Ok(entries) = std::fs::read_dir(&self.files) else {
+            return 0;
+        };
+        entries
+            .flatten()
+            .filter_map(|entry| entry.metadata().ok())
+            .filter(std::fs::Metadata::is_file)
+            .map(|meta| meta.len())
+            .sum()
     }
 
     /// Remove the files no outbox operation or draft refers to and older than `grace`; gives how many. Nothing is

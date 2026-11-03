@@ -68,6 +68,27 @@ pub(crate) fn keep_frame(store: &Store, me: &str, text: &str) {
     }
 }
 
+/// The `clientRef` of my own chat message in a `/notws` text frame of `me`'s, which takes its outbox operation off
+/// (`outbox::echoed`); none for anything else.
+pub(crate) fn echo_ref(me: &str, text: &str) -> Option<String> {
+    let frame: Value = serde_json::from_str(text).ok()?;
+    if !frame["topic"].as_str()?.starts_with("chatRoom:") {
+        return None;
+    }
+    let message = match &frame["message"] {
+        Value::String(inner) => serde_json::from_str(inner).ok()?,
+        other => other.clone(),
+    };
+    let event = &message["event"];
+    if message["kind"].as_str() != Some("event") || event["senderUserId"].as_str() != Some(me) {
+        return None;
+    }
+    event["clientRef"]
+        .as_str()
+        .filter(|text| !text.is_empty())
+        .map(str::to_string)
+}
+
 fn room_push(store: &Store, me: &str, room: &str, message: &Value) -> Result<(), String> {
     match message["kind"].as_str().unwrap_or("") {
         "event" if message["event"].is_object() => keep_event(store, me, room, &message["event"]),
@@ -420,8 +441,9 @@ fn new_message(store: &Store, me: &str, room: &str, seq: i64, event: &Value) -> 
     store.put_chat_room(&kept).map_err(|err| err.to_string())
 }
 
-/// The room read up to `last_read` (none: all of it) here or on another device: no unread or mentions.
-fn read_room(store: &Store, room: &str, last_read: Value) -> Result<(), String> {
+/// The room read up to `last_read` (none: all of it) here or on another device, or by a mark-read waiting in the outbox:
+/// no unread or mentions.
+pub(crate) fn read_room(store: &Store, room: &str, last_read: Value) -> Result<(), String> {
     super::offline::note_read(store, room, &last_read)?;
     let Some(mut kept) = store.chat_room(room) else {
         return Ok(());

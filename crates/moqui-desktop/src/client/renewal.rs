@@ -56,6 +56,7 @@ fn renew_due(app: &AppHandle) {
         match renew_one(&client, &account.server, &account.id, &key) {
             Ok(true) => {
                 let reopened = client.sockets.reopen_account(app, &client, &account.id);
+                super::flush::release_held(&client, &account.id);
                 tracing::info!(
                     "Renewed the device key of {} ({reopened} sockets open again)",
                     account.id

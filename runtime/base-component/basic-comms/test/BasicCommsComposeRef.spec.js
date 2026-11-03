@@ -106,9 +106,13 @@ feature("a draft saved twice with one ref is one draft, updated by the second sa
         const first = compose("save#ComposeDraft", draftOf(ownerIdentity, "ref-draft-1", "First version"))
         const second = compose("save#ComposeDraft", draftOf(ownerIdentity, "ref-draft-1", "Second version"))
         const bad = compose("save#ComposeDraft", draftOf(ownerIdentity, "not a ref!", "Bad"))
-        return {first, second, bad, found: rows({clientRef: "ref-draft-1"})}
+        // the draft opened again: its ref, so a send queued offline is taken by the same one
+        const reopened = compose("get#ComposeData", {emailMessageId: first.emailMessageId})
+        return {first, second, bad, reopened, found: rows({clientRef: "ref-draft-1"})}
     },
-    then({first, second, bad, found}) {
+    then({first, second, bad, reopened, found}) {
+        reopened.errors == ""
+        reopened.compose.clientRef == "ref-draft-1"
         first.errors == ""
         second.errors == ""
         first.emailMessageId != null

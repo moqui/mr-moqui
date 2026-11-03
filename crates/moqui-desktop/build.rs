@@ -18,7 +18,9 @@
 //! the ACL, also from the app's own pages, and gets an `allow-<command>` permission (`_` as `-`); only the capability
 //! the bridge adds at run time grants them. `restart_node` is the splash page's: `capabilities/splash.json` grants it
 //! to the app's own pages, never to the node's origin. The `client_` and `socket_` commands are the client's
-//! (src/client/): its capabilities grant the shell's origin both and an app window's origin the sockets only.
+//! (src/client/): its capabilities grant the shell's origin both and an app window's origin the sockets only. The
+//! `outbox_`, `draft_` and `file_save` commands are the client's outbox and drafts, granted to both, each for the
+//! calling window's account.
 
 fn main() {
     let manifest = tauri_build::AppManifest::new().commands(&[
@@ -42,6 +44,16 @@ fn main() {
         "socket_open",
         "socket_send",
         "socket_close",
+        "outbox_add",
+        "outbox_list",
+        "outbox_retry",
+        "outbox_discard",
+        "outbox_unsent",
+        "draft_get",
+        "draft_list",
+        "draft_put",
+        "draft_remove",
+        "file_save",
     ]);
     tauri_build::try_build(tauri_build::Attributes::new().app_manifest(manifest))
         .expect("the Tauri build steps failed");

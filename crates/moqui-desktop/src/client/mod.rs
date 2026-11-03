@@ -25,19 +25,24 @@
 //!   run out.
 //! - [`stores`]: each account's store (MD4), behind the schemes: [`offline`] keeps the comms transitions' answers and
 //!   answers them when the server cannot be reached, [`push`] keeps the chat pushes, [`mirror`] reads ahead.
+//! - [`outbox`]: the outbox and drafts the host keeps for the pages, and [`flush`]: the outbox sent from a thread of
+//!   its own, for every account signed in here.
 //! - [`conf`]: the client's settings (`<client-conf>`), and [`modes`]: what each device mode keeps.
 //!
-//! The shell's origin may call the shell commands and the sockets; an app window's origin only the sockets, which
-//! reach nothing its requests do not already reach with the key (plans/Mobile-Desktop.md "Remote applications and
+//! The shell's origin may call the shell commands, the sockets, the outbox and the drafts; an app window's origin only
+//! the sockets, the outbox and the drafts of its own account, which reach nothing its requests do not already reach
+//! with the key (plans/Mobile-Desktop.md "Remote applications and
 //! authentication").
 
 mod assets;
 pub(crate) mod commands;
 mod conf;
+mod flush;
 mod keystore;
 mod mirror;
 mod modes;
 mod offline;
+pub(crate) mod outbox;
 mod push;
 mod renewal;
 mod scheme;
@@ -80,6 +85,8 @@ pub(crate) struct Client {
     /// it next loads, and by the next app window.
     cleared: Mutex<Cleared>,
     mirror: mirror::Mirror,
+    /// Wakes the thread that sends the outboxes.
+    flusher: flush::Flusher,
     proxy: Proxy,
     assets: assets::Assets,
     sockets: sockets::Sockets,
@@ -104,6 +111,7 @@ impl Client {
             notice: Mutex::new(HashMap::new()),
             cleared: Mutex::new(Cleared::default()),
             mirror: mirror::Mirror::default(),
+            flusher: flush::Flusher::default(),
             proxy: Proxy::new().map_err(|err| err.to_string())?,
             assets: assets::Assets::choose(tauri::is_dev(), resources),
             sockets: sockets::Sockets::default(),
@@ -232,6 +240,7 @@ pub(crate) fn start(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     windows::add_capabilities(app);
     windows::shell_window(app)?;
     renewal::start(app);
+    flush::start(app);
     Ok(())
 }
 

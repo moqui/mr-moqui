@@ -51,10 +51,11 @@ use moqui_lib::error::Error;
 use rusqlite::{params, Connection};
 
 pub use answer::{answer_key, Answer};
+pub use attach::FILE_GRACE;
 pub use chat::{ChatEvent, ChatRoom, EventPage, EventSlice};
 pub use draft::Draft;
 pub use mail::{MailFolder, MailMessage, MailThread};
-pub use outbox::{OutboxOp, OutboxState, OutboxUpdate};
+pub use outbox::{new_client_ref, OutboxOp, OutboxState, OutboxUpdate};
 
 /// The schema, a step per release that changes it; `PRAGMA user_version` is the number of steps applied. Add a step,
 /// never change one that has shipped.

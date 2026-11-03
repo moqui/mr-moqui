@@ -82,11 +82,13 @@ along with this software (see the LICENSE.md file). If not, see
                         </template>
                     </div>
                     <m-html-view v-if="belowSignature" :html="signatureBlock(belowSignature)" :collapse-quotes="false" :images-bar="false" title="Signature" class="q-mt-xs"></m-html-view>
-                    <div v-if="draft.attachments.length || draft.uploads.length || uploading" class="row q-gutter-xs q-mt-xs">
+                    <div v-if="draft.attachments.length || draft.uploads.length || queued.length || uploading" class="row q-gutter-xs q-mt-xs">
                         <q-chip v-for="file in draft.attachments" :key="'a' + file.id" dense square removable icon="sym_o_attach_file" class="m-tonal q-ml-none"
                                 @remove="removeAttachment(file)">{{file.name}}<span v-if="file.size" class="m-muted q-ml-xs">{{sizeText(file.size)}}</span></q-chip>
                         <q-chip v-for="file in draft.uploads" :key="'u' + file.location" dense square removable icon="sym_o_attach_file" class="m-tonal q-ml-none"
                                 @remove="removeUpload(file)">{{file.name}}<span v-if="file.size" class="m-muted q-ml-xs">{{sizeText(file.size)}}</span></q-chip>
+                        <q-chip v-for="file in queued" :key="'q' + file.file" dense square removable icon="sym_o_schedule" class="m-tonal q-ml-none"
+                                @remove="removeQueued(file)">{{file.name}}<span v-if="file.size" class="m-muted q-ml-xs">{{sizeText(file.size)}}</span></q-chip>
                         <q-chip v-if="uploading" dense square class="q-ml-none"><q-spinner size="14px" class="q-mr-xs"></q-spinner>{{t('Uploading…')}}</q-chip>
                     </div>
                     <div v-if="dragOver" class="q-pa-lg q-mt-xs text-center text-primary rounded-borders" style="border:2px dashed">{{t('Drop files to attach them')}}</div>
@@ -226,6 +228,9 @@ module.exports = {
             sending: false, sent: false, savedAt: null, saving: false, dirty: false, saveTimer: null, scheduleOpen: false, scheduleCustom: '',
             blocksOpen: false, blocks: [], blockSearch: '', slashPending: false, signature: null, signaturePlacement: 'above', belowSignature: null,
             loadedOnce: false, pageLayoutOverride: null, hasDrive: false,
+            // the desktop client offline (MD4): the files kept by the app until the message is sent from its outbox, the
+            // message's clientRef, and whether the email's draft is kept here, not yet on the server
+            queued: [], clientRef: null, offlineDraft: false, localEmailKey: null,
             picker: { open: false, drives: [], driveId: null, path: '', crumbs: [], rows: [], loading: false, text: '', searching: false, chosen: {}, saving: false }
         };
     },
@@ -281,7 +286,13 @@ module.exports = {
                 { key: 'monday', label: t('Monday morning'), icon: 'sym_o_next_week', at: at(toMonday, 8) }];
         },
         pickerCount() { return Object.keys(this.picker.chosen).filter((key) => this.picker.chosen[key]).length; },
-        draftStorageKey() { return moqui.scopedKey('ironstone.compose.' + (this.dockKey || ('page.' + (this.query.contactListId || this.query.replyToCommEventId || 'new')))); }
+        // under the storage scope (moqui.drafts), or in the desktop client's store
+        draftSlot() { return this.dockKey || ('page.' + (this.query.contactListId || this.query.replyToCommEventId || 'new')); },
+        draftStorageKey() { return 'ironstone.compose.' + this.draftSlot; },
+        // the desktop client: an email kept offline, by its message (the server's draft, else its clientRef), and for a new
+        // one the clientRef this composer's slot last kept, so it opens again here
+        emailLocalKey() { return 'ironstone.compose.email.' + (this.draft.emailMessageId || this.clientRef); },
+        emailRefKey() { return 'ironstone.compose.emailRef.' + this.draftSlot; }
     },
     watch: {
         draft: { handler() { this.onChange(); }, deep: true },
@@ -316,6 +327,10 @@ module.exports = {
             this.query = this.readQuery();
             this.state = 'loading';
             this.error = null;
+            this.queued = [];
+            this.offlineDraft = false;
+            this.localEmailKey = null;
+            this.clientRef = moqui.hostOutbox() ? 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10) : null;
             const q = this.query;
             const params = {};
             ['emailMessageId', 'replyToEmailMessageId', 'forwardEmailMessageId', 'replyAll', 'replyToCommEventId', 'replyToSender', 'contactListId', 'to', 'cc',
@@ -358,6 +373,8 @@ module.exports = {
             this.showBcc = draft.bcc.length > 0;
             this.showQuote = this.kind === 'forward';
             this.draft = draft;
+            // the server's draft has its clientRef: a send queued offline is taken once by it
+            if (this.clientRef && compose.clientRef) this.clientRef = compose.clientRef;
             if (draft.emailMessageId) { this.savedAt = Date.now(); if (this.mComposeHost && this.dockKey) this.mComposeHost.draftSaved(this.dockKey, draft.emailMessageId); }
         },
         signatureBlock(html) { return '<p></p><p>-- </p>' + html; },
@@ -474,6 +491,8 @@ module.exports = {
             }
             if (d.emailMessageId) params.emailMessageId = d.emailMessageId;
             else if (d.parentEmailMessageId) { params.parentEmailMessageId = d.parentEmailMessageId; params.isForward = d.isForward ? 'true' : 'false'; }
+            // the desktop client: the draft's first save is taken once by its clientRef (one written offline, saved later)
+            if (this.clientRef && !d.emailMessageId) params.clientRef = this.clientRef;
             return params;
         },
         save(force) {
@@ -491,36 +510,120 @@ module.exports = {
                 }
                 this.savedAt = Date.now();
                 this.$nextTick(() => { this.dirty = false; });
+                // kept offline, on the server now: kept here only while files wait for the send
+                if (this.offlineDraft && json.emailMessageId) { this.offlineDraft = false; if (this.queued.length) this.saveLocal(); else this.clearLocal(); }
                 if (this.saveAgain) { this.saveAgain = false; return this.save(); }
                 return json;
             }, (err) => {
                 this.saving = false;
+                // the desktop client with no server: kept in the app, and saved on the server once it is back
+                if (this.unreachable(err)) { this.saveLocal(); return; }
                 // an autosave that fails is told once; the send says it again
                 if (force) moqui.handleAjaxError(err); else console.info('Draft not saved', err && err.status);
             });
             return this.savePromise;
         },
+        // an internal message's draft, kept in this browser (moqui.drafts); in the desktop client also an email's written
+        // offline, with its clientRef and the files kept for it
         saveLocal() {
-            try {
-                localStorage.setItem(this.draftStorageKey, JSON.stringify({ at: Date.now(), draft: Object.assign({}, this.draft, { attachments: [] }) }));
+            const email = this.mode === 'email' && !!this.clientRef;
+            const value = { at: Date.now(), draft: Object.assign({}, this.draft, { attachments: [] }) };
+            let key = this.draftStorageKey;
+            if (email) {
+                Object.assign(value, { email: true, clientRef: this.clientRef, queued: this.queued });
+                this.offlineDraft = true;
+                key = this.emailLocalKey;
+                // kept by its clientRef until the server saved it, then by its id
+                if (this.localEmailKey && this.localEmailKey !== key) moqui.drafts.remove(this.localEmailKey);
+                this.localEmailKey = key;
+                if (!this.draft.emailMessageId) moqui.drafts.put(this.emailRefKey, JSON.stringify({ clientRef: this.clientRef }));
+            }
+            return moqui.drafts.put(key, JSON.stringify(value), this.queued.map((file) => file.file)).then(() => {
                 this.savedAt = Date.now();
                 this.$nextTick(() => { this.dirty = false; });
-            } catch (err) { /* no storage */ }
+            });
         },
         restoreLocal() {
-            // an internal message's draft from this browser, or what Undo send gave back
+            // what Undo send gave back, an internal message's draft from this browser, or an email's kept offline in the desktop client
             let saved = null;
-            try {
-                if (this.query.restoreKey) saved = JSON.parse(sessionStorage.getItem(this.query.restoreKey) || 'null');
-                else if (this.mode === 'internal' && !this.draft.emailMessageId) saved = JSON.parse(localStorage.getItem(this.draftStorageKey) || 'null');
-            } catch (err) { saved = null; }
+            try { if (this.query.restoreKey) saved = JSON.parse(sessionStorage.getItem(this.query.restoreKey) || 'null'); } catch (err) { saved = null; }
+            if (saved || this.query.restoreKey) { this.applyLocal(saved); return; }
+            if (this.mode === 'internal' ? this.draft.emailMessageId : !this.clientRef) return;
+            const parse = (key) => { try { return JSON.parse(moqui.drafts.get(key) || 'null'); } catch (err) { return null; } };
+            const read = () => {
+                if (this.mode === 'internal') return parse(this.draftStorageKey);
+                const pointer = this.draft.emailMessageId ? null : parse(this.emailRefKey);
+                const key = 'ironstone.compose.email.' + (this.draft.emailMessageId || (pointer && pointer.clientRef) || this.clientRef);
+                const saved = parse(key);
+                if (saved) this.localEmailKey = key;
+                return saved;
+            };
+            const local = read();
+            if (local) this.applyLocal(local);
+            else moqui.drafts.ready().then(() => { const later = read(); if (later && !this.dirty) this.applyLocal(later); });
+        },
+        applyLocal(saved) {
             if (!saved || !saved.draft) return;
+            if (!this.query.restoreKey && !!saved.email !== (this.mode === 'email')) return;
+            // an email's: of this draft (a new one, or the server's draft edited offline)
+            if (saved.email && !this.query.restoreKey && (saved.draft.emailMessageId || null) !== (this.draft.emailMessageId || null)) return;
             const kept = saved.draft;
             ['to', 'cc', 'subject', 'body', 'uploads', 'record'].forEach((name) => { if (kept[name] != null && (!Array.isArray(kept[name]) || kept[name].length)) this.draft[name] = kept[name]; });
             if (kept.cc && kept.cc.length) this.showCc = true;
+            if (saved.email && !this.query.restoreKey) {
+                ['bcc', 'quoteHtml'].forEach((name) => { if (kept[name] != null) this.draft[name] = kept[name]; });
+                if (kept.bcc && kept.bcc.length) this.showBcc = true;
+                this.clientRef = saved.clientRef || this.clientRef;
+                this.queued = Array.isArray(saved.queued) ? saved.queued : [];
+                this.offlineDraft = true;
+                // on the server now if it can be reached
+                this.$nextTick(() => this.save());
+            }
         },
         clearLocal() {
-            try { localStorage.removeItem(this.draftStorageKey); if (this.query.restoreKey) sessionStorage.removeItem(this.query.restoreKey); } catch (err) { /* no storage */ }
+            moqui.drafts.remove(this.draftStorageKey);
+            if (this.clientRef) {
+                [this.localEmailKey, this.emailLocalKey].forEach((key) => { if (key) moqui.drafts.remove(key); });
+                const pointer = moqui.drafts.get(this.emailRefKey);
+                if (pointer && pointer.indexOf(JSON.stringify(this.clientRef)) >= 0) moqui.drafts.remove(this.emailRefKey);
+                this.localEmailKey = null;
+            }
+            try { if (this.query.restoreKey) sessionStorage.removeItem(this.query.restoreKey); } catch (err) { /* no storage */ }
+        },
+        // an answer that says the server cannot be reached in the desktop client, whose outbox and drafts keep the message
+        unreachable(err) {
+            const status = err && err.status != null ? Number(err.status) : 0;
+            return !!moqui.hostOutbox() && (status === 0 || status === 502 || status === 504);
+        },
+        // files kept by the app for a send from its outbox (offline): each a {file, name, size, contentType}
+        keepFiles(files) {
+            return Promise.all(files.map((file) => moqui.drafts.saveFile(file).then((name) => (name ? { file: name, name: file.name, size: file.size,
+                contentType: file.type || 'application/octet-stream' } : null)))).then((kept) => {
+                this.queued = this.queued.concat(kept.filter((file) => file));
+                return this.saveLocal();
+            }, (err) => moqui.notifyMessages(null, (err && err.message) || t('The files could not be kept')));
+        },
+        removeQueued(file) {
+            this.queued = this.queued.filter((item) => item !== file);
+            this.saveLocal();
+        },
+        // Send from the app's outbox (the desktop client): the draft saved, its files uploaded and sent once the server can be
+        // reached, each taken once by the clientRef; Undo is not offered, as it goes later.
+        queueSend(params) {
+            const fields = Object.assign({}, params);
+            delete fields.holdSeconds;
+            delete fields.clientRef;
+            if (this.draft.emailMessageId) fields.emailMessageId = this.draft.emailMessageId;
+            const files = this.queued.map((file) => ({ file: file.file, name: file.name, contentType: file.contentType }));
+            return moqui.hostOutbox().add('mail-send', { clientRef: this.clientRef, fields, files }, files.map((file) => file.file)).then(() => {
+                this.sending = false;
+                this.sent = true;
+                this.clearLocal();
+                this.afterSend({ mode: 'queued', holdSeconds: 0, message: t('Waiting to send: it goes when the server can be reached') });
+            }, (err) => {
+                this.sending = false;
+                moqui.notifyMessages(null, (err && err.message) || t('This message cannot wait to be sent'));
+            });
         },
 
         // ---- files ----
@@ -550,11 +653,21 @@ module.exports = {
                     const json = result.json || {};
                     if (this.mode === 'email') this.draft.attachments = json.attachmentList || this.draft.attachments;
                     else this.draft.uploads = this.draft.uploads.concat(json.uploadList || []);
-                }, (err) => { this.uploading = false; moqui.handleAjaxError(err); });
+                }, (err) => {
+                    this.uploading = false;
+                    // the desktop client with no server: the app keeps them for the send
+                    if (this.unreachable(err) && this.mode === 'email') return this.keepFiles(files);
+                    if (this.unreachable(err)) { moqui.notifyMessages(null, t('Attaching files to an internal message needs a connection')); return; }
+                    moqui.handleAjaxError(err);
+                });
             };
             if (this.mode === 'email' && !this.draft.emailMessageId) {
-                // a draft first, so the files have their message
-                return this.save(true).then(() => { if (this.draft.emailMessageId) return run(); });
+                // a draft first, so the files have their message (kept by the app when the draft is kept offline)
+                return this.save(true).then(() => {
+                    if (this.draft.emailMessageId) return run();
+                    if (this.offlineDraft) return this.keepFiles(files);
+                    return null;
+                });
             }
             return run();
         },
@@ -709,6 +822,12 @@ module.exports = {
             else if (this.mode === 'email') params.holdSeconds = String(Math.max(0, Math.min(this.undoSeconds || 0, 300)));
             if (opts.archive && d.threadStore && d.threadId) { params.archiveThread = 'true'; params.threadStore = d.threadStore; params.threadId = d.threadId; }
             this.sending = true;
+            // files kept by the app offline go with the send from its outbox (MD4)
+            if (this.queued.length && moqui.hostOutbox() && this.mode === 'email') {
+                const queue = () => this.queueSend(params);
+                if (this.saving && this.savePromise) this.savePromise.then(queue, queue); else queue();
+                return;
+            }
             const go = () => moqui.request(this.url('send'), { method: 'POST', params }).then((result) => {
                 this.sending = false;
                 const json = result.json || {};
@@ -721,7 +840,19 @@ module.exports = {
                 this.clearLocal();
                 const info = Object.assign({}, json, { holdSeconds: params.holdSeconds ? Number(params.holdSeconds) : 0, restoreKey });
                 this.afterSend(info);
-            }, (err) => { this.sending = false; moqui.handleAjaxError(err); });
+            }, (err) => {
+                // the desktop client with no server: sent from the app's outbox when it is back
+                if (this.unreachable(err) && this.clientRef && this.mode === 'email') { this.queueSend(params); return; }
+                // an internal message is not taken once by a clientRef yet (MD5): kept here as a draft, to send online
+                if (this.unreachable(err) && this.mode === 'internal') {
+                    this.sending = false;
+                    this.saveLocal();
+                    moqui.notifyMessages(null, t('An internal message needs a connection to send; it is kept as a draft'));
+                    return;
+                }
+                this.sending = false;
+                moqui.handleAjaxError(err);
+            });
             // a save that is running finishes first, so the send has the draft's id
             if (this.saving && this.savePromise) this.savePromise.then(() => { if (this.draft.emailMessageId) params.emailMessageId = this.draft.emailMessageId; go(); });
             else go();

@@ -89,7 +89,13 @@ the server. So `window.moquiDesktop` may also have:
   The node the app runs in its own process, on its app scheme with no port, has `socket` too, for `/notws`, `/callws`
   and `/termws`, whose binary frames it carries as an `ArrayBuffer` (and takes one, or a typed array, to send);
 - `storageScope`: what `moqui.scopedKey(key)` puts browser storage keys of a server's data under (the chat outbox,
-  the crypto device and store, drafts); `moqui.storageScope` set to a string is used instead. Empty on the web.
+  the crypto device and store, drafts); `moqui.storageScope` set to a string is used instead. Empty on the web;
+- `outbox`: the host's outbox (`add(kind, payload, files)`, `list`, `retry`, `discard`, `on(fn)`), which keeps and sends
+  what a page sends offline. `moqui.hostOutbox()` answers it, or null on the web; `moqui.chat` keeps its outbox there
+  (and moves the one `localStorage` held into it once), and Compose queues a mail send there;
+- `drafts`: the host's drafts and their files. `moqui.drafts` (`ready`, `get`, `keys`, `files`, `put`, `remove`,
+  `saveFile`) is the drafts of Chat and Compose: the host's where there is one (this browser's moved in once), else
+  `localStorage` under `scopedKey`.
 
 Its bundled shell runs on the runtime build of Vue: `moqui.bundledComponent(name)` answers a screen it bundled
 precompiled (`moqui.qvtBundled`), `loadComponent` answers one without fetching it, and on the runtime build a `.qvue` or

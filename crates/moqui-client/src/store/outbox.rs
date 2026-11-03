@@ -122,6 +122,17 @@ impl OutboxOp {
     }
 }
 
+/// A new `clientRef` for an operation the host makes (a mark-read, a mail state change): 16 random bytes in hex.
+///
+/// # Errors
+///
+/// Returns an error when there is no random source.
+pub fn new_client_ref() -> Result<String, Error> {
+    let mut random = [0_u8; 16];
+    getrandom::fill(&mut random).map_err(|err| Error::new(format!("random source failed: {err}")))?;
+    Ok(format!("h{}", moqui_lib::codec::hex_encode(&random)))
+}
+
 /// A change of an operation's state after a send, or by the user (retry, hold).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutboxUpdate {

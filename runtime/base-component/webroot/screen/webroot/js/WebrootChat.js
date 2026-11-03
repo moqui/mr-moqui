@@ -7,7 +7,9 @@
  *   - me: the current user's own status, set from the account menu, with the heartbeat that keeps it (auto-away from idle),
  *   - unread: each room's unread and mention counts, typing: who is typing in each room, reads: the members' read markers,
  *   - outbox: the messages sent and not yet answered, kept in localStorage per user (moqui.chat.outbox.<userId>) so a
- *     send made offline, or one that failed for a while, goes when the page is back (chat.send, chat.flush),
+ *     send made offline, or one that failed for a while, goes when the page is back (chat.send, chat.flush); in the
+ *     desktop client the host keeps and sends it (moqui.hostOutbox(), crates/moqui-desktop/src/client/outbox.rs), also
+ *     with no window open, and the page shows its items and hears of each change,
  * and hands the chat pushes to the screens that listen (moqui.chat.on). The server side is org.moqui.impl.ChatServices; the
  * topics and their messages are described there and in docs/ui/Qvt-Client.md, "Chat store and presence".
  *
@@ -34,6 +36,8 @@
     const OUTBOX_FILES_FOR = 20 * 3600 * 1000;
     const BACKOFF = [2000, 5000, 15000, 60000];
     const FLUSH_EVERY = 2000;
+    // the host outbox's states as the page's items show them
+    const HOST_STATUS = { queued: "waiting", retry: "waiting", sending: "sending", held: "held", failed: "failed" };
 
     const chat = {
         labels: { statusOnline: "Online", statusAway: "Away", statusDnd: "Do not disturb", statusInvisible: "Invisible", statusOffline: "Offline",
@@ -267,6 +271,11 @@
         },
         // the wait before try number attempts + 1: 2, 5, 15, then 60 seconds
         backoff(attempts) { return BACKOFF[Math.min(Math.max(Number(attempts) || 1, 1), BACKOFF.length) - 1]; },
+        // An operation of the host's outbox (outbox_list) as an item of the page's outbox, with its status.
+        itemOfOp(op) {
+            return Object.assign({}, op.payload, { clientRef: op.id, createdDate: op.createdMs, attempts: op.attempts || 0, nextDate: op.nextMs || 0,
+                status: HOST_STATUS[op.state] || "waiting", error: op.error || null });
+        },
 
         // A message of the socket on the state: presence (userStatus), the room events and signals (chatRoom:<id>) and the
         // user's room list (chatUser:<me>). Returns what it was ({kind, chatRoomId, ...}) for the listeners, or null.
@@ -392,11 +401,14 @@
             // the outbox: what waited goes now, when the browser and the socket are back, and when an item is due; other
             // tabs' changes are read (the server answers a message sent twice with the first)
             chat.state.online = !(root.navigator && root.navigator.onLine === false);
-            chat.readOutbox();
+            // the desktop client's host keeps and sends the outbox: the page shows it and stops its own sending
+            const host = chat.host();
+            if (host) chat.startHost(host);
+            else chat.readOutbox();
             if (root.addEventListener) {
                 root.addEventListener("online", () => { chat.state.online = true; chat.flush(true); });
                 root.addEventListener("offline", () => { chat.state.online = false; chat.touchOutbox(); });
-                root.addEventListener("storage", (event) => { if (event && event.key === chat.outboxKey()) { chat.readOutbox(); chat.emit("outbox", {}); } });
+                if (!host) root.addEventListener("storage", (event) => { if (event && event.key === chat.outboxKey()) { chat.readOutbox(); chat.emit("outbox", {}); } });
             }
             if (client && client.onState) client.onState((socketState) => {
                 const reconnected = socketState === "open" && chat.state.connected === false;
@@ -404,8 +416,65 @@
                 if (socketState === "open") chat.flush(true);
                 chat.emit("connection", { state: socketState, reconnected });
             });
+            if (host) return;
             chat.flushTimer = setInterval(() => chat.flush(false), FLUSH_EVERY);
             chat.flush(true);
+        },
+        // the host's outbox (the desktop client), null on the web
+        host() { return moqui.hostOutbox ? moqui.hostOutbox() : null; },
+        // Show the host's outbox and hear its changes: a chat send answered is told as the page's own (sent). The outbox this
+        // browser kept before is moved into the host first (importOutbox).
+        startHost(host) {
+            chat.hostOff = host.on((event) => {
+                if (event && event.kind === "sent" && event.op === "chat-send") {
+                    chat.emit("sent", { clientRef: event.clientRef, chatRoomId: event.chatRoomId, threadRootEventSeq: event.threadRootEventSeq ?? null,
+                        json: event.json || {} });
+                }
+                chat.refreshHost();
+            });
+            return chat.importOutbox(host).then(() => chat.refreshHost());
+        },
+        refreshHost() {
+            const host = chat.host();
+            if (!host) return Promise.resolve();
+            return host.list().then((ops) => {
+                chat.state.outbox = (Array.isArray(ops) ? ops : []).filter((op) => op.kind === "chat-send").map((op) => chat.itemOfOp(op));
+                chat.emit("outbox", {});
+            }, (err) => console.info("chat outbox not read from the app", err));
+        },
+        // The outbox this browser kept (localStorage, under the scope) moved into the host once: each item with its clientRef,
+        // createdDate and ciphertext (the host takes an item it has once), taken off the stored list once the host has it,
+        // or dropped with a warning when the host refuses it for good (one refused for now stays to try again). Resolves to
+        // how many there were.
+        importOutbox(host) {
+            const key = chat.outboxKey();
+            let list = [];
+            try {
+                const text = root.localStorage ? root.localStorage.getItem(key) : null;
+                const parsed = text ? JSON.parse(text) : [];
+                if (Array.isArray(parsed)) list = parsed.filter((item) => item && item.clientRef && item.chatRoomId);
+            } catch (err) { list = []; }
+            if (!list.length) return Promise.resolve(0);
+            let left = list.slice();
+            const done = (item) => {
+                left = left.filter((other) => other !== item);
+                try {
+                    if (left.length) root.localStorage.setItem(key, JSON.stringify(left));
+                    else root.localStorage.removeItem(key);
+                } catch (err) { /* no storage */ }
+            };
+            return list.reduce((previous, item) => previous.then(() => host.add("chat-send", item).then(() => done(item), (err) => {
+                if (moqui.hostBusy && moqui.hostBusy(err)) { console.info("chat outbox item " + item.clientRef + " not moved to the app yet", err); return; }
+                console.warn("chat outbox item " + item.clientRef + " not taken by the app, dropped", err);
+                done(item);
+            })), Promise.resolve()).then(() => list.length);
+        },
+        // A room read up to seq, through the host's outbox (sent when it can, the room shown read at once in the stored
+        // copy): resolves as markRead answers; null on the web or with no seq, where the screen asks the server itself.
+        queueRead(roomId, seq) {
+            const host = chat.host();
+            if (!host || !roomId || seq == null || !(Number(seq) >= 0)) return null;
+            return host.add("chat-read", { chatRoomId: roomId, lastReadEventSeq: Number(seq) }).then(() => ({ lastReadEventSeq: Number(seq) }));
         },
         noop() {},
         // a GET or POST to a webroot transition of the store, its JSON (null when it fails, which is logged)
@@ -675,6 +744,7 @@
         // the outbox as stored (another tab may have changed it); the state changes only when it did, so the screens
         // do not draw their pending rows again for nothing
         readOutbox() {
+            if (chat.host()) return chat.state.outbox.map((item) => Object.assign({}, item));
             let text = null;
             try { text = root.localStorage ? root.localStorage.getItem(chat.outboxKey()) : null; } catch (err) { text = null; }
             if (text !== null && text === chat.outboxText) return chat.state.outbox.map((item) => Object.assign({}, item));
@@ -706,6 +776,8 @@
         touchOutbox() { chat.state.outbox = chat.state.outbox.slice(); chat.emit("outbox", {}); },
         dropOutbox(clientRef) {
             if (!chat.state.outbox.some((item) => item.clientRef === clientRef)) return;
+            // the host takes its own off (an echo, an answer); the page shows it gone now
+            if (chat.host()) { chat.state.outbox = chat.outboxRemove(chat.state.outbox, clientRef); chat.emit("outbox", {}); return; }
             chat.saveOutbox(chat.outboxRemove(chat.readOutbox(), clientRef));
         },
         changeOutbox(clientRef, fields) {
@@ -732,16 +804,51 @@
             const kept = Object.assign({ clientRef: chat.newClientRef(), createdDate: Date.now(), attempts: 0, nextDate: 0, status: "waiting" }, item);
             const list = chat.outboxAdd(chat.readOutbox(), kept);
             if (!list) return Promise.reject({ outbox: true, status: 0 });
+            const host = chat.host();
+            if (host) {
+                // shown at once; the host sends it, and its answer comes as sent
+                chat.state.outbox = list;
+                chat.emit("outbox", {});
+                return host.add("chat-send", kept).then(() => { chat.refreshHost(); return { queued: true, clientRef: kept.clientRef }; }, (err) => {
+                    chat.state.outbox = chat.outboxRemove(chat.state.outbox, kept.clientRef);
+                    chat.emit("outbox", {});
+                    // one the host will not keep (not its outbox being full) goes now while online, as the web sends it
+                    if (chat.state.online && !/full/i.test(String((err && err.message) || ""))) return chat.sendNow(kept);
+                    return Promise.reject({ outbox: true, status: 0, error: err && err.message });
+                });
+            }
             chat.saveOutbox(list);
             if (!chat.state.online) return Promise.resolve({ queued: true, clientRef: kept.clientRef });
             return chat.sendItem(kept);
         },
+        // A message sent at once, not kept (the host would not): resolves as send does, {sent, json} or {failed, error}.
+        sendNow(item) {
+            const params = Object.assign({}, item.params, { chatRoomId: item.chatRoomId, clientRef: item.clientRef });
+            return moqui.request(item.url, { method: "POST", params }).then((result) => {
+                const json = (result && result.json) || {};
+                if (json.event || json.eventSeq != null) {
+                    chat.emit("sent", { clientRef: item.clientRef, chatRoomId: item.chatRoomId, threadRootEventSeq: item.threadRootEventSeq ?? null, json });
+                    return { sent: true, json };
+                }
+                return { failed: true, clientRef: item.clientRef, error: json.errors ? [].concat(json.errors).join(" ") : null };
+            }, (err) => {
+                const json = err && err.json;
+                return { failed: true, clientRef: item.clientRef, error: json && json.errors ? [].concat(json.errors).join(" ") : null };
+            });
+        },
         newClientRef() { return "c" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); },
         retry(clientRef) {
+            const host = chat.host();
+            if (host) return host.retry(clientRef).then(() => { chat.refreshHost(); return { queued: true, clientRef }; });
             const item = chat.changeOutbox(clientRef, { status: "waiting", nextDate: 0, attempts: 0, error: null, createdDate: Date.now() });
             return item ? chat.sendItem(item) : Promise.resolve(null);
         },
-        discard(clientRef) { chat.dropOutbox(clientRef); },
+        discard(clientRef) {
+            const host = chat.host();
+            if (host) { chat.dropOutbox(clientRef); return host.discard(clientRef).then(() => chat.refreshHost()); }
+            chat.dropOutbox(clientRef);
+            return Promise.resolve();
+        },
         sendItem(item) {
             if (chat.inFlight[item.clientRef]) return chat.inFlight[item.clientRef];
             const params = Object.assign({}, item.params, { chatRoomId: item.chatRoomId, clientRef: item.clientRef });
@@ -785,7 +892,7 @@
         // Send what is due, oldest first and one at a time (force: what waits too, as when the browser or the socket is
         // back). Not while offline; not an item that failed or whose files expired.
         flush(force) {
-            if (!chat.started || !chat.state.online || chat.flushing) return Promise.resolve();
+            if (!chat.started || !chat.state.online || chat.flushing || chat.host()) return Promise.resolve();
             const now = Date.now();
             const due = chat.readOutbox().filter((item) => !chat.inFlight[item.clientRef] && item.status !== "failed" && !chat.outboxExpired(item, now)
                 && (force || (item.status !== "held" && Number(item.nextDate || 0) <= now)));

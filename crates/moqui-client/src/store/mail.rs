@@ -302,8 +302,8 @@ impl Store {
         )
     }
 
-    /// The rows of a thread in each folder that keeps it.
-    fn mail_threads_of(&self, thread_id: &str) -> Vec<MailThread> {
+    /// The rows of a thread in each folder that keeps it (a state change made offline is applied to each).
+    pub fn mail_threads_of(&self, thread_id: &str) -> Vec<MailThread> {
         self.rows(
             "mail threads",
             "SELECT folder_id, thread_id, sort_ms, row FROM mail_thread WHERE thread_id = ?1",

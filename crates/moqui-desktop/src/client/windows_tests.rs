@@ -67,3 +67,16 @@ fn the_shells_url_takes_a_query() {
         "http://moqui-shell.localhost/?signIn=1"
     );
 }
+
+#[test]
+fn an_app_window_has_the_outbox_but_none_of_the_shells_commands() {
+    for permission in ["allow-outbox-add", "allow-draft-put", "allow-file-save"] {
+        assert!(APP_PERMISSIONS.contains(&permission), "{permission}");
+        assert!(SHELL_PERMISSIONS.contains(&permission), "{permission}");
+    }
+    assert!(APP_PERMISSIONS
+        .iter()
+        .all(|permission| !permission.starts_with("allow-client-")));
+    // what a shared sign-out would delete is the shell's to ask
+    assert!(!APP_PERMISSIONS.contains(&"allow-outbox-unsent"));
+}

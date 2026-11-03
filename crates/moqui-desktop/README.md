@@ -122,6 +122,18 @@ bundled shell, which opens with no network; each account is a server and a user,
   shell's `/notws` opens, `client/mirror.rs` reads ahead on a thread of its own: a personal device all rooms and mail
   folders back to `mirror-days`, a shared one the `prefetch-rooms` latest rooms and the inbox's first `prefetch-mail`
   threads; after a drop, each room's latest page again.
+- **Outbox and drafts:** what a page sends offline is kept in the account's store and sent by the host
+  (`client/outbox.rs`, `client/flush.rs`), on a thread of its own for every account signed in here, with WebrootChat's
+  rules (no answer, 408, 429, 5xx again after 2, 5, 15, 60 s; 401 and 403 held until a sign-in or a renewed key; another
+  4xx failed with the server's message; 50 waiting, 64 KB each): a chat message (`chat-send`, acknowledged by its answer
+  and its pushed echo), a mark-read (`chat-read`), a compose (`mail-send`: the draft saved, its files uploaded, sent, each
+  once by its `clientRef`) and a thread's read, flag, archive, move or trash (`mail-state`). A mark-read and a mail state
+  change show in the stored rows at once. The pages call `moquiDesktop.outbox` (`add`, `list`, `retry`, `discard`, `on`
+  for each change) and `moquiDesktop.drafts` (`get`, `list`, `put`, `remove`, `saveFile`), for the calling window's
+  account; the shell's `outbox.unsent()` lists what a shared sign-out would delete. An internal message is not queued:
+  its send is not taken once by a `clientRef` yet (MD5), so Compose keeps it as a draft until there is a connection.
+  An operation held three times in a row fails, and a chat message with files fails after 20 hours. The drafts are
+  capped at 500 and 16 MB of text, their and the sends' files at a quarter of `store-max-mb`.
 - **Device mode:** `<client-conf device-mode>` in the runtime's merged conf (read without booting, `client/conf.rs`):
   `personal` or `shared` for every account, or `choose`, where the sign-in asks. The mode is kept with the account; one
   already personal stays so (the shell says why); one with none follows the build's mode. Sign-out or a revocation of
@@ -151,8 +163,8 @@ bundled shell, which opens with no network; each account is a server and a user,
   with the key, and its frames are handed to the page.
 - **Accounts:** the accounts are `client/accounts.json`; switching closes the other account's windows and sockets. The
   pages' browser storage of a server's data is under the account (`moquiDesktop.storageScope`, MoquiLib `scopedKey`).
-- **Commands:** the main window (the shell) has the shell's commands, the page bridge's and the sockets; an app window
-  has the sockets only. Tauri counts the app's scheme pages as local, so the capabilities name the windows, and each window's
+- **Commands:** the main window (the shell) has the shell's commands, the page bridge's, the sockets, the outbox and the
+  drafts; an app window has the sockets, the outbox and the drafts of its own account. Tauri counts the app's scheme pages as local, so the capabilities name the windows, and each window's
   navigation stays on its origin (the web opens in the system browser, a server page from the shell in an app window).
 - **Downloads:** an attachment or a large file is saved by the host, streamed, as for the node in process (above); a
   small one is Chromium's. An event stream is answered 503, as on the node's scheme.

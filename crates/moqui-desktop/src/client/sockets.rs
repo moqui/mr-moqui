@@ -24,7 +24,8 @@
 //!
 //! A client's `/notws` frames are also written into the account's store (`push.rs`, MD4). A drop of any of the
 //! account's `/notws` marks the timelines' heads stale, as pushes may be missed while it is down, and has the mirror
-//! (`mirror.rs`) read them again when the shell's opens next; the shell's opening starts the mirror.
+//! (`mirror.rs`) read them again when the shell's opens next; the shell's opening starts the mirror. An opening also
+//! wakes the outbox's sender (`flush.rs`), and my own message pushed back takes its operation off (`outbox::echoed`).
 //!
 //! The node in process (`crate::node::scheme`, no port) has its pages' sockets here too: `/notws`, `/callws` and
 //! `/termws`, opened in process (`moqui_host::in_process`) with the window's cookies.
@@ -192,14 +193,26 @@ fn notified(app: &AppHandle, label: &str, account: &moqui_client::account::Accou
             client.with_store(&account.id, |store| {
                 super::push::keep_frame(store, &account.user_id, text)
             });
+            // my message came back: its outbox operation is done
+            if let Some(client_ref) = super::push::echo_ref(&account.user_id, text) {
+                let removed = client.with_store(&account.id, |store| super::outbox::echoed(store, &client_ref));
+                if removed == Some(true) {
+                    super::outbox::notify_pages(app, &account.id, &serde_json::json!({ "kind": "changed" }));
+                }
+            }
         }
         Event::Closed | Event::Revoked => {
             // pushes may be missed until it is back: newer events are a gap until the mirror reads them again
             client.mirror.dropped(&account.id);
             mark_stale(&client, &account.id);
         }
-        Event::Open if label == "main" => super::mirror::start(app, &account.id),
-        Event::Open => {}
+        Event::Open => {
+            // the network is back: what waits in the outbox goes
+            client.flusher.wake();
+            if label == "main" {
+                super::mirror::start(app, &account.id);
+            }
+        }
     }
 }
 

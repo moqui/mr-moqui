@@ -225,8 +225,8 @@ const CLEAR_LABELS = { '0': "Don't clear", '30': 'Clears in 30 minutes', '60': '
 const ROOM_ICONS = { CrtDirect: 'sym_o_group', CrtPrivate: 'sym_o_lock', CrtPublic: 'sym_o_tag', CrtRecord: 'sym_o_description', CrtExternal: 'sym_o_sms' };
 const LEVELS = [{ value: 'CnlAll', label: 'All messages', icon: 'sym_o_notifications_active' }, { value: 'CnlMentions', label: 'Mentions only', icon: 'sym_o_alternate_email' },
     { value: 'CnlNone', label: 'Nothing', icon: 'sym_o_notifications_off' }];
-// under the storage scope: in the desktop client every server's pages share one origin (MoquiLib scopedKey)
-const draftPrefix = () => moqui.scopedKey('boss.chat.draft.');
+// the drafts' keys (moqui.drafts puts them under the storage scope, or in the desktop client's store)
+const draftPrefix = () => 'boss.chat.draft.';
 // the drafts of encrypted rooms: in this page only (C7)
 const sealedDrafts = {};
 const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
@@ -300,10 +300,11 @@ const systemText = (event, nameOf) => {
     if (event.type === 'poll') return [fill(t('{by} made a poll'), { by }), 'sym_o_ballot'];
     return [by, 'sym_o_info'];
 };
+// the drafts: this browser's storage under the scope, or the desktop client's store (MoquiLib moqui.drafts)
 const storage = {
-    get(key) { try { return window.localStorage.getItem(key); } catch (err) { return null; } },
-    set(key, value) { try { if (value) window.localStorage.setItem(key, value); else window.localStorage.removeItem(key); } catch (err) { /* no storage */ } },
-    keys(prefix) { const out = []; try { for (let i = 0; i < window.localStorage.length; i++) { const key = window.localStorage.key(i); if (key && key.indexOf(prefix) === 0) out.push(key); } } catch (err) { /* no storage */ } return out; }
+    get(key) { return moqui.drafts.get(key); },
+    set(key, value) { moqui.drafts.put(key, value || null); },
+    keys(prefix) { return moqui.drafts.keys(prefix); }
 };
 // a short sound for a new message, at most every two seconds (not under do not disturb: the caller asks moqui.chat.quiet())
 let lastChime = 0;
@@ -686,6 +687,8 @@ const chatComposer = {
     mounted() {
         const saved = this.room.sealed ? sealedDrafts[this.draftKey] : storage.get(this.draftKey);
         if (saved) this.body = saved;
+        // the desktop client's drafts, once read
+        else if (!this.room.sealed) moqui.drafts.ready().then(() => { const later = storage.get(this.draftKey); if (later && isEmptyHtml(this.body)) this.body = later; });
         this.room.registerComposer(this, this.threadRoot);
     },
     beforeUnmount() {
@@ -1469,7 +1472,10 @@ const chatRoom = {
         markRead(now) {
             if (!this.isMember) return;
             if (now) this.holdRead = false;
-            this.post('markRead', { chatRoomId: this.roomId }).then((json) => {
+            // the desktop client sends it from its outbox, offline too; the web asks now
+            const queued = moqui.chat && moqui.chat.queueRead ? moqui.chat.queueRead(this.roomId, this.room && this.room.lastEventSeq) : null;
+            const asked = () => this.post('markRead', { chatRoomId: this.roomId });
+            (queued ? queued.catch(asked) : asked()).then((json) => {
                 if (json.lastReadEventSeq != null) this.myLastRead = Math.max(this.myLastRead, Number(json.lastReadEventSeq));
                 if (now) this.dividerSeq = null;
                 this.$emit('read', this.roomId);
@@ -2513,6 +2519,7 @@ module.exports = {
         this.onDraft = () => this.readDrafts();
         window.addEventListener('boss-chat-draft', this.onDraft);
         this.readDrafts();
+        moqui.drafts.ready().then(() => this.readDrafts());
         this.unsubscribe = [];
         if (moqui.chat) {
             this.unsubscribe.push(moqui.chat.on('event', (payload) => this.onEvent(payload)));

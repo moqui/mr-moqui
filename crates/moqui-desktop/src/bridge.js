@@ -5,7 +5,8 @@
 // saveBlob, WebrootVue.qvt.js openLink and the shell's counts and presence, WebrootCall.js the ring). An
 // initialization script of the main window, so it runs on every page the window shows; it defines the adapter only on
 // the node's loopback origin, and the host's capability lets only that exact origin call the commands. A client of a
-// server (src/client/) has it on its shell, with the accounts and sign-in, and on its app windows with the sockets only.
+// server (src/client/) has it on its shell, with the accounts and sign-in, and on its app windows with the sockets, the
+// outbox and the drafts only.
 //
 // No saveFile: a download link (moqui.saveBlob without it, an export link, an attachment) goes to Chromium's download,
 // which the host takes with a save dialog and a notification when done (bridge.rs on_download).
@@ -170,6 +171,43 @@
             request.onsuccess = request.onerror = request.onblocked = () => resolve();
         })))).catch((err) => console.info("Deleted accounts' browser databases not all removed", err));
     };
+    // The outbox and drafts the host keeps for the window's account (src/client/outbox.rs, flush.rs): an operation kept
+    // is sent by the host, also while no window shows it; on() hears each change ({kind: "changed"}, or "sent" with the
+    // server's answer). Used by WebrootChat.js and MoquiLib.js (moqui.drafts) where present; the web keeps localStorage.
+    const outboxListeners = [];
+    window.__moquiOutboxEvent = (event) => {
+        outboxListeners.slice().forEach((fn) => {
+            try { fn(event || {}); } catch (err) { console.error("moquiDesktop outbox listener failed", err); }
+        });
+    };
+    const outbox = Object.freeze({
+        // kind chat-send, chat-read, mail-send or mail-state; files: the store's names (drafts.saveFile) it sends
+        add: (kind, payload, files) => ask("outbox_add", { kind: String(kind || ""), payload: payload || {}, files: Array.isArray(files) ? files.map(String) : null }),
+        list: () => ask("outbox_list"),
+        retry: (id) => ask("outbox_retry", { id: String(id || "") }),
+        discard: (id) => ask("outbox_discard", { id: String(id || "") }),
+        on: (fn) => {
+            if (typeof fn !== "function") return () => {};
+            outboxListeners.push(fn);
+            return () => { const at = outboxListeners.indexOf(fn); if (at >= 0) outboxListeners.splice(at, 1); };
+        }
+    });
+    // a Blob or File as base64, for the host to keep
+    const base64Of = (blob) => new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => { const text = String(reader.result || ""); resolve(text.slice(text.indexOf(",") + 1)); };
+        reader.onerror = () => reject(reader.error || new Error("The file was not read"));
+        reader.readAsDataURL(blob);
+    });
+    const drafts = Object.freeze({
+        get: (key) => ask("draft_get", { key: String(key || "") }),
+        list: (prefix) => ask("draft_list", { prefix: String(prefix || "") }),
+        // value: text (JSON); files: the store's names of the files attached to it
+        put: (key, value, files) => ask("draft_put", { key: String(key || ""), value: String(value ?? ""), files: Array.isArray(files) ? files.map(String) : null }),
+        remove: (key) => ask("draft_remove", { key: String(key || "") }),
+        // a File or Blob kept by the host for a draft or a send: resolves to its name in the store
+        saveFile: (file, name) => base64Of(file).then((data) => ask("file_save", { name: String(name || (file && file.name) || "file"), data }))
+    });
     if (appWindow) {
         // the scopes the host gave this window to clear, once (its later pages carry the same list)
         const scopes = window.__moquiClearScopes;
@@ -184,11 +222,13 @@
             if (first) clearScopes(scopes);
         }
         // a server's page: its sockets, and the storage scope of its account (MoquiLib scopedKey); no other command
-        window.moquiDesktop = Object.freeze({ socket, storageScope: String(window.__moquiStorageScope || "") });
+        window.moquiDesktop = Object.freeze({ socket, outbox, drafts, storageScope: String(window.__moquiStorageScope || "") });
         return;
     }
     window.moquiDesktop = Object.freeze(Object.assign({}, pageCommands, {
         socket,
+        outbox: Object.freeze(Object.assign({ unsent: () => ask("outbox_unsent") }, outbox)),
+        drafts,
         // the shell (shell/js/shell.js): the accounts and sign-in, which the host keeps; never the key
         state: () => ask("client_state"),
         // the storage of the accounts state's clearScopes names, as the shell loads
