@@ -33,6 +33,9 @@
     <default-property name="webapp_allow_origins" value=""/>
     <default-property name="webapp_handle_cors" value="true"/>
     <default-property name="webapp_status_ips" value="127.0.0.1"/>
+    <!-- The color of the dev/test instance marker of the Quasar shell (a small square in the corner of the window; the shell
+        only draws it for a dev or test instance_purpose): a CSS color, empty turns it off. It never overrides the theme's colors. -->
+    <default-property name="webapp_dev_marker_color" value="#2196f3"/>
     <default-property name="webapp_require_session_token" value="true"/>
     <default-property name="webapp_upload_executable_allow" value="false"/>
     <!-- Largest multipart/form-data request body, in bytes or with a k, m or g suffix (other request bodies stop at

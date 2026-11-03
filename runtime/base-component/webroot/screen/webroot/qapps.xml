@@ -177,6 +177,9 @@ along with this software (see the LICENSE.md file). If not, see
             leftMini: ec.user.getPreference('QUASAR_LEFT_MINI') == 'true',
             density: density, startApp: startApp,
             notificationEndpoint: (ec.user.userId && System.getProperty('webapp_notification_endpoint')) || '',
+            // the dev/test instance marker (the webapp_dev_marker_color conf property): the shell draws a small square in the
+            // corner of the window in this color for a dev or test instance; empty turns it off
+            devMarker: System.getProperty('webapp_dev_marker_color') || '',
             // the account menu's Terminal, when the host serves the browser terminal (the /termws endpoint)
             terminalUrl: (ec.user.userId && System.getProperty('webapp_terminal_endpoint')) ? '/qapps/Terminal' : '',
             navPlugins: sri.getThemeValues('STRT_HEADER_NAVBAR_COMP'), accountPlugins: sri.getThemeValues('STRT_HEADER_ACCOUNT_COMP'),

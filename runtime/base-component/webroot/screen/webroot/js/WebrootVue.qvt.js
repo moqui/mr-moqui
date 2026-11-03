@@ -9436,6 +9436,10 @@
         const config = JSON.parse(configEl.textContent);
         qvt.config = config;
         moqui.config = config;
+        // The dev/test instance marker (the webapp_dev_marker_color conf property): a small square in the corner of the window
+        // (the style sheet draws it for a dev or test body class); an empty or invalid color turns it off. It never overrides
+        // the theme's colors.
+        if (config.devMarker && moqui.isCssColor(config.devMarker)) doc.body.style.setProperty("--m-dev-marker", config.devMarker.trim());
         moqui.setNumberSeparators(config.locale);
         let catalogReady = Promise.resolve();
         if (moqui.l10n) {

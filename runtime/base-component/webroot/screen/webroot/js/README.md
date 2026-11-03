@@ -491,7 +491,7 @@ and token name without its prefix (`primary`, `page-bg`, ...).
   - In dark mode, `panel-bg` and `page-bg` are also `--q-dark` and `--q-dark-page`, which Quasar's dark components use.
   - A name or value with a character that could end its declaration is logged and left out.
 - The scheme's `extraCss` comes after the colors, for what is not a color. An administrator writes it; nothing a user enters goes there.
-- `WebrootQuasarThemeData.xml` seeds Default (no colors), Slate, Forest, Warm, High Contrast, Ocean, Indigo, Crimson, Teal, Graphite and OpenStep (the NeXTSTEP/OpenStep look, with a charcoal dark mode) for `DEFAULT_QUASAR`.
+- `WebrootQuasarThemeData.xml` seeds Default (no colors), Slate, Forest, Warm, High Contrast, Ocean, Indigo, Crimson, Teal, Graphite, OpenStep (the NeXTSTEP/OpenStep look, with a charcoal dark mode), Windows 11 (the Fluent look, with the dark Mica mode), Plasma (the KDE Plasma/Breeze look, with the Breeze dark mode) and Rainbow (the pride flag, with the flag-over-charcoal dark mode) for `DEFAULT_QUASAR`.
 - A theme may name its default scheme in a `STRT_DEFAULT_COLOR_SCHEME` resource (a `ScreenColorScheme` id of the theme): the effective
   scheme when the user has no `THEME_COLOR_SCHEME` preference. The page links it, the Appearance dialog shows it as chosen, and the
   user's own choice wins over it. This is how a corporate look becomes the theme's default (the System app's Theme screen keeps the

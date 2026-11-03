@@ -84,11 +84,9 @@ pre { text-wrap: normal; white-space: pre-line; word-wrap: normal; word-break: n
 
 /* ====== shell ====== */
 
-/* The header is a neutral surface (the shell sets bg-white or bg-dark); a dev or test deployment tints it. */
-body.dev #top { background:#e3f2fd!important; }
-body.dev.body--dark #top { background:#0c1b29!important; }
-body.test #top { background:#e8f5e9!important; }
-body.test.body--dark #top { background:#1b3a1b!important; }
+/* A dev or test deployment marks the window with a small square in the corner (the color is the webapp_dev_marker_color conf
+   property, set on the body by the shell; an empty value turns it off). It never overrides the theme's colors. */
+body:is(.dev,.test)::after { content:""; position:fixed; right:10px; bottom:10px; width:12px; height:12px; background:var(--m-dev-marker); pointer-events:none; z-index:9000; }
 /* The page is a shade darker than its surfaces, as in dark mode (page --q-dark-page, surfaces --q-dark): a light grey page with
    the header, drawer, cards, boxes and dialogs white; an outlined field on the page itself stays white too (the body's background
    is --m-page-bg, in the tokens above). */
@@ -249,40 +247,42 @@ td, .td { min-height:21px; }
 .q-table__container { overflow-x: auto; }
 /* the row selection column (m-sel) is as narrow as its checkbox: the automatic table layout would give the first column the slack */
 .q-table .m-sel { width: 1%; white-space: nowrap; }
-.q-table .thead .tr, .q-table .tbody .td { height: 48px; }
-.q-table .th { font-weight: 500; font-size: calc(12px * var(--m-fs-small-scale)); -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; }
-.q-table .th, .q-table .td { padding: 7px 16px; background-color: inherit; }
-.q-table .thead, .q-table .td, .q-table .th { border-style: solid; border-width: 0; }
-.q-table .tbody .td { font-size: calc(13px * var(--m-fs-small-scale)); }
+/* Quasar 2.35 renders the table rows and cells as plain thead/tbody/tr/th/td elements (a selected row is tr.selected),
+   so the selectors target the elements, not .thead/.tbody/.tr/.th/.td classes. */
+.q-table thead tr, .q-table tbody td { height: 48px; }
+.q-table th { font-weight: 500; font-size: calc(12px * var(--m-fs-small-scale)); -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; }
+.q-table th, .q-table td { padding: 7px 16px; background-color: inherit; }
+.q-table thead, .q-table td, .q-table th { border-style: solid; border-width: 0; }
+.q-table tbody td { font-size: calc(13px * var(--m-fs-small-scale)); }
 
-.q-table--no-wrap .th, .q-table--no-wrap .td { white-space: nowrap; }
-.q-table--grid .q-table__middle .thead, .q-table--grid .q-table__middle .thead .th { border: 0 !important; }
+.q-table--no-wrap th, .q-table--no-wrap td { white-space: nowrap; }
+.q-table--grid .q-table__middle thead, .q-table--grid .q-table__middle thead th { border: 0 !important; }
 
-.q-table--horizontal-separator .thead .th, .q-table--cell-separator .thead .th, .q-table--horizontal-separator .tbody .tr:not(:last-child) .td,
-    .q-table--cell-separator .tbody .tr:not(:last-child) .td { border-bottom-width: 1px; }
-.q-table--vertical-separator .td, .q-table--cell-separator .td, .q-table--vertical-separator .th, .q-table--cell-separator .th { border-left-width: 1px; }
-.q-table--vertical-separator .thead .tr:last-child .th, .q-table--cell-separator .thead .tr:last-child .th, .q-table--vertical-separator.q-table--loading .tr:nth-last-child(2) .th,
-.q-table--cell-separator.q-table--loading .tr:nth-last-child(2) .th { border-bottom-width: 1px; }
-.q-table--vertical-separator .td:first-child, .q-table--cell-separator .td:first-child, .q-table--vertical-separator .th:first-child,
-    .q-table--cell-separator .th:first-child { border-left: 0; }
-.q-table--dense .q-table .th, .q-table--dense .q-table .td { padding: 4px 8px; }
-.q-table--dense .q-table .thead .tr, .q-table--dense .q-table .tbody .tr, .q-table--dense .q-table .tbody .td { height: 28px; }
-.q-table--dense .q-table .th:first-child, .q-table--dense .q-table .td:first-child { padding-left: 16px; }
-.q-table--dense .q-table .th:last-child, .q-table--dense .q-table .td:last-child { padding-right: 16px; }
-.q-table .thead, .q-table .tr, .q-table .th, .q-table .td { border-color: var(--m-border); }
-.q-table .tbody .td { position: relative; }
-.q-table .tbody .td:before, .q-table .tbody .td:after { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; }
-.q-table .tbody .td:before { background: rgba(0,0,0,0.03); content: ''; opacity: 0; transition: opacity 150ms ease; }
-.q-table .tbody .td:after { background: rgba(0,0,0,0.06); }
-.q-table .tbody .tr.selected .td:after { content: ''; }
-body.desktop .q-table .tr:not(.q-tr--no-hover):hover .td:not(.q-td--no-hover):before { opacity: 1; }
-.q-table--dark .q-table__bottom, .q-table--dark .thead, .q-table--dark .tr, .q-table--dark .th, .q-table--dark .td { border-color: var(--m-border); }
-.q-table--dark .tbody .td:before { background: rgba(255,255,255,0.07); }
-.q-table--dark .tbody .td:after { background: rgba(255,255,255,0.1); }
+.q-table--horizontal-separator thead th, .q-table--cell-separator thead th, .q-table--horizontal-separator tbody tr:not(:last-child) td,
+    .q-table--cell-separator tbody tr:not(:last-child) td { border-bottom-width: 1px; }
+.q-table--vertical-separator td, .q-table--cell-separator td, .q-table--vertical-separator th, .q-table--cell-separator th { border-left-width: 1px; }
+.q-table--vertical-separator thead tr:last-child th, .q-table--cell-separator thead tr:last-child th, .q-table--vertical-separator.q-table--loading tr:nth-last-child(2) th,
+.q-table--cell-separator.q-table--loading tr:nth-last-child(2) th { border-bottom-width: 1px; }
+.q-table--vertical-separator td:first-child, .q-table--cell-separator td:first-child, .q-table--vertical-separator th:first-child,
+    .q-table--cell-separator th:first-child { border-left: 0; }
+.q-table--dense .q-table th, .q-table--dense .q-table td { padding: 4px 8px; }
+.q-table--dense .q-table thead tr, .q-table--dense .q-table tbody tr, .q-table--dense .q-table tbody td { height: 28px; }
+.q-table--dense .q-table th:first-child, .q-table--dense .q-table td:first-child { padding-left: 16px; }
+.q-table--dense .q-table th:last-child, .q-table--dense .q-table td:last-child { padding-right: 16px; }
+.q-table thead, .q-table tr, .q-table th, .q-table td { border-color: var(--m-border); }
+.q-table tbody td { position: relative; }
+.q-table tbody td:before, .q-table tbody td:after { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; }
+.q-table tbody td:before { background: rgba(0,0,0,0.03); content: ''; opacity: 0; transition: opacity 150ms ease; }
+.q-table tbody td:after { background: rgba(0,0,0,0.06); }
+.q-table tbody tr.selected td:after { content: ''; }
+body.desktop .q-table tr:not(.q-tr--no-hover):hover td:not(.q-td--no-hover):before { opacity: 1; }
+.q-table--dark .q-table__bottom, .q-table--dark thead, .q-table--dark tr, .q-table--dark th, .q-table--dark td { border-color: var(--m-border); }
+.q-table--dark tbody td:before { background: rgba(255,255,255,0.07); }
+.q-table--dark tbody td:after { background: rgba(255,255,255,0.1); }
 .q-table__card { border-radius:4px; }
 
-.q-table .q-virtual-scroll__padding .tr { height: 0 !important; }
-.q-table .q-virtual-scroll__padding .td { padding: 0 !important; }
+.q-table .q-virtual-scroll__padding tr { height: 0 !important; }
+.q-table .q-virtual-scroll__padding td { padding: 0 !important; }
 
 /* the sort arrows of a column head sit on the title line */
 .form-title { white-space: nowrap; font-weight: 500; }
@@ -772,9 +772,9 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 body.m-density-compact { font-size:13px; }
 body.m-density-compact .q-page.q-pa-sm { padding:4px; }
 body.m-density-compact .m-container-box .q-card__section--vert { padding:4px 8px; }
-body.m-density-compact .q-table--dense .q-table .th, body.m-density-compact .q-table--dense .q-table .td { padding:2px 6px; }
-body.m-density-compact .q-table--dense .q-table .thead .tr, body.m-density-compact .q-table--dense .q-table .tbody .tr,
-    body.m-density-compact .q-table--dense .q-table .tbody .td { height:24px; }
+body.m-density-compact .q-table--dense .q-table th, body.m-density-compact .q-table--dense .q-table td { padding:2px 6px; }
+body.m-density-compact .q-table--dense .q-table thead tr, body.m-density-compact .q-table--dense .q-table tbody tr,
+    body.m-density-compact .q-table--dense .q-table tbody td { height:24px; }
 body.m-density-compact .q-field--dense .q-field__control, body.m-density-compact .q-field--dense .q-field__marginal { height:32px; min-height:32px; }
 body.m-density-compact .q-field--dense.q-field--labeled .q-field__native { padding-top:12px; }
 body.m-density-compact .q-item { min-height:32px; padding:4px 12px; }
