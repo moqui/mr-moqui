@@ -36,7 +36,7 @@ members = [
 # Add-on component crates are linked by `./moq build` through a generated crate in target/moqui-app, not by this
 # workspace. Excluded so cargo run inside one of them treats it as its own root.
 # runtime/dev-component holds a user's own dev components beside the framework's, which are members above.
-exclude = ["runtime/component", "runtime/ecomponent", "runtime/dev-component"]
+exclude = ["runtime/component", "runtime/ecomponent", "runtime/dev-component", "crates/moqui-desktop"]
 
 [workspace.package]
 edition = "2021"

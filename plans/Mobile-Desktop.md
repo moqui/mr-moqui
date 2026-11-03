@@ -2,10 +2,12 @@
 
 Status 2026-11-02: tentative implementation plan, reviewed against the code, [Edge-Node](Edge-Node.md) and [Comms-Framework](Comms-Framework.md). Build order:
 
-1. A desktop local node in a Tauri 2 app: the `moqui` server as a sidecar, linked as an Edge Client.
-2. The same full node in the app's own process.
+1. A desktop local node in a Tauri app, in the app's own process (MD2), linked as an Edge Client. A prototype is in [crates/moqui-desktop](../crates/moqui-desktop/README.md): Tauri 3 (alpha) on Chromium (CEF), with the node on a loopback port (MD2, first stage).
+2. The same node with no port, through the app scheme (MD2, second stage). The `moqui` server as a sidecar (MD1) is kept as the fallback, in case the in-process build proves harder to ship.
 3. An offline-capable client of a remote server, with synchronization.
 4. An Android app on that client model, then iOS.
+
+The in-process node came first because `moqui-host` already runs a node inside another program. `start_embedded` boots it on a thread and returns once it listens. Dropping the `Server` stops the listeners, the factory and then Postgres, in order, as `moqui tui --serve` does. That leaves no sidecar packaging, child supervision, readiness polling or signal handling to build. Chromium, which MR Moqui already drives for PDF and the client tests, takes the place of the platform WebViews. It removes the WebKitGTK gaps of §3 (no WebRTC on Linux, slower rendering) and gives one engine on every desktop OS. The costs are an alpha runtime and about 170 MB more in each installer.
 
 The mobile host is confirmed at MT5; Capacitor is the alternative. No packaged client or platform performance results are claimed here.
 
@@ -95,7 +97,11 @@ The Tauri client is the existing web frontend in a Tauri host, not a Quasar CLI 
 ### Platform facts that shape the design
 
 - **Linux.** WebKitGTK ships with WebRTC disabled upstream ([WebKit bug 274711](https://bugs.webkit.org/show_bug.cgi?id=274711)); working setups use custom builds and a media permission handler in the embedding app ([Tauri discussion 8426](https://github.com/tauri-apps/tauri/discussions/8426)). Calls on Linux need another path (§5). WebKitGTK also renders more slowly than the other WebViews.
-- **A Chromium runtime for Tauri** (`tauri-runtime-cef`) is in alpha (3.0.0-alpha.6, October 2026). It is a later option for Linux, not a dependency. [tauri-runtime-cef](https://docs.rs/crate/tauri-runtime-cef/3.0.0-alpha.5).
+- **A Chromium runtime for Tauri** (`tauri-runtime-cef`) is in alpha: 3.0.0-alpha.6 (October 2026), on CEF 154 and `tauri` 3.0.0-alpha.5.
+  - The desktop prototype uses it on every desktop OS. CEF re-launches the app's binary for its renderer, GPU and utility processes, and `cef_entry_point` sends those to CEF before the app starts.
+  - The first build downloads the CEF distribution, about 1 GB.
+  - Windows bundling is blocked upstream for now.
+  - [tauri-runtime-cef](https://docs.rs/crate/tauri-runtime-cef/3.0.0-alpha.6).
 - **Webviews.** Child webviews in one window are behind Tauri's `unstable` feature, on desktop only. Mobile has one webview per window; multiple windows on mobile are an open pull request ([tauri 14484](https://github.com/tauri-apps/tauri/pull/14484)). An iframe of the server inside the app's origin meets third-party cookie blocking in WKWebView and needs the server's `frame-ancestors`.
 - **Mobile push and calls.** Tauri has no official APNs/FCM push plugin; third-party ones exist ([tauri-plugin-mobile-push](https://github.com/yanqianglu/tauri-plugin-mobile-push), [tauri-plugin-remote-push](https://docs.rs/crate/tauri-plugin-remote-push/latest)). Neither Tauri nor Capacitor has CallKit, Android Telecom or VoIP push built in.
 - **Encrypted calls** require `RTCRtpScriptTransform`: Chromium 141 and later, including WebView2 and Android WebView ([intent to ship](https://groups.google.com/a/chromium.org/g/blink-dev/c/QeosFeu-d8A)), and Safari; check WKWebView.
@@ -147,7 +153,7 @@ The app runs MR Moqui itself as the system of record, for a person, household or
 - **The peer** is either an edge node (`node_role=edge`, MoquiEdgeConf.xml) or an all-in-one node: a full server that also runs the edge interfaces for its Edge Clients. On an all-in-one node each name, address, number and bridge belongs to the server or to the paired node and is routed by owner ([Edge-Node §10](Edge-Node.md#10-all-in-one-node-e12), phase E12, planned before E11).
 - **Backups.** The computer is the system of record, so schedule `save-db` dumps to a location the user chooses, and prove a restore.
 - **Sleep and network changes.** The edge link reconnects after an address change or a dropped mapping. Check scheduled jobs after a long sleep.
-- **PDF** needs Chromium (`pdf_chromium_path`). Point it at an installed Chrome or Edge; otherwise PDF is unavailable, as on a server without it.
+- **PDF** needs Chromium (`pdf_chromium_path`). Point it at an installed Chrome or Edge; otherwise PDF is unavailable, as on a server without it. With the node in process and CEF in the app (configuration 2), the app could supply the node's PDF engine instead: a `PdfEngine` (`moqui_core::screen::pdf`) on CEF's `PrintToPDF` in a windowless browser. That would ship Chromium with the desktop package, which changes the "not shipped" stance of [License-Review](archive/License-Review.md) for that package; CEF is BSD-licensed. Not built yet.
 
 ### Configuration 2: full node in the app's process
 
@@ -241,7 +247,8 @@ Calls on desktop depend on the WebView, in every configuration; with a local nod
 
 | Desktop | WebView | Calls |
 |---|---|---|
-| Linux | WebKitGTK | None: no WebRTC upstream. Open calls in the system browser first; later a native audio client in Rust, or the Chromium runtime once it is stable |
+| Any, with CEF (the prototype) | Chromium 154 | Expected to work: WebRTC, and `RTCRtpScriptTransform` from Chromium 141. Check media permissions in CEF |
+| Linux | WebKitGTK | None: no WebRTC upstream. Open calls in the system browser first; later a native audio client in Rust, or CEF |
 | macOS | WKWebView | Check media permissions and `RTCRtpScriptTransform` |
 | Windows | WebView2 (Chromium) | Expected to work: WebRTC, and `RTCRtpScriptTransform` from Chromium 141. Check |
 
@@ -402,4 +409,4 @@ Before mobile distribution, check the actual remote-application and local-code m
 - The Linux call path: the system browser, a native audio client in Rust, or a Chromium runtime for Tauri.
 - The measured latency/memory/startup budgets that define success, and which optional features stay unloaded by default.
 
-The first implementation should deliver MD0 and MD1 on Linux: the packaging, supervision, edge pairing and desktop integration of a local node, before the in-process build and the client of a remote server.
+The first implementation is MD2 on macOS, then Linux, on CEF: a node in the app's process, its runtime in the app data directory, edge pairing, and the tray, before the app scheme, the remaining desktop features of MD1 and the client of a remote server. MD1's exit evidence applies to it, apart from the sidecar.

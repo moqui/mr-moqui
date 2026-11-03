@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- The window while the node starts; the host then sends it to the node's /qapps, or shows why the start failed. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MR Moqui</title>
+<style>
+    :root { color-scheme: light dark; --bg: #f5f5f5; --fg: #222; --muted: #666; --err: #b00020; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #1d1d1d; --fg: #eee; --muted: #aaa; --err: #ff6b6b; } }
+    html, body { height: 100%; margin: 0; }
+    body { display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--fg);
+        font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 36rem; padding: 0 16px; text-align: center; }
+    img { width: 72px; height: 72px; }
+    #status { color: var(--muted); }
+    #error { display: none; color: var(--err); text-align: left; white-space: pre-wrap; font-family: ui-monospace, monospace;
+        font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+    <img src="icon.png" alt="">
+    <p id="status">Starting the node…</p>
+    <pre id="error"></pre>
+</main>
+<script>
+    // Called by the host (Window::eval) when the node does not start.
+    window.moquiStartFailed = function (message) {
+        document.getElementById('status').textContent = 'The node did not start.';
+        const error = document.getElementById('error');
+        error.textContent = message;
+        error.style.display = 'block';
+    };
+</script>
+</body>
+</html>

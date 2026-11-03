@@ -422,6 +422,30 @@ pub fn start_server(
     }
 }
 
+/// Start the server in the calling program on the runtime at `runtime_dir`, as `moqui` run does: the listeners from
+/// the properties (`webapp_http_port`, `webapp_http_bind`, `cluster_https_port` and the rest, which the caller sets
+/// with [`moqui_lib::env::set_property`] first), the embedded cluster in `db/embedded`, and the framework from
+/// `MOQUI_FRAMEWORK` or beside the runtime. For a program that hosts the node itself, such as the desktop app
+/// (plans/Mobile-Desktop.md, configuration 2). Drop the returned server to stop it and the postmaster.
+///
+/// # Errors
+///
+/// Returns an error when this build has no HTTP server, boot fails, or a port cannot be bound.
+pub fn start_embedded(runtime_dir: &std::path::Path) -> Result<Server, moqui_lib::error::Error> {
+    #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
+    {
+        process_started();
+        let framework = framework_from_env(runtime_dir);
+        let cluster = runtime_dir.join("db/embedded");
+        start_server_in(runtime_dir.to_path_buf(), framework, cluster, ListenBind::Property)
+    }
+    #[cfg(not(all(feature = "axum", any(feature = "postgres", feature = "mysql"))))]
+    {
+        let _ = runtime_dir;
+        Err(moqui_lib::error::Error::new("http server is not in this build"))
+    }
+}
+
 /// A runtime booted with no listeners, for `moqui tui` (plans/archive/Screen-TUI-Impl.md 4.1). Drop it to flush what is only in
 /// memory (telemetry, sessions), flush telemetry and close the database, as a server does when it stops.
 #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]

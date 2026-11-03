@@ -1,0 +1,122 @@
+# The desktop app: a node in the app's own process, shown in a Tauri window (plans/Mobile-Desktop.md, configuration 2).
+# Not a workspace member: Tauri and CEF stay out of the server builds and `cargo test --workspace`. `./moq desktop`
+# generates target/moqui-app first, which links the framework and the component crates.
+
+[package]
+name = "moqui-desktop"
+version = "0.1.0"
+description = "Desktop app: an MR Moqui node in a Tauri window"
+edition = "2021"
+license = "CC0-1.0"
+publish = false
+
+[lib]
+name = "moqui_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "moqui-desktop"
+path = "src/main.rs"
+
+[features]
+default = ["maximal"]
+# The package of the node, as in crates/moqui. Maximal has the edge link and calls.
+maximal = ["moqui-app/maximal"]
+dev = ["moqui-app/dev"]
+devtools = ["moqui-app/devtools"]
+
+[dependencies]
+moqui-app = { path = "../../target/moqui-app", default-features = false }
+moqui-host = { path = "../moqui-host", default-features = false }
+moqui-lib = { path = "../moqui-lib" }
+moqui-core = { path = "../moqui-core", default-features = false }
+serde_json = "1"
+tauri = { version = "=3.0.0-alpha.5", features = ["unstable", "tray-icon"] }
+# The webview runtime: Chromium (CEF) on every desktop OS, in place of the platform WebViews.
+tauri-runtime-cef = "=3.0.0-alpha.6"
+tracing = "0.1"
+
+[build-dependencies]
+tauri-build = { version = "=3.0.0-alpha.4", features = [] }
+
+# Its own workspace: not a member of the repository's.
+[workspace]
+
+# As in the repository's workspace and target/moqui-app: a debug build leaves the framework and component crates at
+# opt-level 0 with full debug info and optimizes the other dependencies (.cargo/config.toml). Here they are not
+# workspace members, so they are named.
+[profile.dev.package.moqui-app]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-lib]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-db]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-entity]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-core]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-llm]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-git]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-mail]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-report]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-collab]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-rtc]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-sip]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-channels]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-xmpp]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-dav]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-devkit]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-drivers]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-tui]
+opt-level = 0
+debug = true
+
+[profile.dev.package.moqui-host]
+opt-level = 0
+debug = true

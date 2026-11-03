@@ -97,3 +97,7 @@ ehthumbs.db
 Desktop.ini
 # Linux auto files
 *~
+
+# The desktop app: its lock file, copied from the repository's by ./moq desktop, and what tauri-build generates
+/crates/moqui-desktop/Cargo.lock
+/crates/moqui-desktop/gen/
