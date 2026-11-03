@@ -58,7 +58,6 @@ mod edge_setup;
 mod edge_web;
 mod edge_work;
 mod edge_xmpp;
-mod elfinder;
 mod entity_cache;
 mod entity_db;
 mod factory_restart;
@@ -94,6 +93,7 @@ mod report_alerts;
 mod report_documents;
 mod report_monitoring;
 mod report_schedule_lock;
+mod resources;
 #[cfg(feature = "rtc")]
 mod rtc;
 #[cfg(feature = "sip")]

@@ -23,9 +23,6 @@
             <subscreens-item name="ServiceRun" menu-include="false" location="component://demo/screen/Disabled.xml"/>
             <subscreens-item name="ServiceLoadRunner" menu-include="false" location="component://demo/screen/Disabled.xml"/>
         </screen>
-        <screen location="component://tools/screen/System/Resource.xml">
-            <subscreens-item name="ElFinder" menu-include="false" location="component://demo/screen/Disabled.xml"/>
-        </screen>
     </screen-facade>
 
     <!-- The servers a demo visitor does not need, off whatever ssh_port, mcp_enabled, a2a_enabled and

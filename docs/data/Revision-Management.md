@@ -94,7 +94,7 @@ indexed back that far. It serves:
 
 ### Repositories
 
-Each repository is a `moqui.resource.GitRepository` row, edited under System, Resource Finder, Git Repositories:
+Each repository is a `moqui.resource.GitRepository` row, edited under System, Resources, Git Repositories:
 
 | Field | |
 |---|---|

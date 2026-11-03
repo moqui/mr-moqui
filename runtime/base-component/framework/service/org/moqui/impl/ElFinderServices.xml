@@ -15,7 +15,12 @@ along with this software (see the LICENSE.md file). If not, see
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="run" noun="Command" type="rust" location="moqui_dav::elfinder::run_command">
         <description>See elFinder API docs at: https://github.com/Studio-42/elFinder/wiki/Client-Server-API-2.0
-            The body is Rust (crates/moqui-core/src/service/elfinder.rs), the port of ElFinderConnector.groovy.</description>
+            The body is Rust (crates/moqui-dav/src/elfinder.rs), the port of ElFinderConnector.groovy.
+
+            The elFinder JS client is no longer used: its System screen was removed, as the Dev-AIDE tools are better and
+            have a clearer security boundary. The API is kept as an example, for use with other tools, and for an app that
+            adds elFinder itself. It is served by the resources transition of webroot.xml (/resources), ADMIN only by the
+            ResourceCommandServices artifact group (SecurityTypeData.xml).</description>
         <in-parameters>
             <parameter name="cmd" required="true"/>
             <parameter name="target"/>

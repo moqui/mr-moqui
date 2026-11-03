@@ -248,6 +248,32 @@ along with this software (see the LICENSE.md file). If not, see
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- An interface to the ResourceFacade over one root (resourceRoot: dbresource://, content://, git://, component://,
+        file:...), in the elFinder client-server protocol (org.moqui.impl.ElFinderServices.run#Command; no elFinder client
+        is shipped). A command answers JSON; cmd=file sends the file (ranges, ETag; streamed); cmd=upload takes multipart
+        files, spooled as they arrive. Some clients send commands as GET, so it is read-only and takes either method.
+        Refused without a user (401) and without the ResourceCommandServices authorization (ADMIN, SecurityTypeData.xml);
+        in production only roots that hold data take writes. -->
+    <transition name="resources" read-only="true">
+        <parameter name="resourceRoot"/>
+        <actions><script><![CDATA[
+            if (!ec.user.userId) { ec.web.sendJsonError(401, 'Authentication required') } else {
+                const root = resourceRoot || ec.user.getPreference('mantle.content.root') || 'dbresource://mantle/content'
+                const out = ec.service.sync().name('org.moqui.impl.ElFinderServices.run#Command')
+                    .parameters(Object.assign({}, context, {resourceRoot: root, otherParameters: ec.web.parameters})).call()
+                if (ec.message.hasError() || out == null) {
+                    const errors = ec.message.errorsString; ec.message.clearErrors()
+                    ec.web.sendJsonError(403, errors || 'Not allowed')
+                } else if (out.fileLocation) {
+                    // the location is from the call just authorized; its dbresource:// rows are read as that call's
+                    ec.artifactExecution.disableAuthz()
+                    try { ec.web.sendResourceResponse(out.fileLocation, out.fileInline || false) }
+                    finally { ec.artifactExecution.enableAuthz() }
+                } else ec.web.sendJsonResponse(out.responseMap)
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <transition name="email"><path-parameter name="emailMessageId"/><actions><script>ec.web.viewEmailMessage()</script></actions>
         <default-response type="none"/></transition>
 
@@ -255,7 +281,7 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- TODO: get fancier with this, crawl screen tree looking for screens that don't require authc, maybe some sort of setting to allow robots or not -->
         <!-- TODO: also generate sitemap XML with paths we want crawled, based on ? -->
         <actions><script><![CDATA[
-            const disallowList = ['apps', 'qapps', 'rest', 'status', 'menuData', 'shellData', 'shellSearch', 'shellCounts', 'userStatus', 'setUserStatus', 'userStatusHeartbeat', 'userStatuses', 'chatTyping', 'chatUnread', 'chatAssistCard', 'richTextImage', 'llm', 'a2a', 'mcp', 'rum']
+            const disallowList = ['apps', 'qapps', 'rest', 'status', 'menuData', 'shellData', 'shellSearch', 'shellCounts', 'userStatus', 'setUserStatus', 'userStatusHeartbeat', 'userStatuses', 'chatTyping', 'chatUnread', 'chatAssistCard', 'richTextImage', 'resources', 'llm', 'a2a', 'mcp', 'rum']
             let robotsText = "user-agent: *\n"
             for (const disPath of disallowList) robotsText += `disallow: /${disPath}\n`
             ec.web.sendTextResponse(robotsText)

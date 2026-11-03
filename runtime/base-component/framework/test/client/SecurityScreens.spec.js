@@ -272,15 +272,16 @@ feature("A01 a DataSnapshot #name of a parent segment is rejected", {
     },
 })
 
-// test_a01_more.py: test_elfinder_component_webroot_put_does_not_write_screen. files.list stays in this component, so
-// it cannot see webroot's screens; the command's answer is the proof that the put was refused.
-feature("A01 an ElFinder put does not write a screen under component://webroot", {
+// test_a01_more.py: test_elfinder_component_webroot_put_does_not_write_screen, now at /resources (webroot.xml), the
+// elFinder protocol without the removed screen. files.list stays in this component, so it cannot see webroot's
+// screens; the command's answer is the proof that the put was refused.
+feature("A01 a /resources put does not write a screen under component://webroot", {
     when() {
         const s = formSession(USER, PASSWORD)
-        const elf = s.get("/apps/system/Resource/ElFinder")
-        if (elf.status == 401 || elf.status == 403) skip("user cannot open ElFinder")
+        const page = s.get("/apps/system/Resource")
+        if (page.status == 401 || page.status == 403) skip("user cannot open System Resource")
         if (!s.token()) skip("no CSRF token after login")
-        const res = s.post("/apps/system/Resource/ElFinder/command", {
+        const res = s.post("/resources", {
             form: {
                 cmd: "put",
                 resourceRoot: "component://webroot",
@@ -293,7 +294,7 @@ feature("A01 an ElFinder put does not write a screen under component://webroot",
         if ((res.status == 401 || res.status == 403) && body.includes("session token")) {
             return { body, ctype: (res.contentType ?? "").toLowerCase(), csrfRejected: true }
         }
-        if (res.status == 401 || res.status == 403) skip("user cannot run ElFinder command")
+        if (res.status == 401 || res.status == 403) skip("user cannot run /resources commands")
         return { body, ctype: (res.contentType ?? "").toLowerCase(), csrfRejected: false }
     },
     then({ body, ctype, csrfRejected }) {

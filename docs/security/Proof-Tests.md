@@ -75,7 +75,7 @@ Stop the server when the client exits (its standard input is the terminal). The 
 | `/notws` from a foreign origin is refused (logged-in session) | A01 | `SecurityWebSocket` |
 | An anonymous `/notws` upgrade is 401 | A01 | `SecurityWebSocket` |
 | The server's host on another port or scheme is refused for `/notws` | A01 | `SecurityWebSocket` |
-| Screen proofs: escaped extra path, FOP without login, login form action, VIEW-only service run, anonymous data import, `qzSign`, `GET` login with a password, `WEB-INF`, `GET /notws`, SQL Runner query string, menu data, FOP `filename`, DataSnapshot download and parent segments, ElFinder put, Tools CSV, remote data import | A01, A03, A05 | `SecurityScreens` |
+| Screen proofs: escaped extra path, FOP without login, login form action, VIEW-only service run, anonymous data import, `qzSign`, `GET` login with a password, `WEB-INF`, `GET /notws`, SQL Runner query string, menu data, FOP `filename`, DataSnapshot download and parent segments, `/resources` put, Tools CSV, remote data import | A01, A03, A05 | `SecurityScreens` |
 | `/email/NOTAREALID.png` is HTTP 200, `image/png` with no charset, inline, and the 1x1 tracking PNG | A01 | `SecurityScreens` |
 | `/htmlr` and `/htmlr/...` are 404, not a PDF and not a stack trace | A10 | `SecurityScreens` (the renderer is not mounted) |
 | `/status` from loopback is public JSON (no heap, datasources, or VmVendor) | A01 | `SecurityStatus` |
@@ -136,7 +136,7 @@ Three `SecurityScreens` assertions are tighter than the Python ones they port. A
 - `/status` is requested from loopback. The three features prove the public JSON shape and that forwarded headers do not hide it. They do not prove that a TCP source outside `webapp_status_ips` is rejected.
 - The HMAC replay cache is local unless a distributed cache is configured. A second server does not see the first server's replay.
 - With `search_backend` at its default `postgres`, `/search` and `/dashboard` are 404 after authentication. The `SearchRemote` feature asserts the response is neither 401 nor 403.
-- The ElFinder feature posts `cmd=put` at the volume root `v0_cm9vdA` and expects JSON containing `write not allowed` or `error`, and not `changed`. That is the root-refusal on every conf. It does not prove a production-only block of writes under `component://`.
+- The `/resources` feature posts `cmd=put` at the volume root `v0_cm9vdA` and expects JSON containing `write not allowed` or `error`, and not `changed`. That is the root-refusal on every conf. It does not prove a production-only block of writes under `component://`.
 - The menu feature passes when the body is not the Tools menu, including when the status is 500. An anonymous `GET /menuData/apps/tools` logged `cannot read property 'extraPathNameList' of undefined` (`screen_host.rs`). The in-process menu test expects 401 once `getMenuData` runs. The HTTP proof does not require that status.
 - The email pixel proof is `GET /email/NOTAREALID.png`: status 200, `image/png`, inline, and the PNG magic. The client harness records the first four bytes as hex (`89504e47`). The full 68-byte image, and marking a known message `ES_VIEWED` with `receivedDate` set once, are the unit test `view_email_message_sends_the_png_and_marks_a_known_message`. That is Java's `markEmailMessageViewed` side effect. The Spock method that calls it was not ported.
 - `/htmlr` features prove the path is 404. They do not prove an HTML renderer's error page.

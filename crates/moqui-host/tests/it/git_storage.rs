@@ -320,9 +320,7 @@ fn storage_of_imported_histories() {
         "db_{}",
         base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, "video.mp4")
     );
-    let url = format!(
-        "/System/Resource/ElFinder/command?resourceRoot=git%3A%2F%2Fbench-media&cmd=file&target={hash}&download=1"
-    );
+    let url = format!("/resources?resourceRoot=git%3A%2F%2Fbench-media&cmd=file&target={hash}&download=1");
     let auth = crate::common::basic("john.doe", "moqui");
     let started = Instant::now();
     let mut stream = std::net::TcpStream::connect(http).unwrap();

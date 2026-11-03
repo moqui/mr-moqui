@@ -21,6 +21,9 @@
 //! hashes it, so the client's hashes stay valid. A hash that does not decode, or a path with a `..` segment, a backslash
 //! turned slash, or a part with a colon, is an elFinder error response, never the root. `rm`, `rename` and `put` refuse
 //! the root itself.
+//!
+//! The elFinder JS client is no longer used (its System screen was removed; the Dev-AIDE tools replace it). The API is
+//! kept as an example, for other tools, and for an app that adds elFinder itself, served at `/resources` (`webroot.xml`).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

@@ -79,7 +79,7 @@ along with this software (see the LICENSE.md file). If not, see
             <container-box id="DataAdmin"><box-header title="Data Admin"/><box-body>
                 <link url="../Localization/Messages" text="L10n: Messages"/>
                 <link url="../Localization/EntityFields" text="L10n: Entity Fields"/>
-                <link url="../Resource" text="Resource Finder"/>
+                <link url="../Resource" text="Resources"/>
             </box-body></container-box>
             <container-box id="IntegrationAdmin"><box-header title="Integration Admin"/><box-body>
                 <link url="../SystemMessage/Message" text="System Messages"/>

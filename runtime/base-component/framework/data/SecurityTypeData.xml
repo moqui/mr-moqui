@@ -32,6 +32,14 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.ArtifactAuthz artifactAuthzId="EntitySyncServicesADMIN" userGroupId="ADMIN" artifactGroupId="EntitySyncServices"
             authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
 
+    <!-- The resources transition of webroot.xml (the elFinder protocol over a resource root, ElFinderServices.run#Command)
+        reads and writes any root it is given, so only ADMIN -->
+    <moqui.security.ArtifactGroup artifactGroupId="ResourceCommandServices" description="Resource command services (/resources)"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="ResourceCommandServices" artifactName="org.moqui.impl.ElFinderServices.run#Command"
+            nameIsPattern="N" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="ResourceCommandServicesADMIN" userGroupId="ADMIN" artifactGroupId="ResourceCommandServices"
+            authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+
     <!-- An artifact group for remote SystemMessage calls; members of other groups like remote API only groups would use this as well -->
     <moqui.security.ArtifactGroup artifactGroupId="SystemMessageServices" description="SystemMessage Services"/>
     <moqui.security.ArtifactGroupMember artifactGroupId="SystemMessageServices"

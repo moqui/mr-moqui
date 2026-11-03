@@ -82,7 +82,7 @@ are Java Assist checks and out of scope.
 | `test_datasnapshot_parent_segment_filename_is_not_found` | ported: SecurityScreens > A01 a DataSnapshot download of a parent segment is not found
 | `test_datasnapshot_parent_segment_delete_is_rejected` | ported: SecurityScreens > A01 a DataSnapshot #name of a parent segment is rejected
 | `test_datasnapshot_parent_segment_import_is_rejected` | ported: SecurityScreens > A01 a DataSnapshot #name of a parent segment is rejected
-| `test_elfinder_component_webroot_put_does_not_write_screen` | ported: SecurityScreens > A01 an ElFinder put does not write a screen under component://webroot
+| `test_elfinder_component_webroot_put_does_not_write_screen` | ported: SecurityScreens > A01 a /resources put does not write a screen under component://webroot
 | `test_anonymous_tools_csv_is_not_a_data_dump` | ported: SecurityScreens > A01 an anonymous Tools CSV is not a data dump
 | `test_view_only_tools_csv_is_not_a_privilege_escalation` | ported: SecurityScreens > A01 a VIEW-only Tools CSV is not a privilege escalation
 | `test_authorized_tools_csv_is_csv` | ported: SecurityScreens > A01 a Tools CSV for a user who may open Tools is CSV
