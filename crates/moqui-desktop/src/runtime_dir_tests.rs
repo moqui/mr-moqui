@@ -23,18 +23,25 @@ fn temp(name: &str) -> PathBuf {
 }
 
 #[test]
-fn moqui_runtime_wins_then_the_repository_runtime_in_a_dev_run() {
+fn moqui_runtime_wins_then_the_repository_runtime_in_a_dev_run_then_one_found() {
+    let found = || Some(PathBuf::from("/work/runtime"));
     let env = Some(PathBuf::from("/srv/runtime"));
     assert_eq!(
-        Location::choose(env, true, Path::new("/r"), Path::new("/d")),
+        Location::choose(env, true, found(), Path::new("/r"), Path::new("/d")),
         Location::Existing(PathBuf::from("/srv/runtime"))
     );
-    let Location::Existing(dev) = Location::choose(Some(PathBuf::new()), true, Path::new("/r"), Path::new("/d")) else {
+    let Location::Existing(dev) =
+        Location::choose(Some(PathBuf::new()), true, found(), Path::new("/r"), Path::new("/d"))
+    else {
         panic!("a dev run uses the repository's runtime");
     };
     assert!(dev.ends_with("../../runtime"));
     assert_eq!(
-        Location::choose(None, false, Path::new("/r"), Path::new("/d")),
+        Location::choose(None, false, found(), Path::new("/r"), Path::new("/d")),
+        Location::Existing(PathBuf::from("/work/runtime"))
+    );
+    assert_eq!(
+        Location::choose(None, false, None, Path::new("/r"), Path::new("/d")),
         Location::Bundled {
             resources: PathBuf::from("/r/runtime"),
             runtime: PathBuf::from("/d/runtime")

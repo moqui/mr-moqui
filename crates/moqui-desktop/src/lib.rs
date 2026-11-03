@@ -177,6 +177,7 @@ fn start_node(app: &AppHandle, origin: Arc<OnceLock<Url>>) -> Result<(), Box<dyn
     let location = runtime_dir::Location::choose(
         std::env::var_os("MOQUI_RUNTIME").map(Into::into),
         dev,
+        runtime_dir::find_existing(),
         &paths.resource_dir()?,
         &paths.app_data_dir()?,
     );

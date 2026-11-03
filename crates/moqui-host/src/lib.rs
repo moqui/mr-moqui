@@ -766,12 +766,17 @@ fn default_runtime_dir() -> std::path::PathBuf {
 }
 
 fn runtime_dir_for(local: &std::path::Path, exe: Option<&std::path::Path>) -> std::path::PathBuf {
+    find_runtime_dir(local, exe).unwrap_or_else(|| local.to_path_buf())
+}
+
+/// The first of `local`, `runtime` beside `exe` and the directory of `exe` that has a `base-component` directory: the
+/// search `moqui` makes when `MOQUI_RUNTIME` is not set, which the desktop app makes too before using its bundled one.
+pub fn find_runtime_dir(local: &std::path::Path, exe: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
     let exe_dir = exe.and_then(std::path::Path::parent);
     std::iter::once(local.to_path_buf())
         .chain(exe_dir.map(|dir| dir.join("runtime")))
         .chain(exe_dir.map(std::path::Path::to_path_buf))
         .find(|dir| dir.join("base-component").is_dir())
-        .unwrap_or_else(|| local.to_path_buf())
 }
 
 /// Create `dir` and its parents when missing.

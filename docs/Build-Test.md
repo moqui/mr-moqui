@@ -6,7 +6,8 @@ that test a running server from outside are in [Client-Testing](dev/Client-Testi
 
 - [Build](#build)
 - [Packages](#packages): [features](#features), [profiles](#profiles), the [embedded Postgres
-  archive](#embedded-postgres-archive), the [instance archive](#instance-archive), [build cost](#build-cost)
+  archive](#embedded-postgres-archive), the [instance archive](#instance-archive), [build cost](#build-cost), the
+  [desktop app](#desktop-app)
 - [The moq script](#the-moq-script)
 - [Rust tests and lints](#rust-tests-and-lints)
 - [Component specs](#component-specs): [running](#running), [a spec file](#a-spec-file),
@@ -227,6 +228,51 @@ What a clean build still spends: aws-lc-sys (the TLS crypto every package links)
 chain, then rustls, reqwest and moqui-core itself; QuickJS is compiled twice because rquickjs's `macro` proc-macro links
 its own copy; postgresql_embedded's build script still compiles reqwest and tokio (without TLS) though it no longer
 uses them. `cargo build --timings` writes the chart to `target/cargo-timings/`.
+
+### Desktop app
+
+`./moq desktop` runs, and `./moq desktop build` bundles, the desktop app in `crates/moqui-desktop`: a node in a Tauri 3
+(alpha) window on Chromium (CEF). It is not a workspace member, so the server builds need none of this. What it is and
+how it runs are in its [README](../crates/moqui-desktop/README.md) and [Mobile-Desktop](../plans/Mobile-Desktop.md).
+
+Prerequisites, beyond those of the server build:
+
+- **Tauri CLI**, the version `./moq desktop` checks for (`TAURI_CLI_VERSION` in `moq`), from cargo, so no Node:
+  `cargo install tauri-cli --version 3.0.0-alpha.5 --locked`.
+- **CMake, Ninja and a C++ compiler**, which build CEF's C++ wrapper (cef-dll-sys uses the Ninja generator).
+- **Linux:** the GTK 4 development packages and pkg-config (gtk4-sys); `patchelf` for the AppImage; and `cc`, which
+  quick-sharun and `./moq` use while bundling.
+- **Network on the first build and for each AppImage:** the first build downloads the CEF binary distribution, about
+  1 GB, into the `tauri-cef` cache (`~/.cache/tauri-cef` on Linux, `~/Library/Caches/tauri-cef` on macOS; `CEF_PATH`
+  for another). The AppImage step downloads quick-sharun.sh, sharun and appimagetool each time.
+
+```sh
+# Ubuntu 26.04
+sudo apt install build-essential pkg-config cmake ninja-build libgtk-4-dev patchelf
+# macOS (with the Xcode command line tools)
+brew install cmake ninja
+cargo install tauri-cli --version 3.0.0-alpha.5 --locked
+./moq desktop build                    # target/release/bundle: .deb and .AppImage on Linux, .app and .dmg on macOS
+```
+
+On Linux, `./moq desktop build` builds with `cargo tauri build --no-bundle` and then runs `cargo tauri bundle`, with
+these workarounds for tauri-bundler 3.0.0-alpha.4:
+
+- Its `.deb` and AppImage steps copy CEF's `libEGL.so` and `libGLESv2.so`, which the CEF 154 Linux distribution no
+  longer has. The bundle step's `CEF_PATH` is `target/desktop-cef`, links to the distribution's files with an empty
+  shared library for each one missing.
+- The quick-sharun.sh it downloads fetches two helper sources (`anylinux.c`, `gtk-class-fix.c`) that
+  Anylinux-AppImages has since removed. `ANYLINUX_LIB_SOURCE` and `GTK_CLASS_FIX_SOURCE` point to the last commit that
+  has them (`ANYLINUX_APPIMAGES_LIB` in `moq`).
+- `STRACE_MODE=0`: quick-sharun would otherwise run the app, and so a node and its Postgres, for a few seconds to
+  see what it loads (under `xvfb-run` when installed). Its `DEPLOY_CHROMIUM` rules cover those libraries without the
+  run.
+- The AppImage is made again without `fix-namespaces.hook`, from the AppDir the bundler leaves beside it, with
+  `quick-sharun.sh --make-appimage`. Where AppArmor restricts unprivileged user namespaces (Ubuntu 23.10 and later)
+  the hook offers on every start to add an AppArmor profile through pkexec. That fails on a path with a space, and
+  would not matter anyway: tauri-runtime-cef starts an AppImage with `--no-sandbox` whenever
+  `kernel.apparmor_restrict_unprivileged_userns` is 1. The `.deb` keeps Chromium's sandbox through a setuid
+  `chrome-sandbox`.
 
 ## The moq script
 

@@ -13,9 +13,10 @@
  */
 
 //! Where the node's runtime directory is (plans/Mobile-Desktop.md, configuration 2). `MOQUI_RUNTIME` when set; in a
-//! development run this repository's `runtime`; in a bundled app a runtime in the app data directory, whose read-only
-//! parts (the components and the conf) are links into the app's resources, so an app upgrade replaces them and keeps
-//! the data, `.env` and logs, which the node writes beside them.
+//! development run this repository's `runtime`; then a runtime found as `moqui` finds one (`runtime` in the working
+//! directory, or beside or around the executable, or the AppImage file); else the bundled runtime, in the app data
+//! directory, whose read-only parts (the components and the conf) are links into the app's resources, so an app upgrade
+//! replaces them and keeps the data, `.env` and logs, which the node writes beside them.
 
 use std::path::{Path, PathBuf};
 
@@ -25,21 +26,31 @@ pub(crate) const READ_ONLY: [&str; 5] = ["base-component", "component", "ecompon
 /// Where the runtime is, before any of it is made.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Location {
-    /// `MOQUI_RUNTIME`, or this repository's runtime in a development run: used as it is.
+    /// `MOQUI_RUNTIME`, this repository's runtime in a development run, or one found: used as it is.
     Existing(PathBuf),
     /// The runtime in the app data directory, linked to the bundled parts in `resources`.
     Bundled { resources: PathBuf, runtime: PathBuf },
 }
 
 impl Location {
-    /// `env` is `MOQUI_RUNTIME`, `dev` whether this is a development run (`cargo tauri dev`), `resources` the app's
-    /// resource directory and `app_data` its data directory.
-    pub(crate) fn choose(env: Option<PathBuf>, dev: bool, resources: &Path, app_data: &Path) -> Self {
+    /// `env` is `MOQUI_RUNTIME`, `dev` whether this is a development run (`cargo tauri dev`), `found` the runtime
+    /// [`moqui_host::find_runtime_dir`] found, `resources` the app's resource directory and `app_data` its data
+    /// directory.
+    pub(crate) fn choose(
+        env: Option<PathBuf>,
+        dev: bool,
+        found: Option<PathBuf>,
+        resources: &Path,
+        app_data: &Path,
+    ) -> Self {
         if let Some(dir) = env.filter(|dir| !dir.as_os_str().is_empty()) {
             return Self::Existing(dir);
         }
         if dev {
             return Self::Existing(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime"));
+        }
+        if let Some(dir) = found {
+            return Self::Existing(dir);
         }
         Self::Bundled {
             resources: resources.join("runtime"),
@@ -61,6 +72,19 @@ impl Location {
             }
         }
     }
+}
+
+/// The runtime `moqui` would use with no `MOQUI_RUNTIME`, if there is one: `runtime` in the working directory, or
+/// beside or around the executable. In an AppImage the executable is the AppImage file (`APPIMAGE`), not the binary in
+/// its mounted image, so a runtime beside the file is found.
+pub(crate) fn find_existing() -> Option<PathBuf> {
+    let exe = std::env::var_os("APPIMAGE")
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_exe().ok())
+        .and_then(|exe| std::fs::canonicalize(exe).ok());
+    let found = moqui_host::find_runtime_dir(Path::new("runtime"), exe.as_deref())?;
+    Some(std::path::absolute(&found).unwrap_or(found))
 }
 
 /// Link each read-only part in `resources` from `runtime`, replacing a link that points elsewhere (the app moved or

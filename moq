@@ -1315,6 +1315,8 @@ task_build() {
 
 # The Tauri CLI version the desktop app is built with: the tauri crate's version in crates/moqui-desktop/Cargo.toml.
 TAURI_CLI_VERSION=3.0.0-alpha.5
+# Where the AppImage step gets the helper sources quick-sharun.sh compiles in (task_desktop).
+ANYLINUX_APPIMAGES_LIB=https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/df9cd3246ccbcf61eb22fc321a52277351047b4b/useful-tools/lib
 
 task_desktop() {
     local command=dev release=
@@ -1365,8 +1367,79 @@ task_desktop() {
     fi
     # The repository's target directory, so the framework crates are built once for the server and the app.
     export_var CARGO_TARGET_DIR "$ROOT/target"
+    if [ "$command" = build ] && [ "$(uname -s)" = Linux ]; then
+        # The Linux bundles copy libEGL.so and libGLESv2.so from the CEF distribution, which no longer has them, so
+        # the bundle step runs on a staged distribution (stage_desktop_cef). The build keeps the CEF_PATH it has, so
+        # cef-dll-sys is not rebuilt between dev and build runs.
+        (cd "$app" && run_cmd cargo tauri build --no-bundle ${tauri_args[@]+"${tauri_args[@]}"} \
+            -- ${cargo_args[@]+"${cargo_args[@]}"}) || die "cargo tauri build failed"
+        local cef_path
+        cef_path=$(stage_desktop_cef "$app/Cargo.lock" "$ROOT/target/desktop-cef") || exit 1
+        # The AppImage is made by quick-sharun.sh, which tauri downloads from a fork that still fetches two helper
+        # sources Anylinux-AppImages has since removed: they come from the last commit that has them. Its strace mode
+        # would run the app (and so a node and its Postgres) for a few seconds to see what it loads; the
+        # DEPLOY_CHROMIUM rules cover the libraries without that.
+        (cd "$app" && CEF_PATH=$cef_path STRACE_MODE=0 \
+            ANYLINUX_LIB_SOURCE=$ANYLINUX_APPIMAGES_LIB/anylinux.c \
+            GTK_CLASS_FIX_SOURCE=$ANYLINUX_APPIMAGES_LIB/gtk-class-fix.c \
+            run_cmd cargo tauri bundle ${tauri_args[@]+"${tauri_args[@]}"}) \
+            || die "cargo tauri bundle failed"
+        remake_appimage_without_namespaces_hook "$ROOT/target/release/bundle/appimage"
+        return
+    fi
     (cd "$app" && run_cmd cargo tauri "$command" ${tauri_args[@]+"${tauri_args[@]}"} -- ${cargo_args[@]+"${cargo_args[@]}"}) \
         || die "cargo tauri $command failed"
+}
+
+# Remake the AppImage in $1 from the AppDir the bundler leaves beside it, without fix-namespaces.hook. Tauri adds that
+# hook to every CEF AppImage: where AppArmor restricts unprivileged user namespaces it asks on each start to add an
+# AppArmor profile, and it cannot (its pkexec script breaks on a path with a space and it does not check the result).
+# The profile would not help anyway: tauri-runtime-cef runs an AppImage with --no-sandbox whenever
+# kernel.apparmor_restrict_unprivileged_userns is 1, whatever profiles there are. The .deb keeps Chromium's sandbox
+# (a setuid chrome-sandbox). quick-sharun.sh --make-appimage is the bundler's own last step.
+remake_appimage_without_namespaces_hook() {
+    local dir=$1 appdir image quick_sharun
+    quick_sharun=${XDG_CACHE_HOME:-$HOME/.cache}/tauri/quick-sharun.sh
+    for appdir in "$dir"/*.AppDir; do
+        [ -f "$appdir/bin/fix-namespaces.hook" ] || continue
+        for image in "$dir"/*.AppImage; do
+            [ -f "$image" ] || die "no AppImage beside $(rel "$appdir")"
+            [ -f "$quick_sharun" ] || die "no $quick_sharun to remake $(rel "$image") with"
+            run_cmd rm -f -- "$appdir/bin/fix-namespaces.hook" "$image" || die "could not remove the namespaces hook"
+            (cd "$dir" && APPDIR=$appdir OUTNAME=${image##*/} run_cmd sh "$quick_sharun" --make-appimage) \
+                || die "could not remake $(rel "$image")"
+        done
+    done
+}
+
+# The CEF distribution the Linux bundles are made from, in $2, printing the CEF_PATH that resolves to it: links to the
+# files of the one the build used (CEF_PATH, or the tauri-cef cache), the version the cef crate in the lock file $1
+# names. tauri-bundler 3.0.0-alpha.4 copies and strips a fixed list of files that still has ANGLE's libEGL.so and
+# libGLESv2.so, which CEF no longer ships or lists as redistributable on Linux; an empty shared library stands in for
+# each one the distribution is missing.
+stage_desktop_cef() {
+    local lock=$1 stage=$2 version os_arch source dest file name
+    version=$(awk '$0 == "name = \"cef\"" { getline; sub(/.*\+/, ""); sub(/".*/, ""); print; exit }' "$lock")
+    [ -n "$version" ] || die "no cef crate in $(rel "$lock")"
+    case $(uname -m) in
+        x86_64) os_arch=cef_linux_x86_64 ;;
+        aarch64 | arm64) os_arch=cef_linux_aarch64 ;;
+        *) die "no CEF distribution for $(uname -m)" ;;
+    esac
+    source=${CEF_PATH:-${XDG_CACHE_HOME:-$HOME/.cache}/tauri-cef}
+    [ -f "$source/$version/$os_arch/libcef.so" ] && source=$source/$version/$os_arch
+    [ -f "$source/libcef.so" ] || die "no CEF $version distribution at $source"
+    dest=$stage/$version/$os_arch
+    run_cmd rm -rf -- "$stage" && run_cmd mkdir -p "$dest" || die "could not create $(rel "$dest")"
+    for file in "$source"/*; do
+        run_cmd ln -s "$file" "$dest/" || die "could not link $file"
+    done
+    need_tool cc
+    for name in libEGL.so libGLESv2.so; do
+        [ -e "$dest/$name" ] && continue
+        run_cmd cc -shared -nostdlib -o "$dest/$name" -x c /dev/null || die "could not make the stand-in $name"
+    done
+    printf '%s\n' "$stage"
 }
 
 # The runtime a bundled desktop app carries in its resources, in $1: what ./moq archive --no-data puts in, less the
