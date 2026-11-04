@@ -1786,6 +1786,10 @@ along with this software (see the LICENSE.md file). If not, see
                     work takes (sequence banks, sessions, login, hits, job and semaphore records, cluster membership),
                     so a full pool cannot block it.</xs:documentation></xs:annotation>
             </xs:attribute>
+            <xs:attribute name="read-timeout" type="xs:nonNegativeInteger">
+                <xs:annotation><xs:documentation>MySQL: the most time in seconds one read from the database waits, the
+                    sign-in's included; 0 waits without a limit. Defaults to 600 seconds.</xs:documentation></xs:annotation>
+            </xs:attribute>
             <xs:attribute name="pool-time-idle" type="xs:nonNegativeInteger">
                 <xs:annotation><xs:documentation>Maximum time in seconds that unused excess connections should stay in
                     the pool. Defaults to 60 seconds.</xs:documentation></xs:annotation>

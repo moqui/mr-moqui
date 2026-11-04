@@ -161,6 +161,9 @@ pub struct DatasourceConf {
     pub runtime_add_missing: bool,
     /// `runtime-add-fks`, true unless set to something other than `true`.
     pub runtime_add_fks: bool,
+    /// The `inline-jdbc` `read-timeout` in seconds: the most one read from the database waits, for a driver that sets
+    /// it once per connection (MySQL). `None` when not given (the driver's default); `Some(ZERO)` for no limit.
+    pub read_timeout: Option<Duration>,
 }
 
 /// Leaves out the password.
@@ -184,6 +187,7 @@ impl std::fmt::Debug for DatasourceConf {
             .field("startup_add_missing", &self.startup_add_missing)
             .field("runtime_add_missing", &self.runtime_add_missing)
             .field("runtime_add_fks", &self.runtime_add_fks)
+            .field("read_timeout", &self.read_timeout)
             .finish()
     }
 }
@@ -270,6 +274,7 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
             "" => true,
             value => value == "true",
         },
+        read_timeout: read_timeout(inline.as_ref())?,
     };
     if kind == DatasourceKind::Embedded {
         // Only the database: a group other than `transactional` has a database of its own in the embedded cluster,
@@ -364,6 +369,21 @@ fn pool_config(inline: Option<&MNode>, database: &MNode) -> Result<PoolConfig, E
         test_query,
         test_after_idle: Duration::from_secs(1),
     })
+}
+
+/// The `inline-jdbc` `read-timeout`, in seconds; `None` when not given.
+fn read_timeout(inline: Option<&MNode>) -> Result<Option<Duration>, Error> {
+    let raw = inline.map(|node| expanded(node, "read-timeout")).unwrap_or_default();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    raw.parse::<u64>()
+        .map(|seconds| Some(Duration::from_secs(seconds)))
+        .map_err(|_| {
+            Error::new(format!(
+                "inline-jdbc read-timeout=\"{raw}\" is not a whole number of seconds"
+            ))
+        })
 }
 
 /// Server, database and credentials from `xa-properties`, else from `jdbc-uri` and the

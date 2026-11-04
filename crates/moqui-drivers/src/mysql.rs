@@ -15,10 +15,11 @@
 //! Sync MySQL client behind [`moqui_core::driver::DbDriver`].
 //!
 //! Network waits are bounded (plans/High-Level-Review.md HL-019): a connection connects within `CONNECT_TIMEOUT`, each
-//! read waits at most `READ_TIMEOUT` and each write `WRITE_TIMEOUT`, and TCP keepalive is on. The `mysql` crate sets a
-//! read timeout only when it connects, so it is one fixed bound, the handshake's among them, rather than the
-//! transaction's remaining time as for Postgres; the transaction deadline itself is enforced by `KILL QUERY` and the
-//! session's statement time. A cancel connects, signs in and sends `KILL QUERY` within `CANCEL_TIMEOUT` per step.
+//! read waits at most `READ_TIMEOUT` (or the datasource's `read-timeout`) and each write `WRITE_TIMEOUT`, and TCP
+//! keepalive is on. The `mysql` crate sets a read timeout only when it connects, so it is one fixed bound, the
+//! handshake's among them, rather than the transaction's remaining time as for Postgres; the transaction deadline
+//! itself is enforced by `KILL QUERY` and the session's statement time. A cancel connects, signs in and sends
+//! `KILL QUERY` within `CANCEL_TIMEOUT` per step.
 
 #[cfg(feature = "mysql")]
 mod driver {
@@ -43,8 +44,8 @@ mod driver {
     const ER_UNSUPPORTED_PS: u16 = 1295;
     /// The most a TCP connection takes.
     pub(super) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-    /// The most one read waits, the sign-in's included: past the longest transaction a statement is expected to run
-    /// in, as the bound cannot follow each transaction's own time.
+    /// The most one read waits, the sign-in's included, unless the datasource's `read-timeout` says otherwise: past the
+    /// longest transaction a statement is expected to run in, as the bound cannot follow each transaction's own time.
     pub(super) const READ_TIMEOUT: Duration = Duration::from_secs(600);
     pub(super) const WRITE_TIMEOUT: Duration = Duration::from_secs(60);
     /// The most each step of a cancel (connect, sign in, `KILL QUERY`) waits.
@@ -62,6 +63,8 @@ mod driver {
         password: String,
         database: String,
         tls: bool,
+        /// The most one read waits; `None` without a limit.
+        read_timeout: Option<Duration>,
         /// The session's isolation level as SQL writes it (`READ COMMITTED`); `None` leaves the server's default
         /// (InnoDB's is `REPEATABLE READ`).
         isolation: Option<&'static str>,
@@ -70,11 +73,16 @@ mod driver {
     impl Endpoint {
         /// A session's options: [`Endpoint::opts_within`] the driver's bounds.
         fn opts(&self) -> mysql::OptsBuilder {
-            self.opts_within(CONNECT_TIMEOUT, READ_TIMEOUT, WRITE_TIMEOUT)
+            self.opts_within(CONNECT_TIMEOUT, self.read_timeout, WRITE_TIMEOUT)
         }
 
-        /// The options with these network bounds, and keepalive on.
-        pub(super) fn opts_within(&self, connect: Duration, read: Duration, write: Duration) -> mysql::OptsBuilder {
+        /// The options with these network bounds (`read` `None` waits without a limit), and keepalive on.
+        pub(super) fn opts_within(
+            &self,
+            connect: Duration,
+            read: Option<Duration>,
+            write: Duration,
+        ) -> mysql::OptsBuilder {
             let database = if self.database.is_empty() {
                 None
             } else {
@@ -91,7 +99,7 @@ mod driver {
                 .ssl_opts(self.tls.then(mysql::SslOpts::default))
                 .init(self.init())
                 .tcp_connect_timeout(Some(connect))
-                .read_timeout(Some(read))
+                .read_timeout(read)
                 .write_timeout(Some(write))
                 .tcp_keepalive_time_ms(Some(KEEPALIVE_IDLE_MS));
             #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -175,9 +183,18 @@ mod driver {
                     password: password.into(),
                     database: database.into(),
                     tls,
+                    read_timeout: Some(READ_TIMEOUT),
                     isolation: None,
                 },
             }
+        }
+
+        /// The most one read waits, the sign-in's included; [`Duration::ZERO`] waits without a limit. The default is
+        /// ten minutes. The datasource's `inline-jdbc` `read-timeout` sets it.
+        #[must_use]
+        pub fn read_timeout(mut self, timeout: Duration) -> Self {
+            self.endpoint.read_timeout = (!timeout.is_zero()).then_some(timeout);
+            self
         }
 
         /// Each connection sets its session's isolation level to `level`, as SQL writes it (`READ COMMITTED`), as
@@ -515,7 +532,7 @@ mod driver {
             }
             // KILL QUERY needs a signed-in session of its own: each of its steps is bounded, so a server that does not
             // answer does not hold the deadline worker
-            let opts = self.state.endpoint.opts_within(timeout, timeout, timeout);
+            let opts = self.state.endpoint.opts_within(timeout, Some(timeout), timeout);
             let mut conn = mysql::Conn::new(opts).map_err(mysql_err)?;
             conn.query_drop(format!("KILL QUERY {id}")).map_err(mysql_err)
         }

@@ -343,6 +343,7 @@ fn endpoint_at(port: u16) -> Endpoint {
         password: "secret".to_string(),
         database: "moqui".to_string(),
         tls: false,
+        read_timeout: Some(READ_TIMEOUT),
         isolation: None,
     }
 }
@@ -355,6 +356,13 @@ fn a_session_bounds_its_network_waits_and_keeps_alive() {
     assert_eq!(opts.get_read_timeout(), Some(&READ_TIMEOUT));
     assert_eq!(opts.get_write_timeout(), Some(&WRITE_TIMEOUT));
     assert_eq!(opts.get_tcp_keepalive_time_ms(), Some(KEEPALIVE_IDLE_MS));
+    // the datasource's read-timeout, and 0 for none
+    let driver = MysqlDriver::new("127.0.0.1", 3306, "u", "p", "moqui", false).read_timeout(Duration::from_secs(90));
+    let opts = mysql::Opts::from(driver.endpoint.opts());
+    assert_eq!(opts.get_read_timeout(), Some(&Duration::from_secs(90)));
+    assert_eq!(opts.get_write_timeout(), Some(&WRITE_TIMEOUT));
+    let unbounded = MysqlDriver::new("127.0.0.1", 3306, "u", "p", "moqui", false).read_timeout(Duration::ZERO);
+    assert_eq!(mysql::Opts::from(unbounded.endpoint.opts()).get_read_timeout(), None);
 }
 
 /// A server that accepts TCP and then sends no greeting: a connection and a cancel (which signs in first) each end
@@ -373,7 +381,7 @@ fn a_server_that_stalls_after_accepting_bounds_connect_and_cancel() {
     });
     let limit = Duration::from_millis(300);
     let started = std::time::Instant::now();
-    assert!(mysql::Conn::new(endpoint_at(port).opts_within(limit, limit, limit)).is_err());
+    assert!(mysql::Conn::new(endpoint_at(port).opts_within(limit, Some(limit), limit)).is_err());
     assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
     let cancel = MysqlCancel {
         state: Arc::new(KillState {
