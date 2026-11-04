@@ -39,6 +39,8 @@ pub(crate) mod report;
 mod serve;
 #[cfg(feature = "llm")]
 mod skills;
+#[cfg(feature = "embedded-postgres")]
+mod workers;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -97,6 +99,10 @@ pub struct TestArgs {
     /// `--acceptance`: run the acceptance suite (`acceptance/*.spec.js`) in place of the regression suite (`test/`);
     /// `--spec` and `dependsOn` resolve across both.
     pub acceptance: bool,
+    /// `--workers N`: run the specs in N child processes, each on its own copy of the `--db snapshot` database.
+    pub workers: usize,
+    /// `--results-json file`: write the results here as JSON, for the parent of a worker.
+    pub results_json: Option<PathBuf>,
     pub db: DbMode,
     /// The user passed `--db`. When they did not, a run whose every spec sets `database: false` uses [`DbMode::None`].
     pub db_explicit: bool,
@@ -136,6 +142,8 @@ pub fn parse_test_args(args: &[String]) -> Result<TestArgs, Error> {
         specs: Vec::new(),
         feature: None,
         acceptance: false,
+        workers: 1,
+        results_json: None,
         db: DbMode::Fresh,
         db_explicit: false,
         junit: None,
@@ -170,6 +178,14 @@ pub fn parse_test_args(args: &[String]) -> Result<TestArgs, Error> {
             ),
             "--feature" => parsed.feature = Some(value("--feature")?),
             "--acceptance" => parsed.acceptance = true,
+            "--workers" => {
+                parsed.workers = value("--workers")?
+                    .parse()
+                    .ok()
+                    .filter(|workers| *workers > 0)
+                    .ok_or_else(|| Error::new("--workers is a whole number of at least 1"))?;
+            }
+            "--results-json" => parsed.results_json = Some(PathBuf::from(value("--results-json")?)),
             "--db" => {
                 parsed.db = DbMode::parse(&value("--db")?)?;
                 parsed.db_explicit = true;
@@ -235,6 +251,11 @@ pub fn parse_test_args(args: &[String]) -> Result<TestArgs, Error> {
         if parsed.agents || parsed.skills {
             return Err(Error::new(
                 "--serve serves after the specs; it does not go with --agents or --skills",
+            ));
+        }
+        if parsed.workers > 1 {
+            return Err(Error::new(
+                "--workers runs the specs on copies of the database; it does not go with --serve",
             ));
         }
     } else if parsed.ready_file.is_some() {
@@ -469,8 +490,15 @@ pub(crate) fn select_across(components: &[TestComponent], names: &[String]) -> R
     let mut wanted: Vec<(usize, String)> = Vec::new();
     let mut pending: Vec<(usize, String)> = Vec::new();
     for name in names.iter().rev() {
+        // `component/Spec` names the spec of that component only
+        let (only, name) = match name.split_once('/') {
+            Some((component, spec)) => (Some(component), spec.to_string()),
+            None => (None, name.clone()),
+        };
         for (index, component) in components.iter().enumerate() {
-            if component.specs.iter().any(|spec| &spec.name == name) {
+            if only.is_none_or(|only| only == component.name)
+                && component.specs.iter().any(|spec| spec.name == name)
+            {
                 pending.push((index, name.clone()));
             }
         }
@@ -512,6 +540,65 @@ pub(crate) fn select_across(components: &[TestComponent], names: &[String]) -> R
             })
         })
         .collect())
+}
+
+/// The specs of a component that its own client suites (`test/client/suite.js`, `acceptance/client/suite.js`) name in
+/// `server.specs`: fixtures that `moqui test-client --serve` runs on its server.
+fn served_fixture_names(component: &TestComponent) -> Vec<String> {
+    let mut names = Vec::new();
+    for tree in ["test/client", "acceptance/client"] {
+        let Ok(text) = std::fs::read_to_string(component.dir.join(tree).join("suite.js")) else {
+            continue;
+        };
+        let Ok(Some(server)) = moqui_devkit::testkit::suite_server(&text) else {
+            continue;
+        };
+        for name in server.specs {
+            if component.specs.iter().any(|spec| spec.name == name) && !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
+/// Leave out of a plain run each fixture spec a served suite of its component runs, unless a spec that stays depends on
+/// it; return the names left out, as `component/Spec`.
+pub(crate) fn drop_served_fixtures(components: &mut [TestComponent]) -> Vec<String> {
+    let mut left_out = Vec::new();
+    for component in components.iter_mut() {
+        let fixtures = served_fixture_names(component);
+        if fixtures.is_empty() {
+            continue;
+        }
+        // the specs that stay, and what they depend on, through the fixtures too
+        let mut keep: Vec<String> = component
+            .specs
+            .iter()
+            .filter(|spec| !fixtures.contains(&spec.name))
+            .map(|spec| spec.name.clone())
+            .collect();
+        let mut index = 0;
+        while index < keep.len() {
+            let name = keep[index].clone();
+            if let Some(spec) = component.specs.iter().find(|spec| spec.name == name) {
+                for depends in spec_depends_on(&spec.source) {
+                    if !keep.contains(&depends) {
+                        keep.push(depends);
+                    }
+                }
+            }
+            index += 1;
+        }
+        component.specs.retain(|spec| {
+            let stays = keep.contains(&spec.name);
+            if !stays {
+                left_out.push(format!("{}/{}", component.name, spec.name));
+            }
+            stays
+        });
+    }
+    left_out
 }
 
 /// Run `moqui test`. An error when any feature or spec phase failed, so the exit status is 1.
@@ -601,14 +688,28 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
     if !args.specs.is_empty() {
         let picked = select_across(&components, &args.specs)?;
         for name in &args.specs {
-            if !picked
-                .iter()
-                .any(|component| component.specs.iter().any(|spec| &spec.name == name))
-            {
+            let (only, spec_name) = match name.split_once('/') {
+                Some((component, spec)) => (Some(component), spec),
+                None => (None, name.as_str()),
+            };
+            if !picked.iter().any(|component| {
+                only.is_none_or(|only| only == component.name)
+                    && component.specs.iter().any(|spec| spec.name == spec_name)
+            }) {
                 return Err(Error::new(format!("no component has a spec {name}")));
             }
         }
         components = picked;
+    }
+    // A fixture runs where a served suite names it, not again in a plain run (plans/Test-Reduction.md, "Fixtures once").
+    if !args.acceptance && args.specs.is_empty() && args.serve.is_none() {
+        let left_out = drop_served_fixtures(&mut components);
+        if !left_out.is_empty() {
+            println!(
+                "Left out the fixture specs their served client suites run: {} (name one with --spec to run it)",
+                left_out.join(", ")
+            );
+        }
     }
     if components.is_empty() && args.serve.is_none() {
         return Err(Error::new(format!(
@@ -630,6 +731,10 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
     moqui_core::service::http_fixtures::allow();
     let mode = database_mode(&args, &components)?;
     let started = Instant::now();
+    #[cfg(feature = "embedded-postgres")]
+    if args.workers > 1 && matches!(mode, DbMode::Fresh | DbMode::Snapshot) && !args.coverage {
+        return workers::run(&args, &runtime, &framework, &mut components, started);
+    }
     if mode == DbMode::None {
         return run_without_database(&args, &runtime, &framework, &mut components, started);
     }
@@ -878,6 +983,10 @@ fn finish_report(
     }
     if let Some(dir) = &args.junit {
         report::write_junit(dir, results, "")?;
+    }
+    #[cfg(feature = "embedded-postgres")]
+    if let Some(path) = &args.results_json {
+        workers::write_results(path, results)?;
     }
     let (text, failed) = report::summary(results, started.elapsed());
     print!("{text}");

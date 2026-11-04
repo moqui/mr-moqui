@@ -475,11 +475,12 @@ printf 'suite(["Walk"], { server: { components: ["app-x"] } })\n' >"$R/runtime/c
 : >"$R/runtime/component/app-y/test/client/Page.spec.js"
 printf '// No server: offline\nsuite(["Page"])\n' >"$R/runtime/component/app-y/test/client/suite.js"
 : >"$R/runtime/base-component/fw-x/test/Fw.spec.js"
-check "test-apps runs the app specs" 0 'moq test --nobuild app-x$' -- dry "$M" test-apps
+check "test-apps runs the app specs" 0 'moq test --nobuild -- app-x --workers 4$' -- dry "$M" test-apps
 check "test-apps serves the app client specs" 0 'moq test-client --nobuild -- --serve app-x$' -- dry "$M" test-apps
-check "test-framework runs the framework specs" 0 'moq test fw-x$' -- dry "$M" test-framework
+check "test-framework runs the framework specs" 0 'moq test -- fw-x --workers 4$' -- dry "$M" test-framework
 lacks "test-framework leaves the app specs out" 'app-x' -- dry "$M" test-framework
-check "test-all runs both" 0 'moq test --nobuild app-x$' -- dry "$M" test-all
+check "test-all runs both" 0 'moq test --nobuild -- app-x --workers 4$' -- dry "$M" test-all
+check "MOQ_TEST_WORKERS sets the workers" 0 'moq test --nobuild -- app-x --workers 2$' -- env MOQ_TEST_WORKERS=2 MOQ_DRY_RUN=1 "$M" test-apps
 # acceptance: its own tree, run only by accept and accept-all
 mkdir -p "$R/runtime/component/app-x/acceptance/client"
 : >"$R/runtime/component/app-x/acceptance/Sweep.spec.js"

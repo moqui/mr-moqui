@@ -331,3 +331,77 @@ fn the_acceptance_tree() {
     );
     let _ = std::fs::remove_dir_all(runtime);
 }
+
+/// A fixture spec runs where a served suite names it: a plain run leaves it out, unless a spec that stays depends on it.
+#[test]
+fn a_served_fixture_runs_only_where_it_is_served() {
+    let dir = std::env::temp_dir().join(format!("moqui-test-fixtures-once-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("test/client")).unwrap();
+    std::fs::write(
+        dir.join("test/client/suite.js"),
+        "suite(['Walk'], { server: { components: ['c'], specs: ['WalkFixtures', 'SharedFixtures', 'OtherFlow'] } })",
+    )
+    .unwrap();
+    let mut components = vec![TestComponent {
+        name: "c".to_string(),
+        dir: dir.clone(),
+        specs: vec![
+            spec("Rule", "spec({ dependsOn: ['SharedFixtures'] })"),
+            spec("WalkFixtures", "spec({})"),
+            spec("SharedFixtures", "spec({})"),
+        ],
+    }];
+    let left_out = drop_served_fixtures(&mut components);
+    assert_eq!(left_out, vec!["c/WalkFixtures".to_string()]);
+    let names: Vec<&str> = components[0].specs.iter().map(|spec| spec.name.as_str()).collect();
+    assert_eq!(names, vec!["Rule", "SharedFixtures"]);
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// The units of a run on workers: a suite.js chain is one unit and draws in what its specs depend on; a spec joins the
+/// unit of what it depends on, across components; every other spec is its own. They are dealt longest first.
+#[cfg(feature = "embedded-postgres")]
+#[test]
+fn worker_units_follow_the_suite_chain_and_depends_on() {
+    let dir = std::env::temp_dir().join(format!("moqui-test-units-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("a/test")).unwrap();
+    std::fs::write(dir.join("a/test/suite.js"), "suite(['Flow1', 'Flow2'])").unwrap();
+    let components = vec![
+        TestComponent {
+            name: "a".to_string(),
+            dir: dir.join("a"),
+            specs: vec![
+                spec("Flow1", "spec({})"),
+                spec("Flow2", "spec({})"),
+                spec("Report", "spec({ dependsOn: ['Flow2'] })"),
+                spec("Alone", "spec({})"),
+            ],
+        },
+        TestComponent {
+            name: "b".to_string(),
+            dir: dir.join("b"),
+            specs: vec![
+                spec("Screens", "spec({ dependsOn: ['Flow1'] })"),
+                spec("Rule", "spec({})"),
+            ],
+        },
+    ];
+    let units = workers::units(&components, false);
+    assert_eq!(
+        workers::unit_names(&components, &units),
+        vec![vec!["Flow1", "Flow2", "Report", "Screens"], vec!["Alone"], vec!["Rule"]]
+    );
+    let bins = workers::deal(units, 2);
+    assert_eq!(bins.len(), 2);
+    assert_eq!(bins[0].len(), 1);
+    assert_eq!(bins[0][0].specs.len(), 4);
+    let args = parse_test_args(&["--workers".to_string(), "4".to_string()]).unwrap();
+    assert_eq!(args.workers, 4);
+    let worker = workers::worker_args(&args, &components, &bins[0], Path::new("/tmp/w.json")).join(" ");
+    assert_eq!(
+        worker,
+        "test a b --spec a/Flow1,a/Flow2,a/Report,b/Screens --db snapshot --results-json /tmp/w.json"
+    );
+    assert!(parse_test_args(&["--workers".to_string(), "0".to_string()]).is_err());
+    let _ = std::fs::remove_dir_all(dir);
+}

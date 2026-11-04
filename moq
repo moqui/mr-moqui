@@ -589,8 +589,9 @@ passed and exits 1 when any failed. For work on the framework: crates/, runtime/
 runtime/dev-component, moq or the scripts.
   cargo test --workspace            the unit and integration tests of every crate
   scripts/moq-test.sh               the tests of this script
-  moqui test <components>           the specs of base-component and dev-component (test/*.spec.js),
-                                    including the database-free screen template specs
+  moqui test <components> --workers 4
+                                    the specs of base-component and dev-component (test/*.spec.js),
+                                    on 4 workers (MOQ_TEST_WORKERS)
   moqui test demo                   the demo component's specs, with -D demo_disabled=false (it is off
                                     by default)
   moqui test-client webroot --offline
@@ -615,8 +616,10 @@ help_test_apps() {
     cat <<EOF
 Runs the application tests, the regression suite of the components under runtime/component, then lists
 which passed and exits 1 when any failed. The command for application work, before a commit:
-  moqui test <components>           the specs (test/*.spec.js) of each component under
-                                    runtime/component that has them
+  moqui test <components> --workers 4
+                                    the specs (test/*.spec.js) of each component under
+                                    runtime/component that has them, on 4 workers
+                                    (MOQ_TEST_WORKERS)
   moqui test-client --serve <components>
                                     their client specs, each against the server its
                                     test/client/suite.js declares
@@ -2160,6 +2163,9 @@ suite_summary() {
     return $SUITE_FAILED
 }
 
+# The workers of moqui test in test-framework, test-apps and test-all: MOQ_TEST_WORKERS, 4 by default.
+TEST_WORKERS=${MOQ_TEST_WORKERS:-4}
+
 # parse_suite_opts <task> <args...>: the package options and --nobuild into SUITE_MOQ_OPTS.
 parse_suite_opts() {
     local task=$1 arg
@@ -2194,7 +2200,7 @@ framework_suites() {
     suite "cargo test --workspace" cargo test --workspace
     suite "scripts/moq-test.sh" bash scripts/moq-test.sh
     if [ ${#server[@]} -gt 0 ]; then
-        suite "moqui test (framework)" "$MOQ" test "${SUITE_MOQ_OPTS[@]}" "${server[@]}"
+        suite "moqui test (framework)" "$MOQ" test "${SUITE_MOQ_OPTS[@]}" -- "${server[@]}" --workers "$TEST_WORKERS"
     fi
     suite "moqui test demo" "$MOQ" test "${SUITE_MOQ_OPTS[@]}" --nobuild -D demo_disabled=false demo
     # the binary is built by now. Offline specs open no server; --serve runs the suites that declare one.
@@ -2225,7 +2231,7 @@ apps_suites() {
         return 0
     fi
     if [ ${#server[@]} -gt 0 ]; then
-        suite "moqui test (apps)" "$MOQ" test "${SUITE_MOQ_OPTS[@]}" --nobuild "${server[@]}"
+        suite "moqui test (apps)" "$MOQ" test "${SUITE_MOQ_OPTS[@]}" --nobuild -- "${server[@]}" --workers "$TEST_WORKERS"
     fi
     if [ ${#client[@]} -gt 0 ]; then
         suite "moqui test-client --serve (apps)" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" --nobuild -- --serve \

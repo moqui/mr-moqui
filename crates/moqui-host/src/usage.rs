@@ -350,7 +350,9 @@ run in the order they load. --spec adds the specs named in dependsOn, in that sa
 runs in its own execution context on one database. Any failed feature exits 1. A component's
 test/MoquiConf.xml merges after its MoquiConf.xml, in test runs only. A dependsOn name that the
 spec's component lacks is found in the run's other components. A regression spec over 15 seconds is
-named at the end of the run: move it to acceptance/ or delete it.
+named at the end of the run: move it to acceptance/ or delete it. A run with no --spec leaves out
+the fixture specs a served client suite of their component names (test/client/suite.js server.specs)
+unless a spec that runs depends on them: the served run makes them.
 
   moqui test
   moqui test mr-mantle
@@ -359,13 +361,18 @@ named at the end of the run: move it to acceptance/ or delete it.
   moqui test mr-mantle mr-marble --spec SimpleScreensRender --serve 127.0.0.1:18081
 
 Options:
-  --spec Name[,Name]              Specs to run. The name is the file name without .spec.js.
-                                  Specs named in dependsOn are included, in suite order.
+  --spec Name[,Name]              Specs to run. The name is the file name without .spec.js;
+                                  component/Name picks one component's. Specs named in dependsOn
+                                  are included, in suite order.
   --feature text                  Run features whose names contain this text.
   --acceptance                    Run the acceptance suite, the specs of acceptance/ (other than
                                   client and agent), in place of test/. --spec and dependsOn
                                   resolve across both trees; a regression run never reads
                                   acceptance/.
+  --workers N                     Run the specs in N child processes, each on its own copy of the
+                                  --db snapshot database (made once first). A suite.js chain and
+                                  what dependsOn names stay in one worker; a spec that reads another
+                                  spec's data names it in dependsOn. Not with --serve.
   --db MODE                       none, fresh, snapshot, or existing. The default is fresh,
                                   or none when every selected spec sets database: false.
                                   none boots the factory and skips Postgres, including a build
@@ -375,7 +382,8 @@ Options:
                                   it at the end. It needs embedded-postgres.
                                   snapshot saves that load under runtime/save and restores it
                                   while the components the run loads, their entity and data
-                                  files and this binary are unchanged.
+                                  files and the crate version are unchanged (a relink
+                                  keeps it; remove runtime/save/test-* to reload).
                                   existing uses the runtime's embedded database and changes its data.
   --junit dir                     Write TEST-<component>.<Spec>.xml into this directory.
   --keep                          Leave the scratch runtime in place.
@@ -443,7 +451,7 @@ failed-<feature>-<n>.png and .txt in the --out directory.
 --serve starts the server each suite declares in test/client/suite.js, suite([...], { server: {
 components, specs, conf } }), as a child moqui test <components> --spec <specs> --db snapshot --serve
 with MOQUI_CONF set to the conf, runs that suite against it, then stops it. Components with the same
-declaration share one server; a server that does not start fails its suite's specs only. The child's
+declaration, or the same conf and properties with named specs, share one server; a server that does not start fails its suite's specs only. The child's
 output goes to server-<n>.log in the --out directory.
 
   moqui test-client framework

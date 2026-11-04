@@ -254,18 +254,16 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
     Ok(())
 }
 
-/// A hash of the binary's version and of what the load of `scratch` reads: the components a factory on it loads, by
-/// name in load order (the conf and the instance purpose decide them: a dev component such as example loads only on a
-/// dev instance), and the name, size and change time of each one's entity and data files. A snapshot is made again
-/// when a file changes or a run loads another set of components: a server on a conf without the dev components once
-/// saved a snapshot that a run with example then restored, without example's tables.
+/// A hash of the crate version and of what the load of `scratch` reads: the components a factory on it loads, by name
+/// in load order (the conf and the instance purpose decide them: a dev component such as example loads only on a dev
+/// instance), and the name, size and change time of each one's entity and data files, which hold the schema and the
+/// data. A snapshot is made again when a file changes or a run loads another set of components: a server on a conf
+/// without the dev components once saved a snapshot that a run with example then restored, without example's tables.
+/// The binary is not part of the key, so a relink keeps the snapshots (plans/Test-Reduction.md, "Cheaper machinery");
+/// after a change to how the binary loads data, remove `runtime/save/test-*`.
 fn data_hash(scratch: &Path, framework: &Path) -> Result<u64, Error> {
     let mut hasher = DefaultHasher::new();
     env!("CARGO_PKG_VERSION").hash(&mut hasher);
-    if let Ok(exe) = std::env::current_exe().and_then(std::fs::metadata) {
-        exe.len().hash(&mut hasher);
-        exe.modified().ok().hash(&mut hasher);
-    }
     hash_tree(&framework.join("entity"), &mut hasher);
     hash_tree(&framework.join("data"), &mut hasher);
     let components = moqui_core::context::discover_components(scratch, framework)

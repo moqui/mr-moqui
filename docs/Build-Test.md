@@ -553,16 +553,20 @@ moqui test mr-mantle --coverage                       # the services no spec cal
 moqui test mr-mantle --keep --log-level info          # keep the scratch runtime, more on the console
 ```
 
-With no component, every component that has `test/*.spec.js` runs, in load order. `./moq test --debug` uses the debug
+With no component, every component that has `test/*.spec.js` runs, in load order. A run with no `--spec` leaves out
+each fixture spec that a served client suite of its component names in `server.specs` (`test/client/suite.js`,
+`acceptance/client/suite.js`), unless a spec that runs depends on it: `moqui test-client --serve` runs it on its
+server, so a plain run would make the same data twice. `./moq test --debug` uses the debug
 binary.
 
 | Option | |
 |---|---|
-| `--spec Name[,Name]` | The specs to run, by file name without `.spec.js`, with the specs their `dependsOn` names, in suite order. A `dependsOn` name the spec's own component lacks is found in the run's other components |
+| `--spec Name[,Name]` | The specs to run, by file name without `.spec.js` (`component/Name` for one component's, where two have a spec of the name), with the specs their `dependsOn` names, in suite order. A `dependsOn` name the spec's own component lacks is found in the run's other components |
 | `--feature text` | Only the features whose names contain the text |
+| `--workers N` | Run the specs in N child processes, each on its own copy of the `--db snapshot` database, which the run makes once first. A component's `suite.js` chain and what a spec's `dependsOn` names stay in one worker; every other spec may run in any worker, on a database without the other specs' writes, so a spec that reads another spec's data names it in `dependsOn`. The summary, JUnit files and feature times are of the whole run. Not with `--serve` |
 | `--acceptance` | The acceptance specs (`acceptance/`) in place of the regression specs; `--spec` and `dependsOn` resolve across both ([The two suites](#the-two-suites)) |
 | `--db fresh` | The default: load every data type into a scratch runtime, removed at the end unless `--keep`. Needs `embedded-postgres` |
-| `--db snapshot` | As fresh, but save the load under `runtime/save` and restore it while the components the run loads (which the conf and the instance purpose decide: a dev component loads only on a dev instance), their entity and data files and the binary are unchanged |
+| `--db snapshot` | As fresh, but save the load under `runtime/save` and restore it while the components the run loads (which the conf and the instance purpose decide: a dev component loads only on a dev instance), their entity and data files and the crate version are unchanged. A relink keeps the snapshots; after a change to how the binary loads data, remove `runtime/save/test-*` |
 | `--db existing` | The runtime's embedded database as it is. The specs change its data |
 | `--db none` | Boot the factory and skip Postgres, so `ec.resource` works and the entity facade stays unset. A build without `embedded-postgres` can run this. Every selected spec must set `database: false`; one that does not is named and the run stops before boot. When every selected spec sets it, and the run is not `--serve`, `--agents`, `--skills`, or `--coverage`, this is the default |
 | `--junit dir` | `TEST-<component>.<Spec>.xml` per spec |

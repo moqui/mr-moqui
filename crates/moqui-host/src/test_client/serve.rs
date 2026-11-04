@@ -68,8 +68,11 @@ pub(super) fn run_served(
             continue;
         }
         match declared_server(component, args.acceptance) {
-            Ok(server) => match groups.iter_mut().find(|group| group.server == server) {
-                Some(group) => group.components.push(component.clone()),
+            Ok(server) => match groups.iter_mut().find(|group| shares_server(&group.server, &server)) {
+                Some(group) => {
+                    merge_server(&mut group.server, server);
+                    group.components.push(component.clone());
+                }
                 None => groups.push(Group {
                     server,
                     components: vec![component.clone()],
@@ -111,6 +114,31 @@ pub(super) fn run_served(
         child.stop();
     }
     results
+}
+
+/// Whether two declarations can be one server: the same one, or the same conf and properties with named specs on both
+/// (an empty specs list runs every spec of its components, which a merge would widen). One server for the run's
+/// suites saves a server start each (plans/Test-Reduction.md, "Cheaper machinery").
+fn shares_server(have: &SuiteServer, other: &SuiteServer) -> bool {
+    have == other
+        || (have.conf == other.conf
+            && have.properties == other.properties
+            && !have.specs.is_empty()
+            && !other.specs.is_empty())
+}
+
+/// `other`'s components and specs added to `have`'s, each once, in order.
+fn merge_server(have: &mut SuiteServer, other: SuiteServer) {
+    for component in other.components {
+        if !have.components.contains(&component) {
+            have.components.push(component);
+        }
+    }
+    for spec in other.specs {
+        if !have.specs.contains(&spec) {
+            have.specs.push(spec);
+        }
+    }
 }
 
 /// The server a component's client `suite.js` declares (`test/client`, or `acceptance/client` with `acceptance`), its
@@ -347,6 +375,31 @@ fn failed_specs(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn suites_on_one_conf_share_a_server() {
+        let server = |components: &[&str], specs: &[&str], conf: Option<&str>| SuiteServer {
+            components: components.iter().map(|name| name.to_string()).collect(),
+            specs: specs.iter().map(|name| name.to_string()).collect(),
+            conf: conf.map(str::to_string),
+            ..SuiteServer::default()
+        };
+        let load = Some("conf/MoquiLoadTestConf.xml");
+        let mut framework = server(&["framework"], &["ClientFixtures"], load);
+        let tools = server(&["framework", "tools"], &["ClientFixtures"], load);
+        assert!(shares_server(&framework, &tools));
+        merge_server(&mut framework, tools);
+        assert_eq!(framework, server(&["framework", "tools"], &["ClientFixtures"], load));
+        // another conf, or an empty specs list (every spec of the components), stays apart
+        assert!(!shares_server(
+            &framework,
+            &server(&["mr-pass"], &["ClientFixtures"], None)
+        ));
+        assert!(!shares_server(
+            &server(&["example"], &[], None),
+            &server(&["basic-comms"], &["A"], None)
+        ));
+    }
 
     #[test]
     fn the_child_runs_the_declared_specs_on_a_snapshot() {

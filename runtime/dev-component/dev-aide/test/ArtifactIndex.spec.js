@@ -24,6 +24,9 @@ feature("the index builds from the components' files", {
 
 feature("an unchanged file is not read again", {
     expect() {
+        // the index reads the component files every spec shares: on workers another spec may write some between two
+        // features, so one update takes those first, and the next reads none
+        svc("rebuild#ArtifactIndex").call()
         const report = svc("rebuild#ArtifactIndex").call().report
         report.read == 0
         report.unchanged > 500

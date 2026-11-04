@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use moqui_lib::object::to_plain_string;
 use rquickjs::{Ctx, Exception, Function, Object};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::rewrite::rewrite_spec;
 use moqui_core::context::{Error, ExecutionContext, ExecutionContextFactory};
@@ -103,7 +103,7 @@ pub struct SpecFile {
 }
 
 /// Why a feature, or a spec phase, did not pass.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Failure {
     /// `assertion` (a condition was false), `error` (a block threw), `messages` (`ec.message` errors were left), or
     /// `registration` (the file did not load, or a `spec()` or `feature()` is wrong).
@@ -123,7 +123,7 @@ pub struct Failure {
     pub attachments: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Outcome {
     Passed,
     Failed(Failure),
@@ -135,7 +135,7 @@ pub enum Outcome {
 }
 
 /// One feature, or one `where` row of it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CaseResult {
     pub name: String,
     pub outcome: Outcome,
@@ -144,7 +144,7 @@ pub struct CaseResult {
     pub output: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SpecResult {
     pub name: String,
     pub display: String,

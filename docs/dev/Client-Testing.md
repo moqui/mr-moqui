@@ -113,8 +113,9 @@ the runtime as `MOQUI_CONF` is, and `properties` conf properties set in the serv
 send invoices and reminders, so its suite has `properties: { mail_capture_sends: "true" }`). The file is read as
 literals, not run.
 
-`moqui test-client --serve` groups the selected components by their declaration; components with the same one share a
-server. For each group it starts this binary as `moqui test <components> --spec <specs> --db snapshot --serve
+`moqui test-client --serve` groups the selected components by their declaration: components with the same one, or
+with the same `conf` and `properties` and named `specs` on both, share a server, which loads the components of all of
+them and runs all of their specs (an empty `specs` list, every spec of its components, stays on a server of its own). For each group it starts this binary as `moqui test <components> --spec <specs> --db snapshot --serve
 127.0.0.1:0 --ready-file <file>`, with `MOQUI_CONF` set to the conf, the properties in its environment and a pipe on
 the child's standard input. The
 child's output goes to `server-<n>.log` in the output directory. Once the ready file names the URL, the group's specs
@@ -127,7 +128,7 @@ browser too.
 
 The child is an ordinary `moqui test` run, so it writes what one writes: a scratch runtime, and the saved load under
 `runtime/save` that `--db snapshot` restores on later runs while the components it loads, their entity and data files
-and the binary are unchanged. Servers on different confs or instance purposes load different components (a dev
+and the crate version are unchanged (a relink keeps them). Servers on different confs or instance purposes load different components (a dev
 component only on a dev instance), so each has a snapshot of its own. A first run with Mantle's data takes minutes;
 later ones take seconds.
 
