@@ -380,16 +380,7 @@ fn accept_topic(posts: &Mutex<Vec<String>>, topic: &str, body: &[u8]) -> Result<
     if body.len() > moqui_core::cluster::MAX_CLUSTER_BODY {
         return Err(413);
     }
-    if ![
-        moqui_core::notify::ENTITY_CACHE_INVALIDATE,
-        moqui_core::notify::NOTIFICATION_MESSAGE,
-        moqui_core::notify::COLLAB_UPDATE,
-        moqui_core::notify::SESSION_END,
-        moqui_core::notify::RTC_SIGNAL,
-        moqui_core::notify::RUNTIME_SETTINGS,
-    ]
-    .contains(&topic)
-    {
+    if !moqui_core::notify::TOPICS.contains(&topic) {
         return Err(404);
     }
     let message = topic_message(body).map_err(|err| {
@@ -410,20 +401,7 @@ fn cluster_topic<'a>(method: &str, path: &'a str) -> Option<&'a str> {
         return None;
     }
     let topic = path.strip_prefix("/cluster/")?;
-    if [
-        moqui_core::notify::ENTITY_CACHE_INVALIDATE,
-        moqui_core::notify::NOTIFICATION_MESSAGE,
-        moqui_core::notify::COLLAB_UPDATE,
-        moqui_core::notify::SESSION_END,
-        moqui_core::notify::RTC_SIGNAL,
-        moqui_core::notify::RUNTIME_SETTINGS,
-    ]
-    .contains(&topic)
-    {
-        Some(topic)
-    } else {
-        None
-    }
+    moqui_core::notify::TOPICS.contains(&topic).then_some(topic)
 }
 
 fn topic_message(body: &[u8]) -> Result<TopicMessage, String> {
