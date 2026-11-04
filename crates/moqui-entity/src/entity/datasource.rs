@@ -113,6 +113,23 @@ impl IsolationLevel {
     }
 }
 
+impl DatasourceConf {
+    /// Whether a transaction on this datasource reads one snapshot from its first statement: REPEATABLE READ or
+    /// SERIALIZABLE, and MySQL with no level set, as InnoDB's default is REPEATABLE READ. The embedded database runs
+    /// at READ COMMITTED whatever the conf says. See [`super::EntityGroup::with_snapshot_reads`].
+    #[must_use]
+    pub fn snapshot_reads(&self) -> bool {
+        if self.kind == DatasourceKind::Embedded {
+            return false;
+        }
+        match self.isolation_level {
+            Some(IsolationLevel::RepeatableRead | IsolationLevel::Serializable) => true,
+            Some(IsolationLevel::ReadCommitted | IsolationLevel::ReadUncommitted) => false,
+            None => self.kind == DatasourceKind::Mysql,
+        }
+    }
+}
+
 /// One datasource, with `${}` expanded.
 #[derive(Clone)]
 pub struct DatasourceConf {

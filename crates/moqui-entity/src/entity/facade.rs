@@ -52,6 +52,7 @@ pub struct EntityGroup {
     name: String,
     dialect_name: String,
     transactions: TransactionManager,
+    snapshot_reads: bool,
 }
 
 impl EntityGroup {
@@ -60,7 +61,17 @@ impl EntityGroup {
             name: name.into(),
             dialect_name: dialect_name.into(),
             transactions,
+            snapshot_reads: false,
         }
+    }
+
+    /// The datasource's transactions read one snapshot from their first statement (REPEATABLE READ or SERIALIZABLE,
+    /// and MySQL's InnoDB with no level set), so a find in a transaction may not see what was committed before it
+    /// began. Its finds are then not stored in the shared entity cache.
+    #[must_use]
+    pub fn with_snapshot_reads(mut self, on: bool) -> Self {
+        self.snapshot_reads = on;
+        self
     }
 
     pub fn name(&self) -> &str {
@@ -79,6 +90,8 @@ impl EntityGroup {
 pub(crate) struct GroupRuntime {
     pub(crate) dialect: Dialect,
     pub(crate) transactions: TransactionManager,
+    /// See [`EntityGroup::with_snapshot_reads`].
+    pub(crate) snapshot_reads: bool,
 }
 
 pub(crate) struct Inner {
@@ -256,6 +269,7 @@ impl EntityFacade {
                 GroupRuntime {
                     dialect,
                     transactions: group.transactions,
+                    snapshot_reads: group.snapshot_reads,
                 },
             );
         }
@@ -684,24 +698,45 @@ impl EntityFacade {
     ) -> Result<T, Error> {
         let model = self.inner.model.model();
         let entity = self.definition(&model, name)?;
-        let runtime = if use_clone {
-            let group = entity.group.as_deref().unwrap_or(self.inner.default_group.as_str());
-            let prefix = format!("{group}#clone");
-            let mut clones: Vec<&String> = self
-                .inner
-                .groups
-                .keys()
-                .filter(|name| name.starts_with(&prefix))
-                .collect();
-            clones.sort();
-            match clones.first() {
-                Some(clone) => &self.inner.groups[*clone],
-                None => self.group_runtime(entity.group.as_deref())?,
-            }
-        } else {
-            self.group_runtime(entity.group.as_deref())?
+        let runtime = match self.clone_runtime(&entity).filter(|_| use_clone) {
+            Some(clone) => clone,
+            None => self.group_runtime(entity.group.as_deref())?,
         };
         body(&entity, &runtime.dialect, &model, &runtime.transactions)
+    }
+
+    /// The first group named `{group}#clone...` open for the entity's group, which a `use_clone` read goes to.
+    fn clone_runtime(&self, entity: &EntityDefinition) -> Option<&GroupRuntime> {
+        let group = entity.group.as_deref().unwrap_or(self.inner.default_group.as_str());
+        let prefix = format!("{group}#clone");
+        let clone = self
+            .inner
+            .groups
+            .keys()
+            .filter(|name| name.starts_with(&prefix))
+            .min()?;
+        self.inner.groups.get(clone)
+    }
+
+    /// True when a `use_clone` find of `name` reads a replica, whose rows may be behind the primary's: such a find is
+    /// not stored in the shared entity cache (plans/High-Level-Review.md HL-023).
+    pub(crate) fn reads_clone(&self, name: &str) -> bool {
+        let model = self.inner.model.model();
+        self.definition(&model, name)
+            .is_ok_and(|entity| self.clone_runtime(&entity).is_some())
+    }
+
+    /// True when a find of `name` inside a transaction reads the snapshot the transaction took (its datasource is at
+    /// REPEATABLE READ or SERIALIZABLE, see [`EntityGroup::with_snapshot_reads`]) rather than what was committed when
+    /// the statement began. Such a frame does not store its finds in the shared cache: a commit it does not see may
+    /// have been evicted for before the find's store fence was taken.
+    pub(crate) fn snapshot_frame(&self, name: &str) -> bool {
+        let model = self.inner.model.model();
+        let Ok(entity) = self.definition(&model, name) else {
+            return false;
+        };
+        self.group_runtime(entity.group.as_deref())
+            .is_ok_and(|runtime| runtime.snapshot_reads && runtime.transactions.in_transaction())
     }
 
     /// `getDatabaseConfName`: the `database-list` name of the database an entity's group is on (`postgres` for the

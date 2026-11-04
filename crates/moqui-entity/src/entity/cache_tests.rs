@@ -607,6 +607,151 @@ fn a_commit_clears_rows_another_thread_cached_before_it() {
     assert!(super::TX_WRITTEN.with(|slot| slot.borrow().is_empty()));
 }
 
+/// The lookup `found` makes of `TYPE` by `id`.
+fn type_lookup(id: &str) -> FindLookup {
+    FindLookup {
+        entity_name: TYPE.to_string(),
+        use_cache: None,
+        condition: Some(Condition::equals("enumTypeId", Value::string(id))),
+        order: Vec::new(),
+        limit: None,
+        offset: None,
+        filtered: false,
+    }
+}
+
+/// The rows of `TYPE` by `id`, read from the database.
+fn type_rows(facade: &EntityFacade, id: &str) -> crate::entity::EntityList {
+    facade
+        .find(TYPE)
+        .unwrap()
+        .eq("enumTypeId", Value::string(id))
+        .use_cache(false)
+        .list()
+        .unwrap()
+}
+
+/// HL-023: a find whose query ran before another thread's autocommit write, and whose store comes after that write's
+/// eviction, is not stored; the next cached read is fresh. With no write between, the store is kept.
+#[test]
+fn a_find_read_before_an_autocommit_write_is_not_stored_after_its_eviction() {
+    let facade = testing::open();
+    let lookup = type_lookup("FENCED");
+    let fence = super::store_fence(&facade, &lookup).expect("the entity's finds are cached");
+    let rows = type_rows(&facade, "FENCED");
+    assert!(rows.is_empty());
+    let writer = facade.clone();
+    std::thread::spawn(move || put(&writer, TYPE, "enumTypeId", "FENCED"))
+        .join()
+        .unwrap();
+    assert!(
+        !super::after_find(&facade, &lookup, &fence, &rows).unwrap(),
+        "the rows read before the write are refused"
+    );
+    assert!(
+        super::before_find(&facade, &lookup).is_none(),
+        "nothing stale is cached"
+    );
+    assert!(found(&facade, TYPE, "enumTypeId", "FENCED"), "the next read is fresh");
+    assert!(
+        super::before_find(&facade, &lookup).is_some_and(|rows| rows.len() == 1),
+        "and is cached"
+    );
+    // The same for a count.
+    let count_fence = super::store_fence(&facade, &type_lookup("COUNTED")).unwrap();
+    put(&facade, TYPE, "enumTypeId", "COUNTED");
+    assert!(!super::after_count(&facade, &type_lookup("COUNTED"), &count_fence, 0).unwrap());
+    // With no write since its fence, a find is stored.
+    let quiet = type_lookup("QUIET");
+    let fence = super::store_fence(&facade, &quiet).unwrap();
+    assert!(super::after_find(&facade, &quiet, &fence, &type_rows(&facade, "QUIET")).unwrap());
+}
+
+/// HL-023: the query straddles another thread's commit. The writer's frame wrote (and evicted) before the reader took
+/// its fence, and the reader's query saw the rows as they were before the commit (as a database at READ COMMITTED
+/// shows them); the store lands after the commit's eviction and is refused.
+#[test]
+fn a_find_whose_query_straddles_a_commit_is_not_stored() {
+    use std::sync::mpsc;
+    let facade = testing::open();
+    let lookup = type_lookup("STRADDLE");
+    let before = type_rows(&facade, "STRADDLE");
+    assert!(before.is_empty());
+    let (wrote_tx, wrote_rx) = mpsc::channel::<()>();
+    let (commit_tx, commit_rx) = mpsc::channel::<()>();
+    let writer = facade.clone();
+    let handle = std::thread::spawn(move || {
+        let tx = writer.transactions_for(TYPE).unwrap();
+        assert!(tx.begin(None).unwrap());
+        put(&writer, TYPE, "enumTypeId", "STRADDLE");
+        wrote_tx.send(()).unwrap();
+        commit_rx.recv().unwrap();
+        tx.commit().unwrap();
+    });
+    wrote_rx.recv().unwrap();
+    let fence = super::store_fence(&facade, &lookup).expect("this thread did not write");
+    commit_tx.send(()).unwrap();
+    handle.join().unwrap();
+    assert!(
+        !super::after_find(&facade, &lookup, &fence, &before).unwrap(),
+        "the rows from before the commit are refused"
+    );
+    assert!(found(&facade, TYPE, "enumTypeId", "STRADDLE"), "the next read is fresh");
+}
+
+/// HL-023: a remote invalidation and a whole-cache clear move the fence as a local write does.
+#[test]
+fn a_remote_invalidation_and_a_whole_clear_refuse_an_earlier_find() {
+    let facade = testing::open();
+    let lookup = type_lookup("REMOTE");
+    let rows = type_rows(&facade, "REMOTE");
+    let fence = super::store_fence(&facade, &lookup).unwrap();
+    super::clear_one_cache(&facade, TYPE, None).unwrap();
+    assert!(!super::after_find(&facade, &lookup, &fence, &rows).unwrap());
+    let fence = super::store_fence(&facade, &lookup).unwrap();
+    let key = row(&[("enumTypeId", Value::string("OTHER"))]);
+    super::clear_one_cache(&facade, TYPE, Some(&key)).unwrap();
+    assert!(
+        !super::after_find(&facade, &lookup, &fence, &rows).unwrap(),
+        "a remote eviction by primary key moves the fence too"
+    );
+    let fence = super::store_fence(&facade, &lookup).unwrap();
+    super::clear_all_list_caches(&facade).unwrap();
+    assert!(!super::after_find(&facade, &lookup, &fence, &rows).unwrap());
+}
+
+/// HL-023: a find of a replica (`use_clone` with a clone group open) is not stored where a find of the primary would
+/// read it.
+#[test]
+fn a_find_of_a_replica_is_not_stored_in_the_shared_cache() {
+    let facade = testing::open_groups("transactional#clone1");
+    let entity = "moqui.basic.Enumeration";
+    let mut row = facade.make_value(entity).unwrap();
+    row.set("enumId", Value::string("MAIN"));
+    row.create(&facade).unwrap();
+    let find = || {
+        facade
+            .find(entity)
+            .unwrap()
+            .eq("enumId", Value::string("MAIN"))
+            .use_cache(true)
+    };
+    assert!(find().use_clone(true).one().unwrap().is_none(), "the clone has no row");
+    assert!(find().one().unwrap().is_some(), "the primary's read is not the clone's");
+}
+
+/// HL-023: a frame that reads one snapshot does not store its finds; outside a transaction it does.
+#[test]
+fn a_snapshot_frame_does_not_store_its_finds() {
+    let facade = testing::open_snapshot_reads();
+    let lookup = type_lookup("SNAP");
+    assert!(super::store_fence(&facade, &lookup).is_some());
+    let tx = facade.transactions_for(TYPE).unwrap();
+    assert!(tx.begin(None).unwrap());
+    assert!(super::store_fence(&facade, &lookup).is_none());
+    tx.commit().unwrap();
+}
+
 /// The writes of each open frame kept for `full_name`: `None` when the frame keeps none (clears it whole), else
 /// how many.
 fn kept_writes(full_name: &str) -> Vec<Option<usize>> {

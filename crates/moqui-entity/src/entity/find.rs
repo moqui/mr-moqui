@@ -325,19 +325,29 @@ impl EntityFind {
             return Ok(EntityList::new(Vec::new()));
         }
         self.require_transaction_for_lock()?;
+        let fence = self.store_fence(bypass, &lookup);
         let plan = self.plan(false, condition)?;
         let rows = query_tx(&plan.tx, &plan.sql, &plan.params)?;
         self.record_query(&plan.sql);
         after_statement(&self.facade, &plan.tx, false);
         let values = self.rows_to_values(&plan, rows)?;
         let list = EntityList::new(values);
-        if !bypass {
+        if let Some(fence) = fence {
             // The rows were read; a cache that cannot hold them only costs the next read.
-            if let Err(err) = cache::after_find(&self.facade, &lookup, &list) {
+            if let Err(err) = cache::after_find(&self.facade, &lookup, &fence, &list) {
                 tracing::warn!(error = %err, "Could not cache the find of {}", self.entity_name);
             }
         }
         Ok(self.attach_l10n(list))
+    }
+
+    /// The store fence of this find, taken before its query (plans/High-Level-Review.md HL-023); `None` when its result
+    /// is not stored in the shared cache: it bypasses the cache, reads a replica ([`Self::use_clone`]), or is not cached.
+    fn store_fence(&self, bypass: bool, lookup: &FindLookup) -> Option<cache::StoreFence> {
+        if bypass || (self.use_clone && self.facade.reads_clone(&self.entity_name)) {
+            return None;
+        }
+        cache::store_fence(&self.facade, lookup)
     }
 
     /// Java `updateAll`: set `fields` on each row found and update the rows that change, so each update runs its
@@ -504,13 +514,14 @@ impl EntityFind {
         if !self.facade.table_ready(&self.entity_name) {
             return Ok(0);
         }
+        let fence = self.store_fence(bypass, &lookup);
         let plan = self.plan(true, condition)?;
         let rows = query_tx(&plan.tx, &plan.sql, &plan.params)?;
         self.record_query(&plan.sql);
         after_statement(&self.facade, &plan.tx, false);
         let count = count_of(&rows)?;
-        if !bypass {
-            if let Err(err) = cache::after_count(&self.facade, &lookup, count) {
+        if let Some(fence) = fence {
+            if let Err(err) = cache::after_count(&self.facade, &lookup, &fence, count) {
                 tracing::warn!(error = %err, "Could not cache the count of {}", self.entity_name);
             }
         }

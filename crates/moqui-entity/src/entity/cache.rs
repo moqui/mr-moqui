@@ -400,6 +400,66 @@ struct OneCaches {
     counts: HashMap<String, MCache<String, CachedCount>>,
     /// The view entities that have each entity as a member, made on first use.
     views_by_member: Option<Arc<HashMap<String, Vec<String>>>>,
+    /// The store fence of each entity whose find has taken one ([`store_fence`]): moved before each eviction or clear
+    /// of its caches. An entity with none has no find between its fence and its store, so a write need not move one.
+    generations: HashMap<String, Arc<AtomicU64>>,
+    /// Moved before every cache is cleared at once ([`clear_all_list_caches`]).
+    epoch: Arc<AtomicU64>,
+}
+
+/// What a find took of its entity's store fence before its query (plans/High-Level-Review.md HL-023). Its result is
+/// stored only when no eviction or clear of the entity's caches began since: under the cache's write lock, which the
+/// eviction takes after moving the fence, so rows read before a commit are either refused or evicted after their
+/// store. As [`super::derived`] does for the definitions it builds.
+pub struct StoreFence {
+    full_name: String,
+    generation: Arc<AtomicU64>,
+    epoch: Arc<AtomicU64>,
+    taken: u64,
+}
+
+impl StoreFence {
+    /// Both counts only grow, so their sum moves when either does.
+    fn current(generation: &AtomicU64, epoch: &AtomicU64) -> u64 {
+        generation
+            .load(AtomicOrdering::SeqCst)
+            .wrapping_add(epoch.load(AtomicOrdering::SeqCst))
+    }
+
+    fn holds(&self) -> bool {
+        Self::current(&self.generation, &self.epoch) == self.taken
+    }
+}
+
+/// The store fence of a find, taken before its query; `None` when its result is not to be stored: the entity's finds
+/// are not cached ([`ReadMeta::caches`]), this frame wrote the entity (its rows may be uncommitted), or the frame reads
+/// one snapshot ([`EntityFacade::snapshot_frame`]), whose rows may predate a commit already evicted for.
+pub fn store_fence(facade: &EntityFacade, lookup: &FindLookup) -> Option<StoreFence> {
+    let meta = read_meta(facade, &lookup.entity_name).ok()?;
+    if !meta.caches(lookup)
+        || frame_wrote(facade, &lookup.entity_name, &meta)
+        || facade.snapshot_frame(&lookup.entity_name)
+    {
+        return None;
+    }
+    let name = &meta.full_name;
+    let (known, epoch) = facade.with_slot_read(OneCaches::default, |caches| {
+        (caches.generations.get(name).cloned(), Arc::clone(&caches.epoch))
+    });
+    // Made under the slot's write lock, which a writer's move reads under: a write that saw no fence committed before
+    // this one was made, so the query below sees it.
+    let generation = known.unwrap_or_else(|| {
+        facade.with_slot(OneCaches::default, |caches| {
+            Arc::clone(caches.generations.entry(name.clone()).or_default())
+        })
+    });
+    let taken = StoreFence::current(&generation, &epoch);
+    Some(StoreFence {
+        full_name: name.clone(),
+        generation,
+        epoch,
+        taken,
+    })
 }
 
 /// A cached find: its condition, which a write compares with what it wrote, and its rows.
@@ -494,14 +554,11 @@ pub fn before_count(facade: &EntityFacade, lookup: &FindLookup) -> Option<i64> {
     None
 }
 
-/// Store a count the database gave, as Java's count cache, when the entity's finds are cached.
-pub fn after_count(facade: &EntityFacade, lookup: &FindLookup, count: i64) -> Result<(), Error> {
-    let meta = read_meta(facade, &lookup.entity_name)?;
-    if !meta.caches(lookup) || frame_wrote(facade, &lookup.entity_name, &meta) {
-        return Ok(());
-    }
+/// Store a count the database gave, as Java's count cache, unless the entity's caches were evicted or cleared since
+/// `fence` was taken. True when stored.
+pub fn after_count(facade: &EntityFacade, lookup: &FindLookup, fence: &StoreFence, count: i64) -> Result<bool, Error> {
     let key = owned_lookup_key(lookup);
-    let name = &meta.full_name;
+    let name = &fence.full_name;
     let known = facade.with_slot_read(OneCaches::default, |caches| caches.counts.get(name).cloned());
     let cache = known.unwrap_or_else(|| {
         facade.with_slot(OneCaches::default, |caches| {
@@ -512,26 +569,23 @@ pub fn after_count(facade: &EntityFacade, lookup: &FindLookup, count: i64) -> Re
                 .clone()
         })
     });
-    cache.put(
-        key,
-        CachedCount {
-            condition: lookup.condition.clone(),
-            count,
-        },
-    )
+    let value = CachedCount {
+        condition: lookup.condition.clone(),
+        count,
+    };
+    cache.put_if(key, value, || fence.holds())
 }
 
-/// Store a find result when the entity cache attribute is `true`. Rows are already plaintext.
-///
-/// Not stored while the active frame has written the entity (any entity, for a view): those rows may be
-/// uncommitted.
-pub fn after_find(facade: &EntityFacade, lookup: &FindLookup, rows: &EntityList) -> Result<(), Error> {
-    let meta = read_meta(facade, &lookup.entity_name)?;
-    if !meta.caches(lookup) || frame_wrote(facade, &lookup.entity_name, &meta) {
-        return Ok(());
-    }
+/// Store a find result, unless the entity's caches were evicted or cleared since `fence` was taken ([`store_fence`]
+/// says which finds are stored). Rows are already plaintext. True when stored.
+pub fn after_find(
+    facade: &EntityFacade,
+    lookup: &FindLookup,
+    fence: &StoreFence,
+    rows: &EntityList,
+) -> Result<bool, Error> {
     let key = owned_lookup_key(lookup);
-    let name = &meta.full_name;
+    let name = &fence.full_name;
     let known = facade.with_slot_read(OneCaches::default, |caches| caches.lists.get(name).cloned());
     let cache = known.unwrap_or_else(|| {
         facade.with_slot(OneCaches::default, |caches| {
@@ -542,13 +596,11 @@ pub fn after_find(facade: &EntityFacade, lookup: &FindLookup, rows: &EntityList)
                 .clone()
         })
     });
-    cache.put(
-        key,
-        CachedList {
-            condition: lookup.condition.clone(),
-            rows: rows.clone(),
-        },
-    )
+    let value = CachedList {
+        condition: lookup.condition.clone(),
+        rows: rows.clone(),
+    };
+    cache.put_if(key, value, || fence.holds())
 }
 
 /// True when this thread's active frame for the entity has written it. For a view, any write in the frame counts,
@@ -676,6 +728,10 @@ fn frame_operation(operation: &str) -> Option<&'static str> {
 /// has a cache of finds or of counts.
 fn evict(facade: &EntityFacade, meta: &ReadMeta, operation: &str, values: &FieldMap) -> Result<bool, Error> {
     let (lists, counts) = facade.with_slot_read(OneCaches::default, |caches| {
+        // The fence first: a find whose query began before this write is not stored after the eviction below.
+        if let Some(generation) = caches.generations.get(&meta.full_name) {
+            generation.fetch_add(1, AtomicOrdering::SeqCst);
+        }
         (
             caches.lists.get(&meta.full_name).cloned(),
             caches.counts.get(&meta.full_name).cloned(),
@@ -1042,6 +1098,10 @@ pub fn clear_one_cache(facade: &EntityFacade, entity_name: &str, primary_key: Op
 /// Clear the list and count caches of `full_name`, and those of the views it is a member of.
 fn clear_named(facade: &EntityFacade, full_name: &str) -> Result<(), Error> {
     let (lists, counts) = facade.with_slot(OneCaches::default, |caches| {
+        // The fence first, as in `evict`.
+        if let Some(generation) = caches.generations.get(full_name) {
+            generation.fetch_add(1, AtomicOrdering::SeqCst);
+        }
         (
             caches.lists.get(full_name).cloned(),
             caches.counts.get(full_name).cloned(),
@@ -1074,6 +1134,7 @@ pub fn list_cache_infos(facade: &EntityFacade) -> Vec<moqui_lib::cache::CacheInf
 /// Clear the list cache named `cache_name`. `false` when no entity has a list cache of that name.
 pub fn clear_list_cache(facade: &EntityFacade, cache_name: &str) -> Result<bool, Error> {
     facade.with_slot(OneCaches::default, |caches| {
+        caches.epoch.fetch_add(1, AtomicOrdering::SeqCst);
         if let Some(cache) = caches.lists.values().find(|cache| cache.name() == cache_name) {
             return cache.clear().map(|()| true);
         }
@@ -1093,9 +1154,10 @@ pub(crate) fn forget_model(facade: &EntityFacade) {
     }
 }
 
-/// Clear every entity list cache.
+/// Clear every entity list and count cache, moving every store fence first.
 pub fn clear_all_list_caches(facade: &EntityFacade) -> Result<(), Error> {
     facade.with_slot(OneCaches::default, |caches| {
+        caches.epoch.fetch_add(1, AtomicOrdering::SeqCst);
         for cache in caches.lists.values() {
             cache.clear()?;
         }
