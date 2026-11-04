@@ -32,6 +32,8 @@ mod agents;
 mod coverage;
 #[cfg(feature = "embedded-postgres")]
 mod fixture;
+#[cfg(feature = "embedded-postgres")]
+mod interrupt;
 pub(crate) mod report;
 #[cfg(feature = "embedded-postgres")]
 mod serve;

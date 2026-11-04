@@ -157,26 +157,8 @@ mod overlay {
 
     /// `pg_ctl stop -m immediate` for a live postmaster in `dir/data`. The overlay holds nothing to keep.
     fn stop_postmaster(dir: &Path, install_dir: Option<&Path>) {
-        let data_dir = dir.join("data");
-        if !super::super::embedded::postmaster_live(&data_dir) {
-            return;
-        }
         let install = install_dir.map_or_else(|| dir.join("install"), Path::to_path_buf);
-        let pg_ctl = super::super::embedded::pg_ctl_path(&install);
-        let stopped = std::process::Command::new(&pg_ctl)
-            .args(["stop", "-m", "immediate", "-D"])
-            .arg(&data_dir)
-            .output();
-        match stopped {
-            Ok(output) if output.status.success() => {}
-            Ok(output) => tracing::warn!(
-                "pg_ctl stop for {} exited {}: {}",
-                data_dir.display(),
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            ),
-            Err(err) => tracing::warn!("could not run {}: {err}", pg_ctl.display()),
-        }
+        super::super::embedded::stop_postmaster(&dir.join("data"), &install, "immediate");
     }
 }
 

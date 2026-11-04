@@ -867,6 +867,35 @@ mod cluster {
         base.join(format!("moqui-pg-{hash:016x}"))
     }
 
+    /// `pg_ctl stop -m <mode>` for a live postmaster of `data_dir`, with the `pg_ctl` under `install_dir`. True when
+    /// no postmaster is left live there.
+    pub fn stop_postmaster(data_dir: &Path, install_dir: &Path, mode: &str) -> bool {
+        if !postmaster_live(data_dir) {
+            return true;
+        }
+        let pg_ctl = pg_ctl_path(install_dir);
+        let stopped = std::process::Command::new(&pg_ctl)
+            .args(["stop", "-m", mode, "-D"])
+            .arg(data_dir)
+            .output();
+        match stopped {
+            Ok(output) if output.status.success() => true,
+            Ok(output) => {
+                tracing::warn!(
+                    "pg_ctl stop for {} exited {}: {}",
+                    data_dir.display(),
+                    output.status,
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                false
+            }
+            Err(err) => {
+                tracing::warn!("could not run {}: {err}", pg_ctl.display());
+                false
+            }
+        }
+    }
+
     /// `pg_ctl` of this build's theseus version under `install_dir`.
     pub(crate) fn pg_ctl_path(install_dir: &Path) -> PathBuf {
         tool_bin(&install_dir.join(SHIPPED_VERSION).join("bin"), "pg_ctl")
@@ -1030,14 +1059,12 @@ mod cluster {
 }
 
 #[cfg(feature = "embedded-postgres")]
-pub use cluster::process_live;
-#[cfg(feature = "embedded-postgres")]
 pub use cluster::{
     database_dump_path, load_save, save_db, shared_install_dir, sibling_dumps, ClusterRole, EmbeddedCluster,
     StartOptions, ToolTarget,
 };
 #[cfg(feature = "embedded-postgres")]
-pub(crate) use cluster::{pg_ctl_path, postmaster_live};
+pub use cluster::{process_live, stop_postmaster};
 
 /// Where the embedded Postgres of a runtime is unpacked: `postgres` under `MOQUI_INSTALL` (a process property, then
 /// the environment variable, as `MOQUI_CONF`) when it is set, else under `install` in the runtime directory, where
