@@ -339,7 +339,7 @@ fn watch(
         match connect_imap(&facade, &server) {
             Ok(conn) => conn,
             Err(SyncFailure::Auth(text) | SyncFailure::SignIn(text)) => return Ended::Done(text),
-            Err(SyncFailure::Connect(text)) => return Ended::Retry(text),
+            Err(SyncFailure::Connect(text) | SyncFailure::Lapsed(text)) => return Ended::Retry(text),
         }
     };
     *lock(socket) = conn.socket.as_ref().and_then(|socket| socket.try_clone().ok());

@@ -15,7 +15,8 @@
 //! `EmailClientServices.sync#EmailAccount`: an IMAP or POP3 account's mail into `EmailMessage` rows, and its local
 //! changes onto the server.
 //!
-//! One session, under the account's sync lock (`syncLockedUntil`, so no two run at once on any server):
+//! One session, under the account's sync lock (`syncLockedUntil`, so no two run at once on any server; renewed as it
+//! goes, and a session whose lock lapsed to another stops, [`Lease`]):
 //!
 //! 1. The changes queued by `push#RemoteChanges` are made on the server, in order ([`super::remote`]). One that loses
 //!    the connection is counted and waits, with the later changes of its message; the session goes on with a new
@@ -69,7 +70,7 @@ pub(super) const SERVER: &str = "moqui.basic.email.EmailServer";
 pub(super) const CHANGE: &str = "moqui.basic.email.EmailRemoteChange";
 const SERVICES: &str = "org.moqui.impl.EmailClientServices";
 
-/// How long a sync holds its account; it is renewed for each folder.
+/// How long a sync holds its account; it is renewed as the session goes ([`Lease::keep`]).
 const LEASE_MILLIS: i64 = 15 * 60 * 1000;
 /// UIDs in one FETCH.
 const FETCH_CHUNK: usize = 25;
@@ -314,12 +315,15 @@ pub(super) enum SyncFailure {
     SignIn(String),
     /// The server could not be reached or the connection broke: EasError, tried again later.
     Connect(String),
+    /// The session's lease on its account lapsed and another session has it ([`Lease::keep`]): this one stops
+    /// without recording anything on the account, which is the other session's now.
+    Lapsed(String),
 }
 
 impl std::fmt::Display for SyncFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Auth(text) | Self::SignIn(text) | Self::Connect(text) => f.write_str(text),
+            Self::Auth(text) | Self::SignIn(text) | Self::Connect(text) | Self::Lapsed(text) => f.write_str(text),
         }
     }
 }
@@ -789,6 +793,8 @@ pub(super) struct SyncOptions {
     pub(super) inbox_only: bool,
     /// A user asked for it: a paused account says so, an EasAuthFailed one is tried.
     pub(super) by_user: bool,
+    /// How long the session holds its account, when not [`LEASE_MILLIS`] (a test's short lease).
+    pub(super) lease_millis: Option<i64>,
 }
 
 #[derive(Debug, Default)]
@@ -872,6 +878,7 @@ pub(super) fn sync_account_service(
         push_only: flag("pushOnly"),
         inbox_only: flag("inboxOnly"),
         by_user: !authz_off,
+        lease_millis: None,
     };
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let report = run_sync(facade, &account_id, &options);
@@ -894,54 +901,124 @@ fn instance_name() -> String {
     format!("{host}:{}", std::process::id())
 }
 
-/// Take the account's sync lock for [`LEASE_MILLIS`], or renew the one this server holds. False when another sync has it.
+/// A session's hold on its account's sync lock (`syncLockedUntil`, `syncLockedBy`), under a holder name of its own:
+/// this server's instance and a random part, so a second sync on the same server is another holder.
 ///
-/// The row is read `FOR UPDATE`, here and in [`release_lease`]: an update of a row read writes back each field read, so
-/// without the row lock two syncs could both read the lock free and both take it, and a lock taken or released could
-/// write back the status a sync running at the same time had just recorded (a failed sync's EasError read as EasActive
-/// again). With it a second claim waits for the first, then reads the row it wrote: taken, so busy.
-fn claim_lease(facade: &EntityFacade, account_id: &str, renew: bool) -> Result<bool, LibError> {
-    let now = now_millis();
-    let me = instance_name();
-    force_new(facade, || {
-        let mut find = facade
-            .find(ACCOUNT)?
-            .eq("emailAccountId", Value::string(account_id))
-            .for_update(true);
-        let free = Condition::or(vec![
-            Condition::is_null("syncLockedUntil"),
-            Condition::less("syncLockedUntil", stamp_millis(now)),
-        ]);
-        find = if renew {
-            find.condition(Condition::or(vec![
-                free,
-                Condition::equals("syncLockedBy", Value::string(&me)),
-            ]))
-        } else {
-            find.condition(free)
-        };
-        let count = find.update_all([
-            ("syncLockedUntil".to_string(), stamp_millis(now + LEASE_MILLIS)),
-            ("syncLockedBy".to_string(), Value::string(&me)),
-        ])?;
-        Ok(count > 0)
-    })
+/// The session renews it by elapsed time, inside the change, folder and fetch loops ([`Lease::keep`]), so a long change
+/// phase or a long first folder does not outlive it. A renewal refused (the lock lapsed and another session took it, or
+/// it was released) ends the session before it writes again, and the release clears the lock only while this session
+/// holds it, so the session that took it over keeps it (plans/High-Level-Review.md HL-037).
+///
+/// The row is read `FOR UPDATE` in each of these: an update of a row read writes back each field read, so without the
+/// row lock two syncs could both read the lock free and both take it, and a lock taken or released could write back
+/// the status a sync running at the same time had just recorded (a failed sync's EasError read as EasActive again).
+/// With it a second claim waits for the first, then reads the row it wrote: taken, so busy.
+pub(super) struct Lease {
+    account_id: String,
+    holder: String,
+    millis: i64,
+    /// When the last renewal that held started.
+    renewed: std::cell::Cell<std::time::Instant>,
 }
 
-fn release_lease(facade: &EntityFacade, account_id: &str) {
-    let released = force_new(facade, || {
-        facade
+impl Lease {
+    /// Take the account's sync lock for `millis`; None when another sync has it.
+    fn claim(facade: &EntityFacade, account_id: &str, millis: i64) -> Result<Option<Self>, LibError> {
+        let mut random = [0_u8; 6];
+        if getrandom::fill(&mut random).is_err() {
+            random = now_millis().to_le_bytes()[..6].try_into().unwrap_or_default();
+        }
+        let holder = format!(
+            "{} {}",
+            instance_name(),
+            random.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+        );
+        let started = std::time::Instant::now();
+        let now = now_millis();
+        let taken = force_new(facade, || {
+            facade
+                .find(ACCOUNT)?
+                .eq("emailAccountId", Value::string(account_id))
+                .for_update(true)
+                .condition(Condition::or(vec![
+                    Condition::is_null("syncLockedUntil"),
+                    Condition::less("syncLockedUntil", stamp_millis(now)),
+                ]))
+                .update_all([
+                    ("syncLockedUntil".to_string(), stamp_millis(now + millis)),
+                    ("syncLockedBy".to_string(), Value::string(&holder)),
+                ])
+        })?;
+        Ok((taken > 0).then(|| Self {
+            account_id: account_id.to_string(),
+            holder,
+            millis,
+            renewed: std::cell::Cell::new(started),
+        }))
+    }
+
+    /// The lock while this session holds it: renewed once a third of the lease has passed since the last renewal.
+    /// An error when it is no longer this session's, so the session stops before writing again. A renewal that fails
+    /// on the database is tried again at the next call, until the lease has run out.
+    pub(super) fn keep(&self, facade: &EntityFacade) -> Result<(), SyncFailure> {
+        let since = i64::try_from(self.renewed.get().elapsed().as_millis()).unwrap_or(i64::MAX);
+        if since < self.millis / 3 {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        let now = now_millis();
+        let renewed = force_new(facade, || {
+            self.mine(facade)?
+                .update_all([("syncLockedUntil".to_string(), stamp_millis(now + self.millis))])
+        });
+        match renewed {
+            Ok(count) if count > 0 => {
+                self.renewed.set(started);
+                Ok(())
+            }
+            Ok(_) => Err(SyncFailure::Lapsed(format!(
+                "The sync lock of email account {} lapsed and another sync has it; this one stops",
+                self.account_id
+            ))),
+            Err(err) if since >= self.millis => Err(SyncFailure::Lapsed(format!(
+                "The sync lock of email account {} lapsed: it could not be renewed: {err}",
+                self.account_id
+            ))),
+            Err(err) => {
+                tracing::warn!(
+                    "Could not renew the sync lock of email account {}, tried again: {err}",
+                    self.account_id
+                );
+                Ok(())
+            }
+        }
+    }
+
+    /// The account row while this session holds its lock, read `FOR UPDATE`.
+    fn mine(&self, facade: &EntityFacade) -> Result<moqui_core::entity::EntityFind, LibError> {
+        Ok(facade
             .find(ACCOUNT)?
-            .eq("emailAccountId", Value::string(account_id))
-            .for_update(true)
-            .update_all([
-                ("syncLockedUntil".to_string(), Value::Null),
-                ("syncLockedBy".to_string(), Value::Null),
-            ])
-            .map(|_| ())
-    });
-    if let Err(err) = released {
-        tracing::error!("Could not release the sync lock of email account {account_id}: {err}");
+            .eq("emailAccountId", Value::string(&self.account_id))
+            .eq("syncLockedBy", Value::string(&self.holder))
+            .for_update(true))
+    }
+
+    /// Clear the lock, if this session still holds it.
+    fn release(&self, facade: &EntityFacade) {
+        let released = force_new(facade, || {
+            self.mine(facade)?
+                .update_all([
+                    ("syncLockedUntil".to_string(), Value::Null),
+                    ("syncLockedBy".to_string(), Value::Null),
+                ])
+                .map(|_| ())
+        });
+        if let Err(err) = released {
+            tracing::error!(
+                "Could not release the sync lock of email account {}: {err}",
+                self.account_id
+            );
+        }
     }
 }
 
@@ -972,11 +1049,11 @@ pub(super) fn run_sync(facade: &EntityFacade, account_id: &str, options: &SyncOp
         }
         _ => {}
     }
-    match claim_lease(facade, account_id, false) {
-        Ok(true) => {}
-        Ok(false) => return SyncReport::with("busy", format!("Email account {account_id} is syncing already")),
+    let lease = match Lease::claim(facade, account_id, options.lease_millis.unwrap_or(LEASE_MILLIS)) {
+        Ok(Some(lease)) => lease,
+        Ok(None) => return SyncReport::with("busy", format!("Email account {account_id} is syncing already")),
         Err(err) => return SyncReport::with("failed", format!("Could not lock email account {account_id}: {err}")),
-    }
+    };
     let mut report = SyncReport {
         outcome: "synced",
         ..SyncReport::default()
@@ -988,10 +1065,10 @@ pub(super) fn run_sync(facade: &EntityFacade, account_id: &str, options: &SyncOp
             if options.push_only {
                 Ok(())
             } else {
-                pop_sync(facade, &account, &server, &mut report, &mut progress)
+                pop_sync(facade, &account, &server, &lease, &mut report, &mut progress)
             }
         } else {
-            imap_sync(facade, &account, &server, options, &mut report, &mut progress)
+            imap_sync(facade, &account, &server, &lease, options, &mut report, &mut progress)
         }
     }))
     .unwrap_or_else(|payload| {
@@ -999,10 +1076,12 @@ pub(super) fn run_sync(facade: &EntityFacade, account_id: &str, options: &SyncOp
             "the sync stopped: {}",
             moqui_core::service::pool::panic_text(payload.as_ref())
         )))
-    });
+    })
+    // the account's state is recorded only while this session still holds it
+    .and_then(|()| lease.keep(facade));
     record_outcome(facade, &account, &result, &mut report, options);
     set_backlog(account_id, report.capped && report.outcome == "synced");
-    release_lease(facade, account_id);
+    lease.release(facade);
     progress.finish(&report);
     tracing::info!(
         account = %account_id,
@@ -1076,6 +1155,12 @@ fn record_outcome(
                 fields.push(("statusId", Value::string("EasError")));
                 fields.push(("lastSyncError", Value::string(clip(text, 4000))));
             }
+        }
+        // the account is the other session's now: nothing recorded on it
+        Err(SyncFailure::Lapsed(text)) => {
+            tracing::warn!(account = %account.id, "{text}");
+            report.outcome = "busy";
+            report.message = text.clone();
         }
     }
     if fields.is_empty() {
@@ -1320,6 +1405,7 @@ pub(super) fn publish_counts(account_id: &str) {
 struct Session<'a> {
     facade: &'a EntityFacade,
     account: &'a AccountInfo,
+    lease: &'a Lease,
     /// Messages with local changes still queued: the server's flags do not replace theirs, and they are not removed.
     pending_local: HashSet<String>,
     /// Rows whose message left its folder in this session, by emailMessageId, with the folder: claimed by Message-ID
@@ -1367,6 +1453,14 @@ enum FolderError {
     Lost(String),
     /// This folder failed; the others go on.
     Folder(String),
+    /// The session ends for another reason: its lease lapsed.
+    Stop(SyncFailure),
+}
+
+impl From<SyncFailure> for FolderError {
+    fn from(failure: SyncFailure) -> Self {
+        Self::Stop(failure)
+    }
 }
 
 impl From<imap::Error> for FolderError {
@@ -1408,7 +1502,7 @@ fn imap_date(millis: i64) -> String {
 }
 
 impl<'a> Session<'a> {
-    fn new(facade: &'a EntityFacade, account: &'a AccountInfo) -> Self {
+    fn new(facade: &'a EntityFacade, account: &'a AccountInfo, lease: &'a Lease) -> Self {
         let window = account.window_days.map(|days| {
             let start = now_millis() - days * 86_400_000;
             (imap_date(start), start)
@@ -1416,6 +1510,7 @@ impl<'a> Session<'a> {
         Self {
             facade,
             account,
+            lease,
             pending_local: HashSet::new(),
             vanished: HashMap::new(),
             incomplete: HashSet::new(),
@@ -1483,6 +1578,7 @@ fn imap_sync(
     facade: &EntityFacade,
     account: &AccountInfo,
     server: &ServerInfo,
+    lease: &Lease,
     options: &SyncOptions,
     report: &mut SyncReport,
     progress: &mut Progress,
@@ -1493,7 +1589,7 @@ fn imap_sync(
     // connection was counted; the session goes on with a new one, and that change waits for the next session, so one
     // change the server cannot take does not keep the account from its mail.
     let mut held = HashSet::new();
-    let run = super::remote::apply_queue(&mut conn, facade, account, &mut held)?;
+    let run = super::remote::apply_queue(&mut conn, facade, account, lease, &mut held)?;
     report.pushed_count += run.applied;
     if let Some(text) = run.lost {
         tracing::warn!(
@@ -1504,7 +1600,7 @@ fn imap_sync(
         conn = open_session(facade, server)?;
         if options.push_only {
             // the other changes still go
-            let again = super::remote::apply_queue(&mut conn, facade, account, &mut held)?;
+            let again = super::remote::apply_queue(&mut conn, facade, account, lease, &mut held)?;
             report.pushed_count += again.applied;
             if let Some(text) = again.lost {
                 tracing::warn!(
@@ -1527,6 +1623,7 @@ fn imap_sync(
         match list_folders(&mut conn, facade, account) {
             Ok(folders) => folders,
             Err(FolderError::Lost(text)) => return Err(SyncFailure::Connect(text)),
+            Err(FolderError::Stop(failure)) => return Err(failure),
             Err(FolderError::Folder(text)) => {
                 tracing::error!(account = %account.id, "Could not list the folders of email account {}: {text}", account.id);
                 report.folder_errors.push(format!("LIST: {text}"));
@@ -1534,7 +1631,7 @@ fn imap_sync(
             }
         }
     };
-    let mut session = Session::new(facade, account);
+    let mut session = Session::new(facade, account, lease);
     session.pending_local = super::remote::pending_message_ids(facade, &account.id).map_err(lost)?;
     // the rows of folders gone from the server may be claimed by a message that moved out of them
     for folder in folders.iter().filter(|folder| folder.removed) {
@@ -1554,15 +1651,14 @@ fn imap_sync(
         if options.inbox_only && index > 0 && folder.kind != "EfkInbox" && session.vanished.is_empty() {
             break;
         }
-        if index > 0 && claim_lease(facade, &account.id, true).is_err() {
-            tracing::warn!("Could not renew the sync lock of email account {}", account.id);
-        }
+        lease.keep(facade)?;
         progress.start_folder(&folder.name, &folder.path);
         let synced = sync_folder(&mut conn, &mut session, folder, report, progress);
         progress.end_folder();
         match synced {
             Ok(()) => report.folder_count += 1,
             Err(FolderError::Lost(text)) => return Err(SyncFailure::Connect(text)),
+            Err(FolderError::Stop(failure)) => return Err(failure),
             Err(FolderError::Folder(text)) => {
                 session.incomplete.insert(folder.id.clone());
                 tracing::error!(
@@ -1577,14 +1673,16 @@ fn imap_sync(
         }
     }
     // 3. copies, and what left and went nowhere
+    lease.keep(facade)?;
     resolve_pending(&mut conn, &mut session, report)?;
+    lease.keep(facade)?;
     remove_vanished(&mut session, report);
     // 4. the rules, on the new mail of the Inbox, then what new mail brings: a snoozed thread back, the automatic reply
     run_rules(&account.id, &session.new_inbox_ids);
     after_new_mail(&account.id, &session.new_inbox_ids);
     // 5. what the rules and the user changed meanwhile, with the changes a lost connection in 1 left (but those of the
     // message whose change lost it)
-    let run = super::remote::apply_queue(&mut conn, facade, account, &mut held)?;
+    let run = super::remote::apply_queue(&mut conn, facade, account, lease, &mut held)?;
     report.pushed_count += run.applied;
     if let Some(text) = run.lost {
         tracing::warn!(
@@ -2144,6 +2242,7 @@ fn sync_folder(
                 gone.extend(locals.keys().copied().filter(|uid| !present.contains(uid)));
             }
         }
+        session.lease.keep(session.facade)?;
         report.updated_count += apply_flags(session, &locals, &flags, keywords)?;
         gone.sort_unstable();
         gone.dedup();
@@ -2161,6 +2260,7 @@ fn sync_folder(
     progress.new_mail(wanted.len(), pending, locals.len());
     let mut failed_from: Option<u32> = None;
     for chunk in wanted.chunks(HEADER_CHUNK) {
+        session.lease.keep(session.facade)?;
         let heads = conn.session.uid_fetch(
             uid_set(chunk),
             "(UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])",
@@ -2214,6 +2314,8 @@ fn sync_folder(
                 }
             }
             drop(bodies);
+            // a fetch can outlast the lease: nothing is stored once another session has the account
+            session.lease.keep(session.facade)?;
             for (uid, flags, internal, size) in batch {
                 let Some(raw) = raw_by_uid.remove(uid) else {
                     tracing::warn!(
@@ -2707,6 +2809,7 @@ fn pop_sync(
     facade: &EntityFacade,
     account: &AccountInfo,
     server: &ServerInfo,
+    lease: &Lease,
     report: &mut SyncReport,
     progress: &mut Progress,
 ) -> Result<(), SyncFailure> {
@@ -2769,6 +2872,7 @@ fn pop_sync(
                 )))
             }
         };
+        lease.keep(facade)?;
         let parsed = match parse_message(&raw) {
             Ok(parsed) => parsed,
             Err(text) => {

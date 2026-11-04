@@ -2782,3 +2782,91 @@ fn an_idle_worker_takes_an_exists_before_the_continuation() {
     super::idle::stop_all(ctx.factory());
     assert!(stopping.elapsed() < Duration::from_secs(5), "{:?}", stopping.elapsed());
 }
+
+/// A sync whose lease lapsed during a stalled fetch, while a second sync took the account, stops at its next renewal
+/// without storing what it fetched, and its release leaves the second sync's lock (HL-037).
+#[test]
+fn a_sync_whose_lease_lapsed_stops_and_leaves_the_lock_to_the_next() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let imap = FakeImap::start(&["UIDPLUS"]);
+    let account = imap_account(imap.port, "app-password");
+    sync(&account);
+    imap.add(
+        "INBOX",
+        &mail(
+            "<lapse@example.com>",
+            "x@example.com",
+            "alice@example.com",
+            "Lapse",
+            "",
+            "l",
+        ),
+        &[],
+    );
+    // the first body fetch outlasts the first sync's lease; the second keeps the second sync going past the first's end
+    imap.stall_on("BODY.PEEK[]", Duration::from_millis(400));
+    imap.stall_on("BODY.PEEK[]", Duration::from_millis(400));
+    let run = |lease_millis: i64| {
+        let factory = std::sync::Arc::clone(ctx.factory());
+        let facade = facade.clone();
+        let account = account.clone();
+        std::thread::spawn(move || {
+            let context = factory.new_context();
+            let _entered = context.enter();
+            let _authz = context.disable_authz();
+            let options = super::sync::SyncOptions {
+                lease_millis: Some(lease_millis),
+                ..super::sync::SyncOptions::default()
+            };
+            super::sync::run_sync(&facade, &account, &options)
+        })
+    };
+    let started = Instant::now();
+    let first = run(100);
+    // the second starts once the first's lease has lapsed, during its stalled fetch
+    loop {
+        let row = one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account);
+        let until = row.get("syncLockedUntil").and_then(moqui_core::user::value_millis);
+        if !field(&row, "syncLockedBy").is_empty() && until.is_some_and(|until| until < now()) {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "the first sync's lease did not lapse"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let second = run(600_000);
+    let first = first.join().unwrap();
+    assert_eq!(first.outcome, "busy", "{first:?}");
+    assert_eq!(first.new_count, 0, "{first:?}");
+    let held = one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account);
+    assert!(
+        !field(&held, "syncLockedBy").is_empty(),
+        "the second sync keeps its lock"
+    );
+    assert!(by_message_id(&facade, &account, "<lapse@example.com>").is_none());
+    let second = second.join().unwrap();
+    assert_eq!(second.outcome, "synced", "{second:?}");
+    assert_eq!(second.new_count, 1, "{second:?}");
+    assert_eq!(
+        rows(
+            &facade,
+            MESSAGE,
+            &[("emailAccountId", &account), ("messageId", "<lapse@example.com>")]
+        )
+        .len(),
+        1
+    );
+    let released = one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account);
+    assert!(field(&released, "syncLockedBy").is_empty());
+    assert!(
+        field(&released, "lastSyncError").is_empty(),
+        "the lapsed sync recorded nothing"
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
