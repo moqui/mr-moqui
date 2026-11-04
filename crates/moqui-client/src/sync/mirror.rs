@@ -24,6 +24,10 @@
 //! - **Shared:** the latest page of the `prefetch-rooms` most recent rooms, the new message's `composeData`, and the
 //!   inbox's first `prefetch-mail` threads with their messages.
 //!
+//! With a server at `clientApi` 4 (MD5) a run first reads the changes feeds (`sync::feeds`): a run of the heads only
+//! is then the feeds alone, which read again only the rooms with something new, unless a feed was reset (or read the
+//! first time), when chat or mail is read as a full run reads it.
+//!
 //! The requests go through the proxy with the account's key ([`Transport`]), one at a time with a short pause between
 //! them, and their answers are written as the scheme writes the pages' (`offline::keep`). A run is bounded (pages per
 //! room and folder, requests in all), stops when the server cannot be reached or no longer takes the key, when the
@@ -36,6 +40,7 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+use super::feeds::{self, Synced};
 use crate::account::Account;
 use crate::app::{Client, ClientHost};
 use crate::conf::{ClientConf, DeviceMode};
@@ -101,6 +106,8 @@ pub(crate) struct Job<'a> {
     pub(crate) pause: Duration,
     /// Only each room's latest page (the timelines' heads), after a drop.
     pub(crate) heads_only: bool,
+    /// The changes feeds of a server at `clientApi` 4, read first; none below it.
+    pub(crate) feeds: Option<&'a dyn Fn() -> Synced>,
 }
 
 /// A run's progress: the requests it made.
@@ -140,14 +147,22 @@ impl Run<'_, '_> {
     }
 }
 
-/// Run the mirror of `job`: chat, then mail.
+/// Run the mirror of `job`: the feeds, then chat and mail.
 pub(crate) fn run(job: &Job<'_>) -> Ended {
+    let synced = job.feeds.map(|feeds| feeds());
+    if let Some(ended) = synced.as_ref().and_then(|synced| synced.ended) {
+        return ended;
+    }
     let mut run = Run { job, requests: 0 };
-    let ended = if job.heads_only {
-        chat(&mut run)
-    } else {
-        chat(&mut run).and_then(|()| mail(&mut run))
+    let (read_chat, read_mail) = match (&synced, job.heads_only) {
+        (_, false) => (true, true),
+        (None, true) => (true, false),
+        // the feeds kept the store up; what a reset dropped is read again
+        (Some(synced), true) => (synced.chat_reread, synced.mail_reread),
     };
+    let ended =
+        (if read_chat { chat(&mut run) } else { Ok(()) })
+            .and_then(|()| if read_mail { mail(&mut run) } else { Ok(()) });
     match ended {
         Ok(()) => Ended::Done,
         Err(ended) => ended,
@@ -159,7 +174,8 @@ fn cutoff(job: &Job<'_>) -> i64 {
     job.now_ms - i64::from(job.conf.mirror_days) * 24 * 3600 * 1000
 }
 
-fn encode(value: &str) -> String {
+/// A value for a query, percent-encoded.
+pub(crate) fn encode(value: &str) -> String {
     let mut out = String::new();
     for byte in value.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'~') {
@@ -365,6 +381,11 @@ impl Mirror {
         }
     }
 
+    /// The generation runs start in now ([`Self::cancel`] moves it on).
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
     /// Whether the run of `generation` is to stop.
     pub(crate) fn cancelled(&self, generation: u64) -> bool {
         self.generation.load(Ordering::SeqCst) != generation
@@ -381,13 +402,13 @@ impl Mirror {
     }
 }
 
-/// Start a run for the account `id` on a thread of its own, as [`Mirror::begin`] decides.
-pub fn start(client: &Arc<Client>, host: &Arc<dyn ClientHost>, id: &str) {
+/// Start a run for the account `id` on a thread of its own, as [`Mirror::begin`] decides; whether one started.
+pub fn start(client: &Arc<Client>, host: &Arc<dyn ClientHost>, id: &str) -> bool {
     if client.is_stopped() {
-        return;
+        return false;
     }
     let Some((generation, heads_only)) = client.mirror.begin(id) else {
-        return;
+        return false;
     };
     let thread_client = Arc::clone(client);
     let thread_host = Arc::clone(host);
@@ -407,7 +428,9 @@ pub fn start(client: &Arc<Client>, host: &Arc<dyn ClientHost>, id: &str) {
     if let Err(err) = started {
         tracing::error!("The mirror of {id} did not start: {err}");
         client.mirror.end(id, generation, Ended::Cancelled);
+        return false;
     }
+    true
 }
 
 /// One run for the account `id`, with its key, mode and comms app.
@@ -429,6 +452,21 @@ fn run_for(host: &dyn ClientHost, client: &Client, id: &str, generation: u64, he
         }
     };
     let cancelled = || client.mirror.cancelled(generation);
+    // the feeds, unless a run of them is under way (it covers this one); one asked for meanwhile runs after
+    let syncs = feeds::server_of(client, id).syncs();
+    let read_feeds = || {
+        if !client.feeds.begin(id) {
+            return Synced::default();
+        }
+        let mut synced = feeds::run_for(host, client, id);
+        while client.feeds.finish(id) && synced.ended.is_none() {
+            let again = feeds::run_for(host, client, id);
+            synced.chat_reread |= again.chat_reread;
+            synced.mail_reread |= again.mail_reread;
+            synced.ended = again.ended;
+        }
+        synced
+    };
     let job = Job {
         transport: &transport,
         keep: &keep,
@@ -441,6 +479,7 @@ fn run_for(host: &dyn ClientHost, client: &Client, id: &str, generation: u64, he
         cancelled: &cancelled,
         pause: PAUSE,
         heads_only,
+        feeds: if syncs { Some(&read_feeds) } else { None },
     };
     let started = Instant::now();
     let ended = run(&job);
@@ -454,11 +493,11 @@ fn run_for(host: &dyn ClientHost, client: &Client, id: &str, generation: u64, he
 }
 
 /// The account's server through the proxy, with its key, as the shell's requests go.
-struct ProxyTransport<'a> {
-    host: &'a dyn ClientHost,
-    client: &'a Client,
-    account: &'a Account,
-    key: &'a str,
+pub(crate) struct ProxyTransport<'a> {
+    pub(crate) host: &'a dyn ClientHost,
+    pub(crate) client: &'a Client,
+    pub(crate) account: &'a Account,
+    pub(crate) key: &'a str,
 }
 
 impl Transport for ProxyTransport<'_> {

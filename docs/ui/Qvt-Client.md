@@ -1081,7 +1081,7 @@ app windows (`moqui-app`) show the server's own `/qapps`. The bridge then also h
 |---|---|
 | `socket(url)` | a socket-like object the host holds for `/notws` and `/callws` (text frames), which `moqui.openSocket(url)` returns in place of a WebSocket. The node in process has it too, for `/notws`, `/callws` and `/termws`, whose binary frames it carries as an `ArrayBuffer` |
 | `storageScope` | what `moqui.scopedKey(key)` puts browser storage keys of a server's data under (the chat outbox, the crypto device and store, drafts); `moqui.storageScope` set to a string is used instead. Empty on the web |
-| `outbox` | the host's outbox of the window's account: `add(kind, payload, files)`, `list()`, `retry(id)`, `discard(id)`, `on(fn)` for each change; kinds `chat-send`, `chat-read`, `mail-send`, `mail-state` |
+| `outbox` | the host's outbox of the window's account: `add(kind, payload, files)`, `list()` (each with its `state`, a rejection's `status` and `error`, a conflict's `current`), `kinds()` (what the server takes queued), `retry(id)`, `discard(id)`, `on(fn)` for each change; kinds `chat-send`, `chat-read`, `mail-send`, `mail-state`, and with a server at `clientApi` 4 `chat-edit`, `chat-redact`, `chat-react`, `poll-vote` and `internal-send` ([Desktop-Client](Desktop-Client.md#the-outbox-and-drafts)) |
 | `drafts` | the host's drafts and their files: `get`, `list`, `put`, `remove`, `saveFile` |
 | `deviceName` | the shell's name for its chat crypto device ("MR Moqui desktop on <host>"), which `WebrootCrypto.js` uses |
 | `openInShell(path)` | app windows: shows a comms screen (an encrypted room, a call) in the shell, for the window's account while it is current |

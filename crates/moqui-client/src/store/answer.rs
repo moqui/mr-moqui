@@ -94,6 +94,41 @@ impl Store {
     }
 }
 
+impl Store {
+    /// The keys of the kept answers whose key starts with `prefix` (a path, with or without the start of a query).
+    pub fn answer_keys(&self, prefix: &str) -> Vec<String> {
+        self.rows(
+            "answers",
+            "SELECT key FROM answer WHERE substr(key, 1, length(?1)) = ?1",
+            [prefix],
+            |row| row.get(0),
+        )
+    }
+
+    /// Forget the answers whose key starts with `prefix` and passes `keep_out` (the cached reads of a feed reset);
+    /// gives how many went.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a row cannot be removed.
+    pub fn remove_answers(&self, prefix: &str, keep_out: impl Fn(&str) -> bool) -> Result<usize, Error> {
+        let keys: Vec<String> = self
+            .answer_keys(prefix)
+            .into_iter()
+            .filter(|key| keep_out(key))
+            .collect();
+        self.atomic(|store| {
+            for key in &keys {
+                store
+                    .conn
+                    .execute("DELETE FROM answer WHERE key = ?1", [key])
+                    .map_err(failed("answer not removed"))?;
+            }
+            Ok(keys.len())
+        })
+    }
+}
+
 /// The key of an answer: the path, and the query's parameters sorted by name (the order of one name's values kept),
 /// so one request asked with its parameters in another order finds the same answer.
 pub fn answer_key(path: &str, query: &str) -> String {

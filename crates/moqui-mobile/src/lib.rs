@@ -106,6 +106,7 @@ pub fn run() {
             moqui_client_tauri::socket_close,
             moqui_client_tauri::outbox_add,
             moqui_client_tauri::outbox_list,
+            moqui_client_tauri::outbox_kinds,
             moqui_client_tauri::outbox_retry,
             moqui_client_tauri::outbox_discard,
             moqui_client_tauri::outbox_unsent,

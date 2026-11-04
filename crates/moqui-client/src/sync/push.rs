@@ -33,21 +33,29 @@
 //! A push that comes twice (the shell's socket and an app window's) changes nothing the second time: one at or below
 //! the head range, or whose row is kept, is in already. A frame that does
 //! not parse, or that the store does not take, is logged and passed over.
+//!
+//! With a server at `clientApi` 4 (MD5) the pushes carry their number in the changes feeds: `changeSeq` on
+//! `chatUser:`, `roomChangeSeq` on a `chatRoom:` push that changed a message. A push next after the cursor the store
+//! keeps (`sync::feeds`) and folded whole here moves the cursor on; one past it (a gap: pushes were missed), or one
+//! this fold cannot finish (a room joined or changed, whose row is read), has [`keep_frame`] ask for the feeds to be
+//! read. A store with no cursor yet (an older server, or before the first read) asks nothing.
 
-use crate::store::{ChatEvent, Store};
+use crate::store::{ChatEvent, Store, ROOM_CURSOR};
 use serde_json::{json, Value};
 
+use super::feeds::CHAT_CURSOR;
 use crate::offline::{chat_event, number};
 
-/// Keep what a `/notws` text frame of `me`'s says of chat; anything else is passed over.
-pub(crate) fn keep_frame(store: &Store, me: &str, text: &str) {
+/// Keep what a `/notws` text frame of `me`'s says of chat; anything else is passed over. True when the changes feeds
+/// are to be read: the push's number is past the cursor kept, or its change needs a read.
+pub(crate) fn keep_frame(store: &Store, me: &str, text: &str) -> bool {
     let Ok(frame) = serde_json::from_str::<Value>(text) else {
         tracing::debug!("A /notws frame that is not JSON was passed over");
-        return;
+        return false;
     };
     let topic = frame["topic"].as_str().unwrap_or("");
     if !topic.starts_with("chatRoom:") && !topic.starts_with("chatUser:") {
-        return;
+        return false;
     }
     // the message may come as JSON text
     let message = match &frame["message"] {
@@ -55,17 +63,47 @@ pub(crate) fn keep_frame(store: &Store, me: &str, text: &str) {
         other => other.clone(),
     };
     if !message.is_object() {
-        return;
+        return false;
     }
-    let kept = if let Some(room) = topic.strip_prefix("chatRoom:") {
+    let (kept, wanted) = if let Some(room) = topic.strip_prefix("chatRoom:") {
         let room = message["chatRoomId"].as_str().unwrap_or(room).to_string();
-        room_push(store, me, &room, &message)
+        let kept = room_push(store, me, &room, &message);
+        let wanted = kept.is_ok() && follow(store, &format!("{ROOM_CURSOR}{room}"), &message["roomChangeSeq"], true);
+        (kept, wanted)
     } else {
-        user_push(store, &message)
+        let kept = user_push(store, &message);
+        // a read or a room left is folded whole here; a room joined or changed needs its row read
+        let whole = match message["kind"].as_str() {
+            Some("read") => true,
+            Some("room") => message["action"].as_str() == Some("left"),
+            _ => false,
+        };
+        let wanted = kept.is_ok() && follow(store, CHAT_CURSOR, &message["changeSeq"], whole);
+        (kept, wanted)
     };
     if let Err(err) = kept {
         tracing::warn!("A chat push on {topic} was not kept: {err}");
     }
+    wanted
+}
+
+/// A pushed change numbered `seq` in the feed whose cursor is `name`: the cursor moved on when it is the next and was
+/// folded `whole`; true when the feed is to be read (a gap, or a change not folded whole). Nothing without a number or
+/// a cursor.
+fn follow(store: &Store, name: &str, seq: &Value, whole: bool) -> bool {
+    let (Some(seq), Some(cursor)) = (number(seq), store.sync_seq(name)) else {
+        return false;
+    };
+    if seq <= cursor {
+        return false;
+    }
+    if seq == cursor + 1 && whole {
+        if let Err(err) = store.set_sync_seq(name, seq) {
+            tracing::warn!("The cursor {name} was not moved on: {err}");
+        }
+        return false;
+    }
+    true
 }
 
 /// The `clientRef` of my own chat message in a `/notws` text frame of `me`'s, which takes its outbox operation off
@@ -344,6 +382,12 @@ fn redact(store: &Store, room: &str, event: &Value, who: &str, mine: bool) -> Re
     let Some(target) = number(&event["relatesToEventSeq"]) else {
         return Ok(());
     };
+    redact_message(store, room, target, &event["sentDate"])
+}
+
+/// A message of `room` redacted (on `date`): its content removed as `get#Timeline` shows a redacted message, and a
+/// thread reply's count on its root taken down. One not kept, or redacted already, is passed over.
+pub(crate) fn redact_message(store: &Store, room: &str, target: i64, date: &Value) -> Result<(), String> {
     let Some(kept) = store.chat_event(room, target) else {
         return Ok(());
     };
@@ -373,7 +417,7 @@ fn redact(store: &Store, room: &str, event: &Value, who: &str, mine: bool) -> Re
         ("forwardOf", Value::Null),
         ("linkPreviews", json!([])),
         ("assist", Value::Null),
-        ("redactedDate", event["sentDate"].clone()),
+        ("redactedDate", date.clone()),
     ] {
         item[name] = value;
     }

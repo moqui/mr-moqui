@@ -37,6 +37,7 @@ use crate::keys::Keys;
 use crate::proxy::Proxy;
 use crate::store::Store;
 use crate::stores::Stores;
+use crate::sync::feeds::Feeds;
 use crate::sync::flush::Flusher;
 use crate::sync::mirror::Mirror;
 use crate::{modes, offline};
@@ -73,6 +74,8 @@ pub struct Client {
     /// Each account's comms app (`calls.appRoot` of its client config), once known.
     comms: Mutex<HashMap<String, String>>,
     pub(crate) mirror: Mirror,
+    /// The changes feeds' runs (MD5).
+    pub(crate) feeds: Feeds,
     /// Wakes the thread that sends the outboxes.
     pub(crate) flusher: Flusher,
     pub(crate) proxy: Proxy,
@@ -98,6 +101,7 @@ impl Client {
             read_conf,
             comms: Mutex::new(HashMap::new()),
             mirror: Mirror::default(),
+            feeds: Feeds::default(),
             flusher: Flusher::default(),
             proxy: Proxy::new().map_err(|err| err.to_string())?,
             sockets: Sockets::default(),
@@ -219,6 +223,12 @@ impl Client {
             .unwrap_or_else(|| offline::DEFAULT_COMMS_ROOT.to_string());
         moqui_lib::sync::lock(&self.comms).insert(id.to_string(), root.clone());
         root
+    }
+
+    /// What the account's server supports of the client's sync (its `clientApi` and features), from its kept client
+    /// config; MD4's when none is kept.
+    pub fn server_sync_of(&self, id: &str) -> crate::login::ServerSync {
+        crate::sync::feeds::server_of(self, id)
     }
 
     /// The comms app of an account as noted in memory, never read from the store or the conf (for the main thread).

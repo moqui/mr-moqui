@@ -33,7 +33,7 @@ use super::{Client, APP_ORIGIN, SHELL_ORIGIN};
 
 /// The shell's commands, as `allow-<command>` (build.rs), the sockets, the node page bridge's, and the notification
 /// plugin's check its `window.Notification` makes.
-const SHELL_PERMISSIONS: [&str; 30] = [
+const SHELL_PERMISSIONS: [&str; 31] = [
     "allow-client-state",
     "allow-client-sign-in",
     "allow-client-send-code",
@@ -51,6 +51,7 @@ const SHELL_PERMISSIONS: [&str; 30] = [
     "allow-socket-close",
     "allow-outbox-add",
     "allow-outbox-list",
+    "allow-outbox-kinds",
     "allow-outbox-retry",
     "allow-outbox-discard",
     "allow-outbox-unsent",
@@ -68,12 +69,13 @@ const SHELL_PERMISSIONS: [&str; 30] = [
 
 /// An app window's: the sockets of its page, the outbox and drafts of its account (which reach nothing its requests do
 /// not), and the notification plugin's check its `window.Notification` makes.
-const APP_PERMISSIONS: [&str; 14] = [
+const APP_PERMISSIONS: [&str; 15] = [
     "allow-socket-open",
     "allow-socket-send",
     "allow-socket-close",
     "allow-outbox-add",
     "allow-outbox-list",
+    "allow-outbox-kinds",
     "allow-outbox-retry",
     "allow-outbox-discard",
     "allow-draft-get",

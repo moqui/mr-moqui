@@ -136,6 +136,7 @@ fn mirror(server: &Server, store: &Store, mode: DeviceMode, cancelled: &dyn Fn()
         cancelled,
         pause: Duration::ZERO,
         heads_only: false,
+        feeds: None,
     })
 }
 
@@ -301,6 +302,7 @@ fn a_heads_run_reads_each_rooms_latest_page_only() {
         cancelled: &|| false,
         pause: Duration::ZERO,
         heads_only: true,
+        feeds: None,
     });
     assert_eq!(ended, Ended::Done);
     assert_eq!(

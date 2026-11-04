@@ -156,6 +156,8 @@
     const outbox = Object.freeze({
         add: (kind, payload, files) => ask("outbox_add", { kind: String(kind || ""), payload: payload || {}, files: Array.isArray(files) ? files.map(String) : null }),
         list: () => ask("outbox_list"),
+        // {clientApi, kinds, internalSend}: what the account's server takes queued (MD5)
+        kinds: () => ask("outbox_kinds"),
         retry: (id) => ask("outbox_retry", { id: String(id || "") }),
         discard: (id) => ask("outbox_discard", { id: String(id || "") }),
         on: (fn) => {

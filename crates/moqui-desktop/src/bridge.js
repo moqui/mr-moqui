@@ -184,9 +184,13 @@
         });
     };
     const outbox = Object.freeze({
-        // kind chat-send, chat-read, mail-send or mail-state; files: the store's names (drafts.saveFile) it sends
+        // kind chat-send, chat-read, mail-send or mail-state, and with a server at clientApi 4 chat-edit, chat-redact,
+        // chat-react, poll-vote and internal-send (kinds() says which); files: the store's names (drafts.saveFile) it sends
         add: (kind, payload, files) => ask("outbox_add", { kind: String(kind || ""), payload: payload || {}, files: Array.isArray(files) ? files.map(String) : null }),
+        // each with its state (a conflict's current, a rejection's status and error)
         list: () => ask("outbox_list"),
+        // {clientApi, kinds, internalSend}: what the account's server takes queued
+        kinds: () => ask("outbox_kinds"),
         retry: (id) => ask("outbox_retry", { id: String(id || "") }),
         discard: (id) => ask("outbox_discard", { id: String(id || "") }),
         on: (fn) => {

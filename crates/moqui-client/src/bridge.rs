@@ -26,7 +26,9 @@
 //! account's `/notws` marks the timelines' heads stale, as pushes may be missed while it is down, and has the mirror
 //! (`sync::mirror`) read them again when the shell's opens next; the shell's opening starts the mirror. An opening also
 //! wakes the outbox's sender (`sync::flush`), and my own message pushed back takes its operation off
-//! (`sync::outbox::echoed`).
+//! (`sync::outbox::echoed`). With a server at `clientApi` 4 the changes feeds (`sync::feeds`) are read when a `/notws`
+//! opens (in the mirror's run, or in one of their own when the mirror does not start) and when a push's number shows a
+//! gap.
 //!
 //! [`Sockets`] holds any [`PageSocket`], so a host may keep other sockets of its pages there too (the desktop app's
 //! node in process).
@@ -40,7 +42,7 @@ use serde_json::{json, Value};
 use crate::account::Account;
 use crate::app::{Client, ClientHost};
 use crate::socket::{Event, Socket};
-use crate::sync::{mirror, outbox, push};
+use crate::sync::{feeds, mirror, outbox, push};
 
 /// A socket held for a page.
 pub trait PageSocket: Send {
@@ -218,7 +220,10 @@ pub fn open_remote(client: &Arc<Client>, host: &Arc<dyn ClientHost>, page: &str,
 fn notified(client: &Arc<Client>, host: &Arc<dyn ClientHost>, page: &str, account: &Account, event: &Event) {
     match event {
         Event::Text(text) => {
-            client.with_store(&account.id, |store| push::keep_frame(store, &account.user_id, text));
+            let gap = client.with_store(&account.id, |store| push::keep_frame(store, &account.user_id, text));
+            if gap == Some(true) {
+                feeds::start(client, host, &account.id);
+            }
             // my message came back: its outbox operation is done
             if let Some(client_ref) = push::echo_ref(&account.user_id, text) {
                 let removed = client.with_store(&account.id, |store| outbox::echoed(store, &client_ref));
@@ -235,8 +240,9 @@ fn notified(client: &Arc<Client>, host: &Arc<dyn ClientHost>, page: &str, accoun
         Event::Open => {
             // the network is back: what waits in the outbox goes
             client.flusher.wake();
-            if host.is_shell(page) {
-                mirror::start(client, host, &account.id);
+            // pushes may have been missed while it was down: the feeds catch up, in the mirror's run when one starts
+            if !(host.is_shell(page) && mirror::start(client, host, &account.id)) {
+                feeds::start(client, host, &account.id);
             }
         }
     }

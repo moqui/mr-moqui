@@ -27,8 +27,9 @@ along with this software (see the LICENSE.md file). If not, see
         more, reset} or {unsupported}; clientRef on more mutations (Chat's edit, redact, react, votePoll and markRead, the Inbox's
         state and viewAction), conflicts (Compose's baseStamp, a state target's seen) and chunked uploads (uploadChunk and
         uploadStatus, then upload by uploadId; plans/Mobile-Desktop.md MD5)). server.features says what a client may use
-        beside it: nativePush {providers: ['fcm'], fcmConfigured, registered} (registerClientPush below). A transition
-        runs none of the pre-actions below. 401 without a user. -->
+        beside it: nativePush {providers: ['fcm'], fcmConfigured, registered} (registerClientPush below), and what each
+        inbox-source provider's operation features answers, merged in: internalSendRef, mailChangesUncovered. A
+        transition runs none of the pre-actions below. 401 without a user. -->
     <transition name="clientConfig" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
             if (!ec.user.userId) {
@@ -42,6 +43,22 @@ along with this software (see the LICENSE.md file). If not, see
                 config.server = { name: config.shell.title || ec.web.getHostName(false), moquiVersion: ec.factory.moquiVersion, clientApi: 4 }
                 const push = ec.service.sync().name('org.moqui.impl.NotificationServices.get#PushDeviceStatus').disableAuthz().call() || {}
                 config.server.features = { nativePush: { providers: ['fcm'], fcmConfigured: push.fcmConfigured === true, registered: push.registered === true } }
+                // what an app's inbox source supports beyond the framework's (its operation features), for a client that works
+                // offline: internalSendRef (an internal send is made once by its clientRef, so it may be queued) and
+                // mailChangesUncovered (the stores the mail change cursor does not cover). Read-only and the user's own, so with
+                // no authorization, as the shell's other services here; each provider runs as its app. One that fails is logged.
+                const features = config.server.features = Object.assign({}, config.server.features || {})
+                try {
+                    const providers = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'inbox-source',
+                        parameters: {operation: 'features'}}).disableAuthz().call()
+                    for (const answer of Array.from(providers?.results || [])) {
+                        if (answer && answer.handled && answer.result) Object.assign(features, answer.result)
+                    }
+                    for (const part of Array.from(providers?.failedParts || [])) ec.logger.warn(`Client config features of ${part.sourceId}: ${part.error}`)
+                } catch (err) {
+                    ec.logger.warn(`Client config features not read: ${err && err.message ? err.message : err}`)
+                }
+                if (ec.message.hasError()) { ec.logger.warn(`Client config features: ${ec.message.errorsString}`); ec.message.clearErrors() }
                 ec.web.sendJsonResponse(config)
             }
             ]]></script></actions>

@@ -45,8 +45,13 @@ pub enum OutboxState {
     Retry,
     /// Waiting for the user to sign in again (401, 403); [`Store::outbox_release_held`] makes it a retry.
     Held,
-    /// Refused by the server; kept for the user to see, retry or discard. It does not hold up its target.
+    /// Refused by the server (its `status` a 4xx, a rejection), or failed on the way (held too often, its files
+    /// gone); kept with its error for the user to see, retry or discard. It does not hold up its target.
     Failed,
+    /// The server's copy changed since the user's was made (MD5: a draft's `baseStamp`, a thread's `seen`): nothing
+    /// of it was done, and the server's state is kept in `current` for the user to see; a retry sends it anyway, a
+    /// discard drops it. It does not hold up its target.
+    Conflict,
 }
 
 impl OutboxState {
@@ -58,6 +63,7 @@ impl OutboxState {
             Self::Retry => "retry",
             Self::Held => "held",
             Self::Failed => "failed",
+            Self::Conflict => "conflict",
         }
     }
 
@@ -69,6 +75,7 @@ impl OutboxState {
             "retry" => Self::Retry,
             "held" => Self::Held,
             "failed" => Self::Failed,
+            "conflict" => Self::Conflict,
             _ => return None,
         })
     }
@@ -100,6 +107,12 @@ pub struct OutboxOp {
     pub error: Option<String>,
     /// The store's files it sends ([`Store::save_file`]), removed with it.
     pub files: Vec<String>,
+    /// The HTTP status of its last refusal (a 4xx for a rejection), 0 for none.
+    #[serde(default)]
+    pub status: u16,
+    /// For a conflict, the server's state it met (JSON), for the user to see.
+    #[serde(default)]
+    pub current: Option<String>,
 }
 
 impl OutboxOp {
@@ -118,7 +131,23 @@ impl OutboxOp {
             payload: payload.to_string(),
             error: None,
             files: Vec::new(),
+            status: 0,
+            current: None,
         }
+    }
+
+    /// Whether the server refused it (a 4xx): a rejection, for the user to retry or discard.
+    pub fn rejected(&self) -> bool {
+        self.state == OutboxState::Failed && (400..500).contains(&self.status)
+    }
+}
+
+/// The group an operation's order is kept in with its target: a message's edit, redaction, reaction and poll vote go
+/// in the order they were made, whatever their kind; another kind is a group of its own.
+pub fn order_group(kind: &str) -> &str {
+    match kind {
+        "chat-edit" | "chat-redact" | "chat-react" | "poll-vote" => "chat-message",
+        other => other,
     }
 }
 
@@ -142,16 +171,36 @@ pub struct OutboxUpdate {
     pub error: Option<String>,
 }
 
-const COLUMNS: &str = "id, kind, target, state, attempts, next_ms, created_ms, updated_ms, payload, error, files";
+const COLUMNS: &str =
+    "id, kind, target, state, attempts, next_ms, created_ms, updated_ms, payload, error, files, status, current";
 
-/// The operations due at `?1`: queued or to retry with their time come, and no earlier one of their kind and target
-/// waiting (held, being sent, or queued or to retry and not due).
-const DUE: &str = "state IN ('queued', 'retry') AND next_ms <= ?1 AND (target = '' OR NOT EXISTS (
-        SELECT 1 FROM outbox earlier WHERE earlier.kind = outbox.kind AND earlier.target = outbox.target
+/// The order group of an operation's kind in SQL, as [`order_group`], of the row of `$table`.
+macro_rules! group_of {
+    ($table:literal) => {
+        concat!(
+            "(CASE WHEN ",
+            $table,
+            ".kind IN ('chat-edit', 'chat-redact', 'chat-react', 'poll-vote') THEN 'chat-message' ELSE ",
+            $table,
+            ".kind END)"
+        )
+    };
+}
+
+/// The operations due at `?1`: queued or to retry with their time come, and no earlier one of their order group
+/// ([`order_group`]) and target waiting (held, being sent, or queued or to retry and not due).
+const DUE: &str = concat!(
+    "state IN ('queued', 'retry') AND next_ms <= ?1 AND (target = '' OR NOT EXISTS (
+        SELECT 1 FROM outbox earlier WHERE ",
+    group_of!("earlier"),
+    " = ",
+    group_of!("outbox"),
+    " AND earlier.target = outbox.target
             AND (earlier.created_ms < outbox.created_ms
                 OR (earlier.created_ms = outbox.created_ms AND earlier.id < outbox.id))
             AND (earlier.state IN ('held', 'sending')
-                OR (earlier.state IN ('queued', 'retry') AND earlier.next_ms > ?1))))";
+                OR (earlier.state IN ('queued', 'retry') AND earlier.next_ms > ?1))))"
+);
 
 impl Store {
     /// Add an operation; false, and the kept one unchanged, when one of its id is there already, so adding again
@@ -166,7 +215,8 @@ impl Store {
             .conn
             .execute(
                 &format!(
-                    "INSERT OR IGNORE INTO outbox ({COLUMNS}) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
+                    "INSERT OR IGNORE INTO outbox ({COLUMNS})
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)"
                 ),
                 params![
                     op.id,
@@ -179,7 +229,9 @@ impl Store {
                     op.updated_ms,
                     op.payload,
                     op.error,
-                    files
+                    files,
+                    op.status,
+                    op.current
                 ],
             )
             .map_err(failed("outbox operation not kept"))?;
@@ -242,24 +294,61 @@ impl Store {
         ops
     }
 
-    /// Change an operation's state; false when there is no such operation.
+    /// Change an operation's state; false when there is no such operation. The status of a refusal and the state of
+    /// a conflict are cleared, as they were of the state it leaves ([`Self::outbox_settle`] sets them).
     ///
     /// # Errors
     ///
     /// Returns an error when the row cannot be written.
     pub fn outbox_update(&self, id: &str, update: &OutboxUpdate) -> Result<bool, Error> {
+        self.outbox_settle(id, update, 0, None)
+    }
+
+    /// Change an operation's state after a send, with the status of a refusal (0 for none) and, for a conflict, the
+    /// server's state it met; false when there is no such operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row cannot be written.
+    pub fn outbox_settle(
+        &self,
+        id: &str,
+        update: &OutboxUpdate,
+        status: u16,
+        current: Option<&str>,
+    ) -> Result<bool, Error> {
         let changed = self
             .conn
             .execute(
-                "UPDATE outbox SET state = ?1, attempts = ?2, next_ms = ?3, error = ?4, updated_ms = ?5 WHERE id = ?6",
+                "UPDATE outbox SET state = ?1, attempts = ?2, next_ms = ?3, error = ?4, updated_ms = ?5, status = ?6,
+                    current = ?7 WHERE id = ?8",
                 params![
                     update.state.as_str(),
                     update.attempts,
                     update.next_ms,
                     update.error,
                     now_ms(),
+                    status,
+                    current,
                     id
                 ],
+            )
+            .map_err(failed("outbox operation not changed"))?;
+        Ok(changed > 0)
+    }
+
+    /// Replace an operation's payload (a conflict's targets narrowed, a forced retry's references); false when there
+    /// is no such operation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row cannot be written.
+    pub fn outbox_set_payload(&self, id: &str, payload: &str) -> Result<bool, Error> {
+        let changed = self
+            .conn
+            .execute(
+                "UPDATE outbox SET payload = ?1, updated_ms = ?2 WHERE id = ?3",
+                params![payload, now_ms(), id],
             )
             .map_err(failed("outbox operation not changed"))?;
         Ok(changed > 0)
@@ -295,6 +384,9 @@ impl Store {
             .optional()
             .map_err(failed("outbox operation not removed"))?;
         let Some(files) = files else { return Ok(false) };
+        if let Err(err) = self.remove_uploads(id) {
+            tracing::warn!("Client store {}: {err}", self.account);
+        }
         self.release_files(&files);
         Ok(true)
     }
@@ -360,6 +452,8 @@ fn op_of(row: &rusqlite::Row<'_>) -> Result<OutboxOp, String> {
             payload: row.get(8).map_err(|err| err.to_string())?,
             error: row.get(9).map_err(|err| err.to_string())?,
             files: serde_json::from_str(&files).map_err(|err| format!("files: {err}"))?,
+            status: row.get(11).map_err(|err| err.to_string())?,
+            current: row.get(12).map_err(|err| err.to_string())?,
         })
     };
     read().map_err(|err| format!("{id}: {err}"))

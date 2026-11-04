@@ -21,6 +21,7 @@
     "allow-socket-close",
     "allow-outbox-add",
     "allow-outbox-list",
+    "allow-outbox-kinds",
     "allow-outbox-retry",
     "allow-outbox-discard",
     "allow-outbox-unsent",

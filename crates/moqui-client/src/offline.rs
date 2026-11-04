@@ -51,13 +51,13 @@ pub const DEFAULT_COMMS_ROOT: &str = "/qapps/BasicComms";
 pub(crate) const VOLATILE: [&str; 3] = ["_", "moquiSessionToken", "pageTraceId"];
 
 /// Where a room's fields are kept (a path no request has).
-const ROOM_META: &str = "~chat-room";
+pub(crate) const ROOM_META: &str = "~chat-room";
 /// Where a mail folder's list fields are kept.
-const FOLDER_META: &str = "~mail-folder";
+pub(crate) const FOLDER_META: &str = "~mail-folder";
 /// Where the user and the chat preferences of `chatData` are kept.
-const CHAT_META: &str = "~chat-data";
+pub(crate) const CHAT_META: &str = "~chat-data";
 /// Where a mail thread's fields but its messages are kept.
-const THREAD_META: &str = "~mail-thread";
+pub(crate) const THREAD_META: &str = "~mail-thread";
 
 /// The most events a timeline page has, as `get#Timeline`.
 const PAGE_MAX: u32 = 200;
@@ -259,14 +259,14 @@ pub fn answer(store: &Store, kind: Kind, bare: &str, query: &str) -> Option<Vec<
 }
 
 /// A kept JSON object of a synthetic path, or none.
-fn kept_object(store: &Store, path: &str, query: &str) -> Option<Map<String, Value>> {
+pub(crate) fn kept_object(store: &Store, path: &str, query: &str) -> Option<Map<String, Value>> {
     match serde_json::from_slice::<Value>(&store.answer(path, query)?.body).ok()? {
         Value::Object(map) => Some(map),
         _ => None,
     }
 }
 
-fn put_object(store: &Store, path: &str, query: &str, value: &Value) -> Result<(), String> {
+pub(crate) fn put_object(store: &Store, path: &str, query: &str, value: &Value) -> Result<(), String> {
     store
         .put_answer(path, query, "application/json", value.to_string().as_bytes())
         .map_err(|err| err.to_string())
@@ -716,7 +716,7 @@ fn keep_threads(store: &Store, params: &Params, json: &Value) -> Result<(), Stri
     )
 }
 
-fn folder_meta_query(folder: &str) -> String {
+pub(crate) fn folder_meta_query(folder: &str) -> String {
     format!("folder={}", folder.replace('&', ";"))
 }
 

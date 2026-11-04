@@ -49,7 +49,8 @@ pub use commands::{
     client_sso_cancel, client_sso_providers, client_sso_start, client_state, client_switch_account, client_take_open,
 };
 pub use outbox::{
-    draft_get, draft_list, draft_put, draft_remove, file_save, outbox_add, outbox_discard, outbox_list, outbox_retry,
+    draft_get, draft_list, draft_put, draft_remove, file_save, outbox_add, outbox_discard, outbox_kinds, outbox_list,
+    outbox_retry,
     outbox_unsent,
 };
 pub use sockets::{socket_close, socket_open, socket_send};

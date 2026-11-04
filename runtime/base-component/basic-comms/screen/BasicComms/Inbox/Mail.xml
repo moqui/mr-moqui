@@ -59,14 +59,16 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- the mail change cursor of a client that keeps the mail (plans/Mobile-Desktop.md MD5): the threads changed after afterSeq,
         each with its messages as they are now, {changes, lastSeq, more, reset} (EmailClientServices.get#MailChanges); reset true
         says to read the folders again and go on from lastSeq; unsupported true, when an app answers the Inbox without a cursor,
-        says to read them again each time -->
+        says to read them again each time; uncoveredStores names the stores of an app whose changes are not in changes
+        (IronStone: internal), whose threads the client reads again each time -->
     <transition name="mailChanges" method="get" read-only="true">
         <actions><script><![CDATA[
             const seq = afterSeq != null && afterSeq !== '' ? Number(afterSeq) : NaN
             const out = ec.service.sync().name('org.moqui.comms.InboxServices.run#Operation').parameters({operation: 'get#MailChanges', parameters: {
                 afterSeq: Number.isNaN(seq) ? null : seq, limit: Number(limit) > 0 ? Number(limit) : 200}}).call()?.result || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : out.unsupported ? {unsupported: true, changes: [], lastSeq: null, more: false, reset: false}
-                : {changes: out.changes || [], lastSeq: out.lastSeq, more: out.more === true, reset: out.reset === true})
+                : {changes: out.changes || [], lastSeq: out.lastSeq, more: out.more === true, reset: out.reset === true,
+                    uncoveredStores: out.uncoveredStores || []})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

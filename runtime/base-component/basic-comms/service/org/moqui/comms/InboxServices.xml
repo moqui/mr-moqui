@@ -39,7 +39,10 @@ along with this software (see the LICENSE.md file). If not, see
 
             get#MailChanges is the mail change cursor (EmailClientServices.get#MailChanges): an app's provider that does not
             answer it gets result {unsupported: true}, as the framework's log knows nothing of the app's own messages; the
-            client then reads its folders again instead. set#ThreadState and apply#ViewAction with parameters.clientRef (the
+            client then reads its folders again instead. A provider that answers it covers every store of its Inbox but those
+            its result names in uncoveredStores (IronStone: internal, whose messages have no change log): the client reads
+            those stores' threads again each time and takes the rest from the cursor. set#ThreadState and apply#ViewAction
+            with parameters.clientRef (the
             client's own reference of the request, ^[A-Za-z0-9_.:-]{1,64}$) run once per reference, the provider's answer
             too: one sent again answers the first one's result with duplicate true and does nothing
             (ClientSyncServices.claim#ClientRequest).</description>

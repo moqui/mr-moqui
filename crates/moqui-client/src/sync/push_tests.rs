@@ -321,3 +321,35 @@ fn a_late_copy_of_an_applied_push_changes_nothing() {
     drop(store);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_pushed_number_next_after_the_cursor_moves_it_and_a_gap_asks_for_the_feeds() {
+    let (store, dir) = store("gaps");
+    let frame = |topic: &str, message: Value| json!({ "topic": topic, "message": message }).to_string();
+    let user = |message: Value| frame("chatUser:ME", message);
+    // no cursor (an older server, or before the first read): nothing is asked
+    let read = |seq: i64| user(json!({ "kind": "read", "chatRoomId": "R1", "lastReadEventSeq": 3, "changeSeq": seq }));
+    assert!(!keep_frame(&store, ME, &read(9)));
+    store.set_sync_seq(crate::sync::feeds::CHAT_CURSOR, 4).unwrap();
+    // the next read is folded whole: the cursor moves on
+    assert!(!keep_frame(&store, ME, &read(5)));
+    assert_eq!(store.sync_seq(crate::sync::feeds::CHAT_CURSOR), Some(5));
+    // one seen already changes no cursor; a room joined needs its row; a gap needs the feed
+    assert!(!keep_frame(&store, ME, &read(5)));
+    let joined = user(json!({ "kind": "room", "action": "joined", "chatRoomId": "R2", "changeSeq": 6 }));
+    assert!(keep_frame(&store, ME, &joined));
+    assert!(keep_frame(&store, ME, &read(8)));
+    assert_eq!(store.sync_seq(crate::sync::feeds::CHAT_CURSOR), Some(5));
+    // a room's message change: the next moves the room's cursor, a gap asks
+    store.set_sync_seq("room:R1", 2).unwrap();
+    let edit = json!({ "kind": "event", "chatRoomId": "R1", "eventSeq": 4, "roomChangeSeq": 3,
+        "event": { "eventSeq": 4, "type": "edit", "editsEventSeq": 1, "body": "new", "senderUserId": "U2" } });
+    assert!(!keep_frame(&store, ME, &frame("chatRoom:R1", edit)));
+    assert_eq!(store.sync_seq("room:R1"), Some(3));
+    assert_eq!(kept(&store, 1)["body"], "new");
+    let update = json!({ "kind": "update", "chatRoomId": "R1", "eventSeq": 2, "roomChangeSeq": 7,
+        "fields": { "linkPreviews": [] } });
+    assert!(keep_frame(&store, ME, &frame("chatRoom:R1", update)));
+    assert_eq!(store.sync_seq("room:R1"), Some(3));
+    let _ = std::fs::remove_dir_all(&dir);
+}

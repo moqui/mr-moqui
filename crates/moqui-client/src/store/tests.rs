@@ -806,3 +806,200 @@ fn the_files_bytes_add_up() {
     drop(store);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn step_two_keeps_sync_cursors_and_uploads_and_an_outbox_refusal() {
+    let dir = dir("step2");
+    let store = Store::open(&dir, "a", 1 << 20).unwrap();
+    assert!(store.sync_cursor("chat").is_none());
+    store.set_sync_seq("chat", 7).unwrap();
+    store
+        .set_sync_cursor(
+            "mail",
+            &SyncCursor {
+                seq: None,
+                value: Some("unsupported".to_string()),
+            },
+        )
+        .unwrap();
+    store.set_sync_seq("room:R1", 3).unwrap();
+    store.set_sync_seq("room:R2", 4).unwrap();
+    assert_eq!(store.sync_seq("chat"), Some(7));
+    assert_eq!(store.sync_cursor("mail").unwrap().value.as_deref(), Some("unsupported"));
+    // a room's cursor goes with the room; the rooms' all with a prefix
+    store.put_chat_room(&room("R1", 1)).unwrap();
+    store.remove_chat_room("R1").unwrap();
+    assert_eq!(store.sync_seq("room:R1"), None);
+    assert_eq!(store.remove_sync_cursors("room:").unwrap(), 1);
+
+    // an upload is kept with its operation, and goes with it
+    store.outbox_add(&op("m1", "mail-send", "", 1)).unwrap();
+    let upload = Upload {
+        op_id: "m1".to_string(),
+        file: "f1".to_string(),
+        upload_id: "u1".to_string(),
+        offset: 0,
+        total: 10,
+    };
+    store.put_upload(&upload).unwrap();
+    store
+        .put_upload(&Upload {
+            offset: 4,
+            ..upload.clone()
+        })
+        .unwrap();
+    assert_eq!(store.upload("m1", "f1").unwrap().offset, 4);
+    // a refusal keeps its status, a conflict the server's state; a state change clears both
+    let failed = OutboxUpdate {
+        state: OutboxState::Failed,
+        attempts: 1,
+        next_ms: 1,
+        error: Some("No".to_string()),
+    };
+    store.outbox_settle("m1", &failed, 422, None).unwrap();
+    let kept = store.outbox_get("m1").unwrap();
+    assert!(kept.rejected() && kept.status == 422);
+    let conflict = OutboxUpdate {
+        state: OutboxState::Conflict,
+        ..failed.clone()
+    };
+    store.outbox_settle("m1", &conflict, 409, Some("{\"a\":1}")).unwrap();
+    let kept = store.outbox_get("m1").unwrap();
+    assert_eq!(kept.state, OutboxState::Conflict);
+    assert_eq!(kept.current.as_deref(), Some("{\"a\":1}"));
+    assert!(!kept.rejected());
+    store.outbox_set_payload("m1", "{\"x\":2}").unwrap();
+    assert_eq!(store.outbox_get("m1").unwrap().payload, "{\"x\":2}");
+    store
+        .outbox_update(
+            "m1",
+            &OutboxUpdate {
+                state: OutboxState::Retry,
+                ..failed
+            },
+        )
+        .unwrap();
+    let kept = store.outbox_get("m1").unwrap();
+    assert!(kept.current.is_none() && kept.status == 0);
+    store.outbox_remove("m1").unwrap();
+    assert!(store.upload("m1", "f1").is_none());
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_store_of_step_one_moves_to_step_two_with_its_rows() {
+    let dir = dir("step1");
+    let db = {
+        let store = Store::open(&dir, "a", 1 << 20).unwrap();
+        store.outbox_add(&op("q1", "chat-send", "R1", 1)).unwrap();
+        // back to step one: as MD4 left it
+        store
+            .conn
+            .execute_batch(
+                "DROP TABLE sync_cursor; DROP TABLE upload; ALTER TABLE outbox DROP COLUMN status;
+                ALTER TABLE outbox DROP COLUMN current; PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        dir.join("data/a.db")
+    };
+    assert!(db.is_file());
+    let store = Store::open(&dir, "a", 1 << 20).unwrap();
+    let kept = store.outbox_get("q1").unwrap();
+    assert_eq!((kept.status, kept.current), (0, None));
+    store.set_sync_seq("chat", 1).unwrap();
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_message_change_waits_behind_another_of_its_message_and_a_conflict_holds_up_nothing() {
+    let dir = dir("groups");
+    let store = Store::open(&dir, "a", 1 << 20).unwrap();
+    let mut edit = op("e1", "chat-edit", "R1#5", 1);
+    edit.next_ms = 1_000;
+    store.outbox_add(&edit).unwrap();
+    store.outbox_add(&op("r1", "chat-react", "R1#5", 2)).unwrap();
+    store.outbox_add(&op("r2", "chat-react", "R1#6", 3)).unwrap();
+    // the edit of R1#5 is not due: the reaction of that message waits, another message's goes
+    assert_eq!(ids(store.outbox_due(10, 10)), vec!["r2"]);
+    let mut state = op("s1", "mail-state", "mail-state", 4);
+    state.state = OutboxState::Conflict;
+    store.outbox_add(&state).unwrap();
+    store.outbox_add(&op("s2", "mail-state", "mail-state", 5)).unwrap();
+    assert_eq!(ids(store.outbox_due(10, 10)), vec!["r2", "s2"]);
+    assert_eq!(order_group("poll-vote"), "chat-message");
+    assert_eq!(order_group("chat-send"), "chat-send");
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn retention_trims_events_and_ranges_and_a_current_stretch_is_the_head_again() {
+    let dir = dir("retention");
+    let store = Store::open(&dir, "a", 1 << 20).unwrap();
+    store.put_chat_room(&room("R1", 1)).unwrap();
+    store
+        .put_chat_page("R1", &page(None, None, 50), &events("R1", 1..=3), false, true)
+        .unwrap();
+    store
+        .put_chat_page("R1", &page(None, Some(5), 50), &events("R1", 6..=9), true, false)
+        .unwrap();
+    store.put_chat_events(&[event("R1", 10, Some(2))]).unwrap();
+    store.trim_chat_retention("R1", 3).unwrap();
+    assert!(store.chat_event("R1", 3).is_none() && store.chat_event("R1", 6).is_some());
+    // the stretch 6..9 is after a gap (4, 5 never read): it does not start the timeline
+    assert!(store.chat_events("R1", &page(None, None, 50)).gap_before);
+    store.trim_chat_retention("R1", 5).unwrap();
+    assert!(!store.chat_events("R1", &page(None, None, 50)).gap_before);
+    assert!(store.has_chat_events("R1"));
+
+    store.mark_chat_heads_stale().unwrap();
+    assert_eq!(store.chat_head("R1", None), None);
+    assert!(!store.restore_chat_head("R1", 12).unwrap());
+    assert!(store.restore_chat_head("R1", 9).unwrap());
+    assert_eq!(store.chat_head("R1", None), Some(9));
+    store.forget_chat_events("R1").unwrap();
+    assert!(!store.has_chat_events("R1") && store.chat_room("R1").is_some());
+    store.forget_chat().unwrap();
+    assert!(store.chat_room_ids().is_empty());
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn answers_go_by_prefix_and_mail_by_thread_and_store() {
+    let dir = dir("prefix");
+    let store = Store::open(&dir, "a", 1 << 20).unwrap();
+    for query in ["chatRoomId=R1", "chatRoomId=R2"] {
+        store
+            .put_answer("/x/timeline", query, "application/json", b"{}")
+            .unwrap();
+    }
+    assert_eq!(store.answer_keys("/x/time").len(), 2);
+    assert_eq!(store.remove_answers("/x/", |key| key.ends_with("R1")).unwrap(), 1);
+    assert!(store.answer("/x/timeline", "chatRoomId=R2").is_some());
+    store
+        .put_mail_threads(&[thread("f", "email:T1", 1), thread("f", "internal:C1", 2)])
+        .unwrap();
+    store
+        .put_mail_messages(&[
+            message("email:T1", "email:M1", 1),
+            message("internal:C1", "internal:C1", 1),
+        ])
+        .unwrap();
+    assert_eq!(store.mail_message_ids("email:T1"), vec!["email:M1".to_string()]);
+    assert_eq!(
+        store.mail_thread_ids_with_messages("internal:", 10),
+        vec!["internal:C1".to_string()]
+    );
+    store.remove_mail_threads_of_store("internal:").unwrap();
+    assert!(store.mail_threads_of("internal:C1").is_empty());
+    store.remove_mail_message("email:M1").unwrap();
+    assert!(store.mail_message("email:M1").is_none());
+    store.remove_mail_thread_everywhere("email:T1").unwrap();
+    assert!(store.mail_threads_of("email:T1").is_empty());
+    store.forget_mail().unwrap();
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -18,7 +18,9 @@
 //! - [`outbox`]: the operations and drafts a page keeps in the store, their checks and limits.
 //! - [`flush`]: the outbox sent from a thread of its own, for every account signed in here.
 //! - [`mirror`]: the current account's chat and mail read ahead into its store.
+//! - [`feeds`]: the server's changes feeds (MD5) folded into the store.
 
+pub mod feeds;
 pub mod flush;
 pub mod mirror;
 pub mod outbox;

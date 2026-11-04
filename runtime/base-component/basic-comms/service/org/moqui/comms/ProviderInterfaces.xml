@@ -27,9 +27,13 @@ along with this software (see the LICENSE.md file). If not, see
             (org.moqui.comms.InboxServices.run#Operation names them: get#InboxData, find#InboxRows, get#ThreadView,
             send#Compose, get#CommsHome and the others) with handled true and result, the operation's out-parameters, for
             parameters, its in-parameters; its answer is the whole answer, its page the list. handled false leaves an
-            operation to the framework. operation accounts answers the app's own accounts (accountList, the Internal account).</description>
+            operation to the framework. operation accounts answers the app's own accounts (accountList, the Internal account).
+            operation features answers in result what the app's answers support beyond the framework's, for a client that
+            works offline (merged into /qapps/clientConfig's features): internalSendRef (send#Compose of an internal message
+            is made once by its clientRef) and mailChangesUncovered (the stores get#MailChanges does not cover, as its
+            uncoveredStores).</description>
         <in-parameters>
-            <parameter name="operation" required="true"><description>An Inbox operation, or accounts</description></parameter>
+            <parameter name="operation" required="true"><description>An Inbox operation, accounts or features</description></parameter>
             <parameter name="parameters" type="Map"><description>The operation's parameters</description></parameter>
             <parameter name="sourceId"/>
             <parameter name="folder"/>

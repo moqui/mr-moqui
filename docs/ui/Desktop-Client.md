@@ -146,13 +146,16 @@ protects it at rest, and the keys are in the key store, not in it.
 
 **Pushes.** The chat pushes on the account's `/notws` (`chatRoom:*`, `chatUser:*`) are written into the store as
 `get#Timeline` shows them (`moqui_client::sync::push`): edits, reactions and redactions folded into their message,
-encrypted rooms too, the same push from two sockets once. A drop marks the timelines' heads stale.
+encrypted rooms too, the same push from two sockets once. A drop marks the timelines' heads stale. With a server at
+`clientApi` 4 a push's number in the changes feeds moves the store's cursor, or has the feeds read
+([below](#the-clients-sync)).
 
 **The mirror.** When the shell's `/notws` opens, `moqui_client::sync::mirror` reads ahead on a thread of its own: a
 personal device all rooms and mail folders back to `mirror-days`, a shared one the `prefetch-rooms` latest rooms and the
 inbox's first `prefetch-mail` threads. Both read the new message's `composeData`, so mail can be written offline. A run
 is bounded, cancelled on a switch or sign-out, and stops on a 401 or when offline. After a drop, each room's latest page
-is read again.
+is read again; with a server at `clientApi` 4 the run reads the changes feeds first, and after a drop those alone,
+which read again only the rooms with something new.
 
 ## The outbox and drafts
 
@@ -165,7 +168,9 @@ while the window is hidden.
 | `chat-send` | a chat message (a plain `/apps` or `/qapps` Chat send path), done by its answer or its pushed echo's `clientRef` |
 | `chat-read` | a mark-read, coalesced per room; the room shows read in the stored rows at once |
 | `mail-send` | a compose: the draft saved, its files uploaded and the mail sent, each once by its `clientRef` (by id for a draft whose ref is another's) |
-| `mail-state` | a thread's read, flag, archive, move or trash, as absolute values, in order; shown in the stored rows at once |
+| `mail-state` | a thread's read, flag, archive, move or trash, as absolute values, in order; shown in the stored rows at once; with `seen` at `clientApi` 4 |
+| `chat-edit`, `chat-redact`, `chat-react`, `poll-vote` | a message's edit, redaction, reaction or poll vote, once by its `clientRef`, the four of one message in order (`clientApi` 4) |
+| `internal-send` | an internal message's send, once by its `clientRef`, where the server's `server.features.internalSendRef` says so (a `mail-send` of one becomes it); no files |
 
 - **WebrootChat's rules:** no answer, 408, 429 and 5xx are tried again after 2, 5, 15 and 60 seconds; 401 and 403 hold
   until a sign-in or a renewed key, and an operation held three times in a row fails; another 4xx fails with the
@@ -173,8 +178,13 @@ while the window is hidden.
 - **Limits:** 50 waiting, 64 KB each; a chat message with files fails after 20 hours. The drafts are capped at 500 and
   16 MB of text, their files and the sends' at a quarter of `store-max-mb`. Files no operation or draft refers to are
   collected.
-- **Not queued:** an internal message, whose send is not taken once by a `clientRef` yet (MD5): Compose keeps it as a
-  draft until there is a connection. A send with an undo hold is not queued either.
+- **Not queued:** an internal message, unless the server takes its send once by its `clientRef` (`internal-send`):
+  Compose keeps it as a draft until there is a connection. A send with an undo hold is not queued either.
+- **Conflicts and rejections (`clientApi` 4):** an operation the server met changed (a thread's `seen`, a draft's
+  `baseStamp`) is `conflict`, with the server's state in `current`; a mail send's own text is then kept as a copy, a
+  new Compose draft (`current.copyKey`), and the server's draft stays. A refusal (another 4xx) is `failed` with its
+  `status`, listed as `rejected`. Neither holds up another operation; Retry of a conflict sends the user's change
+  anyway (no `seen` or `baseStamp`, new references), Discard drops it. `outbox.kinds()` says what the server takes.
 - **Moved from the browser:** WebrootChat uses the host's outbox when there is one (its own flush off) and moves the
   outbox it kept in scoped `localStorage` into it item by item, each taken off the browser's list once the host has it
   (one refused for now stays to try again). Chat's and Compose's drafts move the same way, the newer copy kept.
@@ -191,8 +201,15 @@ What `clientApi` 4 adds on the server for a client that keeps data offline (MD5 
 stage 3 of the plan). Each answers only the user's own data, and each is a JSON transition of the BasicComms screens.
 
 **The mail change cursor.** `Inbox/Mail/mailChanges?afterSeq=&limit=` (through `InboxServices.run#Operation`,
-`EmailClientServices.get#MailChanges`) answers `{changes, lastSeq, more, reset}`, or `{unsupported: true}` when an app's
-inbox source answers the Inbox without a cursor (the client then reads its folders each time).
+`EmailClientServices.get#MailChanges`) answers `{changes, lastSeq, more, reset, uncoveredStores}`, or
+`{unsupported: true}` when an app's inbox source answers the Inbox without a cursor (the client then reads its folders
+each time). An answer that is not `unsupported` covers every store of the Inbox but those `uncoveredStores` names
+(IronStone: `internal`, whose messages have no change log): the client reads those stores' threads again each time.
+
+**What an app adds.** `/qapps/clientConfig`'s `server.features` has what each inbox source's `features` operation
+answers (`ProviderInterfaces.inbox#Source`; none for BasicComms alone): `internalSendRef` (an internal message's send is
+made once by its `clientRef`, so a client may queue it) and `mailChangesUncovered` (the stores the mail cursor does not
+cover, as `uncoveredStores`). IronStone answers both.
 
 - Each change is one thread, the newest change of it: `{changeSeq, kind, threadId, emailAccountId, emailMessageId,
   emailFolderId, changeDate, removedMessageIds, deleted, messages}`. `messages` are the thread's messages as they are when
@@ -250,6 +267,38 @@ only, and goes `client_upload_expire_hours` (24) after its last chunk. A chunk b
 
 The jobs `clean_MailChanges_daily`, `clean_ClientRequests_daily` and `clean_ClientUploads_hourly` clean them up, each user
 or upload on its own.
+
+## The client's sync
+
+With a server at `clientApi` 4 (`moqui_client::login::ServerSync`, from the kept client config) the client uses those
+contracts (MD5 stage 3); at 3 it keeps MD4's behavior. The store's step 2 keeps each feed's cursor (`sync_cursor`: the
+user's chat feed and its `headsSince`, each room's message changes, the mail feed or `unsupported`), each chunked
+upload's progress (`upload`), and an operation's refusal `status` and conflict `current`.
+
+**The feeds** (`moqui_client::sync::feeds`) run when a page's `/notws` opens (in the mirror's run, or a run of their
+own), when a push's `changeSeq` or `roomChangeSeq` is past the next number (or names a change the push does not carry
+whole, such as a room joined), and in the mirror; a push that is the next number and carries its change moves the
+cursor itself. A first read (no cursor) only takes the cursor; a `reset` of a cursor drops what its feed covers and the
+mirror reads it again.
+
+- **The user's chat feed:** a room left (`member` false) is forgotten with its cursor and answers; a new room or a room
+  changed reads the room list (and the room); settings go on the room's row; a read marker clears the counts when it
+  reaches the last message (else the list is read for them); retention deletes the events up to `eventSeq`, the ranges
+  below them and the room's cached timeline answers. The heads (all of them after a drop, else those since
+  `headsSince`) restore a stale head whose stretch reaches the room's newest event, or read that room's latest page.
+- **Room feeds:** for each room held whose `lastChangeSeq` is past its cursor: a redaction folded as the push folds it,
+  another change's message read again (`timeline` by `eventSeq`, a thread reply's root too, an event gone removed);
+  past 50 messages, or on a reset, the room's held events go and its latest page is read. A room with nothing held
+  only takes its cursor.
+- **The mail feed:** each change makes the thread match: `deleted` removes it everywhere, `removedMessageIds` and the
+  messages no longer in it go, the kept messages and the thread's rows take its state (read, flags, archived,
+  folder, label, newest message), a row of a folder none of its messages is in leaves it, and a thread with a message
+  not kept is read again. The stores it does not cover have their kept threads read again.
+
+**The outbox** at 4: every operation goes with its `clientRef` (`duplicate` is done); `mail-state` sends `seen` (what
+the stored thread showed when the change was made); `mail-send` sends `baseStamp` and `saveRef`, and the send the
+stamp its save left; a file over 256 KB goes by `uploadChunk` in 1 MB chunks, its progress kept, and after a restart
+or a retry goes on from what `uploadStatus` says, then `upload` takes it by `uploadId`.
 
 ## Bundled screens and app windows
 
@@ -317,10 +366,10 @@ shared device's hint of what is kept, and the sign-out's list of what is unsent.
   grows with the store.
 - A reply or forward built offline quotes with English labels and this computer's time zone, not the user's locale and
   zone as the server does.
-- MD5: the server's contracts are built ([above](#the-servers-sync-contracts)); the client does not use them yet: the
-  changes feeds folded into the store, the new outbox kinds, `seen` and `baseStamp`, chunked sends, and idempotent
-  internal messages (IronStone's send) ([Mobile-Desktop §6](../../plans/Mobile-Desktop.md#6-offline-behavior-and-data-ownership)).
-  A server at `clientApi` 4 asks this app (3) to update until the client catches up.
+- MD5: the screens do not show the conflict and rejected states yet (stage 4); the outbox list has them. A queued
+  message change is not shown in the stored rows until its push or the feed brings it. A chat message's files are
+  uploaded by the page before it is queued, not in chunks by the host
+  ([Mobile-Desktop §6](../../plans/Mobile-Desktop.md#6-offline-behavior-and-data-ownership)).
 
 ## Tests
 

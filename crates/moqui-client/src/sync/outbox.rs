@@ -26,7 +26,23 @@
 //! - `mail-send`: a compose sent offline, `{clientRef, fields, files}`: Compose's send parameters and the store's files
 //!   to attach, sent as save draft, upload, send, each taken once by its `clientRef` (stage 2).
 //! - `mail-state`: threads read, unread, flagged, archived, moved or trashed, as absolute values, applied to the stored
-//!   rows at once so a list read offline shows it; all in one order.
+//!   rows at once so a list read offline shows it; all in one order. Each target takes `seen`, the state the stored
+//!   thread had when the change was made, so the server leaves a thread changed since (a conflict, MD5).
+//!
+//! With a server at `clientApi` 4 (MD5, [`ServerSync`]) also, each with its `clientRef`, which the server takes once
+//! (a ref sent again answers `duplicate`, which counts as done):
+//!
+//! - `chat-edit`, `chat-redact`, `chat-react` and `poll-vote`: a message's edit (`body`, or an encrypted room's
+//!   `encryptedJson` with `mentionUserIds`), redaction (`reason`), reaction (`key`, or `encryptedJson`, or
+//!   `reactionEventSeq` to take an encrypted one back) and poll vote (`optionIds`), by `chatRoomId` and `eventSeq`;
+//!   the four of one message go in the order they were made (`store::order_group`).
+//! - `internal-send`: an internal message's send (`fromValue` internal), when the server says its send is taken once
+//!   by its `clientRef` (`features.internalSendRef`); a `mail-send` of one becomes it. No files.
+//! - `mail-send` carries `baseStamp` (the server's draft the user edited) and `saveRef` (the save's own reference), so
+//!   a draft changed on the server meanwhile is a conflict, not overwritten.
+//!
+//! A conflict (`conflict` state) keeps the server's state in `current`; a retry of it sends the user's anyway (no
+//! `seen` or `baseStamp`, new references), a discard drops it.
 //!
 //! The checks here keep a page to what it could send itself with the key: the `url` of a chat send is a path of the
 //! account's comms app (never a URL of its own), and the same limits as WebrootChat.js (50 waiting, 64 KB each).
@@ -34,6 +50,7 @@
 //! The pages hear of each change through the host (`ClientHost::notify_pages`): `changed`, or `sent` with the server's
 //! answer to a chat or mail send.
 
+use crate::login::ServerSync;
 use crate::store::{new_client_ref, OutboxOp, OutboxState, OutboxUpdate, Store};
 use base64::Engine;
 use serde_json::{json, Map, Value};
@@ -64,7 +81,7 @@ const TARGETS_MAX: usize = 200;
 pub(crate) const MAIL_STATE_TARGET: &str = "mail-state";
 
 /// The parameters of Compose's send (and save draft) a mail send may carry.
-const MAIL_FIELDS: [&str; 20] = [
+const MAIL_FIELDS: [&str; 22] = [
     "fromValue",
     "emailMessageId",
     "toJson",
@@ -85,6 +102,8 @@ const MAIL_FIELDS: [&str; 20] = [
     "archiveThread",
     "threadStore",
     "threadId",
+    "baseStamp",
+    "saveRef",
 ];
 
 /// The thread state changes that may wait for the network; others need a connection.
@@ -104,6 +123,18 @@ pub(crate) const CHAT_SEND: &str = "chat-send";
 pub(crate) const CHAT_READ: &str = "chat-read";
 pub(crate) const MAIL_SEND: &str = "mail-send";
 pub(crate) const MAIL_STATE: &str = "mail-state";
+pub(crate) const CHAT_EDIT: &str = "chat-edit";
+pub(crate) const CHAT_REDACT: &str = "chat-redact";
+pub(crate) const CHAT_REACT: &str = "chat-react";
+pub(crate) const POLL_VOTE: &str = "poll-vote";
+pub(crate) const INTERNAL_SEND: &str = "internal-send";
+
+/// The kinds a server below `clientApi` 4 is sent (MD4).
+const MD4_KINDS: [&str; 4] = [CHAT_SEND, CHAT_READ, MAIL_SEND, MAIL_STATE];
+/// The kinds of a message's change, on a server at `clientApi` 4.
+const MESSAGE_KINDS: [&str; 4] = [CHAT_EDIT, CHAT_REDACT, CHAT_REACT, POLL_VOTE];
+/// The longest text of a message change's field (a body, its ciphertext).
+const TEXT_BYTES: usize = 48 * 1024;
 
 /// What an operation that did not go does next.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -196,21 +227,72 @@ fn scalar(value: &Value) -> Result<Option<String>, ()> {
     }
 }
 
-/// Check an operation a page asks for and make it, at `now_ms`: its id, target, payload and files. A page's `files`
-/// are the store's files ([`file_save`]) it sends (a mail send's attachments).
+/// Check an operation a page asks for and make it, at `now_ms`, for a server of MD4 (`clientApi` 3): its id, target,
+/// payload and files. A page's `files` are the store's files ([`file_save`]) it sends (a mail send's attachments).
 ///
 /// # Errors
 ///
 /// Returns why the operation cannot wait (unknown kind, a field missing or of the wrong kind, a URL that is not the
 /// comms app's, too large), for the page to send it online or say so.
 pub fn check(kind: &str, payload: &Value, files: &[String], now_ms: i64) -> Result<OutboxOp, String> {
+    check_with(kind, payload, files, now_ms, &ServerSync::default())
+}
+
+/// The kinds of operation the account's server takes queued, as a page asks (`outbox_kinds`): `{clientApi, kinds,
+/// internalSend}`.
+pub fn kinds_json(server: &ServerSync) -> Value {
+    let mut kinds: Vec<&str> = MD4_KINDS.to_vec();
+    if server.syncs() {
+        kinds.extend(MESSAGE_KINDS);
+    }
+    if server.internal_send() {
+        kinds.push(INTERNAL_SEND);
+    }
+    json!({ "clientApi": server.client_api, "kinds": kinds, "internalSend": server.internal_send() })
+}
+
+/// [`check`] for the account's server as it is (`server`): with `clientApi` 4 the kinds of MD5 too, a mail send's
+/// `baseStamp` and `saveRef` (one made when the page gives none), and an internal message queued when the server
+/// takes its send once.
+///
+/// # Errors
+///
+/// Returns why the operation cannot wait, as [`check`].
+pub fn check_with(
+    kind: &str,
+    payload: &Value,
+    files: &[String],
+    now_ms: i64,
+    server: &ServerSync,
+) -> Result<OutboxOp, String> {
     let Some(given) = payload.as_object() else {
         return Err("An operation is a JSON object".to_string());
     };
     if files.len() > FILES_MAX || files.iter().any(|name| !plain_file(name)) {
         return Err("An operation's files are not the store's".to_string());
     }
+    if !MD4_KINDS.contains(&kind) && !server.syncs() {
+        return Err(format!("{kind} needs a connection to this server"));
+    }
+    let internal = matches!(kind, MAIL_SEND | INTERNAL_SEND)
+        && given
+            .get("fields")
+            .and_then(|fields| fields.get("fromValue"))
+            .and_then(Value::as_str)
+            == Some("internal");
+    let kind = if internal && server.internal_send() {
+        INTERNAL_SEND
+    } else {
+        kind
+    };
     let (id, target, kept, created) = match kind {
+        CHAT_EDIT | CHAT_REDACT | CHAT_REACT | POLL_VOTE => {
+            if !files.is_empty() {
+                return Err("A message's change sends no files".to_string());
+            }
+            let (id, target, kept) = message_change(kind, given)?;
+            (id, target, kept, now_ms)
+        }
         CHAT_SEND => {
             if !files.is_empty() {
                 return Err("A chat message's files are uploaded before it is sent".to_string());
@@ -293,9 +375,18 @@ pub fn check(kind: &str, payload: &Value, files: &[String], now_ms: i64) -> Resu
             {
                 return Err("A mail send needs fromValue".to_string());
             }
-            // an internal message's send is not taken once by its clientRef yet (MD5): it waits for a connection
+            // an internal message's send is taken once by its clientRef only where the server says so
             if kept_fields.get("fromValue").and_then(Value::as_str) == Some("internal") {
                 return Err("An internal message needs a connection to send".to_string());
+            }
+            if server.syncs() {
+                if !kept_fields.contains_key("saveRef") {
+                    let save = new_client_ref().map_err(|err| err.to_string())?;
+                    kept_fields.insert("saveRef".to_string(), Value::String(save));
+                }
+            } else {
+                kept_fields.remove("baseStamp");
+                kept_fields.remove("saveRef");
             }
             // the files' names and types as the page gives them, each one of the operation's files
             let mut kept_files = Vec::new();
@@ -314,6 +405,42 @@ pub fn check(kind: &str, payload: &Value, files: &[String], now_ms: i64) -> Resu
                 id.clone(),
                 String::new(),
                 json!({ "clientRef": id, "fields": kept_fields, "files": kept_files }),
+                now_ms,
+            )
+        }
+        INTERNAL_SEND => {
+            if !server.internal_send() {
+                return Err("An internal message needs a connection to send".to_string());
+            }
+            if !files.is_empty()
+                || given
+                    .get("files")
+                    .and_then(Value::as_array)
+                    .is_some_and(|list| !list.is_empty())
+            {
+                return Err("An internal message's files need a connection".to_string());
+            }
+            let id = plain_ref(&given.get("clientRef").cloned().unwrap_or(Value::Null))?;
+            let Some(fields) = given.get("fields").and_then(Value::as_object) else {
+                return Err("An internal message needs its fields".to_string());
+            };
+            let mut kept_fields = Map::new();
+            for (name, value) in fields {
+                if !MAIL_FIELDS.contains(&name.as_str()) || matches!(name.as_str(), "baseStamp" | "saveRef") {
+                    return Err(format!("An internal message has no field {name}"));
+                }
+                match scalar(value) {
+                    Ok(Some(text)) => {
+                        kept_fields.insert(name.clone(), Value::String(text));
+                    }
+                    Ok(None) => {}
+                    Err(()) => return Err(format!("An internal message's {name} is a plain value")),
+                }
+            }
+            (
+                id.clone(),
+                String::new(),
+                json!({ "clientRef": id, "fields": kept_fields, "files": [] }),
                 now_ms,
             )
         }
@@ -353,6 +480,119 @@ pub fn check(kind: &str, payload: &Value, files: &[String], now_ms: i64) -> Resu
     Ok(op)
 }
 
+/// A message's change (edit, redaction, reaction, poll vote): its `clientRef`, its target (the message) and the
+/// fields kept.
+fn message_change(kind: &str, given: &Map<String, Value>) -> Result<(String, String, Value), String> {
+    let id = plain_ref(&given.get("clientRef").cloned().unwrap_or(Value::Null))?;
+    let room = plain_id(given.get("chatRoomId").unwrap_or(&Value::Null), "a chatRoomId")?;
+    let seq = given
+        .get("eventSeq")
+        .and_then(number)
+        .filter(|seq| *seq > 0)
+        .ok_or("A message's change needs its eventSeq")?;
+    let text = |name: &str| -> Result<Option<String>, String> {
+        match given.get(name) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(text)) if text.len() <= TEXT_BYTES => Ok(Some(text.clone())),
+            Some(Value::String(_)) => Err(format!("A message's {name} is too large to wait")),
+            Some(_) => Err(format!("A message's {name} is text")),
+        }
+    };
+    let mut kept = json!({ "clientRef": id, "chatRoomId": room, "eventSeq": seq });
+    let names: &[&str] = match kind {
+        CHAT_EDIT => &["body", "encryptedJson", "mentionUserIds"],
+        CHAT_REDACT => &["reason"],
+        CHAT_REACT => &["key", "encryptedJson"],
+        _ => &[],
+    };
+    for name in names {
+        if let Some(value) = text(name)? {
+            kept[*name] = Value::String(value);
+        }
+    }
+    match kind {
+        CHAT_EDIT if kept["body"].is_null() && kept["encryptedJson"].is_null() => {
+            return Err("An edit needs its body".to_string());
+        }
+        CHAT_REACT => {
+            if let Some(reaction) = given.get("reactionEventSeq").and_then(number) {
+                kept["reactionEventSeq"] = json!(reaction);
+            }
+            if kept["key"].is_null() && kept["encryptedJson"].is_null() && kept["reactionEventSeq"].is_null() {
+                return Err("A reaction needs its key".to_string());
+            }
+        }
+        POLL_VOTE => {
+            let ids: Vec<i64> = match given.get("optionIds") {
+                Some(Value::Array(list)) => list.iter().filter_map(number).collect(),
+                Some(Value::String(text)) => text.split(',').filter_map(|id| id.trim().parse().ok()).collect(),
+                _ => Vec::new(),
+            };
+            if ids.is_empty() || ids.len() > 100 {
+                return Err("A vote needs its optionIds".to_string());
+            }
+            let text: Vec<String> = ids.iter().map(i64::to_string).collect();
+            kept["optionIds"] = Value::String(text.join(","));
+        }
+        _ => {}
+    }
+    Ok((id, format!("{room}#{seq}"), kept))
+}
+
+/// The state a stored thread shows for the fields a mail action changes, as `set#ThreadState`'s `seen` names them
+/// (`EmailClientServices.check#SeenState`): read and archive with the newest message seen, so one come since is not
+/// taken unseen. None for a target the store does not hold, of another store than email, or of one message.
+pub(crate) fn seen_of(store: &Store, action: &str, target: &Value) -> Option<Value> {
+    if target["store"].as_str().is_some_and(|name| name != "email") || target["emailMessageId"].is_string() {
+        return None;
+    }
+    let key = target["rowKey"]
+        .as_str()
+        .map(str::to_string)
+        .or_else(|| target["threadId"].as_str().map(|thread| format!("email:{thread}")))?;
+    let rows = store.mail_threads_of(&key);
+    let wanted_folder = target["emailFolderId"].as_str();
+    let row = rows
+        .iter()
+        .find(|row| wanted_folder.is_some_and(|folder| row.folder_id.ends_with(&format!("folder={folder}"))))
+        .or_else(|| rows.first())?;
+    let row: Value = serde_json::from_str(&row.row).ok()?;
+    let latest = row["lastEmailMessageId"].clone();
+    let truth = |value: &Value| value.as_bool() == Some(true);
+    let mut seen = Map::new();
+    match action {
+        "read" | "unread" => {
+            seen.insert("isRead".to_string(), json!(!truth(&row["isUnread"])));
+            seen.insert("latestMessageId".to_string(), latest);
+        }
+        "flag" => {
+            // a flag goes on the thread's newest message: its own flag when it is kept, else none flagged at all
+            let last = target["lastEmailMessageId"].as_str().or_else(|| latest.as_str());
+            let message = last.and_then(|id| store.mail_message(&format!("email:{id}")));
+            let flagged = match message.and_then(|message| serde_json::from_str::<Value>(&message.row).ok()) {
+                Some(message) => Some(truth(&message["isFlagged"])),
+                None if !truth(&row["isFlagged"]) => Some(false),
+                None => None,
+            };
+            seen.insert("isFlagged".to_string(), json!(flagged?));
+        }
+        "unflag" => {
+            seen.insert("isFlagged".to_string(), json!(truth(&row["isFlagged"])));
+        }
+        "archive" | "unarchive" => {
+            seen.insert("archived".to_string(), json!(truth(&row["isArchived"])));
+            seen.insert("latestMessageId".to_string(), latest);
+        }
+        "move" | "trash" => {
+            let folder = row["emailFolderId"].as_str()?;
+            seen.insert("emailFolderId".to_string(), json!(folder));
+        }
+        _ => return None,
+    }
+    seen.retain(|_, value| !value.is_null());
+    (!seen.is_empty()).then_some(Value::Object(seen))
+}
+
 /// Add a checked operation to the store, with its change to the stored rows, as one unit: the kept one when one of its
 /// id is there already (a page adding again, an import), and a mark-read of a room replacing one still waiting. Gives
 /// the operation and whether it was added.
@@ -381,6 +621,19 @@ pub(crate) fn add(store: &Store, mut op: OutboxOp) -> Result<(OutboxOp, bool), S
                     store.outbox_remove(&waiting.id)?;
                 }
                 op.payload = json!({ "chatRoomId": op.target, "lastReadEventSeq": seq }).to_string();
+            }
+            if op.kind == MAIL_STATE {
+                // what the user saw, before the change is shown in the rows
+                let mut payload = payload_of(&op);
+                let action = payload["action"].as_str().unwrap_or("").to_string();
+                if let Some(targets) = payload["targets"].as_array_mut() {
+                    for target in targets.iter_mut().filter(|target| target["seen"].is_null()) {
+                        if let Some(seen) = seen_of(store, &action, target) {
+                            target["seen"] = seen;
+                        }
+                    }
+                }
+                op.payload = payload.to_string();
             }
             let waiting = store
                 .outbox_list()
@@ -498,6 +751,9 @@ pub(crate) fn op_json(op: &OutboxOp) -> Value {
         "error": op.error,
         "payload": payload_of(op),
         "files": op.files,
+        "status": op.status,
+        "rejected": op.rejected(),
+        "current": op.current.as_deref().and_then(|current| serde_json::from_str::<Value>(current).ok()),
     })
 }
 
@@ -513,13 +769,41 @@ pub fn list_json(store: &Store) -> Value {
     )
 }
 
-/// The user's retry of an operation: due now, its attempts and error cleared. False when there is none.
+/// The user's retry of an operation: due now, its attempts and error cleared. False when there is none. A conflict's
+/// retry sends the user's change anyway: a thread's without `seen` and with a new request ref, a draft's without
+/// `baseStamp` and with a new `saveRef`.
 pub fn retry(store: &Store, id: &str, now_ms: i64) -> Result<bool, String> {
     let Some(op) = store.outbox_get(id) else {
         return Ok(false);
     };
     if matches!(op.state, OutboxState::Sending | OutboxState::Acked) {
         return Ok(true);
+    }
+    if op.state == OutboxState::Conflict {
+        let mut payload = payload_of(&op);
+        match op.kind.as_str() {
+            MAIL_STATE => {
+                for target in payload["targets"].as_array_mut().into_iter().flatten() {
+                    if let Some(target) = target.as_object_mut() {
+                        target.remove("seen");
+                    }
+                }
+                payload["requestRef"] = json!(new_client_ref().map_err(|err| err.to_string())?);
+            }
+            MAIL_SEND => {
+                if let Some(fields) = payload["fields"].as_object_mut() {
+                    fields.remove("baseStamp");
+                    fields.insert(
+                        "saveRef".to_string(),
+                        json!(new_client_ref().map_err(|err| err.to_string())?),
+                    );
+                }
+            }
+            _ => {}
+        }
+        store
+            .outbox_set_payload(id, &payload.to_string())
+            .map_err(|err| err.to_string())?;
     }
     store
         .outbox_update(

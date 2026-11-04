@@ -302,6 +302,97 @@ impl Store {
         )
     }
 
+    /// The ids of a thread's kept messages; not a read of it (the mail changes feed folds into them).
+    pub fn mail_message_ids(&self, thread_id: &str) -> Vec<String> {
+        self.rows(
+            "mail messages",
+            "SELECT message_id FROM mail_message WHERE thread_id = ?1",
+            [thread_id],
+            |row| row.get(0),
+        )
+    }
+
+    /// The threads whose id starts with `prefix` (`internal:`) that have messages kept, at most `limit`.
+    pub fn mail_thread_ids_with_messages(&self, prefix: &str, limit: u32) -> Vec<String> {
+        self.rows(
+            "mail threads",
+            "SELECT DISTINCT thread_id FROM mail_message WHERE substr(thread_id, 1, length(?1)) = ?1
+            ORDER BY thread_id LIMIT ?2",
+            params![prefix, limit],
+            |row| row.get(0),
+        )
+    }
+
+    /// Forget a message (removed from its thread on the server).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row cannot be removed.
+    pub fn remove_mail_message(&self, message_id: &str) -> Result<(), Error> {
+        self.conn
+            .execute("DELETE FROM mail_message WHERE message_id = ?1", [message_id])
+            .map_err(failed("mail message not removed"))?;
+        Ok(())
+    }
+
+    /// Forget a thread in every folder, with its messages (nothing of it is left on the server).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the rows cannot be removed.
+    pub fn remove_mail_thread_everywhere(&self, thread_id: &str) -> Result<(), Error> {
+        self.atomic(|store| {
+            for sql in [
+                "DELETE FROM mail_thread WHERE thread_id = ?1",
+                "DELETE FROM mail_message WHERE thread_id = ?1",
+            ] {
+                store
+                    .conn
+                    .execute(sql, [thread_id])
+                    .map_err(failed("mail thread not removed"))?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Forget the threads of a store (`internal:`, a prefix of their ids) in every folder, with their messages: the
+    /// mail changes feed does not cover them, so they are read again.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the rows cannot be removed.
+    pub fn remove_mail_threads_of_store(&self, prefix: &str) -> Result<(), Error> {
+        self.atomic(|store| {
+            for sql in [
+                "DELETE FROM mail_thread WHERE substr(thread_id, 1, length(?1)) = ?1",
+                "DELETE FROM mail_message WHERE substr(thread_id, 1, length(?1)) = ?1",
+            ] {
+                store
+                    .conn
+                    .execute(sql, [prefix])
+                    .map_err(failed("mail threads not removed"))?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Forget all threads and messages, keeping the folders (the mail changes feed reset: they are read again).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the rows cannot be removed.
+    pub fn forget_mail(&self) -> Result<(), Error> {
+        self.atomic(|store| {
+            for table in ["mail_thread", "mail_message"] {
+                store
+                    .conn
+                    .execute(&format!("DELETE FROM {table}"), [])
+                    .map_err(failed("mail not removed"))?;
+            }
+            Ok(())
+        })
+    }
+
     /// One message by its id (`email:<id>`), whatever its thread; none when it is not kept. Not a read of its thread:
     /// the composer offline reads the message it answers.
     pub fn mail_message(&self, message_id: &str) -> Option<MailMessage> {

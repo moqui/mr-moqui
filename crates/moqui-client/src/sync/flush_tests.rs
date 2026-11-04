@@ -20,6 +20,7 @@ use crate::store::{OutboxState, Store};
 use serde_json::{json, Value};
 
 use super::*;
+use crate::login::ServerSync;
 use crate::offline::DEFAULT_COMMS_ROOT;
 use crate::sync::outbox::{add, check, echoed};
 
@@ -70,6 +71,10 @@ impl Transport for Server {
             list.front().cloned().unwrap_or(Sent::Offline)
         }
     }
+
+    fn get(&self, path: &str) -> Sent {
+        self.post(path, "", Vec::new())
+    }
 }
 
 impl StoreAccess for Mutex<Store> {
@@ -112,6 +117,7 @@ fn run(server: &Server, store: &Mutex<Store>, now: i64) -> Flushed {
         comms_root: DEFAULT_COMMS_ROOT.to_string(),
         now: &clock,
         claimed: &|| {},
+        server: ServerSync::default(),
     })
 }
 
@@ -363,6 +369,7 @@ fn a_store_that_is_gone_ends_the_pass() {
         comms_root: DEFAULT_COMMS_ROOT.to_string(),
         now: &clock,
         claimed: &|| {},
+        server: ServerSync::default(),
     });
     assert!(!flushed.changed && flushed.next_ms.is_none());
     assert!(server.take().is_empty());
@@ -406,6 +413,7 @@ fn run_with(transport: &dyn Transport, store: &Mutex<Store>, now: i64, claimed: 
         comms_root: DEFAULT_COMMS_ROOT.to_string(),
         now: &clock,
         claimed,
+        server: ServerSync::default(),
     })
 }
 
@@ -562,5 +570,366 @@ fn an_internal_message_queued_before_is_refused() {
     run(&server, &store, LATER);
     assert!(server.take().is_empty());
     assert_eq!(state(&store, "m9"), Some(OutboxState::Failed));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+// ---- MD5: a server at clientApi 4 ----
+
+const MAIL: &str = "/apps/BasicComms/Inbox/Mail";
+
+fn md5(internal: bool) -> ServerSync {
+    ServerSync {
+        client_api: 4,
+        internal_send_ref: internal,
+        mail_uncovered: Vec::new(),
+    }
+}
+
+fn run_md5(server: &Server, store: &Mutex<Store>, now: i64) -> Flushed {
+    let clock = move || now;
+    flush(&Job {
+        transport: server,
+        store,
+        comms_root: DEFAULT_COMMS_ROOT.to_string(),
+        now: &clock,
+        claimed: &|| {},
+        server: md5(false),
+    })
+}
+
+fn queue_md5(store: &Mutex<Store>, kind: &str, payload: Value, files: &[String], created: i64, internal: bool) {
+    let op = outbox::check_with(kind, &payload, files, created, &md5(internal)).unwrap();
+    add(&store.lock().unwrap(), op).unwrap();
+}
+
+fn forget(server: &Server, path: &str) {
+    server.answers.borrow_mut().remove(path);
+}
+
+#[test]
+fn a_message_change_goes_once_by_its_ref_in_the_order_of_its_message() {
+    let (store, dir) = store("message-kinds");
+    // not queued for a server of MD4
+    let edit = json!({ "clientRef": "e1", "chatRoomId": "R1", "eventSeq": 5, "body": "<p>new</p>" });
+    assert!(check(outbox::CHAT_EDIT, &edit, &[], NOW).is_err());
+    queue_md5(&store, outbox::CHAT_EDIT, edit, &[], NOW, false);
+    let react = json!({ "clientRef": "r1", "chatRoomId": "R1", "eventSeq": 5, "key": "+1" });
+    queue_md5(&store, outbox::CHAT_REACT, react, &[], NOW + 1, false);
+    let vote = json!({ "clientRef": "v1", "chatRoomId": "R1", "eventSeq": 7, "optionIds": [2, 3] });
+    queue_md5(&store, outbox::POLL_VOTE, vote, &[], NOW + 2, false);
+    let redact = json!({ "clientRef": "d1", "chatRoomId": "R1", "eventSeq": 8 });
+    queue_md5(&store, outbox::CHAT_REDACT, redact, &[], NOW + 3, false);
+    let server = Server::default();
+    // the edit's answer is lost: its reaction waits behind it, the other messages' changes go
+    server.answer(&format!("{CHAT}/edit"), Sent::Offline);
+    server.answer(
+        &format!("{CHAT}/votePoll"),
+        ok(json!({ "poll": {}, "duplicate": true })),
+    );
+    server.answer(&format!("{CHAT}/redact"), ok(json!({ "redactionEventSeq": 9 })));
+    run_md5(&server, &store, NOW + 10);
+    let asked = server.take();
+    let paths: Vec<&str> = asked.iter().map(|(path, _)| path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            format!("{CHAT}/edit"),
+            format!("{CHAT}/votePoll"),
+            format!("{CHAT}/redact")
+        ]
+    );
+    assert!(asked[0].1.contains("clientRef=e1") && asked[0].1.contains("eventSeq=5"));
+    assert!(asked[1].1.contains("optionIds=2%2C3"));
+    assert_eq!(state(&store, "v1"), None);
+    assert_eq!(state(&store, "d1"), None);
+    assert_eq!(state(&store, "r1"), Some(OutboxState::Queued));
+    // sent again: the server took it before and says so; then the reaction goes
+    forget(&server, &format!("{CHAT}/edit"));
+    server.answer(
+        &format!("{CHAT}/edit"),
+        ok(json!({ "editEventSeq": 9, "duplicate": true })),
+    );
+    server.answer(&format!("{CHAT}/react"), ok(json!({ "added": true })));
+    run_md5(&server, &store, NOW + 10 + 2_000);
+    assert_eq!(server.paths(), [format!("{CHAT}/edit"), format!("{CHAT}/react")]);
+    assert!(store.lock().unwrap().outbox_list().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_refusal_is_a_rejection_kept_with_its_status() {
+    let (store, dir) = store("rejected");
+    let redact = json!({ "clientRef": "d1", "chatRoomId": "R1", "eventSeq": 8 });
+    queue_md5(&store, outbox::CHAT_REDACT, redact, &[], NOW, false);
+    let server = Server::default();
+    server.answer(
+        &format!("{CHAT}/redact"),
+        Sent::Answer(400, json!({ "errors": "Not yours" }).to_string().into_bytes()),
+    );
+    run_md5(&server, &store, NOW + 1);
+    let op = store.lock().unwrap().outbox_get("d1").unwrap();
+    assert!(op.rejected() && op.status == 400);
+    let listed = &outbox::list_json(&store.lock().unwrap())[0];
+    assert_eq!(listed["rejected"], true);
+    assert_eq!(listed["error"], "Not yours");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_mail_state_change_sends_what_was_seen_and_keeps_a_conflict() {
+    let (store, dir) = store("seen");
+    {
+        let locked = store.lock().unwrap();
+        let row = |id: &str, unread: bool| crate::store::MailThread {
+            folder_id: "view=inbox".to_string(),
+            thread_id: format!("email:{id}"),
+            sort_ms: 1,
+            row: json!({ "threadId": id, "isUnread": unread, "lastEmailMessageId": format!("{id}-last") }).to_string(),
+        };
+        locked.put_mail_threads(&[row("T1", true), row("T2", true)]).unwrap();
+    }
+    let targets = json!([{ "store": "email", "threadId": "T1", "rowKey": "email:T1" },
+        { "store": "email", "threadId": "T2", "rowKey": "email:T2" }]);
+    queue_md5(
+        &store,
+        outbox::MAIL_STATE,
+        json!({ "targets": targets, "action": "read" }),
+        &[],
+        NOW,
+        false,
+    );
+    // shown read at once, but seen as it was
+    let op = store.lock().unwrap().outbox_list().remove(0);
+    let payload = outbox::payload_of(&op);
+    assert_eq!(
+        payload["targets"][0]["seen"],
+        json!({ "isRead": false, "latestMessageId": "T1-last" })
+    );
+    let server = Server::default();
+    server.answer(
+        &format!("{MAIL}/state"),
+        ok(
+            json!({ "updatedCount": 1, "failedList": [{ "key": "email:T2", "message": "Changed on the server",
+            "reason": "conflict", "current": { "isRead": true } }] }),
+        ),
+    );
+    run_md5(&server, &store, NOW + 1);
+    let asked = server.take();
+    assert!(asked[0].1.contains(&format!("clientRef={}", op.id)));
+    assert!(asked[0].1.contains("seen"));
+    let kept = store.lock().unwrap().outbox_get(&op.id).unwrap();
+    assert_eq!(kept.state, OutboxState::Conflict);
+    let current: Value = serde_json::from_str(kept.current.as_deref().unwrap()).unwrap();
+    assert_eq!(current["conflicts"][0]["current"]["isRead"], true);
+    let narrowed = outbox::payload_of(&kept);
+    assert_eq!(narrowed["targets"].as_array().unwrap().len(), 1);
+    assert_eq!(narrowed["targets"][0]["threadId"], "T2");
+    // a conflict holds up no later change
+    queue_md5(
+        &store,
+        outbox::MAIL_STATE,
+        json!({ "targets": [{ "store": "email", "threadId": "T3" }], "action": "flag" }),
+        &[],
+        NOW + 2,
+        false,
+    );
+    server.answer(
+        &format!("{MAIL}/state"),
+        ok(json!({ "updatedCount": 1, "failedList": [] })),
+    );
+    forget(&server, &format!("{MAIL}/state"));
+    server.answer(
+        &format!("{MAIL}/state"),
+        ok(json!({ "updatedCount": 1, "failedList": [] })),
+    );
+    run_md5(&server, &store, NOW + 3);
+    assert_eq!(server.take().len(), 1);
+    // the user's retry sends it anyway: no seen, another request ref
+    outbox::retry(&store.lock().unwrap(), &op.id, NOW + 4).unwrap();
+    run_md5(&server, &store, NOW + 5);
+    let asked = server.take();
+    assert!(!asked[0].1.contains("seen") && !asked[0].1.ends_with(&format!("clientRef={}", op.id)));
+    assert!(store.lock().unwrap().outbox_list().is_empty());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_server_of_md4_is_sent_no_seen() {
+    let (store, dir) = store("seen-md4");
+    store
+        .lock()
+        .unwrap()
+        .put_mail_threads(&[crate::store::MailThread {
+            folder_id: "view=inbox".to_string(),
+            thread_id: "email:T1".to_string(),
+            sort_ms: 1,
+            row: json!({ "isUnread": true }).to_string(),
+        }])
+        .unwrap();
+    let targets = json!([{ "store": "email", "threadId": "T1", "rowKey": "email:T1" }]);
+    queue(
+        &store,
+        outbox::MAIL_STATE,
+        json!({ "targets": targets, "action": "read" }),
+        &[],
+        NOW,
+    );
+    let server = Server::default();
+    server.answer(
+        &format!("{MAIL}/state"),
+        ok(json!({ "updatedCount": 1, "failedList": [] })),
+    );
+    run(&server, &store, NOW + 1);
+    let asked = server.take();
+    assert!(!asked[0].1.contains("seen") && !asked[0].1.contains("clientRef"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_draft_changed_on_the_server_is_kept_as_a_copy_and_the_servers_stays() {
+    let (store, dir) = store("draft-conflict");
+    let file = store.lock().unwrap().save_file("a.txt", b"hello").unwrap();
+    let send = json!({ "clientRef": "m1", "fields": { "fromValue": "identity:1", "emailMessageId": "E1",
+        "toJson": "[{\"value\":\"a@x.org\"}]", "subject": "Mine", "body": "<p>mine</p>", "baseStamp": "100" },
+        "files": [{ "file": file, "name": "a.txt", "contentType": "text/plain" }] });
+    queue_md5(&store, outbox::MAIL_SEND, send, std::slice::from_ref(&file), NOW, false);
+    let server = Server::default();
+    server.answer(
+        &format!("{COMPOSE}/saveDraft"),
+        ok(json!({ "conflict": true, "compose": { "emailMessageId": "E1", "subject": "Theirs" } })),
+    );
+    run_md5(&server, &store, NOW + 1);
+    let asked = server.take();
+    assert_eq!(asked.len(), 1);
+    assert!(asked[0].1.contains("baseStamp=100") && asked[0].1.contains("saveRef="));
+    let kept = store.lock().unwrap().outbox_get("m1").unwrap();
+    assert_eq!(kept.state, OutboxState::Conflict);
+    let current: Value = serde_json::from_str(kept.current.as_deref().unwrap()).unwrap();
+    assert_eq!(current["compose"]["subject"], "Theirs");
+    let copy_key = current["copyKey"].as_str().unwrap().to_string();
+    assert!(copy_key.starts_with("ironstone.compose.email."));
+    let copy = store.lock().unwrap().draft(&copy_key).unwrap();
+    let value: Value = serde_json::from_str(&copy.value).unwrap();
+    assert_eq!(value["draft"]["subject"], "Mine");
+    assert_eq!(value["draft"]["to"][0]["value"], "a@x.org");
+    assert!(value["draft"]["emailMessageId"].is_null());
+    assert_eq!(copy.files, vec![file.clone()]);
+    // a retry sends it anyway, without its baseStamp; a discard keeps the copy's file
+    let save_ref = outbox::payload_of(&kept)["fields"]["saveRef"].clone();
+    outbox::retry(&store.lock().unwrap(), "m1", NOW + 2).unwrap();
+    let retried = outbox::payload_of(&store.lock().unwrap().outbox_get("m1").unwrap());
+    assert!(retried["fields"]["baseStamp"].is_null());
+    assert_ne!(retried["fields"]["saveRef"], save_ref);
+    outbox::discard(&store.lock().unwrap(), "m1").unwrap();
+    assert!(store.lock().unwrap().read_file(&file).is_some());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_large_file_goes_in_chunks_and_goes_on_from_where_the_server_is() {
+    let (store, dir) = store("chunks");
+    let bytes: Vec<u8> = (0..1_500_000_u32).map(|n| (n % 251) as u8).collect();
+    let file = store.lock().unwrap().save_file("big.bin", &bytes).unwrap();
+    let send = json!({ "clientRef": "m1", "fields": { "fromValue": "identity:1", "subject": "Big" },
+        "files": [{ "file": file, "name": "big.bin", "contentType": "application/octet-stream" }] });
+    queue_md5(&store, outbox::MAIL_SEND, send, std::slice::from_ref(&file), NOW, false);
+    let server = Server::default();
+    server.answer(
+        &format!("{COMPOSE}/saveDraft"),
+        ok(json!({ "emailMessageId": "E1", "draftStamp": 5 })),
+    );
+    let chunk = format!("{COMPOSE}/uploadChunk");
+    server.answer(
+        &chunk,
+        ok(json!({ "received": 1_048_576, "total": 1_500_000, "accepted": true, "complete": false })),
+    );
+    server.answer(&chunk, Sent::Offline);
+    run_md5(&server, &store, NOW + 1);
+    let asked = server.take();
+    assert_eq!(asked.len(), 3);
+    assert!(asked[1].1.contains("name=\"chunk\"") && asked[1].1.contains("name=\"offset\"\r\n\r\n0\r\n"));
+    let upload = store.lock().unwrap().upload("m1", &file).unwrap();
+    assert_eq!(upload.offset, 1_048_576);
+    assert_eq!(state(&store, "m1"), Some(OutboxState::Retry));
+    // after a restart: the server holds the first chunk; the rest goes from there, then the file by its uploadId
+    let status = format!("{COMPOSE}/uploadStatus?uploadId={}", upload.upload_id);
+    server.answer(
+        &status,
+        ok(json!({ "found": true, "received": 1_048_576, "total": 1_500_000, "complete": false })),
+    );
+    forget(&server, &chunk);
+    server.answer(
+        &chunk,
+        ok(json!({ "received": 1_500_000, "total": 1_500_000, "accepted": true, "complete": true })),
+    );
+    server.answer(&format!("{COMPOSE}/upload"), ok(json!({ "attachmentList": [] })));
+    server.answer(
+        &format!("{COMPOSE}/send"),
+        ok(json!({ "mode": "email", "emailMessageId": "E1" })),
+    );
+    run_md5(&server, &store, NOW + 10_000);
+    let asked = server.take();
+    let paths: Vec<&str> = asked.iter().map(|(path, _)| path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            format!("{COMPOSE}/saveDraft"),
+            status.clone(),
+            chunk.clone(),
+            format!("{COMPOSE}/upload"),
+            format!("{COMPOSE}/send")
+        ]
+    );
+    assert!(asked[2].1.contains("name=\"offset\"\r\n\r\n1048576\r\n"));
+    assert!(asked[3].1.contains(&format!("uploadId={}", upload.upload_id)) && asked[3].1.contains("clientRef=m1"));
+    // the send compares with the stamp the save left
+    assert!(asked[4].1.contains("baseStamp=5"));
+    assert!(store.lock().unwrap().outbox_list().is_empty());
+    assert!(store.lock().unwrap().upload("m1", &file).is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn an_internal_message_is_queued_where_the_server_takes_its_send_once() {
+    let (store, dir) = store("internal-send");
+    let send = json!({ "clientRef": "i1", "fields": { "fromValue": "internal", "toJson": "[]", "subject": "Hi" } });
+    // MD4, or a server without the feature: it needs a connection
+    assert!(check(outbox::MAIL_SEND, &send, &[], NOW).is_err());
+    assert!(outbox::check_with(outbox::MAIL_SEND, &send, &[], NOW, &md5(false)).is_err());
+    let op = outbox::check_with(outbox::MAIL_SEND, &send, &[], NOW, &md5(true)).unwrap();
+    assert_eq!(op.kind, outbox::INTERNAL_SEND);
+    add(&store.lock().unwrap(), op).unwrap();
+    let server = Server::default();
+    server.answer(
+        &format!("{COMPOSE}/send"),
+        ok(json!({ "mode": "internal", "duplicate": true })),
+    );
+    let clock = || NOW + 1;
+    flush(&Job {
+        transport: &server,
+        store: &store,
+        comms_root: DEFAULT_COMMS_ROOT.to_string(),
+        now: &clock,
+        claimed: &|| {},
+        server: md5(true),
+    });
+    let asked = server.take();
+    assert_eq!(asked.len(), 1);
+    assert!(asked[0].1.contains("clientRef=i1") && asked[0].1.contains("fromValue=internal"));
+    assert!(store.lock().unwrap().outbox_list().is_empty());
+    let kinds = outbox::kinds_json(&md5(true));
+    assert_eq!(kinds["internalSend"], true);
+    assert!(kinds["kinds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|kind| kind == "chat-edit"));
+    assert_eq!(
+        outbox::kinds_json(&ServerSync::default())["kinds"]
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }

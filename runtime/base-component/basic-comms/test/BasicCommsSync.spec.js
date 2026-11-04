@@ -179,11 +179,38 @@ feature("the first read starts the cursor; arrivals then page in the order they 
         page2.changes[0].threadId == ids.first
         page2.changes[0].messages.map(row => row.emailMessageId).join(",") == [ids.first, ids.reply].join(",")
         page2.lastSeq > page1.lastSeq
-        screen.json.unsupported == (bossInstalled ? true : undefined)
-        screen.json.changes.length == (bossInstalled ? 0 : 3)
+        screen.json.unsupported == undefined
+        screen.json.changes.length == 3
         screen.json.reset == false
+        // the stores the cursor does not cover: IronStone's internal messages, none of BasicComms'
+        JSON.stringify(screen.json.uncoveredStores) == (bossInstalled ? '["internal"]' : "[]")
         none.json.changes.length == 0
-        none.json.lastSeq == (bossInstalled ? null : page2.lastSeq)
+        none.json.lastSeq == page2.lastSeq
+    }
+})
+
+feature("the client config names what the app's inbox source supports offline, in server.features", {
+    when() {
+        ec.user.internalLoginUser(OWNER)
+        const str = ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml").render("qapps/clientConfig", {}, null)
+        const errors = str.errorMessages.join(" | ")
+        ec.message.clearErrors()
+        let json = {}
+        try {
+            json = JSON.parse(String(str.output || ""))
+        } catch (err) {
+            json = {}
+        }
+        const features = (json.server && json.server.features) || {}
+        const uncovered = Array.from(features.mailChangesUncovered || []).join(",")
+        return {errors, json, features, uncovered}
+    },
+    then({errors, json, features, uncovered}) {
+        errors == ""
+        json.server.clientApi == 4
+        typeof features == "object"
+        features.internalSendRef == (bossInstalled ? true : undefined)
+        uncovered == (bossInstalled ? "internal" : "")
     }
 })
 

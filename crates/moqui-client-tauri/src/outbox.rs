@@ -21,6 +21,10 @@
 //!
 //! The pages hear of each change as `window.__moquiOutboxEvent({kind})` (`ClientHost::notify_pages`): `changed`, or
 //! `sent` with the server's answer to a chat or mail send.
+//!
+//! What may be queued follows the account's server (MD5, `moqui_client::login::ServerSync`): at `clientApi` 4 a
+//! message's edit, redaction, reaction and poll vote too, and an internal message where the server takes its send once;
+//! `outbox_kinds` tells the page which.
 
 use moqui_client::store::Store;
 use moqui_client::sync::outbox::{self as rules, now_ms};
@@ -72,7 +76,12 @@ pub fn outbox_add(
     payload: Value,
     files: Option<Vec<String>>,
 ) -> Result<Value, String> {
-    let op = rules::check(&kind, &payload, files.as_deref().unwrap_or(&[]), now_ms())?;
+    let server = {
+        let state = state(&app)?;
+        let id = caller(&state, &webview)?;
+        state.core.server_sync_of(&id)
+    };
+    let op = rules::check_with(&kind, &payload, files.as_deref().unwrap_or(&[]), now_ms(), &server)?;
     let (account, (kept, added)) = on_store(&app, &webview, |account, store| {
         Ok((account.to_string(), rules::add_kept(store, op)?))
     })?;
@@ -82,7 +91,16 @@ pub fn outbox_add(
     Ok(kept)
 }
 
-/// The account's operations waiting to be sent, or refused, oldest first.
+/// The kinds of operation the calling page's account's server takes queued: `{clientApi, kinds, internalSend}`.
+#[tauri::command(async)]
+pub fn outbox_kinds(app: AppHandle, webview: Webview) -> Result<Value, String> {
+    let state = state(&app)?;
+    let id = caller(&state, &webview)?;
+    Ok(rules::kinds_json(&state.core.server_sync_of(&id)))
+}
+
+/// The account's operations waiting to be sent, refused (`rejected`, with the server's `status` and `error`) or in
+/// conflict (with the server's `current`), oldest first.
 #[tauri::command(async)]
 pub fn outbox_list(app: AppHandle, webview: Webview) -> Result<Value, String> {
     on_store(&app, &webview, |_, store| Ok(rules::list_json(store)))
