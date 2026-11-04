@@ -1,8 +1,9 @@
-// BasicComms, the framework's Comms app (plans/Comms-Framework.md §3, A1): every screen under the root renders in qvt (with its
-// static data) and in tui; the screens render the same under an app's own mount (IronStone's /qapps/Comms, when it is
-// installed) with that app's extensions, and the launcher has one Comms; a user with no party (users only) uses the mail
-// settings; the user search leaves out disabled and system accounts; the provider hooks answer for the apps the user may
-// open, and a hook nobody declares is unavailable; Settings, Chat apps says which app passwords work with XMPP apps.
+// BasicComms, the framework's Comms app (plans/Comms-Framework.md §3, A1): the screens render the same under an app's own
+// mount (IronStone's /qapps/Comms, when it is installed) with that app's extensions, and the launcher has one Comms; a
+// user with no party (users only) uses the mail settings; the user search leaves out disabled and system accounts; the
+// provider hooks answer for the apps the user may open, and a hook nobody declares is unavailable; Settings, Chat apps
+// says which app passwords work with XMPP apps. The every-screen render is not a regression test (one sweep per app per
+// mode belongs in acceptance/).
 // Run: ./moq test basic-comms --spec BasicComms
 const root = "component://basic-comms/screen/BasicComms.xml"
 const webroot = "component://webroot/screen/webroot.xml"
@@ -31,20 +32,6 @@ function render(rootLocation, path, mode, parameters) {
         broken: /Error rendering|Exception in render/.test(output)
     }
 }
-// every screen file under the root, as a path from it, with the browser mode it renders in: qvue for a .qvue screen, else qvt
-function screens() {
-    const files = []
-    ec.resource.getLocationReference("component://basic-comms/screen/BasicComms.xml").walkChildTree(files, null)
-    return files
-        .filter(file => file.location.endsWith(".xml") && file.path !== "BasicComms")
-        .map(file => {
-            const modes = (/render-modes="([^"]*)"/.exec(ec.resource.getLocationText(file.location, false) || "") || [])[1] || ""
-            return {
-                path: file.path.substring("BasicComms".length + 1),
-                browser: modes.split(",").includes("qvue") ? "qvue" : "qvt"
-            }
-        })
-}
 function makeUser(userId, username, disabled) {
     sys(() => {
         if (ec.entity.find("moqui.security.UserAccount").condition("userId", userId).count() > 0) return
@@ -63,26 +50,6 @@ spec({
     setupSpec() {
         makeUser(USER, "basic.comms.spec", false)
         makeUser(DISABLED, "basic.comms.spec.off", true)
-    }
-})
-
-feature("every BasicComms screen renders in qvt and tui", {
-    when() {
-        login("john.doe")
-        const problems = []
-        const found = screens()
-        for (const {path, browser} of found) {
-            for (const mode of [browser, "tui"]) {
-                const shown = render(root, path, mode, {})
-                if (shown.status != 200 || shown.broken)
-                    problems.push(`${mode} ${path}: ${shown.status} ${shown.errors} ${shown.output.slice(0, 160)}`)
-            }
-        }
-        return {problems, count: found.length}
-    },
-    then({problems, count}) {
-        count > 15
-        problems.join("\n") == ""
     }
 })
 
