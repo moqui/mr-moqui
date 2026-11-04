@@ -126,6 +126,11 @@ pub struct Net {
     pub hold_offers: Option<String>,
     pub held: Vec<SfuEvent>,
     start: Instant,
+    /// Time spent in the origin SFU's `handle_receive`, by the wall clock of this thread, and the peers its drives
+    /// polled there; and the time spent in its `handle_timeout`.
+    pub receive_time: Duration,
+    pub receive_polls: u64,
+    pub timeout_time: Duration,
 }
 
 /// The size of each layer's video frame, low to high; a frame's size tells which layer arrived.
@@ -158,6 +163,9 @@ impl Net {
             hold_offers: None,
             held: Vec::new(),
             start: now,
+            receive_time: Duration::ZERO,
+            receive_polls: 0,
+            timeout_time: Duration::ZERO,
         }
     }
 
@@ -213,7 +221,16 @@ impl Net {
         self.join_at(leg, simulcast, proto, 0)
     }
 
+    /// A client that joins `room` on the origin, instead of [`ROOM`].
+    pub fn join_room(&mut self, room: &str, leg: &str) -> usize {
+        self.join_in(room, leg, false, Protocol::Udp, 0)
+    }
+
     fn join_at(&mut self, leg: &str, simulcast: bool, proto: Protocol, node: usize) -> usize {
+        self.join_in(ROOM, leg, simulcast, proto, node)
+    }
+
+    fn join_in(&mut self, room: &str, leg: &str, simulcast: bool, proto: Protocol, node: usize) -> usize {
         let n = self.clients.len() as u8 + 2;
         let addr: SocketAddr = (Ipv4Addr::new(10, 0, 1 + node as u8, n), 5_000).into();
         let mut rtc = Rtc::builder()
@@ -242,14 +259,14 @@ impl Net {
         });
         let video_mid = change.add_media(MediaKind::Video, Direction::SendOnly, Some(leg.into()), None, sim);
         let (offer, pending) = change.apply().expect("an offer");
-        let key = LegKey::new(ROOM, leg);
+        let key = LegKey::new(room, leg);
         let now = self.now;
         let answer = self
             .node_sfu(node)
             .join(now, &key, 1, &offer.to_sdp_string())
             .expect("join");
         if node == 1 {
-            self.leg_node_sfu().link(now, ROOM, ORIGIN).expect("linked");
+            self.leg_node_sfu().link(now, room, ORIGIN).expect("linked");
         }
         rtc.sdp_api()
             .accept_answer(pending, SdpAnswer::from_sdp_string(&answer).expect("answer"))
@@ -445,11 +462,20 @@ impl Net {
             }
             let p = queue.pop_front().expect("a packet");
             let proto = Proto::from_protocol(p.proto);
+            let (started, polls) = (Instant::now(), self.node_sfu(node).stats().peer_polls);
             self.node_sfu(node)
                 .handle_receive(now, proto, p.source, p.destination, &p.contents);
+            if node == 0 {
+                self.receive_time += started.elapsed();
+                self.receive_polls += self.sfu.stats().peer_polls - polls;
+            }
             moved = true;
         }
+        let started = Instant::now();
         self.node_sfu(node).handle_timeout(now);
+        if node == 0 {
+            self.timeout_time += started.elapsed();
+        }
         loop {
             match self.node_sfu(node).poll_output() {
                 SfuOutput::Transmit(t) => {

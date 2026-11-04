@@ -388,6 +388,25 @@ const SPEAKER_FLOOR: f32 = 67.0;
 /// The looks a new speaker must lead.
 const SPEAKER_LOOKS: u8 = 2;
 
+/// Counts of the SFU's per-packet work since it started (plans/High-Level-Review.md HL-008), to size the node-wide
+/// passes before changing them: each received datagram is offered to peers until one accepts it, and each accepted
+/// datagram, timeout and signalling input drives every peer of the node.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SfuStats {
+    /// Datagrams [`Sfu::handle_receive`] was given.
+    pub received: u64,
+    /// Datagrams a peer accepted.
+    pub accepted: u64,
+    /// Peers asked whether they accept a datagram (`Rtc::accepts`), over all datagrams.
+    pub accept_checks: u64,
+    /// Calls of the all-peer drive.
+    pub drives: u64,
+    /// Passes of those drives (each polls every peer).
+    pub drive_passes: u64,
+    /// Peers polled to their timeout, over all passes.
+    pub peer_polls: u64,
+}
+
 /// The rooms of one media node.
 pub struct Sfu {
     config: SfuConfig,
@@ -404,6 +423,7 @@ pub struct Sfu {
     next_id: PeerId,
     out: VecDeque<SfuOutput>,
     next_timeout: Option<Instant>,
+    stats: SfuStats,
 }
 
 /// How many passes [`Sfu::drive`] makes before leaving the rest for the next input; each pass forwards what the last
@@ -427,11 +447,17 @@ impl Sfu {
             next_id: 1,
             out: VecDeque::new(),
             next_timeout: None,
+            stats: SfuStats::default(),
         }
     }
 
     pub fn config(&self) -> &SfuConfig {
         &self.config
+    }
+
+    /// The work counts since this node started ([`SfuStats`]).
+    pub fn stats(&self) -> SfuStats {
+        self.stats
     }
 
     /// The legs with a peer or an injected source in a room.
@@ -770,9 +796,15 @@ impl Sfu {
                 contents,
             },
         );
-        let Some(peer) = self.peers.values_mut().find(|p| p.rtc.accepts(&input)) else {
+        self.stats.received += 1;
+        let checks = &mut self.stats.accept_checks;
+        let Some(peer) = self.peers.values_mut().find(|p| {
+            *checks += 1;
+            p.rtc.accepts(&input)
+        }) else {
             return false;
         };
+        self.stats.accepted += 1;
         peer.handle_input(input);
         self.drive(now);
         true
@@ -900,9 +932,12 @@ impl Sfu {
     fn drive(&mut self, now: Instant) {
         let config = self.config.clone();
         let mut next: Option<Instant> = None;
+        self.stats.drives += 1;
         for _ in 0..MAX_PASSES {
             let mut propagated: Vec<Propagated> = Vec::new();
             next = None;
+            self.stats.drive_passes += 1;
+            self.stats.peer_polls += self.peers.len() as u64;
             for p in self.peers.values_mut() {
                 let t = p.poll_to_timeout(&config, now, &mut self.out, &mut propagated);
                 next = Some(next.map_or(t, |n: Instant| n.min(t)));

@@ -419,3 +419,49 @@ fn a_room_s_publishers_are_asked_for_keyframes() {
     let after = before(&net);
     assert!(after[0] > start[0] && after[1] > start[1], "{start:?} then {after:?}");
 }
+
+/// HL-008 measurement, opt-in: independent two-party rooms on one node at the same traffic per room (audio every
+/// 20 ms and video every 34 ms each way), with the work per received datagram: peers asked whether they accept it,
+/// peers polled by the all-peer drive, and the SFU's time per datagram. Linear growth in the per-datagram counts with
+/// the number of rooms is the node-wide work the finding describes. Run it with
+/// `cargo test -p moqui-rtc --lib sfu_work_per_packet_by_rooms -- --ignored --nocapture` (times are
+/// of whatever profile it is built in; the counts do not depend on it).
+#[test]
+#[ignore = "measurement: prints SFU work per packet as independent rooms grow"]
+fn sfu_work_per_packet_by_rooms() {
+    for rooms in [1, 4, 16, 48] {
+        let mut net = Net::new();
+        for room in 0..rooms {
+            net.join_room(&format!("R{room}"), &format!("A{room}"));
+            net.join_room(&format!("R{room}"), &format!("B{room}"));
+        }
+        net.run(secs(2));
+        let connected = net.clients.iter().filter(|c| c.connected).count();
+        let frames = |net: &Net| -> usize { net.clients.iter().map(|c| c.received.values().sum::<usize>()).sum() };
+        let (stats, frames_before) = (net.sfu.stats(), frames(&net));
+        let (receive_time, receive_polls, timeout_time) = (net.receive_time, net.receive_polls, net.timeout_time);
+        net.run(secs(3));
+        let after = net.sfu.stats();
+        let received = (after.received - stats.received).max(1);
+        let accepted = after.accepted - stats.accepted;
+        let checks = after.accept_checks - stats.accept_checks;
+        let polls = after.peer_polls - stats.peer_polls;
+        let drives = after.drives - stats.drives;
+        let receive_micros = (net.receive_time - receive_time).as_secs_f64() * 1e6;
+        let timeout_micros = (net.timeout_time - timeout_time).as_secs_f64() * 1e6;
+        let receive_polls = net.receive_polls - receive_polls;
+        let frames_per_room = (frames(&net) - frames_before) as f64 / rooms as f64;
+        println!(
+            "{rooms:>3} rooms ({connected}/{} connected): {received} datagrams in ({accepted} accepted); per datagram \
+             {:.1} accept checks, {:.1} peer polls in its receive ({:.1} with timeouts), {:.2} drives, \
+             {:.1} us in receive, {:.1} us in timeouts; {frames_per_room:.0} frames delivered per room in 3 s",
+            rooms * 2,
+            checks as f64 / received as f64,
+            receive_polls as f64 / received as f64,
+            polls as f64 / received as f64,
+            drives as f64 / received as f64,
+            receive_micros / received as f64,
+            timeout_micros / received as f64,
+        );
+    }
+}
