@@ -411,3 +411,73 @@ fn the_servers_own_accounts_refused_are_reported_with_the_rest() {
         )]
     );
 }
+
+/// A round reads only the pending rows of nodes no longer paired (HL-039): a backlog of a paired node's rows costs no
+/// row read, and a row of a node that is gone still bounces, its message removed.
+#[test]
+fn a_round_reads_only_the_rows_of_nodes_no_longer_paired() {
+    let (ctx, facade) = crate::sync_tests::setup_with("");
+    let _entered = ctx.enter();
+    for node in ["node1", "node2"] {
+        let mut client = facade.make_value("moqui.edge.EdgeClient").unwrap();
+        client.set("pairedNodeId", Value::string(node));
+        client.set("keyFingerprint", Value::string("00"));
+        client.set("statusId", Value::string("EdgeClientActive"));
+        client.create(&facade).unwrap();
+    }
+    for index in 0..40 {
+        let to = [format!("x{index}@a.test")];
+        record(
+            ctx.factory(),
+            &facade,
+            if index % 2 == 0 { "node1" } else { "node2" },
+            &format!("item{index}"),
+            "bounce@bounce.test",
+            &to,
+            &[],
+            &[],
+            b"Subject: x\r\n\r\nx\r\n",
+        )
+        .unwrap();
+    }
+    assert_eq!(
+        fail_unpaired(ctx.factory(), &facade).unwrap(),
+        0,
+        "no row of a paired node is read"
+    );
+    let to = ["y@b.test".to_string()];
+    record(
+        ctx.factory(),
+        &facade,
+        "gone",
+        "itemGone",
+        "bounce@bounce.test",
+        &to,
+        &[],
+        &[],
+        b"Subject: y\r\n\r\ny\r\n",
+    )
+    .unwrap();
+    let location = format!("{CONTENT_ROOT}gone/itemGone.eml");
+    assert!(ctx.factory().resource().location_bytes(&location).unwrap().is_some());
+    assert_eq!(fail_unpaired(ctx.factory(), &facade).unwrap(), 1);
+    let gone = row(&facade, "b.test");
+    assert_eq!(field_text(&gone, "statusEnumId"), BOUNCED);
+    assert_eq!(field_text(&gone, "lastReplyText"), "the local node is not paired");
+    assert!(ctx.factory().resource().location_bytes(&location).unwrap().is_none());
+    // node2 is revoked: its rows bounce, node1's stay pending
+    let mut client = facade.make_value("moqui.edge.EdgeClient").unwrap();
+    client.set("pairedNodeId", Value::string("node2"));
+    client.set("statusId", Value::string("EdgeClientRevoked"));
+    client.update(&facade).unwrap();
+    assert_eq!(fail_unpaired(ctx.factory(), &facade).unwrap(), 20);
+    assert_eq!(fail_unpaired(ctx.factory(), &facade).unwrap(), 0);
+    let pending = facade
+        .find(DELIVERY)
+        .unwrap()
+        .eq("statusEnumId", Value::string(PENDING))
+        .disable_authz()
+        .count()
+        .unwrap();
+    assert_eq!(pending, 20);
+}
