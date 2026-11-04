@@ -136,6 +136,16 @@ fn the_stamp_is_read_from_ladder_and_app_backups() {
     assert_eq!(backup_stamp("search-20261103T020000Z-d.dump"), None);
     assert_eq!(backup_stamp("moqui-yesterday-d.dump"), None);
     assert_eq!(backup_stamp("notes.txt"), None);
+    assert_eq!(backup_stamp("moqui_content-20261103T020000Z-manual.dump"), None);
+}
+
+#[test]
+fn another_databases_dump_is_not_restored_from() {
+    assert!(not_a_restore_dump("moqui_content-20261103T140509Z-manual.dump"));
+    assert!(not_a_restore_dump("search-20261103T020000Z-d.dump"));
+    assert!(!not_a_restore_dump("moqui-20261103T140509Z-manual.dump"));
+    assert!(!not_a_restore_dump("moqui.dump"));
+    assert!(!not_a_restore_dump("my-backup.dump"));
 }
 
 #[test]

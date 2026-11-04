@@ -207,6 +207,13 @@ pub(crate) fn backup_stamp(name: &str) -> Option<Timestamp> {
         .map(|zoned| zoned.timestamp())
 }
 
+/// Whether `name` is the dump of another database of the cluster (`moqui_content-<stamp>-<kind>.dump`, which `save-db`
+/// writes beside the `moqui` one) or of the search store's, not one to restore from: `load-save` restores the `moqui`
+/// database from the dump it is given, and the others from the dumps beside it.
+pub(crate) fn not_a_restore_dump(name: &str) -> bool {
+    name.starts_with("moqui_") || name.starts_with("search-")
+}
+
 /// The newest backup in `folder`, by its name's stamp.
 pub(crate) fn last_backup(folder: &Path) -> Option<Timestamp> {
     std::fs::read_dir(folder)
@@ -529,6 +536,16 @@ fn choose_restore(app: &AppHandle) {
             };
             let dump = chosen.path().to_path_buf();
             let name = dump.file_name().unwrap_or_default().to_string_lossy().to_string();
+            if not_a_restore_dump(&name) {
+                notify(
+                    &handle,
+                    "Restore not started",
+                    Some(&format!(
+                        "{name} goes with the backup of the same time named moqui-…; choose that one."
+                    )),
+                );
+                return;
+            }
             let description = format!(
                 "All data in MR Moqui is replaced with the backup {name}. A backup of the data now is taken first. \
                  The node stops while it restores."

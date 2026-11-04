@@ -160,9 +160,10 @@ last backup's time. The folder and whether the nightly backup runs are in `backu
   framework's `backup_EmbeddedDatabase_daily` job into the folder, by default `MR-Moqui Backups` in Documents (a
   development run keeps `runtime/db/backup` and leaves the job's schedule as the repository's runtime has it). See [PostgresBackup](../../plans/archive/PostgresBackup.md).
 - **Back up now:** a `pg_dump` of the live database (`moqui save-db`), named `moqui-<stamp>-manual.dump`, outside the
-  nightly rotation.
+  nightly rotation, with the content database's `moqui_content-<stamp>-manual.dump` beside it.
 - **Restore:** backs up the current data (`-before-restore`, and does not go on if that fails), stops the node, runs
-  `moqui load-save`, and starts it again.
+  `moqui load-save` on the chosen `moqui-` dump (which restores the content database from the dump beside it; another
+  database's dump is refused), and starts it again.
 - **Sleep:** `src/wake.rs` compares the wall clock with the monotonic one; after a sleep it asks the node's `/health`
   again and logs the answer. A nightly backup missed in a sleep runs once soon after the wake.
 
