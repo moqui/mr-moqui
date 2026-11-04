@@ -996,6 +996,9 @@ struct ListIndex {
 
 /// The hash of a row's direct, non-expression fields of `node`, a missing one as null: equal to the hash of a child
 /// those fields match. The hash only narrows the search; a candidate still matches only as [`child_matches`] says.
+/// It stays the child's while the child grows: a later write into the child map comes from a row that joined it,
+/// whose value for each direct alias is the child's own (a type-one descendant that reuses the alias writes that same
+/// value) or null, which is not written.
 fn child_hash(node: &FieldNode, row: &BTreeMap<String, Value>) -> u64 {
     use std::hash::Hasher;
     let mut hasher = std::collections::hash_map::DefaultHasher::new();

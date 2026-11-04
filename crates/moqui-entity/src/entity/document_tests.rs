@@ -389,3 +389,72 @@ fn child_merge_cost() {
         );
     }
 }
+
+/// A type-one descendant of a list's child that reuses one of the child's direct field aliases writes into the child
+/// map after it is indexed. It writes the row's value for that alias, which is the value the child already holds (a
+/// row joins a child only when they are equal) or null (not written), so the indexed hash stays the child's: the
+/// documents are the linear merge's whatever the row order.
+#[test]
+fn a_type_one_descendant_reusing_a_direct_alias_merges_as_before() {
+    let mut info = order_info();
+    let items = &mut info.root.relationships[0].node;
+    items.relationships.push(RelNode {
+        relationship: "productAgain".into(),
+        document_alias: "productAgain".into(),
+        type_one: true,
+        node: node(
+            "Product",
+            vec![field("productId"), field("productName")],
+            vec![RelNode {
+                relationship: "category".into(),
+                document_alias: "category".into(),
+                type_one: true,
+                node: node("Category", vec![field("itemSeq")], Vec::new()),
+            }],
+        ),
+    });
+    let rows = vec![
+        row(&[
+            ("orderId", text("O1")),
+            ("itemSeq", text("1")),
+            ("productId", text("A")),
+            ("note", text("n1")),
+        ]),
+        row(&[
+            ("orderId", text("O1")),
+            ("itemSeq", Value::Null),
+            ("productId", text("A")),
+            ("note", text("n2")),
+        ]),
+        row(&[
+            ("orderId", text("O1")),
+            ("productId", Value::Null),
+            ("itemSeq", text("1")),
+            ("note", text("n3")),
+        ]),
+        row(&[
+            ("orderId", text("O1")),
+            ("itemSeq", text("1")),
+            ("productId", text("A")),
+            ("productName", text("Apple")),
+        ]),
+        row(&[("orderId", text("O1")), ("note", text("n4"))]),
+        row(&[
+            ("orderId", text("O1")),
+            ("itemSeq", Value::Null),
+            ("productId", text("A")),
+            ("note", text("n5")),
+        ]),
+        row(&[
+            ("orderId", text("O1")),
+            ("productId", Value::Null),
+            ("itemSeq", text("1")),
+            ("note", text("n6")),
+        ]),
+    ];
+    for order in [rows.clone(), rows.iter().rev().cloned().collect()] {
+        let docs = assembled(&info, &order);
+        assert_eq!(docs, reference(&info, &order));
+        assert_eq!(list(&docs[0], "items").len(), 4, "{docs:?}");
+    }
+}
