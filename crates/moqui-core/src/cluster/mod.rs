@@ -87,6 +87,10 @@ const PEER_BACKOFF: Duration = Duration::from_secs(5);
 /// A member row with no heartbeat in this many liveness windows is deleted.
 const DEAD_WINDOWS: i64 = 10;
 
+/// How long a read that found no live peer is trusted. A member that joins is then seen at the next write after this,
+/// rather than at the next heartbeat or liveness window: until then, writes here are not posted to it.
+const EMPTY_PEERS_TRUSTED_MS: i64 = 250;
+
 /// How long the sender thread waits for more before it ends. The next message starts another.
 const SENDER_IDLE: Duration = Duration::from_secs(30);
 
@@ -888,9 +892,13 @@ pub(crate) fn set_heartbeat_interval(factory: &ExecutionContextFactory, every: D
 
 fn fan_out(state: &Arc<ClusterState>, topic: &'static str, message: &TopicMessage) {
     {
-        // A single member has no one to tell: with no peers at the last read, nothing is queued.
+        // A single member has no one to tell: with no peers at a recent read, nothing is queued. An older read is not
+        // trusted, so a member that joined since is found by the send (and first sent a clear, as a new peer).
         let peers = lock(&state.peers);
-        if peers.read_at != 0 && peers.urls.is_empty() {
+        if peers.read_at != 0
+            && peers.urls.is_empty()
+            && now_millis().saturating_sub(peers.read_at) < EMPTY_PEERS_TRUSTED_MS
+        {
             return;
         }
     }
@@ -1046,12 +1054,19 @@ fn clear_all_payload() -> Result<Vec<u8>, Error> {
     })
 }
 
-/// The live peers, read again when the heartbeat has not refreshed them within a liveness window.
+/// The live peers, read again when the heartbeat has not refreshed them within a liveness window, or when the last
+/// read found none and is older than [`EMPTY_PEERS_TRUSTED_MS`].
 fn current_peers(state: &ClusterState, factory: &ExecutionContextFactory) -> Vec<String> {
     let window = window_millis(factory);
     {
         let peers = lock(&state.peers);
-        if peers.read_at != 0 && now_millis().saturating_sub(peers.read_at) < window {
+        let age = now_millis().saturating_sub(peers.read_at);
+        let trusted = if peers.urls.is_empty() {
+            EMPTY_PEERS_TRUSTED_MS
+        } else {
+            window
+        };
+        if peers.read_at != 0 && age < trusted {
             return peers.urls.clone();
         }
     }

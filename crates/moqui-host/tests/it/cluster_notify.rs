@@ -80,6 +80,9 @@ fn a_notify_member_applies_peer_notifies_and_sends_its_own() {
     .unwrap();
     let mut listener = raw_connection(&gate);
     listener.listen(CHANNEL).unwrap();
+    // A member that joins is seen on the next heartbeat; the write below then goes to it whenever this member last
+    // read its peers. A newly seen peer is first sent a clear of every entity cache (HL-018).
+    moqui_core::cluster::heartbeat(&factory);
     {
         let context = factory.new_context();
         let _entered = context.enter();
@@ -89,9 +92,8 @@ fn a_notify_member_applies_peer_notifies_and_sends_its_own() {
         value.set("description", Value::string("sent on the channel"));
         value.create(&facade).unwrap();
     }
-    let sent = received(&mut listener, own);
+    let sent = received_with(&mut listener, own, "moqui.basic.Enumeration");
     assert!(sent.starts_with("entity-cache-invalidate\n"), "{sent}");
-    assert!(sent.contains("moqui.basic.Enumeration"), "{sent}");
 
     drop(listener);
     drop(peer);
@@ -186,15 +188,20 @@ fn wait_for_posts(gate: &crate::common::Gate, count: usize) {
     }
 }
 
-/// The first payload on `conn` that `origin` sent.
-fn received(conn: &mut PostgresConn, origin: &str) -> String {
+/// The first payload on `conn` that `origin` sent with `text` in it, after any it sent without.
+fn received_with(conn: &mut PostgresConn, origin: &str, text: &str) -> String {
     let until = Instant::now() + Duration::from_secs(10);
+    let mut others = Vec::new();
     while Instant::now() < until {
         for payload in conn.notifications(Duration::from_millis(500)).unwrap() {
-            if payload.split('\n').nth(1) == Some(origin) {
+            if payload.split('\n').nth(1) != Some(origin) {
+                continue;
+            }
+            if payload.contains(text) {
                 return payload;
             }
+            others.push(payload);
         }
     }
-    panic!("no NOTIFY from {origin}");
+    panic!("no NOTIFY from {origin} with {text}; others {others:?}");
 }

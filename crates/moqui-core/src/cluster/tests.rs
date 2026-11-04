@@ -1445,3 +1445,45 @@ fn a_peer_back_in_the_live_set_is_cleared_without_another_write() {
     assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
     assert_eq!(remote.cached("M1").as_deref(), Some("while out"));
 }
+
+/// A read that found no peer is trusted only briefly: a member that joins after it gets the next write here, with a
+/// clear of every entity cache first as a newly seen peer, without waiting for the heartbeat.
+#[test]
+fn a_peer_that_joins_after_an_empty_read_gets_the_next_write() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-alone");
+    let fingerprints = super::configured_fingerprints().unwrap();
+    let (ctx, facade) = open_facade();
+    let recording = install_recording(ctx.factory());
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    super::start(ctx.factory()).unwrap();
+    write_row(&facade, "ALONE-1", true);
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert!(sync::lock(&recording.calls).is_empty(), "no peer yet");
+    put_member(
+        &facade,
+        "inst-joined",
+        "https://joined.example:8443",
+        now_value(),
+        &fingerprints.session,
+        &fingerprints.cert,
+    );
+    std::thread::sleep(Duration::from_millis(super::EMPTY_PEERS_TRUSTED_MS as u64 + 50));
+    write_row(&facade, "ALONE-2", true);
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    let bodies: Vec<serde_json::Value> = sync::lock(&recording.calls)
+        .iter()
+        .map(|call| serde_json::from_slice::<serde_json::Value>(&call.payload).unwrap()["body"].clone())
+        .collect();
+    assert_eq!(
+        bodies.first(),
+        Some(&serde_json::json!({ "clearAll": true })),
+        "{bodies:?}"
+    );
+    assert!(
+        bodies.iter().any(|body| body["primaryKey"]["enumId"] == "ALONE-2"),
+        "{bodies:?}"
+    );
+}
