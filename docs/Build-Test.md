@@ -368,11 +368,16 @@ does not install, and Play takes only a signed AAB):
 
 - `MOQUI_ANDROID_KEYSTORE`: the upload key's keystore (`.jks` or `.p12`), an absolute path, kept out of git.
 - `MOQUI_ANDROID_KEYSTORE_PASSWORD` and `MOQUI_ANDROID_KEY_ALIAS`; `MOQUI_ANDROID_KEY_PASSWORD` when the key's
-  password is not the store's. `./moq` checks that the set is complete.
+  password is not the store's. Each password can instead be a file's first line (`MOQUI_ANDROID_KEYSTORE_PASSWORD_FILE`,
+  `MOQUI_ANDROID_KEY_PASSWORD_FILE`). `./moq` checks that the set is complete.
+
+A release build runs Gradle with no daemon (`-Dorg.gradle.daemon=false`), so no process is left with the passwords
+in its environment, and refuses a prerelease version (`0.2.0-beta.1`), whose version code would be the release's.
 
 ```sh
 keytool -genkeypair -keystore ~/keys/moqui-upload.jks -alias upload -keyalg RSA -keysize 4096 -validity 10000
-MOQUI_ANDROID_KEYSTORE=~/keys/moqui-upload.jks MOQUI_ANDROID_KEYSTORE_PASSWORD=... MOQUI_ANDROID_KEY_ALIAS=upload \
+read -rs -p 'Keystore password: ' MOQUI_ANDROID_KEYSTORE_PASSWORD && export MOQUI_ANDROID_KEYSTORE_PASSWORD
+MOQUI_ANDROID_KEYSTORE=~/keys/moqui-upload.jks MOQUI_ANDROID_KEY_ALIAS=upload \
     ./moq android build --release --target aarch64 --aab
 MOQUI_MOBILE_APK=crates/moqui-mobile/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
     scripts/android-smoke.sh   # a release APK for x86_64 on the emulator: R8 kept the JNI classes, the shell loads

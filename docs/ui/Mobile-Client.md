@@ -87,13 +87,19 @@ own `/qapps`), never both:
   Android keeps the process.
 - **Resumed:** the outbox is woken, and the mirror reads ahead again for the shell's account.
 - **In the background**, where Android freezes or ends the process, the outbox is sent by a WorkManager job
-  (`FlushWorker.kt`): each time the app goes to the background (`ProcessLifecycleOwner`), a job waits for a network and
-  calls Rust (`Native.flush`, `native::flush_background`), which sends what is due for at most a minute
-  (`moqui_client::sync::flush::flush_bounded`; one operation taken goes to its end) and leaves the rest as it was. When
-  something waits for a later time (a retry's backoff), the job runs again after it, at least a minute later and at most
-  12 times. In a process started for it, the client is made from the store as for a push; a 401 holds the operation
-  until a sign-in or a renewed key, as in the app. Operations are claimed in the store, so the job and the app's own
-  sender never send one twice. The feeds and the mirror do not run in the background.
+  (`FlushWorker.kt`): each time the activity stops, and when it finishes (kept by WorkManager before the process
+  ends, and run a few seconds later in a process of its own), a job waits for a network and calls Rust (`Native.flush`,
+  `native::flush_background`), which takes what is due for a minute (`moqui_client::sync::flush::flush_bounded`) and
+  leaves the rest as it was. Past the minute it takes no operation and an upload stops between its chunks (the next run
+  goes on from where the server is); each request's timeout is the time left and 30 seconds, so a run ends within about
+  a minute and a half. When something is still due, or waits for a later time (a retry's backoff), the job runs again,
+  at least a minute later and at most 12 times; a new go-to-background run replaces one not yet run, and has its own
+  name, so a long wait of a run again never holds it up. In a process started for it, the client is made from the
+  store as for a push; a 401 holds the operation until a sign-in or a renewed key, as in the app. Operations are
+  claimed in the store, so the job and the app's own sender do not take one together; one cut off by the process's
+  end is sent again at the next start, which the server takes once by its `clientRef` (a mail send on a draft found by
+  its id rather than its `clientRef` could, rarely, go twice). A process that is ending makes no client for a run. The
+  feeds and the mirror do not run in the background.
 - **The activity ends** (backing out of the app): the client stops (`Client::shutdown`) and the app ends the process
   (`exit`), so a process Android would keep cached never has a stopped client; the next start, as after Android kills
   the process, runs the setup again, opens the stores and sends what the outbox kept. Only an activity that finished

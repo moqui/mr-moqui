@@ -171,6 +171,8 @@ pub(crate) struct Flushed {
     pub(crate) changed: bool,
     pub(crate) sent: Vec<Value>,
     pub(crate) held: bool,
+    /// When the next operation is due: now when the pass stopped with some due still to take (its bound, or its
+    /// rounds), else the earliest later time of one waiting.
     pub(crate) next_ms: Option<i64>,
 }
 
@@ -183,6 +185,8 @@ enum Outcome {
     Done(Option<Value>),
     /// Not sent: what next, by the status, with the server's message.
     NotSent(u16, Option<String>),
+    /// Stopped at the pass's bound part way (between an upload's chunks): put back as it was, for the next pass.
+    Paused,
     /// The server's copy changed since (MD5): nothing done, its state kept for the user; a mail state change's
     /// payload narrowed to the threads that conflict.
     Conflict { current: Value, payload: Option<Value> },
@@ -193,12 +197,16 @@ enum Outcome {
 /// Send what is due of one account, claim by claim, until nothing is due.
 pub(crate) fn flush(job: &Job<'_>) -> Flushed {
     let mut flushed = Flushed::default();
+    // whether the pass stopped with operations due still to take: at its bound, or after its rounds
+    let mut left = true;
     for _ in 0..ROUNDS {
         if job.over() {
+            left = with(job.store, |store| !store.outbox_due((job.now)(), 1).is_empty()).unwrap_or(false);
             break;
         }
         let claimed = with(job.store, |store| store.outbox_claim((job.now)(), CLAIM)).unwrap_or_default();
         if claimed.is_empty() {
+            left = false;
             break;
         }
         flushed.changed = true;
@@ -243,6 +251,9 @@ pub(crate) fn flush(job: &Job<'_>) -> Flushed {
             .min()
     })
     .flatten();
+    if left {
+        flushed.next_ms = Some(now);
+    }
     flushed
 }
 
@@ -284,6 +295,10 @@ fn settle(job: &Job<'_>, op: &OutboxOp, outcome: Outcome, flushed: &mut Flushed)
             with(job.store, |store| store.outbox_remove(&op.id).map(|_| ()))
         }
         Outcome::Gone => return,
+        Outcome::Paused => {
+            put_back(job, op);
+            return;
+        }
         Outcome::Conflict { mut current, payload } => {
             tracing::info!("Outbox {} ({}): a conflict, kept for the user", op.id, op.kind);
             with(job.store, |store| {
@@ -823,6 +838,10 @@ fn upload_chunks(
         if !still_sending(job, op) {
             return Err(Outcome::Gone);
         }
+        // a bounded pass stops between chunks; the next goes on from where the server is
+        if job.over() {
+            return Err(Outcome::Paused);
+        }
         let from = usize::try_from(offset).unwrap_or(0);
         let to = from.saturating_add(CHUNK_BYTES).min(bytes.len());
         let Some(chunk) = bytes.get(from..to) else {
@@ -1049,17 +1068,25 @@ fn flush_all(client: &Client, host: &dyn ClientHost, until: Option<i64>) -> Opti
     let accounts = moqui_lib::sync::lock(&client.accounts).list().to_vec();
     let mut next: Option<i64> = None;
     for account in accounts {
-        if until.is_some_and(|until| now_ms() >= until) {
-            break;
-        }
         let Some(key) = client.keys.get(&account.id) else {
             continue;
         };
+        if until.is_some_and(|until| now_ms() >= until) {
+            // past the bound: this account's outbox waits for the next run, which is due now if it has anything due
+            let due = client
+                .with_store(&account.id, |store| !store.outbox_due(now_ms(), 1).is_empty())
+                .unwrap_or(false);
+            if due {
+                next = Some(now_ms());
+            }
+            continue;
+        }
         let transport = ProxyTransport {
             host,
             client,
             account: &account,
             key: &key,
+            until,
         };
         let store = AccountStore {
             client,
@@ -1112,6 +1139,19 @@ struct ProxyTransport<'a> {
     client: &'a Client,
     account: &'a Account,
     key: &'a str,
+    /// A bounded pass's bound: each request's timeout is the time left and [`BOUND_GRACE`], not the proxy's.
+    until: Option<i64>,
+}
+
+/// How long a request of a bounded pass may run past the bound.
+const BOUND_GRACE: Duration = Duration::from_secs(30);
+
+impl ProxyTransport<'_> {
+    /// The timeout of a request now: none (the proxy's) for the thread's passes.
+    fn timeout(&self) -> Option<Duration> {
+        let left = u64::try_from(self.until? - now_ms()).unwrap_or(0);
+        Some(Duration::from_millis(left) + BOUND_GRACE)
+    }
 }
 
 impl Transport for ProxyTransport<'_> {
@@ -1126,11 +1166,13 @@ impl Transport for ProxyTransport<'_> {
             ],
             body,
         };
-        let upstream = match self
-            .client
-            .proxy
-            .send(&self.account.server, Some(self.key), SHELL_ORIGIN, request)
-        {
+        let upstream = match self.client.proxy.send_within(
+            &self.account.server,
+            Some(self.key),
+            SHELL_ORIGIN,
+            request,
+            self.timeout(),
+        ) {
             Ok(upstream) => upstream,
             Err(err) => {
                 tracing::info!("Outbox: {} {path}: {err}", self.account.server);
@@ -1157,11 +1199,13 @@ impl Transport for ProxyTransport<'_> {
             headers: vec![("Accept".to_string(), "application/json".to_string())],
             body: Vec::new(),
         };
-        let upstream = match self
-            .client
-            .proxy
-            .send(&self.account.server, Some(self.key), SHELL_ORIGIN, request)
-        {
+        let upstream = match self.client.proxy.send_within(
+            &self.account.server,
+            Some(self.key),
+            SHELL_ORIGIN,
+            request,
+            self.timeout(),
+        ) {
             Ok(upstream) => upstream,
             Err(err) => {
                 tracing::info!("Outbox: {} {path}: {err}", self.account.server);

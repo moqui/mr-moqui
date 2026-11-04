@@ -177,6 +177,8 @@ fn a_bounded_pass_takes_nothing_past_its_bound_and_leaves_it_as_it_was() {
     let left = store.lock().unwrap().outbox_get("c2").unwrap();
     assert_eq!(left.state, OutboxState::Queued, "put back, not sending");
     assert_eq!(left.attempts, 0, "its claim is not counted as a try");
+    let due = flushed.next_ms.expect("stopped with one due: the next run is due now");
+    assert!(due <= tick.load(std::sync::atomic::Ordering::SeqCst));
     // a pass already past its bound takes nothing
     let late = || NOW + 10;
     let flushed = flush(&Job {
@@ -191,6 +193,69 @@ fn a_bounded_pass_takes_nothing_past_its_bound_and_leaves_it_as_it_was() {
     assert!(!flushed.changed);
     assert!(server.take().is_empty());
     assert_eq!(state(&store, "c2"), Some(OutboxState::Queued));
+    assert_eq!(flushed.next_ms, Some(NOW + 10), "still due now");
+    // with nothing due, a pass at its bound has nothing next
+    store.lock().unwrap().outbox_remove("c2").unwrap();
+    let flushed = flush(&Job {
+        transport: &server,
+        store: &store,
+        comms_root: DEFAULT_COMMS_ROOT.to_string(),
+        now: &late,
+        claimed: &|| {},
+        server: ServerSync::default(),
+        until: Some(NOW + 3),
+    });
+    assert_eq!(flushed.next_ms, None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_bounded_pass_stops_an_upload_between_chunks_and_the_next_goes_on() {
+    let (store, dir) = store("bounded-chunks");
+    let bytes: Vec<u8> = (0..1_500_000_u32).map(|n| (n % 251) as u8).collect();
+    let file = store.lock().unwrap().save_file("big.bin", &bytes).unwrap();
+    let send = json!({ "clientRef": "m1", "fields": { "fromValue": "identity:1", "subject": "Big" },
+        "files": [{ "file": file, "name": "big.bin", "contentType": "application/octet-stream" }] });
+    queue_md5(&store, outbox::MAIL_SEND, send, std::slice::from_ref(&file), NOW, false);
+    let server = Server::default();
+    server.answer(
+        &format!("{COMPOSE}/saveDraft"),
+        ok(json!({ "emailMessageId": "E1", "draftStamp": 5 })),
+    );
+    let chunk = format!("{COMPOSE}/uploadChunk");
+    server.answer(
+        &chunk,
+        ok(json!({ "received": 1_048_576, "total": 1_500_000, "accepted": true, "complete": false })),
+    );
+    // the bound passes once the first chunk is sent
+    let clock = || {
+        if server.paths().contains(&chunk) {
+            NOW + 100
+        } else {
+            NOW + 1
+        }
+    };
+    let flushed = flush(&Job {
+        transport: &server,
+        store: &store,
+        comms_root: DEFAULT_COMMS_ROOT.to_string(),
+        now: &clock,
+        claimed: &|| {},
+        server: md5(false),
+        until: Some(NOW + 50),
+    });
+    let paths = server.paths();
+    assert_eq!(
+        paths.iter().filter(|path| **path == chunk).count(),
+        1,
+        "no chunk past the bound"
+    );
+    assert!(!paths.iter().any(|path| path.ends_with("/send")));
+    let op = store.lock().unwrap().outbox_get("m1").unwrap();
+    assert_eq!(op.state, OutboxState::Queued, "put back, not a retry");
+    assert_eq!(op.attempts, 0);
+    assert_eq!(store.lock().unwrap().upload("m1", &file).unwrap().offset, 1_048_576);
+    assert_eq!(flushed.next_ms, Some(NOW + 100), "due again now");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

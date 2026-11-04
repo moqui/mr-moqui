@@ -65,5 +65,11 @@ fn one_client_per_process_until_it_stops_and_the_current_account_is_asked_first(
     let again = core_in(&dir).unwrap();
     assert!(!Arc::ptr_eq(&core, &again), "a stopped client is made again");
     again.shutdown();
+    // once the process is ending, no client is made again (none recovers what was sending), and a background run
+    // asks to run again elsewhere
+    process_ending();
+    assert!(core_in(&dir).is_err());
+    assert_eq!(flush_background(&dir, 1000), 0);
+    ENDING.store(false, std::sync::atomic::Ordering::SeqCst);
     let _ = std::fs::remove_dir_all(&dir);
 }

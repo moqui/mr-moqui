@@ -15,7 +15,7 @@ Where a check names the app's config directory, it is `~/Library/Application Sup
 (`~/Library/Application Support/org.moqui.desktop/runtime`, `~/.local/share/org.moqui.desktop/runtime`).
 
 The Android app (MD6) is built with `./moq android build --release` (signed when its variables are set,
-[Build-Test](../docs/Build-Test.md#android-app)): the APKs are under
+[Build-Test](../docs/Build-Test.md#release-builds-and-google-play)): the APKs are under
 `crates/moqui-mobile/gen/android/app/build/outputs/apk/<abi or universal>/release/` and the AAB under
 `.../outputs/bundle/universalRelease/`. Install the APK with `adb install`, or the AAB through a Play internal testing
 track. The app's files are under `/data/data/org.moqui.mobile/`: the account's store is `client/data/<account>.db`,
@@ -298,4 +298,3 @@ says "as on desktop", run that check of MD4 or MD5 on the phone and record it th
     the app's memory (`adb shell dumpsys meminfo org.moqui.mobile`, TOTAL PSS) at idle and after ten minutes of chat,
     mail and a call. Also an hour in the background with a ring: the battery use (Settings, Battery).
     - Record: the times and sizes, with the phone's model and Android and WebView versions.
-

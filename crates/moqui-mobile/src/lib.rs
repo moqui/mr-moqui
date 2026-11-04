@@ -24,8 +24,8 @@
 //! - [`commands`]: the way back to the shell, a notification, a link outside the app.
 //! - The `<client-conf>` of the build (`client-conf.xml`, read at build time), the stores under the app's data
 //!   directory, the SSO hand-back (`org.moqui.mobile:/sso`, an intent filter), and the lifecycle: the mirror stops when
-//!   the app is paused and starts again when it resumes; the outbox's sender runs while the process does, and in the background a WorkManager job (`FlushWorker.kt`) sends
-//!   it for a bounded time ([`native::flush_background`]).
+//!   the app is paused and starts again when it resumes; the outbox's sender runs while the process does, and in the
+//!   background a WorkManager job (`FlushWorker.kt`) sends it for a bounded time ([`native::flush_background`]).
 //! - [`calls`] and [`native`]: the incoming call on a locked phone (MT2), shown by the native code
 //!   (`gen/android/.../CallManager.kt`) with the media in the webview: an Answer's deep link opens the call in the
 //!   shell, a Decline and the push token's registration go to the server from Rust with no webview.
@@ -355,6 +355,7 @@ fn activity_ended_for_good() -> bool {
 
 /// End the client's threads and sockets; what is unsent stays in the store for the next start.
 fn shut_down(app: &AppHandle, why: &str) {
+    native::process_ending();
     if let Ok(state) = moqui_client_tauri::state(app) {
         if !state.core.is_stopped() {
             state.core.shutdown();
