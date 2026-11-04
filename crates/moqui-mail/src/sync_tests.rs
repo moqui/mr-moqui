@@ -1296,6 +1296,103 @@ fn sent_mail_is_appended_to_sent_unless_the_server_kept_a_copy() {
     assert_eq!(imap.messages("Sent Mail").len(), 2);
 }
 
+/// A queued change that loses the connection (the server drops it on APPEND) is counted before its command goes, and
+/// the sync goes on with a new connection (plans/High-Level-Review.md HL-029): the new Inbox mail comes in that
+/// session, a later change of another message still goes, and the change is dropped once it has had its tries.
+#[test]
+fn a_change_that_loses_the_connection_counts_and_the_sync_goes_on() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let imap = FakeImap::start(&["UIDPLUS", "MOVE"]);
+    imap.add(
+        "INBOX",
+        &mail(
+            "<old@example.com>",
+            "bob@example.com",
+            "alice@example.com",
+            "Old",
+            "",
+            "Old",
+        ),
+        &[],
+    );
+    let account = imap_account(imap.port, "app-password");
+    sync(&account);
+    let old = field(
+        &by_message_id(&facade, &account, "<old@example.com>").unwrap(),
+        "emailMessageId",
+    );
+    let _sink = super::SinkGuard::install();
+    let draft = out_text(
+        &ok(
+            "save#Draft",
+            &[
+                ("emailAccountId", text(&account)),
+                ("toAddresses", text("bob@example.com")),
+                ("subject", text("Never appended")),
+                ("body", text("<p>Hello</p>")),
+            ],
+        ),
+        "emailMessageId",
+    );
+    assert_eq!(
+        ok("send#Draft", &[("emailMessageId", text(&draft))]).get("sent"),
+        Some(&Value::Bool(true))
+    );
+    // queued after the sent copy: a flag change of another message
+    ok(
+        "set#MessageFlags",
+        &[("emailMessageId", text(&old)), ("flagged", Value::Bool(true))],
+    );
+    assert_eq!(changes(&facade, &account), 2);
+    moqui_lib::sync::lock(&imap.state).drop_on = Some("APPEND".to_string());
+    imap.add(
+        "INBOX",
+        &mail(
+            "<new@example.com>",
+            "bob@example.com",
+            "alice@example.com",
+            "New",
+            "",
+            "New",
+        ),
+        &[],
+    );
+
+    sync(&account);
+    assert!(
+        by_message_id(&facade, &account, "<new@example.com>").is_some(),
+        "the new mail came in"
+    );
+    let flags = imap
+        .messages("INBOX")
+        .into_iter()
+        .find(|(_, _, mid)| mid == "<old@example.com>")
+        .map(|(_, flags, _)| flags)
+        .unwrap();
+    assert!(flags.contains(&"\\Flagged".to_string()), "{flags:?}");
+    let queued = rows(
+        &facade,
+        "moqui.basic.email.EmailRemoteChange",
+        &[("emailAccountId", &account)],
+    );
+    assert_eq!(queued.len(), 1);
+    assert_eq!(field(&queued[0], "changeType"), "sent");
+    assert_eq!(field(&queued[0], "attemptCount"), "1");
+    let error = field(&queued[0], "lastError");
+    assert!(error.contains("connection lost"), "{error}");
+
+    // one try a session, until it has had its tries
+    for _ in 1..super::remote::MAX_ATTEMPTS {
+        sync(&account);
+    }
+    assert_eq!(changes(&facade, &account), 0, "dropped after its tries");
+    assert!(imap.messages("Sent Mail").is_empty());
+}
+
 /// A sync that stops at email-client sync-batch with mail left is due again at the job's next run, before its interval, until
 /// the backlog is in; then the interval holds again.
 #[test]

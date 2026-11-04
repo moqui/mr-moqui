@@ -494,7 +494,9 @@ feature("a draft saved elsewhere since the client's copy is kept: the save answe
     then({first, elsewhere, stale, upload, after, data, retried, own, ownAgain, notOwn, sent, subject}) {
         sent.errors == ""
         sent.conflict == false
-        sent.sent == true
+        // claimed in send#Compose's transaction, it goes once that commits (EmailClientServices.send#Draft)
+        sent.statusId == "ES_READY"
+        sent.sendError == null
         retried.conflict == false
         own.conflict == false
         ownAgain.conflict == false

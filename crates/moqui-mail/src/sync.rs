@@ -17,7 +17,9 @@
 //!
 //! One session, under the account's sync lock (`syncLockedUntil`, so no two run at once on any server):
 //!
-//! 1. The changes queued by `push#RemoteChanges` are made on the server, in order ([`super::remote`]).
+//! 1. The changes queued by `push#RemoteChanges` are made on the server, in order ([`super::remote`]). One that loses
+//!    the connection is counted and waits, with the later changes of its message; the session goes on with a new
+//!    connection, so a change the server cannot take never keeps the account from its mail.
 //! 2. `LIST` maps the server's folders onto `EmailFolder` rows: INBOX and the special-use attributes (RFC 6154) onto
 //!    the folders the account was made with, the others made, renamed or marked gone (`remoteRemovedDate`).
 //! 3. Each subscribed folder, the Inbox first. `STATUS` skips one with nothing new. A UIDVALIDITY change voids its
@@ -31,7 +33,8 @@
 //!    one whose Message-ID is a local copy waiting for its UID (a sent copy, a move made without UIDPLUS) is that
 //!    copy. A row that left its folder and was found nowhere else is deleted (kept, out of the account, when a
 //!    record refers to it).
-//! 5. The account's rules run on the new Inbox mail (`run#EmailRules`), then the changes queued meanwhile go out.
+//! 5. The account's rules run on the new Inbox mail (`run#EmailRules`), then the changes queued meanwhile go out, with
+//!    those a lost connection in 1 left, but for the message whose change lost it.
 //!
 //! The email-ECA rules (`*.emecas.xml`, as poll#EmailServer runs them) run once on each new message as it is stored in
 //! the Inbox, IMAP or POP3, in a transaction of their own, a failing rule logged ([`eca_due`] says which messages are new
@@ -1484,21 +1487,35 @@ fn imap_sync(
     report: &mut SyncReport,
     progress: &mut Progress,
 ) -> Result<(), SyncFailure> {
-    let mut conn = connect_imap(facade, server)?;
-    if conn.caps.has("QRESYNC") && conn.caps.has("ENABLE") {
-        if conn.session.run_command_and_check_ok("ENABLE QRESYNC").is_ok() {
-            conn.qresync = true;
-            conn.condstore = true;
-        }
-    } else if conn.caps.has("CONDSTORE") {
-        if conn.caps.has("ENABLE") {
-            let _ = conn.session.run_command_and_check_ok("ENABLE CONDSTORE");
-        }
-        conn.condstore = true;
-    }
+    let mut conn = open_session(facade, server)?;
     let lost = |err: LibError| SyncFailure::Connect(err.to_string());
-    // 1. what was changed here goes there first, so the server's state read next has it
-    report.pushed_count += super::remote::apply_queue(&mut conn, facade, account)?;
+    // 1. what was changed here goes there first, so the server's state read next has it. A change that loses the
+    // connection was counted; the session goes on with a new one, and that change waits for the next session, so one
+    // change the server cannot take does not keep the account from its mail.
+    let mut held = HashSet::new();
+    let run = super::remote::apply_queue(&mut conn, facade, account, &mut held)?;
+    report.pushed_count += run.applied;
+    if let Some(text) = run.lost {
+        tracing::warn!(
+            account = %account.id,
+            "Email account {}: {text}; the sync goes on with a new connection",
+            account.id
+        );
+        conn = open_session(facade, server)?;
+        if options.push_only {
+            // the other changes still go
+            let again = super::remote::apply_queue(&mut conn, facade, account, &mut held)?;
+            report.pushed_count += again.applied;
+            if let Some(text) = again.lost {
+                tracing::warn!(
+                    account = %account.id,
+                    "Email account {}: {text}; its changes wait for the next session",
+                    account.id
+                );
+                return Ok(());
+            }
+        }
+    }
     if options.push_only {
         let _ = conn.session.logout();
         return Ok(());
@@ -1565,10 +1582,37 @@ fn imap_sync(
     // 4. the rules, on the new mail of the Inbox, then what new mail brings: a snoozed thread back, the automatic reply
     run_rules(&account.id, &session.new_inbox_ids);
     after_new_mail(&account.id, &session.new_inbox_ids);
-    // 5. what the rules and the user changed meanwhile
-    report.pushed_count += super::remote::apply_queue(&mut conn, facade, account)?;
+    // 5. what the rules and the user changed meanwhile, with the changes a lost connection in 1 left (but those of the
+    // message whose change lost it)
+    let run = super::remote::apply_queue(&mut conn, facade, account, &mut held)?;
+    report.pushed_count += run.applied;
+    if let Some(text) = run.lost {
+        tracing::warn!(
+            account = %account.id,
+            "Email account {}: {text}; its changes wait for the next session",
+            account.id
+        );
+        return Ok(());
+    }
     let _ = conn.session.logout();
     Ok(())
+}
+
+/// A signed-in IMAP connection with CONDSTORE or QRESYNC turned on when the server offers them.
+fn open_session(facade: &EntityFacade, server: &ServerInfo) -> Result<ImapConn, SyncFailure> {
+    let mut conn = connect_imap(facade, server)?;
+    if conn.caps.has("QRESYNC") && conn.caps.has("ENABLE") {
+        if conn.session.run_command_and_check_ok("ENABLE QRESYNC").is_ok() {
+            conn.qresync = true;
+            conn.condstore = true;
+        }
+    } else if conn.caps.has("CONDSTORE") {
+        if conn.caps.has("ENABLE") {
+            let _ = conn.session.run_command_and_check_ok("ENABLE CONDSTORE");
+        }
+        conn.condstore = true;
+    }
+    Ok(conn)
 }
 
 // ---- LIST ----

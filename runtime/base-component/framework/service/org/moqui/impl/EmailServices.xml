@@ -45,8 +45,14 @@ along with this software (see the LICENSE.md file). If not, see
             Sent with its new messageId. A delivery that fails is a message, not an error, as in Java, and its text is
             sendError. A client message (one with an emailAccountId) is the mail client's to keep: what stops it after the
             status checks is its sendError, not an error, and its Sent status is written in the caller's transaction
-            (a template's message in a new one, as in Java).</description>
-        <in-parameters><parameter name="emailMessageId" required="true"/></in-parameters>
+            (a template's message in a new one, as in Java). An SMTP session that does not end within two minutes is a
+            sendError with an uncertain deliveryOutcome.</description>
+        <in-parameters>
+            <parameter name="emailMessageId" required="true"/>
+            <parameter name="markSent" type="Boolean" default="true"><description>False leaves a client message's
+                status as it is: the mail client's deliver#DraftMessage records the result in a transaction of its own
+                (record#SendResult)</description></parameter>
+        </in-parameters>
         <out-parameters>
             <parameter name="emailMessageId"/>
             <parameter name="messageId"><description>The Message-ID it went out with; empty when nothing was sent</description></parameter>
