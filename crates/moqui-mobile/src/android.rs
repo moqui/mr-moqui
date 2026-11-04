@@ -57,6 +57,19 @@ pub(crate) fn init_verifier() -> Result<(), String> {
     Ok(())
 }
 
+/// The phone's model (`android.os.Build.MODEL`), for its name in the user's device list.
+pub(crate) fn device_model() -> Result<String, String> {
+    with_context(|env, _| {
+        let build = env.find_class(jni_str!("android/os/Build"))?;
+        let model = env
+            .get_static_field(&build, jni_str!("MODEL"), jni_sig!("Ljava/lang/String;"))?
+            .l()?;
+        let model = env.cast_local::<jni::objects::JString>(model)?;
+        let text = model.try_to_string(env)?;
+        Ok(text)
+    })
+}
+
 /// Open `url` with Android's handler of its scheme (the browser for http and https), as a new task.
 pub(crate) fn open_url(url: &str) -> Result<(), String> {
     with_context(|env, app| {

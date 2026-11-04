@@ -17,8 +17,10 @@ sent when the server can be reached. How it works on Android is [docs/ui/Mobile-
   `rustls_platform_verifier::android::init_with_env` in the app's setup, its Kotlin component a Maven artifact in
   `gen/android/app/build.gradle.kts`; when it fails the app makes no request and answers from the store.
 - **`gen/android`** is the Gradle project `cargo tauri android init` made, kept in git with the app's changes (the
-  verifier's artifact, `KeyVault.kt`, the SSO intent filter, the window insets in `MainActivity.kt`, the ProGuard
-  rules); its `.gitignore` files leave out what the Tauri CLI writes on each build.
+  verifier's artifact, `KeyVault.kt`, the SSO intent filter, no backup, the window insets in `MainActivity.kt`, the
+  ProGuard rules); its `.gitignore` files leave out what the Tauri CLI writes on each build.
+- **`patches/wry`**: wry with Tauri's scripts and IPC for the main frame of the app's own origins only, through
+  `[patch.crates-io]` ([patches/README.md](patches/README.md)).
 
 The crate is not a member of the repository's workspace. Its `Cargo.lock` is copied from the repository's by
 `./moq android`, as the desktop app's.
@@ -41,5 +43,5 @@ adb logcat -s moqui-mobile                    # the app's log
 ```sh
 cd crates/moqui-mobile && CARGO_TARGET_DIR=../../target cargo test   # the host logic, on the desktop
 scripts/check-android.sh      # clippy for aarch64-linux-android and x86_64-linux-android
-scripts/android-smoke.sh      # on the emulator, when asked: install, start, the shell's ready line, a screenshot
+scripts/android-smoke.sh      # on the emulator, when asked: the shell's ready line, the frame check, a relaunch
 ```

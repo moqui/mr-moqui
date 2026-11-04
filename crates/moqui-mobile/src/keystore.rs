@@ -115,14 +115,58 @@ fn restrict(path: &Path) {
     }
 }
 
-/// The app's keys: the Keystore's sealed files on Android when its key can be made, else a plain owner-only file.
+impl<S: Sealer> SealedFileStore<S> {
+    /// Seal the plain keys a run without the Keystore left in the directory (`FileKeyStore`'s `<account>.key`), and
+    /// remove each once it is sealed; one that does not seal is kept and logged, and the rest go on. How many moved.
+    pub(crate) fn seal_plain_keys(&self) -> usize {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return 0;
+        };
+        let plain = moqui_client::keys::FileKeyStore::new(&self.dir);
+        let mut moved = 0;
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Some(account) = name.strip_suffix(".key") else {
+                continue;
+            };
+            let Some(key) = plain.get(account) else {
+                continue;
+            };
+            if let Err(err) = self.set(account, &key) {
+                log::error!("The plain key of {account} was not sealed, and is kept: {err}");
+                continue;
+            }
+            match plain.delete(account) {
+                Ok(()) => moved += 1,
+                Err(err) => log::error!("The plain key of {account} is sealed but was not removed: {err}"),
+            }
+        }
+        moved
+    }
+}
+
+/// The app's keys: the Keystore's sealed files on Android when its key can be made (tried twice: a Keystore can be
+/// busy just after boot), with any plain key a run without it left sealed and removed; else a plain owner-only file,
+/// which the shell names (`keyStore: file`).
 pub(crate) fn open_keys(dir: &Path) -> moqui_client::keys::Keys {
     #[cfg(target_os = "android")]
-    match crate::android::KeyVault::ready() {
-        Ok(vault) => {
-            return moqui_client::keys::Keys::new(Box::new(SealedFileStore::new(dir, vault)), "os");
+    {
+        let vault = crate::android::KeyVault::ready().or_else(|err| {
+            log::warn!("The Android Keystore did not answer; trying again: {err}");
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            crate::android::KeyVault::ready()
+        });
+        match vault {
+            Ok(vault) => {
+                let store = SealedFileStore::new(dir, vault);
+                let moved = store.seal_plain_keys();
+                if moved > 0 {
+                    log::info!("{moved} plain keys sealed by the Android Keystore");
+                }
+                return moqui_client::keys::Keys::new(Box::new(store), "os");
+            }
+            Err(err) => log::error!("The Android Keystore cannot be used; the keys are kept in a private file: {err}"),
         }
-        Err(err) => log::error!("The Android Keystore cannot be used; the keys are kept in a private file: {err}"),
     }
     moqui_client::keys::Keys::new(Box::new(moqui_client::keys::FileKeyStore::new(dir)), "file")
 }

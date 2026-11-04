@@ -92,9 +92,10 @@ pub trait ShellHost: Send + Sync {
 
     /// Whether `webview` shows the shell now and may call the shell's commands. The desktop's capabilities grant them to
     /// the main window only, which shows only the shell; the mobile app's one webview shows a server's app too, so it
-    /// checks the page (plans/Mobile-Desktop.md "Remote applications and authentication").
-    fn is_shell_page(&self, webview: &Webview) -> bool {
-        let _ = webview;
+    /// checks the page and the `nonce` the command carries, the one the host handed the shell's current load
+    /// (plans/Mobile-Desktop.md "Remote applications and authentication").
+    fn is_shell_page(&self, webview: &Webview, nonce: Option<&str>) -> bool {
+        let _ = (webview, nonce);
         true
     }
 

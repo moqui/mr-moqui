@@ -334,7 +334,7 @@ sdkmanager 'platform-tools' 'emulator' 'platforms;android-37.0' 'build-tools;36.
 ./moq android dev                            # build, install and run on it, or on a phone over adb
 ./moq android build --target x86_64 --apk    # debug APK; --release for a release one; aarch64 for phones
 scripts/check-android.sh                     # clippy for both Android targets: moqui-client, moqui-client-tauri, the app
-scripts/android-smoke.sh                     # when asked, not in test-all: install, start, the shell's ready line
+scripts/android-smoke.sh                     # when asked, not in test-all: ready line, frame check, relaunch
 adb reverse tcp:8080 tcp:8080                # ./moq run on this machine as the app's http://localhost:8080
 ```
 

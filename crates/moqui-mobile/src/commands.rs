@@ -118,7 +118,7 @@ pub(crate) fn external_url(text: &str) -> Result<Url, String> {
     match url.scheme() {
         "http" | "https" => match url.host_str() {
             None | Some("") => Err("The URL has no host".to_string()),
-            Some(host) if host.ends_with(".localhost") || host == "localhost" => {
+            Some(host) if crate::host::own_host(host) => {
                 Err("The URL is the app's own; open it in the app".to_string())
             }
             Some(_) => Ok(url),

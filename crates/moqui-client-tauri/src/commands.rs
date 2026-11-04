@@ -46,17 +46,25 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + 
 }
 
 /// The client's state, for a page that is the shell.
-fn shell_state<'a>(app: &'a AppHandle, webview: &Webview) -> Result<tauri::State<'a, ClientState>, String> {
+fn shell_state<'a>(
+    app: &'a AppHandle,
+    webview: &Webview,
+    nonce: Option<&str>,
+) -> Result<tauri::State<'a, ClientState>, String> {
     let state = state(app)?;
-    if !state.shell.is_shell_page(webview) {
+    if !state.shell.is_shell_page(webview, nonce) {
         return Err("Only the app's shell may do that".to_string());
     }
     Ok(state)
 }
 
 /// The client's state, for a page that is the shell, when the app can make requests.
-fn online_state<'a>(app: &'a AppHandle, webview: &Webview) -> Result<tauri::State<'a, ClientState>, String> {
-    let state = shell_state(app, webview)?;
+fn online_state<'a>(
+    app: &'a AppHandle,
+    webview: &Webview,
+    nonce: Option<&str>,
+) -> Result<tauri::State<'a, ClientState>, String> {
+    let state = shell_state(app, webview, nonce)?;
     if !state.shell.network_ready() {
         return Err("This app cannot make secure connections on this device".to_string());
     }
@@ -102,8 +110,8 @@ pub fn state_json(state: &ClientState) -> Value {
 /// [`state_json`], as the shell loads, with what it is to do once: tell the current account's user something
 /// (`notice`), and clear the browser storage of accounts whose data was deleted (`clearScopes`, their storage scopes).
 #[tauri::command(async)]
-pub fn client_state(app: AppHandle, webview: Webview) -> Result<Value, String> {
-    let state = shell_state(&app, &webview)?;
+pub fn client_state(app: AppHandle, webview: Webview, nonce: Option<String>) -> Result<Value, String> {
+    let state = shell_state(&app, &webview, nonce.as_deref())?;
     let mut answer = state_json(&state);
     let notice = answer["current"]
         .as_str()
@@ -121,8 +129,8 @@ pub fn client_state(app: AppHandle, webview: Webview) -> Result<Value, String> {
 /// The comms screen the host has for the shell to show (a link of the OS or a notification), taken once: the shell of a
 /// signed-in account asks as it mounts and when the host pokes it.
 #[tauri::command(async)]
-pub fn client_take_open(app: AppHandle, webview: Webview) -> Result<Option<String>, String> {
-    let state = shell_state(&app, &webview)?;
+pub fn client_take_open(app: AppHandle, webview: Webview, nonce: Option<String>) -> Result<Option<String>, String> {
+    let state = shell_state(&app, &webview, nonce.as_deref())?;
     let open = moqui_lib::sync::lock(&state.open_pending).take();
     Ok(open)
 }
@@ -135,6 +143,7 @@ pub fn client_take_open(app: AppHandle, webview: Webview) -> Result<Option<Strin
 pub async fn client_sign_in(
     app: AppHandle,
     webview: Webview,
+    nonce: Option<String>,
     server: String,
     username: String,
     password: String,
@@ -142,7 +151,7 @@ pub async fn client_sign_in(
     device_mode: Option<String>,
 ) -> Result<Value, String> {
     let (wanted, device) = {
-        let state = online_state(&app, &webview)?;
+        let state = online_state(&app, &webview, nonce.as_deref())?;
         let wanted = modes::wanted(state.core.conf().device_mode, device_mode.as_deref())?;
         (wanted, state.shell.device_name())
     };
@@ -215,6 +224,8 @@ fn signed_in(
     };
     state.core.keys().set(&account.id, key).map_err(|err| err.to_string())?;
     let id = account.id.clone();
+    // the pages of the account shown until now go before this one is current
+    state.shell.close_remotes(None);
     let told = {
         let mut accounts = moqui_lib::sync::lock(state.core.accounts());
         let kept = accounts.get(&id).and_then(|kept| kept.device_mode);
@@ -248,8 +259,13 @@ fn signed_in(
 
 /// The identity providers of `server` the shell may offer: `[{id, description, icon}]`.
 #[tauri::command]
-pub async fn client_sso_providers(app: AppHandle, webview: Webview, server: String) -> Result<Value, String> {
-    online_state(&app, &webview)?;
+pub async fn client_sso_providers(
+    app: AppHandle,
+    webview: Webview,
+    nonce: Option<String>,
+    server: String,
+) -> Result<Value, String> {
+    online_state(&app, &webview, nonce.as_deref())?;
     let base = base_url(&server).map_err(|err| err.to_string())?;
     let providers = blocking(move || moqui_client::sso::providers(&base).map_err(|err| err.to_string())).await?;
     Ok(Value::Array(
@@ -267,11 +283,12 @@ pub async fn client_sso_providers(app: AppHandle, webview: Webview, server: Stri
 pub fn client_sso_start(
     app: AppHandle,
     webview: Webview,
+    nonce: Option<String>,
     server: String,
     auth_flow_id: String,
     device_mode: Option<String>,
 ) -> Result<(), String> {
-    let state = online_state(&app, &webview)?;
+    let state = online_state(&app, &webview, nonce.as_deref())?;
     let wanted = modes::wanted(state.core.conf().device_mode, device_mode.as_deref())?;
     let base = base_url(&server).map_err(|err| err.to_string())?;
     let (pending, url) = moqui_client::sso::start(
@@ -290,8 +307,8 @@ pub fn client_sso_start(
 
 /// Give up an SSO sign-in waiting for the browser: a hand-back of it is passed over.
 #[tauri::command(async)]
-pub fn client_sso_cancel(app: AppHandle, webview: Webview) -> Result<(), String> {
-    let state = shell_state(&app, &webview)?;
+pub fn client_sso_cancel(app: AppHandle, webview: Webview, nonce: Option<String>) -> Result<(), String> {
+    let state = shell_state(&app, &webview, nonce.as_deref())?;
     *moqui_lib::sync::lock(&state.sso) = None;
     Ok(())
 }
@@ -370,12 +387,13 @@ fn sign_in_failed(state: &ClientState, reason: &str, server: &str) {
 pub async fn client_send_code(
     app: AppHandle,
     webview: Webview,
+    nonce: Option<String>,
     server: String,
     username: String,
     password: String,
     factor: String,
 ) -> Result<(), String> {
-    online_state(&app, &webview)?;
+    online_state(&app, &webview, nonce.as_deref())?;
     let base = base_url(&server).map_err(|err| err.to_string())?;
     blocking(move || {
         moqui_client::login::send_code(&base, username.trim(), &password, &factor).map_err(|err| err.to_string())
@@ -400,8 +418,8 @@ async fn revoke(state: &ClientState, account: &Account, key: String) {
 /// shows the sign-in. A personal account stays in the list with its data, to sign in to again; a shared one is removed
 /// with its data ([`signed_out`]).
 #[tauri::command]
-pub async fn client_sign_out(app: AppHandle, webview: Webview) -> Result<(), String> {
-    let state = shell_state(&app, &webview)?;
+pub async fn client_sign_out(app: AppHandle, webview: Webview, nonce: Option<String>) -> Result<(), String> {
+    let state = shell_state(&app, &webview, nonce.as_deref())?;
     let Some((account, key)) = state.core.current() else {
         return Ok(());
     };
@@ -414,8 +432,18 @@ pub async fn client_sign_out(app: AppHandle, webview: Webview) -> Result<(), Str
 
 /// Show another account: its server's shell, and none of the other's pages or sockets.
 #[tauri::command(async)]
-pub fn client_switch_account(app: AppHandle, webview: Webview, id: String) -> Result<(), String> {
-    let state = shell_state(&app, &webview)?;
+pub fn client_switch_account(
+    app: AppHandle,
+    webview: Webview,
+    nonce: Option<String>,
+    id: String,
+) -> Result<(), String> {
+    let state = shell_state(&app, &webview, nonce.as_deref())?;
+    if moqui_lib::sync::lock(state.core.accounts()).get(&id).is_none() {
+        return Err("No such account".to_string());
+    }
+    // the other account's pages go before this one is current, so none of them is ever taken for this one's
+    state.shell.close_remotes(None);
     {
         let mut accounts = moqui_lib::sync::lock(state.core.accounts());
         if !accounts.set_current(&id) {
@@ -429,8 +457,8 @@ pub fn client_switch_account(app: AppHandle, webview: Webview, id: String) -> Re
 
 /// The sign-in, for another account.
 #[tauri::command(async)]
-pub fn client_add_account(app: AppHandle, webview: Webview) -> Result<(), String> {
-    let state = shell_state(&app, &webview)?;
+pub fn client_add_account(app: AppHandle, webview: Webview, nonce: Option<String>) -> Result<(), String> {
+    let state = shell_state(&app, &webview, nonce.as_deref())?;
     state.load_shell(Some("signIn=1"));
     Ok(())
 }
@@ -438,8 +466,13 @@ pub fn client_add_account(app: AppHandle, webview: Webview) -> Result<(), String
 /// Remove an account from this device, whatever its device mode: its key revoked (when the server answers) and
 /// forgotten, its store, its chat store keys and its entry deleted. Answers the accounts as `client_state` does.
 #[tauri::command]
-pub async fn client_remove_account(app: AppHandle, webview: Webview, id: String) -> Result<Value, String> {
-    let state = shell_state(&app, &webview)?;
+pub async fn client_remove_account(
+    app: AppHandle,
+    webview: Webview,
+    nonce: Option<String>,
+    id: String,
+) -> Result<Value, String> {
+    let state = shell_state(&app, &webview, nonce.as_deref())?;
     let Some((account, key)) = state.core.account(&id) else {
         return Ok(state_json(&state));
     };
@@ -494,8 +527,8 @@ fn remove_account(state: &ClientState, id: &str) -> Result<(), String> {
 /// A page of the current account's server: `path` on the server (`/qapps/...`), in an app window on the desktop, in
 /// the one webview on mobile.
 #[tauri::command(async)]
-pub fn client_open_remote(app: AppHandle, webview: Webview, path: String) -> Result<(), String> {
-    let state = shell_state(&app, &webview)?;
+pub fn client_open_remote(app: AppHandle, webview: Webview, nonce: Option<String>, path: String) -> Result<(), String> {
+    let state = shell_state(&app, &webview, nonce.as_deref())?;
     state.shell.open_remote(&path)
 }
 

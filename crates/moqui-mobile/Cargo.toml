@@ -46,5 +46,10 @@ rustls-platform-verifier = "0.7"
 [build-dependencies]
 tauri-build = { version = "=3.0.0-alpha.4", features = [] }
 
-# Its own workspace: not a member of the repository's.
+# Its own workspace: not a member of the repository's. The patched crates are not members.
 [workspace]
+exclude = ["patches"]
+
+# wry with its Android IPC and initialization scripts for the main frame of the app's own origins (patches/README.md).
+[patch.crates-io]
+wry = { path = "patches/wry" }

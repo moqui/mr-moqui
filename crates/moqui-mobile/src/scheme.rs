@@ -127,6 +127,15 @@ fn respond(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>,
             Err(err) => plain(StatusCode::NOT_FOUND, &err),
         };
     }
+    // the WebView hands the scheme no body, and no Sec-Fetch-* headers (only User-Agent, Accept, Referer, the client
+    // hints, and Origin on a CORS-mode request): a request with a body comes as scheme_fetch, and one that comes here
+    // (a form posted by navigation) would reach the server empty, with nothing to tell where it came from
+    if !matches!(*request.method(), tauri::http::Method::GET | tauri::http::Method::HEAD) {
+        return plain(
+            StatusCode::METHOD_NOT_ALLOWED,
+            "The app's webview sends no request body this way; the page's fetch does",
+        );
+    }
     answered(app, label, request, origin, &MobileHooks)
 }
 
@@ -195,6 +204,10 @@ pub(crate) fn fetch_request(
     let target = page.join(url).map_err(|err| format!("Not a URL: {err}"))?;
     if target.origin() != page.origin() {
         return Err("A page's request goes to its own origin only".to_string());
+    }
+    // the base64 of BODY_MAX bytes at most, checked before it is decoded
+    if body.is_some_and(|text| text.len() > BODY_MAX.div_ceil(3) * 4) {
+        return Err("The body is too large".to_string());
     }
     let body = match body {
         Some(text) => base64::engine::general_purpose::STANDARD

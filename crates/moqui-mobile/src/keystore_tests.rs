@@ -67,3 +67,21 @@ fn a_key_is_kept_sealed_and_opens_only_with_the_keystores_key() {
     assert!(store.set(".hidden", "k").is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn plain_keys_a_run_without_the_keystore_left_are_sealed_and_removed() {
+    let dir = std::env::temp_dir().join(format!("moqui-mobile-plain-keys-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let plain = moqui_client::keys::FileKeyStore::new(&dir);
+    plain.set("server_abc", "key-one").unwrap();
+    plain.set("server_abc.chat-store", "{\"DEV\":\"s\"}").unwrap();
+    let flip = Flip::default();
+    let store = SealedFileStore::new(&dir, &flip);
+    assert_eq!(store.seal_plain_keys(), 2);
+    assert_eq!(store.get("server_abc").as_deref(), Some("key-one"));
+    assert_eq!(store.get("server_abc.chat-store").as_deref(), Some("{\"DEV\":\"s\"}"));
+    assert!(!dir.join("server_abc.key").exists() && !dir.join("server_abc.chat-store.key").exists());
+    // nothing left to move
+    assert_eq!(store.seal_plain_keys(), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}

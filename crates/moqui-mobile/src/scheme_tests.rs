@@ -59,6 +59,10 @@ fn a_pages_fetch_through_the_host_stays_on_its_origin() {
     assert!(fetch_request(&web, "POST", "/x", &headers, None).is_err());
     assert!(fetch_request(&shell, "POST", "/x", &headers, Some("not base64!")).is_err());
     assert!(fetch_request(&shell, "NOT A METHOD", "/x", &headers, None).is_err());
+    // a body over the limit is refused before it is decoded
+    let huge = "A".repeat(super::BODY_MAX.div_ceil(3) * 4 + 4);
+    let refused = fetch_request(&shell, "POST", "/x", &headers, Some(&huge)).unwrap_err();
+    assert!(refused.contains("too large"), "{refused}");
 }
 
 #[test]

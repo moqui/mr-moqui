@@ -50,4 +50,19 @@ fn the_bridge_defines_the_adapter_on_the_apps_two_origins_only() {
         .and_then(|rest| rest.split("return;\n    }").next())
         .unwrap();
     assert!(!app_part.contains("client_sign_in") && !app_part.contains("client_state"));
+    // the main frame only, and the shell's commands carry the load's nonce
+    assert!(super::BRIDGE.contains("window.top !== window.self) return;"));
+    assert!(!super::BRIDGE.contains(" ask(\"client_state\""));
+    assert!(super::BRIDGE.contains("shellAsk(\"client_state\")"));
+}
+
+#[test]
+fn the_device_is_named_for_the_phones_model() {
+    assert_eq!(super::named_device(Some("Pixel 7")), "MR Moqui on Pixel 7");
+    assert_eq!(super::named_device(Some(" \n")), "MR Moqui on Android");
+    assert_eq!(super::named_device(None), "MR Moqui on Android");
+    assert_eq!(
+        super::named_device(Some(&"x".repeat(100))).len(),
+        "MR Moqui on ".len() + 60
+    );
 }

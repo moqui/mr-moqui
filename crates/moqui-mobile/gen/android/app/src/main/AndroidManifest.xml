@@ -5,7 +5,12 @@
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
+    <!-- No backup, to the cloud or to another device: the app's private files hold each account's store (its mail and
+        chat) and the sealed device keys, whose Keystore key would not come along anyway. -->
     <application
+        android:allowBackup="false"
+        android:fullBackupContent="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/Theme.moqui_mobile"

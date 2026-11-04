@@ -162,7 +162,11 @@ fn start(app: &AppHandle, files: Box<dyn tauri::Assets<tauri::DynRuntime>>) -> R
         moqui_client::renewal::start(&core, &client_host);
         moqui_client::sync::flush::start(&core, &client_host);
     }
-    log::info!("moqui-mobile: the client started in {}", dir.display());
+    log::info!(
+        "moqui-mobile: the client started in {}, as \"{}\"",
+        dir.display(),
+        device_name()
+    );
     Ok(())
 }
 
@@ -200,6 +204,7 @@ fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
         }
         PageLoadEvent::Finished => {
             if payload.url().origin().ascii_serialization() == SHELL_ORIGIN {
+                load_host.shell_loaded(payload.url());
                 log::info!("moqui-mobile: the shell loaded");
             }
         }
@@ -211,7 +216,7 @@ fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
 /// A navigation the page starts (a link, `location`): the shell's page and the server's pages stay in the webview, a
 /// server path on the shell's origin goes to the app origin, and the web opens outside.
 fn navigation(host: &Arc<MobileHost>, url: &Url) -> bool {
-    match goes(url, host.signed_in().is_some()) {
+    match goes(url, host.page.origin().as_deref(), host.signed_in().is_some()) {
         Goes::Here => {
             host.page.navigating();
             true
@@ -260,9 +265,13 @@ fn on_event(app: &AppHandle, event: RunEvent) {
             WindowEvent::Suspended => paused(app),
             #[cfg(mobile)]
             WindowEvent::Resumed => resumed(app),
-            // the activity ended (back out of the app): Tauri ends the process after it, and the next start recovers
-            // from the store
-            WindowEvent::Destroyed => shut_down(app, "the activity ended"),
+            // the activity ended (back out of the app): the client stops and the process ends with it, so the next
+            // start, which runs the setup again, recovers from the store; a process Android kept cached would have a
+            // stopped client and no webview for a new activity
+            WindowEvent::Destroyed => {
+                shut_down(app, "the activity ended");
+                app.exit(0);
+            }
             _ => {}
         },
         RunEvent::Exit => shut_down(app, "the app exits"),
@@ -315,7 +324,33 @@ pub(crate) fn open_externally(url: &Url) {
 
 /// The name of this device in the user's device list and of the shell's chat crypto device.
 pub(crate) fn device_name() -> String {
-    "MR Moqui on Android".to_string()
+    static NAME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    NAME.get_or_init(|| {
+        #[cfg(target_os = "android")]
+        let model = android::device_model()
+            .inspect_err(|err| log::warn!("The phone's model was not read: {err}"))
+            .ok();
+        #[cfg(not(target_os = "android"))]
+        let model: Option<String> = None;
+        named_device(model.as_deref())
+    })
+    .clone()
+}
+
+/// "MR Moqui on <model>", or on Android when the model is not known.
+fn named_device(model: Option<&str>) -> String {
+    let model: String = model
+        .unwrap_or("")
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(60)
+        .collect();
+    let model = model.trim();
+    if model.is_empty() {
+        "MR Moqui on Android".to_string()
+    } else {
+        format!("MR Moqui on {model}")
+    }
 }
 
 /// The `<client-conf>` element of [`CLIENT_CONF`], past its comment.

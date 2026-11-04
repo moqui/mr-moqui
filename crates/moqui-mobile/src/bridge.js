@@ -12,7 +12,9 @@
     "use strict";
     const shell = location.origin === "http://moqui-shell.localhost";
     const appPage = location.origin === "http://moqui-app.localhost";
-    if (window.moquiDesktop || !(shell || appPage)) return;
+    // the main frame only: a frame of the app's origins in a page gets no adapter (the host takes no IPC from frames,
+    // and gives frames of other origins no scripts at all: patches/README.md)
+    if (window.moquiDesktop || !(shell || appPage) || window.top !== window.self) return;
     const invoke = (cmd, args) => {
         const ipc = window.__TAURI_INTERNALS__;
         if (!ipc || !ipc.invoke) return Promise.resolve(null);
@@ -28,6 +30,16 @@
         return ipc.invoke(cmd, args).catch((err) => { throw new Error(String((err && err.message) || err)); });
     };
     const text = (value) => (value === undefined || value === null ? null : String(value));
+    // The shell's commands carry the nonce of the shell's current load, which the host hands this document once it has
+    // loaded (host.rs nonce_script); they wait for it. A document that came in the shell's place never gets it.
+    let shellNonce = null;
+    let nonceArrived = null;
+    const nonceReady = new Promise((resolve) => { nonceArrived = resolve; });
+    if (shell) {
+        Object.defineProperty(window, "__moquiShellNonce", { configurable: false, writable: false,
+            value: (nonce) => { if (shellNonce === null) { shellNonce = String(nonce); nonceArrived(); } } });
+    }
+    const shellAsk = (cmd, args) => nonceReady.then(() => ask(cmd, Object.assign({}, args || {}, { nonce: shellNonce })));
 
     // fetch with a body, through the host
     const pageFetch = window.fetch.bind(window);
@@ -230,23 +242,23 @@
         setCounts: () => Promise.resolve(null),
         setPresence: () => Promise.resolve(null),
         openExternal: (url) => invoke("open_external", { url: String(url || "") }),
-        state: () => ask("client_state"),
+        state: () => shellAsk("client_state"),
         deviceName: String(window.__moquiDeviceName || ""),
-        signIn: (given) => ask("client_sign_in", { server: String(given.server || ""), username: String(given.username || ""),
+        signIn: (given) => shellAsk("client_sign_in", { server: String(given.server || ""), username: String(given.username || ""),
             password: String(given.password || ""), code: given.code ? String(given.code) : null,
             deviceMode: given.deviceMode ? String(given.deviceMode) : null }),
-        sendCode: (given) => ask("client_send_code", { server: String(given.server || ""), username: String(given.username || ""),
+        sendCode: (given) => shellAsk("client_send_code", { server: String(given.server || ""), username: String(given.username || ""),
             password: String(given.password || ""), factor: String(given.factor || "") }),
-        signOut: () => ask("client_sign_out"),
-        switchAccount: (id) => ask("client_switch_account", { id: String(id) }),
-        addAccount: () => ask("client_add_account"),
-        removeAccount: (id) => ask("client_remove_account", { id: String(id) }),
-        openRemote: (path) => ask("client_open_remote", { path: String(path || "") }),
-        takeOpen: () => ask("client_take_open"),
-        ssoProviders: (server) => ask("client_sso_providers", { server: String(server || "") }),
-        ssoStart: (server, authFlowId, deviceMode) => ask("client_sso_start", { server: String(server || ""), authFlowId: String(authFlowId || ""),
+        signOut: () => shellAsk("client_sign_out"),
+        switchAccount: (id) => shellAsk("client_switch_account", { id: String(id) }),
+        addAccount: () => shellAsk("client_add_account"),
+        removeAccount: (id) => shellAsk("client_remove_account", { id: String(id) }),
+        openRemote: (path) => shellAsk("client_open_remote", { path: String(path || "") }),
+        takeOpen: () => shellAsk("client_take_open"),
+        ssoProviders: (server) => shellAsk("client_sso_providers", { server: String(server || "") }),
+        ssoStart: (server, authFlowId, deviceMode) => shellAsk("client_sso_start", { server: String(server || ""), authFlowId: String(authFlowId || ""),
             deviceMode: deviceMode ? String(deviceMode) : null }),
-        ssoCancel: () => ask("client_sso_cancel")
+        ssoCancel: () => shellAsk("client_sso_cancel")
     });
     console.info("moqui-mobile: the shell's bridge is ready");
 })();

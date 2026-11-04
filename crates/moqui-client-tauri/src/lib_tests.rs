@@ -73,7 +73,7 @@ impl ShellHost for TestHost {
         moqui_client::sso::MOBILE_REDIRECT
     }
 
-    fn is_shell_page(&self, _webview: &Webview) -> bool {
+    fn is_shell_page(&self, _webview: &Webview, _nonce: Option<&str>) -> bool {
         true
     }
 

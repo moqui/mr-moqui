@@ -18,10 +18,13 @@
 //! (`client_show_shell`), Android's back, or a sign-out or switch.
 //!
 //! The command set is the boundary: Tauri counts both schemes' pages as local, so the capability cannot tell them
-//! apart, and the shell's commands check the page ([`PageState`]): the webview's URL on the shell's origin, and a load
-//! of the shell begun since the last navigation, so a server page that navigates to the shell cannot call them while
-//! it is still the page. A server page has the sockets, the outbox and the drafts of the current account, as the
-//! desktop's app windows do. The device key never reaches a page.
+//! apart, and the shell's commands check the page ([`PageState`]): the webview's URL on the shell's origin, and the
+//! nonce of the shell's current load, which the host hands the shell's document once it has loaded and forgets at the
+//! next navigation, so a document that was there before (a server page) cannot call them. A server page does not
+//! navigate to the shell itself; only the host does (`client_show_shell`). A server page is bound to the account it was
+//! opened for: it has the sockets, the outbox and the drafts of that account while it is the current one, as the
+//! desktop's app windows do, and none after a switch. The device key never reaches a page. Only the main frame of
+//! the app's two origins has the IPC at all (wry's patch, `patches/README.md`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -35,36 +38,118 @@ use tauri::{AppHandle, Manager, Url, Webview};
 /// The label of the one webview.
 pub(crate) const MAIN: &str = "main";
 
-/// Which origin the one webview shows, as its loads say.
+/// What the one webview shows, as its loads say.
 #[derive(Debug, Default)]
 pub(crate) struct PageState {
+    shown: Mutex<Shown>,
+}
+
+#[derive(Debug, Default)]
+struct Shown {
     /// The origin of the page whose load began last, none while a navigation is under way.
-    shown: Mutex<Option<String>>,
+    origin: Option<String>,
+    /// The account the server pages were opened for (`open_remote`), until the account changes.
+    app_account: Option<String>,
+    /// The nonce of the shell's current load, handed to its document once it loaded; none while it loads, after a
+    /// navigation, and on any other origin.
+    nonce: Option<String>,
 }
 
 impl PageState {
     /// A navigation starts (the host's, or a page's link): the page that was there may still run, so no page is the
-    /// shell until the next load begins.
+    /// shell or has an account until the next load begins.
     pub(crate) fn navigating(&self) {
-        *moqui_lib::sync::lock(&self.shown) = None;
+        let mut shown = moqui_lib::sync::lock(&self.shown);
+        shown.origin = None;
+        shown.nonce = None;
     }
 
-    /// A load of `url` began: its document is the page from now on.
+    /// A load of `url` began: its document is the page from now on, with no nonce yet.
     pub(crate) fn started(&self, url: &Url) {
-        *moqui_lib::sync::lock(&self.shown) = Some(url.origin().ascii_serialization());
+        let mut shown = moqui_lib::sync::lock(&self.shown);
+        shown.origin = Some(url.origin().ascii_serialization());
+        shown.nonce = None;
+    }
+
+    /// The shell's load of `url` finished: a new nonce for it, to hand its document; none when the page is not the
+    /// shell's (any more).
+    pub(crate) fn shell_loaded(&self, url: &Url) -> Option<String> {
+        let mut shown = moqui_lib::sync::lock(&self.shown);
+        let here = url.origin().ascii_serialization();
+        if here != SHELL_ORIGIN || shown.origin.as_deref() != Some(SHELL_ORIGIN) {
+            return None;
+        }
+        let nonce = moqui_client::store::new_client_ref().ok()?;
+        shown.nonce = Some(nonce.clone());
+        Some(nonce)
+    }
+
+    /// The server pages about to open are `account`'s.
+    pub(crate) fn bind_app(&self, account: &str) {
+        moqui_lib::sync::lock(&self.shown).app_account = Some(account.to_string());
+    }
+
+    /// The server pages of `account`, or of any account, are no account's any more (a switch, a sign-out): whether they
+    /// were bound to it.
+    pub(crate) fn unbind_app(&self, account: Option<&str>) -> bool {
+        let mut shown = moqui_lib::sync::lock(&self.shown);
+        let theirs = match (&shown.app_account, account) {
+            (Some(_), None) => true,
+            (Some(bound), Some(account)) => bound == account,
+            (None, _) => false,
+        };
+        if theirs {
+            shown.app_account = None;
+        }
+        theirs
     }
 
     /// The origin shown, once a load began.
     pub(crate) fn origin(&self) -> Option<String> {
-        moqui_lib::sync::lock(&self.shown).clone()
+        moqui_lib::sync::lock(&self.shown).origin.clone()
     }
 
-    /// Whether a page at `url` (the webview's URL as a command came) is the shell: on the shell's origin, which the
-    /// webview's last load began on.
-    pub(crate) fn is_shell(&self, url: Option<&Url>) -> bool {
-        let at = url.map(|url| url.origin().ascii_serialization());
-        at.as_deref() == Some(SHELL_ORIGIN) && self.origin().as_deref() == Some(SHELL_ORIGIN)
+    /// The account of the page shown, with `current` the current account: the shell's is the current one; a server
+    /// page's the one it was opened for, while that is the current one; none while a navigation is under way.
+    pub(crate) fn account(&self, current: Option<&str>) -> Option<String> {
+        let shown = moqui_lib::sync::lock(&self.shown);
+        let current = current?;
+        match shown.origin.as_deref() {
+            Some(SHELL_ORIGIN) => Some(current.to_string()),
+            Some(APP_ORIGIN) => shown
+                .app_account
+                .as_deref()
+                .filter(|bound| *bound == current)
+                .map(str::to_string),
+            _ => None,
+        }
     }
+
+    /// Whether a page at `url` (the webview's URL as a command came), with `nonce`, is the shell: on the shell's
+    /// origin, whose current load's nonce it has.
+    pub(crate) fn is_shell(&self, url: Option<&Url>, nonce: Option<&str>) -> bool {
+        let at = url.map(|url| url.origin().ascii_serialization());
+        let shown = moqui_lib::sync::lock(&self.shown);
+        at.as_deref() == Some(SHELL_ORIGIN)
+            && shown.origin.as_deref() == Some(SHELL_ORIGIN)
+            && shown.nonce.is_some()
+            && shown.nonce.as_deref() == nonce
+    }
+}
+
+/// What the host evaluates in the shell's document to hand it its nonce: it takes it only on the shell's origin, so a
+/// document that came in its place gets nothing.
+pub(crate) fn nonce_script(nonce: &str) -> String {
+    let quoted = serde_json::to_string(nonce).unwrap_or_else(|_| "\"\"".to_string());
+    format!(
+        "if (location.origin === {origin:?} && window.__moquiShellNonce) window.__moquiShellNonce({quoted});",
+        origin = SHELL_ORIGIN
+    )
+}
+
+/// Whether `host` is one of this device's or the app's own (`localhost`, `*.localhost`), never opened outside the app.
+pub(crate) fn own_host(host: &str) -> bool {
+    host == "localhost" || host.ends_with(".localhost")
 }
 
 /// Where a navigation of the one webview to `url` goes.
@@ -80,10 +165,16 @@ pub(crate) enum Goes {
     Nowhere,
 }
 
-/// Where a navigation to `url` goes, with an account signed in or not.
-pub(crate) fn goes(url: &Url, signed_in: bool) -> Goes {
+/// Where a navigation the page at `from` (its origin) starts to `url` goes, with an account signed in or not. A server
+/// page never goes to the shell itself: only the host shows it (`client_show_shell`). With no page yet (`from` none),
+/// the webview's first load, it goes.
+pub(crate) fn goes(url: &Url, from: Option<&str>, signed_in: bool) -> Goes {
     let at = url.origin().ascii_serialization();
     if at == SHELL_ORIGIN {
+        // none yet: the webview's first load, the shell; a server page's link: nowhere (the nonce guards the rest)
+        if from.is_some_and(|from| from != SHELL_ORIGIN) {
+            return Goes::Nowhere;
+        }
         return if matches!(url.path(), "/" | "/index.html") {
             Goes::Here
         } else if signed_in {
@@ -97,7 +188,7 @@ pub(crate) fn goes(url: &Url, signed_in: bool) -> Goes {
     }
     match url.scheme() {
         "about" if url.path() == "blank" => Goes::Here,
-        "http" | "https" if url.host_str().is_some_and(|host| !host.ends_with(".localhost")) => Goes::Outside,
+        "http" | "https" if url.host_str().is_some_and(|host| !own_host(host)) => Goes::Outside,
         "mailto" | "tel" | "sip" => Goes::Outside,
         _ => Goes::Nowhere,
     }
@@ -159,6 +250,22 @@ impl MobileHost {
         }
     }
 
+    /// The current account's id.
+    fn current(&self) -> Option<String> {
+        let core = self.core()?;
+        let current = moqui_lib::sync::lock(core.accounts())
+            .current()
+            .map(|account| account.id.clone());
+        current
+    }
+
+    /// The shell's load of `url` finished: its document gets the load's nonce.
+    pub(crate) fn shell_loaded(&self, url: &Url) {
+        if let Some(nonce) = self.page.shell_loaded(url) {
+            self.eval(&nonce_script(&nonce));
+        }
+    }
+
     /// Evaluate `script` in the page.
     fn eval(&self, script: &str) {
         if let Some(window) = self.app.get_webview_window(MAIN) {
@@ -174,11 +281,7 @@ impl ClientHost for MobileHost {
         if page != MAIN {
             return None;
         }
-        let core = self.core()?;
-        let current = moqui_lib::sync::lock(core.accounts())
-            .current()
-            .map(|account| account.id.clone());
-        current
+        self.page.account(self.current().as_deref())
     }
 
     fn is_shell(&self, page: &str) -> bool {
@@ -212,20 +315,18 @@ impl ShellHost for MobileHost {
     }
 
     fn close_remotes(&self, account: Option<&str>) {
-        // the one webview shows a server page of the current account only
-        let current = self.page_account(MAIN);
-        let shows = self.page.origin().as_deref() == Some(APP_ORIGIN);
-        if shows && account.is_none_or(|account| current.as_deref() == Some(account)) {
+        // the server pages are the bound account's: they are no account's, and go, before the current account changes
+        let theirs = self.page.unbind_app(account);
+        if theirs && self.page.origin().as_deref() != Some(SHELL_ORIGIN) {
             self.navigate(&moqui_client_tauri::shell_url(None, None));
         }
     }
 
     fn open_remote(&self, path: &str) -> Result<(), String> {
         let path = server_path(path)?;
-        if self.signed_in().is_none() {
-            return Err("No account is signed in".to_string());
-        }
+        let account = self.signed_in().ok_or("No account is signed in")?;
         let url = Url::parse(&format!("{APP_ORIGIN}{path}")).map_err(|err| err.to_string())?;
+        self.page.bind_app(&account);
         self.navigate(&url);
         Ok(())
     }
@@ -242,8 +343,8 @@ impl ShellHost for MobileHost {
         moqui_client::sso::MOBILE_REDIRECT
     }
 
-    fn is_shell_page(&self, webview: &Webview) -> bool {
-        webview.label() == MAIN && self.page.is_shell(webview.url().ok().as_ref())
+    fn is_shell_page(&self, webview: &Webview, nonce: Option<&str>) -> bool {
+        webview.label() == MAIN && self.page.is_shell(webview.url().ok().as_ref(), nonce)
     }
 
     fn network_ready(&self) -> bool {
