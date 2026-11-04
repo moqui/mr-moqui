@@ -1,4 +1,4 @@
-<#-- A tree's index (plans/Autodoc.md): its packages, the docs at its top, or its files. The names: the doc's header,
+<#-- A tree's index (plans/archive/Autodoc.md): its packages, the docs at its top, or its files. The names: the doc's header,
      treeKind, packages, top, files and count; md is AutodocLib.js. -->
 <#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>
 # ${md.plain(title)}

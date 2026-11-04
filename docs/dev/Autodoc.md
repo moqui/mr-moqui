@@ -3,7 +3,7 @@
 Markdown docs of a system's artifacts, like JavaDoc for Moqui: an entity, service, screen, ECA rules file or REST API
 as the server loaded it, with its descriptions, its tables and Mermaid diagrams of what uses it and what it uses. They
 are made by templates. The Dev AIDE shows them as you work, and `moqui autodoc` or the Dev AIDE's Export docs writes
-them as a tree into a repository. The design is [plans/Autodoc.md](../../plans/Autodoc.md).
+them as a tree into a repository. The design is [plans/archive/Autodoc.md](../../plans/archive/Autodoc.md).
 
 ## The tree
 

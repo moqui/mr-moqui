@@ -104,7 +104,7 @@ along with this software (see the LICENSE.md file). If not, see
             peers pin when cluster_transport is ssh and the clusterBaseUrl is ssh://host:port.</description></field>
     </entity>
 
-    <!-- A component loaded or deployed on a running server (plans/Component-Deploy.md; docs/tools/Component-Deploy.md):
+    <!-- A component loaded or deployed on a running server (plans/archive/Component-Deploy.md; docs/tools/Component-Deploy.md):
         where its files are and where they came from, the data types loaded, and its state. A component placed in a
         component directory and loaded from System > Components has source directory; one deployed from a git URL has
         source git. -->

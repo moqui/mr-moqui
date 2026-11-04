@@ -256,7 +256,7 @@
         const found = node && (node.attrs || []).find((pair) => pair[0] === name);
         return found ? found[1] : undefined;
     };
-    // The doc path of a link in a doc (plans/Autodoc.md): the part after the Docs screen's path
+    // The doc path of a link in a doc (plans/archive/Autodoc.md): the part after the Docs screen's path
     // (/qapps/dev/Artifacts/Doc/entity/a/B.md -> entity/a/B.md, its anchor and query left off), else null.
     pure.docPathOfLink = (href) => {
         const text = String(href || "");
@@ -1578,7 +1578,7 @@
 </div>`
     };
 
-    // An artifact's doc (plans/Autodoc.md), as the Docs screen shows it, in an editor's Doc tab: the Markdown with its
+    // An artifact's doc (plans/archive/Autodoc.md), as the Docs screen shows it, in an editor's Doc tab: the Markdown with its
     // diagrams and the button that copies it; a link to another doc opens it here, Back returns, and Open in Docs opens
     // the Docs screen at it. stamp: a value that changes when the artifact was saved, to make the doc again.
     const artifactDoc = {

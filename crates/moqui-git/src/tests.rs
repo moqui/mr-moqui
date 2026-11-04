@@ -254,6 +254,56 @@ fn a_db_repository_exports_and_imports_with_the_same_ids() {
     assert!(err.to_string().contains("into itself"), "{err}");
 }
 
+/// A `db` repository's commit is written to a plain directory (plans/archive/Component-Deploy.md, Phase 3): the head of its
+/// branch, or an earlier commit by a prefix of its id; the paths two commits differ by are named; a target that exists
+/// is refused.
+#[test]
+fn write_tree_writes_a_commit_of_a_db_repository() {
+    let fixture = fixture("write-tree");
+    let _entered = fixture.context.enter();
+    define(&fixture.entity, "deploy", "db", None, None);
+    let resources = fixture.context.factory().resource();
+    let provider = crate::provider(fixture.context.factory()).expect("git provider");
+    resources
+        .write_bytes("git://deploy/component.xml", b"<component name=\"deploy\"/>")
+        .unwrap();
+    let first = provider.branch_head("deploy").unwrap().expect("a first commit");
+    resources
+        .write_bytes("git://deploy/service/deploy/DeployServices.xml", b"<services/>")
+        .unwrap();
+    let second = provider.branch_head("deploy").unwrap().expect("a second commit");
+    assert_ne!(first, second);
+
+    let head = fixture.dir.join("head");
+    let written = provider.write_tree("deploy", None, &head).unwrap();
+    assert_eq!(written.commit, second);
+    assert_eq!(written.files, 2);
+    assert!(written.skipped.is_empty(), "{:?}", written.skipped);
+    assert_eq!(
+        std::fs::read_to_string(head.join("component.xml")).unwrap(),
+        "<component name=\"deploy\"/>"
+    );
+    assert_eq!(
+        std::fs::read_to_string(head.join("service/deploy/DeployServices.xml")).unwrap(),
+        "<services/>"
+    );
+    assert!(
+        provider.write_tree("deploy", None, &head).is_err(),
+        "a target that exists is refused"
+    );
+
+    let earlier = fixture.dir.join("earlier");
+    let written = provider.write_tree("deploy", Some(&first[..12]), &earlier).unwrap();
+    assert_eq!(written.commit, first);
+    assert_eq!(written.files, 1);
+    assert!(!earlier.join("service").exists());
+    assert_eq!(
+        provider.changed_paths("deploy", &first, &second).unwrap(),
+        ["service/deploy/DeployServices.xml"]
+    );
+    assert!(provider.write_tree("nowhere", None, &fixture.dir.join("none")).is_err());
+}
+
 #[test]
 fn a_remote_repository_is_a_read_only_mirror_kept_by_fetch() {
     if git(&["--version"]).is_none() {

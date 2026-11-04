@@ -18,7 +18,8 @@
 //! reloads the kinds in dependency order (entities, services, ECA rules, REST, screens and the files they read,
 //! skills), each kind once and each on its own: a failure is a problem of its file and the rest go on. A service, ECA
 //! or REST file that does not parse keeps the definitions loaded before, with the parse error as its problem. Entity
-//! files relink the model (F5), and conf and Rust changes take a restart or a rebuild, which the report says. The
+//! files relink the model (F5), a conf file goes to the conf reload (the parts it cannot apply live wait for a
+//! restart), and a `component.xml` or Rust change takes a restart or a rebuild, which the report says. The
 //! dev-aide's save and the file watcher call it; the last reports are kept for the reload log and agents.
 
 use std::collections::VecDeque;
@@ -431,7 +432,7 @@ fn reload_entities(factory: &ExecutionContextFactory, files: &mut [FileReload]) 
 }
 
 /// The conf files (a component's `MoquiConf.xml`, the runtime conf): the conf merged again and what can be live
-/// applied once for all of them, the rest named as waiting for a restart (plans/Component-Deploy.md, Phase 1).
+/// applied once for all of them, the rest named as waiting for a restart (plans/archive/Component-Deploy.md, Phase 1).
 fn reload_conf(factory: &ExecutionContextFactory, files: &mut [FileReload]) {
     let changed: Vec<usize> = indexes(files, &[ArtifactKind::Conf])
         .into_iter()

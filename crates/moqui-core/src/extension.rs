@@ -45,7 +45,7 @@ pub struct Extension {
     /// Stop what the crate runs, at the start of the factory's shutdown, before the service workers stop.
     pub before_shutdown: fn(&ExecutionContextFactory),
     /// Read again what the crate read from the components' files, after a component was loaded on a running server
-    /// (plans/Component-Deploy.md): the shipped report definitions.
+    /// (plans/archive/Component-Deploy.md): the shipped report definitions.
     pub after_artifacts_changed: fn(&ExecutionContextFactory),
     /// The crate's chat bridge adapters (plans/Comms-Framework.md §4.3), each serving the `ChatBridge` rows that name it
     /// ([`crate::service::chat_bridge`]).
@@ -67,7 +67,7 @@ impl Extension {
 }
 
 /// Have each linked crate read again what it read from the components' files: after a component was loaded on a
-/// running server (plans/Component-Deploy.md). A crate that fails logs it.
+/// running server (plans/archive/Component-Deploy.md). A crate that fails logs it.
 pub fn artifacts_changed(factory: &ExecutionContextFactory) {
     for extension in linked() {
         (extension.after_artifacts_changed)(factory);

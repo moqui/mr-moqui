@@ -380,7 +380,7 @@ fn io_error(location: &str, err: &std::io::Error) -> Error {
 pub struct ResourceFacade {
     runtime_dir: PathBuf,
     /// `component://` roots by component name; a component loaded on a running server is added
-    /// (plans/Component-Deploy.md).
+    /// (plans/archive/Component-Deploy.md).
     components: RwLock<HashMap<String, PathBuf>>,
     /// Shared with the factory. `None` until the host installs an entity facade.
     entity: Arc<RwLock<Option<EntityFacade>>>,
@@ -401,9 +401,20 @@ impl ResourceFacade {
         }
     }
 
-    /// Add or replace `component://` roots: a component loaded on a running server (plans/Component-Deploy.md).
+    /// Add or replace `component://` roots: a component loaded on a running server (plans/archive/Component-Deploy.md).
     pub(crate) fn register_components(&self, roots: impl IntoIterator<Item = (String, PathBuf)>) {
         moqui_lib::sync::write(&self.components).extend(roots);
+    }
+
+    /// Drop the `component://` roots of `names`: a component whose load on a running server was rolled back.
+    pub(crate) fn unregister_components(&self, names: &[String]) {
+        if names.is_empty() {
+            return;
+        }
+        let mut roots = moqui_lib::sync::write(&self.components);
+        for name in names {
+            roots.remove(name);
+        }
     }
 
     /// The entity facade slot shared with the factory, for a provider that reads and writes through it (the `git`

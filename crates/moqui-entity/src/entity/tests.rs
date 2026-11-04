@@ -117,6 +117,8 @@ impl DbDriver for FakeDriver {
 struct Tape {
     sql: Vec<String>,
     password: Option<String>,
+    /// A statement that contains this fails, as a DDL step the database refuses.
+    fail: Option<String>,
 }
 
 struct IterTape {
@@ -236,6 +238,9 @@ impl DbConnection for RecConn {
                 .map(str::to_string)
         }) {
             tape.password = Some(stored);
+        }
+        if tape.fail.as_deref().is_some_and(|fail| sql.contains(fail)) {
+            return Err(Error::new(format!("refused: {sql}")));
         }
         tape.sql.push(sql.to_string());
         Ok(1)
@@ -432,6 +437,7 @@ fn try_insert_seals_the_password_before_sql() {
     let tape = Arc::new(Mutex::new(Tape {
         sql: Vec::new(),
         password: None,
+        fail: None,
     }));
     let facade = open_recording(Arc::clone(&tape), "mysql");
     facade.set_crypt(
@@ -580,6 +586,7 @@ fn a_foobar_search_form_puts_bar_rank_equal_and_from_in_the_query() {
     let tape = Arc::new(Mutex::new(Tape {
         sql: Vec::new(),
         password: None,
+        fail: None,
     }));
     let facade = open_recording(tape, "postgres");
     for (field, needle) in [("barRank", "BAR_RANK = ?"), ("barRank_from", "BAR_RANK >= ?")] {
@@ -2315,6 +2322,7 @@ fn a_relink_swaps_the_model_under_finds_in_flight() {
     let tape = Arc::new(Mutex::new(Tape {
         sql: Vec::new(),
         password: None,
+        fail: None,
     }));
     let driver: Arc<dyn DbDriver> = Arc::new(RecDriver {
         tape: Arc::clone(&tape),
@@ -2419,7 +2427,7 @@ fn a_relink_swaps_the_model_under_finds_in_flight() {
 }
 
 /// A relink that reads a component's `entity` directory not read before (a component added to a running server,
-/// plans/Component-Deploy.md) sets the directories only once its model is in place: a directory whose file does not
+/// plans/archive/Component-Deploy.md) sets the directories only once its model is in place: a directory whose file does not
 /// parse leaves them as they were, and the next relink does not read it.
 #[test]
 fn a_relink_sets_new_component_dirs_only_when_the_model_is_swapped_in() {
@@ -2458,6 +2466,7 @@ fn a_relink_sets_new_component_dirs_only_when_the_model_is_swapped_in() {
     let tape = Arc::new(Mutex::new(Tape {
         sql: Vec::new(),
         password: None,
+        fail: None,
     }));
     let driver: Arc<dyn DbDriver> = Arc::new(RecDriver {
         tape: Arc::clone(&tape),
@@ -2508,7 +2517,7 @@ fn a_relink_sets_new_component_dirs_only_when_the_model_is_swapped_in() {
     facade.relink(&[]).unwrap();
 
     // a staged model is read on its own thread alone
-    let conf = moqui_lib::node::MNode::parse_text("conf", facade.inner.model.conf_text()).unwrap();
+    let conf = moqui_lib::node::MNode::parse_text("conf", &facade.inner.model.conf_text()).unwrap();
     let staged_dirs = [
         framework_dir().join("entity"),
         dir.join("base/entity"),
@@ -2537,5 +2546,134 @@ fn a_relink_sets_new_component_dirs_only_when_the_model_is_swapped_in() {
     );
     assert!(known(&facade, "relink.AddedThing"));
     assert_eq!(facade.model_paths().last(), Some(&dir.join("added/entity")));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A facade over the `entity` directories `dirs` recording its SQL, as the relink tests read it.
+fn open_relink(dirs: &[PathBuf]) -> (EntityFacade, Arc<Mutex<Tape>>) {
+    let tape = Arc::new(Mutex::new(Tape {
+        sql: Vec::new(),
+        password: None,
+        fail: None,
+    }));
+    let driver: Arc<dyn DbDriver> = Arc::new(RecDriver {
+        tape: Arc::clone(&tape),
+    });
+    let transactions = TransactionManager::new(
+        driver,
+        PoolConfig {
+            min: 0,
+            max: 4,
+            reserve: 1,
+            acquire_timeout: Duration::from_secs(5),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let facade = EntityFacade::open_components(
+        &framework_dir(),
+        dirs,
+        "transactional",
+        vec![EntityGroup::new("transactional", "postgres", transactions)],
+    )
+    .unwrap();
+    facade.set_disable_fk_create(true);
+    (facade, tape)
+}
+
+/// A component directory `base` with the entity `relink.BaseThing`, and `extends` with an `extend-entity` that adds
+/// the field `relinkNote` to it, under a new temp directory.
+fn relink_extend_fixture(label: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("moqui-relink-{label}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for component in ["base", "extends"] {
+        std::fs::create_dir_all(dir.join(component).join("entity")).unwrap();
+    }
+    std::fs::write(
+        dir.join("base/entity/BaseEntities.xml"),
+        "<entities><entity entity-name=\"BaseThing\" package=\"relink\"><field name=\"thingId\" type=\"id\" is-pk=\"true\"/></entity></entities>",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("extends/entity/ExtendEntities.xml"),
+        "<entities><extend-entity entity-name=\"BaseThing\" package=\"relink\"><field name=\"relinkNote\" type=\"text-medium\"/></extend-entity></entities>",
+    )
+    .unwrap();
+    dir
+}
+
+fn field_count(facade: &EntityFacade, name: &str) -> usize {
+    facade
+        .with_entity(name, |entity, _, _| Ok(entity.fields.len()))
+        .unwrap()
+}
+
+/// A relink whose table check has a failed DDL step keeps the old model and the old component `entity` directories,
+/// so no reader sees a field whose column is not there (plans/archive/Component-Deploy.md, Verification).
+#[test]
+fn a_relink_whose_ddl_fails_keeps_the_old_model_and_dirs() {
+    let dir = relink_extend_fixture("ddl-fails");
+    let (facade, tape) = open_relink(&[dir.join("base/entity")]);
+    let base = field_count(&facade, "relink.BaseThing");
+    tape.lock().unwrap().fail = Some("relink_note".to_string());
+
+    let extend_file = dir.join("extends/entity/ExtendEntities.xml");
+    let err = facade
+        .relink_components(
+            Some(vec![dir.join("base/entity"), dir.join("extends/entity")]),
+            std::slice::from_ref(&extend_file),
+        )
+        .unwrap_err();
+    assert!(err.to_string().contains("table check"), "{err}");
+    assert_eq!(field_count(&facade, "relink.BaseThing"), base, "the old model stays");
+    assert_eq!(
+        facade.model_paths().last(),
+        Some(&dir.join("base/entity")),
+        "the old directories stay"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An `extend-entity` that adds a field has its column made by the table check before the new model is swapped in,
+/// and the field is written right after the relink.
+#[test]
+fn a_relink_makes_an_extend_entity_column_before_the_swap() {
+    let dir = relink_extend_fixture("extend-column");
+    let (facade, tape) = open_relink(&[dir.join("base/entity")]);
+    let base = field_count(&facade, "relink.BaseThing");
+    tape.lock().unwrap().sql.clear();
+
+    let extend_file = dir.join("extends/entity/ExtendEntities.xml");
+    let report = facade
+        .relink_components(
+            Some(vec![dir.join("base/entity"), dir.join("extends/entity")]),
+            std::slice::from_ref(&extend_file),
+        )
+        .unwrap();
+    assert_eq!(report.changed, ["relink.BaseThing"]);
+    assert!(
+        report
+            .ddl
+            .iter()
+            .any(|sql| sql.contains("base_thing") && sql.contains("relink_note")),
+        "{:?}",
+        report.ddl
+    );
+    assert_eq!(field_count(&facade, "relink.BaseThing"), base + 1);
+
+    let mut row = facade.make_value("relink.BaseThing").unwrap();
+    row.set("thingId", Value::string("T1"));
+    row.set("relinkNote", Value::string("added live"));
+    row.create(&facade).unwrap();
+    let sql = tape.lock().unwrap().sql.clone();
+    let ddl_at = sql
+        .iter()
+        .position(|sql| !sql.starts_with("INSERT") && sql.contains("relink_note"))
+        .unwrap_or_else(|| panic!("no DDL of the column in {sql:?}"));
+    let insert_at = sql
+        .iter()
+        .position(|sql| sql.starts_with("INSERT") && sql.contains("relink_note"))
+        .unwrap_or_else(|| panic!("no insert of the column in {sql:?}"));
+    assert!(ddl_at < insert_at, "{sql:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

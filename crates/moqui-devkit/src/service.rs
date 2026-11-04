@@ -639,14 +639,39 @@ fn restart_server(
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let mut out = BTreeMap::new();
-    if !allowed("Restart") {
-        return Ok(out);
+    if restart_soon("Restart") {
+        out.insert("restarting".to_string(), Value::Bool(true));
+    }
+    Ok(out)
+}
+
+/// Whether the current user may restart this server (`restart#Server`, a deploy's "and restart"): a dev instance,
+/// `DEV_AIDE` or the `ADMIN` group, and a server that can restart itself. Adds no message.
+pub(crate) fn restart_allowed() -> bool {
+    moqui_core::devtools::is_dev_instance()
+        && moqui_core::devtools::restart::can_restart()
+        && (moqui_core::user::has_permission("DEV_AIDE").unwrap_or(false)
+            || moqui_core::user::is_in_group("ADMIN").unwrap_or(false))
+}
+
+/// Restart the server just after this request answers, when [`allowed`] for `what`; false (with the error added)
+/// when not.
+pub(crate) fn restart_soon(what: &str) -> bool {
+    if !allowed(what) {
+        return false;
+    }
+    if !moqui_core::devtools::restart::can_restart() {
+        ExecutionContext::with_current(|ec| {
+            ec.message()
+                .add_error(format!("{what}: this process is not a server that can restart"));
+        });
+        return false;
     }
     let user = moqui_core::user::session::current_user_id()
         .ok()
         .flatten()
         .unwrap_or_default();
-    tracing::warn!("Restart of the server requested by user {user}");
+    tracing::warn!("Restart of the server requested by user {user} ({what})");
     // After the response: the shutdown waits for open requests, this one among them.
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -654,8 +679,7 @@ fn restart_server(
             tracing::error!("Restart requested, but this process is not a server that can restart");
         }
     });
-    out.insert("restarting".to_string(), Value::Bool(true));
-    Ok(out)
+    true
 }
 
 #[cfg(test)]

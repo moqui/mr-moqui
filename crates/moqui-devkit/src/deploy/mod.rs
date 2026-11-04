@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Components and conf on a running server (plans/Component-Deploy.md): the conf reload's services, and the loading
+//! Components and conf on a running server (plans/archive/Component-Deploy.md): the conf reload's services, and the loading
 //! of a component without a restart. The conf reload itself is `moqui_core::context::conf_reload`; this crate holds
 //! what uses the reload pipeline ([`crate::reload`]). Guide: docs/tools/Component-Deploy.md.
 

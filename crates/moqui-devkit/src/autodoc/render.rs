@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A doc's text from its template (plans/Autodoc.md, "Templates"): the template of its kind, from the first template
+//! A doc's text from its template (plans/archive/Autodoc.md, "Templates"): the template of its kind, from the first template
 //! directory that has one, else the framework's; run as a trusted fancy template (`.fancy`, not `.md.fancy`, which makes
 //! HTML) with the doc's data as its names.
 

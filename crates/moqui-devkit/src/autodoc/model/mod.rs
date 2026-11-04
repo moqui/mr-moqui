@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The data of each doc's template (plans/Autodoc.md, "Document content"): what every doc has (its header, its way up,
+//! The data of each doc's template (plans/archive/Autodoc.md, "Document content"): what every doc has (its header, its way up,
 //! what uses it and what it uses, grouped by kind as the Artifact Browser groups them) here, and each type's sections in
 //! the modules below. A linked artifact carries its `href`, the relative link to its doc, only when that doc is in the
 //! tree; the text is escaped by the templates' helpers (`AutodocLib.js`), not here.

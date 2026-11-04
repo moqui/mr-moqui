@@ -210,7 +210,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="restart" noun="Server" type="rust" location="moqui_devkit::service::restart_server"
             allow-remote="false">
         <description>Shut the server down gracefully, as on SIGTERM, and run it again with the same arguments: the
-            fallback for what does not reload (an entity change, a conf or component change). Sessions and the sim
+            fallback for what does not reload (a part of the conf that waits for a restart, a component.xml, a component
+            loaded at the next start). Sessions and the sim
             overlay are lost. Answers at once; the shutdown waits for open requests.</description>
         <out-parameters><parameter name="restarting" type="Boolean"/></out-parameters>
     </service>

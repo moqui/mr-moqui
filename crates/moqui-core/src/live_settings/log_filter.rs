@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The process's log filter (plans/Monitor-Settings.md, Applying each group: Logging): the global level, the console
+//! The process's log filter (plans/archive/Monitor-Settings.md, Applying each group: Logging): the global level, the console
 //! level and the target rules, as one snapshot the host's subscriber reads. The host installs the levels it started
 //! with ([`install`]); the live settings replace the snapshot ([`set`]) and rebuild the callsites' cached interest.
 //! The subscriber is the process's, so with two factories in one process the last change of either wins.

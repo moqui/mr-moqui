@@ -150,10 +150,10 @@ pub fn feed_service_names(facade: &EntityFacade) -> Vec<FeedServiceNames> {
     with_load_slot(facade, |slot| slot.feed_services.values().cloned().collect())
 }
 
-/// `load-data` locations from the conf the model was loaded with, in merge order: on a server the merged conf, so a
+/// `load-data` locations from the conf the model is loaded with (the merged conf, replaced by a conf reload), in merge order: on a server the merged conf, so a
 /// component's or the runtime conf's own `load-data` entries are among them. This does not load those files.
 pub fn conf_data_locations(facade: &EntityFacade) -> Result<Vec<String>, Error> {
-    let conf = MNode::parse_text("conf", facade.inner.model.conf_text())?;
+    let conf = MNode::parse_text("conf", &facade.inner.model.conf_text())?;
     let facade = conf
         .first_named("entity-facade")
         .ok_or_else(|| Error::new("conf has no entity-facade"))?;

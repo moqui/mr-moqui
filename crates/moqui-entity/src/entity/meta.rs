@@ -106,7 +106,7 @@ impl EntityFacade {
 
     /// Check the tables of `names` whatever their groups' `startup-add-missing` and `runtime-add-missing` say, and
     /// answer the DDL statements that ran and the steps that failed: the check after an entity file changed or a
-    /// component was added to a running server (plans/design-dev-aide.md 8.2, plans/Component-Deploy.md). Additive
+    /// component was added to a running server (plans/design-dev-aide.md 8.2, plans/archive/Component-Deploy.md). Additive
     /// only, as every check is: a missing table is created, missing columns, indexes and foreign keys added. On
     /// Postgres a statement waits at most [`DDL_LOCK_TIMEOUT`] for its table's lock, so a long transaction on the
     /// table fails the step rather than queueing every query on the table behind it.

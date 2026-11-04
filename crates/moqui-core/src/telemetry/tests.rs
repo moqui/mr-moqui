@@ -1614,7 +1614,7 @@ fn slow_root_ms_comes_from_the_conf_and_a_bad_value_keeps_the_default() {
     assert!(config.warnings.iter().any(|warning| warning.contains("slow-root-ms")), "{:?}", config.warnings);
 }
 
-/// The live config of Monitor › Settings (plans/Monitor-Settings.md): an override changes what the decisions read, and
+/// The live config of Monitor › Settings (plans/archive/Monitor-Settings.md): an override changes what the decisions read, and
 /// a revert to the on-disk config restores it.
 #[cfg(feature = "telemetry")]
 mod live {

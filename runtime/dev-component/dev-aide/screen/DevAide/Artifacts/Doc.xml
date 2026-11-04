@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Docs (plans/Autodoc.md): the Markdown doc of an artifact, a package or a tree, made now from the artifact as the
+<!-- Docs (plans/archive/Autodoc.md): the Markdown doc of an artifact, a package or a tree, made now from the artifact as the
     server has it, with its Mermaid diagrams and the button that copies its Markdown. The doc's path is the screen's
     extra path (Doc/entity/mantle/order/OrderHeader.md), so the doc's relative links open the docs they name here, as in
     an exported tree; artifactId (an id, or a name such as OrderHeader) opens an artifact's doc. A plain markdown-view,

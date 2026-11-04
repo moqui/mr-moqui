@@ -2,7 +2,7 @@
 
 A running server can take changes to its conf files without a restart, where what reads the setting allows it, and
 names the rest as waiting for a restart. It can also load a component placed in a component directory, without a
-restart. The design and status are in [plans/Component-Deploy.md](../../plans/Component-Deploy.md).
+restart. The design and status are in [plans/archive/Component-Deploy.md](../../plans/archive/Component-Deploy.md).
 
 The code: `crates/moqui-core/src/context/conf_reload/` (the catalog, the diff and the apply),
 `crates/moqui-devkit/src/deploy/` (the component load and the services), and `crates/moqui-host/src/http.rs` (SIGHUP
@@ -19,7 +19,9 @@ setting that a later component or the runtime conf overrides therefore shows no 
 There are four ways to reload:
 
 - **System › Conf.** The screen shows every change between the files and the running conf, with its class and what
-  applying it would do. **Apply Changes** reloads.
+  applying it would do. **Apply Changes** reloads. Under **Waiting for a Restart**, **Restart Now** restarts the
+  server (`restart#Server`) where it can: a dev instance, a user with `DEV_AIDE` or in `ADMIN`, and a server that can
+  restart itself (`./moq run`, or `moqui` as a server).
 - **SIGHUP.** `systemctl reload moqui` sends it; the unit in `systemd/` has the `ExecReload` line. The report goes to
   the log, on the `moqui.monitor.audit` target. SIGHUP reloads only when stdin is not a terminal. Under `./moq run` in
   a terminal it ends the server, as before.
@@ -112,14 +114,25 @@ loaded. **Preview** shows what loading one would do:
    of new documents are built after.
 
 **At the next start** records the component instead. The next start loads it as boot loads every component, then
-loads its data.
+loads its data. **With a restart now**, shown only where the server can restart for this user (as Restart Now on
+System › Conf), records it the same way and restarts the server at once.
+
+**Load Data** on a row of **Loaded** loads the data files of the types named (`seed` by default) of a loaded component
+again, each file in its own transaction. A rerun is safe: a record that is there is updated.
 
 `moqui.server.DeployedComponent` keeps each loaded component, with its data types and its state, and
 `DeployedComponentHistory` keeps each load. **Remove** leaves a deployed component out at the next start: its directory
-moves to `.removed/` beside it. What it loaded stays until the restart, and its tables and data stay after.
+moves to `.removed/` beside it. What it loaded stays until the restart, and its tables and data stay after. A working
+clone with changes that are not committed, or commits not pushed, is not removed at first: the screen lists the changes
+and asks again with **Remove Anyway**, which moves the clone aside with its changes.
 
-The services are `scan#Components`, `preview#ComponentLoad`, `load#Component` (`mode` now or restart, `dataTypes`) and
-`remove#Component`. Each needs the `ADMIN` group.
+The services are `scan#Components`, `preview#ComponentLoad`, `load#Component` (`mode` now, restart or restart-now,
+`dataTypes`), `load#ComponentData` (`componentName`, `dataTypes`) and `remove#Component` (`confirmDirty`; out `dirty`
+with the changes when it did not remove a working clone). Each needs the `ADMIN` group.
+
+The Dev AIDE's Repositories page does the same preview after **Get** or **Clone**: when nothing in the component waits
+for a restart it offers **Load**, which runs `load#Component`; otherwise it says the component loads after a restart,
+and why.
 
 ## Deploying from git
 
@@ -140,6 +153,8 @@ discovery does not see them. It shows the same preview a load shows. A staged co
 
 - **Deploy** moves the files into place and loads the component, as Load does.
 - **At Next Start** moves them into place for the next start.
+- **Deploy and Restart**, where the server can restart for this user, moves them into place for the next start and
+  restarts the server.
 - **Discard** drops them.
 
 If the load fails, the files go back to where they were staged.
@@ -154,6 +169,8 @@ A component deployed from git has two more actions:
   2. applies the conf when its `MoquiConf.xml` changed;
   3. reloads the changed files;
   4. loads the changed data files (`seed` unless other types are named).
+- **Update and Restart**, where the server can restart for this user, updates and then restarts the server, for the
+  changes that wait for a restart.
 
 Deploying runs the component's code and loads its data, which may include security data. So it needs:
 
@@ -166,7 +183,8 @@ a fetch, as they stop every fetch. The access token is kept encrypted on the Git
 `DeployedComponent` row. A working clone sends the token as an HTTP header and never writes it into the clone's conf.
 
 The services are `preview#ComponentDeploy` (`url`, `branch`, `storage`, `directory`, `username`, `accessToken`),
-`deploy#Component`, `discard#ComponentDeploy`, `preview#ComponentUpdate` and `update#Component`.
+`deploy#Component` (`mode` now, restart or restart-now), `discard#ComponentDeploy`, `preview#ComponentUpdate` and
+`update#Component` (`mode` now or restart-now).
 
 ## Clusters and containers
 

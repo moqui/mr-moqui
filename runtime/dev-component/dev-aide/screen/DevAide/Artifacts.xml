@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <!-- Artifacts (plans/design-dev-aide.md 7): Search, an artifact's references as lists (Refs, the browser's List view), and
     the site's Customizations, all from the framework's artifact index, plain forms and lists so the terminal reaches
     them; the Browser, the canvas of the same references (a qvue page, P9); and Docs and Export docs, the Markdown docs
-    of the artifacts (plans/Autodoc.md). -->
+    of the artifacts (plans/archive/Autodoc.md). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Artifacts" default-menu-index="4">
     <subscreens default-item="Search">

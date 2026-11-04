@@ -204,7 +204,8 @@ fn get_addons(
 }
 
 /// `get#Component`: `./moq component-get <name>` (with `--dev` for `runtime/dev-component`), which gets the component
-/// and those it depends on; it loads after a restart. The full tier's, with network git allowed.
+/// and those it depends on. Out: `restart` true when it loads only after a restart, else `loadable` and
+/// `componentName` for System › Components' load (see [`offer_load`]). The full tier's, with network git allowed.
 fn get_component(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -253,8 +254,52 @@ fn get_component(
     }
     let mut out = Parameters::new();
     out.insert("output".into(), Value::string(output.1));
-    out.insert("restart".into(), Value::Bool(true));
+    let found = context.factory.runtime_dir().join(if flag(parameters, "dev") {
+        "dev-component"
+    } else {
+        "component"
+    });
+    offer_load(&context, &found.join(&name), &mut out);
     Ok(out)
+}
+
+/// Whether the component just placed at `location` can be loaded on this server now (plans/design-dev-aide.md 4.7):
+/// the load's preview (`moqui_devkit::deploy::load`) has no refusal and nothing that waits for a restart. Sets
+/// `loadable` and `componentName`, or `restart` with `restartReasons`, in `out`.
+pub(crate) fn offer_load(context: &Context, location: &Path, out: &mut Parameters) {
+    use moqui_devkit::deploy::load;
+    let same = |other: &Path| match (std::fs::canonicalize(other), std::fs::canonicalize(location)) {
+        (Ok(other), Ok(location)) => other == location,
+        _ => other == location,
+    };
+    let found = load::scan(&context.factory)
+        .ok()
+        .and_then(|found| found.into_iter().find(|component| same(Path::new(&component.location))));
+    let reasons = match &found {
+        None => vec!["it is not in a component directory this server reads".to_string()],
+        Some(component) => match load::preview(&context.factory, &component.name) {
+            Err(err) => vec![err],
+            Ok(preview) => {
+                let mut reasons = preview.refusals;
+                if preview.restart_needed {
+                    reasons.push("part of its conf takes effect only at a restart".to_string());
+                }
+                reasons
+            }
+        },
+    };
+    match found.filter(|_| reasons.is_empty()) {
+        Some(component) => {
+            out.insert("loadable".into(), Value::Bool(true));
+            out.insert("componentName".into(), Value::string(component.name));
+            out.insert("restart".into(), Value::Bool(false));
+        }
+        None => {
+            out.insert("loadable".into(), Value::Bool(false));
+            out.insert("restart".into(), Value::Bool(true));
+            out.insert("restartReasons".into(), json_value(&reasons));
+        }
+    }
 }
 
 /// Run `command`, killed past `timeout`: whether it succeeded and its output, both streams.

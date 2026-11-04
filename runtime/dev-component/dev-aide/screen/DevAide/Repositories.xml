@@ -29,14 +29,20 @@ along with this software (see the LICENSE.md file). If not, see
         }
         if (done.extensionsAffected) ec.message.addMessage('Extensions affected: ' + done.extensionsAffected + ' (Artifacts, Customizations)', 'warning');</script></actions>
         <default-response url="."/></transition>
-    <transition name="getComponent"><service-call name="org.moqui.devaide.VcsServices.get#Component"/>
-        <actions><message type="success">Got ${name}: it loads after a restart (Home)</message></actions>
-        <default-response url="."/></transition>
-    <transition name="cloneRepository"><service-call name="org.moqui.devaide.VcsServices.clone#Repository"/>
-        <actions><message type="success">Cloned into ${location}: it loads after a restart (Home)</message></actions>
+    <!-- A component got or cloned is offered for loading now when its load needs no restart (plans/design-dev-aide.md
+        4.7); otherwise it loads at the next restart, with the reasons said. -->
+    <transition name="getComponent"><service-call name="org.moqui.devaide.VcsServices.get#Component" out-map="got"/>
+        <actions><message type="success">${got.loadable ? 'Got ' + name + ': Load it now, or it loads at the next restart' : 'Got ' + name + ': it loads after a restart (Home)' + ((got.restartReasons || []).length ? '; ' + got.restartReasons.join('; ') : '')}</message></actions>
+        <default-response url="."><parameter name="loadName" from="got.loadable ? got.componentName : null"/></default-response></transition>
+    <transition name="cloneRepository"><service-call name="org.moqui.devaide.VcsServices.clone#Repository" out-map="got"/>
+        <actions><message type="success">${got.loadable ? 'Cloned into ' + got.location + ': Load it now, or it loads at the next restart' : 'Cloned into ' + got.location + ': it loads after a restart (Home)' + ((got.restartReasons || []).length ? '; ' + got.restartReasons.join('; ') : '')}</message></actions>
+        <default-response url="."><parameter name="loadName" from="got.loadable ? got.componentName : null"/></default-response></transition>
+    <transition name="loadComponent"><service-call name="org.moqui.impl.ComponentServices.load#Component" in-map="{componentName: loadName}" out-map="loaded"/>
+        <actions><message type="${(loaded.report?.problems || []).length ? 'warning' : 'success'}">${loadName}: ${loaded.report?.status || 'not loaded'}${(loaded.report?.problems || []).length ? '; ' + loaded.report.problems.join('; ') : ''}</message></actions>
         <default-response url="."/></transition>
     <transition name="workspace"><default-response url="../Workspace"/></transition>
 
+    <parameter name="loadName"/>
     <actions>
         <service-call name="org.moqui.devaide.VcsServices.list#Repositories" out-map="found"/>
         <set field="repositories" from="found.repositories || []"/>
@@ -63,6 +69,12 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="path"><default-field title="Path"><display/></default-field></field>
         </form-list>
 
+        <section name="LoadSection" condition="full &amp;&amp; loadName"><widgets>
+            <container-box id="DevLoadComponentBox"><box-header title="Load ${loadName} now"/><box-body>
+                <label type="p" text="It needs no restart: its entities, services, screens and conf load on this server, with its seed, seed-initial and install data."/>
+                <link url="loadComponent" text="Load" link-type="hidden-form" btn-type="primary" parameter-map="{loadName: loadName}"/>
+            </box-body></container-box>
+        </widgets></section>
         <section name="AddSection" condition="full"><widgets>
             <container-box id="DevGetComponentBox"><box-header title="Get a component"/><box-body>
                 <section name="MoqSection" condition="found.moqAvailable"><widgets>
@@ -79,7 +91,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="dev"><default-field title="Into runtime/dev-component (dev only)"><check><option key="true" text=" "/></check></default-field></field>
                     <field name="submitButton"><default-field title="Clone"><submit/></default-field></field>
                 </form-single>
-                <label type="p" text="A new site component is made from Home. A component got or cloned loads after a restart."/>
+                <label type="p" text="A new site component is made from Home. A component got or cloned is offered to Load now when it needs no restart; otherwise it loads after a restart."/>
             </box-body></container-box>
         </widgets></section>
     </widgets>

@@ -379,6 +379,13 @@ impl EntityFacade {
         super::cache::set_sim_flag(value);
     }
 
+    /// The merged conf a relink parses and the data locations read from now on: a conf reload replaced it
+    /// (plans/archive/Component-Deploy.md, Phase 1), so a component loaded live has its `load-data` entries seen. The
+    /// `load-entity` files stay the ones the facade opened with: a new `load-entity` entry waits for a restart.
+    pub fn replace_conf_text(&self, text: &str) {
+        self.inner.model.replace_conf_text(text);
+    }
+
     pub fn sim_active(&self) -> bool {
         super::cache::sim_flag()
     }

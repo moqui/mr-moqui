@@ -1,4 +1,4 @@
-// Autodoc in the Dev AIDE (plans/Autodoc.md): an artifact's Markdown doc made from the dev server's artifact index, by
+// Autodoc in the Dev AIDE (plans/archive/Autodoc.md): an artifact's Markdown doc made from the dev server's artifact index, by
 // path, by artifact and by name, with its tables, its diagrams and its links up; the Docs screen in the browser's mode
 // and the terminal's; and an export the upstream lock refuses. Exports that write, their manifest and the tiers are in the
 // host's integration test (crates/moqui-host/tests/it/devaide.rs), on scratch repositories; what each kind's doc holds

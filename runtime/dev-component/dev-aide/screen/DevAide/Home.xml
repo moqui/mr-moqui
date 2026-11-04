@@ -45,7 +45,7 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <container id="DevAideRestart"><section name="RestartSection" condition="overview.restartNeeded"><widgets>
             <container-box><box-header title="A change needs a restart"/><box-body>
-                <label type="p" text="An entity, conf or component change takes effect when the server restarts. Sessions and the sim overlay are lost."/>
+                <label type="p" text="A change that waits for a restart (a part of the conf that is not applied live, a component.xml, a component not loaded live) takes effect when the server restarts. Sessions and the sim overlay are lost."/>
                 <label type="p" text="A Rust change needs a rebuild first: ./moq build" condition="overview.rebuildNeeded"/>
                 <form-single name="RestartForm" transition="restart">
                     <field name="submitButton"><default-field title="Restart"><submit confirmation="Restart the server now?"/></default-field></field>

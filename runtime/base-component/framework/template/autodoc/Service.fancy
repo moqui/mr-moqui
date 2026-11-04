@@ -1,4 +1,4 @@
-<#-- A service's doc (plans/Autodoc.md). The names: the doc's header, service, usedBy, uses and diagrams; md is
+<#-- A service's doc (plans/archive/Autodoc.md). The names: the doc's header, service, usedBy, uses and diagrams; md is
      AutodocLib.js. A site component's template/autodoc/Service.fancy takes the place of this one. -->
 <#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>
 <#assign parameters = (list) => md.table(["Parameter", "Type", "Required", "Default", "Description"], list.map((parameter) =>

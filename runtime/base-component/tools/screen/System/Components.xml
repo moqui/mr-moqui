@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Components (plans/Component-Deploy.md, Phase 2; guide docs/tools/Component-Deploy.md): the loaded components, the
+<!-- Components (plans/archive/Component-Deploy.md, Phase 2; guide docs/tools/Component-Deploy.md): the loaded components, the
     ones a deploy loaded with their state (moqui.server.DeployedComponent), and the ones found in a component directory
     that are not loaded (org.moqui.impl.ComponentServices.scan#Components), placed by ./moq component-get or a clone
     since the start. Preview shows what loading one would do (preview#ComponentLoad): why it cannot be loaded now, the
@@ -21,8 +21,11 @@ along with this software (see the LICENSE.md file). If not, see
     component out at the next start (remove#Component). Deploy from Git fetches a branch into a repository kept in the
     database, as a bare repository on disk, or as a working clone, and stages its files (preview#ComponentDeploy); the
     staged component shows the same preview, with Deploy (deploy#Component) and Discard (discard#ComponentDeploy). A
-    component deployed from git has Check for Update (preview#ComponentUpdate) and Update (update#Component). Deploying
-    needs the sealed COMPONENT_DEPLOY permission, and on a production instance component_deploy_enabled=true. -->
+    component deployed from git has Check for Update (preview#ComponentUpdate) and Update (update#Component). Where the
+    server can restart for this user (a dev instance, restart#Server), Load, Deploy and Update also have a choice that
+    restarts the server right after. Load Data loads a loaded component's data files again (load#ComponentData). A
+    working clone with changes asks again before Remove sets it aside. Deploying needs the sealed COMPONENT_DEPLOY
+    permission, and on a production instance component_deploy_enabled=true. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Components" default-menu-index="2" menu-image="sym_o_extension" menu-image-type="icon">
 
@@ -30,9 +33,11 @@ along with this software (see the LICENSE.md file). If not, see
         <service-call name="org.moqui.impl.ComponentServices.load#Component"
                 in-map="{componentName:componentName, mode:mode, dataTypes:dataTypes}" out-map="loadOut"/>
         <actions><if condition="!ec.message.hasError()">
-            <if condition="loadOut.report?.status == 'pending-restart'"><then>
+            <if condition="loadOut.restarting"><then>
+                <message type="success">${componentName} is loaded at the start the server is restarting into, with its data</message>
+            </then><else-if condition="loadOut.report?.status == 'pending-restart'"><then>
                 <message type="success">${componentName} is loaded at the next start, with its data</message>
-            </then><else>
+            </then></else-if><else>
                 <message type="success">${componentName} loaded: ${loadOut.report?.records ?? 0} records, ${(loadOut.report?.problems || []).length} problems</message>
             </else></if>
         </if></actions>
@@ -52,7 +57,7 @@ along with this software (see the LICENSE.md file). If not, see
         <service-call name="org.moqui.impl.ComponentServices.deploy#Component"
                 in-map="{componentName:componentName, mode:mode, dataTypes:dataTypes}" out-map="deployOut"/>
         <actions><if condition="!ec.message.hasError()">
-            <message type="success">${componentName} deployed (${deployOut.report?.status}): ${deployOut.report?.records ?? 0} records, ${(deployOut.report?.problems || []).length} problems</message>
+            <message type="success">${componentName} deployed (${deployOut.report?.status}${deployOut.restarting ? ', the server is restarting' : ''}): ${deployOut.report?.records ?? 0} records, ${(deployOut.report?.problems || []).length} problems</message>
         </if></actions>
         <default-response url="."/>
         <error-response url="."/>
@@ -77,22 +82,40 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <transition name="updateComponent" authz-action="update">
-        <service-call name="org.moqui.impl.ComponentServices.update#Component" in-map="{componentName:componentName}" out-map="updateOut"/>
+        <service-call name="org.moqui.impl.ComponentServices.update#Component" in-map="{componentName:componentName, mode:mode}" out-map="updateOut"/>
         <actions><if condition="!ec.message.hasError()">
-            <message type="success">${componentName} updated: ${(updateOut.report?.problems || []).join('; ') || 'no problems'}</message>
+            <message type="success">${componentName} updated${updateOut.restarting ? ', the server is restarting' : ''}: ${(updateOut.report?.problems || []).join('; ') || 'no problems'}</message>
         </if></actions>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
     <transition name="removeComponent" authz-action="update">
-        <service-call name="org.moqui.impl.ComponentServices.remove#Component" in-map="{componentName:componentName}" out-map="removeOut"/>
+        <service-call name="org.moqui.impl.ComponentServices.remove#Component" in-map="{componentName:componentName, confirmDirty:confirmDirty}" out-map="removeOut"/>
         <actions><if condition="!ec.message.hasError()">
-            <message type="success">${componentName} is left out at the next start</message>
+            <if condition="(removeOut.dirty || []).length"><then>
+                <message type="warning">${componentName} is a working clone with changes; it was not removed</message>
+            </then><else>
+                <message type="success">${componentName} is left out at the next start</message>
+            </else></if>
+        </if></actions>
+        <default-response url=".">
+            <parameter name="dirtyName" from="(removeOut?.dirty || []).length ? componentName : null"/>
+            <parameter name="dirtyChanges" from="(removeOut?.dirty || []).slice(0, 20).join('\n') || null"/></default-response>
+        <error-response url="."/>
+    </transition>
+    <transition name="loadData" authz-action="update">
+        <service-call name="org.moqui.impl.ComponentServices.load#ComponentData"
+                in-map="{componentName:componentName, dataTypes:dataTypes}" out-map="dataOut"/>
+        <actions><if condition="!ec.message.hasError()">
+            <message type="${(dataOut.report?.problems || []).length ? 'warning' : 'success'}">${componentName}: ${dataOut.report?.records ?? 0} records loaded, ${(dataOut.report?.problems || []).length} problems</message>
         </if></actions>
         <default-response url="."/>
         <error-response url="."/>
     </transition>
 
+    <parameter name="dataName"/>
+    <parameter name="dirtyName"/>
+    <parameter name="dirtyChanges"/>
     <actions>
         <set field="loadedList" from="CollectionUtilities.orderMapList(ec.factory.getComponentInfoList(), ['^name'])"/>
         <entity-find entity-name="moqui.server.DeployedComponent" list="deployedList">
@@ -102,6 +125,11 @@ along with this software (see the LICENSE.md file). If not, see
         <script><![CDATA[
             foundList = scanOut.components || []
             pendingList = pendingOut.changes || []
+            restartAllowed = !!pendingOut.restartAllowed
+            modeOptions = [{key: 'now', text: 'Now'}, {key: 'restart', text: 'At the next start'}]
+                .concat(restartAllowed ? [{key: 'restart-now', text: 'With a restart now'}] : [])
+            dirtyList = dirtyChanges ? String(dirtyChanges).split('\n').map((text) => ({text})) : []
+            dataComponent = dataName && Array.from(loadedList).some((info) => info.name === dataName) ? dataName : null
             preview = null
             if (componentName && foundList.some((found) => found.name === componentName)) {
                 const previewOut = ec.service.sync().name('org.moqui.impl.ComponentServices.preview#ComponentLoad')
@@ -182,7 +210,7 @@ along with this software (see the LICENSE.md file). If not, see
                             <drop-down allow-multiple="true"><list-options list="dataTypeOptions" key="${type}" text="${label}"/></drop-down>
                         </default-field></field>
                         <field name="mode"><default-field title="When"><radio no-current-selected-key="now">
-                            <option key="now" text="Now"/><option key="restart" text="At the next start"/></radio></default-field></field>
+                            <list-options list="modeOptions" key="${key}" text="${text}"/></radio></default-field></field>
                         <field name="submitButton"><default-field title="Load"><submit/></default-field></field>
                     </form-single>
                 </widgets></section>
@@ -218,12 +246,38 @@ along with this software (see the LICENSE.md file). If not, see
                             <parameter name="componentName"/><parameter name="mode" value="now"/><parameter name="dataTypes" from="stagedTypes"/></link>
                         <link url="deployComponent" text="At Next Start" link-type="hidden-form-link" condition="!refusals">
                             <parameter name="componentName"/><parameter name="mode" value="restart"/><parameter name="dataTypes" from="stagedTypes"/></link>
+                        <link url="deployComponent" text="Deploy and Restart" link-type="hidden-form-link" condition="!refusals &amp;&amp; restartAllowed"
+                                confirmation="Deploy ${componentName} and restart the server now? Sessions are lost; it loads at the start, with its data.">
+                            <parameter name="componentName"/><parameter name="mode" value="restart-now"/><parameter name="dataTypes" from="stagedTypes"/></link>
                         <link url="discardDeploy" text="Discard" link-type="hidden-form-link" btn-type="danger">
                             <parameter name="componentName"/></link>
                     </default-field></field>
                 </form-list>
             </widgets></section>
         </box-body></container-box>
+
+        <section name="DirtySection" condition="dirtyName"><widgets>
+            <container-box><box-header title="${dirtyName} Has Changes"/><box-body>
+                <label type="p" text="This working clone has changes that are not committed or not pushed. Remove moves the directory to .removed/ beside it, with the changes."/>
+                <form-list name="DirtyList" list="dirtyList" skip-form="true">
+                    <field name="text"><default-field title="Change"><display/></default-field></field>
+                </form-list>
+                <link url="removeComponent" text="Remove Anyway" link-type="hidden-form" btn-type="danger"
+                        parameter-map="{componentName: dirtyName, confirmDirty: 'true'}"/>
+                <link url="." text="Cancel" link-type="anchor"/>
+            </box-body></container-box>
+        </widgets></section>
+
+        <section name="DataSection" condition="dataComponent"><widgets>
+            <container-box><box-header title="Load Data of ${dataComponent}"/><box-body>
+                <form-single name="LoadDataForm" transition="loadData">
+                    <field name="componentName"><default-field><hidden default-value="${dataComponent}"/></default-field></field>
+                    <field name="dataTypes"><default-field title="Data types" tooltip="Comma separated; data files that declare no type load with any">
+                        <text-line size="40" default-value="seed"/></default-field></field>
+                    <field name="submitButton"><default-field title="Load Data"><submit/></default-field></field>
+                </form-single>
+            </box-body></container-box>
+        </widgets></section>
 
         <container-box><box-header title="Deployed"/><box-body>
             <section name="DeployedSection" condition="deployedRows.length > 0"><widgets>
@@ -240,6 +294,10 @@ along with this software (see the LICENSE.md file). If not, see
                         <link url="updateComponent" text="Update" link-type="hidden-form-link" condition="source == 'git' &amp;&amp; status == 'deployed'"
                                 confirmation="Update ${componentName} to the head of ${branch} and load its changed seed data?">
                             <parameter name="componentName"/></link>
+                        <link url="updateComponent" text="Update and Restart" link-type="hidden-form-link"
+                                condition="source == 'git' &amp;&amp; status == 'deployed' &amp;&amp; restartAllowed"
+                                confirmation="Update ${componentName}, then restart the server for the changes that wait for a restart? Sessions are lost.">
+                            <parameter name="componentName"/><parameter name="mode" value="restart-now"/></link>
                         <link url="removeComponent" text="Remove" link-type="hidden-form-link" btn-type="danger"
                                 condition="status != 'removed'"
                                 confirmation="Leave ${componentName} out at the next start? Its directory is moved aside; its tables and data stay.">
@@ -267,6 +325,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="version"><default-field><display/></default-field></field>
                 <field name="location"><default-field><display/></default-field></field>
                 <field name="dependsOnNames" from="(dependsOn || []).join(', ')"><default-field title="Depends On"><display/></default-field></field>
+                <field name="dataLink"><default-field title=""><link url="." text="Load Data" link-type="anchor">
+                    <parameter name="dataName" from="name"/></link></default-field></field>
             </form-list>
         </box-body-nopad></container-box>
     </widgets>

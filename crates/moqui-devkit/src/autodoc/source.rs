@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The artifact index the docs are read from (plans/Autodoc.md, "Generator"): a memory index (an export and
+//! The artifact index the docs are read from (plans/archive/Autodoc.md, "Generator"): a memory index (an export and
 //! `moqui autodoc`: the files as they are, references read from them) or a dev server's rows (the Dev AIDE's viewer: one
 //! doc at a time, with the calls observed at run time).
 

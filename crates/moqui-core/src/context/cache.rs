@@ -36,7 +36,7 @@ impl CacheFacade {
     }
 
     /// Make each `cache` of the conf's `cache-list` there is none of yet, and answer their names: at boot every one,
-    /// after a conf reload the new ones (plans/Component-Deploy.md). A cache already made keeps its settings.
+    /// after a conf reload the new ones (plans/archive/Component-Deploy.md). A cache already made keeps its settings.
     ///
     /// # Errors
     ///

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What each part of the merged conf takes to change on a running server (plans/Component-Deploy.md, Phase 1): read
+//! What each part of the merged conf takes to change on a running server (plans/archive/Component-Deploy.md, Phase 1): read
 //! on each use (live), built from the conf by a hook (apply), or read once at boot (restart). The catalog is a tree of
 //! units by element name, each with its key, its class, the attributes whose class differs, and its child units. What
 //! no unit names is part of its parent unit; at the top, an element no unit names needs a restart, so an element added

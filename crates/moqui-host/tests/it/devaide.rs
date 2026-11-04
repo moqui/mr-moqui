@@ -2125,6 +2125,52 @@ fn the_git_depth_writes_on_scratch_repositories() {
         &[("url", remote.to_str().unwrap()), ("name", "../escape")],
     )
     .is_err());
+    // a clone of a component that can be loaded now is offered for System › Components' load; one with Rust code waits
+    // for a build and a restart, with the reason
+    // (the clone above is a second my-site, which a load refuses as the directories no longer match what is loaded)
+    std::fs::remove_dir_all(gate.runtime.join("component/cloned-site")).unwrap();
+    let source = |name: &str, files: &[(&str, &str)]| {
+        let dir = gate.runtime.join(format!("{name}-source"));
+        for (path, text) in files {
+            let path = dir.join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        git(&dir, &["init", "-q", "-b", "main"]);
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-q", "-m", "Start"]);
+        dir
+    };
+    let fresh = source("fresh-app", &[("component.xml", r#"<component name="fresh-app"/>"#)]);
+    let offered = call(
+        &factory,
+        "john.doe",
+        &format!("{VCS}clone#Repository"),
+        &[("url", fresh.to_str().unwrap()), ("name", "fresh-app")],
+    )
+    .unwrap();
+    assert_eq!(text(&offered, "loadable"), "true", "{offered:?}");
+    assert_eq!(text(&offered, "componentName"), "fresh-app");
+    assert_eq!(text(&offered, "restart"), "false");
+    let rusty = source(
+        "rusty-app",
+        &[
+            ("component.xml", r#"<component name="rusty-app"/>"#),
+            ("Cargo.toml", "[package]\nname = \"rusty-app\"\n"),
+        ],
+    );
+    let waits = call(
+        &factory,
+        "john.doe",
+        &format!("{VCS}clone#Repository"),
+        &[("url", rusty.to_str().unwrap()), ("name", "rusty-app")],
+    )
+    .unwrap();
+    assert_eq!(text(&waits, "loadable"), "false", "{waits:?}");
+    assert_eq!(text(&waits, "restart"), "true");
+    let reasons = moqui_lib::json::to_json(&waits["restartReasons"]).to_string();
+    assert!(reasons.contains("Rust code"), "{reasons}");
+
 
     // Repositories: every root with its state; Fetch all and Pull all root by root
     let fetched = call(&factory, "john.doe", &format!("{VCS}fetch#All"), &[]).unwrap();
@@ -2691,7 +2737,7 @@ fn an_allowed_projects_index_is_read_off_dev_by_its_id_and_over_rest() {
     let _ = std::fs::remove_dir_all(&project);
 }
 
-/// Autodoc in the Dev AIDE (plans/Autodoc.md): the doc of a site entity from the server's index for the view tier, an
+/// Autodoc in the Dev AIDE (plans/archive/Autodoc.md): the doc of a site entity from the server's index for the view tier, an
 /// export into the site component (the extend tier) that writes the tree and its manifest, an export again that writes
 /// nothing, one that removes the stale doc its manifest lists and not the file written by hand, and the refusals: the
 /// view tier, and an upstream component while the lock is on.

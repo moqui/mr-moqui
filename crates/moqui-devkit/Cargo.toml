@@ -36,7 +36,7 @@ tracing = { workspace = true }
 # The file watcher that reloads changed artifacts on a dev instance; the host's devtools feature (the Dev and Debug
 # packages) turns it on.
 watch = ["dep:notify"]
-# Deploying a component from a git URL (plans/Component-Deploy.md, Phase 3), with the host's git feature.
+# Deploying a component from a git URL (plans/archive/Component-Deploy.md, Phase 3), with the host's git feature.
 git = ["dep:moqui-git", "dep:base64"]
 
 [dev-dependencies]

@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <!-- The conf and the components of a running server (crates/moqui-devkit/src/deploy; plans/Component-Deploy.md,
+    <!-- The conf and the components of a running server (crates/moqui-devkit/src/deploy; plans/archive/Component-Deploy.md,
         guide docs/tools/Component-Deploy.md), for the System app. Each needs the ADMIN group. -->
     <service verb="preview" noun="ConfReload" type="rust" location="moqui_devkit::deploy::services::preview_conf_reload"
             allow-remote="false">
@@ -32,8 +32,9 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="get" noun="PendingRestart" type="rust" location="moqui_devkit::deploy::services::get_pending_restart"
             allow-remote="false">
-        <description>The conf changes the last reload left waiting for a restart.</description>
-        <out-parameters><parameter name="changes" type="List"/></out-parameters>
+        <description>The conf changes the last reload left waiting for a restart, and whether this user may restart the
+            server here (restart#Server).</description>
+        <out-parameters><parameter name="changes" type="List"/><parameter name="restartAllowed" type="Boolean"/></out-parameters>
     </service>
     <service verb="scan" noun="Components" type="rust" location="moqui_devkit::deploy::services::scan_components"
             allow-remote="false">
@@ -55,10 +56,21 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Load a component on the running server: its tables made, then the component registered, the conf
             merged again and what can be live applied, its services, ECA rules, REST APIs, screens and skills reloaded,
             and its data loaded, each file on its own. With mode restart it is recorded and the next start loads it and
-            its data.</description>
+            its data; with mode restart-now the server also restarts right after.</description>
         <in-parameters>
             <parameter name="componentName" required="true"/>
-            <parameter name="mode" default-value="now"><description>now, or restart</description></parameter>
+            <parameter name="mode" default-value="now"><description>now, restart (at the next start), or restart-now (at the next start, and the server restarted right after: a dev instance whose user has DEV_AIDE or is in ADMIN)</description></parameter>
+            <parameter name="dataTypes" type="List"><description>The data types to load: seed, seed-initial and install
+                when empty.</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="report" type="Map"/><parameter name="restarting" type="Boolean"/></out-parameters>
+    </service>
+    <service verb="load" noun="ComponentData" type="rust" location="moqui_devkit::deploy::services::load_component_data"
+            allow-remote="false">
+        <description>Load the data files of a loaded component again, each file on its own (one that fails is reported
+            and the rest go on); a rerun is safe. A component a load or deploy recorded gets a data history row.</description>
+        <in-parameters>
+            <parameter name="componentName" required="true"/>
             <parameter name="dataTypes" type="List"><description>The data types to load: seed, seed-initial and install
                 when empty.</description></parameter>
         </in-parameters>
@@ -67,9 +79,13 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="remove" noun="Component" type="rust" location="moqui_devkit::deploy::services::remove_component"
             allow-remote="false">
         <description>Leave out at the next start a component a deploy loaded: its directory is moved to .removed/
-            beside it. What it loaded stays until the restart; its tables and data stay after.</description>
-        <in-parameters><parameter name="componentName" required="true"/></in-parameters>
-        <out-parameters><parameter name="movedTo"/></out-parameters>
+            beside it. What it loaded stays until the restart; its tables and data stay after. A working clone with
+            changes not committed or not pushed is left as it is unless confirmDirty, with the changes in dirty.</description>
+        <in-parameters>
+            <parameter name="componentName" required="true"/>
+            <parameter name="confirmDirty" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters><parameter name="movedTo"/><parameter name="dirty" type="List"/></out-parameters>
     </service>
     <service verb="preview" noun="ComponentDeploy" type="rust"
             location="moqui_devkit::deploy::services::preview_component_deploy" allow-remote="false">
@@ -94,10 +110,10 @@ along with this software (see the LICENSE.md file). If not, see
             load#Component does. A load that fails puts the files back where they were staged.</description>
         <in-parameters>
             <parameter name="componentName" required="true"/>
-            <parameter name="mode" default-value="now"><description>now, or restart</description></parameter>
+            <parameter name="mode" default-value="now"><description>now, restart (at the next start), or restart-now (at the next start, and the server restarted right after: a dev instance whose user has DEV_AIDE or is in ADMIN)</description></parameter>
             <parameter name="dataTypes" type="List"/>
         </in-parameters>
-        <out-parameters><parameter name="report" type="Map"/></out-parameters>
+        <out-parameters><parameter name="report" type="Map"/><parameter name="restarting" type="Boolean"/></out-parameters>
     </service>
     <service verb="discard" noun="ComponentDeploy" type="rust"
             location="moqui_devkit::deploy::services::discard_component_deploy" allow-remote="false">
@@ -117,11 +133,13 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Update a component deployed from git to its branch's head: the new files in place (the old ones kept
             in .previous/) or the clone fast-forwarded, its entities relinked when an entity file changed, the conf
             applied when its MoquiConf.xml changed, the changed files reloaded, and its changed data files of dataTypes
-            loaded (seed when empty).</description>
+            loaded (seed when empty). With mode restart-now the server restarts after, for the parts that wait for a
+            restart.</description>
         <in-parameters>
             <parameter name="componentName" required="true"/>
+            <parameter name="mode" default-value="now"><description>now, or restart-now (as load#Component)</description></parameter>
             <parameter name="dataTypes" type="List"/>
         </in-parameters>
-        <out-parameters><parameter name="report" type="Map"/></out-parameters>
+        <out-parameters><parameter name="report" type="Map"/><parameter name="restarting" type="Boolean"/></out-parameters>
     </service>
 </services>

@@ -256,6 +256,107 @@ fn a_fixed_property_waits_for_a_restart() {
     );
 }
 
+/// A changed value is set only while the property still has the value the conf set: once the environment changed it
+/// the change has no effect and the environment's value stays; while it has the conf's value the change is applied.
+#[test]
+fn a_changed_property_value_yields_to_the_environment() {
+    let name = format!("conf_reload_changed_{}", std::process::id());
+    let conf = RUNNING.replacen(
+        "<moqui-conf>",
+        &format!("<moqui-conf><default-property name=\"{name}\" value=\"boot\"/>"),
+        1,
+    );
+    let changed = |factory: &ExecutionContextFactory| {
+        let disk = disk(factory);
+        disk.children_named("default-property")
+            .into_iter()
+            .find(|node| node.attribute("name").as_deref() == Some(name.as_str()))
+            .unwrap()
+            .set_attribute("value", "changed");
+        disk
+    };
+    let unit = format!("default-property[{name}]");
+
+    let overridden = factory(&conf);
+    overridden.conf_properties().insert(name.clone(), "boot".to_string());
+    moqui_lib::env::set_property(&name, "from-env".to_string());
+    let report = apply_conf(&overridden, &changed(&overridden)).unwrap();
+    let found = change(&report, &unit, Some("value"));
+    assert_eq!(found.outcome, Outcome::NoEffect, "{:#?}", report.changes);
+    assert!(found.reason.contains("environment"), "{}", found.reason);
+    assert_eq!(moqui_lib::env::get_property(&name).as_deref(), Some("from-env"));
+
+    let from_conf = factory(&conf);
+    from_conf.conf_properties().insert(name.clone(), "boot".to_string());
+    moqui_lib::env::set_property(&name, "boot".to_string());
+    let report = apply_conf(&from_conf, &changed(&from_conf)).unwrap();
+    assert_eq!(
+        change(&report, &unit, Some("value")).outcome,
+        Outcome::Applied,
+        "{:#?}",
+        report.changes
+    );
+    assert_eq!(moqui_lib::env::get_property(&name).as_deref(), Some("changed"));
+    moqui_lib::env::clear_property(&name);
+}
+
+/// A property the conf no longer sets waits for a restart, which clears it; the running conf keeps it until then.
+#[test]
+fn a_removed_property_waits_for_a_restart() {
+    let factory = factory(RUNNING);
+    let disk = disk(&factory);
+    assert!(disk.remove_where(|node| {
+        node.name() == "default-property" && node.attribute("name").as_deref() == Some("conf_reload_kept")
+    }));
+    let report = apply_conf(&factory, &disk).unwrap();
+    let removed = change(&report, "default-property[conf_reload_kept]", None);
+    assert_eq!(
+        (removed.kind, removed.class, removed.outcome),
+        ("removed", "restart", Outcome::PendingRestart)
+    );
+    assert!(removed.reason.contains("next start"), "{}", removed.reason);
+    assert!(factory.conf_text().contains("conf_reload_kept"));
+}
+
+/// A new secret property at its `CHANGEME` default is generated as boot generates one, and saved to the runtime's
+/// `.env`, not the default.
+#[test]
+fn a_new_changeme_secret_is_generated_on_apply() {
+    use crate::context::tests::{repo_env_stamp, workspace_root, EnvGuard, TempRuntime};
+    let _lock = crate::user::session::cookie_property_lock();
+    let root = workspace_root();
+    let _env = EnvGuard::new(root.clone());
+    let before = repo_env_stamp(&root);
+    let temp = TempRuntime::new("conf-reload-secret");
+    let factory =
+        ExecutionContextFactory::boot_with_framework(temp.path(), root.join("runtime/base-component/framework"))
+            .unwrap();
+    let name = format!("conf_reload_new_pass_{}", std::process::id());
+    let disk = disk(&factory);
+    let property = MNode::new("default-property");
+    property.set_attribute("name", name.as_str());
+    property.set_attribute("value", "reload-secret-CHANGEME");
+    disk.insert_node(0, property);
+    let report = apply_conf(&factory, &disk).unwrap();
+    assert_eq!(
+        change(&report, &format!("default-property[{name}]"), None).outcome,
+        Outcome::Applied,
+        "{:#?}",
+        report.changes
+    );
+    let value = moqui_lib::env::get_property(&name).unwrap_or_default();
+    assert_eq!(value.len(), 44, "{value}");
+    assert!(!value.contains("CHANGEME"));
+    let env_text = std::fs::read_to_string(temp.path().join(".env")).unwrap();
+    assert!(env_text.contains(&format!("{name}=")), "{env_text}");
+    assert!(!env_text.contains("reload-secret-CHANGEME"));
+    assert_eq!(repo_env_stamp(&root), before);
+    moqui_lib::env::clear_property(&name);
+    for name in factory.property_names() {
+        moqui_lib::env::clear_property(name);
+    }
+}
+
 /// Every element at the top of the default conf has a unit, so none is reported as needing a restart only because
 /// the catalog does not know it.
 #[test]

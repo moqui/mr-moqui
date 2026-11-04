@@ -248,7 +248,7 @@ pub(crate) async fn listen(
     let guard = Arc::new(guard);
     guard.log_start();
     // a conf reload that changes the webapp's web-protection rules gives the guard the new ones; the listener limits
-    // (`connections`, `requests`) wait for a restart (plans/Component-Deploy.md)
+    // (`connections`, `requests`) wait for a restart (plans/archive/Component-Deploy.md)
     let reloaded = Arc::downgrade(&guard);
     moqui_core::context::conf_reload::on_apply(
         &factory,
@@ -632,7 +632,7 @@ fn read_to_end_on_thread(
     end
 }
 
-/// On SIGHUP, reload the conf files (plans/Component-Deploy.md, Phase 1; `systemctl reload moqui`), with the report
+/// On SIGHUP, reload the conf files (plans/archive/Component-Deploy.md, Phase 1; `systemctl reload moqui`), with the report
 /// in the log, until shutdown. Only when stdin is not a terminal: under `./moq run` in a terminal SIGHUP ends the
 /// server as before, and a dev instance's file watcher reloads the conf files itself.
 #[cfg(unix)]

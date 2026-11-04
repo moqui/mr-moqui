@@ -46,6 +46,12 @@ pub fn request_restart() -> bool {
     true
 }
 
+/// Whether [`request_restart`] would restart: a host that can shut down is running.
+#[must_use]
+pub fn can_restart() -> bool {
+    lock(&SHUTDOWN).is_some()
+}
+
 /// Whether a restart was asked for; the host checks this after its shutdown.
 #[must_use]
 pub fn restart_requested() -> bool {
