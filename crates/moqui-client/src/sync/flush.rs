@@ -615,6 +615,9 @@ pub fn start(client: &Arc<Client>, host: &Arc<dyn ClientHost>) {
     let started = std::thread::Builder::new()
         .name("client-outbox".to_string())
         .spawn(move || loop {
+            if client.is_stopped() {
+                return;
+            }
             let next = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| flush_all(&client, host.as_ref())))
                 .unwrap_or_else(|_| {
                     tracing::error!("The outbox pass panicked");

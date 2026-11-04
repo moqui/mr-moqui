@@ -346,7 +346,7 @@ pub(crate) fn shell_window(app: &AppHandle) -> tauri::Result<()> {
         .on_page_load(|window, payload| {
             if payload.event() == PageLoadEvent::Started {
                 if let Some(client) = window.app_handle().try_state::<Client>() {
-                    client.core.sockets.close_for(window.label());
+                    client.core.sockets().close_for(window.label());
                 }
             }
         })
@@ -412,7 +412,7 @@ pub(crate) fn open_remote(app: &AppHandle, path: &str) -> Result<(), String> {
         .on_page_load(|window, payload| {
             if payload.event() == PageLoadEvent::Started {
                 if let Some(client) = window.app_handle().try_state::<Client>() {
-                    client.core.sockets.close_for(window.label());
+                    client.core.sockets().close_for(window.label());
                 }
             }
         })
@@ -451,7 +451,7 @@ pub(crate) fn close_remotes(app: &AppHandle, account: Option<&str>) {
         closing.into_iter().map(|(label, _)| label).collect()
     };
     for label in closing {
-        client.core.sockets.close_for(&label);
+        client.core.sockets().close_for(&label);
         if let Some(window) = app.get_webview_window(&label) {
             let _ = window.destroy();
         }
@@ -463,7 +463,7 @@ pub(crate) fn closed(app: &AppHandle, label: &str) {
     let Some(client) = app.try_state::<Client>() else {
         return;
     };
-    client.core.sockets.close_for(label);
+    client.core.sockets().close_for(label);
     moqui_lib::sync::lock(&client.windows).retain(|(window, _)| window != label);
 }
 

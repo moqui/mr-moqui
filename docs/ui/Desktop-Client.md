@@ -65,8 +65,9 @@ Chromium's. An event stream is answered 503.
   closing for authentication, has the host check the key and, if it no longer signs in, forget it and show the
   sign-in. What is kept then depends on the device mode (below).
 - **Renewal:** at start and every six hours, a key with less than a third of its life left is renewed
-  (`moqui_client::renewal`, `/qapps/renewClientDevice`), and its pages' sockets open again with the new one; the server ends
-  the old key ten minutes later. The shell says to update the app when the server's `clientApi` is newer than it knows.
+  (`moqui_client::renewal`, `/qapps/renewClientDevice`), and its pages' sockets open again with the new one; the server
+  ends the old key ten minutes later. The shell says to update the app when the server's `clientApi` is newer than it
+  knows.
 - **Apps and devices:** the account menu lists the account's apps and devices signed in by a key of their own
   (`/qapps/clientDevices`), each to sign out; so does My Account's Account page in BOSS.
 - **Key store:** the macOS Keychain or the Secret Service (`keyring`), else a file in `client/keys/` that only the user
@@ -141,14 +142,14 @@ protects it at rest, and the keys are in the key store, not in it.
   the shell only; a revoked device's is dropped, and it goes with the account.
 
 **Pushes.** The chat pushes on the account's `/notws` (`chatRoom:*`, `chatUser:*`) are written into the store as
-`get#Timeline` shows them (`moqui_client::sync::push`): edits, reactions and redactions folded into their message, encrypted rooms
-too, the same push from two sockets once. A drop marks the timelines' heads stale.
+`get#Timeline` shows them (`moqui_client::sync::push`): edits, reactions and redactions folded into their message,
+encrypted rooms too, the same push from two sockets once. A drop marks the timelines' heads stale.
 
-**The mirror.** When the shell's `/notws` opens, `moqui_client::sync::mirror` reads ahead on a thread of its own: a personal device
-all rooms and mail folders back to `mirror-days`, a shared one the `prefetch-rooms` latest rooms and the inbox's first
-`prefetch-mail` threads. Both read the new message's `composeData`, so mail can be written offline. A run is bounded,
-cancelled on a switch or sign-out, and stops on a 401 or when offline. After a drop, each room's latest page is read
-again.
+**The mirror.** When the shell's `/notws` opens, `moqui_client::sync::mirror` reads ahead on a thread of its own: a
+personal device all rooms and mail folders back to `mirror-days`, a shared one the `prefetch-rooms` latest rooms and the
+inbox's first `prefetch-mail` threads. Both read the new message's `composeData`, so mail can be written offline. A run
+is bounded, cancelled on a switch or sign-out, and stops on a 401 or when offline. After a drop, each room's latest page
+is read again.
 
 ## The outbox and drafts
 

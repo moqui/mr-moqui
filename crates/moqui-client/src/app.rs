@@ -19,11 +19,14 @@
 //! check a key the server refused.
 //!
 //! The threads it starts (the outbox's sender, the mirror, the key renewal) are plain threads with blocking requests,
-//! as the rest of this crate.
+//! as the rest of this crate. They hold the `Client` until [`Client::shutdown`] ends them; the pages' sockets hold it
+//! weakly, so a host that makes a new `Client` (the mobile app's activity made again) shuts the old one down and it
+//! goes, with its stores.
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -45,9 +48,7 @@ pub trait ClientHost: Send + Sync {
     fn page_account(&self, page: &str) -> Option<String>;
 
     /// Whether `page` is the shell, whose `/notws` opening starts the mirror.
-    fn is_shell(&self, page: &str) -> bool {
-        page == "main"
-    }
+    fn is_shell(&self, page: &str) -> bool;
 
     /// Tell the account's pages of an outbox change: `event` (`{kind}`) to their `window.__moquiOutboxEvent`.
     fn notify_pages(&self, account: &str, event: &Value);
@@ -62,20 +63,23 @@ pub trait ClientHost: Send + Sync {
 
 /// The client's state, shared by the host and the client's threads.
 pub struct Client {
-    pub accounts: Mutex<Accounts>,
-    pub keys: Keys,
+    pub(crate) accounts: Mutex<Accounts>,
+    pub(crate) keys: Keys,
     /// The accounts' stores, in `data/` of the client's directory.
-    pub stores: Stores,
+    pub(crate) stores: Stores,
     /// The client's settings once read, and how the host reads them.
     conf: OnceLock<ClientConf>,
     read_conf: Box<dyn Fn() -> ClientConf + Send + Sync>,
     /// Each account's comms app (`calls.appRoot` of its client config), once known.
     comms: Mutex<HashMap<String, String>>,
-    pub mirror: Mirror,
+    pub(crate) mirror: Mirror,
     /// Wakes the thread that sends the outboxes.
-    pub flusher: Flusher,
-    pub proxy: Proxy,
-    pub sockets: Sockets,
+    pub(crate) flusher: Flusher,
+    pub(crate) proxy: Proxy,
+    pub(crate) sockets: Sockets,
+    /// Set by [`Self::shutdown`], which the threads wait on.
+    stopped: Mutex<bool>,
+    stop: Condvar,
 }
 
 impl Client {
@@ -97,7 +101,70 @@ impl Client {
             flusher: Flusher::default(),
             proxy: Proxy::new().map_err(|err| err.to_string())?,
             sockets: Sockets::default(),
+            stopped: Mutex::new(false),
+            stop: Condvar::new(),
         })
+    }
+
+    /// The accounts signed in here, and the current one.
+    pub fn accounts(&self) -> &Mutex<Accounts> {
+        &self.accounts
+    }
+
+    /// The device keys.
+    pub fn keys(&self) -> &Keys {
+        &self.keys
+    }
+
+    /// The accounts' stores.
+    pub fn stores(&self) -> &Stores {
+        &self.stores
+    }
+
+    /// The mirror runs.
+    pub fn mirror(&self) -> &Mirror {
+        &self.mirror
+    }
+
+    /// The wake of the thread that sends the outboxes.
+    pub fn flusher(&self) -> &Flusher {
+        &self.flusher
+    }
+
+    /// The pages' requests forwarded to the servers.
+    pub fn proxy(&self) -> &Proxy {
+        &self.proxy
+    }
+
+    /// The pages' sockets.
+    pub fn sockets(&self) -> &Sockets {
+        &self.sockets
+    }
+
+    /// Stop the client: its threads end (the outbox's sender and the key renewal at once, a mirror run at its next
+    /// request), no mirror or socket starts again, and the pages' sockets close. The stores close once the last holder
+    /// of the `Client` lets it go.
+    pub fn shutdown(&self) {
+        *moqui_lib::sync::lock(&self.stopped) = true;
+        self.stop.notify_all();
+        self.flusher.wake();
+        self.mirror.cancel();
+        self.sockets.close_all();
+    }
+
+    /// Whether [`Self::shutdown`] was called.
+    pub fn is_stopped(&self) -> bool {
+        *moqui_lib::sync::lock(&self.stopped)
+    }
+
+    /// Wait for `timeout`, or until the client is shut down; whether it is.
+    pub(crate) fn wait_stopped(&self, timeout: Duration) -> bool {
+        let guard = moqui_lib::sync::lock(&self.stopped);
+        let (stopped, _) = self
+            .stop
+            .wait_timeout_while(guard, timeout, |stopped| !*stopped)
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *stopped
     }
 
     /// The current account and its key, if it has one.
@@ -199,3 +266,7 @@ fn comms_root_in(config: &[u8]) -> Option<String> {
         .filter(|root| !root.is_empty())
         .map(str::to_string)
 }
+
+#[cfg(test)]
+#[path = "app_tests.rs"]
+mod tests;

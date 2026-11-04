@@ -28,7 +28,8 @@ use crate::app::{Client, ClientHost};
 /// How often the keys are looked at.
 const EVERY: Duration = Duration::from_secs(6 * 3600);
 
-/// Look at the keys now and every few hours, on a thread of its own (reqwest's blocking client).
+/// Look at the keys now and every few hours, on a thread of its own (reqwest's blocking client), until the client is
+/// shut down.
 pub fn start(client: &Arc<Client>, host: &Arc<dyn ClientHost>) {
     let client = Arc::clone(client);
     let host = Arc::clone(host);
@@ -36,7 +37,9 @@ pub fn start(client: &Arc<Client>, host: &Arc<dyn ClientHost>) {
         .name("client-renewal".to_string())
         .spawn(move || loop {
             renew_due(&client, host.as_ref());
-            std::thread::sleep(EVERY);
+            if client.wait_stopped(EVERY) {
+                return;
+            }
         });
     if let Err(err) = started {
         tracing::error!("The device key renewal did not start: {err}");

@@ -39,11 +39,11 @@ pub(crate) fn notify_pages(app: &AppHandle, account: &str, event: &Value) {
         .filter(|(_, owner)| owner == account)
         .map(|(label, _)| label.clone())
         .collect();
-    let current = moqui_lib::sync::lock(&client.core.accounts)
+    let current = moqui_lib::sync::lock(client.core.accounts())
         .current()
         .is_some_and(|shown| shown.id == account);
     if current {
-        labels.push("main".to_string());
+        labels.push(super::SHELL_WINDOW.to_string());
     }
     let script = format!("window.__moquiOutboxEvent && window.__moquiOutboxEvent({event})");
     for label in labels {
@@ -89,7 +89,7 @@ pub(crate) fn outbox_add(
     let (kept, added) = on_store(&app, &webview, |_, store| rules::add_kept(store, op))?;
     if added {
         notify_pages(&app, &id, &json!({ "kind": "changed" }));
-        client.core.flusher.wake();
+        client.core.flusher().wake();
     }
     Ok(kept)
 }
@@ -109,7 +109,7 @@ pub(crate) fn outbox_retry(app: AppHandle, webview: Webview, id: String) -> Resu
     if found {
         notify_pages(&app, &account, &json!({ "kind": "changed" }));
         if let Some(client) = app.try_state::<Client>() {
-            client.core.flusher.wake();
+            client.core.flusher().wake();
         }
     }
     Ok(found)

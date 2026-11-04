@@ -138,7 +138,7 @@ fn answer(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>, 
     };
     let upstream = match client
         .core
-        .proxy
+        .proxy()
         .send(&account.server, key.as_deref(), origin, forwarded)
     {
         Ok(upstream) => upstream,
@@ -151,7 +151,7 @@ fn answer(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>, 
                     .flatten(),
                 // the passphrase only to the shell, which runs no server code
                 (None, Some(device)) if origin == SHELL_ORIGIN => {
-                    client.core.keys.chat_store_key(&account.id, device).map(|key| {
+                    client.core.keys().chat_store_key(&account.id, device).map(|key| {
                         serde_json::json!({ "storeKey": key, "legacyStoreKey": null })
                             .to_string()
                             .into_bytes()
@@ -254,7 +254,7 @@ pub(crate) fn check_key(app: &AppHandle, account: &Account) {
         let Some(client) = app.try_state::<Client>() else {
             return;
         };
-        let still = client.core.keys.get(&account.id).map(|key| {
+        let still = client.core.keys().get(&account.id).map(|key| {
             std::panic::catch_unwind(|| moqui_client::login::client_config(&account.server, &key))
                 .unwrap_or_else(|_| Err(moqui_client::Error::new("the check panicked")))
         });
@@ -290,8 +290,8 @@ pub(crate) fn store_key_change(body: &[u8]) -> Option<Option<String>> {
 
 fn store_key_answered(client: &Client, account: &str, device: &str, body: &[u8]) {
     let changed = match store_key_change(body) {
-        Some(Some(key)) => client.core.keys.set_chat_store_key(account, device, &key),
-        Some(None) => client.core.keys.remove_chat_store_key(account, device),
+        Some(Some(key)) => client.core.keys().set_chat_store_key(account, device, &key),
+        Some(None) => client.core.keys().remove_chat_store_key(account, device),
         None => Ok(()),
     };
     if let Err(err) = changed {

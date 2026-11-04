@@ -56,6 +56,9 @@ use moqui_client::conf::{ClientConf, DeviceMode};
 use serde_json::Value;
 use tauri::{AppHandle, Manager, Url};
 
+/// The label of the main window, which shows the shell (and the current account).
+pub(crate) const SHELL_WINDOW: &str = "main";
+
 /// The scheme of the shell, and its origin on Chromium (`http://<scheme>.localhost`).
 pub(crate) const SHELL_SCHEME: &str = "moqui-shell";
 pub(crate) const SHELL_ORIGIN: &str = moqui_client::SHELL_ORIGIN;
@@ -113,13 +116,13 @@ impl Client {
 
     /// The account a webview shows: the shell's is the current one, an app window's its own.
     fn account_of(&self, label: &str) -> Option<(Account, Option<String>)> {
-        self.core.account_of(self.host.as_ref(), label)
+        self.page_account(label).and_then(|id| self.core.account(&id))
     }
 
     /// The id of the account a webview shows ([`Self::account_of`]), from the windows and the accounts alone.
     fn page_account(&self, label: &str) -> Option<String> {
-        if label == "main" {
-            return moqui_lib::sync::lock(&self.core.accounts)
+        if label == SHELL_WINDOW {
+            return moqui_lib::sync::lock(self.core.accounts())
                 .current()
                 .map(|account| account.id.clone());
         }
@@ -151,6 +154,10 @@ struct DesktopHost {
 impl ClientHost for DesktopHost {
     fn page_account(&self, page: &str) -> Option<String> {
         self.app.try_state::<Client>()?.page_account(page)
+    }
+
+    fn is_shell(&self, page: &str) -> bool {
+        page == SHELL_WINDOW
     }
 
     fn notify_pages(&self, account: &str, event: &Value) {
@@ -264,7 +271,7 @@ pub(crate) fn shell_origin() -> Url {
 /// starts, and when a client config is answered), never the store or the conf.
 pub(crate) fn comms_root(app: &AppHandle) -> Option<String> {
     let client = app.try_state::<Client>()?;
-    let id = moqui_lib::sync::lock(&client.core.accounts).current()?.id.clone();
+    let id = moqui_lib::sync::lock(client.core.accounts()).current()?.id.clone();
     client.core.noted_comms_root(&id)
 }
 
@@ -279,3 +286,7 @@ fn device_name() -> String {
     let host = host.strip_suffix(".local").unwrap_or(&host).to_string();
     format!("MR Moqui desktop on {host}")
 }
+
+#[cfg(test)]
+#[path = "shell_tests.rs"]
+mod tests;

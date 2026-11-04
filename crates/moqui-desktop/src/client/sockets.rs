@@ -129,7 +129,7 @@ fn open_local(app: &AppHandle, local: &Local, webview: &Webview, path: &str) -> 
 /// `work` on the sockets of this app's pages: a client's, or the node's in process (managed on the app).
 fn with_sockets<T>(app: &AppHandle, work: impl FnOnce(&Sockets) -> T) -> Option<T> {
     if let Some(client) = app.try_state::<Client>() {
-        return Some(work(&client.core.sockets));
+        return Some(work(client.core.sockets()));
     }
     app.try_state::<Sockets>().map(|sockets| work(&sockets))
 }

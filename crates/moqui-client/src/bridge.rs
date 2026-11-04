@@ -33,7 +33,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use serde_json::{json, Value};
 
@@ -130,7 +130,8 @@ impl Sockets {
         moqui_lib::sync::lock(&self.open).clear();
     }
 
-    /// Let a socket go: it closed.
+    /// Let a socket go: it closed. For the host's own sockets' events only: it has no page check, so it is never
+    /// reached from a page's command (a page closes its own with [`Self::close`]).
     pub fn remove(&self, id: u64) {
         moqui_lib::sync::lock(&self.open).remove(&id);
     }
@@ -175,17 +176,24 @@ pub fn event_json(event: &Event) -> Value {
 ///
 /// Returns an error when the page shows no account, the account is signed out, or the socket does not start.
 pub fn open_remote(client: &Arc<Client>, host: &Arc<dyn ClientHost>, page: &str, path: &str) -> Result<u64, String> {
+    if client.is_stopped() {
+        return Err("The client is stopped".to_string());
+    }
     let (account, key) = client
         .account_of(host.as_ref(), page)
         .ok_or("No account is signed in")?;
     let key = key.ok_or("The account is signed out")?;
     let notifications = path.split_once('?').map_or(path, |(bare, _)| bare) == "/notws";
     client.sockets.open(page, |id| {
-        let sink_client = Arc::clone(client);
+        // weakly: the socket is in the client's own set, and must not keep the client after a shutdown
+        let sink_client: Weak<Client> = Arc::downgrade(client);
         let sink_host = Arc::clone(host);
         let sink_page = page.to_string();
         let sink_account = account.clone();
         let sink = Box::new(move |event: Event| {
+            let Some(sink_client) = sink_client.upgrade() else {
+                return;
+            };
             sink_host.socket_event(&sink_page, id, &event_json(&event));
             if notifications {
                 notified(&sink_client, &sink_host, &sink_page, &sink_account, &event);
@@ -239,3 +247,7 @@ fn mark_stale(client: &Client, account: &str) {
         tracing::warn!("The chat heads of {account} were not marked stale: {err}");
     }
 }
+
+#[cfg(test)]
+#[path = "bridge_tests.rs"]
+mod tests;

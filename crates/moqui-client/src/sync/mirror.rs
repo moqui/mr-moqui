@@ -383,6 +383,9 @@ impl Mirror {
 
 /// Start a run for the account `id` on a thread of its own, as [`Mirror::begin`] decides.
 pub fn start(client: &Arc<Client>, host: &Arc<dyn ClientHost>, id: &str) {
+    if client.is_stopped() {
+        return;
+    }
     let Some((generation, heads_only)) = client.mirror.begin(id) else {
         return;
     };

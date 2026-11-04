@@ -45,7 +45,8 @@ The client's core, what the desktop app's client mode runs and the mobile app is
   sockets), held by the host in an `Arc`; and `ClientHost`, what the host does for it: which account a page shows,
   whether a page is the shell, telling an account's pages of an outbox change, handing a page its socket's events,
   and checking a key the server answered 401 to. `keys::Keys` keeps the keys in memory over the host's `KeyStore`,
-  with each account's chat store passphrases.
+  with each account's chat store passphrases. `Client::shutdown` ends its threads and closes the pages' sockets (which
+  hold it weakly), so a host that makes a new `Client` lets the old one and its stores go.
 - `bridge`: the pages' sockets by id and page (`Sockets`, any `PageSocket`), `/notws` and `/callws` opened on the
   account's server (`open_remote`), and a client's `/notws` frames kept in the store, the heads marked stale on a drop,
   the mirror started and the outbox woken when the shell's opens.
@@ -57,7 +58,8 @@ The client's core, what the desktop app's client mode runs and the mobile app is
 - `modes` (what each device mode keeps), `renewal` (each key renewed on a thread before it runs out) and `assets` (the
   shell's own files and their CSP).
 
-The threads are plain threads with blocking requests. The patterns follow `moqui tui --server` (`crates/moqui-host/src/tui_remote.rs`).
+The threads are plain threads with blocking requests. The patterns follow `moqui tui --server`
+(`crates/moqui-host/src/tui_remote.rs`).
 
 ## Test
 
