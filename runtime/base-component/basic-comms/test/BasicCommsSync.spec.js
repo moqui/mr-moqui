@@ -109,6 +109,7 @@ const draftOf = (clientRef, subject, baseStamp) => ({
     baseStamp
 })
 const compose = (name, parameters) => attempt("org.moqui.comms.ComposeServices." + name, parameters)
+const capture = ec.factory.getTool("MailCapture")
 const threadOf = (page, threadId) => Array.from(page.changes || []).find(change => change.threadId === threadId) || null
 
 spec({
@@ -136,9 +137,13 @@ spec({
         ).emailFolderId
         const row = sys(() => ec.entity.find("moqui.basic.email.EmailIdentity").condition("emailAccountId", accountId).list())[0]
         identity = "identity:" + row.emailIdentityId
+        // the chunks of these specs are a few bytes
+        setProperty("client_upload_min_chunk_bytes", "1")
+        capture.enable()
     },
     cleanupSpec() {
         ec.user.setEffectiveTime(null)
+        capture.reset()
     }
 })
 
@@ -268,6 +273,9 @@ feature("a cursor older than the log kept, past the last change, or not read for
         sys(() => {
             const state = ec.entity.find("moqui.basic.email.EmailUserState").condition("userId", "BASIC_COMMS_SYNC").one()
             state.set("lastReadDate", Number(ec.user.nowTimestamp) + 86400000)
+            // its catch-up window over, as it is long before a purge
+            state.set("catchUpFromDate", null)
+            state.set("catchUpThruDate", null)
             state.update()
         })
         const purged = sys(() =>
@@ -282,11 +290,19 @@ feature("a cursor older than the log kept, past the last change, or not read for
                 before: Number(ec.user.nowTimestamp) + 2 * 86400000
             })
         )
+        // a dormant cursor notes nothing until it is read again
+        const quiet = makeMessage("While dormant")
+        const noted = sys(() =>
+            ec.entity.find("moqui.basic.email.EmailUserChange").condition("userId", "BASIC_COMMS_SYNC").count()
+        )
         const again = changes(current.lastSeq)
+        // another device, asleep as long: its cursor is behind the numbers, never caught up by a new sequence
+        const stale = changes(cursor)
+        const after = changes(again.lastSeq)
         cursor = again.lastSeq
-        return {current, past, purged, old, atEnd, dropped, again}
+        return {current, past, purged, old, atEnd, dropped, noted, again, stale, after, quiet}
     },
-    then({current, past, purged, old, atEnd, dropped, again}) {
+    then({current, past, purged, old, atEnd, dropped, noted, again, stale, after, quiet}) {
         current.changes.length == 1
         current.reset == false
         past.reset == true
@@ -296,8 +312,96 @@ feature("a cursor older than the log kept, past the last change, or not read for
         atEnd.reset == false
         atEnd.changes.length == 0
         dropped.removedCount == 0
+        noted == 0
         again.reset == true
-        again.lastSeq == 0
+        again.lastSeq > current.lastSeq
+        stale.reset == true
+        after.reset == false
+    }
+})
+
+feature("a caught-up cursor answers reset when its user is added to an account, and again when removed", {
+    when() {
+        ec.user.internalLoginUser(OTHER)
+        const start = changes(null)
+        const caughtUp = changes(start.lastSeq)
+        ec.user.internalLoginUser(OWNER)
+        sys(() =>
+            call(MAIL + "add#EmailAccountUser", {
+                emailAccountId: accountId,
+                userId: "BASIC_COMMS_SYNC_OTHER",
+                permissionEnumId: "EapRead"
+            })
+        )
+        ec.user.internalLoginUser(OTHER)
+        const added = changes(caughtUp.lastSeq)
+        const next = changes(added.lastSeq)
+        ec.user.internalLoginUser(OWNER)
+        sys(() => call(MAIL + "remove#EmailAccountUser", {emailAccountId: accountId, userId: "BASIC_COMMS_SYNC_OTHER"}))
+        ec.user.internalLoginUser(OTHER)
+        const removed = changes(next.lastSeq)
+        return {caughtUp, added, next, removed}
+    },
+    then({caughtUp, added, next, removed}) {
+        caughtUp.reset == false
+        added.reset == true
+        added.lastSeq > caughtUp.lastSeq
+        next.reset == false
+        removed.reset == true
+    }
+})
+
+feature("after a reset, a change a writer committed late without a note is caught up at the next read", {
+    when() {
+        ec.user.internalLoginUser(OWNER)
+        sys(() => call(MAIL + "reset#MailChanges", {userIdList: ["BASIC_COMMS_SYNC"]}))
+        const reset = changes(cursor)
+        // the late writer: its change is in the row, its note missed (no cursor then)
+        const late = makeMessage("Late writer")
+        sys(() => ec.entity.find("moqui.basic.email.EmailUserChange").condition("rootEmailMessageId", late).deleteAll())
+        const page = changes(reset.lastSeq)
+        cursor = page.lastSeq
+        return {reset, page, late}
+    },
+    then({reset, page, late}) {
+        reset.reset == true
+        page.reset == false
+        threadOf(page, late) != null
+        threadOf(page, late).messages.length == 1
+    }
+})
+
+feature("a seen check that finds nothing keeps the request's clientRef, and a message newer than the one seen is a conflict", {
+    when() {
+        ec.user.internalLoginUser(OWNER)
+        const gone = JSON.stringify([{store: "email", threadId: "NO_SUCH_THREAD", seen: {isRead: false}}])
+        const first = request("Inbox/Mail/state", {targetsJson: gone, action: "read", clientRef: "sync-gone-1"}, "post")
+        const retry = request("Inbox/Mail/state", {targetsJson: gone, action: "read", clientRef: "sync-gone-1"}, "post")
+        // a reply came after the client saw the thread: its read does not take the reply unseen
+        const reply = makeMessage("Re: Second", ids.second)
+        const newer = attempt("org.moqui.comms.InboxServices.set#ThreadState", {
+            action: "read",
+            targetList: [{store: "email", threadId: ids.second, seen: {latestMessageId: ids.second}}]
+        })
+        // labels compare only the ones the action changes
+        const labels = attempt(MAIL + "check#SeenState", {
+            rootEmailMessageId: ids.second,
+            seen: {labelIds: ["OTHER_LABEL"]},
+            onlyLabelIds: ["L1"]
+        })
+        const unknown = attempt(MAIL + "check#SeenState", {rootEmailMessageId: "NO_SUCH_THREAD", seen: {isRead: true}})
+        return {first, retry, newer, labels, unknown, reply}
+    },
+    then({first, retry, newer, labels, unknown, reply}) {
+        first.errors == ""
+        first.json.failedList.length == 1
+        retry.json.duplicate == true
+        newer.updatedCount == 0
+        newer.failedList[0].reason == "conflict"
+        newer.failedList[0].current.latestMessageId == reply
+        labels.conflict == false
+        unknown.errors == ""
+        unknown.found == false
     }
 })
 
@@ -317,10 +421,58 @@ feature("a draft saved elsewhere since the client's copy is kept: the save answe
         ec.user.setEffectiveTime(start + 3000)
         const after = compose("save#ComposeDraft", draftOf("sync-draft-1", "After the file", elsewhere.draftStamp))
         const data = compose("get#ComposeData", {emailMessageId: ids.draft})
+        // its answer lost: the same save sent again, with the stamp it had, is not a conflict with itself
+        ec.user.setEffectiveTime(start + 4000)
+        const retried = compose("save#ComposeDraft", draftOf("sync-draft-1", "After the file", elsewhere.draftStamp))
+        // by its saveRef too, after a later edit from here changed the content it brings
+        ec.user.setEffectiveTime(start + 5000)
+        const own = compose(
+            "save#ComposeDraft",
+            Object.assign(draftOf("sync-draft-1", "Own edit", retried.draftStamp), {saveRef: "sync-save-1"})
+        )
+        ec.user.setEffectiveTime(start + 6000)
+        const ownAgain = compose(
+            "save#ComposeDraft",
+            Object.assign(draftOf("sync-draft-1", "Own edit again", retried.draftStamp), {saveRef: "sync-save-1"})
+        )
+        // another save with a stale stamp, its content not the draft's: a conflict
+        const notOwn = compose(
+            "save#ComposeDraft",
+            Object.assign(draftOf("sync-draft-1", "From elsewhere", retried.draftStamp), {saveRef: "sync-save-2"})
+        )
+        // a send after its save's answer was lost: the draft holds what the send brings, so it goes
+        ec.user.setEffectiveTime(start + 7000)
+        const second = compose("save#ComposeDraft", draftOf("sync-draft-2", "Sent after a lost save"))
+        ec.user.setEffectiveTime(start + 8000)
+        const sent = compose(
+            "send#Compose",
+            Object.assign(draftOf("sync-draft-2", "Sent after a lost save", second.draftStamp - 500), {holdSeconds: 0})
+        )
         ec.user.setEffectiveTime(null)
-        return {first, elsewhere, stale, upload, after, data, subject: message(ids.draft).subject}
+        return {
+            first,
+            elsewhere,
+            stale,
+            upload,
+            after,
+            data,
+            retried,
+            own,
+            ownAgain,
+            notOwn,
+            sent,
+            subject: message(ids.draft).subject
+        }
     },
-    then({first, elsewhere, stale, upload, after, data, subject}) {
+    then({first, elsewhere, stale, upload, after, data, retried, own, ownAgain, notOwn, sent, subject}) {
+        sent.errors == ""
+        sent.conflict == false
+        sent.sent == true
+        retried.conflict == false
+        own.conflict == false
+        ownAgain.conflict == false
+        notOwn.conflict == true
+        subject == "Own edit again"
         first.errors == ""
         first.draftStamp != null
         elsewhere.errors == ""
@@ -333,7 +485,6 @@ feature("a draft saved elsewhere since the client's copy is kept: the save answe
         upload.errors == ""
         after.errors == ""
         after.conflict == false
-        subject == "After the file"
         data.compose.draftStamp == after.draftStamp
     }
 })
@@ -369,12 +520,15 @@ feature("a file sent in chunks goes on after a partial and a wrong offset, and t
                 .one()
         )
         const text = file ? sys(() => ec.resource.getLocationReference(file.attachmentLocation).getText()) : null
+        const noted = changes(cursor)
+        cursor = noted.lastSeq
         ec.user.internalLoginUser(OTHER)
         const other = attempt(SYNC + "take#Upload", {uploadId: "sync-up-1"})
         const otherStatus = attempt(SYNC + "get#UploadStatus", {uploadId: "sync-up-1"})
-        return {part, status, again, gap, early, last, attached, text, other, otherStatus}
+        return {part, status, again, gap, early, last, attached, text, other, otherStatus, noted}
     },
-    then({part, status, again, gap, early, last, attached, text, other, otherStatus}) {
+    then({part, status, again, gap, early, last, attached, text, other, otherStatus, noted}) {
+        threadOf(noted, ids.draft).messages[0].hasAttachment == true
         part.accepted == true
         part.received == 5
         part.complete == false
@@ -393,6 +547,30 @@ feature("a file sent in chunks goes on after a partial and a wrong offset, and t
         text == "HelloWorld"
         other.errors.includes("not found")
         otherStatus.found == false
+    }
+})
+
+feature("uploads are limited: a small chunk other than the last, and more open uploads than allowed, are refused", {
+    when() {
+        ec.user.internalLoginUser(OWNER)
+        const chunk = (uploadId, text, total) =>
+            attempt(SYNC + "upload#Chunk", {uploadId, offset: 0, total, fileName: "x.txt", chunk: uploadedFile("x.txt", text)})
+        const small = withProperty("client_upload_min_chunk_bytes", "4", () => chunk("sync-small-1", "abc", 10))
+        const lastSmall = withProperty("client_upload_min_chunk_bytes", "4", () => chunk("sync-small-2", "abc", 3))
+        const open = withProperty("client_upload_max_count", "1", () => [
+            chunk("sync-open-1", "ab", 10),
+            chunk("sync-open-2", "ab", 10)
+        ])
+        const big = withProperty("client_upload_max_mb", "1", () => chunk("sync-big-1", "ab", 2 * 1048576))
+        return {small, lastSmall, open, big}
+    },
+    then({small, lastSmall, open, big}) {
+        small.errors.includes("at least 4 bytes")
+        lastSmall.errors == ""
+        lastSmall.complete == true
+        open[0].errors == ""
+        open[1].errors.includes("At most 1 uploads")
+        big.errors.includes("MB of uploads")
     }
 })
 

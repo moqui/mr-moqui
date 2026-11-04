@@ -66,7 +66,7 @@ along with this software (see the LICENSE.md file). If not, see
                 fromValue: fromValue || '', toJson: toJson || '[]', ccJson: ccJson || '[]', bccJson: bccJson || '[]', subject: subject ?? '', body: body ?? '',
                 bodyText: bodyText || null, quoteHtml: quoteHtml || null, parentEmailMessageId: parentEmailMessageId || null,
                 isForward: String(isForward) === 'true', clientRef: clientRef || null,
-                baseStamp: baseStamp != null && baseStamp !== '' ? Number(baseStamp) : null}}).call()?.result || {}
+                baseStamp: baseStamp != null && baseStamp !== '' ? Number(baseStamp) : null, saveRef: saveRef || null}}).call()?.result || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {emailMessageId: out.emailMessageId, rootEmailMessageId: out.rootEmailMessageId,
                 duplicate: out.duplicate === true, draftStamp: out.draftStamp ?? null, conflict: out.conflict === true, compose: out.compose || null})
         ]]></script></actions>
@@ -120,7 +120,7 @@ along with this software (see the LICENSE.md file). If not, see
                 recordEntity: recordEntity || null, recordId: recordId || null,
                 scheduledSendDate: scheduledSendDate ? new Date(Number(scheduledSendDate)) : null, holdSeconds: holdSeconds != null && holdSeconds !== '' ? Number(holdSeconds) : null,
                 archiveThread: String(archiveThread) === 'true', threadStore: threadStore || null, threadId: threadId || null,
-                clientRef: clientRef || null, baseStamp: baseStamp != null && baseStamp !== '' ? Number(baseStamp) : null}}).call()?.result || {}
+                clientRef: clientRef || null, baseStamp: baseStamp != null && baseStamp !== '' ? Number(baseStamp) : null, saveRef: saveRef || null}}).call()?.result || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {mode: out.mode, emailMessageId: out.emailMessageId, statusId: out.statusId, sent: out.sent,
                 sendError: out.sendError, scheduledSendDate: out.scheduledSendDate, communicationEventIdList: out.communicationEventIdList, message: out.message,
                 duplicate: out.duplicate === true, conflict: out.conflict === true, compose: out.compose || null})

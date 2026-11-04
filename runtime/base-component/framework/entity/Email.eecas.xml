@@ -16,13 +16,14 @@ along with this software (see the LICENSE.md file). If not, see
     client message (one with an account) that changes what a client shows, wherever it comes from (the IMAP and POP3 sync,
     hosted delivery, an import, a send, a draft, an action in the Inbox), notes a change of its thread for the users of its
     account who keep a cursor (note#MessageChange). A message with no account (a template's send) is skipped at once,
-    and so is an update that changes none of the fields below. A note that fails is logged; the write goes on. -->
+    and so is an update that changes none of the fields below; a label or an attachment added or removed is a change of
+    its message. A note that fails is logged and leaves no error, so the write goes on (note#MessageChange). -->
 <eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-eca-3.xsd">
     <eeca id="EmailMessageUserChange" entity="moqui.basic.email.EmailMessage" on-create="true" on-update="true" on-delete="true"
             get-original-value="true">
         <actions><script><![CDATA[
             const FIELDS = ['emailAccountId', 'emailFolderId', 'rootEmailMessageId', 'statusId', 'isRead', 'isFlagged', 'isAnswered',
-                'archivedDate', 'snoozedThruDate', 'messageDate', 'sendError', 'scheduledSendDate']
+                'archivedDate', 'snoozedThruDate', 'messageDate', 'sendError', 'scheduledSendDate', 'hasAttachment', 'subject', 'snippet']
             const norm = (value) => value == null || value === '' ? '' : (typeof value === 'object' && typeof value.getTime === 'function'
                 ? String(value.getTime()) : String(value))
             const pick = (value) => {
@@ -56,10 +57,23 @@ along with this software (see the LICENSE.md file). If not, see
                 ec.message.pushErrors()
                 try {
                     ec.service.sync().name('org.moqui.impl.EmailClientServices.note#MessageChange').parameters({emailMessageId: id,
-                        operation: 'label'}).disableAuthz().call()
-                    if (ec.message.hasError()) ec.logger.error(`The label change of message ${id} is not noted: ${ec.message.errorsString}`)
+                        operation: 'related'}).disableAuthz().call()
                 } catch (err) {
                     ec.logger.error(`The label change of message ${id} is not noted: ${err && err.message ? err.message : err}`)
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+        ]]></script></actions>
+    </eeca>
+    <eeca id="EmailMessageAttachmentUserChange" entity="moqui.basic.email.EmailMessageAttachment" on-create="true" on-delete="true">
+        <actions><script><![CDATA[
+            const id = (entityValue && entityValue.emailMessageId) || null
+            if (id) {
+                ec.message.pushErrors()
+                try {
+                    ec.service.sync().name('org.moqui.impl.EmailClientServices.note#MessageChange').parameters({emailMessageId: id,
+                        operation: 'related'}).disableAuthz().call()
+                } catch (err) {
+                    ec.logger.error(`The attachment change of message ${id} is not noted: ${err && err.message ? err.message : err}`)
                 } finally { ec.message.clearErrors(); ec.message.popErrors() }
             }
         ]]></script></actions>

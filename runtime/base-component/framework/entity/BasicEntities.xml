@@ -595,6 +595,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="clientRef" type="text-medium"><description>The composing user's (fromUserId) own reference of a draft,
             ^[A-Za-z0-9_.:-]{1,64}$, so a client that queued it offline saves and sends it once however often it retries
             (EmailClientServices.save#Draft)</description></field>
+        <field name="lastSaveRef" type="text-medium"><description>The client's reference of the last save of a draft
+            (save#Draft saveRef), so that save sent again after a lost answer is not taken for a save from elsewhere</description></field>
 
         <relationship type="one" title="EmailMessage" related="moqui.basic.StatusItem" short-alias="status"/>
         <relationship type="one" title="EmailType" related="moqui.basic.Enumeration" short-alias="type">
@@ -1063,8 +1065,15 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="purgedThruSeq" type="number-integer"><description>A cursor at or before this is too old: the log
             before it was purged, or the user's accounts changed (a member added or removed), so its reader starts again
             (reset)</description></field>
-        <field name="lastReadDate" type="date-time"><description>The user's last read of the cursor, within a day: a
-            state not read for longer than mail_change_keep_days goes, with its log</description></field>
+        <field name="lastReadDate" type="date-time"><description>The user's last read of the cursor, within an hour: a
+            state not read for longer than mail_change_keep_days goes dormant, its log removed</description></field>
+        <field name="dormantDate" type="date-time"><description>When the state went dormant (clean#UserMailChanges): no
+            change is noted for it until its next read, which answers reset. The row stays, so its numbers never start
+            again</description></field>
+        <field name="catchUpFromDate" type="date-time"><description>Until catchUpThruDate, after the state was made, reset
+            or woken, each read also notes the threads of the user's messages changed since this (less a margin), for a
+            writer whose transaction began before (assign#MailChanges)</description></field>
+        <field name="catchUpThruDate" type="date-time"/>
         <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
     </entity>
     <entity entity-name="EmailUserChange" package="moqui.basic.email" use="transactional" cache="never">

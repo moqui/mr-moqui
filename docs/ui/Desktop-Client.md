@@ -205,22 +205,34 @@ inbox source answers the Inbox without a cursor (the client then reads its folde
   comes from (sync arrivals, flag scans, moves and expunges, delivery, sends, drafts, the Inbox's actions), for each
   user of the account who has a cursor (`EmailUserState`); a user with none keeps no log. The changes are numbered at
   the user's next read under the lock of that row, so the numbers follow the order they committed, one row per thread.
+  A note never fails the write it comes from (it logs and leaves no error).
+- A sequence never starts again: a reset (accounts changed) uses up a number, so even a caught-up cursor answers
+  `reset`; a cursor not read for `mail_change_keep_days` goes dormant (its log removed, nothing noted) and its next read
+  answers `reset` and goes on from its last number. For ten minutes after a cursor starts or resets, each read also
+  notes the threads of messages changed since then, for a writer whose transaction began before. A page ends before a
+  thread that would take it past about 20000 messages (`more`), so no thread is cut.
 
 **A request once by its `clientRef`** (`^[A-Za-z0-9_.:-]{1,64}$`, the user's own per request kind; `ClientRequestRef`,
 kept `client_request_keep_days`, 30). The first request runs and its answer is kept in the same transaction; one sent
 again answers it with `duplicate: true` and does nothing. Chat's `edit`, `redact`, `react`, `votePoll` and `markRead`
 (`ClientSyncServices.call#ClientRequest`), and the Inbox's `state` and `viewAction` (`run#Operation`, so an app's inbox
-source is covered too). An app's own mutation uses `claim#ClientRequest` and `store#ClientRequest`.
+source is covered too). An app's own mutation uses `claim#ClientRequest` and `store#ClientRequest`. A ref is keyed by
+user and request kind alone, not by its parameters: a client gives each request its own ref, and the same ref with
+other parameters answers the first request's result. Sent again after 30 days, the request runs again.
 
 **Conflicts.**
 
 - Compose's `saveDraft` and `send` take `baseStamp`, the `draftStamp` of the copy the client edited (answered by
   `composeData` and each save; the time of the draft's last content save, which attachments alone, the sync and flags do
   not move). When the server's draft was saved since, nothing is saved or sent: `{conflict: true, compose}` with the
-  server's draft, and the client keeps its own as a copy (a new draft with a new `clientRef`).
+  server's draft, and the client keeps its own as a copy (a new draft with a new `clientRef`). A save sent again after
+  a lost answer is not a conflict with itself: the draft holds what it brings, or its `saveRef` (the client's reference
+  of that one save) was the draft's last. Stamps compare in milliseconds, or in seconds on a database that keeps no more.
 - Each target of the Inbox's `state` takes `seen`, the state the client saw for the fields its action changes
-  (`isRead`, `isFlagged`, `archived`, `snoozedThruDate`, `emailFolderId`, `labelIds`; for a thread: every message read,
-  any flagged, every one archived, the latest snooze, one message in the folder). When the server's differs, the target
+  (`isRead`, `isFlagged`, `archived`, `snoozedThruDate`, `emailFolderId`, `labelIds`, and `latestMessageId`, the newest
+  message the client saw, so a read or archive does not take a message that came since; for a thread: every message
+  read, any flagged, every one archived, the latest snooze, one message in the folder; a flag's on the message it flags,
+  labels only those the action adds or removes). When the server's differs, the target
   is left and is in `failedList` with `reason: "conflict"` and `current`, the state now; the server's change wins.
 
 **Files in chunks.** Compose's and Chat's `uploadChunk` (multipart: `uploadId`, the client's own name of the upload;
@@ -229,7 +241,9 @@ source is covered too). An app's own mutation uses `claim#ClientRequest` and `st
 or past a gap, answers `accepted: false` with `received`, where to go on. `uploadStatus?uploadId=` answers
 `{found, received, total, complete}` after a restart (`found: false`: start again). The chunk that ends at `total` joins
 the file; then Compose's `upload` and Chat's `upload` take it by `uploadId` in place of the file. An upload is its user's
-only, and goes `client_upload_expire_hours` (24) after its last chunk.
+only, and goes `client_upload_expire_hours` (24) after its last chunk. A chunk but the last is at least
+`client_upload_min_chunk_bytes` (256 KB); a user has at most `client_upload_max_count` (20) unfinished uploads of
+`client_upload_max_mb` (100) MB in all.
 
 The jobs `clean_MailChanges_daily`, `clean_ClientRequests_daily` and `clean_ClientUploads_hourly` clean them up, each user
 or upload on its own.

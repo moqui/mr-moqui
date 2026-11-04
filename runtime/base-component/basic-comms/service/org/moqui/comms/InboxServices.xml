@@ -614,8 +614,9 @@ along with this software (see the LICENSE.md file). If not, see
             refused or fails is named in failedList ({key, message}) with why, and the others are changed.
 
             seen, on a target a client queued offline, is the state the client saw for the fields its action changes
-            ({isRead}, {isFlagged}, {archived}, {snoozedThruDate}, {emailFolderId}, {labelIds}; EmailClientServices.check#SeenState
-            reads them for a thread): when the server's differs, the target is left as it is and named in failedList with
+            ({isRead}, {isFlagged}, {archived}, {snoozedThruDate}, {emailFolderId}, {labelIds}, and latestMessageId, the newest
+            message the client saw, so a read or archive does not take a message that came since; EmailClientServices.check#SeenState
+            reads them for a thread, a flag's on the message it flags, labels only those the action adds or removes): when the server's differs, the target is left as it is and named in failedList with
             reason conflict and current, the state now, which the client shows (the server's change wins). A clientRef
             makes the request once (run#Operation).
         </description>
@@ -683,7 +684,11 @@ along with this software (see the LICENSE.md file). If not, see
                         name = MAIL + '.' + name
                         // queued offline: only while the server is as the client saw it; else the server's state wins
                         if (target.seen && typeof target.seen === 'object') {
-                            const check = ec.service.sync().name(MAIL + '.check#SeenState').parameters(Object.assign({seen: target.seen}, one)).call()
+                            // its own transaction, and no error for a target not found: the request's own (its clientRef) is not touched
+                            const checked = action === 'flag' ? flagOne : one
+                            const labelIds = action === 'labels' ? asList(addLabelIdList).concat(asList(removeLabelIdList)) : null
+                            const check = ec.service.sync().name(MAIL + '.check#SeenState').parameters(Object.assign({seen: target.seen, onlyLabelIds: labelIds}, checked))
+                                    .requireNewTransaction(true).call() || {}
                             if (ec.message.hasError()) throw new Error(ec.message.getErrorsString())
                             if (check.conflict) {
                                 failedList.push({key: key, message: ec.l10n.localize('Changed on the server'), reason: 'conflict', current: check.current})

@@ -406,6 +406,8 @@ along with this software (see the LICENSE.md file). If not, see
                 (for a send); a draft keeps only those that are</description></parameter>
             <parameter name="clientRef"/>
             <parameter name="baseStamp" type="Long"/>
+            <parameter name="saveRef"><description>The client's reference of this save, so it sent again after a lost answer is not
+                a conflict with itself (save#Draft)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="emailMessageId"/>
@@ -441,7 +443,7 @@ along with this software (see the LICENSE.md file). If not, see
             const fullBody = String(body || '') + (quoteHtml ? String(quoteHtml) : '')
             const parameters = {emailMessageId: emailMessageId || null, emailAccountId: identity.emailAccountId, emailIdentityId: identity.emailIdentityId,
                 toAddresses: toText, ccAddresses: ccText, bccAddresses: bccText, subject: subject ?? '', body: fullBody, bodyText: bodyText || null,
-                clientRef: clientRef || null, baseStamp: baseStamp ?? null}
+                clientRef: clientRef || null, baseStamp: baseStamp ?? null, saveRef: saveRef || null}
             if (!emailMessageId && parentEmailMessageId) { parameters.parentEmailMessageId = parentEmailMessageId; parameters.isForward = isForward }
             const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.save#Draft').parameters(parameters).call()
             if (ec.message.hasError()) return
@@ -713,6 +715,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="threadId"/>
             <parameter name="clientRef"/>
             <parameter name="baseStamp" type="Long"/>
+            <parameter name="saveRef"><description>The client's reference of this save, so it sent again after a lost answer is not
+                a conflict with itself (save#Draft)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="mode"/>
@@ -741,7 +745,7 @@ along with this software (see the LICENSE.md file). If not, see
                 mode = 'email'
                 const saved = ec.service.sync().name('org.moqui.comms.ComposeServices.save#ComposeDraft').parameters({emailMessageId: emailMessageId, fromValue: fromValue,
                     toJson: toJson, ccJson: ccJson, bccJson: bccJson, subject: subject, body: body, bodyText: bodyText, quoteHtml: quoteHtml,
-                    parentEmailMessageId: parentEmailMessageId, isForward: isForward, strict: true, clientRef: clientRef || null, baseStamp: baseStamp ?? null}).call()
+                    parentEmailMessageId: parentEmailMessageId, isForward: isForward, strict: true, clientRef: clientRef || null, baseStamp: baseStamp ?? null, saveRef: saveRef || null}).call()
                 if (ec.message.hasError()) return
                 emailMessageId = saved.emailMessageId
                 if (saved.conflict === true) {

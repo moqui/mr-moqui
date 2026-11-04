@@ -25,7 +25,10 @@ along with this software (see the LICENSE.md file). If not, see
             with the result stored for it (store#ClientRequest): the caller answers that and does nothing else. Otherwise
             the reference is claimed in the caller's transaction, so a second try that overlaps the first waits for it and
             then fails (the client tries again and gets the duplicate), and a request that fails leaves no claim. Call
-            store#ClientRequest with the result in the same transaction.</description>
+            store#ClientRequest with the result in the same transaction. The reference is keyed by user and serviceName
+            alone, not by the parameters: a client gives each request its own ref, and the same ref with other parameters
+            answers the first request's result. A ref is kept client_request_keep_days (30): sent again after that, the
+            request runs again.</description>
         <in-parameters>
             <parameter name="clientRef" required="true"/>
             <parameter name="serviceName" required="true"/>
@@ -142,7 +145,12 @@ along with this software (see the LICENSE.md file). If not, see
             accepted is false; received always says how many bytes are held, so the client goes on from there. The chunk
             that ends at total joins the file (complete true); the attachment services take it by uploadId. A chunk of a
             complete upload changes nothing (complete true). A total other than the upload's, or a chunk past it, is an
-            error.</description>
+            error.
+
+            Limits: a chunk other than the last is at least client_upload_min_chunk_bytes (256 KB by default); a user has at
+            most client_upload_max_count (20) uploads not complete, of client_upload_max_mb (100) MB in all, so a new one past
+            them is refused until one finishes or expires. The join reads the chunks one at a time into the file's buffer,
+            so the heap holds the file once and a chunk.</description>
         <in-parameters>
             <parameter name="uploadId" required="true"/>
             <parameter name="offset" type="Long" required="true"/>
@@ -185,8 +193,21 @@ along with this software (see the LICENSE.md file). If not, see
             const partSize = Number(typeof part.getSize === 'function' ? part.getSize() : (part.size || 0))
             if (!(partSize > 0)) { ec.message.addError(L('The chunk is empty')); return }
             if (at + partSize > size) { ec.message.addError(L('The chunk goes past the total size')); return }
+            const property = (name, fallback) => { const value = Number(System.getProperty(name)); return value > 0 ? value : fallback }
+            const minChunk = property('client_upload_min_chunk_bytes', 262144)
+            if (at + partSize < size && partSize < minChunk) {
+                ec.message.addError(ec.resource.expand('A chunk other than the last is at least ${bytes} bytes', '', {bytes: minChunk})); return }
             const now = ec.user.nowTimestamp
             if (!row) {
+                // what the user has open: a new upload past the limits waits for one to finish or expire
+                const open = Array.from(ec.entity.find(UPLOAD).condition('userId', userId).condition(ec.entity.conditionFactory.makeCondition('completedDate', 'is-null', null))
+                        .selectField('totalSize').disableAuthz().list())
+                const maxCount = property('client_upload_max_count', 20)
+                const maxBytesOpen = property('client_upload_max_mb', 100) * 1048576
+                if (open.length >= maxCount) {
+                    ec.message.addError(ec.resource.expand('At most ${count} uploads at once: finish one first', '', {count: maxCount})); return }
+                if (open.reduce((sum, item) => sum + Number(item.totalSize || 0), 0) + size > maxBytesOpen) {
+                    ec.message.addError(ec.resource.expand('At most ${mb} MB of uploads at once: finish one first', '', {mb: maxBytesOpen / 1048576})); return }
                 const token = Math.random().toString(36).substring(2, 10) + Date.now().toString(36)
                 row = ec.entity.makeValue(UPLOAD)
                 row.setFields({userId: userId, uploadId: uploadId, fileName: String(fileName || 'file').split(/[\\/]/).pop().substring(0, 200) || 'file',
@@ -207,25 +228,22 @@ along with this software (see the LICENSE.md file). If not, see
             row.set('chunkCount', Number(row.chunkCount || 0) + 1)
             row.set('lastChunkDate', now)
             if (received === size) {
-                // every byte is here: the chunks become the file, in their order
-                const parts = []
-                let length = 0
+                // every byte is here: the chunks become the file, in their order, each read into the file's one buffer
+                const file = new Uint8Array(size)
+                const starts = []
                 for (let start = 0; start < size;) {
-                    const bytes = ec.resource.getLocationReference(`${store}/${chunkName(start)}`).openStream()?.readAllBytes()
-                    if (!bytes || !bytes.length) { ec.message.addError(ec.resource.expand('The chunk at ${start} of upload ${uploadId} is missing', '', {start: start, uploadId: uploadId})); return }
-                    parts.push(bytes)
-                    length += bytes.length
+                    let bytes = ec.resource.getLocationReference(`${store}/${chunkName(start)}`).openStream()?.readAllBytes()
+                    if (!bytes || !bytes.length || start + bytes.length > size) {
+                        ec.message.addError(ec.resource.expand('The chunk at ${start} of upload ${uploadId} is missing', '', {start: start, uploadId: uploadId})); return }
+                    file.set(bytes, start)
+                    starts.push(start)
                     start += bytes.length
+                    bytes = null
                 }
-                if (length !== size) { ec.message.addError(ec.resource.expand('The upload ${uploadId} has the wrong size', '', {uploadId: uploadId})); return }
-                const file = new Uint8Array(length)
-                let position = 0
-                for (const bytes of parts) { file.set(bytes, position); position += bytes.length }
                 ec.resource.getLocationReference(`${store}/file`).putBytes(file)
-                for (let start = 0, index = 0; index < parts.length; index++) {
+                for (const start of starts) {
                     try { ec.resource.getLocationReference(`${store}/${chunkName(start)}`).delete() }
                     catch (err) { ec.logger.warn(`Could not remove chunk ${start} of upload ${uploadId}: ${err && err.message ? err.message : err}`) }
-                    start += parts[index].length
                 }
                 row.set('completedDate', now)
                 complete = true
@@ -282,10 +300,10 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="clean" noun="ClientUploads" authenticate="anonymous-all">
+    <service verb="clean" noun="ClientUploads" authenticate="anonymous-all" transaction="ignore">
         <description>The hourly job: uploads with no chunk for hours (the property client_upload_expire_hours, 24 by default),
-            finished or not, go with their files. Each upload is on its own: one that cannot be removed is logged and the rest
-            go on.</description>
+            finished or not, go with their files (remove#ClientUpload), and a user's upload folder left empty goes too. Each
+            upload is on its own, in its own transaction: one that cannot be removed is logged and the rest go on.</description>
         <in-parameters><parameter name="hours" type="Integer"/></in-parameters>
         <out-parameters><parameter name="removedCount" type="Integer"/></out-parameters>
         <actions><script><![CDATA[
@@ -296,23 +314,48 @@ along with this software (see the LICENSE.md file). If not, see
             const rows = Array.from(ec.entity.find('moqui.basic.client.ClientUpload').condition(cf.makeCondition([
                 cf.makeCondition('lastChunkDate', 'less', String(before)),
                 cf.makeCondition([cf.makeCondition('lastChunkDate', 'is-null', null), cf.makeCondition('createdDate', 'less', String(before))], 'and')], 'or'))
-                    .disableAuthz().list())
+                    .selectField('userId').selectField('uploadId').disableAuthz().list())
+            const users = new Set()
             for (const row of rows) {
+                ec.message.pushErrors()
                 try {
-                    const store = row.storeLocation ? String(row.storeLocation) : null
-                    if (store && store.startsWith('dbresource://upload/')) {
-                        const directory = ec.resource.getLocationReference(store)
-                        if (directory.getExists()) {
-                            for (const child of Array.from(directory.getDirectoryEntries() || [])) child.delete()
-                            directory.delete()
-                        }
-                    }
-                    row.delete()
-                    removedCount++
+                    ec.service.sync().name('org.moqui.impl.ClientSyncServices.remove#ClientUpload').parameters({userId: row.userId, uploadId: row.uploadId})
+                            .requireNewTransaction(true).disableAuthz().call()
+                    if (ec.message.hasError()) ec.logger.error(`Could not remove upload ${row.uploadId} of user ${row.userId}: ${ec.message.errorsString}`)
+                    else { removedCount++; users.add(row.userId) }
                 } catch (err) {
                     ec.logger.error(`Could not remove upload ${row.uploadId} of user ${row.userId}: ${err && err.message ? err.message : err}`)
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+            for (const userId of users) {
+                try {
+                    const folder = ec.resource.getLocationReference(`dbresource://upload/${userId}`)
+                    if (folder.getExists() && !Array.from(folder.getDirectoryEntries() || []).length) folder.delete()
+                } catch (err) {
+                    ec.logger.warn(`Could not remove the upload folder of user ${userId}: ${err && err.message ? err.message : err}`)
                 }
             }
+        ]]></script></actions>
+    </service>
+    <service verb="remove" noun="ClientUpload" allow-remote="false">
+        <description>Internal, for clean#ClientUploads (authorization disabled): one upload's row and its files.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="uploadId" required="true"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            if (!ec.artifactExecution.authzDisabled()) { ec.message.addError('remove#ClientUpload is internal'); return }
+            const row = ec.entity.find('moqui.basic.client.ClientUpload').condition({userId: userId, uploadId: uploadId}).forUpdate(true).one()
+            if (!row) return
+            const store = row.storeLocation ? String(row.storeLocation) : null
+            if (store && store.startsWith('dbresource://upload/')) {
+                const directory = ec.resource.getLocationReference(store)
+                if (directory.getExists()) {
+                    for (const child of Array.from(directory.getDirectoryEntries() || [])) child.delete()
+                    directory.delete()
+                }
+            }
+            row.delete()
         ]]></script></actions>
     </service>
 </services>

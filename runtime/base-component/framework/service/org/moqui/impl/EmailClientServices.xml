@@ -2597,12 +2597,17 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== The mail change cursor (plans/Mobile-Desktop.md MD5) ========== -->
 
     <service verb="note" noun="MessageChange" allow-remote="false">
-        <description>Internal, from the rules of Email.eecas.xml: a write of a message (operation create, update or delete,
-            with the fields the rule watches before and after it) or of one of its labels (operation label) is a change of
-            its thread for each user of its account who keeps a change cursor (an EmailUserState). Each gets a pending
-            EmailUserChange, numbered at their next read (assign#MailChanges). A user who no longer sees the message in a
-            thread (deleted, taken out of the account, or in another thread now) gets it in that thread's removedMessageIds.
-            Users who keep no cursor get nothing, so the log costs nothing until a client reads it.</description>
+        <description>Internal, from the rules of Email.eecas.xml, in the transaction of the write: a write of a message
+            (operation create, update or delete, with the fields the rule watches before and after it) or of one of its
+            labels or attachments (operation related) is a change of its thread for each user of its account who keeps a
+            change cursor (an EmailUserState that is not dormant). Each gets a pending EmailUserChange, numbered at their
+            next read (assign#MailChanges). A user who no longer sees the message in a thread (deleted, taken out of the
+            account, or in another thread now) gets it in that thread's removedMessageIds.
+
+            It never fails the write: anything that goes wrong is logged and no error is left (a service error would mark
+            the writer's transaction for rollback). The framework has no savepoint for it, so its statements are kept to
+            plain reads by key and inserts with a sequenced key, which do not fail on good data. When no user keeps a cursor
+            at all (one count, the usual case of a server without desktop clients) it reads nothing else.</description>
         <in-parameters>
             <parameter name="emailMessageId" required="true"/>
             <parameter name="operation" required="true"/>
@@ -2610,55 +2615,68 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="after" type="Map"/>
         </in-parameters>
         <actions><script><![CDATA[
-            let prior = before || null, next = after || null
-            if (operation === 'label') {
-                const row = ec.entity.find('moqui.basic.email.EmailMessage').condition('emailMessageId', emailMessageId).selectField('emailAccountId')
-                        .selectField('rootEmailMessageId').selectField('emailFolderId').disableAuthz().one()
-                if (!row || !row.emailAccountId) return
-                prior = next = {emailAccountId: row.emailAccountId, rootEmailMessageId: row.rootEmailMessageId ?? null, emailFolderId: row.emailFolderId ?? null}
-            }
-            const accountIds = Array.from(new Set([prior?.emailAccountId, next?.emailAccountId].filter((id) => id)))
-            if (!accountIds.length) return
-            // the users of each account: its owner and its current members, of them those who keep a cursor
-            const usersOf = {}
-            const everyone = new Set()
-            for (const account of ec.entity.find('moqui.basic.email.EmailAccount').condition('emailAccountId', 'in', accountIds)
-                    .selectField('emailAccountId').selectField('ownerUserId').disableAuthz().list()) {
-                usersOf[account.emailAccountId] = new Set(account.ownerUserId ? [account.ownerUserId] : [])
-            }
-            for (const member of ec.entity.find('moqui.basic.email.EmailAccountUser').condition('emailAccountId', 'in', accountIds)
-                    .conditionDate('fromDate', 'thruDate', null).selectField('emailAccountId').selectField('userId').disableAuthz().list()) {
-                ;(usersOf[member.emailAccountId] ||= new Set()).add(member.userId)
-            }
-            for (const users of Object.values(usersOf)) for (const userId of users) everyone.add(userId)
-            if (!everyone.size) return
-            const keeping = new Set(Array.from(ec.entity.find('moqui.basic.email.EmailUserState').condition('userId', 'in', Array.from(everyone))
-                    .selectField('userId').disableAuthz().list()).map((row) => row.userId))
-            if (!keeping.size) return
-            const threadOf = (fields) => fields.rootEmailMessageId || emailMessageId
-            const kind = operation === 'create' ? 'new' : operation === 'delete' ? 'delete'
-                : (operation === 'update' && prior && next && (prior.emailFolderId ?? null) !== (next.emailFolderId ?? null) ? 'move' : 'state')
-            const rows = new Map()
-            if (next && next.emailAccountId) for (const userId of usersOf[next.emailAccountId] || []) {
-                if (!keeping.has(userId)) continue
-                rows.set(userId + '|' + threadOf(next), {userId: userId, thread: threadOf(next), accountId: next.emailAccountId,
-                    folderId: next.emailFolderId ?? null, kind: kind, removed: false})
-            }
-            // where the message was: gone from that thread for each user who no longer sees it there
-            if (prior && prior.emailAccountId) for (const userId of usersOf[prior.emailAccountId] || []) {
-                const key = userId + '|' + threadOf(prior)
-                if (!keeping.has(userId) || rows.has(key)) continue
-                rows.set(key, {userId: userId, thread: threadOf(prior), accountId: prior.emailAccountId, folderId: prior.emailFolderId ?? null,
-                    kind: 'delete', removed: true})
-            }
-            const now = ec.user.nowTimestamp
-            for (const change of rows.values()) {
-                const row = ec.entity.makeValue('moqui.basic.email.EmailUserChange')
-                row.setSequencedIdPrimary()
-                row.setFields({userId: change.userId, emailMessageId: emailMessageId, rootEmailMessageId: change.thread,
-                    emailAccountId: change.accountId, emailFolderId: change.folderId, changeKind: change.kind,
-                    changeJson: change.removed ? JSON.stringify({removedMessageIds: [emailMessageId]}) : null, changeDate: now}, true, null, null)
-                row.create()
+            const STATE = 'moqui.basic.email.EmailUserState'
+            const cf = ec.entity.conditionFactory
+            try {
+                const awake = cf.makeCondition('dormantDate', 'is-null', null)
+                if (ec.entity.find(STATE).condition(awake).disableAuthz().count() === 0) return
+                let prior = before || null, next = after || null
+                if (operation === 'related' || operation === 'label') {
+                    const row = ec.entity.find('moqui.basic.email.EmailMessage').condition('emailMessageId', emailMessageId).selectField('emailAccountId')
+                            .selectField('rootEmailMessageId').selectField('emailFolderId').disableAuthz().one()
+                    if (!row || !row.emailAccountId) return
+                    prior = next = {emailAccountId: row.emailAccountId, rootEmailMessageId: row.rootEmailMessageId ?? null, emailFolderId: row.emailFolderId ?? null}
+                }
+                const accountIds = Array.from(new Set([prior?.emailAccountId, next?.emailAccountId].filter((id) => id)))
+                if (!accountIds.length) return
+                // the users of each account: its owner and its current members, of them those who keep a cursor
+                const usersOf = {}
+                const everyone = new Set()
+                for (const account of ec.entity.find('moqui.basic.email.EmailAccount').condition('emailAccountId', 'in', accountIds)
+                        .selectField('emailAccountId').selectField('ownerUserId').disableAuthz().list()) {
+                    usersOf[account.emailAccountId] = new Set(account.ownerUserId ? [account.ownerUserId] : [])
+                }
+                for (const member of ec.entity.find('moqui.basic.email.EmailAccountUser').condition('emailAccountId', 'in', accountIds)
+                        .conditionDate('fromDate', 'thruDate', null).selectField('emailAccountId').selectField('userId').disableAuthz().list()) {
+                    ;(usersOf[member.emailAccountId] ||= new Set()).add(member.userId)
+                }
+                for (const users of Object.values(usersOf)) for (const userId of users) everyone.add(userId)
+                if (!everyone.size) return
+                const keeping = new Set(Array.from(ec.entity.find(STATE).condition('userId', 'in', Array.from(everyone)).condition(awake)
+                        .selectField('userId').disableAuthz().list()).map((row) => row.userId))
+                if (!keeping.size) return
+                const threadOf = (fields) => fields.rootEmailMessageId || emailMessageId
+                const kind = operation === 'create' ? 'new' : operation === 'delete' ? 'delete'
+                    : (operation === 'update' && prior && next && (prior.emailFolderId ?? null) !== (next.emailFolderId ?? null) ? 'move' : 'state')
+                const rows = new Map()
+                if (next && next.emailAccountId) for (const userId of usersOf[next.emailAccountId] || []) {
+                    if (!keeping.has(userId)) continue
+                    rows.set(userId + '|' + threadOf(next), {userId: userId, thread: threadOf(next), accountId: next.emailAccountId,
+                        folderId: next.emailFolderId ?? null, kind: kind, removed: false})
+                }
+                // where the message was: gone from that thread for each user who no longer sees it there
+                if (prior && prior.emailAccountId) for (const userId of usersOf[prior.emailAccountId] || []) {
+                    const key = userId + '|' + threadOf(prior)
+                    if (!keeping.has(userId) || rows.has(key)) continue
+                    rows.set(key, {userId: userId, thread: threadOf(prior), accountId: prior.emailAccountId, folderId: prior.emailFolderId ?? null,
+                        kind: 'delete', removed: true})
+                }
+                const now = ec.user.nowTimestamp
+                for (const change of rows.values()) {
+                    const row = ec.entity.makeValue('moqui.basic.email.EmailUserChange')
+                    row.setSequencedIdPrimary()
+                    row.setFields({userId: change.userId, emailMessageId: emailMessageId, rootEmailMessageId: change.thread,
+                        emailAccountId: change.accountId, emailFolderId: change.folderId, changeKind: change.kind,
+                        changeJson: change.removed ? JSON.stringify({removedMessageIds: [emailMessageId]}) : null, changeDate: now}, true, null, null)
+                    row.create()
+                }
+            } catch (err) {
+                ec.logger.error(`The mail change of message ${emailMessageId} is not noted: ${err && err.message ? err.message : err}`)
+            } finally {
+                if (ec.message.hasError()) {
+                    ec.logger.error(`The mail change of message ${emailMessageId} is not noted: ${ec.message.errorsString}`)
+                    ec.message.clearErrors()
+                }
             }
         ]]></script></actions>
     </service>
@@ -2668,76 +2686,126 @@ along with this software (see the LICENSE.md file). If not, see
             changeSeqs, under the lock of the user's EmailUserState, so the numbers follow the order the changes committed
             and a reader never passes a change that commits later. One row is kept per thread: the newest, numbered now,
             with the removedMessageIds of the rows it replaces (a message back in the thread since is not removed), and the
-            kind new when one of the messages of the changes numbered now arrived, else the newest row's kind. ensure makes the user's state first when
-            there is none (the user's first read; created is then true). Run it in a transaction of its own.</description>
+            kind new when one of the messages of the changes numbered now arrived, else the newest row's kind. At most
+            maxRows pending rows a call (remaining is true when there are more): run it in a transaction of its own and
+            call it again, so each pass commits.
+
+            ensure makes the user's state when there is none, and wakes a dormant one (clean#UserMailChanges); either way
+            started is true and the reader answers reset. A sequence never starts again: a woken state goes on from its last
+            number, past purgedThruSeq, so a cursor of another device answers reset too.
+
+            Catch-up: a change written by a transaction that began before the state was made or reset, and committed after,
+            found no cursor to note it on. For ten minutes after (catchUpThruDate) each call notes the threads of the user's
+            messages changed since catchUpFromDate less five minutes (their lastUpdatedStamp, at most 2000), so such a
+            change is not lost (a message deleted in that window is not caught up).</description>
         <in-parameters>
             <parameter name="userId" required="true"/>
             <parameter name="ensure" type="Boolean" default="false"/>
+            <parameter name="maxRows" type="Integer" default="2000"/>
         </in-parameters>
         <out-parameters>
             <parameter name="lastChangeSeq" type="Long"/>
             <parameter name="purgedThruSeq" type="Long"/>
-            <parameter name="created" type="Boolean"/>
+            <parameter name="started" type="Boolean"/>
+            <parameter name="remaining" type="Boolean"/>
         </out-parameters>
         <actions><script><![CDATA[
-            const STATE = 'moqui.basic.email.EmailUserState', CHANGE = 'moqui.basic.email.EmailUserChange'
+            const STATE = 'moqui.basic.email.EmailUserState', CHANGE = 'moqui.basic.email.EmailUserChange', MESSAGE = 'moqui.basic.email.EmailMessage'
             const cf = ec.entity.conditionFactory
+            const MARGIN = 300000, CATCH_UP = 600000
             const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
-            created = false
+            started = false
+            remaining = false
             lastChangeSeq = 0
             purgedThruSeq = 0
             const now = ec.user.nowTimestamp
+            const nowMillis = Number(now)
             let state = ec.entity.find(STATE).condition('userId', userId).forUpdate(true).disableAuthz().one()
             if (!state) {
                 if (!ensure) return
                 const made = ec.entity.makeValue(STATE)
-                made.setFields({userId: userId, lastChangeSeq: 0, purgedThruSeq: 0, lastReadDate: now}, true, null, null)
+                made.setFields({userId: userId, lastChangeSeq: 0, purgedThruSeq: 0, lastReadDate: now, catchUpFromDate: now,
+                    catchUpThruDate: new Date(nowMillis + CATCH_UP)}, true, null, null)
                 made.create()
-                created = true
+                started = true
                 return
             }
-            let last = Number(state.lastChangeSeq || 0)
-            for (let pass = 0; pass < 20; pass++) {
-                const pending = Array.from(ec.entity.find(CHANGE).condition('userId', userId).condition(cf.makeCondition('changeSeq', 'is-null', null))
-                        .orderBy('changeDate').orderBy('emailUserChangeId').limit(5000).disableAuthz().list())
-                if (!pending.length) break
-                const byThread = new Map()
-                pending.forEach((row, index) => {
-                    const group = byThread.get(row.rootEmailMessageId) || {rows: [], lastIndex: 0}
-                    group.rows.push(row)
-                    group.lastIndex = index
-                    byThread.set(row.rootEmailMessageId, group)
-                })
-                const groups = Array.from(byThread.entries()).sort((left, right) => left[1].lastIndex - right[1].lastIndex)
-                for (const [thread, group] of groups) {
-                    const earlier = Array.from(ec.entity.find(CHANGE).condition('userId', userId).condition('rootEmailMessageId', thread)
-                            .condition(cf.makeCondition('changeSeq', 'is-not-null', null)).orderBy('changeSeq').disableAuthz().list())
-                    const all = earlier.concat(group.rows)
-                    // what is no longer in the thread, in the order it happened: a message back since is not removed
-                    const removed = new Set()
-                    for (const row of all) {
-                        const gone = Array.from(parse(row.changeJson).removedMessageIds || [])
-                        if (gone.length) for (const id of gone) removed.add(id)
-                        else removed.delete(row.emailMessageId)
-                    }
-                    const keep = group.rows[group.rows.length - 1]
-                    const arrived = group.rows.some((row) => row.changeKind === 'new' && !removed.has(row.emailMessageId))
-                    last++
-                    keep.set('changeSeq', last)
-                    keep.set('changeKind', arrived ? 'new' : keep.changeKind)
-                    keep.set('changeJson', removed.size ? JSON.stringify({removedMessageIds: Array.from(removed).slice(-500)}) : null)
-                    keep.update()
-                    const replaced = all.filter((row) => row.emailUserChangeId !== keep.emailUserChangeId).map((row) => row.emailUserChangeId)
-                    if (replaced.length) ec.entity.find(CHANGE).condition('emailUserChangeId', 'in', replaced).disableAuthz().deleteAll()
-                }
-                if (pending.length < 5000) break
-            }
-            const readBefore = Number(now) - 3600000
-            if (last !== Number(state.lastChangeSeq || 0) || state.lastReadDate == null || Number(state.lastReadDate) < readBefore) {
-                state.set('lastChangeSeq', last)
-                state.set('lastReadDate', now)
+            if (state.dormantDate != null) {
+                if (!ensure) return
+                // woken after a long sleep: the log starts again, its numbers go on
+                const next = Number(state.lastChangeSeq || 0) + 1
+                state.setFields({lastChangeSeq: next, purgedThruSeq: next, dormantDate: null, lastReadDate: now, catchUpFromDate: now,
+                    catchUpThruDate: new Date(nowMillis + CATCH_UP)}, true, null, null)
                 state.update()
+                started = true
+                lastChangeSeq = next
+                purgedThruSeq = next
+                return
             }
+            // catch-up: what a writer that began before the cursor (re)started committed after it
+            if (state.catchUpThruDate != null && state.catchUpFromDate != null) {
+                const since = Number(state.catchUpFromDate) - MARGIN
+                const accountIds = Array.from(new Set(Array.from(ec.entity.find('moqui.basic.email.EmailAccount').condition('ownerUserId', userId)
+                        .selectField('emailAccountId').disableAuthz().list()).map((row) => row.emailAccountId)
+                    .concat(Array.from(ec.entity.find('moqui.basic.email.EmailAccountUser').condition('userId', userId).conditionDate('fromDate', 'thruDate', null)
+                        .selectField('emailAccountId').disableAuthz().list()).map((row) => row.emailAccountId))))
+                if (accountIds.length) {
+                    // a thread already in the log since then needs nothing more
+                    const seen = new Set(Array.from(ec.entity.find(CHANGE).condition('userId', userId).condition('changeDate', 'greater-equals', String(since))
+                            .selectField('rootEmailMessageId').disableAuthz().list()).map((row) => row.rootEmailMessageId))
+                    for (const row of ec.entity.find(MESSAGE).condition('emailAccountId', 'in', accountIds)
+                            .condition('lastUpdatedStamp', 'greater-equals', String(since)).selectField('emailMessageId').selectField('rootEmailMessageId')
+                            .selectField('emailAccountId').selectField('emailFolderId').orderBy('-lastUpdatedStamp').limit(2000).disableAuthz().list()) {
+                        const thread = row.rootEmailMessageId || row.emailMessageId
+                        if (seen.has(thread)) continue
+                        seen.add(thread)
+                        const change = ec.entity.makeValue(CHANGE)
+                        change.setSequencedIdPrimary()
+                        change.setFields({userId: userId, emailMessageId: row.emailMessageId, rootEmailMessageId: thread, emailAccountId: row.emailAccountId,
+                            emailFolderId: row.emailFolderId ?? null, changeKind: 'state', changeDate: now}, true, null, null)
+                        change.create()
+                    }
+                }
+                if (nowMillis > Number(state.catchUpThruDate)) { state.set('catchUpFromDate', null); state.set('catchUpThruDate', null) }
+                else state.set('catchUpFromDate', now)
+            }
+            let last = Number(state.lastChangeSeq || 0)
+            const size = Math.max(1, Number(maxRows || 2000))
+            const pending = Array.from(ec.entity.find(CHANGE).condition('userId', userId).condition(cf.makeCondition('changeSeq', 'is-null', null))
+                    .orderBy('changeDate').orderBy('emailUserChangeId').limit(size).disableAuthz().list())
+            remaining = pending.length >= size
+            const byThread = new Map()
+            pending.forEach((row, index) => {
+                const group = byThread.get(row.rootEmailMessageId) || {rows: [], lastIndex: 0}
+                group.rows.push(row)
+                group.lastIndex = index
+                byThread.set(row.rootEmailMessageId, group)
+            })
+            const groups = Array.from(byThread.entries()).sort((left, right) => left[1].lastIndex - right[1].lastIndex)
+            for (const [thread, group] of groups) {
+                const earlier = Array.from(ec.entity.find(CHANGE).condition('userId', userId).condition('rootEmailMessageId', thread)
+                        .condition(cf.makeCondition('changeSeq', 'is-not-null', null)).orderBy('changeSeq').disableAuthz().list())
+                const all = earlier.concat(group.rows)
+                // what is no longer in the thread, in the order it happened: a message back since is not removed
+                const removed = new Set()
+                for (const row of all) {
+                    const gone = Array.from(parse(row.changeJson).removedMessageIds || [])
+                    if (gone.length) for (const id of gone) removed.add(id)
+                    else removed.delete(row.emailMessageId)
+                }
+                const keep = group.rows[group.rows.length - 1]
+                const arrived = group.rows.some((row) => row.changeKind === 'new' && !removed.has(row.emailMessageId))
+                last++
+                keep.set('changeSeq', last)
+                keep.set('changeKind', arrived ? 'new' : keep.changeKind)
+                keep.set('changeJson', removed.size ? JSON.stringify({removedMessageIds: Array.from(removed).slice(-500)}) : null)
+                keep.update()
+                const replaced = all.filter((row) => row.emailUserChangeId !== keep.emailUserChangeId).map((row) => row.emailUserChangeId)
+                if (replaced.length) ec.entity.find(CHANGE).condition('emailUserChangeId', 'in', replaced).disableAuthz().deleteAll()
+            }
+            state.set('lastChangeSeq', last)
+            if (state.lastReadDate == null || Number(state.lastReadDate) < nowMillis - 3600000) state.set('lastReadDate', now)
+            state.update()
             lastChangeSeq = last
             purgedThruSeq = Number(state.purgedThruSeq || 0)
         ]]></script></actions>
@@ -2754,14 +2822,15 @@ along with this software (see the LICENSE.md file). If not, see
             thread's messages now, each {emailMessageId, threadId, emailAccountId, emailFolderId, statusId, isRead,
             isFlagged, isAnswered, archived, archivedDate, snoozedThruDate, messageDate, subject, fromName, fromAddress,
             snippet, hasAttachment, labelIds})}. The messages are the thread as it is when read, so the client replaces
-            what it holds of the thread with them; a change read twice does no harm.
+            what it holds of the thread with them; a change read twice does no harm. A page holds about 20000 messages at
+            most: it ends before a thread that would pass that, with more true, so no thread is cut.
 
             lastSeq is the cursor to read from next. reset true, with no changes, means the cursor cannot be used: there is
             none yet (afterSeq empty, or the user's first read, which starts the log), it is older than the log kept
-            (mail_change_keep_days, 30 by default), the user's accounts changed (a member added or removed), or it is past
-            the last change (another server's). The client then reads its folders again and goes on from lastSeq; take
-            lastSeq before reading them. Only the user's own log is read, and only messages of accounts the user reaches
-            now are answered.
+            (mail_change_keep_days, 30 by default), the log started again (the user's accounts changed, a member added or
+            removed, or it was not read for that long), or it is past the last change (another server's). The client then
+            reads its folders again and goes on from lastSeq; take lastSeq before reading them. Only the user's own log is
+            read, and only messages of accounts the user reaches now are answered.
         </description>
         <in-parameters>
             <parameter name="afterSeq" type="Long"/>
@@ -2776,53 +2845,79 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const CHANGE = 'moqui.basic.email.EmailUserChange', MESSAGE = 'moqui.basic.email.EmailMessage'
             const cf = ec.entity.conditionFactory
+            const MAX_MESSAGES = 20000, CHUNK = 50
             const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
             const millis = (value) => value == null || value === '' ? null : (typeof value === 'object' && typeof value.getTime === 'function' ? value.getTime() : Number(value))
             changes = []; more = false; reset = false; lastSeq = 0
             const userId = ec.user.userId
             if (!userId) { ec.message.addError('No user'); return }
-            const assigned = ec.service.sync().name('org.moqui.impl.EmailClientServices.assign#MailChanges').parameters({userId: userId, ensure: true})
-                    .requireNewTransaction(true).disableAuthz().call()
-            if (ec.message.hasError()) return
+            // the pending changes numbered, a pass per transaction, so a large backlog does not hold the lock long
+            let assigned = null, started = false
+            for (let pass = 0; pass < 10; pass++) {
+                assigned = ec.service.sync().name('org.moqui.impl.EmailClientServices.assign#MailChanges').parameters({userId: userId, ensure: true})
+                        .requireNewTransaction(true).disableAuthz().call()
+                if (ec.message.hasError()) return
+                if (assigned.started) started = true
+                if (!assigned.remaining) break
+            }
             lastSeq = Number(assigned.lastChangeSeq || 0)
             const after = afterSeq == null || afterSeq === '' ? null : Number(afterSeq)
-            if (assigned.created || after == null || Number.isNaN(after) || after < Number(assigned.purgedThruSeq || 0) || after > lastSeq) { reset = true; return }
+            if (started || after == null || Number.isNaN(after) || after < Number(assigned.purgedThruSeq || 0) || after > lastSeq) { reset = true; return }
             const size = Math.max(1, Math.min(Number(limit || 200), 1000))
             const rows = Array.from(ec.entity.find(CHANGE).condition('userId', userId).condition('changeSeq', 'greater', after)
                     .orderBy('changeSeq').limit(size + 1).disableAuthz().list())
             more = rows.length > size
-            const page = rows.slice(0, size)
-            if (more) lastSeq = Number(page[page.length - 1].changeSeq)
+            let page = rows.slice(0, size)
             if (!page.length) return
             // the threads as they are now, of the accounts the user reaches now
             const access = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailAccountAccess').call()
             if (ec.message.hasError()) return
             const readable = access.accountList.filter((account) => !account.isInternal).map((account) => account.emailAccountId)
-            const threads = Array.from(new Set(page.map((row) => row.rootEmailMessageId).filter((id) => id)))
             const byThread = {}
-            if (readable.length && threads.length) {
+            const toMessage = (row, thread) => ({emailMessageId: row.emailMessageId, threadId: thread, emailAccountId: row.emailAccountId,
+                emailFolderId: row.emailFolderId ?? null, statusId: row.statusId ?? null, isRead: row.isRead === 'Y', isFlagged: row.isFlagged === 'Y',
+                isAnswered: row.isAnswered === 'Y', archived: row.archivedDate != null, archivedDate: millis(row.archivedDate),
+                snoozedThruDate: millis(row.snoozedThruDate), messageDate: millis(row.messageDate), subject: row.subject ?? null,
+                fromName: row.fromName ?? null, fromAddress: row.fromAddress ?? null, snippet: row.snippet ?? null,
+                hasAttachment: row.hasAttachment === 'Y', labelIds: []})
+            const readThreads = (threads) => {
+                // whole threads only: no limit, a chunk of threads at a time
                 const found = Array.from(ec.entity.find(MESSAGE).condition('emailAccountId', 'in', readable).condition(cf.makeCondition([
                     cf.makeCondition('emailMessageId', 'in', threads), cf.makeCondition('rootEmailMessageId', 'in', threads)], 'or'))
                         .selectField('emailMessageId').selectField('rootEmailMessageId').selectField('emailAccountId').selectField('emailFolderId')
                         .selectField('statusId').selectField('isRead').selectField('isFlagged').selectField('isAnswered').selectField('archivedDate')
                         .selectField('snoozedThruDate').selectField('messageDate').selectField('subject').selectField('fromName').selectField('fromAddress')
-                        .selectField('snippet').selectField('hasAttachment').orderBy('messageDate').orderBy('emailMessageId').limit(20000).list())
+                        .selectField('snippet').selectField('hasAttachment').orderBy('messageDate').orderBy('emailMessageId').disableAuthz().list())
+                const messages = found.map((row) => toMessage(row, row.rootEmailMessageId || row.emailMessageId))
                 const labelsOf = {}
-                const ids = found.map((row) => row.emailMessageId)
+                const ids = messages.map((message) => message.emailMessageId)
                 for (let start = 0; start < ids.length; start += 1000) {
                     for (const label of ec.entity.find('moqui.basic.email.EmailMessageLabel').condition('emailMessageId', 'in', ids.slice(start, start + 1000))
                             .disableAuthz().list()) (labelsOf[label.emailMessageId] ||= []).push(label.emailLabelId)
                 }
-                for (const row of found) {
-                    const thread = row.rootEmailMessageId || row.emailMessageId
-                    ;(byThread[thread] ||= []).push({emailMessageId: row.emailMessageId, threadId: thread, emailAccountId: row.emailAccountId,
-                        emailFolderId: row.emailFolderId ?? null, statusId: row.statusId ?? null, isRead: row.isRead === 'Y', isFlagged: row.isFlagged === 'Y',
-                        isAnswered: row.isAnswered === 'Y', archived: row.archivedDate != null, archivedDate: millis(row.archivedDate),
-                        snoozedThruDate: millis(row.snoozedThruDate), messageDate: millis(row.messageDate), subject: row.subject ?? null,
-                        fromName: row.fromName ?? null, fromAddress: row.fromAddress ?? null, snippet: row.snippet ?? null,
-                        hasAttachment: row.hasAttachment === 'Y', labelIds: (labelsOf[row.emailMessageId] || []).sort()})
+                for (const message of messages) {
+                    message.labelIds = (labelsOf[message.emailMessageId] || []).sort()
+                    ;(byThread[message.threadId] ||= []).push(message)
+                }
+                return messages.length
+            }
+            let total = 0
+            let kept = page.length
+            if (readable.length) {
+                for (let start = 0; start < page.length; start += CHUNK) {
+                    const chunk = page.slice(start, start + CHUNK)
+                    const threads = Array.from(new Set(chunk.map((row) => row.rootEmailMessageId).filter((id) => id && !byThread[id])))
+                    if (threads.length) total += readThreads(threads)
+                    if (total > MAX_MESSAGES && start > 0) {
+                        // too much for one page: it ends before this chunk, whose threads come next time whole
+                        kept = start
+                        for (const row of chunk) delete byThread[row.rootEmailMessageId]
+                        break
+                    }
                 }
             }
+            if (kept < page.length) { page = page.slice(0, kept); more = true }
+            if (more) lastSeq = Number(page[page.length - 1].changeSeq)
             changes = page.map((row) => {
                 const messages = byThread[row.rootEmailMessageId] || []
                 return {changeSeq: Number(row.changeSeq), kind: row.changeKind || 'state', threadId: row.rootEmailMessageId,
@@ -2835,15 +2930,19 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
 
     <service verb="reset" noun="MailChanges" allow-remote="false">
-        <description>Internal: the change cursors of these users start again (purgedThruSeq to their last change), as when
-            their accounts change (EmailAccountUser added or removed): their next read answers reset true and the client
-            reads its folders again. A user with no cursor is skipped.</description>
+        <description>Internal: the change cursors of these users start again, as when their accounts change
+            (EmailAccountUser added or removed): a number is used up (lastChangeSeq and purgedThruSeq to the next one), so
+            even a cursor that has read every change answers reset, and the client reads its folders again; the catch-up of
+            assign#MailChanges runs for ten minutes. A user with no cursor is skipped.</description>
         <in-parameters><parameter name="userIdList" type="List" required="true"/></in-parameters>
         <actions><script><![CDATA[
             const ids = Array.from(new Set(Array.from(userIdList || []).filter((id) => id)))
             if (!ids.length) return
+            const now = ec.user.nowTimestamp
             for (const state of ec.entity.find('moqui.basic.email.EmailUserState').condition('userId', 'in', ids).forUpdate(true).disableAuthz().list()) {
-                state.set('purgedThruSeq', Number(state.lastChangeSeq || 0))
+                const next = Number(state.lastChangeSeq || 0) + 1
+                state.setFields({lastChangeSeq: next, purgedThruSeq: next, catchUpFromDate: now, catchUpThruDate: new Date(Number(now) + 600000)},
+                    true, null, null)
                 state.update()
             }
         ]]></script></actions>
@@ -2851,9 +2950,10 @@ along with this software (see the LICENSE.md file). If not, see
 
     <service verb="clean" noun="MailChanges" authenticate="anonymous-all" transaction="ignore">
         <description>The daily job of the mail change cursors: a cursor not read for days (the property
-            mail_change_keep_days, 30 by default) goes with its log (its client's next read answers reset); of the others,
-            the changes older than that go, and a cursor before them answers reset (purgedThruSeq). Each user is on its own,
-            in its own transaction: one that fails is logged and the rest go on.</description>
+            mail_change_keep_days, 30 by default) goes dormant: its log goes and no change is noted for it until it is read
+            again, which answers reset (its numbers go on; a sequence never starts again). Of the others, the changes
+            older than that go, and a cursor before them answers reset (purgedThruSeq). Each user is on its own, in its own
+            transaction: one that fails is logged and the rest go on.</description>
         <in-parameters><parameter name="days" type="Integer"/></in-parameters>
         <out-parameters>
             <parameter name="userCount" type="Integer"/>
@@ -2879,9 +2979,10 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
     <service verb="clean" noun="UserMailChanges" allow-remote="false">
-        <description>Internal, for clean#MailChanges: one user's cursor. Not read since before (millis): the state and its
-            log go. Otherwise the numbered changes older than before go and purgedThruSeq moves past them. removedCount is
-            the rows removed.</description>
+        <description>Internal, for clean#MailChanges: one user's cursor. Not read since before (millis): its log goes
+            and it goes dormant (dormantDate), its numbers used up past the log (lastChangeSeq and purgedThruSeq to the next
+            one), so any cursor of it answers reset; the row stays, so its numbers never start again. Otherwise the numbered
+            changes older than before go and purgedThruSeq moves past them. removedCount is the rows removed.</description>
         <in-parameters>
             <parameter name="userId" required="true"/>
             <parameter name="before" type="Long" required="true"/>
@@ -2893,9 +2994,12 @@ along with this software (see the LICENSE.md file). If not, see
             removedCount = 0
             const state = ec.entity.find('moqui.basic.email.EmailUserState').condition('userId', userId).forUpdate(true).disableAuthz().one()
             if (!state) return
-            if (state.lastReadDate == null || Number(state.lastReadDate) < Number(before)) {
+            if (state.dormantDate == null && (state.lastReadDate == null || Number(state.lastReadDate) < Number(before))) {
                 removedCount = Number(ec.entity.find(CHANGE).condition('userId', userId).disableAuthz().deleteAll() || 0)
-                state.delete()
+                const next = Number(state.lastChangeSeq || 0) + 1
+                state.setFields({lastChangeSeq: next, purgedThruSeq: next, dormantDate: ec.user.nowTimestamp, catchUpFromDate: null,
+                    catchUpThruDate: null}, true, null, null)
+                state.update()
                 return
             }
             const old = () => ec.entity.find(CHANGE).condition('userId', userId).condition('changeDate', 'less', String(before))
@@ -2910,18 +3014,23 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="check" noun="SeenState" allow-remote="false">
         <description>For an action a client queued (InboxServices.set#ThreadState, a target's seen): whether a message
             (emailMessageId) or a thread (rootEmailMessageId) of the user's mail is still as the client saw it, for the fields
-            seen names: isRead (a thread: every message read), isFlagged (a thread: any flagged), archived (a thread: every
-            message archived), snoozedThruDate (millis or null; a thread: the latest), emailFolderId (a thread: one of its
-            messages is in it) and labelIds (a thread: the labels of any of its messages). conflict is true when one of them
-            differs (differentList names them), and current has the state now: the same fields, with emailFolderId the
-            newest message's folder, and emailFolderIdList. Other names in seen are not compared. A message the user does not
-            reach is "not found".</description>
+            seen names: isRead (a thread: every message read), isFlagged (a thread: any flagged; for a flag the caller names
+            the message it flags), archived (a thread: every message archived), snoozedThruDate (millis or null; a thread:
+            the latest), emailFolderId (a thread: one of its messages is in it), labelIds (only the labels in
+            onlyLabelIds, the ones the action adds or removes, when given) and latestMessageId (the thread's newest message:
+            a message that came since is a change, so a read or an archive does not take it unseen). conflict is true when
+            one of them differs (differentList names them), and current has the state now: the same fields, with
+            emailFolderId the newest message's folder, and emailFolderIdList. Other names in seen are not compared. A message
+            the user does not reach answers found false, with no error, and no conflict: the action then says it is not
+            found.</description>
         <in-parameters>
             <parameter name="emailMessageId"/>
             <parameter name="rootEmailMessageId"/>
             <parameter name="seen" type="Map"/>
+            <parameter name="onlyLabelIds" type="List"/>
         </in-parameters>
         <out-parameters>
+            <parameter name="found" type="Boolean"/>
             <parameter name="conflict" type="Boolean"/>
             <parameter name="current" type="Map"/>
             <parameter name="differentList" type="List"/>
@@ -2929,36 +3038,41 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const cf = ec.entity.conditionFactory
             const MESSAGE = 'moqui.basic.email.EmailMessage'
-            conflict = false; current = null; differentList = []
+            found = false; conflict = false; current = null; differentList = []
             const millis = (value) => value == null || value === '' ? null : (typeof value === 'object' && typeof value.getTime === 'function' ? value.getTime() : Number(value))
             const truth = (value) => value === true || value === 'Y' || value === 'true'
-            const missing = emailMessageId || rootEmailMessageId
-            if (!missing) { ec.message.addError('An emailMessageId or rootEmailMessageId is required'); return }
+            if (!emailMessageId && !rootEmailMessageId) return
             const access = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailAccountAccess').call()
-            if (ec.message.hasError()) return
+            if (ec.message.hasError()) { ec.message.clearErrors(); return }
             const readable = access.accountList.filter((account) => !account.isInternal).map((account) => account.emailAccountId)
-            if (!readable.length) { ec.message.addError(`Email message ${missing} not found`); return }
+            if (!readable.length) return
             const find = ec.entity.find(MESSAGE).condition('emailAccountId', 'in', readable)
             const rows = Array.from((emailMessageId ? find.condition('emailMessageId', emailMessageId) : find.condition(cf.makeCondition([
                 cf.makeCondition('emailMessageId', 'equals', rootEmailMessageId), cf.makeCondition('rootEmailMessageId', 'equals', rootEmailMessageId)], 'or')))
                     .selectField('emailMessageId').selectField('emailFolderId').selectField('isRead').selectField('isFlagged').selectField('archivedDate')
-                    .selectField('snoozedThruDate').selectField('messageDate').orderBy('messageDate').list())
-            if (!rows.length) { ec.message.addError(`Email message ${missing} not found`); return }
+                    .selectField('snoozedThruDate').selectField('messageDate').orderBy('messageDate').orderBy('emailMessageId').disableAuthz().list())
+            if (!rows.length) return
+            found = true
             const labels = new Set(Array.from(ec.entity.find('moqui.basic.email.EmailMessageLabel').condition('emailMessageId', 'in', rows.map((row) => row.emailMessageId))
                     .disableAuthz().list()).map((row) => row.emailLabelId))
             const snoozes = rows.map((row) => millis(row.snoozedThruDate)).filter((value) => value != null)
             const folders = Array.from(new Set(rows.map((row) => row.emailFolderId).filter((id) => id)))
+            const newest = rows[rows.length - 1]
             current = {isRead: rows.every((row) => row.isRead === 'Y'), isFlagged: rows.some((row) => row.isFlagged === 'Y'),
                 archived: rows.every((row) => row.archivedDate != null), snoozedThruDate: snoozes.length ? Math.max(...snoozes) : null,
-                emailFolderId: rows[rows.length - 1].emailFolderId ?? null, emailFolderIdList: folders, labelIds: Array.from(labels).sort()}
+                emailFolderId: newest.emailFolderId ?? null, emailFolderIdList: folders, labelIds: Array.from(labels).sort(),
+                latestMessageId: newest.emailMessageId, messageCount: rows.length}
             const wanted = seen || {}
+            const only = onlyLabelIds && Array.from(onlyLabelIds).length ? new Set(Array.from(onlyLabelIds).map(String)) : null
+            const labelView = (list) => JSON.stringify(Array.from(list || []).map(String).filter((id) => !only || only.has(id)).sort())
             const differs = {
                 isRead: () => truth(wanted.isRead) !== current.isRead,
                 isFlagged: () => truth(wanted.isFlagged) !== current.isFlagged,
                 archived: () => truth(wanted.archived) !== current.archived,
                 snoozedThruDate: () => (wanted.snoozedThruDate == null || wanted.snoozedThruDate === '' ? null : Number(wanted.snoozedThruDate)) !== current.snoozedThruDate,
                 emailFolderId: () => wanted.emailFolderId ? !folders.includes(String(wanted.emailFolderId)) : folders.length > 0,
-                labelIds: () => JSON.stringify(Array.from(wanted.labelIds || []).map(String).sort()) !== JSON.stringify(current.labelIds)
+                labelIds: () => labelView(wanted.labelIds) !== labelView(current.labelIds),
+                latestMessageId: () => wanted.latestMessageId != null && String(wanted.latestMessageId) !== String(current.latestMessageId)
             }
             for (const name of Object.keys(wanted)) if (differs[name] && differs[name]()) differentList.push(name)
             conflict = differentList.length > 0
@@ -3053,7 +3167,9 @@ along with this software (see the LICENSE.md file). If not, see
             toAddresses, ccAddresses, bccAddresses, subject, body, bodyText, draftStamp}); the client keeps its own as a copy
             (a new draft, with a new clientRef). draftStamp is the time of the draft's last save of its content (messageDate,
             which a save of its attachments alone, the sync and the flags leave as it is). With no baseStamp the save is the
-            last one written.
+            last one written. A save sent again after a lost answer is not a conflict with itself: the stored content is
+            what it brings, or its saveRef (the client's reference of this one save) is the draft's last (lastSaveRef). The
+            stamps compare in milliseconds, or in seconds where the database keeps the time to the second.
         </description>
         <in-parameters>
             <parameter name="emailMessageId"/>
@@ -3070,6 +3186,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="isForward" type="Boolean" default="false"/>
             <parameter name="clientRef"/>
             <parameter name="baseStamp" type="Long"/>
+            <parameter name="saveRef"/>
         </in-parameters>
         <out-parameters>
             <parameter name="emailMessageId"/>
@@ -3129,7 +3246,15 @@ along with this software (see the LICENSE.md file). If not, see
                 if (!(draft.statusId === 'ES_DRAFT' || (draft.statusId === 'ES_READY' && draft.sendError))) {
                     ec.message.addError(`Email message ${emailMessageId} is not a draft`); return }
                 // saved elsewhere since the client's copy: the server's stays, and the client keeps its own as a copy
-                if (baseStamp != null && baseStamp !== '' && stampOf(draft.messageDate) !== Number(baseStamp)) {
+                const storedStamp = stampOf(draft.messageDate)
+                const sameStamp = baseStamp == null || baseStamp === '' || storedStamp === Number(baseStamp)
+                    || (storedStamp != null && storedStamp % 1000 === 0 && Math.floor(Number(baseStamp) / 1000) * 1000 === storedStamp)
+                const blank = (value) => value == null ? '' : String(value)
+                const sameContent = () => [['toAddresses', toAddresses], ['ccAddresses', ccAddresses], ['bccAddresses', bccAddresses],
+                    ['subject', subject], ['body', body], ['bodyText', bodyText], ['emailIdentityId', emailIdentityId]]
+                    .every(([name, value]) => value == null || blank(value) === blank(draft[name]))
+                const ownSave = saveRef != null && saveRef !== '' && draft.lastSaveRef === String(saveRef)
+                if (!sameStamp && !ownSave && !sameContent()) {
                     conflict = true
                     rootEmailMessageId = draft.rootEmailMessageId ?? null
                     statusId = draft.statusId
@@ -3170,6 +3295,7 @@ along with this software (see the LICENSE.md file). If not, see
                 fromAddress: identity?.emailAddress || account.emailAddress, fromName: identity ? (identity.displayName ?? null) : (account.accountName ?? null),
                 fromUserId: draft?.fromUserId || ec.user.userId, isRead: 'Y', sendError: null,
                 sendClaimDate: null, scheduledSendDate: null}
+            if (saveRef != null && saveRef !== '') fields.lastSaveRef = String(saveRef).substring(0, 255)
             // the draft's stamp (draftStamp) moves with a save of its content, not with one of its attachments alone
             const contentSaved = [toAddresses, ccAddresses, bccAddresses, subject, body, bodyText, emailIdentityId, parentEmailMessageId].some((value) => value != null)
             if (draft == null || contentSaved || draft.statusId !== 'ES_DRAFT' || draft.messageDate == null) fields.messageDate = ec.user.nowTimestamp
