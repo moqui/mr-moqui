@@ -7,7 +7,7 @@ that test a running server from outside are in [Client-Testing](dev/Client-Testi
 - [Build](#build)
 - [Packages](#packages): [features](#features), [profiles](#profiles), the [embedded Postgres
   archive](#embedded-postgres-archive), the [instance archive](#instance-archive), [build cost](#build-cost), the [compile cache](#compile-cache), the
-  [desktop app](#desktop-app)
+  [desktop app](#desktop-app), the [Android app](#android-app)
 - [The moq script](#the-moq-script)
 - [Rust tests and lints](#rust-tests-and-lints)
 - [Component specs](#component-specs): [running](#running), [a spec file](#a-spec-file),
@@ -316,6 +316,35 @@ these workarounds for tauri-bundler 3.0.0-alpha.4:
   `kernel.apparmor_restrict_unprivileged_userns` is 1. The `.deb` keeps Chromium's sandbox through a setuid
   `chrome-sandbox`. With updates on, the remade AppImage is signed again (`cargo tauri signer sign`), since the
   bundle step's signature is of the image it made.
+
+### Android app
+
+`./moq android` builds and runs the Android app in `crates/moqui-mobile`: the client of a server in a Tauri 3 (alpha)
+app on Android's WebView (the wry runtime, not CEF), outside the workspace like the desktop app. What it is, and the
+Gradle project it keeps in `gen/android`, are in its [README](../crates/moqui-mobile/README.md).
+
+Prerequisites: the Tauri CLI of the desktop app, a JDK 17 or later, the Rust targets, and the Android SDK command-line
+tools (no Android Studio), in `~/Android/Sdk` or `ANDROID_HOME`. The image has Play services, for FCM later.
+
+```sh
+rustup target add x86_64-linux-android aarch64-linux-android
+sdkmanager 'platform-tools' 'emulator' 'platforms;android-36' 'build-tools;37.0.0' 'ndk;30.0.16248370' \
+    'system-images;android-36;google_apis_playstore;x86_64'
+./moq android emulator                       # create (once) and start the moqui-36 AVD, on KVM; adb emu kill
+./moq android dev                            # build, install and run on it, or on a phone over adb
+./moq android build --target x86_64 --apk    # debug APK; --release for a release one; aarch64 for phones
+scripts/check-android.sh                     # clippy for both Android targets, on moqui-client and the app
+```
+
+`scripts/android-env.sh`, which `./moq android` and `scripts/check-android.sh` source, finds the SDK, the newest NDK
+in it and the JDK, and exports `ANDROID_HOME`, `NDK_HOME` and `JAVA_HOME` for the Tauri CLI and the NDK's compilers for
+the C in aws-lc and SQLite. The first Gradle build downloads Gradle, the Android Gradle plugin and the SDK platform
+and build tools it compiles against, and the rustls-platform-verifier Maven artifact from GitHub.
+
+The emulator runs in a hidden window (`-qt-hide-window`), not `-no-window`: `cargo tauri android dev` (cargo-mobile2)
+waits for an emulator's boot animation to stop, and `-no-window` and `-no-boot-anim` turn it off, so it would wait
+forever. With no display at all `./moq android emulator` falls back to `-no-window`, and `./moq android dev` refuses
+such an emulator; build an APK and `adb install` it instead.
 
 ## The moq script
 

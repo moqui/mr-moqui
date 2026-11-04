@@ -87,6 +87,7 @@ component-create|Components|<name> [opts]|Create a component from the component 
 component-zip|Components|[name...]|Zip components in runtime/component
 archive|Package|[file] [opts]|Zip (or --tgz) runtime with the binary and MoquiConf.xml (mr-moqui-YYYYMMDD.zip)
 desktop|Package|[dev or build] [--release] [cargo args...]|Run or bundle the desktop app: the node in a Tauri window (crates/moqui-desktop)
+android|Package|[emulator, init, dev or build] [--release] [--window] [args...]|Run or build the Android app, or start its emulator (crates/moqui-mobile)
 completion|Setup|[bash or zsh] [--install]|Print or install shell completion
 help|Setup|[task]|Show the task list or help for one task'
 
@@ -821,6 +822,39 @@ Options:
 EOF
 }
 
+help_android() {
+    cat <<'EOF'
+The Android app in crates/moqui-mobile: Tauri on Android's WebView (the wry runtime), with the
+client crate (plans/Mobile-Desktop.md, MD6). Commands:
+
+    emulator   Start the emulator (the AVD in MOQUI_ANDROID_AVD, default moqui-36) and wait for
+               it to boot: in a hidden window, or shown with --window (with no display,
+               -no-window, where dev cannot install: it waits for a boot animation that
+               never runs). Creates the AVD from the installed system image
+               (system-images;android-36;google_apis_playstore;<arch>) when missing.
+               Stop it with: adb emu kill
+    init       cargo tauri android init: regenerates what gen/android does not keep in git
+    dev        cargo tauri android dev, on the running emulator or a phone over adb (the default)
+    build      cargo tauri android build: an APK and an AAB for each target, debug unless
+               --release (e.g. ./moq android build --target x86_64 --apk)
+
+Other arguments go to the Tauri CLI. The Android SDK is ANDROID_HOME, else ~/Android/Sdk or
+~/Library/Android/sdk; the NDK the newest under its ndk/ (or ANDROID_NDK_HOME); the JDK JAVA_HOME,
+else the javac on the PATH (scripts/android-env.sh). It needs the Tauri CLI of the desktop app
+and the Rust targets:
+
+    cargo install tauri-cli --version 3.0.0-alpha.5 --locked
+    rustup target add x86_64-linux-android aarch64-linux-android
+
+The Gradle project downloads Gradle, the Android Gradle plugin and the SDK platform it compiles
+against on its first build. See crates/moqui-mobile/README.md.
+
+Options:
+      --release        Optimized, for dev and build
+      --window         emulator: show the emulator's window
+EOF
+}
+
 help_git() {
     cat <<'EOF'
 Runs git with these arguments in the root repo, runtime/ when it is its own repo, and each
@@ -1408,6 +1442,16 @@ TAURI_CLI_VERSION=3.0.0-alpha.5
 # Where the AppImage step gets the helper sources quick-sharun.sh compiles in (task_desktop).
 ANYLINUX_APPIMAGES_LIB=https://raw.githubusercontent.com/pkgforge-dev/Anylinux-AppImages/df9cd3246ccbcf61eb22fc321a52277351047b4b/useful-tools/lib
 
+# cargo, and the Tauri CLI of TAURI_CLI_VERSION.
+need_tauri_cli() {
+    need_cargo
+    local version
+    version=$(cargo tauri --version 2>/dev/null) \
+        || die "the Tauri CLI is not installed: cargo install tauri-cli --version $TAURI_CLI_VERSION --locked"
+    [ "${version##* }" = "$TAURI_CLI_VERSION" ] \
+        || die "the Tauri CLI is ${version##* }, the app needs $TAURI_CLI_VERSION: cargo install tauri-cli --version $TAURI_CLI_VERSION --locked"
+}
+
 task_desktop() {
     local command=dev release=
     local -a cargo_args
@@ -1425,12 +1469,7 @@ task_desktop() {
         esac
         shift
     done
-    need_cargo
-    local version
-    version=$(cargo tauri --version 2>/dev/null) \
-        || die "the Tauri CLI is not installed: cargo install tauri-cli --version $TAURI_CLI_VERSION --locked"
-    [ "${version##* }" = "$TAURI_CLI_VERSION" ] \
-        || die "the Tauri CLI is ${version##* }, the app needs $TAURI_CLI_VERSION: cargo install tauri-cli --version $TAURI_CLI_VERSION --locked"
+    need_tauri_cli
     ensure_pg_archive
     # The component crates, as build_binary finds them; the generated crate is written even when there are none.
     local -a addons
@@ -1486,6 +1525,118 @@ task_desktop() {
     fi
     (cd "$app" && run_cmd cargo tauri "$command" ${tauri_args[@]+"${tauri_args[@]}"} -- ${cargo_args[@]+"${cargo_args[@]}"}) \
         || die "cargo tauri $command failed"
+}
+
+# The emulator's AVD and the API of the system image it is made from (with Play services, for FCM).
+ANDROID_AVD_DEFAULT=moqui-36
+ANDROID_AVD_API=36
+
+task_android() {
+    local command=dev release= window=
+    local -a tauri_args
+    tauri_args=()
+    while [ $# -gt 0 ]; do
+        case $1 in
+            emulator | init | dev | build) command=$1 ;;
+            --release) release=1 ;;
+            --window) window=1 ;;
+            --)
+                shift
+                tauri_args+=("$@")
+                break
+                ;;
+            *) tauri_args+=("$1") ;;
+        esac
+        shift
+    done
+    # The SDK, the NDK, the JDK and the NDK's compilers.
+    # shellcheck source=scripts/android-env.sh
+    . "$ROOT/scripts/android-env.sh" || exit 1
+    [ -n "${ANDROID_HOME:-}" ] || die "no Android SDK: set ANDROID_HOME (see ./moq help android)"
+    if [ "$command" = emulator ]; then
+        android_emulator "$window"
+        return
+    fi
+    need_tauri_cli
+    [ -n "${JAVA_HOME:-}" ] || die "no JDK: set JAVA_HOME, or put a JDK's javac on the PATH"
+    local app=$ROOT/crates/moqui-mobile
+    # Seeded from the repository's lock file, as the desktop app's, so the client crate builds with the same versions.
+    if [ ! -f "$app/Cargo.lock" ] || [ "$ROOT/Cargo.lock" -nt "$app/Cargo.lock" ]; then
+        run_cmd cp "$ROOT/Cargo.lock" "$app/Cargo.lock" || die "could not copy Cargo.lock"
+    fi
+    export_var CARGO_TARGET_DIR "$ROOT/target"
+    if [ "$command" = dev ]; then
+        local adb=$ANDROID_HOME/platform-tools/adb serial
+        serial=$("$adb" devices 2>/dev/null | sed -n 's/^\(emulator-[0-9]*\)[[:space:]]*device$/\1/p' | head -1)
+        # cargo-mobile2 would wait for the boot animation forever (android_emulator).
+        if [ -n "$serial" ] && [ -z "$("$adb" -s "$serial" shell getprop init.svc.bootanim 2>/dev/null | tr -d '\r')" ]; then
+            die "the emulator $serial has no boot animation (started with -no-window or -no-boot-anim), so" \
+                "cargo tauri android dev would wait for it forever: adb emu kill, then ./moq android emulator"
+        fi
+    fi
+    local -a args
+    args=()
+    case $command in
+        init) args=(--ci) ;;
+        dev) [ -z "$release" ] || args=(--release) ;;
+        build) [ -n "$release" ] || args=(--debug) ;;
+    esac
+    (cd "$app" && run_cmd cargo tauri android "$command" ${args[@]+"${args[@]}"} \
+        ${tauri_args[@]+"${tauri_args[@]}"}) || die "cargo tauri android $command failed"
+}
+
+# Starts the AVD (MOQUI_ANDROID_AVD, default moqui-36), headless unless $1, and waits for it to boot; creates it from
+# the installed system image when missing. An emulator already running is used as it is.
+android_emulator() {
+    local window=$1 avd=${MOQUI_ANDROID_AVD:-$ANDROID_AVD_DEFAULT}
+    local emulator=$ANDROID_HOME/emulator/emulator adb=$ANDROID_HOME/platform-tools/adb
+    local avdmanager=$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager
+    [ -x "$emulator" ] || die "no emulator in $ANDROID_HOME: sdkmanager emulator"
+    [ -x "$adb" ] || die "no adb in $ANDROID_HOME: sdkmanager platform-tools"
+    if ! "$emulator" -list-avds 2>/dev/null | grep -qx "$avd"; then
+        local abi=x86_64
+        [ "$(uname -m)" = x86_64 ] || abi=arm64-v8a
+        local image="system-images;android-$ANDROID_AVD_API;google_apis_playstore;$abi"
+        [ -d "$ANDROID_HOME/system-images/android-$ANDROID_AVD_API/google_apis_playstore/$abi" ] \
+            || die "no system image for the AVD: sdkmanager '$image'"
+        [ -x "$avdmanager" ] || die "no avdmanager in $ANDROID_HOME: sdkmanager 'cmdline-tools;latest'"
+        info "Creating the AVD $avd from $image"
+        echo no | run_cmd "$avdmanager" create avd -n "$avd" -k "$image" -d pixel_7 >/dev/null \
+            || die "could not create the AVD $avd"
+    fi
+    if "$adb" devices | grep -q '^emulator-'; then
+        info "An emulator is already running"
+    else
+        local -a emulator_args
+        # cargo tauri android dev (cargo-mobile2) waits for an emulator's init.svc.bootanim to be "stopped", which it
+        # never is without the boot animation, and -no-window (like -no-boot-anim) turns that off. So headless is a
+        # hidden window where there is a display, and -no-window only where there is none.
+        emulator_args=(-avd "$avd" -no-audio)
+        if [ -z "$window" ]; then
+            if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] || [ "$(uname -s)" = Darwin ]; then
+                emulator_args+=(-qt-hide-window)
+            else
+                emulator_args+=(-no-window)
+                warn "no display: the emulator runs with -no-window, where ./moq android dev cannot install the app" \
+                    "(use ./moq android build --target x86_64 --apk and adb install)"
+            fi
+        fi
+        if dry_run; then
+            show_cmd "$emulator" "${emulator_args[@]}"
+            return 0
+        fi
+        mkdir -p "$ROOT/target"
+        info "Starting $avd (its output in $(rel "$ROOT/target/android-emulator.log"))"
+        nohup "$emulator" "${emulator_args[@]}" >"$ROOT/target/android-emulator.log" 2>&1 &
+    fi
+    "$adb" wait-for-device || die "adb wait-for-device failed"
+    local waited=0
+    until [ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do
+        [ "$waited" -lt 300 ] || die "the emulator did not boot in 300 seconds (target/android-emulator.log)"
+        sleep 2
+        waited=$((waited + 2))
+    done
+    info "The emulator is up ($("$adb" devices | sed -n 's/^\(emulator-[0-9]*\).*/\1/p' | head -1)); stop it with: adb emu kill"
 }
 
 # The --config of a bundle with an update feed, as JSON: the updater plugin's public key and endpoints, and the
@@ -4218,6 +4369,7 @@ complete_task() {
         opensearch-download) filter_prefix "$cur" -f --force "$OPENSEARCH_VERSION" ;;
         chromium-download) filter_prefix "$cur" --latest ;;
         desktop) filter_prefix "$cur" dev build --release ;;
+        android) filter_prefix "$cur" emulator init dev build --release --window ;;
         test-all) filter_prefix "$cur" --slow --lite --debug --release --enterprise --nobuild ;;
         autodoc)
             case $prev in
