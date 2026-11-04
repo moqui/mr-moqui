@@ -270,7 +270,9 @@ feature("a ring goes to FCM as a high-priority data message, and a token FCM ans
         sent.message.data.title == "Call from Ann"
         sent.message.data.callSessionId == "CS1"
         sent.message.data.chatRoomId == "ROOM1"
-        sent.message.data.from == "Ann"
+        sent.message.data.caller == "Ann"
+        // FCM refuses a data message with a reserved key (from, message_type, notification, google.*, gcm.*)
+        Object.keys(sent.message.data).every(key => !["from", "message_type", "notification"].includes(key) && !/^(google|gcm)\./.test(key))
         sent.message.data.video == "true"
         sent.message.data.expiresAt == "1800000045000"
         sent.message.android.priority == "HIGH"
@@ -311,5 +313,71 @@ feature("a registration whose device key has ended is deleted at the next push, 
         unset.failureCount == 0
         out.sentCount == 0
         requests == 0
+    }
+})
+
+feature("a ring's end goes to the apps only; a message FCM refuses, or an FCM outage, leaves every device as it is", {
+    when() {
+        setProperty("fcm_service_account", ACCOUNT)
+        setProperty("fcm_base_url", FCM_BASE)
+        register(TOKEN_PREFIX + "a", deviceKey("Push spec phone").key)
+        register(TOKEN_PREFIX + "b", deviceKey("Push spec tablet").key)
+        http.enable()
+        http.add(tokenAnswer)
+        http.add(fcmAnswer(200, {name: "projects/demo-project/messages/2"}))
+        const ended = sendPush({kind: "ringEnded", reason: "answered", callSessionId: "CS1", tag: "call-CS1", ttlSeconds: 60, urgency: "high"})
+        const endedBody = JSON.parse(http.requests().find(request => request.url == SEND_URL).body)
+        // a 400 about the message, not the token: logged, and both are still tried and kept
+        http.clear()
+        http.add(tokenAnswer)
+        http.add(
+            fcmAnswer(400, {
+                error: {code: 400, status: "INVALID_ARGUMENT", details: [{fieldViolations: [{field: "message.data[0].key"}]}]}
+            })
+        )
+        const rejected = sendPush({})
+        const rejectedTries = http.requests().filter(request => request.url == SEND_URL).length
+        // FCM down: tried three times for the first device, the second not tried, neither counted against
+        http.clear()
+        http.add(tokenAnswer)
+        http.add(fcmAnswer(503, {error: {code: 503, status: "UNAVAILABLE"}}))
+        const down = sendPush({})
+        const downTries = http.requests().filter(request => request.url == SEND_URL).length
+        return {ended, endedBody, rejected, rejectedTries, down, downTries, a: row(TOKEN_PREFIX + "a"), b: row(TOKEN_PREFIX + "b")}
+    },
+    then({ended, endedBody, rejected, rejectedTries, down, downTries, a, b}) {
+        ended.sentCount == 2
+        endedBody.message.data.kind == "ringEnded"
+        endedBody.message.data.callSessionId == "CS1"
+        endedBody.message.data.reason == "answered"
+        endedBody.message.android.priority == "HIGH"
+        endedBody.message.android.ttl == "60s"
+        rejected.failedCount == 2
+        rejectedTries == 2
+        down.failedCount == 2
+        downTries == 3
+        a.disabledDate == null
+        a.failureCount == 0
+        b.disabledDate == null
+        b.failureCount == 0
+    }
+})
+
+feature("a browser's subscription with no provider is still a Web Push subscription", {
+    when() {
+        const endpoint = "https://push.pushdevice-spec.invalid/send/legacy"
+        sys(() => {
+            ec.entity.find(SUBSCRIPTION).condition("endpoint", endpoint).deleteAll()
+            const value = ec.entity.makeValue(SUBSCRIPTION)
+            value.setFields({userId: JOHN, endpoint, endpointHash: "pushdevice-spec-legacy-hash"}, true, null, null)
+            value.setSequencedIdPrimary()
+            value.create()
+        })
+        const status = sys(() => call("org.moqui.impl.NotificationServices.get#WebPushStatus", {}))
+        sys(() => ec.entity.find(SUBSCRIPTION).condition("endpoint", endpoint).deleteAll())
+        return {status}
+    },
+    then({status}) {
+        status.subscriptionCount >= 1
     }
 })

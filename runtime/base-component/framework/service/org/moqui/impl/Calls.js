@@ -289,6 +289,26 @@ function pushState(session, action, extra) {
     push([userId], Object.assign({ action, callSessionId: session.callSessionId, revision: Number(session.revision || 1),
       call: view(session, userId) }, extra || {}))
   }
+  ringEnded(session, action, extra || {})
+}
+
+/**
+ * Tells the native apps whose ring screen shows the call that its ring is over (send#WebPush with kind ringEnded: FCM
+ * only, high priority, a minute to live). Answered or declined, the ring ends for that user's other devices; timed out,
+ * or ended before anyone answered (canceled), for everyone in the call.
+ */
+function ringEnded(session, action, extra) {
+  let userIds
+  if (action === 'answered') userIds = [extra.answeredBy]
+  else if (action === 'declined') userIds = [extra.declinedBy]
+  else if (action === 'timedOut' || (action === 'ended' && !session.answeredDate)) userIds = participantUserIds(session.callSessionId)
+  else return
+  userIds = [...new Set(userIds.filter((id) => id))]
+  if (!userIds.length) return
+  ec.service.async().name('org.moqui.impl.NotificationServices.send#WebPush').parameters({
+    userIdList: userIds, kind: 'ringEnded', reason: action, callSessionId: session.callSessionId, topic: 'IncomingCall',
+    tag: 'call-' + session.callSessionId, ttlSeconds: 60, urgency: 'high',
+  }).call()
 }
 
 function bump(session) {

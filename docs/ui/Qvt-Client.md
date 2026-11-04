@@ -1051,10 +1051,14 @@ and one whose key ended otherwise is deleted at the next push. `POST /qapps/unre
 
 `send#WebPush` sends to these through FCM's HTTP v1 API (`service/fcm.rs`) as a data message, which the app's own code
 shows: `{kind, title, link, topic, tag}`, `kind` `notification` or `ring`; a call's ring adds `callSessionId`,
-`chatRoomId`, `from`, `video` and `expiresAt`, with `android.priority` `HIGH` and the ring time as its `ttl`, so the app
-can show the incoming call with the screen locked. It carries what Web Push carries, never a message's body. FCM
-answering `UNREGISTERED` or `INVALID_ARGUMENT` disables the registration; 429 and 5xx are tried twice more with a
-growing wait; 5 failures in a row disable it, as for a browser.
+`chatRoomId`, `caller` (FCM reserves `from`), `video` and `expiresAt`, with `android.priority` `HIGH` and the ring time
+as its `ttl`, so the app can show the incoming call with the screen locked. When the ring is over a `ringEnded` message
+(`callSessionId`, `reason`: answered or declined to that user's other devices, timedOut or ended to everyone; high
+priority, a minute to live, the ring's tag) lets its ring screen stop; browsers get none. A message carries what Web
+Push carries, never a message's body, and its data is cut to 3 KB. FCM answering 404, `UNREGISTERED`,
+`SENDER_ID_MISMATCH` or a 400 about `message.token` disables the registration; another 400 is logged as an error and
+leaves it. 429 and 5xx are tried twice more with a growing wait, never past a ring's end; after that, as with no access
+token, the rest of that send is not tried and no device is counted against, so an outage disables nothing.
 
 The server signs in to FCM as a Firebase project's service account: `fcm_service_account` is its JSON key file's path
 or the JSON itself (an `is-secret` default-property, from the environment or `runtime/.env`, not generated), and

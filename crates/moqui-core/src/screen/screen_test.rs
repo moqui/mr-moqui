@@ -289,6 +289,7 @@ impl ScreenTest {
         // As Java's ScreenTestImpl, a test render is not counted against the tarpits.
         let mut render = make_render(&self.factory)
             .tarpit(false)
+            .as_request(true)
             .screen_path(self.full_path(path))
             .parameters(parameters)
             .base_url(self.base_url.clone());

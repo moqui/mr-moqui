@@ -21,9 +21,11 @@
 //! - each message is a POST to `<fcm_base_url>/v1/projects/<fcm_project_id>/messages:send`: a data message (the app's
 //!   own code shows it), high priority for a call's ring, with the push's time to live.
 //!
-//! An answer of UNREGISTERED or INVALID_ARGUMENT means the token is no good ([`Outcome::Gone`]); 429 and 5xx are tried
-//! again a few times with a growing wait. Every request goes through [`crate::outbound::send`], so a spec's HTTP
-//! fixtures answer it.
+//! A 404, UNREGISTERED, SENDER_ID_MISMATCH or a 400 about `message.token` means the token is no good
+//! ([`Outcome::Gone`]); another 400 is the message's fault, logged as an error. 429 and 5xx are tried again a few times
+//! with a growing wait, never past a ring's end; after that, as with no access token, FCM is taken to be down and the
+//! rest of the send is not tried ([`Outcome::Unsent`]), with no device counted against. Every request goes through
+//! [`crate::outbound::send`], so a spec's HTTP fixtures answer it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -48,6 +50,8 @@ const GRANT_TYPE: &str = "urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer"
 const JWT_SECONDS: i64 = 3600;
 /// A cached token is renewed this long before it expires.
 const TOKEN_MARGIN_SECONDS: i64 = 300;
+/// A failed token request is answered again, without asking, for this long.
+const FAILURE_SECONDS: i64 = 30;
 /// Tries of one message: the first and two more after a 429 or 5xx.
 const MAX_ATTEMPTS: u32 = 3;
 /// The wait before the second try, doubled before the third; a Retry-After of the service is taken up to [`MAX_WAIT`].
@@ -183,25 +187,79 @@ struct Cached {
     expires_at: i64,
 }
 
-/// The OAuth access token, cached until shortly before it expires.
+/// A token request that failed, kept for [`FAILURE_SECONDS`] so a push to many devices, or the next push, does not ask
+/// the token endpoint again at once.
+struct Failure {
+    owner: String,
+    until: i64,
+    reason: String,
+}
+
+/// The OAuth access token, cached until shortly before it expires, and a failure to get one, for half a minute. The
+/// token is read under a short lock; one fetch at a time runs under its own lock, so a slow token endpoint holds up the
+/// threads that need a new token only, and they take the token that fetch got.
 pub(crate) struct Tokens {
     slot: Mutex<Option<Cached>>,
+    failure: Mutex<Option<Failure>>,
+    fetch: Mutex<()>,
 }
 
 impl Tokens {
     pub(crate) const fn new() -> Self {
-        Self { slot: Mutex::new(None) }
+        Self {
+            slot: Mutex::new(None),
+            failure: Mutex::new(None),
+            fetch: Mutex::new(()),
+        }
     }
 
-    /// A token for `account` at `now` (Unix seconds): the cached one, or a new one from its token endpoint.
-    pub(crate) fn get(&self, account: &ServiceAccount, now: i64, send: Send<'_>) -> Result<String, String> {
-        let owner = format!("{} {}", account.client_email, account.token_uri);
-        let mut slot = lock(&self.slot);
-        if let Some(cached) = slot.as_ref() {
+    fn cached(&self, owner: &str, now: i64) -> Option<Result<String, String>> {
+        if let Some(cached) = lock(&self.slot).as_ref() {
             if cached.owner == owner && now < cached.expires_at - TOKEN_MARGIN_SECONDS {
-                return Ok(cached.token.clone());
+                return Some(Ok(cached.token.clone()));
             }
         }
+        lock(&self.failure)
+            .as_ref()
+            .filter(|failure| failure.owner == owner && now < failure.until)
+            .map(|failure| Err(failure.reason.clone()))
+    }
+
+    /// A token for `account` at `now` (Unix seconds): the cached one, or a new one from its token endpoint. A failure
+    /// is answered again for half a minute without a request.
+    pub(crate) fn get(&self, account: &ServiceAccount, now: i64, send: Send<'_>) -> Result<String, String> {
+        let owner = format!("{} {}", account.client_email, account.token_uri);
+        if let Some(answer) = self.cached(&owner, now) {
+            return answer;
+        }
+        let _fetching = lock(&self.fetch);
+        // another thread may have fetched while this one waited
+        if let Some(answer) = self.cached(&owner, now) {
+            return answer;
+        }
+        let fetched = self.fetch_token(account, now, send);
+        match &fetched {
+            Ok((token, expires_at)) => {
+                *lock(&self.failure) = None;
+                *lock(&self.slot) = Some(Cached {
+                    owner,
+                    token: token.clone(),
+                    expires_at: *expires_at,
+                });
+            }
+            Err(reason) => {
+                *lock(&self.failure) = Some(Failure {
+                    owner,
+                    until: now + FAILURE_SECONDS,
+                    reason: reason.clone(),
+                });
+            }
+        }
+        fetched.map(|(token, _)| token)
+    }
+
+    /// The token endpoint's token and when it expires (Unix seconds).
+    fn fetch_token(&self, account: &ServiceAccount, now: i64, send: Send<'_>) -> Result<(String, i64), String> {
         let assertion = jwt(account, now)?;
         // the JWT is base64url and dots, which a form body carries as they are
         let body = format!("grant_type={GRANT_TYPE}&assertion={assertion}");
@@ -229,12 +287,7 @@ impl Tokens {
             return Err(format!("the token endpoint answered {}: {reason}", response.status));
         }
         let expires_in = answer["expires_in"].as_i64().unwrap_or(JWT_SECONDS);
-        *slot = Some(Cached {
-            owner,
-            token: token.to_string(),
-            expires_at: now + expires_in,
-        });
-        Ok(token.to_string())
+        Ok((token.to_string(), now + expires_in))
     }
 
     /// Forget the token, after FCM refused it.
@@ -251,10 +304,23 @@ pub(crate) static TOKENS: Tokens = Tokens::new();
 pub(crate) struct Ring {
     pub call_session_id: String,
     pub chat_room_id: String,
-    pub from: String,
+    /// The caller's name (`caller`: FCM reserves `from`).
+    pub caller: String,
     pub video: bool,
     /// When the ring ends, Unix milliseconds.
     pub expires_at: i64,
+}
+
+/// What a push is for.
+#[derive(Debug, Default, Clone)]
+pub(crate) enum Kind {
+    /// A notification, as a Web Push carries it.
+    #[default]
+    Notification,
+    /// A call ringing the user.
+    Ring(Ring),
+    /// The ring of a call ended (answered, declined, timed out, canceled): the app's ring screen stops. FCM only.
+    RingEnded { call_session_id: String, reason: String },
 }
 
 /// What a push says: what Web Push carries (title, link, topic, tag; never a message's body), and a ring's call.
@@ -264,39 +330,109 @@ pub(crate) struct Notice {
     pub link: String,
     pub topic: String,
     pub tag: String,
-    pub ring: Option<Ring>,
+    pub kind: Kind,
     pub high: bool,
     pub ttl: u32,
 }
 
+impl Notice {
+    /// When pushing it is no longer worth anything (a ring's end), Unix milliseconds.
+    fn deadline(&self) -> Option<i64> {
+        match &self.kind {
+            Kind::Ring(ring) if ring.expires_at > 0 => Some(ring.expires_at),
+            _ => None,
+        }
+    }
+}
+
+/// Keys FCM refuses in a data message ("from", "notification", "message_type", and any starting with "google." or
+/// "gcm."): a message with one is answered 400 INVALID_ARGUMENT.
+pub(crate) fn reserved_key(key: &str) -> bool {
+    matches!(key, "from" | "notification" | "message_type") || key.starts_with("google.") || key.starts_with("gcm.")
+}
+
+/// The most UTF-8 bytes each value of a data message takes, so a message is always well under FCM's 4 KB.
+const MAX_TITLE_BYTES: usize = 512;
+const MAX_LINK_BYTES: usize = 1024;
+const MAX_FIELD_BYTES: usize = 128;
+/// The whole data map, as JSON, at most: what [`message`] cuts the link and then the title to.
+pub(crate) const MAX_DATA_BYTES: usize = 3072;
+
+/// `text` cut to at most `max` UTF-8 bytes, at a character boundary.
+pub(crate) fn cut_bytes(text: &str, max: usize) -> &str {
+    if text.len() <= max {
+        return text;
+    }
+    let mut end = max;
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    &text[..end]
+}
+
+fn data_bytes(data: &serde_json::Map<String, serde_json::Value>) -> usize {
+    serde_json::Value::Object(data.clone()).to_string().len()
+}
+
 /// The `messages:send` body for the device with `token`: a data message (every value a string), so the app's own code
-/// gets it and shows it, a ring as an incoming call. `kind` is `ring` or `notification`. A tag collapses an earlier
-/// push of the same tag that the device has not yet received.
+/// gets it and shows it, a ring as an incoming call. `kind` is `notification`, `ring` or `ringEnded`. A tag collapses an
+/// earlier push of the same tag that the device has not yet received, so a ring's end replaces a ring not yet given.
 pub(crate) fn message(token: &str, notice: &Notice) -> serde_json::Value {
     let mut data = serde_json::Map::new();
-    let kind = if notice.ring.is_some() { "ring" } else { "notification" };
-    data.insert("kind".to_string(), kind.into());
-    for (name, value) in [
-        ("title", &notice.title),
-        ("link", &notice.link),
-        ("topic", &notice.topic),
-        ("tag", &notice.tag),
-    ] {
-        data.insert(name.to_string(), value.as_str().into());
+    let mut put = |name: &str, value: &str, max: usize| {
+        // one reserved key makes FCM refuse the whole message
+        debug_assert!(!reserved_key(name), "{name} is reserved in an FCM data message");
+        if !reserved_key(name) {
+            data.insert(name.to_string(), cut_bytes(value, max).into());
+        }
+    };
+    let kind = match notice.kind {
+        Kind::Notification => "notification",
+        Kind::Ring(_) => "ring",
+        Kind::RingEnded { .. } => "ringEnded",
+    };
+    put("kind", kind, MAX_FIELD_BYTES);
+    put("topic", &notice.topic, MAX_FIELD_BYTES);
+    put("tag", &notice.tag, MAX_FIELD_BYTES);
+    match &notice.kind {
+        Kind::RingEnded {
+            call_session_id,
+            reason,
+        } => {
+            put("callSessionId", call_session_id, MAX_FIELD_BYTES);
+            put("reason", reason, MAX_FIELD_BYTES);
+        }
+        Kind::Notification | Kind::Ring(_) => {
+            put("title", &notice.title, MAX_TITLE_BYTES);
+            put("link", &notice.link, MAX_LINK_BYTES);
+        }
     }
-    if let Some(ring) = &notice.ring {
-        data.insert("callSessionId".to_string(), ring.call_session_id.as_str().into());
-        data.insert("chatRoomId".to_string(), ring.chat_room_id.as_str().into());
-        data.insert("from".to_string(), ring.from.as_str().into());
-        data.insert("video".to_string(), ring.video.to_string().into());
-        data.insert("expiresAt".to_string(), ring.expires_at.to_string().into());
+    if let Kind::Ring(ring) = &notice.kind {
+        put("callSessionId", &ring.call_session_id, MAX_FIELD_BYTES);
+        put("chatRoomId", &ring.chat_room_id, MAX_FIELD_BYTES);
+        put("caller", &ring.caller, MAX_TITLE_BYTES);
+        put("video", if ring.video { "true" } else { "false" }, MAX_FIELD_BYTES);
+        put("expiresAt", &ring.expires_at.to_string(), MAX_FIELD_BYTES);
+    }
+    // JSON escapes can grow a value: cut the link, then the title, until the whole fits
+    for name in ["link", "title"] {
+        while data_bytes(&data) > MAX_DATA_BYTES {
+            let Some(value) = data.get(name).and_then(serde_json::Value::as_str).map(str::to_string) else {
+                break;
+            };
+            if value.is_empty() {
+                break;
+            }
+            let shorter = cut_bytes(&value, value.len() / 2).to_string();
+            data.insert(name.to_string(), shorter.into());
+        }
     }
     let mut android = serde_json::json!({
         "priority": if notice.high { "HIGH" } else { "NORMAL" },
         "ttl": format!("{}s", notice.ttl),
     });
     if !notice.tag.is_empty() {
-        android["collapse_key"] = notice.tag.as_str().into();
+        android["collapse_key"] = cut_bytes(&notice.tag, MAX_FIELD_BYTES).into();
     }
     serde_json::json!({"message": {"token": token, "data": data, "android": android}})
 }
@@ -305,11 +441,13 @@ pub(crate) fn message(token: &str, notice: &Notice) -> serde_json::Value {
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Outcome {
     Delivered,
-    /// UNREGISTERED or INVALID_ARGUMENT: the token is no good; never send to it again.
+    /// 404, UNREGISTERED, SENDER_ID_MISMATCH, or a 400 about the token: the token is no good; never send to it again.
     Gone,
-    /// Any other answer, or none, after the tries: count a failure against the device.
-    Failed,
-    /// Not the device's fault (no token from Google, FCM refused the server's credentials): leave the device as it is.
+    /// Another answer about this message (a 400 not about the token): logged as an error, and the device is left as
+    /// it is, since the fault is most likely the server's message, not the device.
+    Rejected,
+    /// FCM or Google is not taking messages now (no access token, refused credentials, 429 or 5xx after the tries, no
+    /// answer): the device is left as it is, and the rest of the send is not tried, as it would fail the same way.
     Unsent,
 }
 
@@ -322,29 +460,46 @@ enum Answer {
     Reauthorize,
 }
 
-fn error_codes(body: &str) -> Vec<String> {
+/// The `errorCode`s of an FCM error's details, and whether a detail's field violation names `message.token`.
+struct ErrorInfo {
+    codes: Vec<String>,
+    token_field: bool,
+}
+
+fn error_info(body: &str) -> ErrorInfo {
     let value: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
-    let error = &value["error"];
-    let mut codes: Vec<String> = error["status"].as_str().map(str::to_string).into_iter().collect();
-    for detail in error["details"].as_array().into_iter().flatten() {
+    let mut info = ErrorInfo {
+        codes: Vec::new(),
+        token_field: false,
+    };
+    for detail in value["error"]["details"].as_array().into_iter().flatten() {
         if let Some(code) = detail["errorCode"].as_str() {
-            codes.push(code.to_string());
+            info.codes.push(code.to_string());
+        }
+        for violation in detail["fieldViolations"].as_array().into_iter().flatten() {
+            if violation["field"].as_str() == Some("message.token") {
+                info.token_field = true;
+            }
         }
     }
-    codes
+    info
 }
 
 fn answer(response: &Response) -> Answer {
-    let codes = error_codes(&response.body);
-    let has = |code: &str| codes.iter().any(|found| found == code);
+    let info = error_info(&response.body);
+    let has = |code: &str| info.codes.iter().any(|found| found == code);
     match response.status {
         200..=299 => Answer::Done(Outcome::Delivered),
-        404 | 400 if has("UNREGISTERED") || has("INVALID_ARGUMENT") => Answer::Done(Outcome::Gone),
+        404 => Answer::Done(Outcome::Gone),
+        _ if has("UNREGISTERED") => Answer::Done(Outcome::Gone),
+        // the token belongs to another Firebase project's app
+        403 if has("SENDER_ID_MISMATCH") => Answer::Done(Outcome::Gone),
+        400 if info.token_field => Answer::Done(Outcome::Gone),
+        400 => Answer::Done(Outcome::Rejected),
         401 => Answer::Reauthorize,
-        // a sender id mismatch or a quota is the server's configuration, not the device's
-        403 => Answer::Done(Outcome::Unsent),
         429 | 500..=599 => Answer::Retry(retry_after(response)),
-        _ => Answer::Done(Outcome::Failed),
+        // a 403 with no per-token code (the project's API off, the account's role) and anything else: the server's
+        _ => Answer::Done(Outcome::Unsent),
     }
 }
 
@@ -357,6 +512,11 @@ fn retry_after(response: &Response) -> Option<Duration> {
         .map(Duration::from_secs)
 }
 
+/// The clock, Unix milliseconds: for a ring's deadline.
+fn now_millis() -> i64 {
+    jiff::Timestamp::now().as_millisecond()
+}
+
 /// Sends messages with one configuration, token cache and transport.
 pub(crate) struct Sender<'a> {
     pub config: &'a Config,
@@ -367,9 +527,10 @@ pub(crate) struct Sender<'a> {
 }
 
 impl Sender<'_> {
-    /// Send `body` ([`message`]), trying again after a 429 or 5xx and once after a refused access token. A failure is
-    /// logged by `device` (the registration's id), never by its token.
-    pub(crate) fn deliver(&self, device: &str, body: &serde_json::Value, now: i64) -> Outcome {
+    /// Send `body` ([`message`]), trying again after a 429 or 5xx (never waiting past `deadline`, a ring's end in Unix
+    /// milliseconds) and once after a refused access token. A failure is logged by `device` (the registration's id),
+    /// never by its token.
+    pub(crate) fn deliver(&self, device: &str, body: &serde_json::Value, now: i64, deadline: Option<i64>) -> Outcome {
         let mut reauthorized = false;
         let mut wait = self.backoff;
         for attempt in 1..=MAX_ATTEMPTS {
@@ -402,18 +563,20 @@ impl Sender<'_> {
                     Answer::Retry(None)
                 }
             };
+            let codes = || match &sent {
+                Ok(response) => format!("{} {}", response.status, error_info(&response.body).codes.join(" ")),
+                Err(err) => err.message().to_string(),
+            };
             match next {
-                Answer::Done(outcome) => {
-                    if let (Outcome::Failed | Outcome::Unsent, Ok(response)) = (&outcome, &sent) {
-                        tracing::warn!(
-                            subscription_id = %device,
-                            "FCM push failed: {} {}",
-                            response.status,
-                            error_codes(&response.body).join(" ")
-                        );
-                    }
-                    return outcome;
+                Answer::Done(Outcome::Rejected) => {
+                    tracing::error!(subscription_id = %device, "FCM refused the message: {}", codes());
+                    return Outcome::Rejected;
                 }
+                Answer::Done(Outcome::Unsent) => {
+                    tracing::warn!(subscription_id = %device, "FCM push not sent: {}", codes());
+                    return Outcome::Unsent;
+                }
+                Answer::Done(outcome) => return outcome,
                 Answer::Reauthorize if !reauthorized => {
                     reauthorized = true;
                     self.tokens.clear();
@@ -423,16 +586,27 @@ impl Sender<'_> {
                     return Outcome::Unsent;
                 }
                 Answer::Retry(after) if attempt < MAX_ATTEMPTS => {
-                    std::thread::sleep(after.unwrap_or(wait).min(MAX_WAIT));
+                    let pause = after.unwrap_or(wait).min(MAX_WAIT);
+                    let pause_ms = i64::try_from(pause.as_millis()).unwrap_or(i64::MAX);
+                    if deadline.is_some_and(|end| now_millis().saturating_add(pause_ms) >= end) {
+                        tracing::info!(subscription_id = %device, "FCM push not tried again: the ring is over by then");
+                        return Outcome::Unsent;
+                    }
+                    std::thread::sleep(pause);
                     wait *= 2;
                 }
                 Answer::Retry(_) => {
-                    tracing::warn!(subscription_id = %device, "FCM push failed after {MAX_ATTEMPTS} tries");
-                    return Outcome::Failed;
+                    tracing::warn!(subscription_id = %device, "FCM push not sent after {MAX_ATTEMPTS} tries: {}", codes());
+                    return Outcome::Unsent;
                 }
             }
         }
-        Outcome::Failed
+        Outcome::Unsent
+    }
+
+    /// [`Self::deliver`] of `notice` to the device with `token`, with the notice's deadline.
+    pub(crate) fn deliver_notice(&self, device: &str, token: &str, notice: &Notice, now: i64) -> Outcome {
+        self.deliver(device, &message(token, notice), now, notice.deadline())
     }
 }
 

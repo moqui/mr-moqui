@@ -109,6 +109,14 @@ fn current_user() -> Option<String> {
         .filter(|id| !id.is_empty())
 }
 
+/// A browser's subscription: `PushWeb`, or no provider (the entity's default).
+fn web_provider() -> moqui_db::sql::Condition {
+    moqui_db::sql::Condition::or(vec![
+        moqui_db::sql::Condition::equals("pushProviderEnumId", Value::string(PROVIDER_WEB)),
+        moqui_db::sql::Condition::is_null("pushProviderEnumId"),
+    ])
+}
+
 fn endpoint_hash(endpoint: &str) -> String {
     sha2::Sha256::digest(endpoint.as_bytes())
         .iter()
@@ -157,7 +165,7 @@ fn get_status(
     let active = || {
         facade.find(SUBSCRIPTION).map(|find| {
             find.eq("userId", Value::string(&user_id))
-                .eq("pushProviderEnumId", Value::string(PROVIDER_WEB))
+                .condition(web_provider())
                 .condition(moqui_db::sql::Condition::is_null("disabledDate"))
         })
     };
@@ -272,7 +280,7 @@ fn delete_subscription(
         .find(SUBSCRIPTION)?
         .eq("endpointHash", Value::string(endpoint_hash(&endpoint)))
         .eq("userId", Value::string(&user_id))
-        .eq("pushProviderEnumId", Value::string(PROVIDER_WEB))
+        .condition(web_provider())
         .delete_all()?;
     Ok(BTreeMap::new())
 }
@@ -354,15 +362,31 @@ fn register_device(
             row
         }
     };
-    if let Some(previous) = existing
-        .as_ref()
-        .map(|row| field(row, "userId"))
-        .filter(|id| id != &user_id)
-    {
-        tracing::info!(
-            subscription_id = %field(&row, "subscriptionId"),
-            "FCM registration moved from user {previous} to the user now signed in"
-        );
+    if let Some(previous) = existing.as_ref().filter(|row| field(row, "userId") != user_id) {
+        // One app holds one token. Another account signed in on the same app takes it over (an account switch that
+        // did not unregister); whether the earlier account's key still works is logged, as a token seen under two live
+        // keys at once means something other than a switch.
+        let earlier_key = field(previous, "loginKey");
+        let earlier_live = !earlier_key.is_empty()
+            && facade
+                .find(USER_LOGIN_KEY)?
+                .eq("loginKey", Value::string(&earlier_key))
+                .one()?
+                .is_some_and(|key| {
+                    key.get("thruDate")
+                        .and_then(crate::user::value_millis)
+                        .is_none_or(|thru| thru > crate::user::now_millis())
+                });
+        let subscription_id = field(&row, "subscriptionId");
+        let earlier = field(previous, "userId");
+        if earlier_live {
+            tracing::warn!(
+                subscription_id = %subscription_id,
+                "FCM token moved from user {earlier}, whose device key is still good, to the user now signed in"
+            );
+        } else {
+            tracing::info!(subscription_id = %subscription_id, "FCM registration moved from user {earlier} to the user now signed in");
+        }
     }
     let subscription_id = field(&row, "subscriptionId");
     // one registration a device key: the app's token changed
@@ -388,9 +412,42 @@ fn register_device(
     row.set("disabledDate", Value::Null);
     if existing.is_some() {
         row.update(facade)?;
-    } else {
-        row.create(facade)?;
+        return Ok(BTreeMap::from([(
+            "subscriptionId".to_string(),
+            Value::string(subscription_id),
+        )]));
     }
+    // A new row in a transaction of its own: two registrations of one token at once (an app retrying) meet at the
+    // unique endpointHash, and the one that loses updates the row the other made instead of failing the request.
+    let created = facade
+        .transactions_for(SUBSCRIPTION)?
+        .run(TransactionAttribute::ForceNew, None, || row.create(facade));
+    let subscription_id = match created {
+        Ok(()) => subscription_id,
+        Err(err) => {
+            let Some(mut winner) = facade
+                .find(SUBSCRIPTION)?
+                .eq("endpointHash", Value::string(&hash))
+                .one()?
+            else {
+                return Err(err);
+            };
+            for name in [
+                "userId",
+                "pushProviderEnumId",
+                "endpoint",
+                "loginKey",
+                "appId",
+                "platform",
+                "failureCount",
+                "disabledDate",
+            ] {
+                winner.set(name, row.get(name).cloned().unwrap_or(Value::Null));
+            }
+            winner.update(facade)?;
+            field(&winner, "subscriptionId")
+        }
+    };
     Ok(BTreeMap::from([(
         "subscriptionId".to_string(),
         Value::string(subscription_id),
@@ -449,7 +506,9 @@ fn get_device_status(
 }
 
 /// Delete the registrations of the device key `hashed_key` (the stored hash), as the key is revoked. In a transaction
-/// of its own and logged: the next push deletes them anyway, as their key has ended.
+/// of its own and logged: it commits even if the revoke's own transaction later rolls back, which costs only a
+/// re-registration on the device's next start, and when it fails the next push deletes them anyway, as their key has
+/// ended.
 pub(crate) fn forget_device_key(facade: &EntityFacade, hashed_key: &str) {
     if hashed_key.is_empty() || !defined(facade) {
         return;
@@ -469,7 +528,10 @@ pub(crate) fn forget_device_key(facade: &EntityFacade, hashed_key: &str) {
 }
 
 /// Move the registrations of the device key `old_key` to its renewal `new_key` (both stored hashes), so the device keeps
-/// its push past the old key's end. Logged: the app registers again with its new key when it next starts.
+/// its push past the old key's end. In a transaction of its own, after the new key is made in one too (so the key it
+/// points to exists); if the renewal's transaction then rolls back, the registration points at a key the device never
+/// got and is deleted at a push once the old key ends. Logged: the app registers again with its key when it next
+/// starts.
 pub(crate) fn move_device_key(facade: &EntityFacade, old_key: &str, new_key: &str) {
     if old_key.is_empty() || new_key.is_empty() || !defined(facade) {
         return;
@@ -631,15 +693,22 @@ fn push_of(parameters: &BTreeMap<String, Value>) -> Push {
         .filter(|t| *t > 0)
         .map_or(TTL_SECONDS, |t| t.min(TTL_SECONDS));
     let high = text(parameters, "urgency").as_deref() == Some("high");
-    let ring = text(parameters, "callSessionId").map(|call_session_id| super::fcm::Ring {
-        call_session_id,
-        chat_room_id: text(parameters, "chatRoomId").unwrap_or_default(),
-        from: truncated(&text(parameters, "fromName").unwrap_or_default(), MAX_TITLE),
-        video: text(parameters, "video").is_some_and(|video| video == "true" || video == "Y"),
-        expires_at: text(parameters, "expiresAt")
-            .and_then(|at| at.parse::<i64>().ok())
-            .unwrap_or(0),
-    });
+    let kind = match (text(parameters, "kind").as_deref(), text(parameters, "callSessionId")) {
+        (Some("ringEnded"), Some(call_session_id)) => super::fcm::Kind::RingEnded {
+            call_session_id,
+            reason: text(parameters, "reason").unwrap_or_default(),
+        },
+        (_, Some(call_session_id)) => super::fcm::Kind::Ring(super::fcm::Ring {
+            call_session_id,
+            chat_room_id: text(parameters, "chatRoomId").unwrap_or_default(),
+            caller: truncated(&text(parameters, "fromName").unwrap_or_default(), MAX_TITLE),
+            video: text(parameters, "video").is_some_and(|video| video == "true" || video == "Y"),
+            expires_at: text(parameters, "expiresAt")
+                .and_then(|at| at.parse::<i64>().ok())
+                .unwrap_or(0),
+        }),
+        _ => super::fcm::Kind::Notification,
+    };
     Push {
         payload,
         delivery: Delivery {
@@ -651,7 +720,7 @@ fn push_of(parameters: &BTreeMap<String, Value>) -> Push {
             link,
             topic,
             tag,
-            ring,
+            kind,
             high,
             ttl,
         },
@@ -689,7 +758,9 @@ fn send_web_push(
     let (native, browsers): (Vec<&EntityValue>, Vec<&EntityValue>) = rows
         .iter()
         .partition(|row| field(row, "pushProviderEnumId") == PROVIDER_FCM);
-    if !browsers.is_empty() {
+    // a ring's end is for an app's ring screen; a browser's notification of the ring is replaced by the call's state
+    let ring_ended = matches!(push.notice.kind, super::fcm::Kind::RingEnded { .. });
+    if push_crypto::BUILT && !ring_ended && !browsers.is_empty() {
         send_browsers(facade, &browsers, &push, &mut tally);
     }
     if !native.is_empty() {
@@ -784,13 +855,17 @@ fn send_native(facade: &EntityFacade, rows: &[&EntityValue], notice: &super::fcm
     let now_secs = jiff::Timestamp::now().as_second();
     for (index, row) in rows.iter().enumerate() {
         let id = field(row, "subscriptionId");
-        let message = super::fcm::message(&field(row, "endpoint"), notice);
-        let result = match sender.deliver(&id, &message, now_secs) {
+        let result = match sender.deliver_notice(&id, &field(row, "endpoint"), notice, now_secs) {
             super::fcm::Outcome::Delivered => Outcome::Delivered,
             super::fcm::Outcome::Gone => Outcome::Gone,
-            super::fcm::Outcome::Failed => Outcome::Failed,
-            // The server's own trouble (no access token, credentials refused), already logged: it would be the same for
-            // the rest, so they are not tried, and no device is counted against.
+            // the message's fault, logged as an error: the device is left as it is
+            super::fcm::Outcome::Rejected => {
+                tally.count(false);
+                continue;
+            }
+            // FCM or Google not taking messages (no access token, credentials refused, 429 or 5xx after the tries, no
+            // answer), already logged: it would be the same for the rest, so they are not tried, and no device is
+            // counted against.
             super::fcm::Outcome::Unsent => {
                 tally.failed += i64::try_from(rows.len() - index).unwrap_or(i64::MAX);
                 break;

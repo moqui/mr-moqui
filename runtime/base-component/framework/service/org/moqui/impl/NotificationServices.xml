@@ -510,15 +510,18 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="send" noun="WebPush" type="rust" location="moqui_core::service::web_push::send_web_push"
             authenticate="false" allow-remote="false">
-        <description>Internal: run on a service worker when a persisted notification is sent, and for a call's ring.
-            Pushes title, link, topic and tag (the notification message id) to each active subscription and registration
-            of userIdList. A browser's (PushWeb) is encrypted (RFC 8291) with a VAPID token (RFC 8292); a push service
-            answering 404 or 410 disables it. A native app's (PushFcm) goes by FCM's HTTP v1 API as a data message
-            {kind: notification | ring, title, link, topic, tag, and for a ring callSessionId, chatRoomId, from, video,
-            expiresAt}, android.priority HIGH for urgency high, with ttl from ttlSeconds; FCM answering UNREGISTERED or
-            INVALID_ARGUMENT disables it, 429 and 5xx are tried again twice, and one whose device key has ended is
-            deleted. 5 failures in a row disable either. Each one fails on its own, logged by its id; FCM is skipped,
-            with one info line in the log, while fcm_service_account is not set.</description>
+        <description>Internal: run on a service worker when a persisted notification is sent, and for a call's ring
+            and its end. Pushes title, link, topic and tag (the notification message id) to each active subscription and
+            registration of userIdList. A browser's (PushWeb) is encrypted (RFC 8291) with a VAPID token (RFC 8292); a
+            push service answering 404 or 410 disables it, as 5 failures in a row do. A native app's (PushFcm) goes by
+            FCM's HTTP v1 API as a data message {kind: notification | ring | ringEnded, topic, tag; title, link; for a
+            ring callSessionId, chatRoomId, caller, video, expiresAt; for a ring's end callSessionId, reason} (FCM
+            reserves "from"), android.priority HIGH for urgency high, with ttl from ttlSeconds. FCM answering 404,
+            UNREGISTERED, SENDER_ID_MISMATCH or a 400 about the token disables it; another 400 is logged as an error and
+            leaves it. 429 and 5xx are tried again twice, never past a ring's end; then, as with no access token, the
+            rest of the send is not tried and no device is counted against. One whose device key has ended is deleted.
+            Each one fails on its own, logged by its id; FCM is skipped, with one info line in the log, while
+            fcm_service_account is not set.</description>
         <in-parameters>
             <parameter name="userIdList" type="List" required="true"/>
             <parameter name="title"/>
@@ -534,6 +537,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="fromName"><description>A ring: the caller's name</description></parameter>
             <parameter name="video" type="Boolean"><description>A ring: whether it is a video call</description></parameter>
             <parameter name="expiresAt" type="Long"><description>A ring: when it stops ringing, in epoch milliseconds</description></parameter>
+            <parameter name="kind"><description>ringEnded (with callSessionId and reason): the ring of the call is over,
+                for the apps' ring screens only; no Web Push is sent</description></parameter>
+            <parameter name="reason"><description>A ring's end: answered, declined, timedOut or ended</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="sentCount" type="Long"/>
