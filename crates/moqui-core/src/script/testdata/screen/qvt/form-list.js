@@ -241,7 +241,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
         {"name": "id", "title": () => ec.l10n.localize("ID"), "summary": () => {  let $t = ""; sri.pushContext(); try {  $t += $v.valueText({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"true"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rows"}}}}}); } finally { sri.popContext(); } return $t.trim(); }},
         {"name": "title", "title": () => ec.l10n.localize("The Title"), "summary": null},
         {"name": "qty", "title": () => ec.l10n.localize("Qty"), "summary": null},
-        {"name": "amt", "title": () => ec.l10n.localize("Amt"), "summary": null},
+        {"name": "amt", "title": () => ec.l10n.localize("Amt"), "summary": null, "hide": () => (hideAmt)},
         {"name": "status", "title": () => ec.l10n.localize("Status"), "summary": null},
         {"name": "link", "title": () => ec.l10n.localize("Open"), "summary": null},
         {"name": "b", "title": () => ec.l10n.localize("Do"), "summary": null}
