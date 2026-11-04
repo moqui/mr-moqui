@@ -28,8 +28,6 @@ const mediaOf = page =>
     })
 
 spec({
-    // slow: about 61 s, its media wait timing out (test-all, 2026-11-04); run only with --slow, and a candidate for deletion
-    slow: true,
     requires: ["rtc"],
     setupSpec() {
         caller = browser.newPage({user: "john.doe", timeout: 30})

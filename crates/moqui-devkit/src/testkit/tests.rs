@@ -16,9 +16,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use super::run::{
-    run_on_thread, run_spec, CaseExtras, Outcome, RunOptions, SpecFile, SpecHost, SpecResult, SLOW_REASON,
-};
+use super::run::{run_on_thread, run_spec, CaseExtras, Outcome, RunOptions, SpecFile, SpecHost, SpecResult};
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 
 fn run(source: &str) -> SpecResult {
@@ -210,40 +208,18 @@ feature("c", { expect() { true } })
     );
 }
 
-/// A slow feature or spec is ignored, with the reason, unless the run asks for slow tests; a slow spec's setupSpec does
-/// not run either.
+/// `slow` is not a field: a long test belongs in the acceptance suite, so a spec or feature still marked slow fails when
+/// its file loads, naming the field.
 #[test]
-fn slow_features_and_specs_run_only_with_slow() {
-    let source = r#"
-feature("quick", { expect() { true } })
-feature("long", { slow: true, expect() { 1 == 2 } })
-"#;
-    let result = run(source);
-    assert_eq!(
-        outcomes(&result),
-        vec![("quick".to_string(), "passed"), ("long".to_string(), "ignored")]
-    );
-    assert_eq!(result.cases[1].outcome, Outcome::Ignored(SLOW_REASON.to_string()));
-    let slow = RunOptions {
-        slow: true,
-        ..RunOptions::default()
-    };
-    assert_eq!(
-        outcomes(&run_with(source, &slow)),
-        vec![("quick".to_string(), "passed"), ("long".to_string(), "failed")]
-    );
-    let whole = r#"
-spec({ slow: true, setupSpec() { throw new Error("setupSpec ran") } })
-feature("a", { expect() { 1 == 2 } })
-feature("b", { expect() { 1 == 2 } })
-"#;
-    let result = run(whole);
-    assert!(result.setup_failure.is_none(), "{:?}", result.setup_failure);
-    assert_eq!(
-        outcomes(&result),
-        vec![("a".to_string(), "ignored"), ("b".to_string(), "ignored")]
-    );
-    assert!(run_with(whole, &slow).setup_failure.is_some());
+fn a_slow_field_fails_the_file() {
+    for source in [
+        "spec({ slow: true })\nfeature(\"a\", { expect() { true } })",
+        "feature(\"a\", { slow: true, expect() { true } })",
+    ] {
+        let result = run(source);
+        let failure = result.setup_failure.expect("the file fails to load");
+        assert!(failure.message.contains("unknown field slow"), "{}", failure.message);
+    }
 }
 
 #[test]

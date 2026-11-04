@@ -7,7 +7,7 @@
 # The tests marked `#[ignore = "slow: ..."]`, which the default `cargo test` skips: the all-screens render, the REST restart gate,
 # the xlsx and print tools, the screen report and the notification socket. `cargo test -- --include-ignored` runs everything.
 # The binary's `lint --screens --qvt-static` (the same report through the command) is `cargo test -p moqui --test cli -- --ignored`.
-test-slow = "test -p moqui-host --test it -- --ignored tools_screens:: gate2:: tool_components:: qvt_report:: notws::"
+test-slow = "test -p moqui-host --test it -- --ignored tools_screens:: gate2:: tool_components:: qvt_report:: notws:: git_storage:: factory_restart::"
 # rustc warnings plus Clippy. The default Clippy set is already deny
 # in the workspace lints.
 lint = "clippy --workspace --all-targets -- -D warnings"

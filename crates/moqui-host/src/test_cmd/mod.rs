@@ -46,8 +46,8 @@ use std::time::Instant;
 
 use moqui_core::context::ExecutionContextFactory;
 use moqui_devkit::testkit::{
-    run_spec, spec_database_free, spec_depends_on, spec_missing_features, spec_slow, suite_order, CaseResult, Outcome,
-    RunOptions, SpecFile, SpecResult, SLOW_REASON,
+    run_spec, spec_database_free, spec_depends_on, spec_missing_features, suite_order, CaseResult, Outcome, RunOptions,
+    SpecFile, SpecResult,
 };
 use moqui_lib::error::Error;
 
@@ -94,9 +94,9 @@ pub struct TestArgs {
     pub components: Vec<String>,
     pub specs: Vec<String>,
     pub feature: Option<String>,
-    /// `--slow`: run the specs and features marked `slow: true` too; without it they are listed as ignored, also when
-    /// named.
-    pub slow: bool,
+    /// `--acceptance`: run the acceptance suite (`acceptance/*.spec.js`) in place of the regression suite (`test/`);
+    /// `--spec` and `dependsOn` resolve across both.
+    pub acceptance: bool,
     pub db: DbMode,
     /// The user passed `--db`. When they did not, a run whose every spec sets `database: false` uses [`DbMode::None`].
     pub db_explicit: bool,
@@ -135,7 +135,7 @@ pub fn parse_test_args(args: &[String]) -> Result<TestArgs, Error> {
         components: Vec::new(),
         specs: Vec::new(),
         feature: None,
-        slow: false,
+        acceptance: false,
         db: DbMode::Fresh,
         db_explicit: false,
         junit: None,
@@ -169,7 +169,7 @@ pub fn parse_test_args(args: &[String]) -> Result<TestArgs, Error> {
                     .map(str::to_string),
             ),
             "--feature" => parsed.feature = Some(value("--feature")?),
-            "--slow" => parsed.slow = true,
+            "--acceptance" => parsed.acceptance = true,
             "--db" => {
                 parsed.db = DbMode::parse(&value("--db")?)?;
                 parsed.db_explicit = true;
@@ -264,7 +264,8 @@ pub(crate) struct TestComponent {
 }
 
 /// The components under `runtime/base-component`, `runtime/component` and `runtime/dev-component` (which load on a dev
-/// instance) that have specs in `sub`: `test` for `moqui test`, `test/client` for `moqui test-client`. By directory
+/// instance) that have specs in `sub`: `test` for `moqui test`, `test/client` for `moqui test-client`, `acceptance` and
+/// `acceptance/client` for their `--acceptance`. By directory
 /// name within each. Not a template, whose name is a placeholder (`runtime/dev-component/template`).
 pub(crate) fn discover(runtime: &Path, sub: &str) -> Result<Vec<TestComponent>, Error> {
     let mut found = Vec::new();
@@ -313,10 +314,66 @@ pub(crate) fn component_name(dir: &Path) -> String {
 /// `test/agent` (`--agents`) under `test`, `test/client/process` (named process specs) under `test/client`.
 fn reserved_subdirs(sub: &str) -> &'static [&'static str] {
     match sub {
-        "test" => &["client", "agent"],
-        "test/client" => &["process"],
+        "test" | "acceptance" => &["client", "agent"],
+        "test/client" | "acceptance/client" => &["process"],
         _ => &[],
     }
+}
+
+/// The tree of a suite: `test` for the regression suite, `acceptance` for the acceptance suite; with `client`, its
+/// `client` subdirectory.
+pub(crate) fn suite_tree(acceptance: bool, client: bool) -> &'static str {
+    match (acceptance, client) {
+        (false, false) => "test",
+        (false, true) => "test/client",
+        (true, false) => "acceptance",
+        (true, true) => "acceptance/client",
+    }
+}
+
+/// The specs a run picks from. For the regression suite, the specs of `test` (or `test/client`). For the acceptance
+/// suite, each component's regression specs and then its acceptance specs, so that `--spec` and `dependsOn` resolve
+/// across both trees and an acceptance spec can depend on a regression fixture; [`acceptance_only`] is what such a run
+/// takes when no spec is named. A spec name is unique across both trees of a component.
+pub(crate) fn discover_suite(runtime: &Path, client: bool, acceptance: bool) -> Result<Vec<TestComponent>, Error> {
+    let mut components = discover(runtime, suite_tree(false, client))?;
+    if !acceptance {
+        return Ok(components);
+    }
+    for extra in discover(runtime, suite_tree(true, client))? {
+        match components.iter_mut().find(|known| known.name == extra.name) {
+            Some(known) => {
+                for spec in extra.specs {
+                    if let Some(other) = known.specs.iter().find(|have| have.name == spec.name) {
+                        return Err(Error::new(format!(
+                            "{} and {} are both spec {}; a spec name is unique in its component, across test/ and acceptance/",
+                            spec.display, other.display, spec.name
+                        )));
+                    }
+                    known.specs.push(spec);
+                }
+            }
+            None => components.push(extra),
+        }
+    }
+    Ok(components)
+}
+
+/// Whether a spec is in the acceptance suite: its display name is `<component>/acceptance/...`.
+pub(crate) fn is_acceptance(spec: &SpecFile) -> bool {
+    spec.display.split('/').nth(1) == Some("acceptance")
+}
+
+/// The acceptance specs of `components`, without the regression specs of the pool; components left with none are
+/// dropped.
+pub(crate) fn acceptance_only(components: Vec<TestComponent>) -> Vec<TestComponent> {
+    components
+        .into_iter()
+        .filter_map(|mut component| {
+            component.specs.retain(is_acceptance);
+            (!component.specs.is_empty()).then_some(component)
+        })
+        .collect()
 }
 
 /// The `*.spec.js` files under `dir` and its subdirectories, other than the `skip` subdirectories of the top one.
@@ -507,14 +564,18 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
     let serve_setup = args.serve.is_some().then(serve::Setup::before_boot);
     #[cfg(all(feature = "axum", any(feature = "postgres", feature = "mysql")))]
     crate::TEST_CONFS.store(true, std::sync::atomic::Ordering::Relaxed);
-    let mut components = discover(&runtime, "test")?;
+    let tree = suite_tree(args.acceptance, false);
+    let mut components = discover_suite(&runtime, false, args.acceptance)?;
+    if args.acceptance && args.specs.is_empty() {
+        components = acceptance_only(components);
+    }
     // With --serve a named component may have no specs: it is there for the server, and it must load.
     let mut serve_only: Vec<String> = Vec::new();
     if !args.components.is_empty() {
         for name in &args.components {
             if !components.iter().any(|component| &component.name == name) {
                 if args.serve.is_none() {
-                    return Err(Error::new(format!("component {name} has no test/*.spec.js files")));
+                    return Err(Error::new(format!("component {name} has no {tree}/*.spec.js files")));
                 }
                 serve_only.push(name.clone());
             }
@@ -535,7 +596,7 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
     }
     if components.is_empty() && args.serve.is_none() {
         return Err(Error::new(format!(
-            "no test/*.spec.js files under {}/component, {}/base-component or {}/dev-component",
+            "no {tree}/*.spec.js files under {}/component, {}/base-component or {}/dev-component",
             runtime.display(),
             runtime.display(),
             runtime.display()
@@ -747,15 +808,12 @@ fn run_component_specs(
 ) {
     let options = RunOptions {
         feature_filter: args.feature.clone(),
-        slow: args.slow,
         ..RunOptions::default()
     };
     for component in components {
         for spec in &component.specs {
             let missing = spec_missing_features(&spec.source);
-            let not_run = if !args.slow && spec_slow(&spec.source) {
-                Some(slow_spec(spec))
-            } else if !missing.is_empty() {
+            let not_run = if !missing.is_empty() {
                 Some(skipped_spec(spec, &missing))
             } else {
                 None
@@ -827,11 +885,6 @@ pub(crate) fn skipped_spec(spec: &SpecFile, missing: &[String]) -> SpecResult {
     )
 }
 
-/// A spec marked `slow: true` in a run without `--slow`, listed as ignored without loading it.
-pub(crate) fn slow_spec(spec: &SpecFile) -> SpecResult {
-    spec_not_run(spec, Outcome::Ignored(SLOW_REASON.to_string()))
-}
-
 /// A spec that does not run, as one "(every feature)" case with `outcome`.
 fn spec_not_run(spec: &SpecFile, outcome: Outcome) -> SpecResult {
     SpecResult {
@@ -846,7 +899,6 @@ fn spec_not_run(spec: &SpecFile, outcome: Outcome) -> SpecResult {
         setup_failure: None,
         cleanup_failure: None,
         duration: std::time::Duration::ZERO,
-        slow: false,
     }
 }
 

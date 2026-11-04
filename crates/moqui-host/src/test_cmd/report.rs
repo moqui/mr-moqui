@@ -86,28 +86,33 @@ fn indent(text: &str) -> String {
     text.lines().map(|line| format!("    {line}\n")).collect()
 }
 
-/// A spec not marked slow that runs longer than this is named at the end of a run (AGENTS.md: one over 30 seconds is
-/// marked slow, and a slow test is a candidate for deletion).
-const SLOW_SPEC: Duration = Duration::from_secs(30);
+/// A regression spec that runs longer than this is named at the end of a run (docs/Build-Test.md, "The regression
+/// budget"): it belongs in the acceptance suite, or is deleted. An acceptance spec has no limit.
+pub(crate) const SPEC_LIMIT: Duration = Duration::from_secs(15);
 
-/// The specs not marked slow that took longer than [`SLOW_SPEC`], as a note for the end of a run; empty when none did.
-fn unmarked_slow(specs: &[ComponentSpec]) -> String {
+/// Whether a spec result is of the acceptance suite: its display name is `<component>/acceptance/...`.
+pub(crate) fn acceptance_result(spec: &ComponentSpec) -> bool {
+    spec.result.display.split('/').nth(1) == Some("acceptance")
+}
+
+/// The regression specs that took longer than [`SPEC_LIMIT`], as a note for the end of a run; empty when none did.
+fn over_limit(specs: &[ComponentSpec]) -> String {
     let mut slow: Vec<&ComponentSpec> = specs
         .iter()
-        .filter(|spec| !spec.result.slow && spec.result.duration > SLOW_SPEC)
+        .filter(|spec| !acceptance_result(spec) && spec.result.duration > SPEC_LIMIT)
         .collect();
     if slow.is_empty() {
         return String::new();
     }
     slow.sort_by_key(|spec| std::cmp::Reverse(spec.result.duration));
-    let mut out = String::from("\nOver 30 seconds and not marked slow (mark it slow: true, or better remove it):\n");
+    let mut out = String::from("\nRegression specs over 15 seconds (move each to acceptance/ or delete it):\n");
     for spec in slow {
         let _ = writeln!(out, "  {} ({})", spec.result.display, seconds(spec.result.duration));
     }
     out
 }
 
-/// The failures in full, the specs over 30 seconds not marked slow, then the summary line. Returns the text and how many
+/// The failures in full, the regression specs over 15 seconds, then the summary line. Returns the text and how many
 /// features and specs failed.
 pub fn summary(specs: &[ComponentSpec], elapsed: Duration) -> (String, usize) {
     let mut out = String::new();
@@ -154,7 +159,7 @@ pub fn summary(specs: &[ComponentSpec], elapsed: Duration) -> (String, usize) {
         out.push_str("\nFailures:\n");
         out.push_str(&details);
     }
-    out.push_str(&unmarked_slow(specs));
+    out.push_str(&over_limit(specs));
     let _ = writeln!(
         out,
         "\n{} features: {passed} passed, {failed} failed, {ignored} ignored, {skipped} skipped; {} specs{} in {}",
@@ -333,23 +338,21 @@ mod tests {
                 setup_failure: None,
                 cleanup_failure: None,
                 duration: Duration::from_secs(2),
-                slow: false,
             },
         }
     }
 
     #[test]
-    fn summary_names_an_unmarked_spec_over_30_seconds() {
+    fn summary_names_a_regression_spec_over_15_seconds() {
         let mut long = sample();
-        long.result.duration = Duration::from_secs(41);
-        let mut marked = sample();
-        marked.result.name = "Walk".to_string();
-        marked.result.display = "comp-a/test/Walk.spec.js".to_string();
-        marked.result.duration = Duration::from_secs(50);
-        marked.result.slow = true;
-        let (text, _) = summary(&[long, marked], Duration::from_secs(91));
+        long.result.duration = Duration::from_secs(16);
+        let mut accepted = sample();
+        accepted.result.name = "Walk".to_string();
+        accepted.result.display = "comp-a/acceptance/Walk.spec.js".to_string();
+        accepted.result.duration = Duration::from_secs(50);
+        let (text, _) = summary(&[long, accepted], Duration::from_secs(66));
         assert!(
-            text.contains("Over 30 seconds and not marked slow (mark it slow: true, or better remove it):\n  comp-a/test/OrderFlow.spec.js (41.00s)\n"),
+            text.contains("Regression specs over 15 seconds (move each to acceptance/ or delete it):\n  comp-a/test/OrderFlow.spec.js (16.00s)\n"),
             "{text}"
         );
         assert!(!text.contains("Walk.spec.js"), "{text}");
@@ -375,7 +378,7 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("      attachment: out/failed-ship-1.png"), "{text}");
-        assert!(!text.contains("not marked slow"), "{text}");
+        assert!(!text.contains("over 15 seconds"), "{text}");
         let xml = junit_xml(&spec, "");
         assert!(
             xml.contains("<testsuite name=\"comp-a.OrderFlow\" tests=\"3\" failures=\"1\" errors=\"0\" skipped=\"1\""),

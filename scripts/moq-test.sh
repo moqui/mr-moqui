@@ -480,6 +480,24 @@ check "test-apps serves the app client specs" 0 'moq test-client --nobuild -- --
 check "test-framework runs the framework specs" 0 'moq test fw-x$' -- dry "$M" test-framework
 lacks "test-framework leaves the app specs out" 'app-x' -- dry "$M" test-framework
 check "test-all runs both" 0 'moq test --nobuild app-x$' -- dry "$M" test-all
+# acceptance: its own tree, run only by accept and accept-all
+mkdir -p "$R/runtime/component/app-x/acceptance/client"
+: >"$R/runtime/component/app-x/acceptance/Sweep.spec.js"
+: >"$R/runtime/component/app-x/acceptance/client/Scenario.spec.js"
+printf 'suite(["Scenario"], { server: { components: ["app-x"] } })\n' >"$R/runtime/component/app-x/acceptance/client/suite.js"
+lacks "test-apps runs no acceptance spec" '--acceptance' -- dry "$M" test-apps
+check "accept runs the acceptance specs" 0 'moq test -- app-x --acceptance$' -- dry "$M" accept
+check "accept serves the acceptance client specs" 0 'moq test-client --nobuild -- --serve --acceptance app-x$' -- dry "$M" accept app-x
+check "accept --spec picks the tree of the spec" 0 'moq test-client --nobuild -- --serve --acceptance app-x --spec Scenario$' -- \
+    dry "$M" accept --spec Scenario
+lacks "accept --spec leaves out the other tree" 'moq test --' -- dry "$M" accept --spec Scenario
+check "accept of a component with none" 0 'No acceptance specs' -- dry "$M" accept fw-x
+check "accept-all runs the Rust acceptance tests" 0 'cargo test-slow$' -- dry "$M" accept-all
+check "accept-all runs the opt-in host tests" 0 'cargo test -p moqui-host --test gate3 --test client_browser --test tui_screens$' -- \
+    dry "$M" accept-all
+check "accept-all runs gate3_browser" 0 'cargo test -p moqui-host --test gate3_browser$' -- dry "$M" accept-all
+check "accept-all writes a dated junit directory" 0 '--junit .*/junit/[0-9]{8}-[0-9]{6}$' -- dry "$M" accept-all --junit junit
+check "accept-all takes no component" 1 'unknown argument' -- "$M" accept-all app-x
 rm -rf "$R/runtime/component/app-x" "$R/runtime/component/app-y" "$R/runtime/base-component/fw-x"
 check "test still resolves to test" 0 'moqui test$' -- dry "$M" test
 check "chromium-download unknown option" 1 'unknown option --full' -- "$M" chromium-download --full

@@ -13,26 +13,26 @@
  */
 
 //! `moqui test-client --serve` (plans/archive/ClientTestHarness.md 6): the selected components grouped by the server their
-//! `test/client/suite.js` declares (`suite([...], { server: { components, specs, conf, properties } })`), and for each
+//! `test/client/suite.js` (with `--acceptance`, `acceptance/client/suite.js`) declares (`suite([...], { server: { components, specs, conf, properties } })`), and for each
 //! group this binary started as `moqui test <components> --spec <specs> --db snapshot --serve 127.0.0.1:0 --ready-file
 //! <file>`, with `MOQUI_CONF` set to the declared conf and the declared properties in its environment. Its standard input is a pipe this process holds, so the child also stops
 //! when the client dies without cleaning up. Once the ready file names the URL the group's specs run against it, then
 //! the pipe closes and the child stops and removes its scratch runtime.
 //!
 //! The client still opens no database and binds no port: the child does. A child that does not start fails its
-//! group's specs with the last lines of its output, and the other groups still run (D14). The child gets `--slow` when
-//! the client has it, and renders PDF with the browser the client drives when nothing names one for PDF. A component
-//! whose specs are all slow starts no server without `--slow`.
+//! group's specs with the last lines of its output, and the other groups still run (D14). The child gets
+//! `--acceptance` when the client has it, so its specs resolve across `test/` and `acceptance/`, and renders PDF with
+//! the browser the client drives when nothing names one for PDF.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use moqui_devkit::testkit::{spec_offline, spec_slow, suite_server, Failure, SpecResult, SuiteServer};
+use moqui_devkit::testkit::{spec_offline, suite_server, Failure, SpecResult, SuiteServer};
 use moqui_lib::error::Error;
 
 use super::{run_against, ClientArgs, Server};
-use crate::test_cmd::{report, slow_spec, TestComponent};
+use crate::test_cmd::{report, suite_tree, TestComponent};
 
 /// How long a child has to load or restore its database and start listening. A first load of Mantle's data is minutes.
 const START_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -67,21 +67,7 @@ pub(super) fn run_served(
             ));
             continue;
         }
-        // Without --slow a slow spec is not run, so a component of only slow specs needs no server.
-        if !args.slow && !component.specs.is_empty() && component.specs.iter().all(|spec| spec_slow(&spec.source)) {
-            for spec in &component.specs {
-                let result = slow_spec(spec);
-                for case in &result.cases {
-                    print(&report::case_line(&spec.name, case));
-                }
-                results.push(report::ComponentSpec {
-                    component: component.name.clone(),
-                    result,
-                });
-            }
-            continue;
-        }
-        match declared_server(component) {
+        match declared_server(component, args.acceptance) {
             Ok(server) => match groups.iter_mut().find(|group| group.server == server) {
                 Some(group) => group.components.push(component.clone()),
                 None => groups.push(Group {
@@ -97,7 +83,7 @@ pub(super) fn run_served(
         let log = out_dir.join(format!("server-{}.log", index + 1));
         print(&format!(
             "Starting the server for {names}: moqui {}",
-            child_args(&group.server, Path::new("<ready-file>"), args.slow).join(" ")
+            child_args(&group.server, Path::new("<ready-file>"), args.acceptance).join(" ")
         ));
         let mut child = match start(&group.server, &log, index, args) {
             Ok(child) => child,
@@ -127,19 +113,21 @@ pub(super) fn run_served(
     results
 }
 
-/// The server a component's `test/client/suite.js` declares, its own component when it names none.
-fn declared_server(component: &TestComponent) -> Result<SuiteServer, Error> {
-    let suite = component.dir.join("test/client/suite.js");
+/// The server a component's client `suite.js` declares (`test/client`, or `acceptance/client` with `acceptance`), its
+/// own component when it names none.
+fn declared_server(component: &TestComponent, acceptance: bool) -> Result<SuiteServer, Error> {
+    let tree = suite_tree(acceptance, true);
+    let suite = component.dir.join(tree).join("suite.js");
     let declared = if suite.is_file() {
         let text = std::fs::read_to_string(&suite)
             .map_err(|err| Error::new(format!("could not read {}", suite.display())).with_source(err))?;
-        suite_server(&text).map_err(|err| Error::new(format!("{}/test/client/suite.js: {err}", component.name)))?
+        suite_server(&text).map_err(|err| Error::new(format!("{}/{tree}/suite.js: {err}", component.name)))?
     } else {
         None
     };
     let mut server = declared.ok_or_else(|| {
         Error::new(format!(
-            "{} declares no server for --serve: add one to its test/client/suite.js, suite([...], {{ server: {{ components: [\"{}\"], specs: [...] }} }}), or run against a server with --server",
+            "{} declares no server for --serve: add one to its {tree}/suite.js, suite([...], {{ server: {{ components: [\"{}\"], specs: [...] }} }}), or run against a server with --server",
             component.name, component.name
         ))
     })?;
@@ -149,17 +137,17 @@ fn declared_server(component: &TestComponent) -> Result<SuiteServer, Error> {
     Ok(server)
 }
 
-/// The arguments of the child: `test`, the components, the specs, `--slow` when the client has it, and the serve
+/// The arguments of the child: `test`, the components, the specs, `--acceptance` when the client has it, and the serve
 /// options.
-fn child_args(server: &SuiteServer, ready_file: &Path, slow: bool) -> Vec<String> {
+fn child_args(server: &SuiteServer, ready_file: &Path, acceptance: bool) -> Vec<String> {
     let mut args = vec!["test".to_string()];
     args.extend(server.components.iter().cloned());
     if !server.specs.is_empty() {
         args.push("--spec".to_string());
         args.push(server.specs.join(","));
     }
-    if slow {
-        args.push("--slow".to_string());
+    if acceptance {
+        args.push("--acceptance".to_string());
     }
     for arg in ["--db", "snapshot", "--serve", "127.0.0.1:0", "--ready-file"] {
         args.push(arg.to_string());
@@ -205,7 +193,7 @@ fn start(server: &SuiteServer, log: &Path, index: usize, args: &ClientArgs) -> R
         .map_err(|err| Error::new("could not find this binary to start the server").with_source(err))?;
     let mut command = Command::new(exe);
     command
-        .args(child_args(server, &ready_file, args.slow))
+        .args(child_args(server, &ready_file, args.acceptance))
         .stdin(Stdio::piped())
         .stdout(out)
         .stderr(err_out);
@@ -349,7 +337,6 @@ fn failed_specs(
                     }),
                     cleanup_failure: None,
                     duration: Duration::ZERO,
-                    slow: false,
                 },
             });
         }
@@ -372,10 +359,10 @@ mod tests {
             child_args(&server, Path::new("/tmp/r.url"), false).join(" "),
             "test mr-mantle mr-marble --spec A,B --db snapshot --serve 127.0.0.1:0 --ready-file /tmp/r.url"
         );
-        // --slow goes on to the server's own specs
+        // --acceptance goes on, so the server's specs resolve across test/ and acceptance/
         assert_eq!(
             child_args(&server, Path::new("/tmp/r.url"), true).join(" "),
-            "test mr-mantle mr-marble --spec A,B --slow --db snapshot --serve 127.0.0.1:0 --ready-file /tmp/r.url"
+            "test mr-mantle mr-marble --spec A,B --acceptance --db snapshot --serve 127.0.0.1:0 --ready-file /tmp/r.url"
         );
         let all = SuiteServer {
             components: vec!["c".to_string()],

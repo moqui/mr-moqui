@@ -116,6 +116,24 @@ fn the_fixture_suite_passes_in_suite_order_and_writes_junit() {
     assert!(!err.contains("could not remove the scratch runtime"), "{err}");
 }
 
+/// The acceptance suite is a tree of its own: `--acceptance` runs only `acceptance/`, and `slow` is not a field.
+#[test]
+fn acceptance_runs_only_the_acceptance_tree() {
+    let Some(runtime) = test_runtime("accept", &[("moqui-test-fixture", &fixture_component())]) else {
+        return;
+    };
+    let (out, err, ok) = moqui_test(&runtime, &["moqui-test-fixture", "--acceptance"]);
+    assert!(ok, "stdout:\n{out}\nstderr:\n{err}");
+    let lines: Vec<&str> = out.lines().filter(|line| line.contains(" > ")).collect();
+    assert_eq!(lines.len(), 1, "{out}");
+    assert!(
+        lines[0].starts_with("Accepted > an acceptance spec runs only with --acceptance  PASSED"),
+        "{out}"
+    );
+    let (_, err, ok) = moqui_test(&runtime, &["moqui-test-fixture", "--slow"]);
+    assert!(!ok && err.contains("unknown option --slow"), "{err}");
+}
+
 #[test]
 fn spec_selection_runs_what_it_depends_on_and_a_failure_exits_one() {
     let failing = PathBuf::from("/tmp").join(format!("mct-failing-component-{}", std::process::id()));

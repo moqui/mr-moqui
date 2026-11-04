@@ -68,6 +68,8 @@ test-client|Run|[component...] [-p N] [opts]|Run component client tests (moqui t
 test-apps|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the application tests: moqui test and test-client --serve over runtime/component
 test-framework|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the framework tests: cargo, moq, and the specs of base-component and dev-component
 test-all|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the whole regression suite: test-framework, then test-apps
+accept|Run|[component...] [--spec Name] [--junit dir] [opts]|Run the acceptance suite (acceptance/) of the components, or of all
+accept-all|Run|[--junit dir] [opts]|Run every acceptance test: the specs of acceptance/ and the Rust opt-in and ignored tests
 autodoc|Run|[--out dir] [--kinds k,...] [opts]|Markdown docs of the artifacts with Mermaid diagrams, into ./autodoc (moqui autodoc)
 load-save|Run|[-n name] [load args...]|clean-all, load, then save-db
 save-db|Database|[name]|Save the embedded database and OpenSearch data to runtime/save/<name>
@@ -540,9 +542,9 @@ help_test() {
     cat <<EOF
 Runs moqui test, the JavaScript specs in each component's test/ directory, with the Default
 binary (or the package asked for) and the dev conf. A spec that requires a feature the binary
-leaves out (spec({ requires: [...] })) is reported as skipped. A slow spec or feature (slow: true, one
-over 30 seconds) is reported as ignored, also when named; --slow runs it, and only when its result is
-needed. Arguments go to moqui test; the moq options below are read first and any other option is
+leaves out (spec({ requires: [...] })) is reported as skipped. A regression spec over 15 seconds is
+named at the end of a run; --acceptance runs the acceptance suite (acceptance/) instead, only when
+asked (./moq accept). Arguments go to moqui test; the moq options below are read first and any other option is
 passed on, so moqui's own options work as they are:
   ./moq test mr-mantle
   ./moq test mr-mantle --db snapshot
@@ -571,8 +573,8 @@ and any other option is passed on:
   ./moq test-client framework --serve          start the server its test/client/suite.js declares
                                                (a child moqui test --serve), run, then stop it
   ./moq test-client mr-marble --serve --spec FindScreens --param screen=Order/FindOrder --headed
-A slow spec or feature (slow: true, one over 30 seconds) is reported as ignored, also when named;
---slow runs it (and the server's slow specs), only when its result is needed.
+--acceptance runs the acceptance client specs (acceptance/client/) instead, only when asked
+(./moq accept).
 
 Options: --lite, --debug, --release, --enterprise, --nobuild, and
   -p, --port N  The server at http://localhost:N (--server); the default is http://localhost:8080
@@ -635,6 +637,44 @@ and exits 1 when any failed. Before a release, after a framework change that app
 asked; not for application work. The acceptance suite is not part of it (./moq accept-all).
 
 Options:
+$PACKAGE_OPTIONS_HELP
+      --nobuild        Skip the build before moqui test and test-client
+EOF
+}
+
+help_accept() {
+    cat <<EOF
+Runs the acceptance suite of the components named, or of every component: moqui test --acceptance
+over those with acceptance/*.spec.js, then moqui test-client --serve --acceptance over those whose
+acceptance/client/suite.js declares a server. Then it lists which passed and exits 1 when any failed.
+Acceptance tests run on a schedule, before a release, or when asked; an agent runs them only when
+the user asks, or when it adds or changes one (AGENTS.md).
+  ./moq accept mr-boss
+  ./moq accept mr-boss --spec AppStructure     one spec (with what its dependsOn names), in
+                                               the tree it is in
+  ./moq accept --junit build/acceptance        a dated directory of JUnit XML under it
+
+Options:
+  --spec Name[,Name]   Only these specs
+  --junit dir          JUnit XML into <dir>/<yyyyMMdd-HHmmss>
+$PACKAGE_OPTIONS_HELP
+      --nobuild        Skip the build before moqui test and test-client
+EOF
+}
+
+help_accept_all() {
+    cat <<EOF
+Runs every acceptance test: ./moq accept over every component, then the framework's Rust acceptance
+tests, which no regression command runs:
+  cargo test -p moqui-host --test gate3 --test client_browser --test tui_screens
+                                    the opt-in host tests (each builds its own feature set first)
+  cargo test -p moqui-host --test gate3_browser
+  cargo test-slow                   the host's #[ignore] tests
+  cargo test -p moqui --test cli -- --ignored
+For a scheduled runner and before a release, or when the user asks.
+
+Options:
+  --junit dir          JUnit XML of the specs into <dir>/<yyyyMMdd-HHmmss>
 $PACKAGE_OPTIONS_HELP
       --nobuild        Skip the build before moqui test and test-client
 EOF
@@ -2203,6 +2243,120 @@ task_test_apps() {
     parse_suite_opts test-apps "$@"
     apps_suites
     suite_summary test-apps
+}
+
+# parse_accept_opts <task> <args...>: the components into ACCEPT_NAMES, --spec into ACCEPT_SPECS, --junit (a dated
+# directory under it) into ACCEPT_JUNIT, and the package options and --nobuild into SUITE_MOQ_OPTS.
+parse_accept_opts() {
+    local task=$1 arg
+    shift
+    ACCEPT_NAMES=()
+    ACCEPT_SPECS=
+    ACCEPT_JUNIT=
+    SUITE_MOQ_OPTS=()
+    SUITE_RESULTS=()
+    SUITE_FAILED=0
+    while [ $# -gt 0 ]; do
+        arg=$1
+        case $arg in
+            --lite | --debug | --release | --enterprise | --nobuild) SUITE_MOQ_OPTS+=("$arg") ;;
+            --spec)
+                [ $# -ge 2 ] && [ "$task" = accept ] || die "$task: --spec needs a name (accept only)"
+                ACCEPT_SPECS=$2
+                shift
+                ;;
+            --junit)
+                [ $# -ge 2 ] || die "--junit needs a directory"
+                ACCEPT_JUNIT="$(abs_path "$2")/$(date +%Y%m%d-%H%M%S)"
+                shift
+                ;;
+            -*) die "unknown option $arg ($task takes --spec, --junit, a package option and --nobuild)" ;;
+            *)
+                [ "$task" = accept ] || die "unknown argument $arg (accept-all runs every component)"
+                ACCEPT_NAMES+=("$arg")
+                ;;
+        esac
+        shift
+    done
+}
+
+# in_names <name>: whether ACCEPT_NAMES is empty or holds the name.
+in_names() {
+    local name
+    [ ${#ACCEPT_NAMES[@]} -gt 0 ] || return 0
+    for name in "${ACCEPT_NAMES[@]}"; do
+        [ "$name" != "$1" ] || return 0
+    done
+    return 1
+}
+
+# has_spec_file <tree> <component>: whether the component's <tree> holds one of the ACCEPT_SPECS files.
+has_spec_file() {
+    local tree=$1 name=$2 d spec
+    for d in "$RUNTIME_DIR"/*/*/; do
+        [ -f "${d}component.xml" ] && [ "$(component_name_of "${d%/}")" = "$name" ] || continue
+        for spec in ${ACCEPT_SPECS//,/ }; do
+            if [ "$tree" = acceptance ]; then
+                [ -z "$(find "${d}acceptance" -path "${d}acceptance/client" -prune -o -name "$spec.spec.js" -print -quit)" ] || return 0
+            else
+                [ -z "$(find "${d}$tree" -name "$spec.spec.js" -print -quit 2>/dev/null)" ] || return 0
+            fi
+        done
+    done
+    return 1
+}
+
+# The acceptance suites of the components of ACCEPT_NAMES (all when empty).
+accept_suites() {
+    local name
+    local -a server client spec junit demo
+    server=()
+    client=()
+    spec=()
+    junit=()
+    demo=()
+    [ -z "$ACCEPT_SPECS" ] || spec=(--spec "$ACCEPT_SPECS")
+    [ -z "$ACCEPT_JUNIT" ] || junit=(--junit "$ACCEPT_JUNIT")
+    while IFS= read -r name; do
+        in_names "$name" || continue
+        [ -z "$ACCEPT_SPECS" ] || has_spec_file acceptance "$name" || continue
+        server+=("$name")
+        [ "$name" != demo ] || demo=(-D demo_disabled=false)
+    done < <(spec_components acceptance base-component component dev-component)
+    while IFS= read -r name; do
+        in_names "$name" || continue
+        [ -z "$ACCEPT_SPECS" ] || has_spec_file acceptance/client "$name" || continue
+        client+=("$name")
+    done < <(served_components acceptance/client base-component component dev-component)
+    if [ ${#server[@]} -eq 0 ] && [ ${#client[@]} -eq 0 ]; then
+        info "No acceptance specs${ACCEPT_SPECS:+ named $ACCEPT_SPECS} in ${ACCEPT_NAMES[*]:-any component}."
+        return 0
+    fi
+    if [ ${#server[@]} -gt 0 ]; then
+        suite "moqui test --acceptance" "$MOQ" test "${SUITE_MOQ_OPTS[@]}" "${demo[@]}" -- "${server[@]}" --acceptance \
+            "${spec[@]}" "${junit[@]}"
+    fi
+    if [ ${#client[@]} -gt 0 ]; then
+        suite "moqui test-client --serve --acceptance" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" --nobuild -- --serve \
+            --acceptance "${client[@]}" "${spec[@]}" "${junit[@]}"
+    fi
+}
+
+task_accept() {
+    parse_accept_opts accept "$@"
+    accept_suites
+    suite_summary accept
+}
+
+task_accept_all() {
+    parse_accept_opts accept-all "$@"
+    accept_suites
+    need_cargo
+    suite "opt-in host tests" cargo test -p moqui-host --test gate3 --test client_browser --test tui_screens
+    suite "gate3_browser" cargo test -p moqui-host --test gate3_browser
+    suite "cargo test-slow" cargo test-slow
+    suite "moqui cli ignored tests" cargo test -p moqui --test cli -- --ignored
+    suite_summary accept-all
 }
 
 # Every regression suite: the framework's, then the applications'.
@@ -4573,7 +4727,7 @@ complete_task() {
             local out
             out=$(complete_run_like "$cur" "$prev" @binary)
             if [ "$out" = @binary ]; then
-                filter_prefix "$cur" $(test_components) --spec --feature --slow --db --junit --keep --serve \
+                filter_prefix "$cur" $(test_components) --spec --feature --acceptance --db --junit --keep --serve \
                     --ready-file --log-level
             else
                 printf '%s\n' "$out"
@@ -4592,7 +4746,7 @@ complete_task() {
             esac
             case $cur in
                 -*)
-                    filter_prefix "$cur" --server --serve --spec --feature --slow --param --junit --out --wait \
+                    filter_prefix "$cur" --server --serve --spec --feature --acceptance --param --junit --out --wait \
                         --timeout --chromium --headed --video --offline --insecure --allow-http --fail-on-skip --log-level
                     ;;
             esac
@@ -4632,6 +4786,9 @@ complete_task() {
         desktop) filter_prefix "$cur" dev build --release ;;
         android) filter_prefix "$cur" emulator init dev build --release --window ;;
         test-all | test-apps | test-framework) filter_prefix "$cur" --lite --debug --release --enterprise --nobuild ;;
+        accept) filter_prefix "$cur" $(spec_components acceptance base-component component dev-component) --spec --junit \
+            --lite --debug --release --enterprise --nobuild ;;
+        accept-all) filter_prefix "$cur" --junit --lite --debug --release --enterprise --nobuild ;;
         autodoc)
             case $prev in
                 --out | --templates | --project | --java) echo @dirs; return ;;

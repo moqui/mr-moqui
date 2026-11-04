@@ -41,15 +41,15 @@ use std::time::{Duration, Instant};
 
 use moqui_core::service::{hmac_base64, timestamp_header};
 use moqui_devkit::testkit::{
-    run_on_thread, run_spec, spec_missing_features, spec_offline, spec_slow, CaseExtras, RunOptions, SpecHost,
+    run_on_thread, run_spec, spec_missing_features, spec_offline, CaseExtras, RunOptions, SpecHost,
 };
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
 use serde_json::{json, Value};
 
 use crate::test_cmd::{
-    component_name, component_specs, discover, report, select_across, select_specs, skipped_spec, slow_spec,
-    TestComponent,
+    acceptance_only, component_name, component_specs, discover, discover_suite, report, select_across, select_specs,
+    skipped_spec, suite_tree, TestComponent,
 };
 use http::{Ask, Server, Session};
 
@@ -72,9 +72,9 @@ pub struct ClientArgs {
     pub server: Option<String>,
     pub specs: Vec<String>,
     pub feature: Option<String>,
-    /// `--slow`: run the specs and features marked `slow: true` too, and the slow server-side specs of `--serve`;
-    /// without it they are listed as ignored, also when named.
-    pub slow: bool,
+    /// `--acceptance`: run the acceptance client specs (`acceptance/client/`) in place of `test/client/`; with
+    /// `--serve`, against the server `acceptance/client/suite.js` declares, whose specs resolve across both trees.
+    pub acceptance: bool,
     /// `--param name=value`, in order; a later one wins.
     pub params: Vec<(String, String)>,
     pub junit: Option<PathBuf>,
@@ -129,7 +129,7 @@ pub fn parse_client_args(args: &[String]) -> Result<ClientArgs, Error> {
                     .map(str::to_string),
             ),
             "--feature" => parsed.feature = Some(value("--feature")?),
-            "--slow" => parsed.slow = true,
+            "--acceptance" => parsed.acceptance = true,
             "--param" => {
                 let pair = value("--param")?;
                 let (name, text) = pair
@@ -303,7 +303,6 @@ fn run_against(
     let host_dyn: Arc<dyn SpecHost> = host.clone();
     let options = RunOptions {
         feature_filter: args.feature.clone(),
-        slow: args.slow,
         host: Some(host_dyn),
     };
     let mut results = Vec::new();
@@ -321,9 +320,7 @@ fn run_against(
                 }
             };
             let missing = spec_missing_features(&spec.source);
-            let not_run = if !args.slow && spec_slow(&spec.source) {
-                Some(slow_spec(spec))
-            } else if !missing.is_empty() {
+            let not_run = if !missing.is_empty() {
                 Some(skipped_spec(spec, &missing))
             } else {
                 None
@@ -397,14 +394,20 @@ fn select(runtime: &Path, args: &ClientArgs) -> Result<Vec<TestComponent>, Error
         }
         None => components.push(component),
     };
+    let tree = suite_tree(args.acceptance, true);
     let mut discovered = if args.targets.iter().any(|target| !is_path(target)) || args.targets.is_empty() {
-        discover(runtime, "test/client")?
+        let pool = discover_suite(runtime, true, args.acceptance)?;
+        if args.acceptance && args.specs.is_empty() {
+            acceptance_only(pool)
+        } else {
+            pool
+        }
     } else {
         Vec::new()
     };
-    // Process specs (test/client/process/<businessProcessId>.spec.js) run only when --spec names them
+    // Process specs (<tree>/process/<businessProcessId>.spec.js) run only when --spec names them
     if !args.specs.is_empty() && (args.targets.iter().any(|target| !is_path(target)) || args.targets.is_empty()) {
-        for component in discover(runtime, "test/client/process")? {
+        for component in discover(runtime, &format!("{tree}/process"))? {
             add(component, &mut discovered);
         }
     }
@@ -414,13 +417,13 @@ fn select(runtime: &Path, args: &ClientArgs) -> Result<Vec<TestComponent>, Error
     } else {
         for target in &args.targets {
             if is_path(target) {
-                add(path_component(Path::new(target))?, &mut components);
+                add(path_component(Path::new(target), args.acceptance)?, &mut components);
             } else {
                 let component = discovered
                     .iter()
                     .find(|component| &component.name == target)
                     .cloned()
-                    .ok_or_else(|| Error::new(format!("component {target} has no test/client/*.spec.js files")))?;
+                    .ok_or_else(|| Error::new(format!("component {target} has no {tree}/*.spec.js files")))?;
                 add(component, &mut components);
             }
         }
@@ -449,7 +452,7 @@ fn select(runtime: &Path, args: &ClientArgs) -> Result<Vec<TestComponent>, Error
             "no client spec has server: false".to_string()
         } else {
             format!(
-                "no test/client/*.spec.js files under {}/base-component, {}/component or {}/dev-component",
+                "no {tree}/*.spec.js files under {}/base-component, {}/component or {}/dev-component",
                 runtime.display(),
                 runtime.display(),
                 runtime.display()
@@ -463,48 +466,52 @@ fn is_path(target: &str) -> bool {
     target.contains('/') || target.ends_with(".spec.js") || target == "." || target == ".."
 }
 
-/// The component of a `test/client` directory, a component directory, or one spec file in `test/client` (or a
-/// subdirectory of it) or `test/client/process`: the directory above `test`. A file brings its own spec only, with
-/// what its `dependsOn` names.
-fn path_component(path: &Path) -> Result<TestComponent, Error> {
+/// The component of a client directory (`test/client` or `acceptance/client`), a component directory (its
+/// `acceptance/client` with `acceptance`, else its `test/client`), or one spec file in a client directory (or a
+/// subdirectory of it) or its `process` directory: the directory above `test` or `acceptance`. A file brings its own
+/// spec only, with what its `dependsOn` names.
+fn path_component(path: &Path, acceptance: bool) -> Result<TestComponent, Error> {
     let missing = || {
         Error::new(format!(
-            "{} is not a test/client directory or a client .spec.js file",
+            "{} is not a test/client or acceptance/client directory or a client .spec.js file",
             path.display()
         ))
     };
+    let is_client_dir = |dir: &Path| dir.ends_with("test/client") || dir.ends_with("acceptance/client");
     let path = std::fs::canonicalize(path).map_err(|_| missing())?;
     let process_dir = path
         .parent()
-        .filter(|parent| path.is_file() && parent.ends_with("test/client/process"))
+        .filter(|parent| {
+            path.is_file() && (parent.ends_with("test/client/process") || parent.ends_with("acceptance/client/process"))
+        })
         .map(Path::to_path_buf);
+    let own_tree = suite_tree(acceptance, true);
     let (client_dir, file) = if let Some(process_dir) = &process_dir {
         (
             process_dir.parent().ok_or_else(missing)?.to_path_buf(),
             Some(path.clone()),
         )
     } else if path.is_file() {
-        // in test/client or a subdirectory of it
+        // in a client directory or a subdirectory of it
         let client_dir = path
             .ancestors()
             .skip(1)
-            .find(|dir| dir.ends_with("test/client"))
+            .find(|dir| is_client_dir(dir))
             .ok_or_else(missing)?;
         (client_dir.to_path_buf(), Some(path.clone()))
-    } else if path.join("test/client").is_dir() {
-        (path.join("test/client"), None)
+    } else if path.join(own_tree).is_dir() {
+        (path.join(own_tree), None)
     } else {
         (path.clone(), None)
     };
-    if client_dir.file_name().and_then(|name| name.to_str()) != Some("client")
-        || client_dir
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            != Some("test")
-    {
+    if !is_client_dir(&client_dir) {
         return Err(missing());
     }
+    let tree = if client_dir.ends_with("acceptance/client") {
+        "acceptance/client"
+    } else {
+        "test/client"
+    };
     let dir = client_dir
         .parent()
         .and_then(Path::parent)
@@ -512,12 +519,22 @@ fn path_component(path: &Path) -> Result<TestComponent, Error> {
         .to_path_buf();
     let name = component_name(&dir);
     let mut component = TestComponent {
-        specs: component_specs(&name, &client_dir, "test/client")?,
+        specs: component_specs(&name, &client_dir, tree)?,
         name,
         dir,
     };
+    // An acceptance spec may depend on a regression client spec of its component.
+    if tree == "acceptance/client" && component.dir.join("test/client").is_dir() {
+        let mut pool = component_specs(&component.name, &component.dir.join("test/client"), "test/client")?;
+        pool.retain(|spec| !component.specs.iter().any(|have| have.name == spec.name));
+        pool.append(&mut component.specs);
+        component.specs = pool;
+        if file.is_none() {
+            component.specs.retain(crate::test_cmd::is_acceptance);
+        }
+    }
     if let Some(process_dir) = &process_dir {
-        for spec in component_specs(&component.name, process_dir, "test/client/process")? {
+        for spec in component_specs(&component.name, process_dir, &format!("{tree}/process"))? {
             if !component.specs.iter().any(|have| have.name == spec.name) {
                 component.specs.push(spec);
             }
@@ -1505,7 +1522,12 @@ mod tests {
         assert_eq!((parsed.wait, parsed.timeout), (Some(30.0), 2.5));
         assert!(parsed.insecure && parsed.fail_on_skip && parsed.video && !parsed.allow_http && !parsed.serve);
         assert!(parse_client_args(&args(&["framework", "--serve"])).unwrap().serve);
-        assert!(!parsed.slow && parse_client_args(&args(&["framework", "--slow"])).unwrap().slow);
+        assert!(
+            !parsed.acceptance
+                && parse_client_args(&args(&["framework", "--acceptance"]))
+                    .unwrap()
+                    .acceptance
+        );
         for (bad, says) in [
             (&["--param", "novalue"][..], "--param needs name=value"),
             (&["--wait", "soon"][..], "--wait is a number of seconds"),
@@ -1564,18 +1586,33 @@ mod tests {
         std::fs::write(dir.join("comp/component.xml"), "<component name=\"my-comp\"/>").unwrap();
         std::fs::write(client.join("A.spec.js"), "spec({})").unwrap();
         std::fs::write(client.join("B.spec.js"), "spec({ dependsOn: ['A'] })").unwrap();
-        let whole = path_component(&client).unwrap();
+        let whole = path_component(&client, false).unwrap();
         assert_eq!(whole.name, "my-comp");
         assert_eq!(whole.specs.len(), 2);
         assert_eq!(whole.specs[0].display, "my-comp/test/client/A.spec.js");
-        assert_eq!(path_component(&dir.join("comp")).unwrap().specs.len(), 2);
-        let one = path_component(&client.join("B.spec.js")).unwrap();
+        assert_eq!(path_component(&dir.join("comp"), false).unwrap().specs.len(), 2);
+        let one = path_component(&client.join("B.spec.js"), false).unwrap();
         assert_eq!(
             one.specs.iter().map(|spec| spec.name.as_str()).collect::<Vec<_>>(),
             vec!["A", "B"]
         );
-        assert!(path_component(&dir).is_err());
-        assert!(path_component(&dir.join("nowhere")).is_err());
+        assert!(path_component(&dir, false).is_err());
+        assert!(path_component(&dir.join("nowhere"), false).is_err());
+        // acceptance/client: a component directory with --acceptance, a file there, and its dependsOn in test/client
+        let accept = dir.join("comp/acceptance/client");
+        std::fs::create_dir_all(&accept).unwrap();
+        std::fs::write(accept.join("Walk.spec.js"), "spec({ dependsOn: ['A'] })").unwrap();
+        let walks = path_component(&dir.join("comp"), true).unwrap();
+        assert_eq!(
+            walks.specs.iter().map(|spec| spec.name.as_str()).collect::<Vec<_>>(),
+            vec!["Walk"]
+        );
+        assert_eq!(walks.specs[0].display, "my-comp/acceptance/client/Walk.spec.js");
+        let walk = path_component(&accept.join("Walk.spec.js"), false).unwrap();
+        assert_eq!(
+            walk.specs.iter().map(|spec| spec.name.as_str()).collect::<Vec<_>>(),
+            vec!["A", "Walk"]
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

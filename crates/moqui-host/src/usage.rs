@@ -349,7 +349,8 @@ files by name. Components
 run in the order they load. --spec adds the specs named in dependsOn, in that same order. Each spec
 runs in its own execution context on one database. Any failed feature exits 1. A component's
 test/MoquiConf.xml merges after its MoquiConf.xml, in test runs only. A dependsOn name that the
-spec's component lacks is found in the run's other components.
+spec's component lacks is found in the run's other components. A regression spec over 15 seconds is
+named at the end of the run: move it to acceptance/ or delete it.
 
   moqui test
   moqui test mr-mantle
@@ -361,8 +362,10 @@ Options:
   --spec Name[,Name]              Specs to run. The name is the file name without .spec.js.
                                   Specs named in dependsOn are included, in suite order.
   --feature text                  Run features whose names contain this text.
-  --slow                          Also run the specs and features marked slow: true (over 30
-                                  seconds). Without it they are listed as ignored, also when named.
+  --acceptance                    Run the acceptance suite, the specs of acceptance/ (other than
+                                  client and agent), in place of test/. --spec and dependsOn
+                                  resolve across both trees; a regression run never reads
+                                  acceptance/.
   --db MODE                       none, fresh, snapshot, or existing. The default is fresh,
                                   or none when every selected spec sets database: false.
                                   none boots the factory and skips Postgres, including a build
@@ -457,9 +460,9 @@ Options:
   --serve                         Start each suite's declared server, as above, instead of --server.
   --spec Name[,Name]              Specs to run, with the specs named in their dependsOn.
   --feature text                  Run features whose names contain this text.
-  --slow                          Also run the specs and features marked slow: true (over 30
-                                  seconds), and the server's slow specs with --serve. Without it
-                                  they are listed as ignored, also when named.
+  --acceptance                    Run the acceptance client specs of acceptance/client in place of
+                                  test/client; with --serve, against the server acceptance/client/
+                                  suite.js declares, its specs resolved across test/ and acceptance/.
   --param name=value              Repeatable; params.name in specs. MOQUI_TEST_<NAME> variables
                                   are params too (MOQUI_TEST_LOAD_PASSWORD is params.loadPassword),
                                   for a password that should not show in ps.
