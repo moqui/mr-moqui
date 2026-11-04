@@ -290,11 +290,8 @@ impl ProjectIndex {
         let named = named.trim();
         let path = if let Some(location) = named.strip_prefix("component://") {
             let (name, rest) = location.split_once('/')?;
-            let component = self
-                .factory
-                .components()
-                .iter()
-                .find(|component| component.name == name)?;
+            let components = self.factory.components();
+            let component = components.iter().find(|component| component.name == name)?;
             component.location.join(rest)
         } else {
             PathBuf::from(named)

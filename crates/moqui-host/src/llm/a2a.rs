@@ -141,8 +141,8 @@ fn header(headers: &HeaderMap, name: &str) -> Option<String> {
 
 pub(crate) fn origin_of(state: &HttpState, headers: &HeaderMap, over_tls: bool, peer: SocketAddr) -> Origin {
     Origin {
-        https: over_tls || forwarded_https(headers, peer.ip(), state.guard.conf.addressing()),
-        believed: state.guard.conf.addressing().believes(peer.ip()),
+        https: over_tls || forwarded_https(headers, peer.ip(), state.guard.conf().addressing()),
+        believed: state.guard.conf().addressing().believes(peer.ip()),
         host: header(headers, "host"),
         forwarded_proto: header(headers, "x-forwarded-proto"),
         forwarded_host: header(headers, "x-forwarded-host"),

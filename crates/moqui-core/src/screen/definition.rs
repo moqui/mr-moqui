@@ -727,11 +727,14 @@ pub(super) fn screen_entity_absent(entity: &crate::entity::EntityFacade, name: &
     !crate::entity::info::is_entity_defined(entity, name) || matches!(entity.table_exists(name), Ok(false))
 }
 
-/// The count of screen configuration writes of the factory's database, 0 with none installed.
+/// The count of screen configuration writes of the factory's database (0 with none installed), with the conf
+/// generation in its high bits: a `SubscreensItem` write or a conf reload (its mounts, plans/Component-Deploy.md) makes
+/// every definition and `//` path read before it stale, also in production where the files are not checked.
 pub(super) fn screen_config_generation(factory: &ExecutionContextFactory) -> u64 {
-    factory
+    let rows = factory
         .entity()
-        .map_or(0, |facade| crate::entity::screen_config_generation(&facade))
+        .map_or(0, |facade| crate::entity::screen_config_generation(&facade));
+    rows.wrapping_add(factory.conf_generation() << 40)
 }
 
 impl ScreenDef {
@@ -1121,7 +1124,7 @@ fn apply_screen_extends(
     let after_scheme = location.split_once("://").map_or(location, |(_, rest)| rest);
     let after_screen = after_scheme.split_once("/screen/").map(|(_, rest)| rest);
     let mut extended = Extended::default();
-    for component in factory.components() {
+    for component in factory.components().iter() {
         let directory = component.location.join("screen-extend");
         let full = directory.join(after_scheme.trim_start_matches('/'));
         // an overlaid screen-extend file (a proposal's or a draft's) stands at its path whether one is there or not,

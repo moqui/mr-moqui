@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Components (plans/Component-Deploy.md, Phase 2; guide docs/tools/Component-Deploy.md): the loaded components, the
+    ones a deploy loaded with their state (moqui.server.DeployedComponent), and the ones found in a component directory
+    that are not loaded (org.moqui.impl.ComponentServices.scan#Components), placed by ./moq component-get or a clone
+    since the start. Preview shows what loading one would do (preview#ComponentLoad): why it cannot be loaded now, the
+    conf changes of its MoquiConf.xml with their class, its entities, and its data files by type. Load loads it on the
+    running server, or with Load at Next Start records it for the next start (load#Component). Remove leaves a deployed
+    component out at the next start (remove#Component). Deploy from Git fetches a branch into a repository kept in the
+    database, as a bare repository on disk, or as a working clone, and stages its files (preview#ComponentDeploy); the
+    staged component shows the same preview, with Deploy (deploy#Component) and Discard (discard#ComponentDeploy). A
+    component deployed from git has Check for Update (preview#ComponentUpdate) and Update (update#Component). Deploying
+    needs the sealed COMPONENT_DEPLOY permission, and on a production instance component_deploy_enabled=true. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Components" default-menu-index="2" menu-image="sym_o_extension" menu-image-type="icon">
+
+    <transition name="loadComponent" authz-action="update">
+        <service-call name="org.moqui.impl.ComponentServices.load#Component"
+                in-map="{componentName:componentName, mode:mode, dataTypes:dataTypes}" out-map="loadOut"/>
+        <actions><if condition="!ec.message.hasError()">
+            <if condition="loadOut.report?.status == 'pending-restart'"><then>
+                <message type="success">${componentName} is loaded at the next start, with its data</message>
+            </then><else>
+                <message type="success">${componentName} loaded: ${loadOut.report?.records ?? 0} records, ${(loadOut.report?.problems || []).length} problems</message>
+            </else></if>
+        </if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="previewDeploy" authz-action="update">
+        <service-call name="org.moqui.impl.ComponentServices.preview#ComponentDeploy" out-map="deployOut"
+                in-map="{url:url, branch:branch, storage:storage, directory:directory, username:username, accessToken:accessToken}"/>
+        <actions><if condition="!ec.message.hasError()">
+            <message type="success">${deployOut.preview?.component} ${(deployOut.preview?.commit || '').substring(0, 12)} is staged; check what deploying it does below</message>
+        </if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="deployComponent" authz-action="update">
+        <service-call name="org.moqui.impl.ComponentServices.deploy#Component"
+                in-map="{componentName:componentName, mode:mode, dataTypes:dataTypes}" out-map="deployOut"/>
+        <actions><if condition="!ec.message.hasError()">
+            <message type="success">${componentName} deployed (${deployOut.report?.status}): ${deployOut.report?.records ?? 0} records, ${(deployOut.report?.problems || []).length} problems</message>
+        </if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="discardDeploy" authz-action="update">
+        <service-call name="org.moqui.impl.ComponentServices.discard#ComponentDeploy" in-map="{componentName:componentName}"/>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="checkUpdate" authz-action="update">
+        <service-call name="org.moqui.impl.ComponentServices.preview#ComponentUpdate" in-map="{componentName:componentName}" out-map="updateOut"/>
+        <actions><script><![CDATA[
+            const preview = updateOut.preview || {}
+            if (!ec.message.hasError()) {
+                if (preview.from === preview.to) ec.message.addMessage(`${componentName} is up to date`, 'info')
+                else ec.message.addMessage(`${componentName}: ${(preview.changed || []).length} files changed from ${(preview.from || '').substring(0, 12)} to ${(preview.to || '').substring(0, 12)}` +
+                    ((preview.refusals || []).length ? `; it cannot be updated now: ${preview.refusals.join('; ')}` : '') +
+                    (preview.conf?.pendingRestart ? `; ${preview.conf.pendingRestart} conf changes need a restart` : ''), 'warning')
+            }
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="updateComponent" authz-action="update">
+        <service-call name="org.moqui.impl.ComponentServices.update#Component" in-map="{componentName:componentName}" out-map="updateOut"/>
+        <actions><if condition="!ec.message.hasError()">
+            <message type="success">${componentName} updated: ${(updateOut.report?.problems || []).join('; ') || 'no problems'}</message>
+        </if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="removeComponent" authz-action="update">
+        <service-call name="org.moqui.impl.ComponentServices.remove#Component" in-map="{componentName:componentName}" out-map="removeOut"/>
+        <actions><if condition="!ec.message.hasError()">
+            <message type="success">${componentName} is left out at the next start</message>
+        </if></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <set field="loadedList" from="CollectionUtilities.orderMapList(ec.factory.getComponentInfoList(), ['^name'])"/>
+        <entity-find entity-name="moqui.server.DeployedComponent" list="deployedList">
+            <order-by field-name="componentName"/></entity-find>
+        <service-call name="org.moqui.impl.ComponentServices.scan#Components" out-map="scanOut"/>
+        <service-call name="org.moqui.impl.ComponentServices.get#PendingRestart" out-map="pendingOut"/>
+        <script><![CDATA[
+            foundList = scanOut.components || []
+            pendingList = pendingOut.changes || []
+            preview = null
+            if (componentName && foundList.some((found) => found.name === componentName)) {
+                const previewOut = ec.service.sync().name('org.moqui.impl.ComponentServices.preview#ComponentLoad')
+                    .parameters({componentName}).call() || {}
+                preview = previewOut.preview || null
+            }
+            refusalList = preview ? (preview.refusals || []).map((text) => ({text})) : []
+            confChangeList = preview ? (preview.conf?.changes || []) : []
+            const counts = preview ? (preview.dataTypes || {}) : {}
+            dataTypeOptions = Object.keys(counts).filter((type) => type !== '(any)')
+                .map((type) => ({type, label: `${type} (${counts[type]} files)`}))
+            untypedCount = counts['(any)'] || 0
+            if (!dataTypes) dataTypes = dataTypeOptions.map((option) => option.type)
+                .filter((type) => ['seed', 'seed-initial', 'install'].includes(type))
+            entitiesAdded = preview ? (preview.entities?.added || []).join(', ') : ''
+            entitiesChanged = preview ? (preview.entities?.changed || []).join(', ') : ''
+            // the components a git deploy staged, with the preview kept on their row
+            stagedList = Array.from(deployedList).filter((row) => row.status === 'staged').map((row) => {
+                let staged = {}
+                try { staged = JSON.parse(row.lastReport || '{}') } catch (err) { staged = {} }
+                const load = staged.load || {}
+                const types = Object.keys(load.dataTypes || {}).filter((type) => type !== '(any)')
+                return {componentName: row.componentName, commit: (row.commitId || '').substring(0, 12),
+                    remoteUrl: row.remoteUrl, branch: row.branch, storage: row.storage, location: staged.location || row.location,
+                    refusals: (load.refusals || []).join('; '), restartNeeded: !!load.restartNeeded,
+                    confChanges: (load.conf?.changes || []).length, dataTypeText: types.map((type) => `${type} (${load.dataTypes[type]})`).join(', '),
+                    stagedTypes: types.filter((type) => ['seed', 'seed-initial', 'install'].includes(type)).join(',')}
+            })
+            deployedRows = Array.from(deployedList).filter((row) => row.status !== 'staged')
+            storageOptions = [{key: 'database', text: 'Database'}, {key: 'bare', text: 'Bare repository on disk'},
+                {key: 'clone', text: 'Working clone in a component directory'}]
+        ]]></script>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Found in a Component Directory"/><box-body>
+            <section name="FoundSection" condition="foundList.length > 0"><widgets>
+                <form-list name="FoundList" list="foundList" skip-form="true">
+                    <field name="name"><default-field title="Component"><display/></default-field></field>
+                    <field name="version"><default-field><display/></default-field></field>
+                    <field name="location"><default-field><display/></default-field></field>
+                    <field name="dependsOnNames" from="(dependsOn || []).join(', ')"><default-field title="Depends On"><display/></default-field></field>
+                    <field name="previewLink"><default-field title=""><link url="." text="Preview" link-type="anchor">
+                        <parameter name="componentName" from="name"/></link></default-field></field>
+                </form-list>
+            </widgets><fail-widgets>
+                <label text="Every component in the component directories is loaded." type="p"/>
+            </fail-widgets></section>
+        </box-body></container-box>
+
+        <section name="PreviewSection" condition="preview"><widgets>
+            <container-box><box-header title="Load ${preview.component} ${preview.version}"/><box-body>
+                <label text="${preview.location}" type="p"/>
+                <section name="RefusalSection" condition="refusalList.length > 0"><widgets>
+                    <label text="It cannot be loaded now:" type="strong"/>
+                    <form-list name="RefusalList" list="refusalList" skip-form="true">
+                        <field name="text"><default-field title="Reason"><display/></default-field></field>
+                    </form-list>
+                </widgets></section>
+                <label text="New entities: ${entitiesAdded}" type="p" condition="entitiesAdded"/>
+                <label text="Entities it changes: ${entitiesChanged}" type="p" condition="entitiesChanged"/>
+                <label text="Some of its conf changes need a restart; Load applies the rest now, or load it at the next start."
+                        type="p" condition="preview.restartNeeded"/>
+                <section name="ConfSection" condition="confChangeList.length > 0"><widgets>
+                    <form-list name="ConfChangeList" list="confChangeList" skip-form="true">
+                        <field name="unit"><default-field title="Conf"><display/></default-field></field>
+                        <field name="attribute"><default-field><display/></default-field></field>
+                        <field name="kind"><default-field><display/></default-field></field>
+                        <field name="class"><default-field title="Class"><display/></default-field></field>
+                        <field name="outcome"><default-field><display/></default-field></field>
+                        <field name="reason"><default-field><display/></default-field></field>
+                    </form-list>
+                </widgets></section>
+                <section name="LoadSection" condition="refusalList.length == 0"><widgets>
+                    <form-single name="LoadForm" transition="loadComponent">
+                        <field name="componentName"><default-field><hidden default-value="${preview.component}"/></default-field></field>
+                        <field name="dataTypes"><default-field title="Data to load"
+                                tooltip="Data files that declare no type load with any choice">
+                            <drop-down allow-multiple="true"><list-options list="dataTypeOptions" key="${type}" text="${label}"/></drop-down>
+                        </default-field></field>
+                        <field name="mode"><default-field title="When"><radio no-current-selected-key="now">
+                            <option key="now" text="Now"/><option key="restart" text="At the next start"/></radio></default-field></field>
+                        <field name="submitButton"><default-field title="Load"><submit/></default-field></field>
+                    </form-single>
+                </widgets></section>
+            </box-body></container-box>
+        </widgets></section>
+
+        <container-box><box-header title="Deploy from Git"/><box-body>
+            <form-single name="DeployForm" transition="previewDeploy">
+                <field name="url"><default-field title="URL" tooltip="https:// or ssh:// (or user@host:path)"><text-line size="60"/></default-field></field>
+                <field name="branch"><default-field><text-line size="20" default-value="main"/></default-field></field>
+                <field name="storage"><default-field title="Keep it"><drop-down no-current-selected-key="database">
+                    <list-options list="storageOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                <field name="directory"><default-field title="Clone into" tooltip="For a working clone: the component directory, component when empty">
+                    <text-line size="20"/></default-field></field>
+                <field name="username"><default-field><text-line size="20"/></default-field></field>
+                <field name="accessToken"><default-field title="Access token"><password size="30"/></default-field></field>
+                <field name="submitButton"><default-field title="Fetch and Preview"><submit/></default-field></field>
+            </form-single>
+            <section name="StagedSection" condition="stagedList.length > 0"><widgets>
+                <label text="Staged" type="h6"/>
+                <form-list name="StagedList" list="stagedList" skip-form="true">
+                    <field name="componentName"><default-field title="Component"><display/></default-field></field>
+                    <field name="commit"><default-field><display/></default-field></field>
+                    <field name="storage"><default-field><display/></default-field></field>
+                    <field name="location"><default-field><display/></default-field></field>
+                    <field name="refusals"><default-field title="Cannot deploy now"><display/></default-field></field>
+                    <field name="confChanges"><default-field title="Conf changes"><display/></default-field></field>
+                    <field name="restartNeeded"><default-field title="Restart needed"><display/></default-field></field>
+                    <field name="dataTypeText"><default-field title="Data files"><display/></default-field></field>
+                    <field name="deployLink"><default-field title="">
+                        <link url="deployComponent" text="Deploy" link-type="hidden-form-link" btn-type="primary" condition="!refusals"
+                                confirmation="Deploy ${componentName} now and load its ${stagedTypes || 'seed, seed-initial and install'} data?">
+                            <parameter name="componentName"/><parameter name="mode" value="now"/><parameter name="dataTypes" from="stagedTypes"/></link>
+                        <link url="deployComponent" text="At Next Start" link-type="hidden-form-link" condition="!refusals">
+                            <parameter name="componentName"/><parameter name="mode" value="restart"/><parameter name="dataTypes" from="stagedTypes"/></link>
+                        <link url="discardDeploy" text="Discard" link-type="hidden-form-link" btn-type="danger">
+                            <parameter name="componentName"/></link>
+                    </default-field></field>
+                </form-list>
+            </widgets></section>
+        </box-body></container-box>
+
+        <container-box><box-header title="Deployed"/><box-body>
+            <section name="DeployedSection" condition="deployedRows.length > 0"><widgets>
+                <form-list name="DeployedList" list="deployedRows" skip-form="true">
+                    <field name="componentName"><default-field title="Component"><display/></default-field></field>
+                    <field name="status"><default-field><display/></default-field></field>
+                    <field name="source"><default-field><display/></default-field></field>
+                    <field name="dataTypes"><default-field title="Data"><display/></default-field></field>
+                    <field name="changedDate"><default-field title="Changed"><display/></default-field></field>
+                    <field name="location"><default-field><display/></default-field></field>
+                    <field name="removeLink"><default-field title="">
+                        <link url="checkUpdate" text="Check for Update" link-type="hidden-form-link"
+                                condition="source == 'git' &amp;&amp; status == 'deployed'"><parameter name="componentName"/></link>
+                        <link url="updateComponent" text="Update" link-type="hidden-form-link" condition="source == 'git' &amp;&amp; status == 'deployed'"
+                                confirmation="Update ${componentName} to the head of ${branch} and load its changed seed data?">
+                            <parameter name="componentName"/></link>
+                        <link url="removeComponent" text="Remove" link-type="hidden-form-link" btn-type="danger"
+                                condition="status != 'removed'"
+                                confirmation="Leave ${componentName} out at the next start? Its directory is moved aside; its tables and data stay.">
+                            <parameter name="componentName"/></link>
+                    </default-field></field>
+                </form-list>
+            </widgets><fail-widgets>
+                <label text="No component was loaded or deployed on this server." type="p"/>
+            </fail-widgets></section>
+        </box-body></container-box>
+
+        <section name="PendingSection" condition="pendingList.length > 0"><widgets>
+            <container-box><box-header title="Conf Waiting for a Restart"/><box-body-nopad>
+                <form-list name="PendingList" list="pendingList" skip-form="true">
+                    <field name="unit"><default-field title="Conf"><display/></default-field></field>
+                    <field name="attribute"><default-field><display/></default-field></field>
+                    <field name="reason"><default-field><display/></default-field></field>
+                </form-list>
+            </box-body-nopad></container-box>
+        </widgets></section>
+
+        <container-box><box-header title="Loaded"/><box-body-nopad>
+            <form-list name="LoadedList" list="loadedList" skip-form="true">
+                <field name="name"><default-field title="Component"><display/></default-field></field>
+                <field name="version"><default-field><display/></default-field></field>
+                <field name="location"><default-field><display/></default-field></field>
+                <field name="dependsOnNames" from="(dependsOn || []).join(', ')"><default-field title="Depends On"><display/></default-field></field>
+            </form-list>
+        </box-body-nopad></container-box>
+    </widgets>
+</screen>

@@ -271,7 +271,7 @@ pub(crate) fn init(factory: &ExecutionContextFactory) {
 /// [`settings`], read for a node of the given role the first time.
 pub(super) fn settings_as(factory: &ExecutionContextFactory, role: NodeRole) -> Arc<EdgeSettings> {
     factory.extension(|factory| {
-        let settings = match MNode::parse_shared("moqui-conf", factory.conf_text()) {
+        let settings = match MNode::parse_shared("moqui-conf", &factory.conf_text()) {
             Ok(conf) => EdgeSettings::parse(&conf, role),
             Err(err) => {
                 tracing::error!("the edge conf could not be read ({err}); nothing is delegated, queued or replicated");

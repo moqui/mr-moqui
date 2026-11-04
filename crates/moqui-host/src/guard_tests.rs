@@ -58,10 +58,14 @@ fn globs_match_url_patterns() {
 
 #[test]
 fn off_without_trusted_proxies_unless_enabled() {
-    assert!(!guard(r#"<web-protection/>"#, "").conf.enabled);
-    assert!(guard(r#"<web-protection/>"#, "10.0.0.0/8").conf.enabled);
-    assert!(guard(r#"<web-protection enabled="true"/>"#, "").conf.enabled);
-    assert!(!guard(r#"<web-protection enabled="false"/>"#, "10.0.0.0/8").conf.enabled);
+    assert!(!guard(r#"<web-protection/>"#, "").conf().enabled);
+    assert!(guard(r#"<web-protection/>"#, "10.0.0.0/8").conf().enabled);
+    assert!(guard(r#"<web-protection enabled="true"/>"#, "").conf().enabled);
+    assert!(
+        !guard(r#"<web-protection enabled="false"/>"#, "10.0.0.0/8")
+            .conf()
+            .enabled
+    );
     let off = guard(
         r#"<web-protection><rate-limit name="all" requests="1" burst="1"/></web-protection>"#,
         "",
@@ -238,8 +242,34 @@ fn bad_entries_are_left_out_and_the_rest_apply() {
             </web-protection>"#,
         "",
     );
-    assert_eq!(guard.conf.rate_limits.len(), 1);
-    assert!(guard.conf.bans.is_empty());
+    assert_eq!(guard.conf().rate_limits.len(), 1);
+    assert!(guard.conf().bans.is_empty());
     assert_eq!(status(&guard, "203.0.113.5", "GET", "/"), 200);
     assert_eq!(status(&guard, "203.0.113.5", "GET", "/"), 429);
+}
+
+/// A conf reload gives the guard new rules in place (plans/Component-Deploy.md): a client seen before counts against
+/// the new rate limit, whose window starts again, with no index past the old rule count.
+#[test]
+fn replaced_rules_apply_to_clients_already_seen() {
+    let guard = guard(
+        r#"<web-protection enabled="true"><rate-limit name="all" requests="1" seconds="60" burst="1"/></web-protection>"#,
+        "",
+    );
+    assert_eq!(status(&guard, "203.0.113.9", "GET", "/"), 200);
+    assert_eq!(status(&guard, "203.0.113.9", "GET", "/"), 429);
+    let node = MNode::parse_text(
+        "web-protection",
+        r#"<web-protection enabled="true">
+                <rate-limit name="all" requests="100" seconds="60" burst="100"/>
+                <rate-limit name="form" path="/r/*/submit" methods="POST" requests="1" seconds="60" burst="1"/>
+            </web-protection>"#,
+    )
+    .unwrap();
+    let addressing = Arc::new(ClientAddressing::new("X-Forwarded-For", parse_cidrs("", "test")));
+    guard.replace_conf(GuardConf::from_node(Some(&node), addressing));
+    assert_eq!(guard.conf().rate_limits.len(), 2);
+    assert_eq!(status(&guard, "203.0.113.9", "GET", "/"), 200);
+    assert_eq!(status(&guard, "203.0.113.9", "POST", "/r/a/submit"), 200);
+    assert_eq!(status(&guard, "203.0.113.9", "POST", "/r/a/submit"), 429);
 }

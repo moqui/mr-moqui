@@ -51,7 +51,7 @@ pub(crate) use feed::{feed_wants_old, note_touch};
 pub use loader::{
     is_restricted_entity, load_entity_data, load_entity_text_file, load_entity_xml_text, location_in_components,
 };
-pub use locations::{component_data_locations, data_directory_locations};
+pub use locations::{component_data_locations, data_directory_locations, data_types_of};
 
 /// A data-file service element. It is called as it is read, and kept here for [`data_file_services`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -150,9 +150,10 @@ pub fn feed_service_names(facade: &EntityFacade) -> Vec<FeedServiceNames> {
     with_load_slot(facade, |slot| slot.feed_services.values().cloned().collect())
 }
 
-/// `load-data` locations from the framework conf. This does not load those files.
+/// `load-data` locations from the conf the model was loaded with, in merge order: on a server the merged conf, so a
+/// component's or the runtime conf's own `load-data` entries are among them. This does not load those files.
 pub fn conf_data_locations(facade: &EntityFacade) -> Result<Vec<String>, Error> {
-    let conf = MNode::parse_file(facade.framework_dir().join("conf/MoquiDefaultConf.xml"))?;
+    let conf = MNode::parse_text("conf", facade.inner.model.conf_text())?;
     let facade = conf
         .first_named("entity-facade")
         .ok_or_else(|| Error::new("conf has no entity-facade"))?;

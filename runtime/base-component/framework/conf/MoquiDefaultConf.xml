@@ -9,6 +9,10 @@
 
     <!-- recommended values: production, dev, test; any code may look at these Java System properties to vary behavior (System.getProperty("instance_purpose")) -->
     <default-property name="instance_purpose" value="production"/>
+    <!-- Deploying a component from a git URL (System > Components) runs its code and loads its data: it needs the
+        sealed COMPONENT_DEPLOY permission, and on a production instance also this set to true
+        (docs/tools/Component-Deploy.md). -->
+    <default-property name="component_deploy_enabled" value=""/>
 
     <!-- Locale and Time Zone Properties -->
     <default-property name="default_locale" value="en_US"/>
@@ -781,7 +785,7 @@
             receive#IncomingSystemMessage (SystemMessageServices) as a remote system. sealed-permissions: UserGroupPermission
             create/update/delete for these IDs is allowed only if the caller already has that permission. -->
         <authz privileged-groups="ADMIN,ADMIN_ADV,SYSMSG_RECEIVE"
-                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse"/>
+                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY"/>
     </user-facade>
 
     <transaction-facade use-transaction-cache="true" use-connection-stash="true" use-lock-track="${entity_lock_track}" use-statement-timeout="${entity_statement_timeout}">
@@ -1736,6 +1740,9 @@
         <!-- The dev components (the dev-aide and others; plans/design-dev-aide.md 3.1): loaded only when
             instance_purpose is dev, each left out with a WARN on any other purpose. -->
         <component-dir location="dev-component" purpose="dev"/>
+        <!-- Components deployed from a git URL in System > Components, their files written from the repository
+            (plans/Component-Deploy.md; docs/tools/Component-Deploy.md). -->
+        <component-dir location="deployed-component"/>
         <!-- Here are some examples of explicitly loading the example component in different ways: -->
         <!-- <component name="example" location="component/example"/> -->
         <!-- <component name="example" location="content://main/component/example"/> -->

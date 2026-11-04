@@ -123,7 +123,7 @@ fn serve_caps_reject_a_small_pool_and_accept_8_and_32() {
     let factory = ctx.factory();
     let missing = check_serve_caps(factory).unwrap_err();
     assert!(missing.to_string().contains("no entity facade"), "{missing}");
-    assert_eq!(caps(factory.conf_text()), (8, 32));
+    assert_eq!(caps(&factory.conf_text()), (8, 32));
 
     factory.set_entity(facade(PoolConfig {
         min: 0,

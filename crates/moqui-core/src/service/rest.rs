@@ -223,7 +223,7 @@ fn roots_of(factory: &ExecutionContextFactory) -> Arc<Roots> {
 /// file never takes the other resources down. A later file with the same root name replaces an earlier one.
 fn load(factory: &ExecutionContextFactory) -> Roots {
     let mut resources = BTreeMap::new();
-    for component in factory.components() {
+    for component in factory.components().iter() {
         let dir = component.location.join("service");
         load_dir(&mut resources, &dir);
     }

@@ -375,7 +375,7 @@ pub struct Completion {
 /// The factory's facade, made on first use from the merged conf.
 pub fn facade(factory: &ExecutionContextFactory) -> Arc<LlmFacade> {
     factory.extension(|factory| {
-        let conf = LlmConf::from_conf_text(factory.conf_text()).unwrap_or_else(|error| {
+        let conf = LlmConf::from_conf_text(&factory.conf_text()).unwrap_or_else(|error| {
             tracing::error!("the llm-facade conf could not be read, so it is off: {error}");
             LlmConf {
                 enabled: false,

@@ -194,8 +194,10 @@ The runtime conf is the first of these that is found:
 2. `<runtime>/MoquiConf.xml`;
 3. `<runtime>/conf/MoquiDevConf.xml`.
 
-`./moq run` uses the dev conf and `./moq run-production` uses `conf/MoquiProductionConf.xml`. Conf merges add
-components but never remove one. To leave a component out, keep it out of `runtime/component`. The example dev
+`./moq run` uses the dev conf and `./moq run-production` uses `conf/MoquiProductionConf.xml`. A running server takes
+a changed conf file without a restart where what reads the setting allows it (System › Conf, `systemctl reload moqui`
+or SIGHUP, and the file watcher on a dev instance), and lists the rest as waiting for a restart
+([Component-Deploy](tools/Component-Deploy.md)). Conf merges add components but never remove one. To leave a component out, keep it out of `runtime/component`. The example dev
 component is the exception: `example_disabled=true` leaves it out. The demo dev component is off until
 `demo_disabled=false` or a conf names it ([Public demo server](#public-demo-server)).
 
@@ -1260,7 +1262,9 @@ with no names) and `default-repository` on its root.
 
 The get tasks take `-t git|current|release|binary` and `-r <repository>`. `--dev` puts the named components in
 `runtime/dev-component`. A component with a `Cargo.toml` is linked into the binary on the next build
-([Native-Components](dev/Native-Components.md)). A change to the set of components takes a restart.
+([Native-Components](dev/Native-Components.md)). A new component loads at the next start. System › Components can also
+load it on a running server, with its data, when it has no Rust code
+([Component-Deploy](tools/Component-Deploy.md#loading-a-component)).
 
 ## Moving from Moqui Java
 

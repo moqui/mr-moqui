@@ -27,15 +27,32 @@ pub struct CacheFacade {
 
 impl CacheFacade {
     pub(super) fn from_conf(conf: &MNode) -> Result<Self, Error> {
-        let manager = MCacheManager::new();
-        let Some(list) = conf.first_named("cache-list") else {
-            return Ok(Self { manager });
+        let facade = Self {
+            manager: MCacheManager::new(),
         };
-        let mut count = 0_usize;
+        let made = facade.add_from_conf(conf)?;
+        tracing::info!("Initialized {} caches", made.len());
+        Ok(facade)
+    }
+
+    /// Make each `cache` of the conf's `cache-list` there is none of yet, and answer their names: at boot every one,
+    /// after a conf reload the new ones (plans/Component-Deploy.md). A cache already made keeps its settings.
+    ///
+    /// # Errors
+    ///
+    /// When an expiry does not parse or a cache cannot be made.
+    pub fn add_from_conf(&self, conf: &MNode) -> Result<Vec<String>, Error> {
+        let mut made = Vec::new();
+        let Some(list) = conf.first_named("cache-list") else {
+            return Ok(made);
+        };
         for node in list.named_iter("cache") {
             let Some(name) = node.attribute("name").filter(|name| !name.is_empty()) else {
                 continue;
             };
+            if self.manager.get::<String, Value>(&name)?.is_some() {
+                continue;
+            }
             let mut config = CacheConfig::new();
             if let Some(millis) = expire_millis(&node, &name, "expire-time-idle")? {
                 config = config.expire_access_ms(millis);
@@ -50,11 +67,10 @@ impl CacheFacade {
             {
                 config = config.max_entries(max);
             }
-            manager.create::<String, Value>(name, config)?;
-            count += 1;
+            self.manager.create::<String, Value>(name.clone(), config)?;
+            made.push(name);
         }
-        tracing::info!("Initialized {count} caches");
-        Ok(Self { manager })
+        Ok(made)
     }
 
     pub fn names(&self) -> Result<Vec<String>, Error> {

@@ -21,6 +21,7 @@ use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, RwLock};
 
+use arc_swap::ArcSwap;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 
@@ -144,13 +145,18 @@ impl Default for TarpitHits {
 pub struct ExecutionContextFactory {
     runtime_dir: PathBuf,
     framework_dir: PathBuf,
-    components: Vec<ComponentInfo>,
+    /// The framework component's directory, kept apart from the list so a borrow of it outlives a swap of the list.
+    framework_component_dir: PathBuf,
+    /// The components in load order; a hot deploy swaps in a longer list (plans/Component-Deploy.md).
+    components: ArcSwap<Vec<ComponentInfo>>,
     resource: ResourceFacade,
     cache: CacheFacade,
-    conf_text: String,
-    conf_cache: std::sync::OnceLock<ConfCache>,
-    /// The `webroot` webapp's servlets, filters, listeners and lifecycle actions, read from the conf when first asked for.
-    webapp_scripts: std::sync::OnceLock<Arc<crate::web::servlet::WebappScripts>>,
+    /// The merged conf; a conf reload swaps it whole (plans/Component-Deploy.md, Phase 1).
+    conf: ArcSwap<ConfState>,
+    /// Whether the merge took each component's `test/MoquiConf.xml`, so a re-merge takes them too.
+    test_confs: bool,
+    /// State built from the conf by [`Self::conf_derived`], with the conf generation it was built from.
+    derived: std::sync::Mutex<std::collections::HashMap<std::any::TypeId, DerivedState>>,
     /// Hit times per `userId@type:name`, for tarpit counting.
     tarpit_hits: std::sync::Mutex<TarpitHits>,
     /// Live overrides of conf settings by `path@name` (plans/Monitor-Settings.md), read by [`Self::conf_setting`].
@@ -158,6 +164,9 @@ pub struct ExecutionContextFactory {
     /// The overlay has an entry, so [`Self::conf_setting`] looks there.
     conf_overlaid: AtomicBool,
     property_names: Vec<String>,
+    /// The properties a `default-property` of the conf set, with the value it set: boot's, then a conf reload's. A conf
+    /// reload changes a property only while it still has that value (plans/Component-Deploy.md, Phase 1).
+    conf_properties: std::sync::Mutex<std::collections::HashMap<String, String>>,
     extensions:
         std::sync::Mutex<std::collections::HashMap<std::any::TypeId, std::sync::Arc<dyn std::any::Any + Send + Sync>>>,
     /// Entity facade for `dbresource://`. Empty until the host calls [`Self::set_entity`].
@@ -356,19 +365,22 @@ impl ExecutionContextFactory {
             "Execution Context Factory initialized in {:.3} seconds",
             boot_started.elapsed().as_secs_f64()
         );
+        let framework_component_dir = framework_component_dir(&framework_dir, &components);
         let factory = Arc::new(Self {
             runtime_dir,
             framework_dir,
-            components,
+            framework_component_dir,
+            components: ArcSwap::from_pointee(components),
             resource,
             cache,
-            conf_text,
-            conf_cache: std::sync::OnceLock::new(),
-            webapp_scripts: std::sync::OnceLock::new(),
+            conf: ArcSwap::from_pointee(ConfState::new(conf_text, 0)),
+            test_confs: options.test_confs,
+            derived: std::sync::Mutex::default(),
             tarpit_hits: std::sync::Mutex::default(),
             conf_overlay: RwLock::default(),
             conf_overlaid: AtomicBool::new(false),
             property_names,
+            conf_properties: std::sync::Mutex::new(set_by_boot.values()),
             extensions: std::sync::Mutex::new(std::collections::HashMap::new()),
             entity,
             pools,
@@ -413,7 +425,7 @@ impl ExecutionContextFactory {
         if self.executor == Executor::Inline {
             return Ok(());
         }
-        self.requests.start_from_conf(&self.conf_text)
+        self.requests.start_from_conf(&self.conf_text())
     }
 
     /// The executor this factory booted with.
@@ -501,14 +513,27 @@ impl ExecutionContextFactory {
     /// The framework component's directory, where its entities, services and screens are: the framework directory, or
     /// the one [`BootOptions::framework_component`] named (a Java Moqui checkout's `framework`).
     pub fn framework_component_dir(&self) -> &Path {
-        self.components
-            .iter()
-            .find(|component| component.name == "framework")
-            .map_or(self.framework_dir.as_path(), |component| component.location.as_path())
+        &self.framework_component_dir
     }
 
-    pub fn components(&self) -> &[ComponentInfo] {
-        &self.components
+    /// The components in load order. The list is the one in place when called; a hot deploy swaps in a new one.
+    pub fn components(&self) -> Arc<Vec<ComponentInfo>> {
+        self.components.load_full()
+    }
+
+    /// Put `components` in place of the components, in load order: a component loaded on a running server
+    /// (plans/Component-Deploy.md). Its `component://` root is registered first, so a location a reader of the new list
+    /// names resolves.
+    pub fn replace_components(&self, components: Vec<ComponentInfo>) {
+        self.resource
+            .register_components(components.iter().map(|info| (info.name.clone(), info.location.clone())));
+        super::locate::remember(&self.framework_dir, &components);
+        self.components.store(Arc::new(components));
+    }
+
+    /// Whether the conf merge takes each component's `test/MoquiConf.xml` (a `moqui test` run).
+    pub fn test_confs(&self) -> bool {
+        self.test_confs
     }
 
     /// Linked implementations; XML still defines services and bindings.
@@ -679,6 +704,12 @@ impl ExecutionContextFactory {
         }
     }
 
+    /// The state of type `T` another facade keeps ([`Self::extension`]), when it was made; it is not made here.
+    pub fn extension_if_present<T: std::any::Any + Send + Sync>(&self) -> Option<Arc<T>> {
+        let value = lock(&self.extensions).get(&std::any::TypeId::of::<T>()).cloned()?;
+        value.downcast::<T>().ok()
+    }
+
     /// True when the `artifact-execution` element for `artifact_type` has `flag="true"`.
     pub fn artifact_flag(&self, artifact_type: &str, flag: &str) -> bool {
         self.conf().artifact_flag(artifact_type, flag)
@@ -842,8 +873,8 @@ impl ExecutionContextFactory {
         }
     }
 
-    fn conf(&self) -> &ConfCache {
-        self.conf_cache.get_or_init(|| ConfCache::parse(&self.conf_text))
+    fn conf(&self) -> ConfGuard {
+        ConfGuard(self.conf.load_full())
     }
 
     /// Hit times recorded for a tarpit key, oldest first.
@@ -881,12 +912,90 @@ impl ExecutionContextFactory {
         lock(&self.tarpit_hits).by_key.len()
     }
 
-    pub(crate) fn webapp_scripts_cell(&self) -> &std::sync::OnceLock<Arc<crate::web::servlet::WebappScripts>> {
-        &self.webapp_scripts
+    /// The merged conf as XML text. A conf reload replaces it, so read it again rather than keep it.
+    pub fn conf_text(&self) -> Arc<str> {
+        Arc::clone(&self.conf.load().text)
     }
 
-    pub fn conf_text(&self) -> &str {
-        &self.conf_text
+    /// How many times the conf was replaced since boot: 0 until a conf reload. State built from the conf compares it.
+    pub fn conf_generation(&self) -> u64 {
+        self.conf.load().generation
+    }
+
+    /// Put `text` in place of the merged conf and answer its generation, one past the one before. A read in flight
+    /// keeps the conf it took; [`Self::conf_derived`] state is built again on next use. The conf reload calls this with
+    /// the conf it found live (plans/Component-Deploy.md, Phase 1).
+    pub(crate) fn replace_conf(&self, text: String) -> u64 {
+        let mut generation = 0;
+        self.conf.rcu(|current| {
+            generation = current.generation + 1;
+            ConfState::new(text.clone(), generation)
+        });
+        generation
+    }
+
+    /// State built from the merged conf, made on first use and made again on the first use after a conf reload
+    /// replaced the conf. `build` may use the factory but not ask for state of its own type.
+    pub fn conf_derived<T: std::any::Any + Send + Sync>(&self, build: impl FnOnce(&Self) -> T) -> Arc<T> {
+        let key = std::any::TypeId::of::<T>();
+        let generation = self.conf_generation();
+        let held = lock(&self.derived)
+            .get(&key)
+            .filter(|state| state.generation == generation)
+            .map(|state| Arc::clone(&state.value));
+        let value = match held {
+            Some(value) => value,
+            None => {
+                // Not under the lock, so build can read other state.
+                let made: Arc<dyn std::any::Any + Send + Sync> = Arc::new(build(self));
+                let mut map = lock(&self.derived);
+                let state = map.entry(key).or_insert_with(|| DerivedState {
+                    generation,
+                    value: Arc::clone(&made),
+                });
+                if state.generation < generation {
+                    *state = DerivedState {
+                        generation,
+                        value: made,
+                    };
+                }
+                Arc::clone(&state.value)
+            }
+        };
+        match value.downcast::<T>() {
+            Ok(typed) => typed,
+            Err(_) => unreachable!("conf-derived state is stored under its own type id"),
+        }
+    }
+
+    /// The properties the conf set, with the value it set ([`Self::conf_properties`] field).
+    pub(crate) fn conf_properties(&self) -> std::sync::MutexGuard<'_, std::collections::HashMap<String, String>> {
+        lock(&self.conf_properties)
+    }
+
+    /// Set the property `name` from a `default-property` a conf reload found (plans/Component-Deploy.md, Phase 1) as
+    /// boot sets one: `raw` expanded, or a secret at its `CHANGEME` default generated and saved to `runtime/.env`. It
+    /// is remembered as set by the conf, so a later reload may change it again. Answers the value set.
+    ///
+    /// # Errors
+    ///
+    /// When `raw` does not expand, or a generated secret cannot be saved.
+    pub(crate) fn set_conf_property(&self, name: &str, raw: &str, secret: bool) -> Result<String, Error> {
+        let mut value = if raw.is_empty() {
+            String::new()
+        } else {
+            env::expand(raw)?
+        };
+        if secret && value.ends_with("CHANGEME") && !leave_sentinel(name) {
+            value = generate_secret()?;
+            append_env_secrets(&self.runtime_dir.join(".env"), &[(name.to_string(), value.clone())])?;
+            tracing::info!("Generated secret property {name}");
+        } else {
+            log_property(name, &value, secret, true);
+        }
+        env::set_property(name, value.clone());
+        self.conf_properties().insert(name.to_string(), value.clone());
+        Ok(value)
     }
 
     /// Install the entity facade. `dbresource://` reads and writes through it.
@@ -1395,6 +1504,53 @@ fn canonicalize_dir(path: &Path) -> Result<PathBuf, Error> {
         .map_err(|err| Error::new(format!("could not resolve directory {}", path.display())).with_source(err))
 }
 
+/// The merged conf of a factory: its text, the attribute map read from it on first use, and its generation.
+pub(crate) struct ConfState {
+    text: Arc<str>,
+    cache: std::sync::OnceLock<ConfCache>,
+    generation: u64,
+}
+
+impl ConfState {
+    fn new(text: String, generation: u64) -> Self {
+        Self {
+            text: Arc::from(text),
+            cache: std::sync::OnceLock::new(),
+            generation,
+        }
+    }
+
+    fn cache(&self) -> &ConfCache {
+        self.cache.get_or_init(|| ConfCache::parse(&self.text))
+    }
+}
+
+/// State of [`ExecutionContextFactory::conf_derived`] and the conf generation it was built from.
+struct DerivedState {
+    generation: u64,
+    value: Arc<dyn std::any::Any + Send + Sync>,
+}
+
+/// The conf state in place when it was asked for, read as its attribute map.
+struct ConfGuard(Arc<ConfState>);
+
+impl std::ops::Deref for ConfGuard {
+    type Target = ConfCache;
+
+    fn deref(&self) -> &ConfCache {
+        self.0.cache()
+    }
+}
+
+/// The framework component's directory: the component named `framework` (a Java checkout's, on a model-only boot), or
+/// the framework directory.
+fn framework_component_dir(framework_dir: &Path, components: &[ComponentInfo]) -> PathBuf {
+    components
+        .iter()
+        .find(|component| component.name == "framework")
+        .map_or_else(|| framework_dir.to_path_buf(), |component| component.location.clone())
+}
+
 fn component_roots(components: &[ComponentInfo]) -> std::collections::HashMap<String, PathBuf> {
     components
         .iter()
@@ -1563,6 +1719,12 @@ fn log_property(name: &str, value: &str, secret: bool, from_default: bool) {
     }
 }
 
+/// Whether the `default-property` `name` is a secret: `is-secret="true"`, or a name with `pass`, `pw` or `key` in it
+/// unless `is-secret="false"`.
+pub(crate) fn property_is_secret(name: &str, flag: Option<&str>) -> bool {
+    is_secret(name, flag)
+}
+
 fn is_secret(name: &str, flag: Option<&str>) -> bool {
     let flag = flag.unwrap_or("");
     flag != "false" && (flag == "true" || name.contains("pass") || name.contains("pw") || name.contains("key"))
@@ -1609,6 +1771,14 @@ impl PropertyRollback {
 
     fn keep(&mut self) {
         self.rollback = false;
+    }
+
+    /// The names set, with the value each has now.
+    fn values(&self) -> std::collections::HashMap<String, String> {
+        self.names
+            .iter()
+            .filter_map(|name| env::get_property(name).map(|value| (name.clone(), value)))
+            .collect()
     }
 
     fn clear(&self) {
@@ -1687,19 +1857,22 @@ impl ExecutionContextFactory {
         for component in &components {
             component_dirs.insert(component.name.clone(), component.location.clone());
         }
+        let framework_component_dir = framework_component_dir(&framework_dir, &components);
         let factory = Arc::new(Self {
             runtime_dir: runtime_dir.clone(),
             framework_dir,
-            components,
+            framework_component_dir,
+            components: ArcSwap::from_pointee(components),
             resource: ResourceFacade::new(runtime_dir, component_dirs, entity.clone()),
             cache: CacheFacade::from_conf(&conf).expect("cache"),
-            conf_text: conf_text.to_string(),
-            conf_cache: std::sync::OnceLock::new(),
-            webapp_scripts: std::sync::OnceLock::new(),
+            conf: ArcSwap::from_pointee(ConfState::new(conf_text.to_string(), 0)),
+            test_confs: false,
+            derived: std::sync::Mutex::default(),
             tarpit_hits: std::sync::Mutex::default(),
             conf_overlay: RwLock::default(),
             conf_overlaid: AtomicBool::new(false),
             property_names: Vec::new(),
+            conf_properties: std::sync::Mutex::default(),
             extensions: std::sync::Mutex::new(std::collections::HashMap::new()),
             entity,
             pools,

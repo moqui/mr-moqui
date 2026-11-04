@@ -638,9 +638,7 @@ pub fn chain_next() -> Result<(), Error> {
 impl ExecutionContextFactory {
     /// The `webroot` webapp's servlets, filters, listeners and lifecycle actions.
     pub fn webapp_scripts(&self) -> Arc<WebappScripts> {
-        self.webapp_scripts_cell()
-            .get_or_init(|| Arc::new(WebappScripts::of_conf(self.conf_text())))
-            .clone()
+        self.conf_derived(|factory| WebappScripts::of_conf(&factory.conf_text()))
     }
 }
 

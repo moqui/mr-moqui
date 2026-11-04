@@ -268,12 +268,13 @@ fn boot_registers_components_and_named_resource_errors() {
     env::set_property("moqui_version", "phase2-test");
     let framework = root.join("runtime/base-component/framework");
     let factory = ExecutionContextFactory::boot_with_framework(temp.path(), &framework).unwrap();
-    let names: Vec<&str> = factory.components().iter().map(|info| info.name.as_str()).collect();
+    let components = factory.components();
+    let names: Vec<&str> = components.iter().map(|info| info.name.as_str()).collect();
     assert_eq!(
         names,
         vec!["framework", "basic-comms", "tools", "webroot", "unlinked-tool"]
     );
-    for info in factory.components() {
+    for info in components.iter() {
         assert_eq!(info.version, "phase2-test");
     }
     let tools = factory.resource().get("component://tools/screen/Tools.xml").unwrap();

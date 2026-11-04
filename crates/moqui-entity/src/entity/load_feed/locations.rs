@@ -88,6 +88,64 @@ pub fn data_directory_locations(component_name: &str, data_dir: &Path) -> Vec<St
     locations
 }
 
+/// The data types the data file at `path` declares, as the loader reads them: an XML file's `entity-facade-xml`
+/// `type` (or `seed` for the `seed-data` of an entity file), a CSV file's second value on its entity line, a JSON
+/// file's `_dataType`. Empty when it declares none, so it loads whatever types are asked for; an XML file that does not
+/// parse declares none here and fails when it loads.
+#[must_use]
+pub fn data_types_of(path: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let name = path.to_string_lossy();
+    let mut types: Vec<String> = Vec::new();
+    let mut add = |kind: &str| {
+        let kind = kind.trim();
+        if !kind.is_empty() && !types.iter().any(|known| known == kind) {
+            types.push(kind.to_string());
+        }
+    };
+    if name.ends_with(".xml") {
+        let Ok(root) = moqui_lib::node::MNode::parse_text(&name, &text) else {
+            return Vec::new();
+        };
+        let mut blocks = vec![root];
+        while let Some(node) = blocks.pop() {
+            if node.has_name("seed-data") {
+                add("seed");
+            } else if node.has_name("entity-facade-xml") {
+                if let Some(kind) = node.attribute("type") {
+                    add(&kind);
+                }
+            } else {
+                blocks.extend(node.children());
+            }
+        }
+    } else if name.ends_with(".csv") {
+        let first = text
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty() && !line.starts_with('#'));
+        if let Some(kind) = first.and_then(|line| line.split(',').nth(1)) {
+            add(kind.trim_matches('"'));
+        }
+    } else if name.ends_with(".json") {
+        if let Some((_, rest)) = text.split_once("\"_dataType\"") {
+            let value = rest
+                .trim_start()
+                .strip_prefix(':')
+                .map(str::trim_start)
+                .and_then(|rest| rest.strip_prefix('"'))
+                .and_then(|rest| rest.split_once('"'))
+                .map(|(kind, _)| kind);
+            if let Some(kind) = value {
+                add(kind);
+            }
+        }
+    }
+    types
+}
+
 fn is_data_file(name: &str) -> bool {
     [".xml", ".csv", ".json"].iter().any(|ext| name.ends_with(ext))
 }

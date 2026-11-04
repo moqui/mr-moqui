@@ -203,7 +203,7 @@ fn location_of(factory: &ExecutionContextFactory, path: &Path) -> String {
             .ok()
             .map(|rest| rest.to_string_lossy().replace('\\', "/"))
     };
-    for component in factory.components() {
+    for component in factory.components().iter() {
         if let Some(rest) = relative(&component.location) {
             return format!("component://{}/{rest}", component.name);
         }

@@ -332,7 +332,7 @@ fn list_data_files(
     let only_type = text(parameters, "type");
     let only_component = text(parameters, "component");
     let mut files = Vec::new();
-    for component in context.factory.components() {
+    for component in context.factory.components().iter() {
         if !only_component.is_empty() && component.name != only_component {
             continue;
         }

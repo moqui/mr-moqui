@@ -48,7 +48,7 @@ smtp = ["dep:moqui-mail"]
 # delivery of mail the SMTP listener received. Replies and the client's sends go out through SMTP, so this includes it.
 imap = ["smtp", "moqui-mail/imap"]
 # git:// locations, the git services and the git server (crates/moqui-git).
-git = ["dep:moqui-git"]
+git = ["dep:moqui-git", "moqui-devkit/git"]
 # Framework features, forwarded to moqui-core.
 image = ["moqui-core/image"]
 # Web Push to subscribed browsers (the PWA), in every package.
@@ -141,6 +141,8 @@ moqui-drivers = { workspace = true }
 moqui-tui = { workspace = true, optional = true, features = ["ui"] }
 tungstenite = { workspace = true, optional = true }
 tracing = { workspace = true }
+# the web protection conf a conf reload replaces (plans/Component-Deploy.md)
+arc-swap = { workspace = true }
 # `moqui lsp` (plans/design-dev-aide.md 13.6, F13): the Language Server Protocol's messages and its stdio transport, as
 # rust-analyzer uses them; under devtools.
 lsp-server = { version = "0.10", optional = true }

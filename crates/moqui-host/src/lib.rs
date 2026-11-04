@@ -1165,7 +1165,7 @@ fn load_with_factory(
     let entity_started = std::time::Instant::now();
     let facade = crate::db::entity_facade::open_entity_facade_for_db(factory, db, pool)?;
     crate::db::entity_facade::attach(factory, facade.clone());
-    let merged = moqui_lib::node::MNode::parse_shared("moqui-conf", factory.conf_text()).ok();
+    let merged = moqui_lib::node::MNode::parse_shared("moqui-conf", &factory.conf_text()).ok();
     crate::db::entity_facade::apply_datasource_conf(&facade, &db.conf, merged.as_ref());
     tracing::info!(
         "Entity Facade initialized in {:.3} seconds",
@@ -1516,7 +1516,7 @@ fn boot_server_factory(
     let entity_started = std::time::Instant::now();
     let facade = crate::db::entity_facade::open_entity_facade_for_db(&factory, &db, pool)?;
     crate::db::entity_facade::attach(&factory, facade.clone());
-    let merged = moqui_lib::node::MNode::parse_shared("moqui-conf", factory.conf_text()).ok();
+    let merged = moqui_lib::node::MNode::parse_shared("moqui-conf", &factory.conf_text()).ok();
     crate::db::entity_facade::apply_datasource_conf(&facade, &db.conf, merged.as_ref());
     tracing::info!(
         "Entity Facade initialized in {:.3} seconds",
@@ -1554,7 +1554,7 @@ fn boot_server_factory(
         let context = factory.new_context();
         let entered = context.enter();
         let authz = context.disable_authz();
-        let flags = startup_load_flags(factory.conf_text())?;
+        let flags = startup_load_flags(&factory.conf_text())?;
         let loaded = load_in_context(
             &framework_dir,
             &facade,
@@ -1574,8 +1574,22 @@ fn boot_server_factory(
         "Table check and empty-db load finished in {:.3} seconds",
         load_started.elapsed().as_secs_f64()
     );
-    if empty_db_loaded {
-        tracing::warn!("Data loaded into empty DB, re-initializing ExecutionContextFactory");
+    // the files of components kept in the database that are not here (a new container, a member started after the
+    // deploy), written out so the fresh factory loads them as at every start (plans/Component-Deploy.md, Phase 4)
+    let restored = if empty_db_loaded {
+        0
+    } else {
+        moqui_devkit::deploy::git::restore(&factory)
+    };
+    if restored > 0 {
+        tracing::warn!(
+            "{restored} deployed components written from the database, re-initializing ExecutionContextFactory"
+        );
+    }
+    if empty_db_loaded || restored > 0 {
+        if empty_db_loaded {
+            tracing::warn!("Data loaded into empty DB, re-initializing ExecutionContextFactory");
+        }
         factory.flush_sessions().map_err(moqui_lib::error::Error::from)?;
 
         factory.shutdown();
@@ -1640,6 +1654,11 @@ fn boot_server_factory(
     if let Some(facade) = factory.entity() {
         moqui_llm::skills::sync::ensure_synced(&factory, &facade);
     }
+    // the data of a component a load left for this start (System › Components, plans/Component-Deploy.md), as the
+    // seed data is loaded before the cluster starts
+    moqui_devkit::deploy::load::load_pending(&factory);
+    // the deploys and updates of components kept in the database that other cluster members make
+    moqui_devkit::deploy::git::install(&factory);
     moqui_core::cluster::start(&factory).map_err(moqui_lib::error::Error::from)?;
     if let Some(instance) = moqui_core::cluster::instance_id(&factory) {
         moqui_core::telemetry::for_factory(&factory).set_instance_id(instance);
@@ -2255,7 +2274,7 @@ fn component_data_locations(factory: &moqui_core::context::ExecutionContextFacto
         .as_ref()
         .is_none_or(|types| types.is_empty() || types.iter().any(|kind| kind == "seed" || kind == "all"));
     let mut locations = Vec::new();
-    for info in factory.components() {
+    for info in factory.components().iter() {
         if same_dir(&info.location, factory.framework_dir())
             || (!flags.components.is_empty() && !flags.components.contains(&info.name))
         {
@@ -2377,7 +2396,7 @@ fn push_unique(
 fn factory_served_groups() -> Vec<String> {
     use moqui_core::entity::datasource::{datasource_attribute, datasource_nodes};
     moqui_core::context::ExecutionContext::with_current(|ec| {
-        moqui_lib::node::MNode::parse_shared("moqui-conf", ec.factory().conf_text())
+        moqui_lib::node::MNode::parse_shared("moqui-conf", &ec.factory().conf_text())
             .map(|conf| {
                 datasource_nodes(&conf)
                     .iter()

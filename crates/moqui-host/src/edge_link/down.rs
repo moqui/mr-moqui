@@ -198,7 +198,7 @@ fn forwarded(
         Some(client) => {
             let app = &web.serve.app;
             let headers = request.headers_mut();
-            super::web::strip_forwarding(headers, app.guard.conf.addressing().header());
+            super::web::strip_forwarding(headers, app.guard.conf().addressing().header());
             // HTTP/2 names the host in :authority; the app reads Host, as from an HTTP/1.1 client
             if !headers.contains_key(header::HOST) {
                 if let Some(host) = request

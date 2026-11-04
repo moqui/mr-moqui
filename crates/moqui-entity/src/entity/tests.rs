@@ -2417,3 +2417,125 @@ fn a_relink_swaps_the_model_under_finds_in_flight() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A relink that reads a component's `entity` directory not read before (a component added to a running server,
+/// plans/Component-Deploy.md) sets the directories only once its model is in place: a directory whose file does not
+/// parse leaves them as they were, and the next relink does not read it.
+#[test]
+fn a_relink_sets_new_component_dirs_only_when_the_model_is_swapped_in() {
+    let dir = std::env::temp_dir().join(format!("moqui-relink-dirs-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    for component in ["base", "added", "broken", "extends", "rekeys"] {
+        std::fs::create_dir_all(dir.join(component).join("entity")).unwrap();
+    }
+    let entity = |name: &str| {
+        format!(
+            "<entities><entity entity-name=\"{name}\" package=\"relink\"><field name=\"thingId\" type=\"id\" is-pk=\"true\"/></entity></entities>"
+        )
+    };
+    std::fs::write(dir.join("base/entity/BaseEntities.xml"), entity("BaseThing")).unwrap();
+    std::fs::write(dir.join("added/entity/AddedEntities.xml"), entity("AddedThing")).unwrap();
+    std::fs::write(
+        dir.join("broken/entity/BrokenEntities.xml"),
+        "<entities><entity entity-name=",
+    )
+    .unwrap();
+    let extend = |field: &str| {
+        format!(
+            "<entities><extend-entity entity-name=\"BaseThing\" package=\"relink\">{field}</extend-entity></entities>"
+        )
+    };
+    std::fs::write(
+        dir.join("extends/entity/ExtendEntities.xml"),
+        extend("<field name=\"note\" type=\"text-medium\"/>"),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("rekeys/entity/RekeyEntities.xml"),
+        extend("<field name=\"otherId\" type=\"id\" is-pk=\"true\"/>"),
+    )
+    .unwrap();
+    let tape = Arc::new(Mutex::new(Tape {
+        sql: Vec::new(),
+        password: None,
+    }));
+    let driver: Arc<dyn DbDriver> = Arc::new(RecDriver {
+        tape: Arc::clone(&tape),
+    });
+    let transactions = TransactionManager::new(
+        driver,
+        PoolConfig {
+            min: 0,
+            max: 4,
+            reserve: 1,
+            acquire_timeout: Duration::from_secs(5),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let base_dirs = vec![dir.join("base/entity")];
+    let facade = EntityFacade::open_components(
+        &framework_dir(),
+        &base_dirs,
+        "transactional",
+        vec![EntityGroup::new("transactional", "postgres", transactions)],
+    )
+    .unwrap();
+    facade.set_disable_fk_create(true);
+    let known = |facade: &EntityFacade, name: &str| facade.with_entity(name, |_, _, _| Ok(())).is_ok();
+    assert!(known(&facade, "relink.BaseThing"));
+    assert!(!known(&facade, "relink.AddedThing"));
+
+    // a preview names what would change, and what the additive table check cannot make
+    let preview = facade
+        .preview_relink(&[dir.join("base/entity"), dir.join("extends/entity")])
+        .unwrap();
+    assert_eq!(preview.changed, ["relink.BaseThing"]);
+    assert!(preview.incompatible.is_empty(), "{:?}", preview.incompatible);
+    let preview = facade
+        .preview_relink(&[dir.join("base/entity"), dir.join("rekeys/entity")])
+        .unwrap();
+    assert_eq!(preview.incompatible.len(), 1, "{:?}", preview.incompatible);
+    assert!(!known(&facade, "relink.AddedThing"), "a preview changes nothing");
+
+    let broken = vec![dir.join("base/entity"), dir.join("broken/entity")];
+    assert!(facade.relink_components(Some(broken), &[]).is_err());
+    assert_eq!(
+        facade.model_paths().last(),
+        Some(&dir.join("base/entity")),
+        "the directories stay"
+    );
+    facade.relink(&[]).unwrap();
+
+    // a staged model is read on its own thread alone
+    let conf = moqui_lib::node::MNode::parse_text("conf", facade.inner.model.conf_text()).unwrap();
+    let staged_dirs = [
+        framework_dir().join("entity"),
+        dir.join("base/entity"),
+        dir.join("added/entity"),
+    ];
+    let staged_paths: Vec<&std::path::Path> = staged_dirs.iter().map(PathBuf::as_path).collect();
+    let staged = Arc::new(moqui_db::model::EntityModel::load_paths(&conf, &staged_paths).unwrap());
+    facade.inner.model.with_staged(&staged, || {
+        assert!(known(&facade, "relink.AddedThing"));
+        let other = facade.clone();
+        let seen = std::thread::spawn(move || other.with_entity("relink.AddedThing", |_, _, _| Ok(())).is_ok());
+        assert!(!seen.join().unwrap(), "another thread keeps the current model");
+    });
+    assert!(!known(&facade, "relink.AddedThing"));
+
+    let added_file = dir.join("added/entity/AddedEntities.xml");
+    let added = vec![dir.join("base/entity"), dir.join("added/entity")];
+    let report = facade
+        .relink_components(Some(added), std::slice::from_ref(&added_file))
+        .unwrap();
+    assert_eq!(report.added, vec!["relink.AddedThing".to_string()]);
+    assert!(
+        report.ddl.iter().any(|sql| sql.contains("added_thing")),
+        "the new entity's table is made before the swap: {:?}",
+        report.ddl
+    );
+    assert!(known(&facade, "relink.AddedThing"));
+    assert_eq!(facade.model_paths().last(), Some(&dir.join("added/entity")));
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -177,7 +177,7 @@ pub fn caps(conf_text: &str) -> (u32, u32) {
 /// `max-concurrent-runs` as the rest of the pool leaves ([`spare_connections`]), at least one.
 pub fn check_serve_caps(factory: &ExecutionContextFactory) -> Result<(), Error> {
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
-    let (request_cap, service_cap) = caps(factory.conf_text());
+    let (request_cap, service_cap) = caps(&factory.conf_text());
     let agent_workers = u32::from(crate::llm_hooks::linked());
     for (group, manager) in linked_managers(&facade)? {
         manager
@@ -216,7 +216,7 @@ fn default_manager(facade: &crate::entity::EntityFacade) -> Result<crate::transa
 /// `(request cap + service cap) * 2`), the fewest of it and the pools linked to it; `None` with no entity facade.
 pub fn spare_connections(factory: &ExecutionContextFactory) -> Option<u32> {
     let facade = factory.entity()?;
-    let (request_cap, service_cap) = caps(factory.conf_text());
+    let (request_cap, service_cap) = caps(&factory.conf_text());
     linked_managers(&facade).ok().and_then(|managers| {
         managers
             .iter()

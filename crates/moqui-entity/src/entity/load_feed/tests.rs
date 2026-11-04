@@ -30,7 +30,7 @@ use zip::{CompressionMethod, ZipWriter};
 use super::feed::{probe_query, Touch, TOUCHES};
 use super::xml::decode_xml_entities;
 use super::{
-    component_data_locations, conf_data_locations, data_directory_locations, eca_rules, error_chain,
+    component_data_locations, conf_data_locations, data_directory_locations, data_types_of, eca_rules, error_chain,
     feed_service_names, load_entity_data, match_rules, register_feed_insert, LoadOptions,
 };
 use crate::driver::{DbCancel, DbConnection, DbDriver, DbRow};
@@ -362,6 +362,42 @@ fn component_data_locations_take_entity_files_for_seed() {
         component_data_locations("site", &dir, false),
         ["component://site/data/SiteSeedData.xml".to_string()]
     );
+}
+
+/// The types a data file declares, as the loader reads them, for the choice of types to load.
+#[test]
+fn data_types_come_from_each_file_kind() {
+    let (dir, _guard) = temp_dir();
+    let write = |name: &str, text: &str| {
+        let path = dir.join(name);
+        std::fs::write(&path, text).unwrap();
+        path
+    };
+    let xml = write(
+        "A.xml",
+        r#"<entity-facade-xml type="seed-initial"><moqui.basic.Enumeration/></entity-facade-xml>"#,
+    );
+    assert_eq!(data_types_of(&xml), ["seed-initial"]);
+    let entities = write(
+        "E.xml",
+        "<entities><entity entity-name=\"X\"/><seed-data><X/></seed-data></entities>",
+    );
+    assert_eq!(data_types_of(&entities), ["seed"]);
+    let csv = write(
+        "C.csv",
+        "# comment\nmoqui.basic.Enumeration, demo\nenumId, description\n",
+    );
+    assert_eq!(data_types_of(&csv), ["demo"]);
+    let json = write(
+        "J.json",
+        r#"[{"_dataType": "install"}, {"_entity": "moqui.basic.Enumeration"}]"#,
+    );
+    assert_eq!(data_types_of(&json), ["install"]);
+    let untyped = write(
+        "U.xml",
+        "<entity-facade-xml><moqui.basic.Enumeration/></entity-facade-xml>",
+    );
+    assert!(data_types_of(&untyped).is_empty());
 }
 
 #[test]

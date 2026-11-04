@@ -168,9 +168,7 @@ fn screen_render<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::Result<
 fn screen_mime_type_by_mode(ctx: Ctx<'_>, mode: String) -> rquickjs::Result<Option<String>> {
     host_guard(&ctx, || {
         with_ec(&ctx, |ec| {
-            crate::screen::ScreenFacade::of(ec.factory())
-                .mime_type(&mode)
-                .map(str::to_string)
+            crate::screen::ScreenFacade::of(ec.factory()).mime_type(&mode)
         })
     })
 }

@@ -27,16 +27,16 @@ use crate::context::{Error, ExecutionContextFactory};
 /// How deep the walk goes before it stops, against a screen that mounts an ancestor.
 const MAX_DEPTH: usize = 24;
 
-/// The `root-screen` elements of each `webapp` in the merged conf, read once per factory: the webapp name, then each
-/// element's `host` (empty when absent) and `location`. The error when the conf does not parse.
+/// The `root-screen` elements of each `webapp` in the merged conf, read once per conf generation: the webapp name,
+/// then each element's `host` (empty when absent) and `location`. The error when the conf does not parse.
 struct RootScreens(Result<Vec<WebappRoots>, String>);
 
 /// A webapp's name and its `root-screen` `host` and `location` pairs.
 type WebappRoots = (String, Vec<(String, Option<String>)>);
 
 fn root_screens(factory: &ExecutionContextFactory) -> std::sync::Arc<RootScreens> {
-    factory.extension(|factory| {
-        let conf = match MNode::parse_shared("moqui-conf", factory.conf_text()) {
+    factory.conf_derived(|factory| {
+        let conf = match MNode::parse_shared("moqui-conf", &factory.conf_text()) {
             Ok(conf) => conf,
             Err(err) => return RootScreens(Err(err.to_string())),
         };

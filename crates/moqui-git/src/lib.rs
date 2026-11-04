@@ -30,6 +30,7 @@
 
 pub mod attributes;
 pub(crate) mod browse;
+pub mod checkout;
 pub(crate) mod db;
 pub(crate) mod delta;
 pub(crate) mod diff;

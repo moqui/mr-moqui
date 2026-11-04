@@ -1248,7 +1248,7 @@ fn output_type(facade: &ScreenFacade, info: &ScreenUrlInfo, mode: &str) -> (Stri
         }
     }
     let content_type = content_type
-        .or_else(|| facade.mime_type(mode).map(str::to_string))
+        .or_else(|| facade.mime_type(mode))
         .unwrap_or_else(|| "text/html".to_string());
     (content_type, encoding.unwrap_or_else(|| DEFAULT_ENCODING.to_string()))
 }

@@ -93,7 +93,7 @@ impl Browser {
         let skipped = browser.request(true, || {
             let mut paths = moqui_core::service::configured_service_files()
                 .map_err(|err| Error::new(format!("services: {err}")))?;
-            for component in browser.factory.components() {
+            for component in browser.factory.components().iter() {
                 if component.location != browser.factory.framework_dir() {
                     xml_files(&component.location.join("service"), &mut paths);
                 }
@@ -292,7 +292,7 @@ pub fn open_entity_facade_for_factory(
     factory: &ExecutionContextFactory,
     driver: Arc<dyn DbDriver>,
 ) -> Result<EntityFacade, Error> {
-    let conf = moqui_lib::node::MNode::parse_shared("moqui-conf", factory.conf_text())?;
+    let conf = moqui_lib::node::MNode::parse_shared("moqui-conf", &factory.conf_text())?;
     let transactions = moqui_core::transaction::TransactionManager::new(driver, pool())?;
     transactions.configure_from_conf(&conf)?;
     let groups = ["transactional", "logging"]

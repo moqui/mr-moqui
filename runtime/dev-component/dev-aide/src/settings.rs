@@ -75,7 +75,7 @@ impl Settings {
             roots: Vec::new(),
             excludes: Vec::new(),
         };
-        if let Ok(conf) = MNode::parse_shared("moqui-conf", factory.conf_text()) {
+        if let Ok(conf) = MNode::parse_shared("moqui-conf", &factory.conf_text()) {
             for element in conf.named_iter("dev-aide") {
                 for root in element.named_iter("root") {
                     if let Some(location) = root.attribute("location").filter(|location| !location.is_empty()) {

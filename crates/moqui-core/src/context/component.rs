@@ -48,10 +48,14 @@ impl ComponentInfo {
 
 /// Component entity directories in load order, excluding the framework model already loaded by the facade.
 pub fn component_entity_dirs(factory: &super::ExecutionContextFactory) -> Vec<PathBuf> {
-    factory
-        .components()
+    component_entity_dirs_of(factory.framework_component_dir(), &factory.components())
+}
+
+/// [`component_entity_dirs`] of `components`: a set about to be put in place (plans/Component-Deploy.md).
+pub fn component_entity_dirs_of(framework_component_dir: &Path, components: &[ComponentInfo]) -> Vec<PathBuf> {
+    components
         .iter()
-        .filter(|info| !same_directory(&info.location, factory.framework_component_dir()))
+        .filter(|info| !same_directory(&info.location, framework_component_dir))
         .map(|info| info.location.join("entity"))
         .filter(|dir| dir.is_dir())
         .collect()
@@ -70,6 +74,17 @@ struct Discovery<'a> {
 pub fn discover_components(runtime_dir: &Path, framework_dir: &Path) -> Result<Vec<ComponentInfo>, Error> {
     let conf = super::conf::load_merged_conf(framework_dir, runtime_dir)?;
     discover(runtime_dir, framework_dir, &conf)
+}
+
+/// The components a boot of `factory`'s runtime would load now, in load order, found as boot finds them: a component
+/// placed since the boot is among them (plans/Component-Deploy.md).
+///
+/// # Errors
+///
+/// When the conf does not merge, or a `component.xml` does not parse.
+pub fn discover_again(factory: &super::ExecutionContextFactory) -> Result<Vec<ComponentInfo>, Error> {
+    let conf = super::conf::load_merged_conf(factory.framework_dir(), factory.runtime_dir())?;
+    discover(factory.runtime_dir(), factory.framework_component_dir(), &conf)
 }
 
 pub(super) fn discover(runtime_dir: &Path, framework_dir: &Path, conf: &MNode) -> Result<Vec<ComponentInfo>, Error> {
@@ -362,6 +377,16 @@ fn component_from_element(base: &Path, node: &MNode) -> Result<ComponentInfo, Er
     }
     let path = resolve_location(base, &location);
     component_from_dir(&path, Some(node))
+}
+
+/// The component in the directory `path`, from its `component.xml` (or the directory's name): a component fetched for a
+/// deploy, before it is in a component directory (plans/Component-Deploy.md).
+///
+/// # Errors
+///
+/// When `path` is not a directory or its `component.xml` does not parse.
+pub fn read_component(path: &Path) -> Result<ComponentInfo, Error> {
+    component_from_dir(path, None)
 }
 
 fn component_from_dir(path: &Path, fallback: Option<&MNode>) -> Result<ComponentInfo, Error> {

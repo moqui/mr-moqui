@@ -80,13 +80,13 @@ pub struct RouteMatch {
 
 struct Routes(Vec<TokenRoute>);
 
-/// The `token-route` elements of the webroot webapp, read from the conf once per factory. A route without a name,
-/// screen or service is logged and left out; a name that is a webroot screen path (`apps`, `qapps`, `rest`, ...) is
-/// left out too, so a route cannot take over a framework path.
+/// The `token-route` elements of the webroot webapp, read from the conf once per conf generation. A route without a
+/// name, screen or service is logged and left out; a name that is a webroot screen path (`apps`, `qapps`, `rest`, ...)
+/// is left out too, so a route cannot take over a framework path.
 fn routes(factory: &ExecutionContextFactory) -> Arc<Routes> {
-    factory.extension(|factory| {
+    factory.conf_derived(|factory| {
         let mut found = Vec::new();
-        let Ok(conf) = MNode::parse_shared("moqui-conf", factory.conf_text()) else {
+        let Ok(conf) = MNode::parse_shared("moqui-conf", &factory.conf_text()) else {
             return Routes(found);
         };
         let Some(list) = conf.first_named("webapp-list") else {

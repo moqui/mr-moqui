@@ -217,7 +217,7 @@ impl FromRequestParts<Arc<HttpState>> for RequestSite {
             .map(|info| info.0.ip());
         // set by the listener: TLS, or a believed proxy's X-Forwarded-Proto of https
         let https = parts.extensions.get::<HttpsRequest>().is_some();
-        let believed = peer.is_some_and(|peer| state.guard.conf.addressing().believes(peer));
+        let believed = peer.is_some_and(|peer| state.guard.conf().addressing().believes(peer));
         Ok(Self(
             request_site(
                 https,

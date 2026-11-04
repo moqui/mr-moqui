@@ -137,7 +137,7 @@ impl ListenLimits {
 
 /// The listener limits and the web protection, from the factory's conf.
 fn protection(factory: &ExecutionContextFactory) -> (ListenLimits, Guard) {
-    let node = crate::guard::protection_node(factory.conf_text());
+    let node = crate::guard::protection_node(&factory.conf_text());
     let addressing = factory.extension(moqui_core::web::address::ClientAddressing::of_factory);
     let limits = ListenLimits::from_node(node.as_ref());
     let guard = Guard::new(GuardConf::from_node(node.as_ref(), addressing));
@@ -234,6 +234,23 @@ pub(crate) async fn listen(
     let (limits, guard) = protection(&factory);
     let guard = Arc::new(guard);
     guard.log_start();
+    // a conf reload that changes the webapp's web-protection rules gives the guard the new ones; the listener limits
+    // (`connections`, `requests`) wait for a restart (plans/Component-Deploy.md)
+    let reloaded = Arc::downgrade(&guard);
+    moqui_core::context::conf_reload::on_apply(
+        &factory,
+        moqui_core::context::conf_reload::catalog::Group::WebProtection,
+        move |factory| {
+            if let Some(guard) = reloaded.upgrade() {
+                let node = crate::guard::protection_node(&factory.conf_text());
+                let addressing = factory.extension(moqui_core::web::address::ClientAddressing::of_factory);
+                guard.replace_conf(GuardConf::from_node(node.as_ref(), addressing));
+                tracing::info!("Web protection rules replaced after a conf reload");
+            }
+        },
+    );
+    #[cfg(unix)]
+    reload_conf_on_hangup(&factory, shutdown_rx.clone());
     crate::monitor::register_guard_gauges(&factory, &guard);
     tokio::spawn(sweep(Arc::clone(&guard), shutdown_rx.clone()));
     // Text responses are compressed when the client accepts gzip (`Compressible`).
@@ -593,6 +610,74 @@ fn read_to_end_on_thread(
     end
 }
 
+/// On SIGHUP, reload the conf files (plans/Component-Deploy.md, Phase 1; `systemctl reload moqui`), with the report
+/// in the log, until shutdown. Only when stdin is not a terminal: under `./moq run` in a terminal SIGHUP ends the
+/// server as before, and a dev instance's file watcher reloads the conf files itself.
+#[cfg(unix)]
+fn reload_conf_on_hangup(factory: &Arc<ExecutionContextFactory>, mut shutdown: tokio::sync::watch::Receiver<bool>) {
+    use std::io::IsTerminal;
+    if std::io::stdin().is_terminal() {
+        return;
+    }
+    let mut hangup = match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup()) {
+        Ok(hangup) => hangup,
+        Err(err) => {
+            tracing::warn!("SIGHUP will not reload the conf: {err}");
+            return;
+        }
+    };
+    let factory = Arc::downgrade(factory);
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                received = hangup.recv() => if received.is_none() { return },
+                _ = shutdown.changed() => return,
+            }
+            let Some(factory) = factory.upgrade() else {
+                return;
+            };
+            // the reload reads the conf files and may build state: off the async threads
+            let _ = tokio::task::spawn_blocking(move || reload_conf_logged(&factory)).await;
+        }
+    });
+}
+
+/// Reload the conf files and log what was applied and what waits for a restart.
+#[cfg(unix)]
+fn reload_conf_logged(factory: &ExecutionContextFactory) {
+    use moqui_core::context::conf_reload;
+    match conf_reload::apply(factory) {
+        Ok(report) => {
+            tracing::warn!(
+                target: moqui_core::live_settings::AUDIT,
+                "SIGHUP: conf reloaded, {} change(s) live, {} waiting for a restart",
+                report.applied,
+                report.pending_restart
+            );
+            let pending = report
+                .changes
+                .iter()
+                .filter(|change| change.outcome == conf_reload::Outcome::PendingRestart);
+            for change in pending {
+                let attribute = change
+                    .attribute
+                    .as_deref()
+                    .map(|name| format!("@{name}"))
+                    .unwrap_or_default();
+                tracing::warn!(
+                    "Conf change waits for a restart: {}{attribute} ({})",
+                    change.unit,
+                    change.reason
+                );
+            }
+            for problem in &report.problems {
+                tracing::error!("Conf reload problem: {problem}");
+            }
+        }
+        Err(err) => tracing::error!("SIGHUP: the conf files do not merge, so the running conf stays: {err}"),
+    }
+}
+
 async fn termination_signal() {
     let ctrl_c = async {
         if tokio::signal::ctrl_c().await.is_err() {
@@ -759,7 +844,7 @@ async fn dispatch_screen(
     let (parts, body) = request.into_parts();
     let trace_context = parts.extensions.get::<moqui_core::telemetry::TraceContext>().cloned();
     let mut web = WebRequest::new(parts.method.as_str(), parts.uri.path());
-    web.https = over_tls || forwarded_https(&parts.headers, peer.ip(), state.guard.conf.addressing());
+    web.https = over_tls || forwarded_https(&parts.headers, peer.ip(), state.guard.conf().addressing());
     web.peer_ip = peer.ip().to_string();
     web.headers = header_map(&parts.headers);
     web.query = moqui_core::web::form_pairs(parts.uri.query().unwrap_or(""));
@@ -794,7 +879,7 @@ async fn dispatch_screen(
     let (done, result) = tokio::sync::oneshot::channel::<Option<WebResponse>>();
     let guard = Arc::clone(&state.guard);
     let queued = std::time::Instant::now();
-    let queue_timeout = state.guard.conf.queue_timeout;
+    let queue_timeout = state.guard.conf().queue_timeout;
     let worker_trace = trace_context.clone();
     // The job owns `done`. A worker that panics or a pool that stops drops it, which ends the wait. A job nobody waits
     // for any more (the deadline passed, the client went away) is not run, and one that waited past the queue timeout

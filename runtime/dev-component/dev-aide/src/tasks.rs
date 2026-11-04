@@ -265,7 +265,7 @@ fn rest_tasks(row: &moqui_core::entity::EntityValue) -> Result<Vec<Json>, LibErr
 /// replaces the conf's).
 fn apps(context: &Context) -> Vec<Json> {
     let mut apps: Vec<Json> = Vec::new();
-    if let Ok(conf) = MNode::parse_shared("moqui-conf", context.factory.conf_text()) {
+    if let Ok(conf) = MNode::parse_shared("moqui-conf", &context.factory.conf_text()) {
         for element in conf.named_iter("dev-aide") {
             for app in element.named_iter("task-app") {
                 let attr = |name: &str| app.attribute(name).unwrap_or_default();

@@ -55,7 +55,7 @@ fn normalize_host(host: &str) -> String {
 /// The hosts of the conf's `public-site` routes (mr-pass's sites), normalized: on an edge node, names no local node's
 /// setup may claim (plans/Edge-Node.md §5.7).
 pub fn hosts(factory: &ExecutionContextFactory) -> Vec<String> {
-    let Ok(conf) = MNode::parse_shared("moqui-conf", factory.conf_text()) else {
+    let Ok(conf) = MNode::parse_shared("moqui-conf", &factory.conf_text()) else {
         return Vec::new();
     };
     let Some(list) = conf.first_named("webapp-list") else {
@@ -77,7 +77,7 @@ pub(super) fn resolve(
     request: &WebRequest,
     current_root: &str,
 ) -> Result<Option<PublicSiteRoute>, Error> {
-    let conf = MNode::parse_shared("moqui-conf", factory.conf_text())?;
+    let conf = MNode::parse_shared("moqui-conf", &factory.conf_text())?;
     resolve_conf(&conf, request, current_root)
 }
 

@@ -18,8 +18,8 @@
 //! reloads the kinds in dependency order (entities, services, ECA rules, REST, screens and the files they read,
 //! skills), each kind once and each on its own: a failure is a problem of its file and the rest go on. A service, ECA
 //! or REST file that does not parse keeps the definitions loaded before, with the parse error as its problem. Entity
-//! files take a restart for now (F5 is staged), and conf and Rust changes a restart or a rebuild, which the report
-//! says. The dev-aide's save and the file watcher call it; the last reports are kept for the reload log and agents.
+//! files relink the model (F5), and conf and Rust changes take a restart or a rebuild, which the report says. The
+//! dev-aide's save and the file watcher call it; the last reports are kept for the reload log and agents.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -52,7 +52,8 @@ pub enum ArtifactKind {
     Script,
     Skill,
     Data,
-    /// `component.xml`, `MoquiConf.xml` or the runtime conf: a restart.
+    /// `component.xml`, `MoquiConf.xml` or the runtime conf: the conf reloads what can be live, the rest and a
+    /// `component.xml` take a restart.
     Conf,
     /// Rust source or a `Cargo.toml`: a rebuild.
     Rust,
@@ -186,9 +187,21 @@ pub fn recent_reports(factory: &ExecutionContextFactory) -> Vec<Arc<ReloadReport
 /// Reload what `paths` define on `factory`, in the entered context or a new one, and answer what was done. Paths in
 /// no component (other than the runtime conf) and paths of no known kind are left out of the report.
 pub fn reload_paths(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) -> ReloadReport {
+    with_reload_lock(factory, || reload_paths_held(factory, paths))
+}
+
+/// Run `body` holding the lock a reload holds, so no reload (a save, the file watcher) runs beside it: the load of a
+/// component (crate::deploy), which reloads with [`reload_paths_held`].
+pub(crate) fn with_reload_lock<R>(factory: &ExecutionContextFactory, body: impl FnOnce() -> R) -> R {
+    let reloads = reloads_of(factory);
+    let _running = lock(&reloads.running);
+    body()
+}
+
+/// [`reload_paths`] with the reload lock already held ([`with_reload_lock`]).
+pub(crate) fn reload_paths_held(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) -> ReloadReport {
     let reloads = reloads_of(factory);
     let report = {
-        let _running = lock(&reloads.running);
         {
             let mut handled = lock(&reloads.handled);
             if handled.len() > 10_000 {
@@ -236,6 +249,7 @@ fn run(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) -> ReloadRepor
         }
     }
     files.sort_by_key(|file| file.kind.order());
+    reload_conf(factory, &mut files);
     let relinked = reload_entities(factory, &mut files);
     let services_changed = reload_services(factory, &mut files);
     // a SECA rule naming a service not defined when the rules were read was left out: read them again when services
@@ -262,6 +276,7 @@ fn run(factory: &Arc<ExecutionContextFactory>, paths: &[PathBuf]) -> ReloadRepor
 fn classify(factory: &ExecutionContextFactory, path: &Path) -> Option<FileReload> {
     let display = path.display().to_string();
     let conf_dir = canonical(&factory.runtime_dir().join("conf"));
+    let runtime_conf = moqui_core::context::runtime_conf_file(factory.runtime_dir()).map(|file| canonical(&file));
     let found = factory.components().iter().find_map(|component| {
         let root = canonical(&component.location);
         path.strip_prefix(&root)
@@ -274,6 +289,7 @@ fn classify(factory: &ExecutionContextFactory, path: &Path) -> Option<FileReload
             (Some(name), kind)
         }
         None if path.starts_with(&conf_dir) && has_extension(path, "xml") => (None, ArtifactKind::Conf),
+        None if runtime_conf.as_deref() == Some(path) => (None, ArtifactKind::Conf),
         None => return None,
     };
     let mut file = FileReload {
@@ -289,7 +305,8 @@ fn classify(factory: &ExecutionContextFactory, path: &Path) -> Option<FileReload
         rebuild: false,
     };
     match kind {
-        ArtifactKind::Conf => {
+        // a `MoquiConf.xml` or the runtime conf reloads live ([`reload_conf`]); the set of components does not
+        ArtifactKind::Conf if path.file_name().is_some_and(|name| name == "component.xml") => {
             file.summary = "restart to apply".into();
             file.restart = true;
         }
@@ -359,9 +376,11 @@ fn reload_entities(factory: &ExecutionContextFactory, files: &mut [FileReload]) 
         Some(_) if failed => Err("an entity file does not parse, so the model was not relinked".to_string()),
         Some(facade) => {
             // a site's first entity file makes its entity directory, which the model is read from from now on
-            facade.set_component_entity_dirs(moqui_core::context::component_entity_dirs(factory));
+            let dirs = moqui_core::context::component_entity_dirs(factory);
             let paths: Vec<PathBuf> = changed.iter().map(|&at| PathBuf::from(&files[at].path)).collect();
-            facade.relink(&paths).map_err(|err| err.to_string())
+            facade
+                .relink_components(Some(dirs), &paths)
+                .map_err(|err| err.to_string())
         }
         None => Err("no entity facade".to_string()),
     };
@@ -407,6 +426,48 @@ fn reload_entities(factory: &ExecutionContextFactory, files: &mut [FileReload]) 
                 }
             }
             false
+        }
+    }
+}
+
+/// The conf files (a component's `MoquiConf.xml`, the runtime conf): the conf merged again and what can be live
+/// applied once for all of them, the rest named as waiting for a restart (plans/Component-Deploy.md, Phase 1).
+fn reload_conf(factory: &ExecutionContextFactory, files: &mut [FileReload]) {
+    let changed: Vec<usize> = indexes(files, &[ArtifactKind::Conf])
+        .into_iter()
+        .filter(|&at| !files[at].restart)
+        .collect();
+    if changed.is_empty() {
+        return;
+    }
+    match moqui_core::context::conf_reload::apply(factory) {
+        Ok(report) => {
+            for &at in &changed {
+                let file = &mut files[at];
+                file.summary = if report.changes.is_empty() {
+                    "conf reloaded: no change".to_string()
+                } else {
+                    format!(
+                        "conf reloaded: {} change{} live, {} waiting for a restart",
+                        report.applied,
+                        plural(report.applied),
+                        report.pending_restart
+                    )
+                };
+                file.restart = report.pending_restart > 0;
+                for problem in &report.problems {
+                    file.problems
+                        .push(Problem::file_error(&file.path, "reload.conf", problem.clone()));
+                }
+            }
+        }
+        Err(err) => {
+            for &at in &changed {
+                let file = &mut files[at];
+                file.summary = "the conf does not merge, so the running conf stays".into();
+                file.problems
+                    .push(Problem::file_error(&file.path, "reload.conf", err.to_string()));
+            }
         }
     }
 }

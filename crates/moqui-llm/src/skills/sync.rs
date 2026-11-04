@@ -90,7 +90,7 @@ pub struct ReadSkills {
 /// The `skill/` directories of the framework and the components, in load order, with each one's component name.
 pub fn skill_dirs(factory: &ExecutionContextFactory) -> Vec<(String, PathBuf)> {
     let mut dirs: Vec<(String, PathBuf)> = vec![("framework".to_string(), factory.framework_dir().join("skill"))];
-    for component in factory.components() {
+    for component in factory.components().iter() {
         let dir = component.location.join("skill");
         if !dirs.iter().any(|(_, known)| known == &dir) {
             dirs.push((component.name.clone(), dir));

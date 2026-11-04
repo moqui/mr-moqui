@@ -217,8 +217,8 @@ fn vapps_is_not_a_screen_under_webroot() {
 fn text_output_conf_has_the_modes_and_the_print_alias() {
     let context = ExecutionContextFactory::test_context();
     let facade = ScreenFacade::of(context.factory());
-    assert_eq!(facade.mime_type("csv"), Some("text/csv"));
-    assert_eq!(facade.mime_type("xsl-fo"), Some("text/html"));
+    assert_eq!(facade.mime_type("csv").as_deref(), Some("text/csv"));
+    assert_eq!(facade.mime_type("xsl-fo").as_deref(), Some("text/html"));
     assert!(facade.is_always_standalone("xsl-fo"));
     assert!(facade.is_always_standalone("html-print"));
     assert!(!facade.is_always_standalone("html"));
@@ -228,7 +228,7 @@ fn text_output_conf_has_the_modes_and_the_print_alias() {
         .unwrap()
         .macro_template_location
         .ends_with("ScreenQvt.js"));
-    assert_eq!(facade.mime_type("tui"), Some("application/json"));
+    assert_eq!(facade.mime_type("tui").as_deref(), Some("application/json"));
     assert!(facade.is_always_standalone("tui"));
     assert_eq!(facade.output_kind("tui"), OutputKind::Json);
     assert_eq!(facade.output_kind("qvt"), OutputKind::Vue);

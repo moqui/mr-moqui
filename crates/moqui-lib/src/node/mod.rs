@@ -263,6 +263,20 @@ impl MNode {
         }
     }
 
+    /// Remove the attribute `name`; false when the element has none.
+    pub fn remove_attribute(&self, name: &str) -> bool {
+        let mut inner = self.inner.borrow_mut();
+        let before = inner.attributes.len();
+        inner.attributes.retain(|(key, _)| **key != *name);
+        inner.attributes.len() != before
+    }
+
+    /// Whether `other` is this very element, not a copy of it.
+    #[must_use]
+    pub fn same_node(&self, other: &MNode) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
+
     /// Copy attribute values from `other` onto this node. Existing attributes not in `other` stay.
     pub fn copy_attributes_from(&self, other: &MNode) {
         if Rc::ptr_eq(&self.inner, &other.inner) {

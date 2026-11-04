@@ -1453,10 +1453,11 @@ fn load_source(
     options: &crate::entity::load_feed::LoadOptions,
 ) -> Result<(u64, Vec<String>), moqui_lib::error::Error> {
     use crate::entity::load_feed::{
-        conf_data_locations, load_entity_data, load_entity_text_file, load_entity_xml_text, location_in_components,
+        component_data_locations, conf_data_locations, load_entity_data, load_entity_text_file, load_entity_xml_text,
+        location_in_components,
     };
     // As Java's `internalRun`: the XML, CSV and JSON text, each in its own transaction, then each location. With
-    // none of those, the conf data of the data types or components.
+    // none of those, the conf data and the components' data of the data types or components.
     let mut records = 0;
     let mut messages = Vec::new();
     let xml = text("xmlText");
@@ -1488,6 +1489,12 @@ fn load_source(
     } else {
         // Only the locations gathered here are narrowed to the components, as Java's `componentNameList`.
         let mut gathered = conf_data_locations(facade)?;
+        let seed = options.data_types.is_empty() || options.data_types.iter().any(|kind| kind == "seed");
+        for component in factory.components().iter() {
+            if component.location != factory.framework_component_dir() {
+                gathered.extend(component_data_locations(&component.name, &component.location, seed));
+            }
+        }
         gathered.retain(|location| location_in_components(location, &options.components));
         gathered
     };

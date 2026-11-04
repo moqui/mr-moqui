@@ -249,7 +249,7 @@ struct Origin {
 /// loopback, or with the conf's `git-server` `allow-http="true"`.
 fn secure(state: &HttpState, over_tls: bool, headers: &axum::http::HeaderMap, peer: SocketAddr) -> bool {
     over_tls
-        || forwarded_https(headers, peer.ip(), state.guard.conf.addressing())
+        || forwarded_https(headers, peer.ip(), state.guard.conf().addressing())
         || peer.ip().is_loopback()
         || state.factory.conf_flag("git-server", "allow-http", false)
 }

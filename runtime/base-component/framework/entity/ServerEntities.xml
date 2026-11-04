@@ -104,6 +104,42 @@ along with this software (see the LICENSE.md file). If not, see
             peers pin when cluster_transport is ssh and the clusterBaseUrl is ssh://host:port.</description></field>
     </entity>
 
+    <!-- A component loaded or deployed on a running server (plans/Component-Deploy.md; docs/tools/Component-Deploy.md):
+        where its files are and where they came from, the data types loaded, and its state. A component placed in a
+        component directory and loaded from System > Components has source directory; one deployed from a git URL has
+        source git. -->
+    <entity entity-name="DeployedComponent" package="moqui.server" use="configuration" cache="never">
+        <field name="componentName" type="text-medium" is-pk="true"/>
+        <field name="source" type="text-short"><description>directory or git</description></field>
+        <field name="storage" type="text-short"><description>For a git source: database (a db GitRepository, its files
+            written to runtime/deployed-component), bare (a remote GitRepository mirror on disk, the same), or clone (a
+            working clone in a component directory).</description></field>
+        <field name="location" type="text-medium"><description>The component's directory.</description></field>
+        <field name="gitRepositoryId" type="id"/>
+        <field name="remoteUrl" type="text-medium"/>
+        <field name="branch" type="text-medium"/>
+        <field name="commitId" type="text-short"/>
+        <field name="username" type="text-medium"/>
+        <field name="accessToken" type="text-medium" encrypt="true"/>
+        <field name="dataTypes" type="text-medium"><description>The data types to load, comma separated.</description></field>
+        <field name="status" type="text-short"><description>deployed (loaded, its data loaded), pending-restart (its
+            files in place, loaded and its data loaded at the next start), failed, or removed (left out at the next
+            start).</description></field>
+        <field name="lastReport" type="text-very-long"/>
+        <field name="changedDate" type="date-time"/>
+        <field name="changedByUserId" type="id"/>
+        <relationship type="one-nofk" related="moqui.resource.GitRepository" short-alias="gitRepository"/>
+    </entity>
+    <entity entity-name="DeployedComponentHistory" package="moqui.server" use="nontransactional" cache="never">
+        <field name="componentName" type="text-medium" is-pk="true"/>
+        <field name="historyDate" type="date-time" is-pk="true"/>
+        <field name="action" type="text-short"><description>load, deploy, update, remove, or data</description></field>
+        <field name="status" type="text-short"/>
+        <field name="commitId" type="text-short"/>
+        <field name="userId" type="id"/>
+        <field name="report" type="text-very-long"/>
+    </entity>
+
     <!-- ========================================================= -->
     <!-- moqui.server.instance -->
     <!-- ========================================================= -->

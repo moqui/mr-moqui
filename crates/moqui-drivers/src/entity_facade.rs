@@ -101,7 +101,7 @@ fn open_facade(
     dialect: &str,
     db: Option<&super::entity_db::EntityDb>,
 ) -> Result<EntityFacade, Error> {
-    let conf = moqui_lib::node::MNode::parse_shared("moqui-conf", factory.conf_text())?;
+    let conf = moqui_lib::node::MNode::parse_shared("moqui-conf", &factory.conf_text())?;
     let tx = moqui_core::transaction::TransactionManager::new(Arc::clone(&driver), pool)?;
     tx.configure_from_conf(&conf)?;
     let mut groups = vec![moqui_core::entity::EntityGroup::new("transactional", dialect, tx)];
@@ -134,7 +134,7 @@ fn other_datasources(conf: &moqui_lib::node::MNode) -> Vec<(String, moqui_lib::n
 #[must_use]
 pub fn embedded_group_pool_max(factory: &ExecutionContextFactory) -> u32 {
     use moqui_core::entity::datasource::{datasource_attribute, datasource_conf, DatasourceKind};
-    let Ok(conf) = moqui_lib::node::MNode::parse_shared("moqui-conf", factory.conf_text()) else {
+    let Ok(conf) = moqui_lib::node::MNode::parse_shared("moqui-conf", &factory.conf_text()) else {
         return 0;
     };
     let embedded = |group: &str| {

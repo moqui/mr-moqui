@@ -66,6 +66,14 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> bool {
     watch(factory, debounce)
 }
 
+/// Watch the directory of a component loaded on a running server (plans/Component-Deploy.md), when the watcher runs.
+pub fn watch_component(factory: &ExecutionContextFactory, dir: &Path) {
+    let Some(dev) = factory.extension_if_present::<Arc<DevWatcher>>() else {
+        return;
+    };
+    dev.watch_tree(dir);
+}
+
 /// Watch `factory`'s components and reload what changes, `debounce` after the last change of a burst.
 pub(crate) fn watch(factory: &Arc<ExecutionContextFactory>, debounce: Duration) -> bool {
     let (sender, events) = channel();
@@ -81,12 +89,20 @@ pub(crate) fn watch(factory: &Arc<ExecutionContextFactory>, debounce: Duration) 
         watched: Mutex::new(BTreeSet::new()),
     });
     let started = std::time::Instant::now();
-    for component in factory.components() {
+    for component in factory.components().iter() {
         dev.watch_tree(&component.location);
     }
     let conf = factory.runtime_dir().join("conf");
     if conf.is_dir() {
         dev.watch_tree(&conf);
+    }
+    // the runtime conf when it is not under runtime/conf: runtime/MoquiConf.xml, or a MOQUI_CONF elsewhere
+    if let Some(parent) = moqui_core::context::runtime_conf_file(factory.runtime_dir())
+        .as_deref()
+        .and_then(Path::parent)
+        .filter(|parent| !parent.starts_with(&conf))
+    {
+        dev.watch_one(parent);
     }
     tracing::info!(
         "Dev reload: watching {} directories of {} components in {} ms; a changed file reloads what it defines",

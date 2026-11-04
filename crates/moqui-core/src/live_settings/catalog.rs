@@ -487,7 +487,7 @@ fn telemetry_on_disk(factory: &ExecutionContextFactory, entry: &Entry, path: &st
         },
         _ => String::new(),
     };
-    let named = conf_names(factory.conf_text(), base, selector, attr);
+    let named = conf_names(&factory.conf_text(), base, selector, attr);
     let value = if value.is_empty() && !named {
         entry.default.to_string()
     } else {

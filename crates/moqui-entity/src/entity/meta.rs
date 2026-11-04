@@ -79,6 +79,18 @@ pub(crate) struct TableState {
     check_lock: Mutex<()>,
 }
 
+/// What an [`EntityFacade::check_tables_ddl`] did.
+#[derive(Clone, Debug, Default)]
+pub struct TableCheck {
+    /// The DDL statements that ran.
+    pub ddl: Vec<String>,
+    /// The steps that failed, each logged with its statement: a table, column, index or foreign key not made.
+    pub errors: usize,
+}
+
+/// How long a DDL statement of [`EntityFacade::check_tables_ddl`] waits for its table's lock on Postgres.
+const DDL_LOCK_TIMEOUT: &str = "5s";
+
 impl EntityFacade {
     pub fn meta(&self) -> EntityDbMeta<'_> {
         EntityDbMeta { facade: self }
@@ -93,17 +105,22 @@ impl EntityFacade {
     }
 
     /// Check the tables of `names` whatever their groups' `startup-add-missing` and `runtime-add-missing` say, and
-    /// answer the DDL statements that ran: the dev tools' check after an entity file changed (plans/design-dev-aide.md
-    /// 8.2). Additive only, as every check is: a missing table is created, missing columns, indexes and foreign keys
-    /// added.
-    pub fn check_tables_ddl(&self, names: &[&str]) -> Result<Vec<String>, Error> {
+    /// answer the DDL statements that ran and the steps that failed: the check after an entity file changed or a
+    /// component was added to a running server (plans/design-dev-aide.md 8.2, plans/Component-Deploy.md). Additive
+    /// only, as every check is: a missing table is created, missing columns, indexes and foreign keys added. On
+    /// Postgres a statement waits at most [`DDL_LOCK_TIMEOUT`] for its table's lock, so a long transaction on the
+    /// table fails the step rather than queueing every query on the table behind it.
+    pub fn check_tables_ddl(&self, names: &[&str]) -> Result<TableCheck, Error> {
         if self.inner.tables.model_only.load(Ordering::Relaxed) {
-            return Ok(Vec::new());
+            return Ok(TableCheck::default());
         }
         DDL_LOG.with(|log| *log.borrow_mut() = Some(Vec::new()));
         let result = self.meta().run(names, true, false);
         let ran = DDL_LOG.with(|log| log.borrow_mut().take()).unwrap_or_default();
-        result.map(|()| ran)
+        result.map(|counts| TableCheck {
+            ddl: ran,
+            errors: counts.errors,
+        })
     }
 
     /// The SQL of a change the table check never makes (plans/design-dev-aide.md 8.2), for a developer to run on a
@@ -628,7 +645,7 @@ fn view_members(facade: &EntityFacade, entity_name: &str) -> Result<(String, Opt
 impl EntityDbMeta<'_> {
     /// Create tables for these entities. View-entities expand to their member entities.
     pub fn check(&self, names: &[&str]) -> Result<(), Error> {
-        self.run(names, true, true)
+        self.run(names, true, true).map(|_| ())
     }
 
     /// Create every non-view entity.
@@ -645,13 +662,13 @@ impl EntityDbMeta<'_> {
             .map(|entity| entity.full_name.clone())
             .collect();
         let refs: Vec<&str> = owned.iter().map(String::as_str).collect();
-        self.run(&refs, true, true)
+        self.run(&refs, true, true).map(|_| ())
     }
 
     /// Check the tables of `names`. The foreign keys of a table that was already there are added when
     /// `fks_for_existing`; a new table always gets them, unless foreign key creation is off.
     /// With `startup`, a group whose datasource turns `startup-add-missing` off is left out.
-    fn run(&self, names: &[&str], fks_for_existing: bool, startup: bool) -> Result<(), Error> {
+    fn run(&self, names: &[&str], fks_for_existing: bool, startup: bool) -> Result<Counts, Error> {
         let concrete = expand(self.facade, names)?;
         let default_group = self.facade.inner.default_group.clone();
         let mut batches: HashMap<String, Batch> = HashMap::new();
@@ -736,7 +753,7 @@ impl EntityDbMeta<'_> {
             "Checked tables for all entities in {:.3} seconds",
             started.elapsed().as_secs_f64()
         );
-        Ok(())
+        Ok(totals)
     }
 }
 
@@ -809,6 +826,44 @@ fn collect(facade: &EntityFacade, name: &str, out: &mut Vec<String>, seen: &mut 
 }
 
 fn apply(
+    facade: &EntityFacade,
+    conn: &mut dyn DbConnection,
+    group: &str,
+    names: &[String],
+    skip_fk: bool,
+    fks_for_existing: bool,
+) -> Result<Counts, Error> {
+    let dialect = names
+        .first()
+        .and_then(|name| facade.with_entity(name, |_, dialect, _| Ok(dialect.clone())).ok());
+    let Some(dialect) = dialect.filter(|dialect| set_lock_timeout(conn, dialect)) else {
+        return apply_steps(facade, conn, group, names, skip_fk, fks_for_existing);
+    };
+    let result = apply_steps(facade, conn, group, names, skip_fk, fks_for_existing);
+    if let Err(err) = execute_conn(conn, "RESET lock_timeout", &[]) {
+        tracing::warn!(error = %err, dialect = %dialect.name, "Could not reset the lock timeout after the table check");
+    }
+    result
+}
+
+/// On the reserve connection of a [`EntityFacade::check_tables_ddl`] on Postgres, a lock timeout for the check: its
+/// statements run in autocommit, so the setting is the session's, and [`apply`] resets it after. True when it was set.
+fn set_lock_timeout(conn: &mut dyn DbConnection, dialect: &Dialect) -> bool {
+    let runtime_check = DDL_LOG.with(|log| log.borrow().is_some());
+    if !runtime_check || !dialect.name.starts_with("postgres") {
+        return false;
+    }
+    match execute_conn(conn, &format!("SET lock_timeout = '{DDL_LOCK_TIMEOUT}'"), &[]) {
+        Ok(_) => true,
+        Err(err) => {
+            tracing::warn!(error = %err, "Could not set a lock timeout for the table check");
+            false
+        }
+    }
+}
+
+/// The steps of [`apply`].
+fn apply_steps(
     facade: &EntityFacade,
     conn: &mut dyn DbConnection,
     group: &str,

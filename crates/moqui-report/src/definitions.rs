@@ -10,8 +10,8 @@ struct Shipped {
     definitions: std::sync::RwLock<Option<std::sync::Arc<[Json]>>>,
 }
 
-/// Load component files once at boot. A bad independent file is logged and skipped; named
-/// duplicates are deterministic and never replace the earlier component's definition.
+/// Load component files at boot, and again after a component is loaded on a running server. A bad independent file is
+/// logged and skipped; named duplicates are deterministic and never replace the earlier component's definition.
 pub fn load_shipped(factory: &moqui_core::context::ExecutionContextFactory) -> Result<usize, Error> {
     let registry = factory.extension(|_| Shipped::default());
     let definitions = scan_shipped(factory);
@@ -71,7 +71,7 @@ fn shipped(ec: &ExecutionContext) -> std::sync::Arc<[Json]> {
 fn scan_shipped(factory: &moqui_core::context::ExecutionContextFactory) -> Vec<Json> {
     let mut out = Vec::new();
     let mut ids = BTreeSet::new();
-    for component in factory.components() {
+    for component in factory.components().iter() {
         let directory = component.location.join("report");
         if !directory.is_dir() {
             continue;

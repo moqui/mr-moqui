@@ -306,14 +306,17 @@ fn each_check_rule_is_in_its_skill_section() {
     }
 }
 
-/// The Rust services register at the `moqui_devkit::` locations the service file names, and at no other.
+/// The Rust services register at the `moqui_devkit::` locations the service files name, and at no other.
 #[test]
 fn the_services_register_at_the_locations_the_service_file_names() {
     let mut map = std::collections::BTreeMap::new();
     crate::service::register(&mut map).unwrap();
     let registered: Vec<&str> = map.keys().copied().collect();
-    let file = moqui_core::context::framework_dir().join("service/org/moqui/impl/DevToolsServices.xml");
-    let text = std::fs::read_to_string(file).unwrap();
+    let dir = moqui_core::context::framework_dir().join("service/org/moqui/impl");
+    let text: String = ["DevToolsServices.xml", "ComponentServices.xml"]
+        .iter()
+        .map(|name| std::fs::read_to_string(dir.join(name)).unwrap())
+        .collect();
     let mut named: Vec<String> = text
         .split("location=\"")
         .skip(1)

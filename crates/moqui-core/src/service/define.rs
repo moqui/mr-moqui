@@ -683,8 +683,9 @@ fn service_roots() -> Vec<PathBuf> {
         return Vec::new();
     };
     let mut roots: Vec<PathBuf> = Vec::new();
+    let components = factory.components();
     let dirs = std::iter::once(factory.framework_component_dir().to_path_buf())
-        .chain(factory.components().iter().map(|info| info.location.clone()));
+        .chain(components.iter().map(|info| info.location.clone()));
     for dir in dirs {
         let root = normalize(&dir.join("service"));
         if !roots.contains(&root) {

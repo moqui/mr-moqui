@@ -19,6 +19,7 @@ mod background;
 mod cache;
 mod component;
 mod conf;
+pub mod conf_reload;
 mod confcache;
 mod factory;
 pub(crate) mod identity;
@@ -29,8 +30,10 @@ pub mod status;
 
 pub use artifact::{Authz, AuthzGuard, AuthzRequired, Tarpit};
 pub use cache::CacheFacade;
-pub use component::{component_entity_dirs, discover_components, ComponentInfo};
-pub use conf::{load_merged_conf, merge_component_confs, merge_conf};
+pub use component::{
+    component_entity_dirs, component_entity_dirs_of, discover_again, discover_components, read_component, ComponentInfo,
+};
+pub use conf::{load_merged_conf, merge_component_confs, merge_conf, runtime_conf_file};
 pub use factory::{
     default_framework_dir, AgentOrigin, BeforeInit, BootOptions, ContextGuard, ExecutionContext,
     ExecutionContextFactory, Executor,

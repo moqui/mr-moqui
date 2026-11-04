@@ -70,7 +70,7 @@ pub(crate) async fn handle(
         }
     }
     let secure = over_tls
-        || forwarded_https(&parts.headers, peer.ip(), state.guard.conf.addressing())
+        || forwarded_https(&parts.headers, peer.ip(), state.guard.conf().addressing())
         || peer.ip().is_loopback();
     let dav_request = DavRequest {
         method: parts.method.as_str().to_string(),

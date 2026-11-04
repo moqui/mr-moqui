@@ -32,6 +32,13 @@ pub(super) fn runtime_conf(runtime_dir: &Path) -> Result<Option<PathBuf>, Error>
     runtime_conf_from(runtime_dir, selected.as_deref())
 }
 
+/// The runtime conf file this runtime merges ([`runtime_conf`]), for the dev file watcher and the conf reload; `None`
+/// when there is none or the one named is missing.
+#[must_use]
+pub fn runtime_conf_file(runtime_dir: &Path) -> Option<PathBuf> {
+    runtime_conf(runtime_dir).ok().flatten()
+}
+
 pub(super) fn runtime_conf_from(runtime_dir: &Path, selected: Option<&OsStr>) -> Result<Option<PathBuf>, Error> {
     match selected.filter(|value| !value.is_empty()) {
         Some(value) => {

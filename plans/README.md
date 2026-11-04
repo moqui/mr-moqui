@@ -43,6 +43,7 @@ Design, status and review documents for MR Moqui. User guides for built features
 
 **Deployment**
 - [Mobile-Desktop.md](Mobile-Desktop.md): the qvt client in Tauri, built in order: a desktop local node as an Edge Client (in process with no port, or a sidecar, one app, built; the checks on installed apps in [Mobile-Desktop-Exit-Checks.md](Mobile-Desktop-Exit-Checks.md)), an offline-capable client of a remote server with sync, then an Android app on that model and iOS; one host transport, device login keys, the call gate per platform, and the Capacitor alternative.
+- [Component-Deploy.md](Component-Deploy.md): component hot-deploy from a git URL and branch (database, bare or working-clone storage) from the System app, and live reload of conf files (watcher, System › Conf, `reload#Conf`, SIGHUP): the conf re-merged and compared by liveness unit, live units applied, the rest named as needing a restart.
 - [Edge-Node.md](Edge-Node.md): a small cloud edge node in front of a local node behind a firewall on a dynamic IP: the link the local node dials out (gRPC both ways), web access, comms at the edge with store and forward, mr-pass on gRPC, MoquiEdgeConf.xml and the attach wizard. Gap analysis, decisions and plan; E0–E10 built, E11 not yet; the manual checks on a deployed edge node are pending.
 
 **[proposals/](proposals/)**: unbuilt, no code in the workspace; each is digested in Future-Plans.

@@ -4792,8 +4792,10 @@ dependencies = [
 name = "moqui-devkit"
 version = "0.1.0"
 dependencies = [
+ "base64 0.23.1",
  "moqui-core",
  "moqui-db",
+ "moqui-git",
  "moqui-lib",
  "notify",
  "oxc_allocator",
@@ -4887,6 +4889,7 @@ dependencies = [
 name = "moqui-host"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "aws-lc-rs",
  "axum",
  "base64 0.23.1",

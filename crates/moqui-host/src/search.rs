@@ -93,7 +93,7 @@ pub fn attach_search(
     entity: &EntityFacade,
     entity_is_postgres: bool,
 ) -> Result<SearchStore, Error> {
-    let conf = SearchConf::from_conf_text(factory.conf_text())?;
+    let conf = SearchConf::from_conf_text(&factory.conf_text())?;
     match conf.backend {
         Backend::OpenSearch => attach_opensearch(factory, entity, &conf),
         Backend::Postgres => {

@@ -187,7 +187,7 @@ pub(crate) async fn handle(
         .iter()
         .filter_map(|(name, value)| Some((name.as_str().to_ascii_lowercase(), value.to_str().ok()?.to_string())))
         .collect();
-    let https = over_tls || forwarded_https(&parts.headers, peer.ip(), state.guard.conf.addressing());
+    let https = over_tls || forwarded_https(&parts.headers, peer.ip(), state.guard.conf().addressing());
     let gateway_request = HttpRequest {
         method: parts.method.as_str().to_string(),
         path: parts.uri.path().strip_prefix("/llm/v1").unwrap_or_default().to_string(),

@@ -400,7 +400,7 @@ pub struct TemplateRegistry {
 
 impl TemplateRegistry {
     pub fn of(factory: &ExecutionContextFactory) -> Arc<Self> {
-        factory.extension(|factory| Self::parse_with_native(factory.conf_text(), Some(factory.native())))
+        factory.conf_derived(|factory| Self::parse_with_native(&factory.conf_text(), Some(factory.native())))
     }
 
     #[cfg(test)]

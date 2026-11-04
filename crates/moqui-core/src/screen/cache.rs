@@ -283,7 +283,8 @@ struct SparsePaths {
 }
 
 pub struct ScreenFacade {
-    conf: ScreenConf,
+    /// The screen part of the merged conf; [`Self::reconf`] replaces it after a conf reload.
+    conf: arc_swap::ArcSwap<ScreenConf>,
     definitions: MCache<String, Arc<ScreenDef>>,
     urls: MCache<String, Arc<ScreenUrlInfo>>,
     /// `//` name searches, keyed by root location and the sparse path. A miss is stored as `None`.
@@ -314,7 +315,7 @@ const SHELL_PROVIDERS_MAX: usize = 2000;
 impl ScreenFacade {
     fn new(factory: &ExecutionContextFactory) -> Self {
         Self {
-            conf: ScreenConf::parse(factory.conf_text()),
+            conf: arc_swap::ArcSwap::from_pointee(ScreenConf::parse(&factory.conf_text())),
             definitions: MCache::new("screen.definition", CacheConfig::new().background(false)),
             urls: MCache::new(
                 "screen.url",
@@ -405,21 +406,31 @@ impl ScreenFacade {
         factory.extension(Self::new)
     }
 
-    pub fn conf(&self) -> &ScreenConf {
-        &self.conf
+    /// The screen part of the merged conf in place now.
+    pub fn conf(&self) -> Arc<ScreenConf> {
+        self.conf.load_full()
+    }
+
+    /// Read the screen part of the merged conf again after a conf reload replaced it (plans/Component-Deploy.md,
+    /// Phase 1): the render modes, the mounts and the settings, and the definitions built with the old ones dropped.
+    pub fn reconf(&self, factory: &ExecutionContextFactory) {
+        self.conf.store(Arc::new(ScreenConf::parse(&factory.conf_text())));
+        self.check_interval_ms
+            .store(configured_check_interval(factory), Ordering::Relaxed);
+        self.clear();
     }
 
     /// Whether `mode` is a render mode with a `screen-text-output`. `xsl-fo` counts as `html-print`.
     pub fn is_render_mode_valid(&self, mode: &str) -> bool {
-        self.conf.text_output.contains_key(canonical_render_mode(mode))
+        self.conf.load().text_output.contains_key(canonical_render_mode(mode))
     }
 
-    pub fn text_output(&self, mode: &str) -> Option<&TextOutput> {
-        self.conf.text_output.get(canonical_render_mode(mode))
+    pub fn text_output(&self, mode: &str) -> Option<TextOutput> {
+        self.conf.load().text_output.get(canonical_render_mode(mode)).cloned()
     }
 
-    pub fn mime_type(&self, mode: &str) -> Option<&str> {
-        self.text_output(mode).map(|output| output.mime_type.as_str())
+    pub fn mime_type(&self, mode: &str) -> Option<String> {
+        self.text_output(mode).map(|output| output.mime_type)
     }
 
     /// Whether `mode` is a `screen-output` mode whose render is bytes, not text.

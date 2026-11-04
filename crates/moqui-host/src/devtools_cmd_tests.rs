@@ -144,11 +144,8 @@ fn a_java_checkout_is_read_directly() {
         factory.framework_component_dir(),
         std::fs::canonicalize(checkout.join("framework")).unwrap()
     );
-    let names: Vec<&str> = factory
-        .components()
-        .iter()
-        .map(|component| component.name.as_str())
-        .collect();
+    let components = factory.components();
+    let names: Vec<&str> = components.iter().map(|component| component.name.as_str()).collect();
     assert!(
         names.contains(&"framework") && names.contains(&"fp-core") && names.contains(&"tools"),
         "{names:?}"

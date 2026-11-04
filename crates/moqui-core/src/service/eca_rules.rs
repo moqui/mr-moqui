@@ -135,7 +135,7 @@ fn load(factory: &ExecutionContextFactory) -> EcaRules {
     let facade = factory.entity();
     let mut known_services = None;
     let started = std::time::Instant::now();
-    for component in factory.components() {
+    for component in factory.components().iter() {
         let dir = component.location.join("service");
         let Ok(read) = std::fs::read_dir(&dir) else {
             continue;

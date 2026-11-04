@@ -563,7 +563,7 @@ impl RenderEnv {
 
     fn mime_type(&self, mode: &str) -> Option<String> {
         let factory = self.factory.as_ref()?;
-        ScreenFacade::of(factory).mime_type(mode).map(str::to_string)
+        ScreenFacade::of(factory).mime_type(mode)
     }
 }
 

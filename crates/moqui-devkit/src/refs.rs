@@ -209,7 +209,7 @@ fn full_entity_name(node: &MNode) -> Option<String> {
 #[must_use]
 pub fn component_xml_files(factory: &moqui_core::context::ExecutionContextFactory) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
-    for component in factory.components() {
+    for component in factory.components().iter() {
         for dir in ["entity", "service", "screen", "screen-extend"] {
             collect(&component.location.join(dir), &mut files);
         }

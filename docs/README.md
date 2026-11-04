@@ -70,6 +70,7 @@ What other systems, devices and clients reach, and what Moqui calls.
 | Guide | What it covers |
 |---|---|
 | [Comms.md](tools/Comms.md) | BasicComms: the Inbox, Compose, chat and the mail settings, and how an app adds to them |
+| [Component-Deploy.md](tools/Component-Deploy.md) | Reloading the conf on a running server (System › Conf, SIGHUP, the dev watcher), what changes live and what waits for a restart, and loading or deploying a component from git without a restart (System › Components) |
 | [Monitoring.md](tools/Monitoring.md) | Telemetry, OTLP in and out, the Monitor and Dashboards apps, and reports |
 
 ## security

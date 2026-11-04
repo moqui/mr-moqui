@@ -39,6 +39,11 @@ pub const RTC_SIGNAL: &str = "rtc-signal";
 /// plans/Monitor-Settings.md), `{"op": "set"|"revert"|"revertAll", ..}`, so every running server applies it.
 pub const RUNTIME_SETTINGS: &str = "runtime-settings";
 
+/// A component deployed or updated from a database repository on one server (System › Components,
+/// plans/Component-Deploy.md), `{"componentName", "action": "deploy"|"update", "from", "to"}`, so every running server
+/// writes its files from the shared repository and loads it; its data is in the shared database already.
+pub const COMPONENT_DEPLOY: &str = "component-deploy";
+
 const RECENT_IDS: usize = 1024;
 
 /// A published message. `body` is the topic payload. `origin_id` is this process.

@@ -184,7 +184,7 @@ fn decode_path(path: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// The `web-protection` conf, read once when the listener starts.
+/// The `web-protection` conf, read when the listener starts and again after a conf reload changes it.
 #[derive(Debug)]
 pub(crate) struct GuardConf {
     /// The per-client parts: rules, rate limits, bans, `max-per-client`.
@@ -475,7 +475,8 @@ pub(crate) struct Counts {
 
 /// The web protection state of one listener set: the conf and the clients seen.
 pub(crate) struct Guard {
-    pub(crate) conf: GuardConf,
+    /// A conf reload replaces it in place ([`Self::replace_conf`]); the clients seen stay.
+    conf: arc_swap::ArcSwap<GuardConf>,
     shards: Vec<Mutex<HashMap<IpAddr, Client>>>,
     tracked: AtomicUsize,
     epoch: Instant,
@@ -503,7 +504,7 @@ pub(crate) struct Refused {
 impl Guard {
     pub(crate) fn new(conf: GuardConf) -> Self {
         Self {
-            conf,
+            conf: arc_swap::ArcSwap::from_pointee(conf),
             shards: (0..SHARDS).map(|_| Mutex::new(HashMap::new())).collect(),
             tracked: AtomicUsize::new(0),
             epoch: Instant::now(),
@@ -517,6 +518,25 @@ impl Guard {
         Self::new(GuardConf::from_node(None, Arc::new(ClientAddressing::default())))
     }
 
+    /// The conf in place now.
+    pub(crate) fn conf(&self) -> arc_swap::Guard<Arc<GuardConf>> {
+        self.conf.load()
+    }
+
+    /// Take `conf` after a conf reload changed the webapp's `web-protection` (plans/Component-Deploy.md, Phase 1):
+    /// the clients seen keep their connections and bans, and their rate and ban windows start again, as the rules
+    /// they count against may have changed.
+    pub(crate) fn replace_conf(&self, conf: GuardConf) {
+        let (limits, bans) = (conf.rate_limits.len(), conf.bans.len());
+        self.conf.store(Arc::new(conf));
+        for shard in &self.shards {
+            for client in moqui_lib::sync::lock(shard).values_mut() {
+                client.arrivals = vec![0; limits];
+                client.windows = vec![(0, 0); bans];
+            }
+        }
+    }
+
     fn now(&self) -> u64 {
         nanos(self.epoch.elapsed()).max(1)
     }
@@ -525,7 +545,7 @@ impl Guard {
     fn key(&self, address: IpAddr) -> IpAddr {
         let address = address.to_canonical();
         if address.is_ipv6() {
-            masked(address, self.conf.ipv6_prefix)
+            masked(address, self.conf().ipv6_prefix)
         } else {
             address
         }
@@ -549,15 +569,15 @@ impl Guard {
         let client = match shard.entry(key) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::hash_map::Entry::Vacant(entry) => {
-                if self.tracked.load(Ordering::Relaxed) >= self.conf.max_tracked {
+                if self.tracked.load(Ordering::Relaxed) >= self.conf().max_tracked {
                     self.counts.untracked.fetch_add(1, Ordering::Relaxed);
                     return None;
                 }
                 self.tracked.fetch_add(1, Ordering::Relaxed);
                 entry.insert(Client {
                     connections: 0,
-                    arrivals: vec![0; self.conf.rate_limits.len()],
-                    windows: vec![(0, 0); self.conf.bans.len()],
+                    arrivals: vec![0; self.conf().rate_limits.len()],
+                    windows: vec![(0, 0); self.conf().bans.len()],
                     banned_until: 0,
                     seen: now,
                 })
@@ -573,11 +593,11 @@ impl Guard {
     }
 
     fn exempt(&self, address: IpAddr) -> bool {
-        self.conf.exempt.iter().any(|range| range.contains(address))
+        self.conf().exempt.iter().any(|range| range.contains(address))
     }
 
     fn denied(&self, address: IpAddr) -> bool {
-        self.conf.deny.iter().any(|range| range.contains(address))
+        self.conf().deny.iter().any(|range| range.contains(address))
     }
 
     fn banned(&self, key: IpAddr) -> bool {
@@ -591,7 +611,7 @@ impl Guard {
     pub(crate) fn admit(self: &Arc<Self>, peer: IpAddr) -> Option<ConnectionSlot> {
         let peer = peer.to_canonical();
         let uncounted = ConnectionSlot { counted: None };
-        if !self.conf.enabled || self.conf.addressing.is_trusted(peer) || self.exempt(peer) {
+        if !self.conf().enabled || self.conf().addressing.is_trusted(peer) || self.exempt(peer) {
             return Some(uncounted);
         }
         let key = self.key(peer);
@@ -599,7 +619,7 @@ impl Guard {
             self.counts.connections_refused.fetch_add(1, Ordering::Relaxed);
             return None;
         }
-        let max = self.conf.max_per_client;
+        let max = self.conf().max_per_client;
         let admitted = self.with_client(key, |client, now| {
             if client.banned_until > now || client.connections >= max {
                 false
@@ -623,11 +643,12 @@ impl Guard {
 
     /// The client of a request from `peer` with `headers`.
     pub(crate) fn client_of(&self, peer: IpAddr, headers: &HeaderMap) -> IpAddr {
-        let header = self.conf.addressing.header();
+        let conf = self.conf();
+        let header = conf.addressing.header();
         let value = (!header.is_empty())
             .then(|| headers.get(header).and_then(|value| value.to_str().ok()))
             .flatten();
-        self.conf.addressing.resolve(peer, value)
+        conf.addressing.resolve(peer, value)
     }
 
     /// The rules and rate limits for a request from `client` (through `peer`), once its head is read. A refusal of a
@@ -641,10 +662,10 @@ impl Guard {
         path: &str,
         headers: &HeaderMap,
     ) -> Result<(), Refused> {
-        if !self.conf.enabled || self.exempt(client) {
+        if !self.conf().enabled || self.exempt(client) {
             return Ok(());
         }
-        let close = !self.conf.addressing.is_trusted(peer.to_canonical());
+        let close = !self.conf().addressing.is_trusted(peer.to_canonical());
         let key = self.key(client);
         if self.denied(client) || self.banned(key) {
             self.counts.denied.fetch_add(1, Ordering::Relaxed);
@@ -657,25 +678,27 @@ impl Guard {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("")
             .to_ascii_lowercase();
-        if !agent.is_empty() && self.conf.deny_agents.iter().any(|part| agent.contains(part.as_str())) {
+        if !agent.is_empty() && self.conf().deny_agents.iter().any(|part| agent.contains(part.as_str())) {
             return Err(self.deny(key, client, refusal(403, "forbidden", close, None)));
         }
-        if !self.conf.methods.is_empty() && !self.conf.methods.iter().any(|allowed| allowed == method) {
+        if !self.conf().methods.is_empty() && !self.conf().methods.iter().any(|allowed| allowed == method) {
             let mut response = refusal(405, "method not allowed", false, None);
-            if let Ok(allow) = self.conf.methods.join(", ").parse() {
+            if let Ok(allow) = self.conf().methods.join(", ").parse() {
                 response.headers_mut().insert(axum::http::header::ALLOW, allow);
             }
             return Err(self.deny(key, client, response));
         }
         let decoded = decode_path(path);
-        if self.conf.deny_paths.iter().any(|glob| glob.matches(&decoded)) {
+        if self.conf().deny_paths.iter().any(|glob| glob.matches(&decoded)) {
             return Err(self.deny(key, client, refusal(404, "not found", false, None)));
         }
-        if self.conf.rate_limits.is_empty() {
+        if self.conf().rate_limits.is_empty() {
             return Ok(());
         }
-        let limits = &self.conf.rate_limits;
+        let limits = &self.conf().rate_limits;
         let waited = self.with_client(key, |client_state, now| {
+            // a conf reload between reading the rules and this client (Self::replace_conf) changes their count
+            client_state.arrivals.resize(limits.len(), 0);
             let mut next = Vec::with_capacity(limits.len());
             for (index, limit) in limits.iter().enumerate() {
                 if !limit.applies(method, &decoded) {
@@ -720,18 +743,20 @@ impl Guard {
     /// Count `event` for `client` toward the bans that count it. Called from the connection task and from request
     /// workers (an auth failure).
     pub(crate) fn record(&self, client: IpAddr, event: Event) {
-        if !self.conf.enabled || self.exempt(client) {
+        if !self.conf().enabled || self.exempt(client) {
             return;
         }
         self.record_key(self.key(client), client, event);
     }
 
     fn record_key(&self, key: IpAddr, client: IpAddr, event: Event) {
-        let bans = &self.conf.bans;
+        let bans = &self.conf().bans;
         if !bans.iter().any(|ban| ban.events.contains(&event)) {
             return;
         }
         let started = self.with_client(key, |state, now| {
+            // a conf reload between reading the rules and this client (Self::replace_conf) changes their count
+            state.windows.resize(bans.len(), (0, 0));
             let mut started = None;
             for (index, ban) in bans.iter().enumerate() {
                 if !ban.events.contains(&event) {
@@ -764,7 +789,7 @@ impl Guard {
     /// Drop the clients idle past every window, with no open connection and no ban.
     pub(crate) fn sweep(&self) {
         let now = self.now();
-        let idle = self.conf.idle_after();
+        let idle = self.conf().idle_after();
         for shard in &self.shards {
             let mut shard = moqui_lib::sync::lock(shard);
             let before = shard.len();
@@ -777,7 +802,7 @@ impl Guard {
 
     /// A 503 for a busy server, with `Retry-After`.
     pub(crate) fn unavailable(&self, text: &str) -> Response {
-        refusal(503, text, false, Some(self.conf.retry_after))
+        refusal(503, text, false, Some(self.conf().retry_after))
     }
 
     /// The `/metrics` lines.
@@ -817,7 +842,7 @@ impl Guard {
 
     /// Log at startup what is on, and a forwarding header that is believed from anyone.
     pub(crate) fn log_start(&self) {
-        let addressing = &self.conf.addressing;
+        let addressing = &self.conf().addressing;
         if !addressing.header().is_empty() && !addressing.has_trusted() {
             tracing::warn!(
                 "client-ip-header {} is believed from any peer: set trusted-proxies (webapp_trusted_proxies) to the \
@@ -825,12 +850,12 @@ impl Guard {
                 addressing.header()
             );
         }
-        if self.conf.enabled {
+        if self.conf().enabled {
             tracing::info!(
                 "Web protection on: {} rate limits, {} bans, {} connections per client",
-                self.conf.rate_limits.len(),
-                self.conf.bans.len(),
-                self.conf.max_per_client
+                self.conf().rate_limits.len(),
+                self.conf().bans.len(),
+                self.conf().max_per_client
             );
         } else {
             tracing::info!(

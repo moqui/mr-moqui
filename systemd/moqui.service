@@ -15,6 +15,9 @@ User=moqui
 Group=moqui
 WorkingDirectory=/opt/moqui
 ExecStart=/opt/moqui/moqui
+# `systemctl reload moqui` reloads the conf files: what can change live does, the rest is logged as waiting for a
+# restart (docs/tools/Component-Deploy.md).
+ExecReload=/bin/kill -HUP $MAINPID
 # Optional variables that must exist before the process starts (MOQUI_CONF, MOQUI_RUNTIME).
 # The binary reads /opt/moqui/.env itself after the conf merge. That file does not select
 # MOQUI_CONF, so this is a different file on purpose.

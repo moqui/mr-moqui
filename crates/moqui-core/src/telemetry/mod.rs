@@ -502,7 +502,7 @@ pub fn for_factory(factory: &ExecutionContextFactory) -> Arc<Telemetry> {
         if !name.is_empty() {
             resource.service_name = name;
         }
-        Arc::new(Telemetry::from_conf(factory.conf_text(), resource))
+        Arc::new(Telemetry::from_conf(&factory.conf_text(), resource))
     }));
     if !telemetry.shared.config.warnings.is_empty() && !telemetry.shared.warned_legacy.swap(true, Ordering::Relaxed) {
         for warning in &telemetry.shared.config.warnings {

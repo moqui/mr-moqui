@@ -156,7 +156,7 @@ where
     } = serving;
     let service = hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
         let client = web.guard.client_of(remote.ip(), request.headers());
-        let https = secure || forwarded_https(request.headers(), remote.ip(), web.guard.conf.addressing());
+        let https = secure || forwarded_https(request.headers(), remote.ip(), web.guard.conf().addressing());
         let peer = Peer {
             remote,
             client,

@@ -133,7 +133,7 @@ impl DbDriver for Closed {
 ///
 /// Returns an error when the conf does not parse or the datasource cannot be read.
 pub fn transactional_conf(factory: &ExecutionContextFactory) -> Result<DatasourceConf, Error> {
-    let conf = MNode::parse_shared("moqui-conf", factory.conf_text())?;
+    let conf = MNode::parse_shared("moqui-conf", &factory.conf_text())?;
     datasource_conf(&conf, "transactional")
 }
 

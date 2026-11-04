@@ -57,10 +57,10 @@ pub use find::{EntityFind, EntityListIterator};
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub use fk::FkScope;
-pub use meta::{DdlConf, EntityDbMeta};
+pub use meta::{DdlConf, EntityDbMeta, TableCheck};
 /// The condition tree `EntityFind::condition` takes, so callers need not depend on `moqui-db`.
 pub use moqui_db::sql::{CompareOp, Condition};
-pub use relink::RelinkReport;
+pub use relink::{RelinkPreview, RelinkReport};
 pub use schema::{document as schema_document, FieldEnums};
 pub use search_form::SearchFormResult;
 #[cfg(any(test, feature = "test-support"))]

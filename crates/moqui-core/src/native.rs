@@ -41,6 +41,15 @@ pub struct NativeComponent {
 }
 inventory::collect!(NativeComponent);
 
+/// Whether the binary links a native crate for the component `name` (its `submit_component!`): a component with Rust
+/// code loads only at boot, when the binary links it (plans/Component-Deploy.md).
+#[must_use]
+pub fn component_linked(name: &str) -> bool {
+    inventory::iter::<NativeComponent>
+        .into_iter()
+        .any(|entry| entry.name == name)
+}
+
 pub type Parameters = BTreeMap<String, Value>;
 
 /// XML metadata passed to a linked function or custom service runner.

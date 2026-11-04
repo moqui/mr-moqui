@@ -42,6 +42,7 @@ mod backup;
 mod chat_actors;
 mod cluster_notify;
 mod collab;
+mod component_deploy;
 mod component_load;
 mod create_or_update_race;
 mod devaide;

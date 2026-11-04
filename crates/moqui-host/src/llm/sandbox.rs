@@ -94,9 +94,9 @@ pub(crate) async fn frame(
     request: Request,
 ) -> Response {
     let over_tls = request.extensions().get::<TlsConnection>().is_some();
-    let https = over_tls || forwarded_https(request.headers(), peer.ip(), state.guard.conf.addressing());
+    let https = over_tls || forwarded_https(request.headers(), peer.ip(), state.guard.conf().addressing());
     let header = |name: &str| request.headers().get(name).and_then(|value| value.to_str().ok());
-    let believed = state.guard.conf.addressing().believes(peer.ip());
+    let believed = state.guard.conf().addressing().believes(peer.ip());
     let host = frame_host(
         header("x-forwarded-host"),
         header("host"),

@@ -59,7 +59,7 @@ pub fn rule_list(factory: &ExecutionContextFactory) -> Vec<EcaRuleInfo> {
         .iter()
         .map(|kind| ((*kind).to_string(), Vec::new()))
         .collect();
-    for component in factory.components() {
+    for component in factory.components().iter() {
         for (dir, suffixes) in [
             (
                 component.location.join("service"),

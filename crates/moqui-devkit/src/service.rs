@@ -41,6 +41,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     rust_service!(map, get_artifact_bindings)?;
     rust_service!(map, get_artifact_extensions)?;
     rust_service!(map, rebuild_artifact_index)?;
+    crate::deploy::register(map)?;
     Ok(())
 }
 

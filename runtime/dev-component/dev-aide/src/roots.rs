@@ -126,7 +126,7 @@ pub fn roots(factory: &ExecutionContextFactory, settings: &Settings, facade: Opt
             }),
         }
     }
-    for component in factory.components() {
+    for component in factory.components().iter() {
         let dir = canonical(&component.location);
         match git_top(&dir) {
             Some(top) => add(&mut found, top, RootKind::Git, Some((component.name.clone(), dir))),

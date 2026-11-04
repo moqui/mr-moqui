@@ -379,7 +379,9 @@ fn io_error(location: &str, err: &std::io::Error) -> Error {
 
 pub struct ResourceFacade {
     runtime_dir: PathBuf,
-    components: HashMap<String, PathBuf>,
+    /// `component://` roots by component name; a component loaded on a running server is added
+    /// (plans/Component-Deploy.md).
+    components: RwLock<HashMap<String, PathBuf>>,
     /// Shared with the factory. `None` until the host installs an entity facade.
     entity: Arc<RwLock<Option<EntityFacade>>>,
     providers: RwLock<HashMap<String, Arc<dyn crate::native::ResourceProvider>>>,
@@ -393,10 +395,15 @@ impl ResourceFacade {
     ) -> Self {
         Self {
             runtime_dir,
-            components,
+            components: RwLock::new(components),
             entity,
             providers: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// Add or replace `component://` roots: a component loaded on a running server (plans/Component-Deploy.md).
+    pub(crate) fn register_components(&self, roots: impl IntoIterator<Item = (String, PathBuf)>) {
+        moqui_lib::sync::write(&self.components).extend(roots);
     }
 
     /// The entity facade slot shared with the factory, for a provider that reads and writes through it (the `git`
@@ -1006,16 +1013,12 @@ impl ResourceFacade {
             Some((name, relative)) => (name, relative.trim_start_matches('/')),
             None => (stripped, ""),
         };
-        let Some(root) = self.components.get(name) else {
+        let Some(root) = moqui_lib::sync::read(&self.components).get(name).cloned() else {
             return Err(Error::new(format!(
                 "component {name} is not registered for location {location}"
             )));
         };
-        let path = if relative.is_empty() {
-            root.clone()
-        } else {
-            root.join(relative)
-        };
+        let path = if relative.is_empty() { root } else { root.join(relative) };
         Ok(ResourceRef {
             location: location.to_string(),
             stored: Stored::File(FileResource::new(path.to_string_lossy())),

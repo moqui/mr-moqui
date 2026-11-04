@@ -29,7 +29,7 @@ pub fn open_for_factory(
     default_group: &str,
     groups: Vec<EntityGroup>,
 ) -> Result<EntityFacade, Error> {
-    let conf = MNode::parse_shared("moqui-conf", factory.conf_text())?;
+    let conf = MNode::parse_shared("moqui-conf", &factory.conf_text())?;
     // the framework component's entities: a Java Moqui checkout's own when the artifact tools boot on one
     let facade = EntityFacade::open_components_with_conf(
         factory.framework_component_dir(),
