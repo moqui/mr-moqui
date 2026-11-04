@@ -653,7 +653,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:sequence>
                 <xs:element minOccurs="0" name="connections"><xs:complexType>
                     <xs:attribute name="max" type="xs:string"><xs:annotation><xs:documentation>
-                        Connections served at once, HTTP and HTTPS together (webapp_max_connections, 1024). Past it new
+                        Connections served at once, HTTP and HTTPS together (webapp_max_connections, 4096). Past it new
                         connections wait until one closes.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-per-client" type="xs:string"><xs:annotation><xs:documentation>
                         Connections from one client address at once (64); past it a new one is closed. Trusted proxies

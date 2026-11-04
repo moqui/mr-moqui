@@ -76,8 +76,8 @@ pub(crate) struct ListenLimits {
     /// `request-timeout` (`webapp_request_timeout`), default 300: from the request head to the response head, or the
     /// answer is 504. `/notws` and `/termws` are exempt, and a response body, such as a long download, is sent after it.
     pub request: Option<Duration>,
-    /// `max` (`webapp_max_connections`), default 1024: connections served at once, HTTP and HTTPS together. Past it
-    /// the listeners stop accepting until one closes.
+    /// `max` (`webapp_max_connections`), default 4096: connections served at once, HTTP and HTTPS together, upgraded
+    /// WebSockets included until they close. Past it the listeners stop accepting until one closes.
     pub connections: usize,
     /// `shutdown-timeout` (`webapp_shutdown_timeout`), default 30: after a stop, how long open connections may take to
     /// finish before the listener stops without them.
@@ -118,7 +118,7 @@ impl ListenLimits {
             body: seconds("requests", "body-timeout", "webapp_body_timeout", 60),
             upload_idle: seconds("requests", "upload-idle-timeout", "webapp_upload_idle_timeout", 60),
             request: seconds("requests", "request-timeout", "webapp_request_timeout", 300),
-            connections: count("connections", "max", "webapp_max_connections", 1024),
+            connections: count("connections", "max", "webapp_max_connections", 4096),
             shutdown: seconds("connections", "shutdown-timeout", "webapp_shutdown_timeout", 30),
             max_uri: count("requests", "max-uri-length", "", 8192),
             max_header_bytes: count("requests", "max-header-bytes", "", 64 * 1024).max(MIN_HEADER_BYTES),
@@ -142,7 +142,7 @@ impl ListenLimits {
             body: None,
             upload_idle: None,
             request: None,
-            connections: 1024,
+            connections: 4096,
             shutdown: None,
             max_uri: 8192,
             max_header_bytes: 64 * 1024,
