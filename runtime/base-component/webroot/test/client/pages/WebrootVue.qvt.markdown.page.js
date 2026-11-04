@@ -100,6 +100,26 @@ test("the markdown component's template compiles and takes its props", () => {
     assert.deepEqual(comp.emits, ["outline", "rendered", "link"]);
 });
 
+test("copyable: the template has the copy button, and copy writes the text to the clipboard and says so", async () => {
+    const comp = moqui.qvt.components["m-markdown"];
+    assert.match(comp.template, /<q-btn v-if="copyable" class="m-markdown-copy"[^>]*:aria-label="copyLabel" @click.stop="copy">/);
+    const written = [];
+    const notified = [];
+    const had = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true,
+        value: { writeText: (text) => { written.push(text); return Promise.resolve(); } } });
+    try {
+        comp.methods.copy.call({ text: "# Doc\n\nText", $q: { notify: (opts) => notified.push(opts) } });
+        await Promise.resolve();
+        await Promise.resolve();
+    } finally {
+        if (had) Object.defineProperty(navigator, "clipboard", had); else delete navigator.clipboard;
+    }
+    assert.deepEqual(written, ["# Doc\n\nText"]);
+    assert.equal(notified.length, 1);
+    assert.equal(notified[0].message, "Copied");
+});
+
 test("a mermaid fence is a pre for the diagram, its text escaped; mermaid false and the other languages stay code blocks", () => {
     const text = "```mermaid\nflowchart LR\n  a[\"A <b>\"] --> b\n```\n\n```js\nx\n```";
     const out = md.render(marked, text, {});
