@@ -22,6 +22,14 @@
                 <!-- AndroidTV support -->
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- The server's SSO hand-back (org.moqui.mobile:/sso?code=...&state=..., moqui_client::sso::MOBILE_REDIRECT),
+                from the system browser: tao hands the VIEW intent to the app as RunEvent::Opened (src/lib.rs). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="org.moqui.mobile" android:path="/sso" />
+            </intent-filter>
         </activity>
 
         <provider

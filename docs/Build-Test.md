@@ -333,8 +333,16 @@ sdkmanager 'platform-tools' 'emulator' 'platforms;android-37.0' 'build-tools;36.
 ./moq android emulator                       # create (once) and start the moqui-36 AVD, on KVM; adb emu kill
 ./moq android dev                            # build, install and run on it, or on a phone over adb
 ./moq android build --target x86_64 --apk    # debug APK; --release for a release one; aarch64 for phones
-scripts/check-android.sh                     # clippy for both Android targets, on moqui-client and the app
+scripts/check-android.sh                     # clippy for both Android targets: moqui-client, moqui-client-tauri, the app
+scripts/android-smoke.sh                     # when asked, not in test-all: install, start, the shell's ready line
+adb reverse tcp:8080 tcp:8080                # ./moq run on this machine as the app's http://localhost:8080
 ```
+
+`./moq android` (but `init`) first stages the client's shell into `target/mobile-shell`, the same step and layout as
+the desktop bundle's (`stage_client_shell`), which the app embeds as its Tauri assets. The app's host logic is tested on
+the desktop: `cd crates/moqui-mobile && CARGO_TARGET_DIR=../../target cargo test` (a placeholder page stands in for an
+unstaged shell), and the Tauri glue it shares with the desktop app in `crates/moqui-client-tauri` the same way. How the
+app works on Android is [Mobile-Client](ui/Mobile-Client.md).
 
 `scripts/android-env.sh`, which `./moq android` and `scripts/check-android.sh` source, finds the SDK, the newest NDK
 in it and the JDK (on macOS `java_home`'s, else Android Studio's), and exports `ANDROID_HOME`, `NDK_HOME` and

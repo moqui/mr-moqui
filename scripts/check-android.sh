@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Clippy, with warnings denied, for Android (aarch64-linux-android for phones, x86_64-linux-android for the emulator),
-# on the client crate and the mobile app (plans/Mobile-Desktop.md §5, MD6): moqui-client, which has no Tauri, no
+# on the client crate, the client glue the apps share (crates/moqui-client-tauri) and the mobile app
+# (plans/Mobile-Desktop.md §5, MD6): moqui-client, which has no Tauri, no
 # framework and no async API, so the client host keeps building for the mobile app, and crates/moqui-mobile, the Tauri
 # app that links it. Their TLS (rustls on aws-lc, and rustls-platform-verifier) compiles C with the NDK's clang, so
 # this needs:
@@ -32,4 +33,6 @@ for target in $targets; do
     cargo clippy -p moqui-client --no-deps --target "$target" --all-targets "$@" -- -D warnings
     echo "== cargo clippy in $mobile --target $target" >&2
     (cd "$mobile" && CARGO_TARGET_DIR="$root/target" cargo clippy --no-deps --target "$target" -- -D warnings)
+    echo "== cargo clippy -p moqui-client-tauri in $mobile --target $target" >&2
+    (cd "$mobile" && CARGO_TARGET_DIR="$root/target" cargo clippy -p moqui-client-tauri --no-deps --target "$target" -- -D warnings)
 done

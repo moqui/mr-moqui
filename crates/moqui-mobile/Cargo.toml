@@ -1,6 +1,6 @@
-# The mobile app (plans/Mobile-Desktop.md, MD6): for now the stage 5 spike, a Tauri app on Android's WebView that links
-# the client crate. Not a workspace member, as crates/moqui-desktop: Tauri stays out of the server builds and
-# `cargo test --workspace`. `./moq android` runs the Tauri CLI here (see README.md).
+# The mobile app (plans/Mobile-Desktop.md, MD6): the client of a remote server on Android's WebView, on the client crate
+# and the Tauri glue it shares with the desktop app. Not a workspace member, as crates/moqui-desktop: Tauri stays out of
+# the server builds and `cargo test --workspace`. `./moq android` runs the Tauri CLI here (see README.md).
 
 [package]
 name = "moqui-mobile"
@@ -17,19 +17,27 @@ path = "src/lib.rs"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [dependencies]
-# The client of a remote server, as the desktop app's client mode.
+# The client of a remote server, as the desktop app's client mode, and the Tauri glue the desktop app shares.
 moqui-client = { path = "../moqui-client" }
-# The same Tauri as the desktop app, so the client glue can be shared; here on the wry runtime (the platform WebView),
-# which tauri::mobile_entry_point names.
+moqui-client-tauri = { path = "../moqui-client-tauri" }
+moqui-lib = { path = "../moqui-lib" }
+# The same Tauri as the desktop app; here on the wry runtime (the platform WebView), which tauri::mobile_entry_point
+# names.
 tauri = { version = "=3.0.0-alpha.5", features = ["unstable"] }
 tauri-runtime-wry = "=3.0.0-alpha.5"
+# The page bridge's notify (src/commands.rs), with its Kotlin side on Android.
+tauri-plugin-notification = "=3.0.0-alpha.3"
+# A page's request body through the host (src/scheme.rs scheme_fetch).
+base64 = "0.23"
 serde_json = "1"
 log = "0.4"
+# moqui-client logs through tracing: with no subscriber its events go to log, so to logcat.
+tracing = { version = "0.1", features = ["log"] }
 
 [target.'cfg(target_os = "android")'.dependencies]
 # Logcat, under the tag moqui-mobile.
 android_logger = "0.15"
-# The JVM and the app context Tauri's activity set (ndk-context), for the TLS verifier's init.
+# The JVM and the app context Tauri's activity set (ndk-context), for the TLS verifier, the Keystore and intents.
 ndk-context = "0.1"
 # As rustls-platform-verifier 0.7's.
 jni = "0.22"

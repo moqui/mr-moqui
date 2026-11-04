@@ -174,6 +174,31 @@ fn the_shell_runs_one_worker_an_encrypted_call_s_staged_sframe_transform() {
 }
 
 #[test]
+fn an_app_that_embeds_the_shell_finds_each_file_in_the_staged_layout() {
+    let assets = Assets::embedded("# the libraries\nvue\nquasar\n");
+    assert_eq!(assets.staged_path("/").as_deref(), Some("shell/index.html"));
+    assert_eq!(
+        assets.staged_path("/shell/js/shell.js").as_deref(),
+        Some("shell/js/shell.js")
+    );
+    assert_eq!(
+        assets.staged_path("/js/MoquiLib.js").as_deref(),
+        Some("webroot/js/MoquiLib.js")
+    );
+    assert_eq!(
+        assets.staged_path("/libs/vue/vue.runtime.global.prod.js").as_deref(),
+        Some("webroot/libs/vue/vue.runtime.global.prod.js")
+    );
+    // a library not listed, a path that climbs, and the server's paths are not the shell's files
+    assert_eq!(assets.staged_path("/libs/tiptap/tiptap.js"), None);
+    assert_eq!(assets.staged_path("/js/../../secret"), None);
+    assert_eq!(assets.staged_path("/qapps/clientConfig"), None);
+    let page = asset("/", "shell/index.html", b"<html>".to_vec());
+    assert!(page.page && page.content_type.starts_with("text/html"));
+    assert!(asset(SFRAME_WORKER, "webroot/js/WebrootSFrameWorker.js", Vec::new()).worker);
+}
+
+#[test]
 fn a_bundle_reads_its_staged_copy() {
     let assets = Assets::staged(Path::new("/App/Resources"));
     assert_eq!(

@@ -4,13 +4,13 @@
   "version": "0.1.0",
   "identifier": "org.moqui.mobile",
   "build": {
-    "frontendDist": "dist"
+    "frontendDist": "../../target/mobile-shell"
   },
   "app": {
-    "withGlobalTauri": true,
-    "windows": [{ "title": "MR Moqui" }],
+    "withGlobalTauri": false,
+    "windows": [],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+      "csp": null
     }
   },
   "bundle": {

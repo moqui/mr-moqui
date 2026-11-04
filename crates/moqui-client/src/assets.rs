@@ -86,6 +86,31 @@ impl Assets {
         Self { shell, webroot, libs }
     }
 
+    /// The shell's files as a host keeps them itself in the staged layout (the mobile app's, embedded in the app), with
+    /// the libraries of `libs_txt` (the text of `shell/libs.txt`): [`Self::staged_path`] says where a path's file is,
+    /// and the host reads it and makes its answer with [`asset`].
+    pub fn embedded(libs_txt: &str) -> Self {
+        let libs = libs_txt
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(str::to_string)
+            .collect();
+        Self {
+            shell: PathBuf::from("shell"),
+            webroot: PathBuf::from("webroot"),
+            libs,
+        }
+    }
+
+    /// Where the file of a request's path is in the staged layout of [`Self::embedded`] (`shell/<file>`,
+    /// `webroot/js/...`, `webroot/libs/<lib>/...`, `webroot/css/...`), or none when it is not one of the shell's files.
+    pub fn staged_path(&self, path: &str) -> Option<String> {
+        let file = self.file_of(path)?;
+        let parts: Vec<&str> = file.iter().filter_map(|part| part.to_str()).collect();
+        Some(parts.join("/"))
+    }
+
     /// Whether a path is one of the shell's own (its page, or under `/shell/`, `/js/`, `/libs/` or `/css/`): answered from
     /// its staged files or not found, never forwarded to the server.
     pub fn is_static(&self, path: &str) -> bool {
@@ -131,6 +156,18 @@ impl Assets {
             page: content_type.starts_with("text/html"),
             worker: path == SFRAME_WORKER,
         })
+    }
+}
+
+/// The shell's file `body` of the request's `path`, kept as `file` (its extension gives the type), as the scheme
+/// answers it: for a host that reads its files itself ([`Assets::embedded`]).
+pub fn asset(path: &str, file: &str, body: Vec<u8>) -> Asset {
+    let content_type = content_type(Path::new(file));
+    Asset {
+        body,
+        content_type,
+        page: content_type.starts_with("text/html"),
+        worker: path == SFRAME_WORKER,
     }
 }
 

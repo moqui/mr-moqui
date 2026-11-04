@@ -838,6 +838,8 @@ client crate (plans/Mobile-Desktop.md, MD6). Commands:
     build      cargo tauri android build: an APK and an AAB for each target, debug unless
                --release (e.g. ./moq android build --target x86_64 --apk)
 
+dev and build stage the client's shell, which the app embeds, in target/mobile-shell first.
+
 Other arguments go to the Tauri CLI. The Android SDK is ANDROID_HOME, else ~/Android/Sdk or
 ~/Library/Android/sdk; the NDK the newest under its ndk/ (or ANDROID_NDK_HOME); the JDK JAVA_HOME,
 else the javac on the PATH (scripts/android-env.sh). It needs the Tauri CLI of the desktop app
@@ -1492,7 +1494,7 @@ task_desktop() {
     fi
     if [ "$command" = build ]; then
         stage_desktop_runtime "$ROOT/target/desktop-runtime"
-        stage_desktop_shell "$ROOT/target/desktop-shell"
+        stage_client_shell "$ROOT/target/desktop-shell"
         stage_desktop_sidecar "$ROOT/target/desktop-bin"
         stage_desktop_notices "$app/Cargo.lock" "$ROOT/target/desktop-notices"
         tauri_args+=(--config '{"bundle":{"resources":{"../../target/desktop-runtime/":"runtime/","../../target/desktop-shell/":"shell-assets/","../../target/desktop-notices/":"notices/"},"externalBin":["../../target/desktop-bin/moqui"]}}')
@@ -1580,6 +1582,8 @@ task_android() {
         run_cmd cp "$ROOT/Cargo.lock" "$app/Cargo.lock" || die "could not copy Cargo.lock"
     fi
     export_var CARGO_TARGET_DIR "$ROOT/target"
+    # The shell the app embeds (its frontendDist), from the same files as the desktop's.
+    [ "$command" = init ] || stage_client_shell "$ROOT/target/mobile-shell"
     if [ "$command" = dev ]; then
         local adb=$ANDROID_HOME/platform-tools/adb serial
         serial=$(android_emulator_serial "$adb")
@@ -1840,10 +1844,11 @@ stage_desktop_sidecar() {
     run_cmd cp "$bin" "$stage/moqui-$triple" || die "could not stage $(rel "$bin") for the bundle"
 }
 
-# The client's shell a bundled desktop app carries in its resources, in $1 (crates/moqui-desktop/src/client/assets.rs):
-# the shell's page and scripts as shell/, and the webroot's client and the libraries the shell loads as webroot/js,
-# webroot/css and webroot/libs/<id>.
-stage_desktop_shell() {
+# The client's shell, in $1, in the layout moqui_client::assets reads (crates/moqui-client/src/assets.rs): the shell's
+# page and scripts as shell/, and the webroot's client and the libraries the shell loads as webroot/js, webroot/css and
+# webroot/libs/<id>. Both apps carry it: a desktop bundle in its resources (target/desktop-shell), the mobile app
+# embedded as its Tauri assets (target/mobile-shell, its frontendDist).
+stage_client_shell() {
     local stage=$1 webroot=$ROOT/runtime/base-component/webroot/screen/webroot lib
     need_tool rsync
     # the libraries of shell/libs.txt only: one dropped from the list goes from the stage too

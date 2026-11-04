@@ -12,27 +12,64 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The mobile app (plans/Mobile-Desktop.md, MD6). For now the stage 5 spike: Tauri on the wry runtime (Android's
-//! WebView) showing a static page, which shows the outcome of one HTTPS request made by moqui-client on a thread of
-//! its own, verified by Android's trust manager through rustls-platform-verifier.
+//! The mobile app (plans/Mobile-Desktop.md MD6, MT1): the client of a remote server, as the desktop app's client mode
+//! (MD3 to MD5), on Tauri with the wry runtime (Android's WebView). Its core is `moqui_client`; the commands and the
+//! schemes' answer are `moqui_client_tauri`'s, shared with the desktop; what is the phone's is here:
+//!
+//! - [`host`]: one webview that shows the bundled shell or a page of the server, and the command set checked by the
+//!   page as the boundary between them.
+//! - [`scheme`]: the shell's files embedded in the app, and what Android's WebView needs of the schemes (no request
+//!   bodies, no redirect status).
+//! - [`keystore`]: the device keys sealed by the Android Keystore (`KeyVault.kt`), in the app's private files.
+//! - [`commands`]: the way back to the shell, a notification, a link outside the app.
+//! - The `<client-conf>` of the build (`client-conf.xml`, read at build time), the stores under the app's data
+//!   directory, the SSO hand-back (`org.moqui.mobile:/sso`, an intent filter), and the lifecycle: the mirror stops when
+//!   the app is paused and starts again when it resumes; the outbox's sender runs while the process does.
 
-use std::sync::{Arc, Mutex};
+#[cfg(target_os = "android")]
+mod android;
+mod commands;
+mod host;
+mod keystore;
+mod scheme;
 
-/// The URL the spike asks for: `MOQUI_MOBILE_PROBE_URL` at build time, else example.com. The client's config path is
-/// added, so any answer but a transport error shows that the TLS handshake passed.
-const PROBE_URL: &str = match option_env!("MOQUI_MOBILE_PROBE_URL") {
-    Some(url) => url,
-    None => "https://example.com",
-};
+use std::borrow::Cow;
+use std::sync::Arc;
 
-/// The probe's outcome, for the page: empty while it runs.
-#[derive(Default)]
-struct Probe(Arc<Mutex<String>>);
+use moqui_client::app::{Client, ClientHost};
+use moqui_client::assets::Assets;
+use moqui_client::conf::ClientConf;
+use moqui_client_tauri::{ClientState, ShellHost, APP_SCHEME, SHELL_ORIGIN, SHELL_SCHEME};
+use tauri::utils::assets::{AssetKey, AssetsIter, CspHash};
+use tauri::webview::PageLoadEvent;
+use tauri::{AppHandle, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
-/// The probe's outcome so far, polled by the page.
-#[tauri::command]
-fn probe_result(probe: tauri::State<'_, Probe>) -> String {
-    probe.0.lock().map(|text| text.clone()).unwrap_or_default()
+use crate::host::{goes, Goes, MobileHost, MAIN};
+
+/// The client's settings of this build: `<client-conf>`, read at build time.
+const CLIENT_CONF: &str = include_str!("../client-conf.xml");
+
+/// The libraries the shell may load (the desktop's `shell/libs.txt`, staged with it).
+const SHELL_LIBS: &str = include_str!("../../moqui-desktop/shell/libs.txt");
+
+/// The page bridge, the one webview's initialization script.
+const BRIDGE: &str = include_str!("bridge.js");
+
+/// No assets for Tauri's own origin: the shell's files are the `moqui-shell` scheme's ([`scheme::EmbeddedShell`]).
+struct NoAssets;
+
+impl tauri::Assets<tauri::DynRuntime> for NoAssets {
+    fn get(&self, _key: &AssetKey) -> Option<Cow<'_, [u8]>> {
+        None
+    }
+
+    fn iter(&self) -> Box<AssetsIter<'_>> {
+        Box::new(std::iter::empty())
+    }
+
+    fn csp_hashes(&self, _html_path: &AssetKey) -> Box<dyn Iterator<Item = CspHash<'_>> + '_> {
+        Box::new(std::iter::empty())
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -43,69 +80,250 @@ pub fn run() {
             .with_max_level(log::LevelFilter::Info)
             .with_tag("moqui-mobile"),
     );
-    let probe = Probe::default();
-    let outcome = Arc::clone(&probe.0);
-    let result = tauri::Builder::default()
+    let mut context = tauri::generate_context!();
+    let files = context.set_assets(Box::new(NoAssets));
+    let mut files = Some(files);
+    let built = tauri::Builder::default()
         .runtime(tauri_runtime_wry::Wry::default())
-        .manage(probe)
-        .invoke_handler(tauri::generate_handler![probe_result])
-        .setup(move |_app| {
-            #[cfg(target_os = "android")]
-            if let Err(err) = android::init_verifier() {
-                log::error!("TLS verifier init failed: {err}");
-            }
-            // reqwest's blocking client must not run on Tauri's async runtime: a plain thread, as the desktop's.
-            std::thread::spawn(move || {
-                let text = run_probe(PROBE_URL);
-                log::info!("probe: {text}");
-                if let Ok(mut slot) = outcome.lock() {
-                    *slot = text;
-                }
-            });
+        .plugin(tauri_plugin_notification::init())
+        .register_asynchronous_uri_scheme_protocol(SHELL_SCHEME, scheme::shell)
+        .register_asynchronous_uri_scheme_protocol(APP_SCHEME, scheme::app)
+        .invoke_handler(tauri::generate_handler![
+            moqui_client_tauri::client_state,
+            moqui_client_tauri::client_sign_in,
+            moqui_client_tauri::client_send_code,
+            moqui_client_tauri::client_sign_out,
+            moqui_client_tauri::client_switch_account,
+            moqui_client_tauri::client_add_account,
+            moqui_client_tauri::client_remove_account,
+            moqui_client_tauri::client_open_remote,
+            moqui_client_tauri::client_take_open,
+            moqui_client_tauri::client_sso_providers,
+            moqui_client_tauri::client_sso_start,
+            moqui_client_tauri::client_sso_cancel,
+            moqui_client_tauri::socket_open,
+            moqui_client_tauri::socket_send,
+            moqui_client_tauri::socket_close,
+            moqui_client_tauri::outbox_add,
+            moqui_client_tauri::outbox_list,
+            moqui_client_tauri::outbox_retry,
+            moqui_client_tauri::outbox_discard,
+            moqui_client_tauri::outbox_unsent,
+            moqui_client_tauri::draft_get,
+            moqui_client_tauri::draft_list,
+            moqui_client_tauri::draft_put,
+            moqui_client_tauri::draft_remove,
+            moqui_client_tauri::file_save,
+            scheme::scheme_fetch,
+            commands::client_show_shell,
+            commands::open_in_shell,
+            commands::notify,
+            commands::open_external
+        ])
+        .setup(move |app| {
+            let embedded = files.take().ok_or("the app was set up twice")?;
+            start(app.handle(), embedded)?;
             Ok(())
         })
-        .run(tauri::generate_context!());
-    if let Err(err) = result {
-        log::error!("the app did not start: {err}");
+        .build(context);
+    match built {
+        Ok(app) => app.run(on_event),
+        Err(err) => log::error!("The app did not start: {err}"),
     }
 }
 
-/// One HTTPS request through moqui-client (its `/qapps/clientConfig`, with no key), described for the page and the log.
-fn run_probe(base: &str) -> String {
-    let conf = moqui_client::conf::ClientConf::parse(r#"<client-conf device-mode="personal"/>"#);
-    let answer = match moqui_client::login::client_config(base, "") {
-        Ok(Some(_)) => "a client config".to_string(),
-        Ok(None) => "401 (TLS verified)".to_string(),
-        // An HTTP status is an answer over a verified connection; a transport error names the TLS failure.
-        Err(err) if err.to_string().contains(": HTTP ") => format!("{err} (TLS verified)"),
-        Err(err) => format!("failed: {err}"),
+/// Start the client: the TLS verifier, the keys, the store under the app's data directory, the shell's webview, and the
+/// key renewal and the outbox's sender.
+fn start(app: &AppHandle, files: Box<dyn tauri::Assets<tauri::DynRuntime>>) -> Result<(), Box<dyn std::error::Error>> {
+    let network = network_ready();
+    let dir = app.path().app_data_dir()?.join("client");
+    let keys = keystore::open_keys(&dir.join("keys"));
+    let conf = ClientConf::parse(client_conf_element());
+    let core = Arc::new(Client::new(&dir, keys, Box::new(move || conf.clone()))?);
+    let host = Arc::new(MobileHost::new(app.clone(), network));
+    *moqui_lib::sync::lock(&host.client) = Some(Arc::clone(&core));
+    let client_host: Arc<dyn ClientHost> = host.clone();
+    let shell_host: Arc<dyn ShellHost> = host.clone();
+    let shell = scheme::EmbeddedShell {
+        layout: Assets::embedded(SHELL_LIBS),
+        files,
     };
-    format!(
-        "moqui-client {} (device mode {}): {base}: {answer}",
-        moqui_client::login::CLIENT_API,
-        conf.device_mode.as_str()
-    )
+    app.manage(ClientState::new(
+        Arc::clone(&core),
+        Arc::clone(&client_host),
+        shell_host,
+        Box::new(shell),
+    ));
+    app.manage(Arc::clone(&host));
+    core.warm();
+    shell_webview(app, &host)?;
+    if network {
+        moqui_client::renewal::start(&core, &client_host);
+        moqui_client::sync::flush::start(&core, &client_host);
+    }
+    log::info!("moqui-mobile: the client started in {}", dir.display());
+    Ok(())
 }
 
-#[cfg(target_os = "android")]
-mod android {
-    use jni::objects::JObject;
-    use jni::JavaVM;
+/// The TLS verifier set up (Android's trust manager), so requests may be made; a failure is logged, and the app runs
+/// with what its store keeps, making no request.
+fn network_ready() -> bool {
+    #[cfg(target_os = "android")]
+    if let Err(err) = android::init_verifier() {
+        log::error!("The TLS verifier did not start; the app makes no requests: {err}");
+        return false;
+    }
+    true
+}
 
-    /// rustls-platform-verifier's JVM init, with the VM and the application context tao's activity recorded in
-    /// ndk-context, before the first request.
-    pub(crate) fn init_verifier() -> Result<(), String> {
-        let context = ndk_context::android_context();
-        // SAFETY: tao sets both from the live JVM and a global reference to the application context, kept for the
-        // life of the process.
-        let vm = unsafe { JavaVM::from_raw(context.vm().cast()) };
-        vm.attach_current_thread(|env| -> Result<(), jni::errors::Error> {
-            // SAFETY: as above; the reference is global, so it outlives this frame.
-            let app = unsafe { JObject::from_raw(env, context.context().cast()) };
-            rustls_platform_verifier::android::init_with_env(env, app)
-        })
-        .map_err(|err| err.to_string())?;
-        log::info!("TLS verifier initialized");
-        Ok(())
+/// The one webview, on the shell.
+fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
+    let navigation_host = Arc::clone(host);
+    let load_host = Arc::clone(host);
+    let name = serde_json::to_string(&device_name()).unwrap_or_else(|_| "\"\"".to_string());
+    let script = format!("window.__moquiDeviceName = {name};\n{BRIDGE}");
+    WebviewWindowBuilder::new(
+        app,
+        MAIN,
+        WebviewUrl::External(moqui_client_tauri::shell_url(None, None)),
+    )
+    .title("MR Moqui")
+    .initialization_script(script)
+    .on_navigation(move |url| navigation(&navigation_host, url))
+    .on_page_load(move |_window, payload| match payload.event() {
+        PageLoadEvent::Started => {
+            load_host.page.started(payload.url());
+            if let Some(core) = moqui_lib::sync::lock(&load_host.client).clone() {
+                core.sockets().close_for(MAIN);
+            }
+        }
+        PageLoadEvent::Finished => {
+            if payload.url().origin().ascii_serialization() == SHELL_ORIGIN {
+                log::info!("moqui-mobile: the shell loaded");
+            }
+        }
+    })
+    .build()?;
+    Ok(())
+}
+
+/// A navigation the page starts (a link, `location`): the shell's page and the server's pages stay in the webview, a
+/// server path on the shell's origin goes to the app origin, and the web opens outside.
+fn navigation(host: &Arc<MobileHost>, url: &Url) -> bool {
+    match goes(url, host.signed_in().is_some()) {
+        Goes::Here => {
+            host.page.navigating();
+            true
+        }
+        Goes::AppPage => {
+            let path = match url.query() {
+                Some(query) => format!("{}?{query}", url.path()),
+                None => url.path().to_string(),
+            };
+            // not from inside the webview's own callback
+            let host = Arc::clone(host);
+            std::thread::spawn(move || {
+                if let Err(err) = host.open_remote(&path) {
+                    log::warn!("Could not open {path}: {err}");
+                }
+            });
+            false
+        }
+        Goes::Outside => {
+            open_externally(url);
+            false
+        }
+        Goes::Nowhere => {
+            log::warn!("Navigation refused: {url}");
+            false
+        }
     }
 }
+
+/// The app's events: the SSO hand-back, and the lifecycle.
+// on the desktop host, where tests build it, the mobile-only arms are gone and clippy would have the match collapsed
+#[cfg_attr(not(mobile), allow(clippy::collapsible_match))]
+fn on_event(app: &AppHandle, event: RunEvent) {
+    match event {
+        RunEvent::Opened { urls } => {
+            for url in urls {
+                if url.scheme() == "org.moqui.mobile" && url.path() == "/sso" {
+                    moqui_client_tauri::commands::sso_returned(app, &url);
+                } else {
+                    log::warn!("A link the app does not take: {}", url.scheme());
+                }
+            }
+        }
+        RunEvent::WindowEvent { label, event, .. } if label == MAIN => match event {
+            #[cfg(mobile)]
+            WindowEvent::Suspended => paused(app),
+            #[cfg(mobile)]
+            WindowEvent::Resumed => resumed(app),
+            // the activity ended (back out of the app): Tauri ends the process after it, and the next start recovers
+            // from the store
+            WindowEvent::Destroyed => shut_down(app, "the activity ended"),
+            _ => {}
+        },
+        RunEvent::Exit => shut_down(app, "the app exits"),
+        _ => {}
+    }
+}
+
+/// End the client's threads and sockets; what is unsent stays in the store for the next start.
+fn shut_down(app: &AppHandle, why: &str) {
+    if let Ok(state) = moqui_client_tauri::state(app) {
+        if !state.core.is_stopped() {
+            state.core.shutdown();
+            log::info!("moqui-mobile: {why}, the client stopped");
+        }
+    }
+}
+
+/// The app went to the background: the mirror stops (a run in progress at its next request); the store, the sockets
+/// and the outbox's sender stay while Android keeps the process.
+#[cfg_attr(not(mobile), allow(dead_code))]
+fn paused(app: &AppHandle) {
+    if let Ok(state) = moqui_client_tauri::state(app) {
+        state.core.mirror().cancel();
+        log::info!("moqui-mobile: paused, the mirror stopped");
+    }
+}
+
+/// The app came back: the mirror reads ahead again for the shell's account, and the outbox goes.
+#[cfg_attr(not(mobile), allow(dead_code))]
+fn resumed(app: &AppHandle) {
+    let (Ok(state), Some(host)) = (moqui_client_tauri::state(app), app.try_state::<Arc<MobileHost>>()) else {
+        return;
+    };
+    state.core.flusher().wake();
+    if let (true, Some(id)) = (host.is_shell(MAIN) && host.network_ready(), host.signed_in()) {
+        moqui_client::sync::mirror::start(&state.core, &state.host, &id);
+    }
+    log::info!("moqui-mobile: resumed");
+}
+
+/// Open `url` outside the app (the system browser, a mail or phone app).
+pub(crate) fn open_externally(url: &Url) {
+    #[cfg(target_os = "android")]
+    if let Err(err) = android::open_url(url.as_str()) {
+        log::error!("{} was not opened: {err}", url.scheme());
+    }
+    #[cfg(not(target_os = "android"))]
+    log::info!("Not opened outside the app on this platform: {url}");
+}
+
+/// The name of this device in the user's device list and of the shell's chat crypto device.
+pub(crate) fn device_name() -> String {
+    "MR Moqui on Android".to_string()
+}
+
+/// The `<client-conf>` element of [`CLIENT_CONF`], past its comment.
+fn client_conf_element() -> &'static str {
+    CLIENT_CONF
+        .find("<client-conf")
+        .map_or(CLIENT_CONF, |at| CLIENT_CONF[at..].trim())
+}
+
+#[cfg(test)]
+#[path = "lib_tests.rs"]
+mod tests;

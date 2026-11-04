@@ -18,17 +18,20 @@
 //!
 //! What does not need Tauri is in `moqui_client`: the client's state ([`moqui_client::app::Client`]), each account's
 //! store, the offline answers, the pushes, the outbox and its sender, the mirror, the key renewal, the device modes,
-//! the shell's files and the pages' sockets. This module is its Tauri host ([`DesktopHost`], a
-//! [`moqui_client::app::ClientHost`]) and what only the app has:
+//! the shell's files and the pages' sockets. What needs Tauri but no CEF and no window layout is shared with the mobile
+//! app in `moqui_client_tauri`: the shell's commands (sign-in, sign-out and the accounts), the outbox and drafts
+//! commands, and the schemes' answer, over its `ClientState`, which this module manages beside its own [`Client`] (the
+//! app windows). This module is the Tauri host ([`DesktopHost`], a [`moqui_client::app::ClientHost`]) and what only
+//! the desktop app has:
 //!
 //! - [`scheme`]: two app schemes. `moqui-shell` (`http://moqui-shell.localhost`) serves the shell's files and forwards
 //!   the rest to the current account's server; `moqui-app` (`http://moqui-app.localhost`) forwards everything, so an
-//!   app window shows the server's own `/qapps` and scripts. Both add the key (`moqui_client::proxy`).
+//!   app window shows the server's own `/qapps` and scripts. Both add the key (`moqui_client::proxy`); a download is
+//!   saved by the host.
 //! - [`sockets`]: the commands of the sockets a page cannot open through a scheme (`/notws`, `/callws`), which the host
 //!   holds and bridges (`moqui_client::bridge`), and the node in process's.
-//! - [`commands`]: sign-in, sign-out and the accounts, for the shell; [`windows`]: the shell and the app windows.
+//! - [`windows`]: the shell and the app windows, and what the shell's commands do with them (`windows::DesktopShell`).
 //! - [`keystore`]: the OS key store, else a file only the user can read.
-//! - [`outbox`]: the commands of the outbox and drafts the host keeps for the pages (`moqui_client::sync`).
 //! - [`conf`]: the client's settings (`<client-conf>`), read from the runtime's conf.
 //!
 //! The shell's origin may call the shell commands, the sockets, the outbox and the drafts; an app window's origin only
@@ -36,23 +39,21 @@
 //! with the key (plans/Mobile-Desktop.md "Remote applications and
 //! authentication").
 
-pub(crate) mod commands;
 mod conf;
 mod keystore;
-pub(crate) mod outbox;
 mod scheme;
 pub(crate) mod sockets;
 pub(crate) mod windows;
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 
 use moqui_client::account::Account;
 use moqui_client::app::ClientHost;
 use moqui_client::assets::Assets;
-use moqui_client::conf::{ClientConf, DeviceMode};
+use moqui_client::conf::ClientConf;
+use moqui_client_tauri::{ClientState, ShellHost};
 use serde_json::Value;
 use tauri::{AppHandle, Manager, Url};
 
@@ -60,66 +61,52 @@ use tauri::{AppHandle, Manager, Url};
 pub(crate) const SHELL_WINDOW: &str = "main";
 
 /// The scheme of the shell, and its origin on Chromium (`http://<scheme>.localhost`).
-pub(crate) const SHELL_SCHEME: &str = "moqui-shell";
-pub(crate) const SHELL_ORIGIN: &str = moqui_client::SHELL_ORIGIN;
+pub(crate) const SHELL_SCHEME: &str = moqui_client_tauri::SHELL_SCHEME;
+pub(crate) const SHELL_ORIGIN: &str = moqui_client_tauri::SHELL_ORIGIN;
 /// The scheme of the app windows, the server's pages, and its origin.
-pub(crate) const APP_SCHEME: &str = "moqui-app";
-pub(crate) const APP_ORIGIN: &str = "http://moqui-app.localhost";
+pub(crate) const APP_SCHEME: &str = moqui_client_tauri::APP_SCHEME;
+pub(crate) const APP_ORIGIN: &str = moqui_client_tauri::APP_ORIGIN;
 
-/// The client's state, on the app while it runs as a client: the host-neutral core and what only the app has.
+/// The app windows of the client, on the app while it runs as a client, beside the shared `ClientState` (whose core and
+/// host it holds too).
 pub(crate) struct Client {
     pub(crate) core: Arc<moqui_client::app::Client>,
     /// This app as the core's host.
     pub(crate) host: Arc<dyn ClientHost>,
-    /// What the shell tells the user when it next loads an account (a sign-in that kept the account personal).
-    notice: Mutex<HashMap<String, String>>,
-    /// Accounts whose data the pages keep (scoped browser storage, the crypto store) is to be cleared: by the shell when
-    /// it next loads, and by the next app window.
-    cleared: Mutex<Cleared>,
-    assets: Assets,
     /// The app windows (`remote-<n>`) and the account each shows.
     windows: Mutex<Vec<(String, String)>>,
     next_window: AtomicU64,
-    /// A check that the current account's key still signs in is under way.
-    checking: AtomicBool,
-    /// An SSO sign-in waiting for the browser to come back, with the device mode chosen for it.
-    sso: Mutex<Option<(moqui_client::sso::Pending, Option<DeviceMode>)>>,
-    /// A comms screen to show in the shell (a link of the OS or a notification), until the shell of a signed-in account
-    /// takes it (`client_take_open`), so one opened while the shell signs in or loads is shown after.
-    open_pending: Mutex<Option<String>>,
-    /// The token of the shell's last load by the host with a query (`windows::load_shell`), which the shell's
-    /// `client_state` answers once: the shell takes its query (signIn, failed, server) only from such a load.
-    load_token: Mutex<Option<String>>,
 }
 
 impl Client {
-    fn new(app: &AppHandle, dir: &Path, resources: &Path, runtime: Option<PathBuf>) -> Result<Self, String> {
+    /// The client of `dir`, and the shared state over it.
+    fn new(
+        app: &AppHandle,
+        dir: &Path,
+        resources: &Path,
+        runtime: Option<PathBuf>,
+    ) -> Result<(Self, ClientState), String> {
         let read_conf = Box::new(move || match &runtime {
             Some(runtime) => conf::read(runtime),
             None => ClientConf::default(),
         });
-        let core = moqui_client::app::Client::new(dir, keystore::open_keys(&dir.join("keys")), read_conf)?;
-        Ok(Self {
-            core: Arc::new(core),
-            host: Arc::new(DesktopHost { app: app.clone() }),
-            notice: Mutex::new(HashMap::new()),
-            cleared: Mutex::new(Cleared::default()),
-            assets: shell_assets(tauri::is_dev(), resources),
+        let keys = keystore::open_keys(&dir.join("keys"));
+        let core = Arc::new(moqui_client::app::Client::new(dir, keys, read_conf)?);
+        let host: Arc<dyn ClientHost> = Arc::new(DesktopHost { app: app.clone() });
+        let shell: Arc<dyn ShellHost> = Arc::new(windows::DesktopShell { app: app.clone() });
+        let files = Box::new(shell_assets(tauri::is_dev(), resources));
+        let state = ClientState::new(Arc::clone(&core), Arc::clone(&host), shell, files);
+        let client = Self {
+            core,
+            host,
             windows: Mutex::new(Vec::new()),
             next_window: AtomicU64::new(1),
-            checking: AtomicBool::new(false),
-            sso: Mutex::new(None),
-            open_pending: Mutex::new(None),
-            load_token: Mutex::new(None),
-        })
+        };
+        Ok((client, state))
     }
 
-    /// The account a webview shows: the shell's is the current one, an app window's its own.
-    fn account_of(&self, label: &str) -> Option<(Account, Option<String>)> {
-        self.page_account(label).and_then(|id| self.core.account(&id))
-    }
-
-    /// The id of the account a webview shows ([`Self::account_of`]), from the windows and the accounts alone.
+    /// The id of the account a webview shows, from the windows and the accounts alone: the shell's is the current one,
+    /// an app window's its own.
     fn page_account(&self, label: &str) -> Option<String> {
         if label == SHELL_WINDOW {
             return moqui_lib::sync::lock(self.core.accounts())
@@ -161,7 +148,7 @@ impl ClientHost for DesktopHost {
     }
 
     fn notify_pages(&self, account: &str, event: &Value) {
-        outbox::notify_pages(&self.app, account, event);
+        windows::notify_pages(&self.app, account, event);
     }
 
     fn socket_event(&self, page: &str, id: u64, event: &Value) {
@@ -173,24 +160,7 @@ impl ClientHost for DesktopHost {
     }
 
     fn check_key(&self, account: &Account) {
-        scheme::check_key(&self.app, account);
-    }
-}
-
-/// The storage scopes (account ids) whose page data each origin is to clear; each list is taken once.
-#[derive(Default)]
-pub(crate) struct Cleared {
-    pub(crate) shell: Vec<String>,
-    pub(crate) app: Vec<String>,
-}
-
-impl Cleared {
-    fn add(&mut self, id: &str) {
-        for list in [&mut self.shell, &mut self.app] {
-            if !list.iter().any(|kept| kept == id) {
-                list.push(id.to_string());
-            }
-        }
+        moqui_client_tauri::scheme::check_key(&self.app, account);
     }
 }
 
@@ -210,9 +180,10 @@ pub(crate) fn register(builder: tauri::Builder) -> tauri::Builder {
 pub(crate) fn start(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let dir = app.path().app_config_dir()?.join("client");
     let resources = app.path().resource_dir()?;
-    let client = Client::new(app, &dir, &resources, conf::runtime_dir(app))?;
+    let (client, state) = Client::new(app, &dir, &resources, conf::runtime_dir(app))?;
     let (core, host) = (Arc::clone(&client.core), Arc::clone(&client.host));
     app.manage(client);
+    app.manage(state);
     core.warm();
     windows::add_capabilities(app);
     windows::shell_window(app)?;
@@ -248,7 +219,7 @@ pub(crate) fn open_link(app: &AppHandle, url: &Url) {
 
 /// The server's hand-back of an SSO sign-in (the `org.moqui.desktop:` link), for the sign-in this app started.
 pub(crate) fn sso_returned(app: &AppHandle, link: &Url) {
-    commands::sso_returned(app, link);
+    moqui_client_tauri::commands::sso_returned(app, link);
 }
 
 /// An app window closed: its sockets go with it.

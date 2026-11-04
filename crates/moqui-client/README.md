@@ -1,6 +1,6 @@
 # moqui-client
 
-The client of a remote MR Moqui server, for the desktop app's client mode and later the mobile app (configuration 3 of
+The client of a remote MR Moqui server, for the desktop app's client mode and the mobile app (configuration 3 of
 [Mobile-Desktop](../../plans/Mobile-Desktop.md), MD3 and MD4; how the desktop app uses it is
 [docs/ui/Desktop-Client.md](../../docs/ui/Desktop-Client.md)). It has no Tauri, no framework and no async API (reqwest's blocking
 client, so callers run on a plain thread), and builds for Android as well as the desktops. TLS is checked against the
@@ -38,7 +38,7 @@ Each installed client is a device with its own login key. The host keeps the key
 - `sso`: sign-in through the server's identity providers in the system browser (RFC 8252): a PKCE verifier and state,
   the server's `/sso/appLogin`, the hand-back's state checked, and the code taken with the verifier for a device key.
 
-The client's core, what the desktop app's client mode runs and the mobile app is to reuse
+The client's core, what the desktop app's client mode and the mobile app run
 ([Desktop-Client](../../docs/ui/Desktop-Client.md)):
 
 - `app`: `Client`, the state while the app runs as a client (the accounts, `keys::Keys`, the stores, the conf read
@@ -57,7 +57,7 @@ The client's core, what the desktop app's client mode runs and the mobile app is
   limits), `flush` (the outbox sent from a thread of its own, with WebrootChat's retry rules) and `mirror` (the current
   account's chat and mail read ahead).
 - `modes` (what each device mode keeps), `renewal` (each key renewed on a thread before it runs out) and `assets` (the
-  shell's own files and their CSP).
+  shell's own files and their CSP: on disk for the desktop, or embedded in the mobile app, `Assets::embedded`).
 
 The threads are plain threads with blocking requests. The patterns follow `moqui tui --server`
 (`crates/moqui-host/src/tui_remote.rs`).

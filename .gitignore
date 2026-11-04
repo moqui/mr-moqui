@@ -107,3 +107,5 @@ Desktop.ini
 # own .gitignore files leave out (build outputs and what the Tauri CLI writes on each build).
 /crates/moqui-mobile/Cargo.lock
 /crates/moqui-mobile/gen/schemas/
+# The client glue both apps share: its lock file, for its own cargo test
+/crates/moqui-client-tauri/Cargo.lock

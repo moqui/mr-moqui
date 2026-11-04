@@ -26,6 +26,9 @@ use tauri::ipc::CapabilityBuilder;
 use tauri::webview::{NewWindowResponse, PageLoadEvent};
 use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindowBuilder};
 
+use moqui_client_tauri::{ClientState, ShellHost};
+use serde_json::Value;
+
 use super::{Client, APP_ORIGIN, SHELL_ORIGIN};
 
 /// The shell's commands, as `allow-<command>` (build.rs), the sockets, the node page bridge's, and the notification
@@ -101,14 +104,69 @@ pub(crate) fn add_capabilities(app: &AppHandle) {
     }
 }
 
-/// The shell's page, with `query` (`signIn=1` for the sign-in) and the token that says the host loaded it.
-fn shell_url(query: Option<&str>, token: Option<&str>) -> Url {
-    let text = match (query, token) {
-        (Some(query), Some(token)) => format!("{SHELL_ORIGIN}/?{query}&load={token}"),
-        (Some(query), None) => format!("{SHELL_ORIGIN}/?{query}"),
-        _ => format!("{SHELL_ORIGIN}/"),
+/// The app's windows as the shared shell commands use them (`moqui_client_tauri::ShellHost`).
+pub(crate) struct DesktopShell {
+    pub(crate) app: AppHandle,
+}
+
+impl ShellHost for DesktopShell {
+    fn show_shell(&self, url: &Url) {
+        if let Some(window) = self.app.get_webview_window("main") {
+            if let Err(err) = window.navigate(url.clone()) {
+                tracing::error!("The shell did not load: {err}");
+            }
+            crate::show_main(&self.app);
+        }
+    }
+
+    fn close_remotes(&self, account: Option<&str>) {
+        close_remotes(&self.app, account);
+    }
+
+    fn open_remote(&self, path: &str) -> Result<(), String> {
+        open_remote(&self.app, path)
+    }
+
+    fn open_external(&self, url: &Url) {
+        crate::open_externally(url);
+    }
+
+    fn device_name(&self) -> String {
+        super::device_name()
+    }
+
+    fn sso_redirect(&self) -> &'static str {
+        moqui_client::sso::DESKTOP_REDIRECT
+    }
+
+    fn sso_starting(&self) {
+        crate::os::claim_app_scheme();
+    }
+}
+
+/// Tell the account's windows that its outbox changed: `event` to `window.__moquiOutboxEvent` in the shell (when it
+/// shows the account) and the account's app windows.
+pub(crate) fn notify_pages(app: &AppHandle, account: &str, event: &Value) {
+    let Some(client) = app.try_state::<Client>() else {
+        return;
     };
-    Url::parse(&text).unwrap_or_else(|_| unreachable!("the shell's url parses"))
+    let mut labels: Vec<String> = moqui_lib::sync::lock(&client.windows)
+        .iter()
+        .filter(|(_, owner)| owner == account)
+        .map(|(label, _)| label.clone())
+        .collect();
+    let current = moqui_lib::sync::lock(client.core.accounts())
+        .current()
+        .is_some_and(|shown| shown.id == account);
+    if current {
+        labels.push(super::SHELL_WINDOW.to_string());
+    }
+    let script = format!("window.__moquiOutboxEvent && window.__moquiOutboxEvent({event})");
+    for label in labels {
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.eval(script.clone());
+        }
+    }
 }
 
 /// Where a window on `origin` sends a navigation to a URL.
@@ -252,15 +310,17 @@ pub(crate) fn open_page(app: &AppHandle, url: &Url) {
         |(account, _)| client.core.comms_root_of(&account.id),
     );
     match page_goes(&path, &root, signed_in) {
-        PageGoes::Shell { poke } => keep_for_shell(app, &client, path, poke),
+        PageGoes::Shell { poke } => keep_for_shell(app, path, poke),
         PageGoes::AppWindow => super::open_link(app, url),
     }
 }
 
 /// Keep `path` for the shell to take (`client_take_open`), poke a shell that shows a signed-in account to take it now, and
 /// show the main window.
-fn keep_for_shell(app: &AppHandle, client: &Client, path: String, poke: bool) {
-    *moqui_lib::sync::lock(&client.open_pending) = Some(path);
+fn keep_for_shell(app: &AppHandle, path: String, poke: bool) {
+    if let Some(state) = app.try_state::<ClientState>() {
+        *moqui_lib::sync::lock(&state.open_pending) = Some(path);
+    }
     if poke {
         if let Some(window) = app.get_webview_window("main") {
             if let Err(err) = window.eval(SHELL_POKE) {
@@ -310,7 +370,7 @@ pub(crate) fn open_in_shell(app: AppHandle, webview: tauri::Webview, path: Strin
         |id| client.core.comms_root_of(id),
     );
     shell_path_for(&path, &root, window_account.as_deref(), current_id.as_deref())?;
-    keep_for_shell(&app, &client, path, signed_in);
+    keep_for_shell(&app, path, signed_in);
     Ok(())
 }
 
@@ -336,45 +396,35 @@ static APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 /// The main window, on the shell.
 pub(crate) fn shell_window(app: &AppHandle) -> tauri::Result<()> {
     let _ = APP.set(app.clone());
-    WebviewWindowBuilder::new(app, "main", WebviewUrl::External(shell_url(None, None)))
-        .title("MR Moqui")
-        .inner_size(1280.0, 860.0)
-        .min_inner_size(400.0, 300.0)
-        .initialization_script(shell_script(&super::device_name()))
-        .on_download(crate::bridge::on_download)
-        .on_permission_request(crate::bridge::on_permission)
-        .on_page_load(|window, payload| {
-            if payload.event() == PageLoadEvent::Started {
-                if let Some(client) = window.app_handle().try_state::<Client>() {
-                    client.core.sockets().close_for(window.label());
-                }
+    WebviewWindowBuilder::new(
+        app,
+        "main",
+        WebviewUrl::External(moqui_client_tauri::shell_url(None, None)),
+    )
+    .title("MR Moqui")
+    .inner_size(1280.0, 860.0)
+    .min_inner_size(400.0, 300.0)
+    .initialization_script(shell_script(&super::device_name()))
+    .on_download(crate::bridge::on_download)
+    .on_permission_request(crate::bridge::on_permission)
+    .on_page_load(|window, payload| {
+        if payload.event() == PageLoadEvent::Started {
+            if let Some(client) = window.app_handle().try_state::<Client>() {
+                client.core.sockets().close_for(window.label());
             }
-        })
-        .on_navigation(|url| stays_on(url, SHELL_ORIGIN))
-        .on_new_window(|url, _features| {
-            // a page's window.open: the server's page in an app window, the web in the system browser
-            let _ = stays_on(&url, SHELL_ORIGIN);
-            NewWindowResponse::Deny
-        })
-        .build()?;
+        }
+    })
+    .on_navigation(|url| stays_on(url, SHELL_ORIGIN))
+    .on_new_window(|url, _features| {
+        // a page's window.open: the server's page in an app window, the web in the system browser
+        let _ = stays_on(&url, SHELL_ORIGIN);
+        NewWindowResponse::Deny
+    })
+    .build()?;
     Ok(())
 }
 
 /// Load the shell again (another account, signed out), with `query`.
-pub(crate) fn load_shell(app: &AppHandle, query: Option<&str>) {
-    // a query comes with a token the shell's state answers once, so only the host's load sets what the shell does
-    let token = query.and_then(|_| moqui_client::store::new_client_ref().ok());
-    if let Some(client) = app.try_state::<Client>() {
-        moqui_lib::sync::lock(&client.load_token).clone_from(&token);
-    }
-    if let Some(window) = app.get_webview_window("main") {
-        if let Err(err) = window.navigate(shell_url(query, token.as_deref())) {
-            tracing::error!("The shell did not load: {err}");
-        }
-        crate::show_main(app);
-    }
-}
-
 /// Open `path` of the current account's server (`/qapps/...`) in a new app window.
 ///
 /// # Errors
@@ -395,7 +445,10 @@ pub(crate) fn open_remote(app: &AppHandle, path: &str) -> Result<(), String> {
     let label = format!("remote-{}", client.next_window.fetch_add(1, Ordering::Relaxed));
     // the account's storage scope for the server's own scripts (MoquiLib scopedKey), and the storage of accounts deleted
     // since an app window last opened, which this one clears once (bridge.js)
-    let cleared = std::mem::take(&mut moqui_lib::sync::lock(&client.cleared).app);
+    let cleared = app
+        .try_state::<ClientState>()
+        .map(|state| std::mem::take(&mut moqui_lib::sync::lock(&state.cleared).app))
+        .unwrap_or_default();
     let script = app_window_script(&account.id, &cleared)?;
     let title = if account.server_name.is_empty() {
         account.server.clone()

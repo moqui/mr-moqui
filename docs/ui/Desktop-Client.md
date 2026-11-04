@@ -5,12 +5,14 @@ computer (configuration 3 of [Mobile-Desktop](../../plans/Mobile-Desktop.md), MD
 user with a device key the host keeps. The shell opens with no network, keeps each account's data in a store on this
 computer, answers from it offline, and sends what was queued once the server can be reached.
 
-- **Host:** `crates/moqui-desktop/src/client/` (the Tauri host: the schemes, the commands, the windows, the OS key
-  store and the conf's reading) and `shell/` ([moqui-desktop](../../crates/moqui-desktop/README.md), which has how to
-  run and test it), on [moqui-client](../../crates/moqui-client/README.md) (accounts, keys, sign-in, the proxy,
-  sockets, the store, the conf, and the client's core: its state behind a host trait, the offline answers, the
-  pushes, the outbox and its sender, the mirror, the renewal and the device modes), which has no Tauri or framework
-  and builds for Android, so the mobile app reuses it.
+- **Host:** `crates/moqui-desktop/src/client/` (the Tauri host: the schemes' hooks, the windows, the OS key store
+  and the conf's reading) and `shell/` ([moqui-desktop](../../crates/moqui-desktop/README.md), which has how to run
+  and test it), on [moqui-client-tauri](../../crates/moqui-client-tauri/README.md) (the shell's commands, the outbox
+  and drafts commands and the schemes' answer, shared with the mobile app) and
+  [moqui-client](../../crates/moqui-client/README.md) (accounts, keys, sign-in, the proxy, sockets, the store, the
+  conf, and the client's core: its state behind a host trait, the offline answers, the pushes, the outbox and its
+  sender, the mirror, the renewal and the device modes), which has no Tauri or framework and builds for Android. The
+  same client on Android is [Mobile-Client](Mobile-Client.md).
 - **Pages:** the webroot's own scripts and BasicComms' `.qvue` screens; what a page sees of the host
   (`window.moquiDesktop`, `moqui.drafts`, `moqui.connection`) is in
   [Qvt-Client, In the desktop app](Qvt-Client.md#in-the-desktop-app).
@@ -154,7 +156,7 @@ is read again.
 ## The outbox and drafts
 
 What a page sends offline is kept in the account's store and sent by the host (`moqui_client::sync::outbox` and
-`flush`; the commands in `client/outbox.rs`), on a thread of its own for every account with a key here, so it goes
+`flush`; the commands in `moqui_client_tauri::outbox`), on a thread of its own for every account with a key here, so it goes
 while the window is hidden.
 
 | Operation | What |

@@ -22,3 +22,6 @@
 
 # rustls-platform-verifier's Kotlin component, called only through JNI.
 -keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }
+
+# The device keys' Keystore vault (src/main/java/org/moqui/mobile/KeyVault.kt), called only through JNI.
+-keep class org.moqui.mobile.KeyVault { *; }

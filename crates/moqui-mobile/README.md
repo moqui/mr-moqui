@@ -1,40 +1,45 @@
 # moqui-mobile
 
-The mobile app: the client of an MR Moqui server ([moqui-client](../moqui-client/README.md)) in a
-[Tauri](https://tauri.app) app on the platform's WebView, Android first (MD6 in
-[Mobile-Desktop](../../plans/Mobile-Desktop.md)). For now it is the stage 5 spike: a static page (`dist/`) that shows
-the outcome of one HTTPS request moqui-client makes from Rust (`src/lib.rs`), with TLS checked by Android's trust
-manager through rustls-platform-verifier.
+The mobile app: the client of an MR Moqui server in a [Tauri](https://tauri.app) app on the platform's WebView, Android
+first (MD6 in [Mobile-Desktop](../../plans/Mobile-Desktop.md)). It is the desktop app's client mode on a phone: the
+bundled shell opens with no network, each account's data is kept in a store for offline use, and what is queued is
+sent when the server can be reached. How it works on Android is [docs/ui/Mobile-Client.md](../../docs/ui/Mobile-Client.md).
 
-- **Tauri version:** 3.0.0-alpha.5, the desktop app's, so the client glue can be shared, on `tauri-runtime-wry` (the
-  system WebView) instead of the desktop's CEF. It builds and runs on Android as it is.
-- **The TLS verifier:** `rustls_platform_verifier::android::init_with_env` (0.7 has no `init_hosted`; this takes the
-  same JNI env and context) runs in the app's setup, with the JVM and application context tao records in `ndk-context`. Its Kotlin component
-  is the Maven artifact `org.rustls:rustls-platform-verifier`, added in `gen/android/app/build.gradle.kts` at the
-  version of `rustls-platform-verifier-android` in `Cargo.lock`, and kept from ProGuard in `proguard-rules.pro`.
-- **`gen/android`** is the Gradle project `cargo tauri android init` made, kept in git with those changes; its
-  `.gitignore` files leave out the build outputs and what the Tauri CLI writes on each build.
+- **Code:** `src/` is the phone's part: one webview (`host.rs`), the schemes on Android's WebView (`scheme.rs`), the
+  Keystore key store (`keystore.rs`, `android.rs` and `gen/android/.../KeyVault.kt`), its own commands
+  (`commands.rs`), the page bridge (`bridge.js`) and the lifecycle (`lib.rs`). The rest is shared with the desktop
+  app: [moqui-client](../moqui-client/README.md) and [moqui-client-tauri](../moqui-client-tauri/README.md).
+- **The shell** is the desktop's (`crates/moqui-desktop/shell`), staged by `./moq android` into
+  `target/mobile-shell` and embedded as the app's Tauri assets (`frontendDist`). A build without it (`cargo test`)
+  gets a placeholder page.
+- **`client-conf.xml`**: the build's `<client-conf>`, read at build time.
+- **Tauri** 3.0.0-alpha.5, the desktop app's, on `tauri-runtime-wry`. The TLS verifier is
+  `rustls_platform_verifier::android::init_with_env` in the app's setup, its Kotlin component a Maven artifact in
+  `gen/android/app/build.gradle.kts`; when it fails the app makes no request and answers from the store.
+- **`gen/android`** is the Gradle project `cargo tauri android init` made, kept in git with the app's changes (the
+  verifier's artifact, `KeyVault.kt`, the SSO intent filter, the window insets in `MainActivity.kt`, the ProGuard
+  rules); its `.gitignore` files leave out what the Tauri CLI writes on each build.
 
 The crate is not a member of the repository's workspace. Its `Cargo.lock` is copied from the repository's by
 `./moq android`, as the desktop app's.
 
 ## Run
 
-Needs the Android SDK (`cmdline-tools`, `platform-tools`, `emulator`, a platform, an NDK and the
-`system-images;android-36;google_apis_playstore;x86_64` image), a JDK 17 or later, the Tauri CLI of the desktop app and
-the Rust targets ([Build-Test](../../docs/Build-Test.md#android-app)):
+Needs the Android SDK, a JDK 17 or later, the Tauri CLI of the desktop app and the Rust targets
+([Build-Test](../../docs/Build-Test.md#android-app)):
 
 ```sh
-./moq android emulator                        # start the moqui-36 AVD in a hidden window (--window shows it); adb emu kill
+./moq android emulator                        # start the moqui-36 AVD in a hidden window (--window shows it)
 ./moq android dev                             # build, install and run on the emulator, or on a phone over adb
 ./moq android build --target x86_64 --apk     # a debug APK under gen/android/app/build/outputs/apk
+adb reverse tcp:8080 tcp:8080                 # a server on this machine (./moq run) as the app's http://localhost:8080
 adb logcat -s moqui-mobile                    # the app's log
 ```
-
-`MOQUI_MOBILE_PROBE_URL`, set at build time, is the server the spike asks (default `https://example.com`).
 
 ## Test
 
 ```sh
-scripts/check-android.sh    # clippy for aarch64-linux-android and x86_64-linux-android, on moqui-client and this crate
+cd crates/moqui-mobile && CARGO_TARGET_DIR=../../target cargo test   # the host logic, on the desktop
+scripts/check-android.sh      # clippy for aarch64-linux-android and x86_64-linux-android
+scripts/android-smoke.sh      # on the emulator, when asked: install, start, the shell's ready line, a screenshot
 ```

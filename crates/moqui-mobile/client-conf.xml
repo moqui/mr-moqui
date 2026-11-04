@@ -1,0 +1,5 @@
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License.
+    The mobile app's client settings (docs/ui/Desktop-Client.md "Device modes and client-conf"), read at build time
+    (src/lib.rs CLIENT_CONF) with moqui_client::conf::ClientConf::parse: the element of the Moqui conf, as a desktop
+    build's runtime conf has it. A build for a phone of the company's (a shared device) sets device-mode="shared". -->
+<client-conf device-mode="choose" mirror-days="90" prefetch-rooms="20" prefetch-mail="100" store-max-mb="512"/>
