@@ -19,7 +19,7 @@
 //! the live peers, as `plans/archive/Cluster.md` says. Invalidations waiting together are sent once per entity, since a peer
 //! clears the entity's whole cache for one. Each peer gets what was waiting as one batch, in order
 //! ([`Sender::post_batch`]: one gRPC call, or one POST after another), and several peers are posted to at once. The
-//! peer list is kept and read again on the heartbeat tick.
+//! peer list is kept and read again on each heartbeat.
 //!
 //! Each factory keeps its own state (sender, member id, queue, peers): a write or notification fans out only to the
 //! peers of the factory whose entity facade made it, so two factories in one process do not post for each other.
@@ -98,6 +98,11 @@ pub(crate) struct ClusterState {
     /// Batches the sender thread has taken and not finished, so a test can wait for the posts.
     in_flight: AtomicUsize,
     loopback_warned: AtomicBool,
+    /// The row [`start`] wrote, which the heartbeat writes again when peers deleted it.
+    member: Mutex<Option<Member>>,
+    /// The heartbeat's interval instead of the scheduler's, for tests.
+    #[cfg(test)]
+    heartbeat_every: Mutex<Option<Duration>>,
     /// The messages for one member each ([`send_to`]), and their thread.
     direct: Mutex<direct::DirectQueue>,
     direct_ready: Condvar,
@@ -136,6 +141,9 @@ impl ClusterState {
             dropped: AtomicU64::new(0),
             in_flight: AtomicUsize::new(0),
             loopback_warned: AtomicBool::new(false),
+            member: Mutex::new(None),
+            #[cfg(test)]
+            heartbeat_every: Mutex::new(None),
             direct: Mutex::new(direct::DirectQueue::default()),
             direct_ready: Condvar::new(),
         }
@@ -220,7 +228,7 @@ pub fn instance_id(factory: &ExecutionContextFactory) -> Option<String> {
 /// Register this instance, check live peers, and link the entity facade to `factory`'s fan-out.
 ///
 /// The host calls this after [`ExecutionContextFactory::set_entity`]. A second call refreshes the
-/// member row and does not add another heartbeat hook.
+/// member row and does not start another heartbeat thread.
 ///
 /// # Errors
 ///
@@ -234,24 +242,23 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
     let fingerprints = configured_fingerprints()?;
     let base_url = cluster_base_url()?;
     reject_peer_mismatch(&facade, factory, &instance_id, &fingerprints)?;
-    write_member(
-        &facade,
-        &Member {
-            instance_id: instance_id.clone(),
-            base_url,
-            heartbeat: millis_value(db_now(&facade)),
-            session_fp: fingerprints.session,
-            cert_fp: fingerprints.cert,
-            ssh_fp: env::get_prop_or_env(SSH_FINGERPRINT_PROPERTY),
-        },
-    )?;
+    let member = Member {
+        instance_id: instance_id.clone(),
+        base_url,
+        heartbeat: millis_value(db_now(&facade)),
+        session_fp: fingerprints.session,
+        cert_fp: fingerprints.cert,
+        ssh_fp: env::get_prop_or_env(SSH_FINGERPRINT_PROPERTY),
+    };
+    write_member(&facade, &member)?;
     let state = ClusterState::of(factory);
+    *lock(&state.member) = Some(member);
     *lock(&state.factory) = Arc::downgrade(factory);
     lock(&state.instance_id).clone_from(&instance_id);
     // The member list is read again on the next send: this start may have joined a cluster or left one.
     *lock(&state.peers) = PeerCache::default();
     facade.with_slot(ClusterLink::default, |link| link.0 = Arc::downgrade(&state));
-    install_heartbeat(factory, instance_id);
+    install_heartbeat(factory);
     Ok(())
 }
 
@@ -442,6 +449,7 @@ struct Fingerprints {
     cert: String,
 }
 
+#[derive(Clone)]
 struct Member {
     instance_id: String,
     base_url: String,
@@ -578,31 +586,88 @@ fn reject_peer_mismatch(
     Ok(())
 }
 
-fn install_heartbeat(factory: &Arc<ExecutionContextFactory>, instance_id: String) {
-    if factory.cluster_heartbeat.swap(true, Ordering::AcqRel) {
+/// Start the heartbeat thread: [`heartbeat`] every scheduler interval. It runs on a thread of its own, not as a
+/// scheduler hook, so a long job pass or maintenance hook does not hold it past the liveness window and drop this member
+/// out of its peers' fan-out (`plans/High-Level-Review.md` HL-020). Pools with no threads (inline, idle) run no
+/// scheduler, so they get no heartbeat, as before.
+fn install_heartbeat(factory: &Arc<ExecutionContextFactory>) {
+    if !factory.service_pools().is_threaded() || factory.cluster_heartbeat.swap(true, Ordering::AcqRel) {
         return;
     }
     let weak = Arc::downgrade(factory);
-    factory.service_pools().add_tick_hook(move || {
-        let Some(factory) = weak.upgrade() else {
+    let spawned = factory.spawn_background("moqui-cluster-heartbeat", move || loop {
+        let every = match weak.upgrade() {
+            Some(factory) => heartbeat_interval(&factory),
+            None => return,
+        };
+        let Some(factory) = ExecutionContextFactory::sleep_while_running(&weak, every) else {
             return;
         };
-        let Some(facade) = factory.entity() else {
-            tracing::warn!("cluster heartbeat has no entity facade");
-            return;
-        };
-        // The database's clock, so members whose clocks differ still see each other as live.
-        let now = db_now(&facade);
-        if let Err(err) = touch_member(&facade, &instance_id, now) {
-            tracing::warn!("cluster heartbeat failed: {err}");
-        }
-        if let Err(err) = delete_dead_members(&facade, now.saturating_sub(window_millis(&factory) * DEAD_WINDOWS)) {
-            tracing::warn!("cluster member cleanup failed: {err}");
-        }
-        let state = ClusterState::of(&factory);
-        refresh_peers(&state, &factory);
-        warn_loopback_peers(&state);
+        let context = factory.new_context();
+        let _entered = context.enter();
+        heartbeat(&factory);
     });
+    if let Err(err) = spawned {
+        factory.cluster_heartbeat.store(false, Ordering::Release);
+        tracing::error!("the cluster heartbeat did not start: {err}");
+    }
+}
+
+fn heartbeat_interval(factory: &ExecutionContextFactory) -> Duration {
+    #[cfg(test)]
+    if let Some(every) = *lock(&ClusterState::of(factory).heartbeat_every) {
+        return every;
+    }
+    factory.service_pools().check_interval()
+}
+
+/// One heartbeat: move this member's heartbeat, or write its row again when peers deleted it as dead; delete members
+/// dead for [`DEAD_WINDOWS`] windows; and read the live peers again. A step that fails is logged and the next still runs.
+/// The heartbeat thread runs it every scheduler interval; a test can run it at once.
+pub fn heartbeat(factory: &ExecutionContextFactory) {
+    let Some(facade) = factory.entity() else {
+        tracing::warn!("cluster heartbeat has no entity facade");
+        return;
+    };
+    let state = ClusterState::of(factory);
+    let instance_id = state.instance_id();
+    if instance_id.is_empty() {
+        return;
+    }
+    // The database's clock, so members whose clocks differ still see each other as live.
+    let now = db_now(&facade);
+    match touch_member(&facade, &instance_id, now) {
+        Ok(0) => rejoin(&state, &facade, now),
+        Ok(_) => {}
+        Err(err) => tracing::warn!("cluster heartbeat failed: {err}"),
+    }
+    if let Err(err) = delete_dead_members(&facade, now.saturating_sub(window_millis(factory) * DEAD_WINDOWS)) {
+        tracing::warn!("cluster member cleanup failed: {err}");
+    }
+    refresh_peers(&state, factory);
+    warn_loopback_peers(&state);
+}
+
+/// The heartbeat found no row: peers deleted it after this member's heartbeat stopped for [`DEAD_WINDOWS`] windows.
+/// Write it again, so the member is back in their fan-out without a restart.
+fn rejoin(state: &ClusterState, facade: &EntityFacade, now: i64) {
+    let Some(mut member) = lock(&state.member).clone() else {
+        return;
+    };
+    member.heartbeat = millis_value(now);
+    match write_member(facade, &member) {
+        Ok(()) => tracing::warn!(
+            "cluster member {} had no row (peers took it for dead); registered it again",
+            member.instance_id
+        ),
+        Err(err) => tracing::error!("cluster member {} could not register again: {err}", member.instance_id),
+    }
+}
+
+/// Run `factory`'s heartbeat every `every` instead of the scheduler interval. Call before [`start`].
+#[cfg(test)]
+pub(crate) fn set_heartbeat_interval(factory: &ExecutionContextFactory, every: Duration) {
+    *lock(&ClusterState::of(factory).heartbeat_every) = Some(every);
 }
 
 fn fan_out(state: &Arc<ClusterState>, topic: &'static str, message: &TopicMessage) {
@@ -739,7 +804,7 @@ fn coalesce(batch: Vec<(&'static str, TopicMessage)>) -> Vec<(&'static str, Topi
         .collect()
 }
 
-/// The live peers, read again when the heartbeat tick has not refreshed them within a liveness window.
+/// The live peers, read again when the heartbeat has not refreshed them within a liveness window.
 fn current_peers(state: &ClusterState, factory: &ExecutionContextFactory) -> Vec<String> {
     let window = window_millis(factory);
     {
@@ -1054,7 +1119,8 @@ fn warn_loopback_peers(state: &ClusterState) {
     }
 }
 
-fn touch_member(facade: &EntityFacade, instance_id: &str, now: i64) -> Result<(), Error> {
+/// Move this member's heartbeat. Out: the rows changed, zero when the row is gone.
+fn touch_member(facade: &EntityFacade, instance_id: &str, now: i64) -> Result<u64, Error> {
     let _authz = entered_authz();
     let condition = Condition::equals("instanceId", Value::string(instance_id));
     let sql = facade
@@ -1064,11 +1130,7 @@ fn touch_member(facade: &EntityFacade, instance_id: &str, now: i64) -> Result<()
         .map_err(Error::from)?;
     let params = [millis_value(now), Value::string(instance_id)];
     let tx = facade.transactions_for(MEMBER).map_err(Error::from)?;
-    with_reserve_tx(&tx, |conn| {
-        conn.execute(&sql, &params)?;
-        Ok(())
-    })
-    .map_err(Error::from)
+    with_reserve_tx(&tx, |conn| conn.execute(&sql, &params)).map_err(Error::from)
 }
 
 /// Keep a message too large for a NOTIFY payload, and answer the id the NOTIFY carries instead.

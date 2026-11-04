@@ -61,8 +61,9 @@ pub(crate) fn scheduler_loop(shared: Arc<Shared>) {
 }
 
 /// When the scheduler runs a job pass and the tick hooks. Job passes are Java's `scheduleAtFixedRate(jobRunner, 120,
-/// rate)`: the first after [`INITIAL_DELAY`], then every interval, and none without a job runner. The tick hooks (the
-/// cluster heartbeat) are this port's own, so they run every interval from the start.
+/// rate)`: the first after [`INITIAL_DELAY`], then every interval, and none without a job runner. The tick hooks (session
+/// flushing and other maintenance; the cluster heartbeat has a thread of its own) are this port's own, so they run every
+/// interval from the start.
 struct Clock {
     next_jobs: Option<Instant>,
     last_hooks: Instant,

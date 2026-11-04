@@ -356,6 +356,11 @@ impl ServicePools {
         self.inline.is_some()
     }
 
+    /// True when the pool has threads and a scheduler, so its tick hooks run.
+    pub(crate) fn is_threaded(&self) -> bool {
+        self.shared.is_some()
+    }
+
     /// Queued inline work not yet run.
     pub fn pending(&self) -> usize {
         self.inline.as_ref().map_or(0, |inline| lock(&inline.queue).len())

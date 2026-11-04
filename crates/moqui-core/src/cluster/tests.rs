@@ -577,8 +577,23 @@ fn a_stale_peer_is_not_posted() {
     assert!(sync::lock(&recording.calls).is_empty());
 }
 
+fn heartbeat_of(facade: &EntityFacade, instance_id: &str) -> Option<i64> {
+    super::load_members(facade)
+        .unwrap()
+        .into_iter()
+        .find(|member| member.instance_id == instance_id)
+        .and_then(|member| member.heartbeat)
+}
+
+fn delete_member_row(facade: &EntityFacade, instance_id: &str) {
+    let mut row = facade.make_value(super::MEMBER).unwrap();
+    row.set("instanceId", Value::string(instance_id));
+    row.delete(facade).unwrap();
+    assert!(heartbeat_of(facade, instance_id).is_none());
+}
+
 #[test]
-fn tick_runs_the_stand_in_and_moves_the_heartbeat() {
+fn a_heartbeat_moves_the_member_and_a_tick_runs_the_stand_in() {
     let _lock = lock();
     let _clean = Clean;
     preset("inst-tick");
@@ -593,22 +608,78 @@ fn tick_runs_the_stand_in_and_moves_the_heartbeat() {
     ctx.factory().set_entity(facade.clone());
     let _entered = ctx.enter();
     super::start(ctx.factory()).unwrap();
-    let before = super::load_members(&facade)
-        .unwrap()
-        .into_iter()
-        .find(|member| member.instance_id == "inst-tick")
-        .and_then(|member| member.heartbeat)
-        .unwrap();
+    let before = heartbeat_of(&facade, "inst-tick").unwrap();
     std::thread::sleep(Duration::from_millis(50));
     ctx.factory().service_pools().tick();
     assert!(hit.load(Ordering::SeqCst));
-    let after = super::load_members(&facade)
-        .unwrap()
-        .into_iter()
-        .find(|member| member.instance_id == "inst-tick")
-        .and_then(|member| member.heartbeat)
-        .unwrap();
+    super::heartbeat(ctx.factory());
+    let after = heartbeat_of(&facade, "inst-tick").unwrap();
     assert!(after > before, "heartbeat {before} did not move to {after}");
+}
+
+/// Peers delete the row of a member whose heartbeat stopped for ten windows; its next heartbeat writes it again, with
+/// the fingerprints and base URL it started with.
+#[test]
+fn a_member_whose_row_was_deleted_registers_again_on_the_next_heartbeat() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-gone");
+    let (ctx, facade) = open_facade();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    super::start(ctx.factory()).unwrap();
+    let started = super::load_members(&facade).unwrap();
+    delete_member_row(&facade, "inst-gone");
+    super::heartbeat(ctx.factory());
+    let members = super::load_members(&facade).unwrap();
+    let again = members.iter().find(|member| member.instance_id == "inst-gone").unwrap();
+    let first = started.iter().find(|member| member.instance_id == "inst-gone").unwrap();
+    assert!(again.heartbeat.is_some());
+    assert_eq!(again.base_url, first.base_url);
+    assert_eq!(again.session_fp, first.session_fp);
+    assert_eq!(again.cert_fp, first.cert_fp);
+}
+
+/// The heartbeat has a thread of its own: a scheduler hook that does not return (a long job pass, a slow session
+/// flush) does not stop it. The row is deleted while the hook is held, so only a heartbeat brings it back.
+#[test]
+fn the_heartbeat_runs_while_a_scheduler_hook_is_blocked() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-busy");
+    let pools = crate::service::ServicePools::bounded(1, 4);
+    let ctx = ExecutionContextFactory::test_context_with("", pools);
+    let facade = crate::testing::open();
+    ctx.factory().set_entity(facade.clone());
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel::<()>();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let release_rx = Mutex::new(release_rx);
+    ctx.factory().service_pools().add_tick_hook(move || {
+        let _ = entered_tx.send(());
+        let _ = sync::lock(&release_rx).recv();
+    });
+    super::set_heartbeat_interval(ctx.factory(), Duration::from_millis(50));
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    super::start(ctx.factory()).unwrap();
+    let ticking = {
+        let factory = Arc::clone(ctx.factory());
+        std::thread::spawn(move || {
+            factory.service_pools().tick();
+        })
+    };
+    entered_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    delete_member_row(&facade, "inst-busy");
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while heartbeat_of(&facade, "inst-busy").is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no heartbeat while the hook was held"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    release_tx.send(()).unwrap();
+    ticking.join().unwrap();
 }
 
 #[test]
