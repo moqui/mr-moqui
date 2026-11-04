@@ -522,3 +522,40 @@ fn a_peers_timer_fires_with_no_traffic() {
         SfuOutput::Transmit(_) | SfuOutput::Event(_) | SfuOutput::Timeout(_)
     ));
 }
+
+/// HL-008: the address index is a first guess. When the peer it names does not take a datagram (the leg moved, an
+/// ICE restart), every peer is asked, the one that takes it is found, and the index follows it; a peer that leaves is
+/// dropped from it.
+#[test]
+fn the_address_index_follows_a_moved_peer_and_forgets_one_that_left() {
+    let mut net = Net::new();
+    net.join("A", false);
+    net.join("B", false);
+    net.run(secs(2));
+    let id = |net: &Net, leg: &str| net.sfu.by_leg[&LegKey::new(ROOM, leg)];
+    let (a, b) = (id(&net, "A"), id(&net, "B"));
+    assert!(net.sfu.by_addr.values().any(|peer| *peer == a));
+    // the index points A's addresses at B, as after A moved to addresses B had
+    for peer in net.sfu.by_addr.values_mut() {
+        if *peer == a {
+            *peer = b;
+        }
+    }
+    let video = net.received("B", "A", MediaKind::Video);
+    net.run(secs(1));
+    assert!(
+        net.received("B", "A", MediaKind::Video) > video + 10,
+        "A's media still goes through"
+    );
+    assert!(
+        net.sfu.by_addr.values().any(|peer| *peer == a),
+        "the index found A again"
+    );
+    let now = net.now;
+    net.sfu.leave(now, &LegKey::new(ROOM, "A"), 1).unwrap();
+    assert!(
+        net.sfu.by_addr.values().all(|peer| *peer != a),
+        "A is gone from the index"
+    );
+    assert!(!net.sfu.deadline_of.contains_key(&a) && !net.sfu.pending.contains(&a));
+}

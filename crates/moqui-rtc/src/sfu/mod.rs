@@ -64,7 +64,7 @@ impl LegKey {
 }
 
 /// A datagram transport.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Proto {
     Udp,
     Tcp,
@@ -411,7 +411,7 @@ pub struct SfuStats {
 ///
 /// Only the peers with work are polled (plans/High-Level-Review.md HL-008): the peer a datagram or a command was for,
 /// the peers a peer's output fans out to, and the peers whose deadline (str0m's timeout, or the next look at the
-/// layers) has come.
+/// layers) has come. A datagram is offered first to the peer that last took one on its addresses.
 pub struct Sfu {
     config: Arc<SfuConfig>,
     rooms: HashMap<Arc<str>, Room>,
@@ -433,6 +433,9 @@ pub struct Sfu {
     /// Each polled peer's deadline, and the peers by deadline.
     deadline_of: HashMap<PeerId, Instant>,
     deadlines: BTreeSet<(Instant, PeerId)>,
+    /// The peer that last accepted a datagram of each transport and address pair. Only a first guess: the peer's own
+    /// ICE session still decides, and a datagram it does not take is offered to every peer.
+    by_addr: HashMap<(Proto, SocketAddr, SocketAddr), PeerId>,
 }
 
 /// A peer's deadline this close is due now. str0m's pacer asks to be woken a microsecond after each packet it sends;
@@ -465,6 +468,7 @@ impl Sfu {
             pending: HashSet::new(),
             deadline_of: HashMap::new(),
             deadlines: BTreeSet::new(),
+            by_addr: HashMap::new(),
         }
     }
 
@@ -828,16 +832,7 @@ impl Sfu {
             },
         );
         self.stats.received += 1;
-        let checks = &mut self.stats.accept_checks;
-        let Some(id) = self
-            .peers
-            .values()
-            .find(|p| {
-                *checks += 1;
-                p.rtc.accepts(&input)
-            })
-            .map(|p| p.id)
-        else {
+        let Some(id) = self.accepting_peer(proto, source, destination, &input) else {
             return false;
         };
         self.stats.accepted += 1;
@@ -847,6 +842,35 @@ impl Sfu {
         self.pending.insert(id);
         self.drive(now);
         true
+    }
+
+    /// The peer whose ICE session takes `input`: first the one that took the last datagram on these addresses, else
+    /// any, which the addresses then lead to (a peer that moved to a new address, an ICE restart, a relay change).
+    fn accepting_peer(
+        &mut self,
+        proto: Proto,
+        source: SocketAddr,
+        destination: SocketAddr,
+        input: &Input,
+    ) -> Option<PeerId> {
+        let addresses = (proto, source, destination);
+        if let Some(id) = self.by_addr.get(&addresses).copied() {
+            self.stats.accept_checks += 1;
+            if self.peers.get(&id).is_some_and(|p| p.rtc.accepts(input)) {
+                return Some(id);
+            }
+        }
+        let checks = &mut self.stats.accept_checks;
+        let id = self
+            .peers
+            .values()
+            .find(|p| {
+                *checks += 1;
+                p.rtc.accepts(input)
+            })
+            .map(|p| p.id)?;
+        self.by_addr.insert(addresses, id);
+        Some(id)
     }
 
     /// Time passed.
@@ -876,12 +900,14 @@ impl Sfu {
         self.deadlines.insert((deadline, id));
     }
 
-    /// Drops what this node keeps of a peer that is gone besides the peer itself: its deadline and its pending work.
+    /// Drops what this node keeps of a peer that is gone besides the peer itself: its deadline, its pending work and
+    /// the addresses that led to it.
     fn forget_peer(&mut self, id: PeerId) {
         if let Some(old) = self.deadline_of.remove(&id) {
             self.deadlines.remove(&(old, id));
         }
         self.pending.remove(&id);
+        self.by_addr.retain(|_, peer| *peer != id);
     }
 
     /// Every peer of the node has work: for the commands that may change any of them (relay links).
