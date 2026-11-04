@@ -293,7 +293,7 @@ These go into `Agg` and both backends, with tests on each. The report tool needs
 
 `runtime/base-component/tools/screen/Monitor.xml` is added to `apps.xml` from `tools/MoquiConf.xml` at menu-index 97 (System is 98, Tools is 99). It uses icon `sym_o_monitoring` and a `MONITOR_APP` artifact group in `MonitoringSecurityData.xml`.
 
-Most of its screens are dashboards shipped as files, or Explore presets from the [Dashboards app](#placement). Traces, Errors and Sources stay specialized screens.
+Most of its screens are dashboards shipped as files, or Explore presets from the [Dashboards app](#placement). Traces, Errors and Sources stay specialized screens. Settings, timed in-memory overrides of log levels and telemetry settings, was designed and built separately ([Monitor-Settings](archive/Monitor-Settings.md), archived).
 
 | Screen | Built as | Content | Replaces |
 |---|---|---|---|

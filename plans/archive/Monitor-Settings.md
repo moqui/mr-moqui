@@ -1,6 +1,8 @@
 # Monitor Settings
 
-Built 2026-11-03 (the live check on a dev server below is still to do): timed runtime overrides of logging and telemetry settings in Monitor › Settings. It extends [Monitoring](Monitoring.md); the guide for what exists is [docs/tools/Monitoring.md](../docs/tools/Monitoring.md).
+> Archived 2026-11-04: built, and the live check on a dev server is done. The guide is [Monitoring, "Changing settings for a while"](../../docs/tools/Monitoring.md#changing-settings-for-a-while); the "Not in v1" list at the end is ideas to take up when they are wanted, not open work.
+
+Built 2026-11-03: timed runtime overrides of logging and telemetry settings in Monitor › Settings. It extends [Monitoring](../Monitoring.md).
 
 ## Context
 
@@ -201,6 +203,14 @@ Where the build differs from the design above:
   opened for a row by a reload with `changeKey` and `_openDialog`. Its value is a drop-down for levels, booleans and
   choices, and a text line otherwise.
 - Expiry has no annotation of its own: the band of the set already ends there.
+- Every audit line has the on-disk value; a revert has no expiry or reason of its own.
+- The core tests are `live_settings/tests.rs`, and they hold the `rsipstack` floor test (a target rule cannot lower
+  it); the host's `logging_tests.rs` checks that `rsipstack` INFO stays hidden while another target is at DEBUG.
+- The spec (`tools/test/MonitorSettings.spec.js`) renders the page as a Monitor user of its own, once without
+  `MONITOR_SETTINGS` and once with it granted, not as ADMIN.
+- The reason is required by `set#RuntimeSetting` (and core's validation), not by the dialog's field.
+- `list#RuntimeSettings` checks only a signed-in user; Monitor access comes from the `MONITOR_APP` artifact group, which
+  covers `org.moqui.monitor.MonitorServices.*`.
 
 ## Not in v1
 

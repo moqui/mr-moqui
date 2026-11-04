@@ -1,6 +1,8 @@
 # Autodoc
 
-Built Nov 3, 2026 (the checks still to do are under "Built" at the end). Generated Markdown docs for Moqui artifacts, like JavaDoc: shown in the Dev AIDE ([design-dev-aide](design-dev-aide.md) §7) and exported as a `.md` tree; the guide for what is built is [docs/dev/Autodoc.md](../docs/dev/Autodoc.md).
+> Archived 2026-11-04: built, and the checks under "Built" at the end are done: the browser look and the Chromium check by hand, and a full export timed on the release package (7.3 s for 7,970 docs), so the Dev AIDE's export stays in the request. The guide is [docs/dev/Autodoc.md](../../docs/dev/Autodoc.md); nothing is left open.
+
+Built Nov 3, 2026. Generated Markdown docs for Moqui artifacts, like JavaDoc: shown in the Dev AIDE ([design-dev-aide](../design-dev-aide.md) §7) and exported as a `.md` tree.
 
 ## Context
 
@@ -310,11 +312,18 @@ Measured on the Debug package (unoptimized):
 - **The viewer:** the first doc of a server builds the artifact index (16 s on Debug; its target is under 2 s on the
   Dev package, design-dev-aide §7.1). After that a doc takes about 50 to 150 ms.
 
-The Dev AIDE export runs in the request. Whether it needs to run in the background with progress turns on the time on
-the Dev package, which is still to be measured.
+Measured on the release package (2026-11-04; the Dev package is gone, and release has what it had): `moqui autodoc`
+over every component wrote 7,970 docs in 7.3 s. That is under the 15 s line, so the Dev AIDE export stays in the
+request, with no background run.
 
-Still to do:
-- **The Dev package time** of a full export.
-- **A look in a browser:** the Docs page in light, dark and at 390 px, the diagrams of a large package (`mantle.order`,
-  about 60 entities, drawn with key fields), and the copy button.
-- **A Chromium check** (gate3, slow, run only with permission) that a Doc tab draws its diagrams.
+Also as built:
+- **Tests.** The View tier's refusal of `export#ArtifactDocs` is in the `it` test
+  (`crates/moqui-host/tests/it/devaide.rs`, `autodoc_shows_a_doc_and_exports_a_tree_into_the_site`, which also covers
+  the export, the unchanged second run, `removeStale` and the upstream root). The Doc and Export docs screens render
+  once each, in qvt and tui, in `ArtifactDocs.spec.js`, not in the screen render specs (one render per screen and mode,
+  AGENTS.md). The copy button's test calls `copy` with the clipboard stubbed (`WebrootVue.qvt.markdown.page.js`).
+- **`artifactId`** on the Doc screen shows that artifact's doc in place; it does not redirect to the doc's path.
+- **`model.rs`** is a directory, `autodoc/model/`, with a module per doc type.
+
+Done (2026-11-04): the time above; a look in a browser (light, dark, 390 px, the diagrams of `mantle.order`, the copy
+button); a Chromium check that a Doc tab draws its diagrams.

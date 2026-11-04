@@ -1,8 +1,9 @@
 # Component hot-deploy and live conf reload
 
-Status 2026-11-04: Phases 0 to 4 built (groundwork, live conf reload, load from a local directory, deploy from git,
-cluster fan-out and the start's restore); the live checks are open: a git deploy and update against a real remote,
-and a database deploy reaching a second cluster member. Guide: [Component-Deploy](../docs/tools/Component-Deploy.md).
+> Archived 2026-11-04: Phases 0 to 4 built (groundwork, live conf reload, load from a local directory, deploy from
+> git, cluster fan-out and the start's restore), with the items the first build left out finished the same day (see
+> "As built"). The live checks are done. The guide is [Component-Deploy](../../docs/tools/Component-Deploy.md);
+> nothing is left open.
 
 ## Context
 
@@ -66,8 +67,44 @@ Where the build differs from the phases below:
 - **Dashboard.** System › Components is added. The dashboard's read-only component list stays.
 - **Cluster.** Only the database storage is fanned out (`component-deploy` topic). The others, and a load from a local
   directory, are refused while the server has live cluster members.
-- **Not checked yet.** These need a live check: a fetch from a real remote, and a deploy that reaches a second
-  cluster member.
+- **Live checks** (done 2026-11-04): a fetch from a real remote, and a deploy that reaches a second cluster member.
+
+Finished 2026-11-04, after a review of the plan against the code:
+- **Working clone fetch.** The system `git` clone and fetch of a working clone pass the sim mode and `RemoteCall` fence
+  checks first, as the in-process fetch does (`deploy/git.rs` `network_allowed`).
+- **Relink reads the running conf.** The entity model's conf text is replaced with each conf reload
+  (`EntityFacade::replace_conf_text`, called by the factory's `replace_conf`), so a relink parses the running conf and
+  `conf_data_locations` sees the `load-data` entries a loaded component's `MoquiConf.xml` added. A new `load-entity`
+  entry stays restart-class: the facade's entity files are the ones it opened with.
+- **Rollback.** A rolled-back load drops the component's `component://` root (`replace_components` drops the roots of
+  components the new list leaves out).
+- **Rust check.** `.rs` files in `src/` count as Rust code too, not only a `Cargo.toml`.
+- **`load#ComponentData`** loads a loaded component's data again (Load Data on System › Components).
+- **Restart modes.** `mode=restart-now` on `load#Component`, `deploy#Component` and `update#Component` (Deploy and
+  Restart, Update and Restart), and Restart Now on System › Conf, all where `restart#Server` is allowed
+  (`get#PendingRestart` answers `restartAllowed`).
+- **Remove of a dirty working clone** answers the changes (`dirty`) and asks again; `confirmDirty` removes it anyway.
+- **Dev AIDE.** Get and Clone preview the component and offer Load when nothing waits for a restart
+  (design-dev-aide §4.7, §6.5).
+- **Docs.** A deploy section in `docs/security/Attack-Surface.md`; the guide covers the above.
+
+Left as built, on purpose:
+- Deploy from Git is a box on `System/Components.xml`, not a subscreen, and Conf is `System/Conf.xml`, not a
+  directory.
+- A deploy whose load fails puts the files back in `.staging-<name>`, not `.failed/`, so Discard or a new preview
+  handles them.
+- Only a failure of the conf step rolls a load back. A problem in a file of the reload step is that file's problem,
+  and the rest go on (the failure-tolerance rule in AGENTS.md).
+- `Extension::after_artifacts_changed` takes no ChangeSet, and only moqui-report uses it. Skills resync through the
+  devkit's own hook (`reload.rs` `sync_skills`).
+- ScreenConf and the screen check interval are built again by `ScreenFacade::reconf`, not `conf_derived`.
+  ClientAddressing is read once, and its attributes are restart-class.
+- `components()` answers an `Arc<Vec<ComponentInfo>>`.
+- The catalog coverage test checks the top-level elements of `MoquiDefaultConf.xml`.
+- A component with Rust code is refused live even when the binary links it: native code registers only at a start.
+- The conf step of a load fails only when the running conf does not parse, which no fixture can bring about, so there
+  is no test of that rollback. The deploy `it` test checks the rollback's own step instead: putting the earlier
+  component list back drops the component's `component://` root.
 
 ## Phase 0: groundwork refactors (no behaviour change)
 

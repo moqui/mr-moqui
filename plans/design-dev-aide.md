@@ -461,11 +461,13 @@ since a terminal does it already and the users of D17 and D18 rarely need it.
 `dev/Repositories` lists every root as `./moq git-status` does: kind, path, components, branch, upstream, ahead and
 behind, changes, last fetch. Fetch all and Pull all (fast-forward only) go root by root, and one that fails is reported
 while the others go on; a pull ends with the reload's report and, when the index finds an anchor of a site extension
-that the upstream no longer has (§5.6 "extension anchors"), "Extensions affected: 2", which opens Problems at them.
-From here: Get a component (through `./moq component-get` from `addons.xml` and `myaddons.xml`,
-`--dev` for `runtime/dev-component`, when the runtime has `moq`), New component (§12), and Clone a URL into
-`runtime/component/<name>` or `runtime/dev-component/<name>`. A change to the set of components needs a restart, which
-a banner says.
+that the upstream no longer has (§5.6 "extension anchors"), "Extensions affected: 2", which opens Problems at them. From
+here: Get a component (through `./moq component-get` from `addons.xml` and `myaddons.xml`, `--dev` for
+`runtime/dev-component`, when the runtime has `moq`), New component (§12), and Clone a URL into
+`runtime/component/<name>` or `runtime/dev-component/<name>`. A component got or cloned is previewed as System ›
+Components does ([Component-Deploy](archive/Component-Deploy.md), Phase 2): when nothing in it waits for a restart,
+Repositories offers **Load**, which loads it on the running server with its seed, seed-initial and install data;
+otherwise it loads at the next restart, which a banner says with the reasons.
 
 ### 4.8 The file status in every tool
 
@@ -680,11 +682,13 @@ screen would otherwise stay), and the problems update.
 
 ### 6.5 Restart and rebuild
 
-A conf or component change needs a restart, an entity change too until F5 lands, and a Rust change a rebuild; a banner
-says which. **Restart** is a button on the banner from the first version: the server re-executes itself with its
-arguments (a `DEV_AIDE` transition, audited; under `./moq run` the same process comes back), `DevReload` tells the open
-pages to reconnect, and the Workspace returns to its tabs from the browser's state. Sessions and the sim overlay are
-lost, which the confirm says. It is the universal fallback that makes every phase shippable without the risky reloads.
+A part of the conf that the conf reload cannot apply live, a `component.xml` change, or a component that is not loaded
+live needs a restart, and a Rust change a rebuild; a banner says which. Entity changes relink (F5), conf files reload
+([Component-Deploy](archive/Component-Deploy.md), Phase 1), and a new component can be loaded live (§4.7). **Restart**
+is a button on the banner from the first version: the server re-executes itself with its arguments (a `DEV_AIDE`
+transition, audited; under `./moq run` the same process comes back), `DevReload` tells the open pages to reconnect, and
+the Workspace returns to its tabs from the browser's state. Sessions and the sim overlay are lost, which the confirm
+says. It is the universal fallback that makes every phase shippable without the risky reloads.
 **Rebuild** (`./moq build` run from the app, its output streamed, then the restart) is later (P10); the banner shows
 the command until then.
 
@@ -820,7 +824,7 @@ reads do: rebuilding the index and every tool that writes or runs code stay on d
 ### 7.5 Docs
 
 Each artifact's Markdown doc, with Mermaid diagrams of what uses it and what it uses, an E-R diagram per entity package,
-and Export docs into a repository, is Autodoc: [Autodoc](Autodoc.md), guide [docs/dev/Autodoc.md](../docs/dev/Autodoc.md).
+and Export docs into a repository, is Autodoc: [Autodoc](archive/Autodoc.md), guide [docs/dev/Autodoc.md](../docs/dev/Autodoc.md).
 Mermaid is used there for diagrams in Markdown that a repository shows as well; D9's "no Mermaid" is about the
 browser's canvas and still holds.
 
