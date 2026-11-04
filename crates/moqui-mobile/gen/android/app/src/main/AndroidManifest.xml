@@ -1,6 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- The incoming call (MT2, CallManager.kt): the ring's notification (asked at run time on Android 13+, once an
+        account is signed in), its full-screen screen over the lock screen (Android 14+ lets the user turn it off: a
+        heads-up notification then), the self-managed Telecom call and its phoneCall foreground service. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <!-- The call's media, in the WebView: asked at the Answer (IncomingCallActivity) or by the page. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
@@ -36,6 +50,33 @@
                 <data android:scheme="org.moqui.mobile" android:path="/sso" />
             </intent-filter>
         </activity>
+
+        <!-- The ring on the screen, over the lock screen; its own task, so it never shows the app's pages. -->
+        <activity
+            android:name=".IncomingCallActivity"
+            android:exported="false"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:launchMode="singleTop"
+            android:taskAffinity="org.moqui.mobile.ring"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+        <!-- The self-managed calls, bound by Telecom only. -->
+        <service
+            android:name=".CallConnectionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.ConnectionService" />
+            </intent-filter>
+        </service>
+        <service
+            android:name=".CallService"
+            android:exported="false"
+            android:foregroundServiceType="phoneCall" />
+        <receiver
+            android:name=".CallActionReceiver"
+            android:exported="false" />
 
         <provider
           android:name="androidx.core.content.FileProvider"

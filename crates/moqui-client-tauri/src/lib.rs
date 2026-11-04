@@ -50,8 +50,7 @@ pub use commands::{
 };
 pub use outbox::{
     draft_get, draft_list, draft_put, draft_remove, file_save, outbox_add, outbox_discard, outbox_kinds, outbox_list,
-    outbox_retry,
-    outbox_unsent,
+    outbox_retry, outbox_unsent,
 };
 pub use sockets::{socket_close, socket_open, socket_send};
 
@@ -103,6 +102,17 @@ pub trait ShellHost: Send + Sync {
     /// would panic; the app's pages then answer from the store, and the commands that need the server refuse.
     fn network_ready(&self) -> bool {
         true
+    }
+
+    /// An account signed in (a new key) and is the current one: the mobile app registers its push token with it.
+    fn account_signed_in(&self, account: &str) {
+        let _ = account;
+    }
+
+    /// An account's `key` is about to be revoked (a sign-out, a removal), on a thread that may block: the mobile app
+    /// takes its push token back from the server first.
+    fn account_signing_out(&self, account: &moqui_client::account::Account, key: &str) {
+        let _ = (account, key);
     }
 }
 

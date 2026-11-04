@@ -56,6 +56,7 @@ const COMMANDS: &[&str] = &[
     "open_in_shell",
     "notify",
     "open_external",
+    "call_state",
 ];
 
 fn main() {

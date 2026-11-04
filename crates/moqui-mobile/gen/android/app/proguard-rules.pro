@@ -25,3 +25,9 @@
 
 # The device keys' Keystore vault (src/main/java/org/moqui/mobile/KeyVault.kt), called only through JNI.
 -keep class org.moqui.mobile.KeyVault { *; }
+
+# The native code Rust calls (the page's call state) and the library's entry points (src/native.rs).
+-keep class org.moqui.mobile.CallManager { *; }
+-keep class org.moqui.mobile.Native { *; }
+# Asked for by name (Push.kt) in a build with Firebase.
+-keep class org.moqui.mobile.FcmPush { *; }

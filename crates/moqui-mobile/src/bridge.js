@@ -258,7 +258,10 @@
         ssoProviders: (server) => shellAsk("client_sso_providers", { server: String(server || "") }),
         ssoStart: (server, authFlowId, deviceMode) => shellAsk("client_sso_start", { server: String(server || ""), authFlowId: String(authFlowId || ""),
             deviceMode: deviceMode ? String(deviceMode) : null }),
-        ssoCancel: () => shellAsk("client_sso_cancel")
+        ssoCancel: () => shellAsk("client_sso_cancel"),
+        // the shell's call joined or over (WebrootCall.js): the phone's native call (MT2) is kept while it lasts
+        callState: (callSessionId, active) => shellAsk("call_state", { callSessionId: String(callSessionId || ""), active: !!active })
+            .catch((err) => console.info("The call state was not told to the app", err))
     });
     console.info("moqui-mobile: the shell's bridge is ready");
 })();

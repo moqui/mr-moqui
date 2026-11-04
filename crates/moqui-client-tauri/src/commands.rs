@@ -25,6 +25,8 @@
 //! main thread or in an async task. The others are `async` commands too, off the main thread: they read the key store,
 //! or open and close windows.
 
+use std::sync::Arc;
+
 use moqui_client::account::{account_id, base_url, Account};
 use moqui_client::conf::DeviceMode;
 use moqui_client::login::SignIn;
@@ -254,6 +256,7 @@ fn signed_in(
     // what waited for this sign-in goes now
     moqui_client::sync::flush::release_held(&state.core, &id);
     switched(&state);
+    state.shell.account_signed_in(&id);
     Ok(())
 }
 
@@ -407,8 +410,13 @@ async fn revoke(state: &ClientState, account: &Account, key: String) {
     if !state.shell.network_ready() {
         return;
     }
-    let server = account.server.clone();
-    let revoked = blocking(move || moqui_client::login::sign_out(&server, &key).map_err(|err| err.to_string())).await;
+    let shell = Arc::clone(&state.shell);
+    let leaving = account.clone();
+    let revoked = blocking(move || {
+        shell.account_signing_out(&leaving, &key);
+        moqui_client::login::sign_out(&leaving.server, &key).map_err(|err| err.to_string())
+    })
+    .await;
     if let Err(err) = revoked {
         tracing::warn!("The device key of {} was not revoked on the server: {err}", account.id);
     }

@@ -34,6 +34,7 @@
     "allow-client-show-shell",
     "allow-open-in-shell",
     "allow-notify",
-    "allow-open-external"
+    "allow-open-external",
+    "allow-call-state"
   ]
 }

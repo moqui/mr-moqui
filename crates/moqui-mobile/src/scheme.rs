@@ -167,9 +167,10 @@ pub(crate) fn app(
 
 /// A page's request with a body, which Android's WebView does not hand the scheme: `method` to `url` (on the page's own
 /// origin) with `headers` and `body` (base64), answered as the scheme would: `{status, headers, body}`, the body in
-/// base64. A redirect is answered as it is, for the bridge to follow.
-#[tauri::command(async)]
-pub(crate) fn scheme_fetch(
+/// base64. A redirect is answered as it is, for the bridge to follow. The request is made on Tauri's blocking pool:
+/// reqwest's blocking client panics on an async runtime's thread, where an async command runs.
+#[tauri::command]
+pub(crate) async fn scheme_fetch(
     app: AppHandle,
     webview: Webview,
     method: String,
@@ -180,13 +181,18 @@ pub(crate) fn scheme_fetch(
     let page = webview.url().map_err(|err| err.to_string())?;
     let request = fetch_request(&page, &method, &url, &headers, body.as_deref())?;
     let origin = page.origin().ascii_serialization();
-    let state = moqui_client_tauri::state(&app)?;
     let label = webview.label().to_string();
-    let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        answer(&state, &label, request, &origin, &moqui_client_tauri::scheme::NoHooks)
-    }))
-    .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "Not answered"));
-    Ok(fetch_answer(&response))
+    let answered = tauri::async_runtime::spawn_blocking(move || {
+        let state = moqui_client_tauri::state(&app)?;
+        let response = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            answer(&state, &label, request, &origin, &moqui_client_tauri::scheme::NoHooks)
+        }))
+        .unwrap_or_else(|_| plain(StatusCode::INTERNAL_SERVER_ERROR, "Not answered"));
+        Ok::<Value, String>(fetch_answer(&response))
+    })
+    .await
+    .map_err(|err| format!("The request did not finish: {err}"))?;
+    answered
 }
 
 /// The request of a page at `page` for [`scheme_fetch`]: on the page's own origin, which is one of the app's.

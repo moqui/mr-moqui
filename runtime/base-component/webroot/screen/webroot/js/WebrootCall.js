@@ -181,6 +181,11 @@
                 return json;
             });
         },
+        // the mobile app's native call (a ring answered on the phone's call screen) lasts while the shell has the call
+        hostCallState(callSessionId, active) {
+            const host = root.moquiDesktop;
+            if (host && typeof host.callState === "function") host.callState(callSessionId, active);
+        },
         remember(view) {
             if (!view || !view.callSessionId) return;
             state.calls[view.callSessionId] = view;
@@ -477,6 +482,7 @@
             if (state.current && state.current !== callSessionId) call.hangUp("switched");
             const video = options.video !== false && !state.settings.cameraOff;
             state.current = callSessionId;
+            call.hostCallState(callSessionId, true);
             state.legId = legId;
             state.phase = "joining";
             state.error = "";
@@ -858,6 +864,7 @@
         // Leaves the media (the services hear of it from leave#Call or the socket); the call's state stays in the store.
         hangUp() {
             if (state.current) delete state.recordingOf[state.current];
+            if (state.current) call.hostCallState(state.current, false);
             if (moqui.callKeys && moqui.callKeys.state.active) moqui.callKeys.end();
             if (call.guest) {
                 call.guest.close();
@@ -1159,7 +1166,7 @@
             // video off when the screen's query asks (video=false: an app window's Answer with audio only, moqui.call.toShell)
             const query = (this.$root && this.$root.currentParameters) || {};
             return { call: state, view: null, loading: false, preview: null, devices: [], level: 0, meter: null, video: String(query.video) !== "false",
-                now: Date.now(), timer: null };
+                now: Date.now(), timer: null, answered: false };
         },
         computed: {
             inThis() { return this.call.current === this.callSessionId; },
@@ -1271,6 +1278,15 @@
                 moqui.call.request("callState", { callSessionId: this.callSessionId }, "GET").then((json) => {
                     this.view = json.call || null;
                     this.loading = false;
+                    // answered on the mobile app's call screen (answer=true): answered and joined here, once; an encrypted
+                    // call this WebView cannot take part in stays unanswered, with the notice why
+                    const query = (this.$root && this.$root.currentParameters) || {};
+                    if (String(query.answer) === "true" && !this.answered && this.view && this.view.myLegStatus === "offered" &&
+                        !this.e2eeUnsupported && !this.offline && !this.keysInShell) {
+                        this.answered = true;
+                        this.join();
+                        return;
+                    }
                     if (this.view && this.view.status !== "ended") moqui.call.loadRecording(this.callSessionId);
                     if (this.view && this.view.kind === "phone") this.video = false;
                     if (this.view && !this.inThis && this.view.status !== "ended" && !this.keysInShell) this.startPreview();

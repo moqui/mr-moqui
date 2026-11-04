@@ -101,6 +101,29 @@ pub(crate) fn notify(
     builder.show().map_err(|err| err.to_string())
 }
 
+/// The shell's call `callSessionId` is joined (`active`) or left or ended: the native call screen's call (MT2) is kept
+/// while the page has it and ended after, with its foreground service and the lock-screen showing. The shell's only
+/// (it owns the calls); the native code acts only on a call it shows.
+#[tauri::command(async)]
+pub(crate) fn call_state(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    call_session_id: String,
+    active: bool,
+) -> Result<(), String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    let id = crate::calls::call_id(&call_session_id).ok_or("Not a call id")?;
+    #[cfg(target_os = "android")]
+    crate::android::page_call_state(id, active)?;
+    #[cfg(not(target_os = "android"))]
+    log::info!("The call {id} is {}", if active { "active" } else { "over" });
+    Ok(())
+}
+
 /// Open `url` outside the app: http and https on the web, mailto, tel and sip.
 #[tauri::command(async)]
 pub(crate) fn open_external(url: String) -> Result<(), String> {

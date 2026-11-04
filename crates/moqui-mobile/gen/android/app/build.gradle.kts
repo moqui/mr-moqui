@@ -7,6 +7,14 @@ plugins {
     id("rust")
 }
 
+// Firebase Cloud Messaging (native push, plans/Mobile-Desktop.md MD6 MT2) only when the Firebase project's
+// google-services.json is here: its plugin, its library and src/fcm (PushService) are then in the build. Without it
+// the app builds and runs with push off (Push.kt asks for FcmPush by name), and no Firebase class is in it.
+val fcm = file("google-services.json").exists()
+if (fcm) {
+    apply(plugin = "com.google.gms.google-services")
+}
+
 val tauriProperties = Properties().apply {
     val propFile = file("tauri.properties")
     if (propFile.exists()) {
@@ -24,6 +32,10 @@ android {
         targetSdk = 37
         versionCode = tauriProperties.getProperty("tauri.android.versionCode", "1").toInt()
         versionName = tauriProperties.getProperty("tauri.android.versionName", "1.0")
+        buildConfigField("boolean", "FCM", fcm.toString())
+    }
+    if (fcm) {
+        sourceSets.getByName("main").java.srcDir("src/fcm/java")
     }
     buildTypes {
         getByName("debug") {
@@ -59,6 +71,13 @@ android {
     }
 }
 
+// src/fcm's manifest (PushService) merged only with Firebase.
+androidComponents {
+    onVariants { variant ->
+        if (fcm) variant.sources.manifests.addStaticManifestFile("src/fcm/AndroidManifest.xml")
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = JvmTarget.JVM_1_8
@@ -77,6 +96,12 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.lifecycle:lifecycle-process:2.10.0")
+    // the ring's CallStyle notification and the full-screen intent check (CallService.kt)
+    implementation("androidx.core:core:1.13.1")
+    if (fcm) {
+        implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+        implementation("com.google.firebase:firebase-messaging")
+    }
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.4")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.0")

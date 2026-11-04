@@ -15,24 +15,88 @@
 //! What the app asks of Android through JNI, on the JVM and the application context tao records in `ndk-context`:
 //! rustls-platform-verifier's init, the Keystore's sealing of the device keys (`KeyVault.kt` in `gen/android`, loaded
 //! through the app's class loader, as a thread of Rust's has only the system's), and a `VIEW` intent for the system
-//! browser or a `mailto:`/`tel:` handler.
+//! browser or a `mailto:`/`tel:` handler. A push can start the process with no activity, so no tao: the native code
+//! then hands Rust the context itself (`Native.init`, [`init_from_native`]), which is used before tao's; tao's
+//! `ndk-context` is never set here, since tao sets it once and would fail if it were set.
+//!
+//! The call path's call into the native code: the page's call state to `CallManager` ([`page_call_state`]).
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use jni::errors::Error;
-use jni::objects::{JByteArray, JClassLoader, JObject};
-use jni::refs::LoaderContext;
+use jni::objects::{JByteArray, JClass, JClassLoader, JObject};
+use jni::refs::{Global, LoaderContext};
+use jni::strings::JNIStr;
 use jni::{jni_sig, jni_str, Env, JValue, JavaVM};
 
 use crate::keystore::Sealer;
 
-/// `work` with the JVM attached to this thread and the application context; a Java exception is cleared and an error.
-fn with_context<T>(work: impl FnOnce(&mut Env<'_>, &JObject<'_>) -> Result<T, Error>) -> Result<T, String> {
+/// The JVM and the application context the native code handed over (`Native.init`).
+static NATIVE: OnceLock<(JavaVM, Global<JObject<'static>>)> = OnceLock::new();
+
+/// The TLS verifier is set up.
+static VERIFIER: AtomicBool = AtomicBool::new(false);
+
+/// The JVM and the application context: the native code's, else tao's.
+fn vm_and_context() -> (JavaVM, *mut std::ffi::c_void) {
+    if let Some((vm, context)) = NATIVE.get() {
+        return (vm.clone(), context.as_obj().as_raw().cast());
+    }
     let context = ndk_context::android_context();
     // SAFETY: tao sets both from the live JVM and a global reference to the application context, kept for the life of
     // the process.
-    let vm = unsafe { JavaVM::from_raw(context.vm().cast()) };
+    (unsafe { JavaVM::from_raw(context.vm().cast()) }, context.context())
+}
+
+/// `Native.init(context)`: keep the JVM and the application context, and set up the TLS verifier; whether requests may
+/// be made.
+pub(crate) fn init_from_native(env: &mut Env<'_>, context: &JObject<'_>) -> bool {
+    if NATIVE.get().is_none() {
+        let kept = (|| -> Result<(JavaVM, Global<JObject<'static>>), Error> {
+            let app = env
+                .call_method(
+                    context,
+                    jni_str!("getApplicationContext"),
+                    jni_sig!("()Landroid/content/Context;"),
+                    &[],
+                )?
+                .l()?;
+            Ok((env.get_java_vm()?, env.new_global_ref(&app)?))
+        })();
+        match kept {
+            Ok(kept) => {
+                let _ = NATIVE.set(kept);
+            }
+            Err(err) => {
+                if env.exception_check() {
+                    env.exception_clear();
+                }
+                log::error!("The app's context was not kept: {err}");
+                return false;
+            }
+        }
+    }
+    if !VERIFIER.load(Ordering::SeqCst) {
+        if let Err(err) = init_verifier() {
+            log::error!("The TLS verifier did not start; the native code makes no requests: {err}");
+        }
+    }
+    VERIFIER.load(Ordering::SeqCst)
+}
+
+/// Whether the TLS verifier is set up.
+pub(crate) fn verifier_ready() -> bool {
+    VERIFIER.load(Ordering::SeqCst)
+}
+
+/// `work` with the JVM attached to this thread and the application context; a Java exception is cleared and an error.
+fn with_context<T>(work: impl FnOnce(&mut Env<'_>, &JObject<'_>) -> Result<T, Error>) -> Result<T, String> {
+    let (vm, context) = vm_and_context();
     vm.attach_current_thread(|env| -> Result<T, Error> {
-        // SAFETY: as above; the reference is global, so it outlives this frame.
-        let app = unsafe { JObject::from_raw(env, context.context().cast()) };
+        // SAFETY: a global reference to the application context, kept for the life of the process, so it outlives this
+        // frame.
+        let app = unsafe { JObject::from_raw(env, context.cast()) };
         let done = work(env, &app);
         if done.is_err() && env.exception_check() {
             env.exception_clear();
@@ -44,17 +108,35 @@ fn with_context<T>(work: impl FnOnce(&mut Env<'_>, &JObject<'_>) -> Result<T, Er
 
 /// rustls-platform-verifier's JVM init, before the first request.
 pub(crate) fn init_verifier() -> Result<(), String> {
-    let context = ndk_context::android_context();
-    // SAFETY: as in with_context.
-    let vm = unsafe { JavaVM::from_raw(context.vm().cast()) };
+    if VERIFIER.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    let (vm, context) = vm_and_context();
     vm.attach_current_thread(|env| -> Result<(), Error> {
         // SAFETY: as in with_context.
-        let app = unsafe { JObject::from_raw(env, context.context().cast()) };
+        let app = unsafe { JObject::from_raw(env, context.cast()) };
         rustls_platform_verifier::android::init_with_env(env, app)
     })
     .map_err(|err| err.to_string())?;
+    VERIFIER.store(true, Ordering::SeqCst);
     log::info!("TLS verifier initialized");
     Ok(())
+}
+
+/// The page's call `id` is active (joined) or not (left, ended): the native code keeps or ends its call
+/// (`CallManager.pageCallState`).
+pub(crate) fn page_call_state(id: &str, active: bool) -> Result<(), String> {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.CallManager"))?;
+        let id = env.new_string(id)?;
+        env.call_static_method(
+            &class,
+            jni_str!("pageCallState"),
+            jni_sig!("(Ljava/lang/String;Z)V"),
+            &[JValue::Object(&id), JValue::Bool(active)],
+        )?;
+        Ok(())
+    })
 }
 
 /// The phone's model (`android.os.Build.MODEL`), for its name in the user's device list.
@@ -114,7 +196,7 @@ impl KeyVault {
     /// The vault, once its Keystore key is made or found.
     pub(crate) fn ready() -> Result<Self, String> {
         with_context(|env, app| {
-            let class = vault_class(env, app)?;
+            let class = app_class(env, app, jni_str!("org.moqui.mobile.KeyVault"))?;
             env.call_static_method(&class, jni_str!("ready"), jni_sig!("()V"), &[])?;
             Ok(())
         })?;
@@ -124,7 +206,7 @@ impl KeyVault {
     /// `bytes` through `KeyVault.<method>(byte[]): byte[]`.
     fn call(method: &'static str, bytes: &[u8]) -> Result<Vec<u8>, String> {
         with_context(|env, app| {
-            let class = vault_class(env, app)?;
+            let class = app_class(env, app, jni_str!("org.moqui.mobile.KeyVault"))?;
             let input = env.byte_array_from_slice(bytes)?;
             let name = match method {
                 "seal" => jni_str!("seal"),
@@ -149,9 +231,9 @@ impl Sealer for KeyVault {
     }
 }
 
-/// The app's `KeyVault` class, through the application context's class loader (`getClassLoader`, the app's; the
-/// context's own class is the framework's).
-fn vault_class<'local>(env: &mut Env<'local>, app: &JObject<'_>) -> Result<jni::objects::JClass<'local>, Error> {
+/// A class of the app's (`KeyVault`, `CallManager`), through the application context's class loader (`getClassLoader`,
+/// the app's; the context's own class is the framework's, and a thread of Rust's has only the system's).
+fn app_class<'local>(env: &mut Env<'local>, app: &JObject<'_>, name: &JNIStr) -> Result<JClass<'local>, Error> {
     let loader = env
         .call_method(
             app,
@@ -161,5 +243,5 @@ fn vault_class<'local>(env: &mut Env<'local>, app: &JObject<'_>) -> Result<jni::
         )?
         .l()?;
     let loader = env.cast_local::<JClassLoader>(loader)?;
-    LoaderContext::Loader(&loader).load_class(env, jni_str!("org.moqui.mobile.KeyVault"), true)
+    LoaderContext::Loader(&loader).load_class(env, name, true)
 }

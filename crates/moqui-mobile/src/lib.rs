@@ -25,20 +25,24 @@
 //! - The `<client-conf>` of the build (`client-conf.xml`, read at build time), the stores under the app's data
 //!   directory, the SSO hand-back (`org.moqui.mobile:/sso`, an intent filter), and the lifecycle: the mirror stops when
 //!   the app is paused and starts again when it resumes; the outbox's sender runs while the process does.
+//! - [`calls`] and [`native`]: the incoming call on a locked phone (MT2), shown by the native code
+//!   (`gen/android/.../CallManager.kt`) with the media in the webview: an Answer's deep link opens the call in the
+//!   shell, a Decline and the push token's registration go to the server from Rust with no webview.
 
 #[cfg(target_os = "android")]
 mod android;
+mod calls;
 mod commands;
 mod host;
 mod keystore;
+mod native;
 mod scheme;
 
 use std::borrow::Cow;
 use std::sync::Arc;
 
-use moqui_client::app::{Client, ClientHost};
+use moqui_client::app::ClientHost;
 use moqui_client::assets::Assets;
-use moqui_client::conf::ClientConf;
 use moqui_client_tauri::{ClientState, ShellHost, APP_SCHEME, SHELL_ORIGIN, SHELL_SCHEME};
 use tauri::utils::assets::{AssetKey, AssetsIter, CspHash};
 use tauri::webview::PageLoadEvent;
@@ -74,12 +78,7 @@ impl tauri::Assets<tauri::DynRuntime> for NoAssets {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    #[cfg(target_os = "android")]
-    android_logger::init_once(
-        android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Info)
-            .with_tag("moqui-mobile"),
-    );
+    init_logging();
     let mut context = tauri::generate_context!();
     let files = context.set_assets(Box::new(NoAssets));
     let mut files = Some(files);
@@ -119,7 +118,8 @@ pub fn run() {
             commands::client_show_shell,
             commands::open_in_shell,
             commands::notify,
-            commands::open_external
+            commands::open_external,
+            commands::call_state
         ])
         .setup(move |app| {
             let embedded = files.take().ok_or("the app was set up twice")?;
@@ -133,15 +133,24 @@ pub fn run() {
     }
 }
 
+/// Logcat, under the tag moqui-mobile: from the app's start, or from the native code's (a push with no activity).
+pub(crate) fn init_logging() {
+    #[cfg(target_os = "android")]
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Info)
+            .with_tag("moqui-mobile"),
+    );
+}
+
 /// Start the client: the TLS verifier, the keys, the store under the app's data directory, the shell's webview, and the
 /// key renewal and the outbox's sender.
 fn start(app: &AppHandle, files: Box<dyn tauri::Assets<tauri::DynRuntime>>) -> Result<(), Box<dyn std::error::Error>> {
     let network = network_ready();
     let dir = app.path().app_data_dir()?.join("client");
-    let keys = keystore::open_keys(&dir.join("keys"));
-    let conf = ClientConf::parse(client_conf_element());
-    let core = Arc::new(Client::new(&dir, keys, Box::new(move || conf.clone()))?);
-    let host = Arc::new(MobileHost::new(app.clone(), network));
+    // the process's one client: a push that started the process may have made it already
+    let core = native::core_in(&dir)?;
+    let host = Arc::new(MobileHost::new(app.clone(), network, dir.clone()));
     *moqui_lib::sync::lock(&host.client) = Some(Arc::clone(&core));
     let client_host: Arc<dyn ClientHost> = host.clone();
     let shell_host: Arc<dyn ShellHost> = host.clone();
@@ -161,6 +170,14 @@ fn start(app: &AppHandle, files: Box<dyn tauri::Assets<tauri::DynRuntime>>) -> R
     if network {
         moqui_client::renewal::start(&core, &client_host);
         moqui_client::sync::flush::start(&core, &client_host);
+        // the push token with any account it is not registered with yet (a token that came while no one was signed in)
+        let (push_core, push_dir) = (Arc::clone(&core), dir.clone());
+        if let Err(err) = std::thread::Builder::new()
+            .name("push-register".to_string())
+            .spawn(move || native::register_push(&push_core, &push_dir, None))
+        {
+            log::warn!("Push: the registration did not start: {err}");
+        }
     }
     log::info!(
         "moqui-mobile: the client started in {}, as \"{}\"",
@@ -255,6 +272,12 @@ fn on_event(app: &AppHandle, event: RunEvent) {
             for url in urls {
                 if url.scheme() == "org.moqui.mobile" && url.path() == "/sso" {
                     moqui_client_tauri::commands::sso_returned(app, &url);
+                } else if let Some(answer) = calls::answer_link(&url) {
+                    // an incoming call answered in the native call screen: the shell joins it
+                    if let Some(host) = app.try_state::<Arc<MobileHost>>() {
+                        let host = Arc::clone(&host);
+                        std::thread::spawn(move || host.open_call(&answer));
+                    }
                 } else {
                     log::warn!("A link the app does not take: {}", url.scheme());
                 }

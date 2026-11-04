@@ -7,7 +7,10 @@ sent when the server can be reached. How it works on Android is [docs/ui/Mobile-
 
 - **Code:** `src/` is the phone's part: one webview (`host.rs`), the schemes on Android's WebView (`scheme.rs`), the
   Keystore key store (`keystore.rs`, `android.rs` and `gen/android/.../KeyVault.kt`), its own commands
-  (`commands.rs`), the page bridge (`bridge.js`) and the lifecycle (`lib.rs`). The rest is shared with the desktop
+  (`commands.rs`), the page bridge (`bridge.js`), the lifecycle (`lib.rs`), and the incoming call on a locked phone
+  (`calls.rs`, `native.rs` and the Kotlin `CallManager`, `CallConnectionService`, `CallService`,
+  `IncomingCallActivity`, `Native`, `Push`; [Mobile-Client](../../docs/ui/Mobile-Client.md#the-incoming-call-mt2)).
+  The rest is shared with the desktop
   app: [moqui-client](../moqui-client/README.md) and [moqui-client-tauri](../moqui-client-tauri/README.md).
 - **The shell** is the desktop's (`crates/moqui-desktop/shell`), staged by `./moq android` into
   `target/mobile-shell` and embedded as the app's Tauri assets (`frontendDist`). A build without it (`cargo test`)
@@ -19,6 +22,9 @@ sent when the server can be reached. How it works on Android is [docs/ui/Mobile-
 - **`gen/android`** is the Gradle project `cargo tauri android init` made, kept in git with the app's changes (the
   verifier's artifact, `KeyVault.kt`, the SSO intent filter, no backup, the window insets in `MainActivity.kt`, the
   ProGuard rules); its `.gitignore` files leave out what the Tauri CLI writes on each build.
+- **Firebase** (native push) is in the build only with `gen/android/app/google-services.json`, the Firebase
+  project's, which git ignores; without it push is off and the app still builds. Debug builds take a ring from adb
+  (`DebugRingReceiver`, [Mobile-Client](../../docs/ui/Mobile-Client.md#the-incoming-call-mt2)).
 - **`patches/wry`**: wry with Tauri's scripts and IPC for the main frame of the app's own origins only, through
   `[patch.crates-io]` ([patches/README.md](patches/README.md)).
 

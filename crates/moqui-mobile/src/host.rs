@@ -26,6 +26,7 @@
 //! desktop's app windows do, and none after a switch. The device key never reaches a page. Only the main frame of
 //! the app's two origins has the IPC at all (wry's patch, `patches/README.md`).
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -82,6 +83,11 @@ impl PageState {
         let nonce = moqui_client::store::new_client_ref().ok()?;
         shown.nonce = Some(nonce.clone());
         Some(nonce)
+    }
+
+    /// Whether the shell's current load has its nonce (it loaded, and is the shell's).
+    pub(crate) fn has_nonce(&self) -> bool {
+        moqui_lib::sync::lock(&self.shown).nonce.is_some()
     }
 
     /// The server pages about to open are `account`'s.
@@ -212,16 +218,47 @@ pub(crate) struct MobileHost {
     pub(crate) page: PageState,
     /// The TLS verifier is set up: requests may be made.
     pub(crate) network: AtomicBool,
+    /// The client's directory (`push.json` beside the accounts).
+    pub(crate) dir: PathBuf,
 }
 
 impl MobileHost {
-    pub(crate) fn new(app: AppHandle, network: bool) -> Self {
+    pub(crate) fn new(app: AppHandle, network: bool, dir: PathBuf) -> Self {
         Self {
             app,
             client: Mutex::new(None),
             page: PageState::default(),
             network: AtomicBool::new(network),
+            dir,
         }
+    }
+
+    /// An incoming call answered in the native call screen (MT2): the shell shows the call's screen of the current
+    /// account's comms app, which answers it and joins (`answer=true`, WebrootCall.js). The shell takes it as it loads
+    /// (`client_take_open`), or now when it is loaded; with no account signed in, after the sign-in. Not on the main
+    /// thread: the comms app may be read from the store.
+    pub(crate) fn open_call(&self, answer: &crate::calls::Answer) {
+        if answer.hang_up {
+            // the shell's call, left by the page (which then tells the native code it is over)
+            if self.is_shell(MAIN) && self.page.has_nonce() {
+                self.eval(&crate::calls::hang_up_script(&answer.call_session_id));
+            }
+            return;
+        }
+        let Ok(state) = moqui_client_tauri::state(&self.app) else {
+            return;
+        };
+        let root = self.signed_in().map_or_else(
+            || moqui_client::offline::DEFAULT_COMMS_ROOT.to_string(),
+            |id| state.core.comms_root_of(&id),
+        );
+        *moqui_lib::sync::lock(&state.open_pending) = Some(crate::calls::call_path(&root, answer));
+        if self.is_shell(MAIN) && self.page.has_nonce() {
+            self.eval("window.moquiShell && window.moquiShell.poke()");
+        } else {
+            self.navigate(&moqui_client_tauri::shell_url(None, None));
+        }
+        log::info!("moqui-mobile: the call {} opens in the shell", answer.call_session_id);
     }
 
     fn core(&self) -> Option<Arc<Client>> {
@@ -349,6 +386,25 @@ impl ShellHost for MobileHost {
 
     fn network_ready(&self) -> bool {
         self.network.load(Ordering::SeqCst)
+    }
+
+    fn account_signed_in(&self, account: &str) {
+        let (Some(core), true) = (self.core(), self.network_ready()) else {
+            return;
+        };
+        let (dir, account) = (self.dir.clone(), account.to_string());
+        let started = std::thread::Builder::new()
+            .name("push-register".to_string())
+            .spawn(move || crate::native::register_push(&core, &dir, Some(&account)));
+        if let Err(err) = started {
+            log::warn!("Push: the registration did not start: {err}");
+        }
+    }
+
+    fn account_signing_out(&self, account: &Account, key: &str) {
+        if let Some(core) = self.core() {
+            crate::native::unregister_push(&core, &self.dir, account, key);
+        }
     }
 }
 
