@@ -5,7 +5,7 @@ into MySQL 8.4.13 from the `mysql:8` image. All are deferred. The MySQL fixes ma
 
 The load stored 29,609 records in 216 seconds and skipped 10 data files. Two tables were not created. About 200 of those
 seconds were four lock wait timeouts (issue 5). Issues 1 to 5 are about MySQL. Issues 6 to 8 happen on any database and
-were found on the way.
+were found on the way. Issue 9 was added later, by the HL-019 change.
 
 | # | Issue | Effect on MySQL | MySQL only |
 |---|---|---|---|
@@ -17,6 +17,7 @@ were found on the way.
 | 6 | The log line leaves out a field named `error` | No cause in the console or log file for many errors | No |
 | 7 | The data feed's commit hook can panic on a borrowed connection | The commit fails with "RefCell already mutably borrowed" | No |
 | 8 | A `seed` file depends on a `seed-initial` file | A seed-only load skips it | No |
+| 9 | The network bounds of HL-019 are not checked against a server | A wrong option or a cancel that hangs would show only in production | Yes |
 
 ## How it was run
 
@@ -145,6 +146,26 @@ Fix: resolve the feed targets before the hook runs (when the hook is registered,
 `MonitoringSalesSecurityData.xml` (mr-mantle, `seed`) adds `DataDocumentUserGroup` rows for `MantleSalesOrderItem`
 and `MantleSalesOrderPart`, which `MantleDocumentSalesData.xml` defines as `seed-initial`. So `./moq load seed` skips
 the file on any database. Fix: make it `seed-initial`, the type of the documents it grants.
+
+### 9. The network bounds are not checked against a server
+
+The MySQL part of HL-019 (`crates/moqui-drivers/src/mysql.rs`, plans/High-Level-Review.md) was written with no MySQL
+server here. What has no test against one:
+
+- **Session limits and keepalive:** connect 10 s, read 600 s, write 60 s, TCP keepalive after 60 s. The tests check
+  only the option values (`a_session_bounds_its_network_waits_and_keeps_alive`) and a server that accepts TCP and sends
+  no greeting. Not checked: that a read past the limit ends the statement and the pool drops the connection, and that
+  keepalive ends a wait on a host that stopped answering without a reset.
+- **The `read-timeout` setting:** the datasource's `inline-jdbc` `read-timeout` (seconds, 0 for none, 600 when not
+  given) reaches the session options. Not checked on a load or server, nor how a long statement in a long transaction
+  (a data load) fares with the default.
+- **The `KILL QUERY` cancel:** it still opens a signed-in session of its own, now with 5 s for each step. Not checked:
+  a cancel to a stalled host (only the fake server without a greeting), and that the statement it kills is the one
+  the deadline was for.
+
+To do: an acceptance test against MySQL and MariaDB behind a TCP proxy that stops forwarding part way through a
+statement in a deadline-bound transaction. The worker should be free within the read limit, the cancel should end
+within its 5 s, and the pool should open a new connection after.
 
 ### Smaller
 

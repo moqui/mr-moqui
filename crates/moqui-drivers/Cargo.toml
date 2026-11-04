@@ -14,7 +14,7 @@ publish.workspace = true
 [features]
 # Postgres embedded in the process (theseus archive, staged by build.rs).
 embedded-postgres = ["postgres", "dep:postgresql_embedded", "dep:tar", "dep:flate2", "dep:close_fds"]
-postgres = ["dep:postgres-protocol", "dep:postgres-types", "dep:fallible-iterator", "dep:webpki-roots"]
+postgres = ["dep:postgres-protocol", "dep:postgres-types", "dep:fallible-iterator", "dep:webpki-roots", "dep:socket2"]
 mysql = ["dep:mysql"]
 
 [dependencies]
@@ -33,6 +33,8 @@ postgres-types = { workspace = true, optional = true }
 fallible-iterator = { workspace = true, optional = true }
 webpki-roots = { workspace = true, optional = true }
 mysql = { workspace = true, optional = true }
+# TCP keepalive on the Postgres connections (pgwire.rs).
+socket2 = { workspace = true, optional = true }
 
 # The descriptors a postmaster would inherit from its host, marked close-on-exec first (src/embedded.rs).
 [target.'cfg(unix)'.dependencies]

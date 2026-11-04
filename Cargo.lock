@@ -4831,6 +4831,7 @@ dependencies = [
  "postgresql_embedded",
  "rcgen",
  "rustls",
+ "socket2",
  "tar",
  "tracing",
  "webpki-roots",

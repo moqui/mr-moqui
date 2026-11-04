@@ -169,6 +169,7 @@ pub(super) struct PooledConn {
     /// The discarded client was dead: the others of the pool are suspect.
     lost: bool,
     timeout_armed: bool,
+    read_timeout_armed: bool,
 }
 
 struct Tracked {
@@ -273,6 +274,10 @@ impl DbConnection for Tracked {
 
     fn set_statement_timeout(&mut self, remaining: Option<std::time::Duration>) -> Result<(), Error> {
         self.conn.set_statement_timeout(remaining)
+    }
+
+    fn set_read_timeout(&mut self, timeout: Option<std::time::Duration>) -> Result<(), Error> {
+        self.conn.set_read_timeout(timeout)
     }
 }
 
@@ -477,6 +482,7 @@ impl Pool {
             discard: false,
             lost: false,
             timeout_armed: false,
+            read_timeout_armed: false,
         }
     }
 
@@ -626,6 +632,16 @@ impl PooledConn {
         self.timeout_armed = true;
         Ok(())
     }
+
+    /// Sets the longest read once, as the statement timeout. Returning the connection clears it.
+    pub(super) fn arm_read_timeout(&mut self, timeout: std::time::Duration) -> Result<(), Error> {
+        if self.read_timeout_armed {
+            return Ok(());
+        }
+        self.conn().set_read_timeout(Some(timeout))?;
+        self.read_timeout_armed = true;
+        Ok(())
+    }
 }
 
 impl Drop for PooledConn {
@@ -634,6 +650,14 @@ impl Drop for PooledConn {
             if let Some(tracked) = self.tracked.as_mut() {
                 if let Err(err) = tracked.set_statement_timeout(None) {
                     tracing::warn!(error = %err, "could not clear statement timeout; discarding connection");
+                    self.discard = true;
+                }
+            }
+        }
+        if self.read_timeout_armed && !self.discard {
+            if let Some(tracked) = self.tracked.as_mut() {
+                if let Err(err) = tracked.set_read_timeout(None) {
+                    tracing::warn!(error = %err, "could not clear the read timeout; discarding connection");
                     self.discard = true;
                 }
             }

@@ -36,6 +36,11 @@ struct Shared {
     cancels: Mutex<Vec<Arc<AtomicBool>>>,
     cancellers: AtomicUsize,
     closed: Mutex<HashSet<i64>>,
+    /// Cancels still to stall, as one waiting on a host that does not answer, until `release`.
+    stall_cancels: AtomicUsize,
+    stalled: AtomicUsize,
+    release: AtomicBool,
+    read_timeouts: Mutex<Vec<Option<Duration>>>,
 }
 
 struct FakeDriver {
@@ -49,7 +54,7 @@ struct FakeConn {
     streaming: bool,
 }
 
-struct FlagCancel(Arc<AtomicBool>);
+struct FlagCancel(Arc<AtomicBool>, Arc<Shared>);
 
 impl FakeDriver {
     fn new() -> Arc<Self> {
@@ -65,6 +70,10 @@ impl FakeDriver {
                 cancels: Mutex::new(Vec::new()),
                 cancellers: AtomicUsize::new(0),
                 closed: Mutex::new(HashSet::new()),
+                stall_cancels: AtomicUsize::new(0),
+                stalled: AtomicUsize::new(0),
+                release: AtomicBool::new(false),
+                read_timeouts: Mutex::new(Vec::new()),
             }),
         })
     }
@@ -118,6 +127,18 @@ impl FakeConn {
 
 impl DbCancel for FlagCancel {
     fn cancel(&self) -> Result<(), Error> {
+        let shared = &self.1;
+        let stall = shared
+            .stall_cancels
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |left| left.checked_sub(1))
+            .is_ok();
+        if stall {
+            shared.stalled.fetch_add(1, Ordering::SeqCst);
+            let until = Instant::now() + Duration::from_secs(10);
+            while !shared.release.load(Ordering::SeqCst) && Instant::now() < until {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
         self.0.store(true, Ordering::SeqCst);
         Ok(())
     }
@@ -204,7 +225,12 @@ impl DbConnection for FakeConn {
 
     fn canceller(&self) -> Box<dyn DbCancel> {
         self.shared.cancellers.fetch_add(1, Ordering::SeqCst);
-        Box::new(FlagCancel(Arc::clone(&self.cancelled)))
+        Box::new(FlagCancel(Arc::clone(&self.cancelled), Arc::clone(&self.shared)))
+    }
+
+    fn set_read_timeout(&mut self, timeout: Option<Duration>) -> Result<(), Error> {
+        self.shared.read_timeouts.lock().expect("read timeouts").push(timeout);
+        Ok(())
     }
 
     fn set_statement_timeout(&mut self, remaining: Option<Duration>) -> Result<(), Error> {
@@ -212,6 +238,18 @@ impl DbConnection for FakeConn {
         self.shared.log.lock().expect("log").push(format!("timeout:{ms}"));
         Ok(())
     }
+}
+
+/// Wait up to two seconds for `done`.
+fn eventually(done: impl Fn() -> bool) -> bool {
+    let until = Instant::now() + Duration::from_secs(2);
+    while !done() {
+        if Instant::now() > until {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    true
 }
 
 impl DbDriver for FakeDriver {
@@ -793,6 +831,94 @@ fn poll_deadline_marks_rollback_only_and_cancels() {
     assert!(err.to_string().contains("deadline"), "{err}");
     assert_eq!(driver.event_count("rollback:"), 1);
     assert_eq!(driver.event_count("commit:"), 0);
+}
+
+/// A deadline cancel that stalls (its host does not answer) holds neither the other cancels already due nor the
+/// timer's later passes (plans/High-Level-Review.md HL-019).
+#[test]
+fn a_stalled_cancel_holds_neither_other_cancels_nor_later_passes() {
+    let (first, first_driver) = harness(small());
+    let (second, second_driver) = harness(small());
+    let (third, third_driver) = harness(small());
+    let _clean = (Clean(&first), Clean(&second), Clean(&third));
+    first_driver.shared.stall_cancels.store(1, Ordering::SeqCst);
+    assert!(first.begin(Some(Duration::from_millis(100))).expect("begin"));
+    first.with_connection(|_| Ok(())).expect("enlist");
+    assert!(second.begin(Some(Duration::from_millis(100))).expect("begin"));
+    second.with_connection(|_| Ok(())).expect("enlist");
+    assert!(
+        eventually(|| first_driver.shared.stalled.load(Ordering::SeqCst) == 1),
+        "the first cancel started"
+    );
+    assert!(eventually(|| second_driver.any_cancelled()), "the second cancel went");
+    // a later pass, the first cancel still stalled
+    assert!(third.begin(Some(Duration::from_millis(50))).expect("begin"));
+    third.with_connection(|_| Ok(())).expect("enlist");
+    assert!(eventually(|| third_driver.any_cancelled()), "a later pass cancelled");
+    assert!(!first_driver.any_cancelled(), "still stalled");
+    first_driver.shared.release.store(true, Ordering::SeqCst);
+    assert!(eventually(|| first_driver.any_cancelled()));
+}
+
+/// A connection whose canceller the timer took is closed when its transaction ends, not handed to the next borrower,
+/// whose statement the late cancel would otherwise stop (plans/High-Level-Review.md HL-019).
+#[test]
+fn a_late_cancel_never_reaches_the_next_borrowers_statement() {
+    let (mgr, driver) = harness(PoolConfig {
+        min: 0,
+        max: 1,
+        reserve: 0,
+        acquire_timeout: Duration::from_secs(2),
+        test_after_idle: Duration::ZERO,
+        ..Default::default()
+    });
+    let _clean = Clean(&mgr);
+    driver.shared.stall_cancels.store(1, Ordering::SeqCst);
+    assert!(mgr.begin(Some(Duration::from_millis(50))).expect("begin"));
+    let first = mgr.with_connection(conn_id).expect("enlist");
+    assert!(
+        eventually(|| driver.shared.stalled.load(Ordering::SeqCst) == 1),
+        "the cancel is on its way"
+    );
+    assert!(mgr.commit().expect_err("deadline").to_string().contains("deadline"));
+    assert!(mgr.begin(None).expect("begin"));
+    let second = mgr.with_connection(conn_id).expect("the next borrower");
+    assert_ne!(first, second, "a new connection, not the one the cancel names");
+    assert_eq!(driver.connects(), 2);
+    driver.shared.release.store(true, Ordering::SeqCst);
+    let cancels = driver.shared.cancels.lock().expect("cancels").clone();
+    assert!(eventually(|| cancels[0].load(Ordering::SeqCst)));
+    std::thread::sleep(Duration::from_millis(20));
+    assert!(
+        !cancels[1].load(Ordering::SeqCst),
+        "the late cancel reached only the closed connection"
+    );
+    mgr.commit().expect("commit");
+    // an ordinary end returns its connection
+    assert!(mgr.begin(None).expect("begin"));
+    assert_eq!(mgr.with_connection(conn_id).expect("reuse"), second);
+    mgr.commit().expect("commit");
+    assert_eq!(driver.connects(), 2);
+}
+
+/// A connection joining a transaction gets a read timeout of the remaining time plus a margin, cleared when it goes
+/// back to the pool.
+#[test]
+fn a_transaction_connection_reads_within_its_remaining_time_and_a_margin() {
+    let (mgr, driver) = harness(small());
+    let _clean = Clean(&mgr);
+    assert!(mgr.begin(Some(Duration::from_secs(5))).expect("begin"));
+    mgr.with_connection(|_| Ok(())).expect("enlist");
+    mgr.with_connection(|_| Ok(())).expect("again");
+    mgr.commit().expect("commit");
+    let timeouts = driver.shared.read_timeouts.lock().expect("read timeouts").clone();
+    assert_eq!(timeouts.len(), 2, "{timeouts:?}");
+    let armed = timeouts[0].expect("armed");
+    assert!(
+        armed > Duration::from_secs(15) && armed <= Duration::from_secs(20),
+        "{armed:?}"
+    );
+    assert_eq!(timeouts[1], None);
 }
 
 #[test]
