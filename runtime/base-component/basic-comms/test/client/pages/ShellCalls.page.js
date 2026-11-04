@@ -25,7 +25,7 @@ const calls = {
 };
 const room = { chatRoomId: "R1", roomTypeEnumId: "CrtPrivate", roomName: "Ops", displayName: "Ops", lastEventSeq: 5, isMember: true, unreadCount: 0 };
 const answers = {
-    "/qapps/clientConfig": { userId: "ann", username: "ann", userFullName: "Ann", locale: "en", server: { name: "Test Server", clientApi: 3 },
+    "/qapps/clientConfig": { userId: "ann", username: "ann", userFullName: "Ann", locale: "en", server: { name: "Test Server", clientApi: 4 },
         calls: { appRoot: "/qapps/BasicComms" }, notificationEndpoint: "/notws" },
     "/shellData": { apps: [], counts: {} },
     "/apps/l10nCatalog": {},
@@ -71,7 +71,7 @@ const host = { opened: [], notified: [], pendingOpen: null, seen: true, switched
 const desktopHost = {
     state: () => Promise.resolve({ accounts: [{ id: "a1", username: "ann", server: "https://s.example.com", deviceMode: "personal" },
         { id: "a2", username: "ann", server: "https://t.example.com", deviceMode: "personal" }], current: "a1",
-        signedIn: true, keyStore: "os", clientApi: 3, deviceMode: "personal", loadToken: null }),
+        signedIn: true, keyStore: "os", clientApi: 4, deviceMode: "personal", loadToken: null }),
     takeOpen: () => { const path = host.pendingOpen; host.pendingOpen = null; return Promise.resolve(path); },
     clearScopes: () => Promise.resolve(),
     socket: () => ({ readyState: 0, send() {}, close() {} }),

@@ -1094,11 +1094,16 @@ web and in the client:
 - `moqui.hostOutbox()` answers `moquiDesktop.outbox`, or null on the web. `moqui.chat` keeps its outbox there when there
   is one, with its own flush off (the host sends with the same rules), and moves the outbox it kept in scoped
   `localStorage` into it once, item by item, each taken off the browser's list when the host has it. Compose queues a
-  mail send there, with its files, when the server cannot be reached; an internal message is not queued.
-- `moqui.drafts` (`ready`, `get`, `keys`, `files`, `put`, `remove`, `saveFile`) is the drafts of Chat and Compose: the
-  host's where there is one, else `localStorage` under `scopedKey`. `ready()` resolves once the host's are read, and
-  moves the drafts this browser kept before into the host once, the newer copy kept; in the client `get` and `keys`
-  answer nothing until then, so callers wait for it.
+  mail send there, with its files, when the server cannot be reached; an internal message only where `kinds()` says
+  `internalSend`. With a server at `clientApi` 4, `moqui.chat.queueChange(kind, payload)` queues a message's edit,
+  redaction, reaction or poll vote there (null where `kinds()` lacks the kind), `moqui.chat.state.changes` lists those
+  waiting, and `changed` tells a screen one was answered
+  ([Desktop-Client](Desktop-Client.md#offline-in-the-screens)).
+- `moqui.drafts` (`ready`, `get`, `keys`, `files`, `put`, `remove`, `saveFile`, `fetch`) is the drafts of Chat and
+  Compose: the host's where there is one, else `localStorage` under `scopedKey`. `ready()` resolves once the host's are
+  read, and moves the drafts this browser kept before into the host once, the newer copy kept; in the client `get` and
+  `keys` answer nothing until then, so callers wait for it. `fetch(key)` reads one again from the host, for a draft
+  the host kept itself since (a conflict's copy).
 - `moqui.scopedKey(key)` keeps the rest (the crypto device pointer and store) apart per account.
 
 **Connection.** With a host outbox, `moqui.connection.offline` (reactive; `moqui.onConnection(fn)` hears each change)

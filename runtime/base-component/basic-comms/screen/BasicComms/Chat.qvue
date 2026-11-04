@@ -31,7 +31,11 @@ along with this software (see the LICENSE.md file). If not, see
     it has no forward, filing, app actions or polls; its header and settings say what it gives up. The desktop client's shell
     bundles it (crates/moqui-desktop/shell); with its server out of reach (moqui.connection, never on the web) a room shows
     where the stretch kept on the device ends, a room not kept says so, and what needs the server (edit, delete, react, pin,
-    polls, forward, filing, members and settings, search, threads, files, new rooms, calls) says it needs a connection; in
+    polls, forward, filing, members and settings, search, threads, files, new rooms, calls) says it needs a connection.
+    With a server that takes them once by a clientRef (clientApi 4, the host's outbox.kinds()), a message's edit, deletion,
+    reaction and poll vote go through the app's outbox instead, offline too, and show under the message as waiting until
+    answered, or as not made with the server's reason (Retry, Discard); after a reconnect the messages shown are read
+    again from the app's store, which the changes feeds keep. In
     its app windows, which hold no crypto device (the shell owns it), an encrypted room offers Open in Chat, and a room's
     encrypted call opens the room there (moqui.call). The room's call shows in the shell (Calls/Call, bundled). Brand
     color names and Quasar classes only (style-guide §4.8, §5); the m-* inputs for what is typed. -->
@@ -442,6 +446,17 @@ const messageTemplate = `
                         @click.stop="room.retryDelivery(item)"></q-btn>
             </div>
         </template>
+        <!-- the desktop client: its changes of the message waiting in the app's outbox, or refused (Retry, Discard) -->
+        <div v-for="change in room.changesOf(item)" :key="change.clientRef" class="row items-center no-wrap q-mt-xs text-caption m-chat-change"
+                :class="change.status === 'failed' ? 'text-negative' : 'm-muted'" :data-change="change.kind" :data-pending="change.status" @click.stop>
+            <q-spinner v-if="change.status === 'sending'" size="12px" class="q-mr-xs"></q-spinner>
+            <q-icon v-else :name="change.status === 'failed' ? 'sym_o_error' : 'sym_o_schedule'" size="14px" class="q-mr-xs"></q-icon>
+            <span class="ellipsis">{{room.changeText(change)}}</span>
+            <template v-if="change.status === 'failed'">
+                <q-btn flat dense no-caps size="sm" color="primary" :label="room.t('Retry')" class="q-ml-sm" @click="room.retryChange(change)"></q-btn>
+                <q-btn flat dense no-caps size="sm" :label="room.t('Discard')" @click="room.discardChange(change)"></q-btn>
+            </template>
+        </div>
         <div v-if="item.readers && item.readers.length" class="row justify-end items-center no-wrap q-mt-xs">
             <m-avatar v-for="reader in item.readers.slice(0, 6)" :key="reader.userId" :name="reader.name" :user-id="reader.userId" size="16px" class="q-ml-xs" tooltip></m-avatar>
             <span v-if="item.readers.length > 6" class="text-caption m-muted q-ml-xs">+{{item.readers.length - 6}}</span>
@@ -1741,9 +1756,17 @@ const chatRoom = {
             if (this.side === 'threads') this.loadThreads(false);
             if (this.hasMoreAfter || !this.events.length) return;
             const last = this.events.reduce((max, event) => Math.max(max, Number(event.eventSeq)), 0);
-            this.get('timeline', { chatRoomId: this.roomId, afterSeq: last, limit: 200 }).then((page) => {
+            // the desktop client: the messages shown are read again too (up to 200), as its store has them now, since the
+            // changes feeds (or a reset of them) may have edited or removed them while the socket was closed
+            const first = this.events.reduce((min, event) => (Number(event.eventSeq) > 0 ? Math.min(min, Number(event.eventSeq)) : min), last);
+            const again = !!(moqui.hostOutbox && moqui.hostOutbox()) && last - first < 200;
+            this.get('timeline', { chatRoomId: this.roomId, afterSeq: again ? first - 1 : last, limit: 200 }).then((page) => (again ? this.openPage(page) : page)).then((page) => {
                 this.mergeNames(page.userNames);
                 const wasAtBottom = this.atBottom;
+                if (again) {
+                    const fresh = new Map((page.eventList || []).map((event) => [Number(event.eventSeq), event]));
+                    this.events = this.events.map((event) => fresh.get(Number(event.eventSeq)) || event);
+                }
                 const have = new Set(this.events.map((event) => Number(event.eventSeq)));
                 const added = (page.eventList || []).filter((event) => !have.has(Number(event.eventSeq)));
                 if (added.length) this.events = this.events.concat(added).sort((left, right) => Number(left.eventSeq) - Number(right.eventSeq));
@@ -1831,7 +1854,7 @@ const chatRoom = {
             }, () => {});
         },
         isEditing(item) { return !!this.editing && this.editing.seq === item.eventSeq; },
-        startEdit(item) { if (needsConnection()) return; this.tapKey = null; this.editing = { seq: item.eventSeq, body: item.event.body || '' }; },
+        startEdit(item) { if (!this.queues('chat-edit') && needsConnection()) return; this.tapKey = null; this.editing = { seq: item.eventSeq, body: item.event.body || '' }; },
         cancelEdit() { this.editing = null; this.$nextTick(() => this.focusComposer()); },
         editLast() {
             const me = this.me.userId;
@@ -1839,7 +1862,7 @@ const chatRoom = {
                 const event = this.events[i];
                 if (event.type !== 'message' || event.senderUserId !== me || event.redacted || event.poll) continue;
                 if (Date.now() - Number(event.sentDate || 0) >= EDIT_WINDOW || !this.canPost) return false;
-                if (needsConnection()) return true;
+                if (!this.queues('chat-edit') && needsConnection()) return true;
                 this.editing = { seq: Number(event.eventSeq), body: event.body || '' };
                 this.$nextTick(() => this.scrollToSeq(Number(event.eventSeq), false));
                 return true;
@@ -1847,9 +1870,9 @@ const chatRoom = {
             return false;
         },
         saveEdit(item, body) {
-            const sent = this.sealed ? moqui.chat.sealMessage(this.roomId, this.memberIds(), body, []).then((sealed) => this.post('edit', { chatRoomId: this.roomId,
+            const sent = this.sealed ? moqui.chat.sealMessage(this.roomId, this.memberIds(), body, []).then((sealed) => this.change('chat-edit', 'edit', { chatRoomId: this.roomId,
                 eventSeq: item.eventSeq, encryptedJson: sealed.encryptedJson, mentionUserIds: sealed.mentionUserIds }))
-                : this.post('edit', { chatRoomId: this.roomId, eventSeq: item.eventSeq, body });
+                : this.change('chat-edit', 'edit', { chatRoomId: this.roomId, eventSeq: item.eventSeq, body });
             return sent.then((json) => (json.event && this.sealed ? moqui.chat.openEvent(this.roomId, json.event).then(() => json) : json)).then((json) => {
                 if (json.event) {
                     applyEvent(this.events, json.event, this.me.userId);
@@ -1861,7 +1884,7 @@ const chatRoom = {
             });
         },
         react(item, key) {
-            if (!this.canPost || needsConnection()) return;
+            if (!this.canPost || (!this.queues('chat-react') && needsConnection())) return;
             this.tapKey = null;
             const me = this.me.userId;
             const reactions = item.event.reactions = item.event.reactions || [];
@@ -1881,12 +1904,78 @@ const chatRoom = {
             if (this.sealed) {
                 // an encrypted reaction (C7): the key is encrypted; mine is taken back by its own eventSeq
                 const taken = mine ? moqui.chat.myReaction(this.roomId, item.eventSeq, key, me) : null;
-                if (mine && taken != null) this.post('react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, reactionEventSeq: taken }).catch(() => {});
-                else if (!mine) moqui.chat.sealReaction(this.roomId, this.memberIds(), key).then((encryptedJson) => this.post('react', { chatRoomId: this.roomId,
+                if (mine && taken != null) this.change('chat-react', 'react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, reactionEventSeq: taken }).catch(() => {});
+                else if (!mine) moqui.chat.sealReaction(this.roomId, this.memberIds(), key).then((encryptedJson) => this.change('chat-react', 'react', { chatRoomId: this.roomId,
                     eventSeq: item.eventSeq, encryptedJson })).catch(() => {});
                 return;
             }
-            this.post('react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, key }).catch(() => {});
+            this.change('chat-react', 'react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, key }).catch(() => {});
+        },
+        // ---- a message's changes through the desktop client's outbox ----
+        // the app's outbox takes this change of a message (a server at clientApi 4): it waits there, offline too; never on the web
+        queues(kind) { return !!(moqui.chat && moqui.chat.state.hostKinds && moqui.chat.state.hostKinds.includes(kind) && moqui.hostOutbox && moqui.hostOutbox()); },
+        // A message's change (chat-edit, chat-redact, chat-react, poll-vote): through the app's outbox where it takes it,
+        // resolving {queued: true} (it shows under the message until it is answered), else the transition name asked now.
+        change(kind, name, params) {
+            const queued = moqui.chat && moqui.chat.queueChange ? moqui.chat.queueChange(kind, params) : null;
+            if (!queued) return this.post(name, params);
+            return queued.catch((err) => {
+                moqui.notifyMessages(null, (err && err.message) || t('This change cannot wait for the connection'));
+                throw err;
+            });
+        },
+        // the changes of a message waiting in the app's outbox (none on the web)
+        changesOf(item) {
+            void (moqui.chat && moqui.chat.state.changes);
+            return moqui.chat && moqui.chat.changesOf && item && item.eventSeq > 0 ? moqui.chat.changesOf(this.roomId, item.eventSeq) : [];
+        },
+        changeText(change) {
+            const what = { 'chat-edit': t('Edit'), 'chat-redact': t('Deletion'), 'chat-react': t('Reaction'), 'poll-vote': t('Vote') }[change.kind] || t('Change');
+            if (change.status === 'sending') return fill(t('{what}: sending…'), { what });
+            if (change.status === 'failed') return change.error ? fill(t('{what} not made: {error}'), { what, error: change.error }) : fill(t('{what} not made'), { what });
+            if (change.status === 'held') return fill(t('{what}: waiting, sign in again to send it'), { what });
+            return fill(this.offline || this.noConnection ? t('{what}: waiting for the connection') : t('{what}: waiting to send'), { what });
+        },
+        retryChange(change) { if (moqui.chat) moqui.chat.retry(change.clientRef); },
+        // a change not made, dropped: a reaction shown at once is read again as the server has it
+        discardChange(change) {
+            if (!moqui.chat) return;
+            moqui.chat.discard(change.clientRef).then(() => { if (change.kind === 'chat-react' || change.kind === 'poll-vote') this.rereadMessage(change.eventSeq); }, () => {});
+        },
+        // one message read again (the store's copy offline), in place
+        rereadMessage(seq) {
+            moqui.request(this.url('timeline'), { params: { chatRoomId: this.roomId, eventSeq: seq, limit: 1 } })
+                .then((result) => this.openPage(result.json || {}))
+                .then((page) => {
+                    const event = (page.eventList || []).find((one) => Number(one.eventSeq) === Number(seq));
+                    if (!event) return;
+                    [this.events, this.threadView.events].forEach((list) => {
+                        const at = list.findIndex((one) => Number(one.eventSeq) === Number(seq));
+                        if (at >= 0) list.splice(at, 1, event);
+                    });
+                }, (err) => console.info('Chat: the message was not read again', err && err.status));
+        },
+        // a message's change from the app's outbox answered: shown as the answer has it (the push may follow)
+        onChangeAnswered(payload) {
+            if (!payload || payload.chatRoomId !== this.roomId || this.state !== 'ready') return;
+            const json = payload.json || {};
+            const me = this.me.userId;
+            if (payload.kind === 'chat-edit' && json.event) {
+                Promise.resolve(this.sealed ? moqui.chat.openEvent(this.roomId, json.event) : null).then(() => {
+                    applyEvent(this.events, json.event, me);
+                    if (this.threadView.rootSeq != null) applyEvent(this.threadView.events, json.event, me, this.threadView.rootSeq);
+                }, () => {});
+            } else if (payload.kind === 'chat-redact') {
+                this.applyRedaction(payload.eventSeq);
+            } else if (payload.kind === 'poll-vote' && json.poll) {
+                this.applyFields(payload.eventSeq, { poll: json.poll });
+            }
+        },
+        applyRedaction(seq) {
+            const target = this.events.concat(this.threadView.events).find((one) => Number(one.eventSeq) === Number(seq));
+            const event = { type: 'redaction', eventSeq: -1, relatesToEventSeq: Number(seq), content: { target: 'message' }, sentDate: Date.now(), threadRootEventSeq: null };
+            if (!target || target.threadRootEventSeq == null) applyEvent(this.events, event, this.me.userId);
+            if (this.threadView.rootSeq != null) applyEvent(this.threadView.events, event, this.me.userId, this.threadView.rootSeq);
         },
         pin(item, pinned) {
             if (needsConnection()) return;
@@ -1898,12 +1987,11 @@ const chatRoom = {
             }, () => {});
         },
         redact(item) {
-            if (needsConnection()) return;
+            if (!this.queues('chat-redact') && needsConnection()) return;
             this.confirm(t('Delete the message?'), t('It is removed for everyone; the room shows that a message was removed.'), t('Delete'), true).then(() => {
-                this.post('redact', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then(() => {
-                    const event = { type: 'redaction', eventSeq: -1, relatesToEventSeq: item.eventSeq, content: { target: 'message' }, sentDate: Date.now(), threadRootEventSeq: null };
-                    if (item.event.threadRootEventSeq == null) applyEvent(this.events, event, this.me.userId);
-                    if (this.threadView.rootSeq != null) applyEvent(this.threadView.events, event, this.me.userId, this.threadView.rootSeq);
+                // through the app's outbox it shows as waiting under the message until it is answered
+                this.change('chat-redact', 'redact', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
+                    if (!(json && json.queued)) this.applyRedaction(item.eventSeq);
                 }, () => {});
             });
         },
@@ -2124,7 +2212,9 @@ const chatRoom = {
             this.tapKey = null;
             const mine = item.poll.options.filter((other) => other.mine).map((other) => other.id);
             const chosen = item.poll.multiple ? (option.mine ? mine.filter((id) => id !== option.id) : mine.concat([option.id])) : (option.mine ? [] : [option.id]);
-            this.post('votePoll', { chatRoomId: this.roomId, eventSeq: item.eventSeq, optionIds: chosen.join(',') }).then((json) => {
+            // a vote taken back (no option) is asked now: the app's outbox keeps only a vote for options
+            const params = { chatRoomId: this.roomId, eventSeq: item.eventSeq, optionIds: chosen.join(',') };
+            (chosen.length ? this.change('poll-vote', 'votePoll', params) : this.post('votePoll', params)).then((json) => {
                 if (json.poll) this.applyFields(item.eventSeq, { poll: json.poll });
             }, () => {});
         },
@@ -2259,6 +2349,7 @@ const chatRoom = {
             this.unsubscribe.push(moqui.chat.on('room', (payload) => this.onRoomSignal(payload)));
             this.unsubscribe.push(moqui.chat.on('update', (payload) => this.onUpdate(payload)));
             this.unsubscribe.push(moqui.chat.on('sent', (payload) => this.onSent(payload)));
+            this.unsubscribe.push(moqui.chat.on('changed', (payload) => this.onChangeAnswered(payload)));
             this.unsubscribe.push(moqui.chat.on('connection', (payload) => this.onConnection(payload)));
         }
         this.onVisibleBound = () => this.onVisible();

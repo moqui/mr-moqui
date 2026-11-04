@@ -18,7 +18,7 @@ const room = { chatRoomId: "R1", roomTypeEnumId: "CrtPrivate", roomName: "Ops", 
 const message = { eventSeq: 5, type: "message", senderUserId: "bob", senderName: "Bob", sentDate: Date.now() - 60000, body: "<p>kept here</p>", bodyText: "kept here",
     reactions: [], attachments: [] };
 const answers = {
-    "/qapps/clientConfig": { userId: "ann", username: "ann", userFullName: "Ann", locale: "en", server: { name: "Test Server", clientApi: 3 },
+    "/qapps/clientConfig": { userId: "ann", username: "ann", userFullName: "Ann", locale: "en", server: { name: "Test Server", clientApi: 4 },
         calls: { appRoot: "/qapps/BasicComms" }, notificationEndpoint: "/notws" },
     "/shellData": { apps: [], counts: {} },
     "/apps/l10nCatalog": {},
@@ -68,7 +68,7 @@ const outbox = {
 };
 // the state the host gives (reactive here, so a test can change the account's device mode)
 const shellState = window.Vue.reactive({ accounts: [{ id: "a1", username: "ann", server: "https://s.example.com", deviceMode: "shared" }], current: "a1",
-    signedIn: true, keyStore: "os", clientApi: 3, deviceMode: "choose", loadToken: null });
+    signedIn: true, keyStore: "os", clientApi: 4, deviceMode: "choose", loadToken: null });
 const desktopHost = {
     state: () => Promise.resolve(shellState),
     // the link the host keeps for the shell, taken once (src/client/windows.rs open_page)

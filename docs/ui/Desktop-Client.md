@@ -366,6 +366,30 @@ From `moqui.connection`, inert on the web: offline is the host's own unreachable
 Retry and Discard, the Inbox's Outbox, the end of kept history, "needs a connection" on what only the server can do, a
 shared device's hint of what is kept, and the sign-out's list of what is unsent.
 
+**What the server did not take (MD5).** With a server at `clientApi` 4 the screens follow what the host's outbox takes
+(`outbox.kinds()`), and show its conflict and refused states where they show what waits, each with Retry and Discard:
+
+- **Chat:** a message's edit, deletion, reaction and poll vote go through the outbox when `kinds()` has them
+  (`moqui.chat.queueChange`; a vote taken back, with no option, is asked of the server), offline too, so they no
+  longer need a connection. Each shows under its message (`.m-chat-change`) as waiting, sending, held ("sign in again
+  to send it") or not made with the server's reason, and the message shows the change when its answer (the host's
+  `sent`, which the page hears as `changed`) or its push brings it; a reaction shows at once, as before, and is read
+  again from the store when its refusal is discarded. A chat send refused shows its error, as in MD4. After a
+  reconnect the room reads the messages it shows again (up to 200), so edits and deletions the changes feeds brought
+  into the store, or a reset of them, show.
+- **Mail:** the Inbox's Outbox lists a thread change the server met changed ("Changed on the server: the thread shows
+  its state there", with the server's reason) or refused ("Not made"), apart from the changes still waiting, which it
+  counts; the list and the open thread are read again when one arrives, so the rows show the server's state. Retry
+  sends the change anyway; Discard leaves the thread as the server has it. An internal message waiting is listed with
+  the mail.
+- **Compose:** a send whose draft changed elsewhere says "Changed elsewhere: your version is kept as a copy" in the
+  Outbox, with Open the copy: Compose opened with `copyRef` reads the copy the host kept
+  (`ironstone.compose.email.<copyRef>`, `moqui.drafts.fetch`), says it is the user's version kept as a copy, and saves
+  it on the server as a new draft by that `clientRef`; the server's draft stays. Retry sends the user's version and the
+  host deletes the copy; Discard keeps it, listed in the Outbox (Open, Delete) until it is opened or deleted. A
+  queued send of a server draft carries `baseStamp`, the `draftStamp` Compose last saw, so the conflict is found. An
+  internal message offline waits in the outbox when `kinds().internalSend` is true, else it is kept as a draft as in MD4.
+
 ## Known gaps
 
 - Device-dependent features refuse with `elsewhere` in app windows (My devices' actions, the key backup, verification),
@@ -377,10 +401,10 @@ shared device's hint of what is kept, and the sign-out's list of what is unsent.
   grows with the store.
 - A reply or forward built offline quotes with English labels and this computer's time zone, not the user's locale and
   zone as the server does.
-- MD5: the screens do not show the conflict and rejected states yet (stage 4); the outbox list has them. A queued
-  message change is not shown in the stored rows until its push or the feed brings it. A chat message's files are
-  uploaded by the page before it is queued, not in chunks by the host
-  ([Mobile-Desktop §6](../../plans/Mobile-Desktop.md#6-offline-behavior-and-data-ownership)).
+- MD5: a queued message change is not shown in the stored rows until its push or the feed brings it (the screen
+  shows it as waiting). Compose's saves while online send no `baseStamp`, so a draft edited online in two places is
+  the last save's; only a queued send carries it. A chat message's files are uploaded by the page before it is queued,
+  not in chunks by the host ([Mobile-Desktop §6](../../plans/Mobile-Desktop.md#6-offline-behavior-and-data-ownership)).
 
 ## Tests
 
@@ -389,7 +413,10 @@ shared device's hint of what is kept, and the sign-out's list of what is unsent.
 - `cd crates/moqui-desktop && CARGO_TARGET_DIR=../../target cargo test`: the schemes, offline answers, pushes, the
   mirror, modes, the outbox and flusher, windows.
 - `moqui test-client webroot --offline`: MoquiLib's drafts and connection, WebrootChat's host outbox and import.
-- `moqui test-client basic-comms --offline`: the bundled screens in the shell (`ShellComms`, `ShellCalls`).
+- `moqui test-client basic-comms --offline`: the bundled screens in the shell (`ShellComms`, `ShellCalls`), and
+  MD5's states in them (`ShellSync`: a lost answer then a retry, a duplicate push, a reconnect after a feed reset, a
+  thread change's and a send's conflict with the copy opened, a refusal with Retry and Discard, a revoked key
+  mid-queue).
 - `moqui test basic-comms`: Compose by `clientRef` (`BasicCommsComposeRef`); the mail change cursor, requests once by
   `clientRef`, conflicts, chunked uploads and their clean-up (`BasicCommsSync`); `cargo test -p moqui-mail`: a sync's
   arrivals, flag scan and expunges on the change cursor.

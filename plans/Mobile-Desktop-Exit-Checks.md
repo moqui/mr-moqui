@@ -1,6 +1,6 @@
 # Mobile-Desktop exit checks
 
-The checks on installed apps that close MD1, MD2, MD3 and MD4 of [Mobile-Desktop](Mobile-Desktop.md) (§8, "Exit evidence"). They
+The checks on installed apps that close MD1 to MD5 of [Mobile-Desktop](Mobile-Desktop.md) (§8, "Exit evidence"). They
 are run by hand on real machines, not in the test suites: several take a sleep, a second machine or minutes of
 waiting. Each says what to set up, what to do, and what to record. Record the results in §8 of the plan (a line per
 check: date, OS and version, app version, pass or what failed), and file what fails as a fix.
@@ -169,3 +169,58 @@ shared one with "Shared device" (the build's `<client-conf device-mode>` is `cho
     and a draft.
     - Record: the store file stays near the cap, the least recently read rooms and threads go first, and the queued
       send and the draft are kept and sent.
+
+## MD5: reliable synchronization
+
+In the client, against the remote server with BOSS at `clientApi` 4 (its `/qapps/clientConfig` says so), with a
+personal account. A lost answer is made with a relay between the app and the server that lets a request through and
+drops its answer: for example [Toxiproxy](https://github.com/Shopify/toxiproxy) with a `timeout` toxic on the
+downstream, the account's server URL pointing at the relay. Where a check reads the account's store, open a copy of
+`client/data/<account>.db` with `sqlite3` (its `outbox`, `sync_cursor` and `upload` tables).
+
+1. **Lost answers.** With the relay dropping answers, send a chat message, edit and react to one of your messages, vote
+   in a poll, archive a thread, and send a mail with an attachment; then let the answers through.
+   - Record: each shows as waiting (the message's row, the change under its message, the Inbox's Outbox), is tried
+     again, and is made once: one message, one edit, one reaction, one vote, the thread archived, one mail in Sent with
+     its file once, in the server's data and in a browser of another user. The server's log shows the retries answered
+     `duplicate`.
+   - With IronStone's internal messages: offline, send one; it waits in the Outbox (not "needs a connection"); online,
+     through a lost answer, it is sent once.
+2. **Restart mid-queue.** Offline, queue a chat message, an edit, a thread's read and a mail; go online and quit the app
+   while one is sending (the relay holding its answer); open it again.
+   - Record: the outbox still lists what was not answered (the one that was sending waits again), and each is made
+     once.
+3. **Duplicate events.** Keep the shell and an app window on the same room (two sockets), and have another user send,
+   edit, react to and delete messages there.
+   - Record: each shows once in both windows, and once in the store's room read offline afterwards.
+4. **Revocation.** Offline, queue a chat message, an edit and a mail; revoke this device from BOSS on another device; go
+   online.
+   - Record: the queued items say "sign in again to send it" (held), nothing is sent with the old key, the shell asks
+     to sign in, and after the sign-in each is sent once. With a shared account: the sign-out's list named them, and
+     they are deleted with its data.
+5. **One bad item.** Queue a chat message to a room this user is then removed from (by another user), a message to
+   another room, and a reaction there.
+   - Record: the first says "Not sent" with the server's reason, with Retry and Discard; the other room's message and
+     the reaction are made without waiting for it; Discard drops it and nothing more is sent.
+6. **A draft conflict.** Save a Compose draft online; go offline, change it here and send it; meanwhile change the same
+   draft in a browser and save it there. Go online.
+   - Record: nothing is sent; the Inbox's Outbox says "Changed elsewhere: your version is kept as a copy"; Open the copy
+     shows a new draft with this computer's text, and the browser's draft is as it was saved there. Retry instead
+     sends this computer's version once (one message in Sent) and the copy goes; Discard keeps the copy, listed in the
+     Outbox to open or delete.
+7. **A thread state conflict.** Offline, archive a thread; meanwhile a new message arrives in it (or another device
+   marks it unread). Go online.
+   - Record: the thread is not archived; the Outbox says "Changed on the server" and the list shows the thread as the
+     server has it; Retry archives it anyway, Discard leaves it.
+8. **Resumable upload across a restart.** Offline, send a mail with a 20 MB attachment; go online and quit the app while
+   it uploads (the store's `upload` row shows an offset part way); open the app again.
+   - Record: the upload goes on from where the server says it is (`uploadStatus`; the server's log shows the first
+     chunk after the restart at that offset, not 0), and the mail is sent once with its file once and whole.
+9. **The feeds after a long offline.** On a test server set `chat_changes_keep_days` and `mail_change_keep_days` to 1.
+   Read a few rooms and folders, quit the app, and for two days have other users send, edit, delete and react, add
+   and remove this user from rooms, and move, read and delete mail. Open the app.
+   - Record: the feeds answered `reset` and the store read again what they cover (the log says so); each room and folder
+     shows the server's state (edits, deletions, a room left gone, a room joined listed), no message twice and none
+     that was deleted; offline again afterwards, the same.
+   - With the usual keep (30 days) and a day offline: the feeds catch up without a reset (the `sync_cursor` rows move
+     on), and the rooms with nothing new are not read again.

@@ -24,8 +24,11 @@ along with this software (see the LICENSE.md file). If not, see
     the message for a file over 25 MB or a folder), Send (Ctrl+Enter) with the undo hold, Schedule send, Send and
     archive, Discard. Email drafts save on the server every few seconds; an internal message keeps its draft in this browser
     until it is sent. In the desktop client with its server out of reach a banner says that an email waits in the outbox and
-    an internal message as a draft; with nothing kept to start from, a new email (still answering the message of a reply or
-    forward). Brand color names and Quasar classes only (style-guide §4.8, §5). -->
+    an internal message as a draft (or in the outbox too, where the server takes its send once: the app's
+    outbox.kinds().internalSend); with nothing kept to start from, a new email (still answering the message of a reply or
+    forward). A queued send carries baseStamp, the server's draft as this composer saw it, so a draft changed elsewhere is
+    a conflict: the app keeps the user's version as a copy, which copyRef opens here as a new draft. Brand color names
+    and Quasar classes only (style-guide §4.8, §5). -->
 <template><div class="m-compose">
     <compose-shell :layout="layout" :title="title" :minimized="minimized" :phone="isPhone" @minimize="minimize" @popout="popOut" @popin="popIn" @close="close">
         <div class="column no-wrap" :class="layout === 'dock' ? 'col' : ''" style="min-height:0" @dragover.prevent="dragOver = true" @dragleave.self="dragOver = false"
@@ -41,9 +44,15 @@ along with this software (see the LICENSE.md file). If not, see
                 <!-- the desktop client with its server out of reach (never on the web) -->
                 <q-banner v-if="noConnection" dense rounded class="q-mx-md q-mt-sm m-tonal text-caption m-compose-offline">
                     <template v-slot:avatar><q-icon name="sym_o_cloud_off" color="warning"></q-icon></template>
-                    {{mode === 'internal' ? t('Offline: an internal message needs a connection to send; it is kept here as a draft until then.')
+                    {{mode === 'internal' ? (internalSend ? t('Offline: this message waits in the outbox and goes when the server can be reached; files need a connection.')
+                        : t('Offline: an internal message needs a connection to send; it is kept here as a draft until then.'))
                         : t('Offline: this email waits in the outbox, with its files, and goes when the server can be reached.')}}
                     <div v-if="offlineNote">{{offlineNote}}</div></q-banner>
+                <!-- the desktop client: the user's version of a draft that changed elsewhere, kept as a copy (MD5) -->
+                <q-banner v-if="copyOf" dense rounded class="q-mx-md q-mt-sm m-tonal text-caption m-compose-copy">
+                    <template v-slot:avatar><q-icon name="sym_o_file_copy" color="warning"></q-icon></template>
+                    {{t('Your version, kept as a copy: the draft was changed elsewhere, and that one stays as it is. This is a new draft.')}}</q-banner>
+                <div v-else-if="offlineNote && !noConnection" class="q-mx-md q-mt-sm text-caption text-warning">{{offlineNote}}</div>
                 <!-- the fields -->
                 <div class="q-px-md q-pt-sm">
                     <div class="row items-center no-wrap">
@@ -239,6 +248,9 @@ module.exports = {
             // the desktop client offline (MD4): the files kept by the app until the message is sent from its outbox, the
             // message's clientRef, and whether the email's draft is kept here, not yet on the server
             queued: [], clientRef: null, offlineDraft: false, localEmailKey: null, offlineNote: null,
+            // MD5: the server's draftStamp of the draft as this composer last saw it (a queued send's baseStamp), whether the
+            // app's outbox takes an internal message's send (its kinds().internalSend), and the conflict this copy was kept from
+            draftStamp: null, internalSend: false, copyOf: null,
             picker: { open: false, drives: [], driveId: null, path: '', crumbs: [], rows: [], loading: false, text: '', searching: false, chosen: {}, saving: false }
         };
     },
@@ -343,7 +355,13 @@ module.exports = {
             this.offlineDraft = false;
             this.localEmailKey = null;
             this.offlineNote = null;
-            this.clientRef = moqui.hostOutbox() ? 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10) : null;
+            this.draftStamp = null;
+            this.copyOf = null;
+            const host = moqui.hostOutbox();
+            this.clientRef = host ? 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10) : null;
+            if (host && typeof host.kinds === 'function') {
+                Promise.resolve(host.kinds()).then((kinds) => { this.internalSend = !!(kinds && kinds.internalSend); }, () => { this.internalSend = false; });
+            }
             const q = this.query;
             const params = {};
             ['emailMessageId', 'replyToEmailMessageId', 'forwardEmailMessageId', 'replyAll', 'replyToCommEventId', 'replyToSender', 'contactListId', 'to', 'cc',
@@ -415,6 +433,7 @@ module.exports = {
             this.draft = draft;
             // the server's draft has its clientRef: a send queued offline is taken once by it
             if (this.clientRef && compose.clientRef) this.clientRef = compose.clientRef;
+            this.draftStamp = compose.draftStamp != null ? compose.draftStamp : null;
             if (draft.emailMessageId) { this.savedAt = Date.now(); if (this.mComposeHost && this.dockKey) this.mComposeHost.draftSaved(this.dockKey, draft.emailMessageId); }
         },
         signatureBlock(html) { return '<p></p><p>-- </p>' + html; },
@@ -549,6 +568,7 @@ module.exports = {
                     if (this.mComposeHost && this.dockKey) this.mComposeHost.draftSaved(this.dockKey, json.emailMessageId);
                 }
                 this.savedAt = Date.now();
+                if (json.draftStamp != null) this.draftStamp = json.draftStamp;
                 this.$nextTick(() => { this.dirty = false; });
                 // kept offline, on the server now: kept here only while files wait for the send
                 if (this.offlineDraft && json.emailMessageId) { this.offlineDraft = false; if (this.queued.length) this.saveLocal(); else this.clearLocal(); }
@@ -571,6 +591,7 @@ module.exports = {
             let key = this.draftStorageKey;
             if (email) {
                 Object.assign(value, { email: true, clientRef: this.clientRef, queued: this.queued });
+                if (this.copyOf) value.conflictOf = this.copyOf;
                 this.offlineDraft = true;
                 key = this.emailLocalKey;
                 // kept by its clientRef until the server saved it, then by its id
@@ -588,6 +609,7 @@ module.exports = {
             let saved = null;
             try { if (this.query.restoreKey) saved = JSON.parse(sessionStorage.getItem(this.query.restoreKey) || 'null'); } catch (err) { saved = null; }
             if (saved || this.query.restoreKey) { this.applyLocal(saved); return; }
+            if (this.query.copyRef && this.clientRef) { this.restoreCopy(String(this.query.copyRef)); return; }
             if (this.mode === 'internal' ? this.draft.emailMessageId : !this.clientRef) return;
             const parse = (key) => { try { return JSON.parse(moqui.drafts.get(key) || 'null'); } catch (err) { return null; } };
             const read = () => {
@@ -601,6 +623,25 @@ module.exports = {
             const local = read();
             if (local) this.applyLocal(local);
             else moqui.drafts.ready().then(() => { const later = read(); if (later && !this.dirty) this.applyLocal(later); });
+        },
+        // The desktop client: the user's own version of a mail whose draft changed elsewhere, which the app kept as a copy
+        // (its outbox's conflict, current.copyRef): a new email draft under its own clientRef, opened by copyRef. It is saved
+        // on the server as a new draft once it can be; the server's draft stays as it is.
+        restoreCopy(ref) {
+            const key = 'ironstone.compose.email.' + ref;
+            moqui.drafts.fetch(key).then((text) => {
+                let saved = null;
+                try { saved = JSON.parse(text || 'null'); } catch (err) { saved = null; }
+                if (!saved || !saved.draft || !saved.email) { this.offlineNote = t('This copy is no longer kept on this computer.'); return; }
+                // the email it was: its identity and the message it answers
+                const kept = saved.draft;
+                if (kept.fromValue) this.draft.fromValue = kept.fromValue;
+                if (kept.parentEmailMessageId) { this.draft.parentEmailMessageId = kept.parentEmailMessageId; this.draft.isForward = String(kept.isForward) === 'true'; }
+                this.copyOf = saved.conflictOf || { clientRef: null };
+                this.localEmailKey = key;
+                // after the identity's signature swap, so the copy's body is taken as it was written
+                this.$nextTick(() => this.applyLocal(saved));
+            }, () => { this.offlineNote = t('This copy is no longer kept on this computer.'); });
         },
         applyLocal(saved) {
             if (!saved || !saved.draft) return;
@@ -651,6 +692,8 @@ module.exports = {
             delete fields.holdSeconds;
             delete fields.clientRef;
             if (this.draft.emailMessageId) fields.emailMessageId = this.draft.emailMessageId;
+            // the server's draft as this composer saw it: one saved elsewhere since is a conflict, not overwritten (MD5)
+            if (this.mode === 'email' && this.draft.emailMessageId && this.draftStamp != null) fields.baseStamp = String(this.draftStamp);
             const files = this.queued.map((file) => ({ file: file.file, name: file.name, contentType: file.contentType }));
             return moqui.hostOutbox().add('mail-send', { clientRef: this.clientRef, fields, files }, files.map((file) => file.file)).then(() => {
                 this.sending = false;
@@ -882,8 +925,9 @@ module.exports = {
                 this.afterSend(info);
             }, (err) => {
                 // the desktop client with no server: sent from the app's outbox when it is back
-                if (this.unreachable(err) && this.clientRef && this.mode === 'email') { this.queueSend(params); return; }
-                // an internal message is not taken once by a clientRef yet (MD5): kept here as a draft, to send online
+                // (an internal message too where the server takes its send once by its clientRef: the app's kinds().internalSend)
+                if (this.unreachable(err) && this.clientRef && (this.mode === 'email' || this.internalSend)) { this.queueSend(params); return; }
+                // a server that does not take an internal message's send once: kept here as a draft, to send online
                 if (this.unreachable(err) && this.mode === 'internal') {
                     this.sending = false;
                     this.saveLocal();
