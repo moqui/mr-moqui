@@ -548,7 +548,8 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
     </service>
     <service verb="clone" noun="Repository" type="rust" location="dev_aide::repo::clone_repository" allow-remote="false">
-        <description>Clone a URL into runtime/component/name, or runtime/dev-component/name with dev; it loads after a restart.</description>
+        <description>Clone a URL into runtime/component/name, or runtime/dev-component/name with dev; it can be loaded now
+            when nothing in it waits for a restart (loadable), or it loads after a restart.</description>
         <in-parameters>
             <parameter name="url" required="true"/>
             <parameter name="name"/>
@@ -558,7 +559,10 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters>
             <parameter name="output"/>
             <parameter name="location"/>
-            <parameter name="restart" type="Boolean"/>
+            <parameter name="restart" type="Boolean"><description>True when it loads only after a restart; restartReasons says why.</description></parameter>
+            <parameter name="loadable" type="Boolean"><description>True when it can be loaded now (load#Component on componentName).</description></parameter>
+            <parameter name="componentName"/>
+            <parameter name="restartReasons" type="List"/>
         </out-parameters>
     </service>
     <service verb="cancel" noun="GitOperation" type="rust" location="dev_aide::repo::cancel_git_operation" allow-remote="false">
@@ -606,14 +610,18 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="addons" type="List"/></out-parameters>
     </service>
     <service verb="get" noun="Component" type="rust" location="dev_aide::repos::get_component" allow-remote="false">
-        <description>./moq component-get name (--dev for runtime/dev-component): the component and those it depends on; it loads after a restart.</description>
+        <description>./moq component-get name (--dev for runtime/dev-component): the component and those it depends on; it can
+            be loaded now when nothing in it waits for a restart (loadable), or it loads after a restart.</description>
         <in-parameters>
             <parameter name="name" required="true"/>
             <parameter name="dev" type="Boolean"/>
         </in-parameters>
         <out-parameters>
             <parameter name="output"/>
-            <parameter name="restart" type="Boolean"/>
+            <parameter name="restart" type="Boolean"><description>True when it loads only after a restart; restartReasons says why.</description></parameter>
+            <parameter name="loadable" type="Boolean"><description>True when it can be loaded now (load#Component on componentName).</description></parameter>
+            <parameter name="componentName"/>
+            <parameter name="restartReasons" type="List"/>
         </out-parameters>
     </service>
 </services>

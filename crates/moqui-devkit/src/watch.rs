@@ -66,7 +66,7 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> bool {
     watch(factory, debounce)
 }
 
-/// Watch the directory of a component loaded on a running server (plans/Component-Deploy.md), when the watcher runs.
+/// Watch the directory of a component loaded on a running server (plans/archive/Component-Deploy.md), when the watcher runs.
 pub fn watch_component(factory: &ExecutionContextFactory, dir: &Path) {
     let Some(dev) = factory.extension_if_present::<Arc<DevWatcher>>() else {
         return;

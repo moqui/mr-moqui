@@ -36,11 +36,11 @@ pub const SESSION_END: &str = "session-end";
 pub const RTC_SIGNAL: &str = "rtc-signal";
 
 /// A timed override of a logging or telemetry setting set, extended or reverted on one server (Monitor › Settings,
-/// plans/Monitor-Settings.md), `{"op": "set"|"revert"|"revertAll", ..}`, so every running server applies it.
+/// plans/archive/Monitor-Settings.md), `{"op": "set"|"revert"|"revertAll", ..}`, so every running server applies it.
 pub const RUNTIME_SETTINGS: &str = "runtime-settings";
 
 /// A component deployed or updated from a database repository on one server (System › Components,
-/// plans/Component-Deploy.md), `{"componentName", "action": "deploy"|"update", "from", "to"}`, so every running server
+/// plans/archive/Component-Deploy.md), `{"componentName", "action": "deploy"|"update", "from", "to"}`, so every running server
 /// writes its files from the shared repository and loads it; its data is in the shared database already.
 pub const COMPONENT_DEPLOY: &str = "component-deploy";
 

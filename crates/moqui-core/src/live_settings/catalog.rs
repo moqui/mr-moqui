@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The settings that can be overridden (plans/Monitor-Settings.md, Model: Catalog): each key in conf form
+//! The settings that can be overridden (plans/archive/Monitor-Settings.md, Model: Catalog): each key in conf form
 //! (`path@attr` or `path[selector]@attr`), its value type, and how its on-disk value is read. Nothing outside this list
 //! can be overridden. The telemetry keys are left out of a build without the `telemetry` feature.
 

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Load a component on a running server from the directory it was placed in (plans/Component-Deploy.md, Phase 2):
+//! Load a component on a running server from the directory it was placed in (plans/archive/Component-Deploy.md, Phase 2):
 //! found as boot finds components, checked, then loaded in an order that keeps the server consistent: its entities'
 //! tables made against the new model before the model is swapped in, the component registered, the conf merged
 //! again and applied, its files reloaded through the reload pipeline, the crates' caches read again, and its data
@@ -76,7 +76,7 @@ pub(crate) struct Shared {
     /// Load the component's data; a cluster member applying another member's deploy does not, as the data is in the
     /// shared database already.
     pub data: bool,
-    /// The component's files reach the cluster's other members (a database repository, plans/Component-Deploy.md
+    /// The component's files reach the cluster's other members (a database repository, plans/archive/Component-Deploy.md
     /// Phase 4), so a cluster does not refuse it.
     pub cluster_ok: bool,
 }
@@ -245,7 +245,7 @@ fn plan(
             ));
         }
     }
-    if component.location.join("Cargo.toml").is_file() {
+    if has_rust(&component.location) {
         refusals.push(if moqui_core::native::component_linked(name) {
             "it has Rust code, which the binary links and a restart loads".to_string()
         } else {
@@ -433,6 +433,16 @@ fn load_held(
     report
 }
 
+/// Whether the component at `location` has Rust code: a `Cargo.toml`, or `.rs` files in its `src/`.
+fn has_rust(location: &Path) -> bool {
+    location.join("Cargo.toml").is_file()
+        || std::fs::read_dir(location.join("src")).is_ok_and(|entries| {
+            entries
+                .flatten()
+                .any(|entry| entry.path().extension().is_some_and(|ext| ext == "rs"))
+        })
+}
+
 /// Put back the components and the entity model there were before a load that failed after it registered the
 /// component. Tables it made stay; they are additive.
 fn roll_back(factory: &ExecutionContextFactory, previous: &[ComponentInfo]) {
@@ -552,13 +562,115 @@ pub fn load_pending(factory: &Arc<ExecutionContextFactory>) {
     }
 }
 
+/// Load the data files of `data_types` (seed, seed-initial and install when empty) of the loaded component `name`
+/// again, each file on its own; a rerun is safe. A component a deploy loaded gets a `data` history row.
+///
+/// # Errors
+///
+/// When `name` is not loaded.
+pub fn load_component_data(
+    factory: &Arc<ExecutionContextFactory>,
+    name: &str,
+    data_types: &[String],
+) -> Result<LoadReport, String> {
+    let started = std::time::Instant::now();
+    let loaded = factory.components();
+    let component = loaded
+        .iter()
+        .find(|info| info.name == name)
+        .ok_or_else(|| format!("{name} is not loaded"))?;
+    let types: Vec<String> = if data_types.is_empty() {
+        DEFAULT_DATA_TYPES.iter().map(|kind| (*kind).to_string()).collect()
+    } else {
+        data_types.to_vec()
+    };
+    let (data, records) = load_data(factory, component, &types);
+    let problems: Vec<String> = data
+        .iter()
+        .filter_map(|file| file.error.as_ref().map(|error| format!("{}: {error}", file.location)))
+        .collect();
+    let report = LoadReport {
+        component: name.to_string(),
+        status: "deployed".to_string(),
+        data,
+        records,
+        problems,
+        millis: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        ..LoadReport::default()
+    };
+    if deployed(factory, name) {
+        record(factory, &report, "data", &types);
+    }
+    tracing::warn!(
+        target: moqui_core::live_settings::AUDIT,
+        "Component {name}: data of {} loaded again, {} records, {} problems",
+        types.join(","),
+        report.records,
+        report.problems.len()
+    );
+    Ok(report)
+}
+
+/// Whether a load or deploy recorded the component `name` (a `DeployedComponent` row).
+fn deployed(factory: &Arc<ExecutionContextFactory>, name: &str) -> bool {
+    let Some(facade) = factory.entity() else {
+        return false;
+    };
+    in_context(factory, || {
+        facade.find(DEPLOYED).and_then(|find| {
+            find.condition(Condition::equals("componentName", Value::string(name)))
+                .disable_authz()
+                .one()
+        })
+    })
+    .is_ok_and(|row| row.is_some())
+}
+
+/// The changes of the working clone at `location` that a remove would set aside: `git status --porcelain` lines and
+/// commits not on its upstream. Empty for a clean clone, or when `git` cannot tell.
+fn clone_changes(location: &Path) -> Vec<String> {
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .current_dir(location)
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+            .unwrap_or_default()
+    };
+    let mut changes: Vec<String> = git(&["status", "--porcelain"])
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+    let ahead = git(&["rev-list", "--count", "@{upstream}..HEAD"]);
+    if let Ok(count) = ahead.trim().parse::<u64>() {
+        if count > 0 {
+            changes.push(format!("{count} commits not pushed"));
+        }
+    }
+    changes
+}
+
+/// What [`remove`] did.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Removed {
+    /// Its directory was moved here (empty when it had none).
+    MovedTo(String),
+    /// Nothing: it is a working clone with these changes, and the remove was not confirmed.
+    Dirty(Vec<String>),
+}
+
 /// Mark the component `name` loaded by a deploy as removed and move its directory aside (`.removed/` beside it), so
-/// the next start leaves it out. What it loaded stays until then; its tables and data stay after.
+/// the next start leaves it out. What it loaded stays until then; its tables and data stay after. A working clone with
+/// changes is left as it is unless `confirm_dirty`: [`Removed::Dirty`] names them.
 ///
 /// # Errors
 ///
 /// When it was not loaded by a deploy, or its directory cannot be moved.
-pub fn remove(factory: &Arc<ExecutionContextFactory>, name: &str) -> Result<String, String> {
+pub fn remove(factory: &Arc<ExecutionContextFactory>, name: &str, confirm_dirty: bool) -> Result<Removed, String> {
     let Some(facade) = factory.entity() else {
         return Err("no entity facade".to_string());
     };
@@ -572,6 +684,12 @@ pub fn remove(factory: &Arc<ExecutionContextFactory>, name: &str) -> Result<Stri
     .map_err(|err| err.to_string())?
     .ok_or_else(|| format!("{name} was not loaded by a deploy; take it out of its component directory instead"))?;
     let location = PathBuf::from(text(&row, "location"));
+    if text(&row, "storage") == "clone" && location.is_dir() && !confirm_dirty {
+        let changes = clone_changes(&location);
+        if !changes.is_empty() {
+            return Ok(Removed::Dirty(changes));
+        }
+    }
     let moved = if location.is_dir() {
         let parent = location.parent().map_or_else(|| PathBuf::from("."), Path::to_path_buf);
         let aside = parent
@@ -590,7 +708,7 @@ pub fn remove(factory: &Arc<ExecutionContextFactory>, name: &str) -> Result<Stri
     };
     record(factory, &report, "remove", &[]);
     tracing::warn!(target: moqui_core::live_settings::AUDIT, "Component {name} removed; it is left out at the next start");
-    Ok(moved)
+    Ok(Removed::MovedTo(moved))
 }
 
 /// Keep what a load did: the component's row and a history row. A failure is logged.

@@ -1578,7 +1578,7 @@ fn boot_server_factory(
         load_started.elapsed().as_secs_f64()
     );
     // the files of components kept in the database that are not here (a new container, a member started after the
-    // deploy), written out so the fresh factory loads them as at every start (plans/Component-Deploy.md, Phase 4)
+    // deploy), written out so the fresh factory loads them as at every start (plans/archive/Component-Deploy.md, Phase 4)
     let restored = if empty_db_loaded {
         0
     } else {
@@ -1657,7 +1657,7 @@ fn boot_server_factory(
     if let Some(facade) = factory.entity() {
         moqui_llm::skills::sync::ensure_synced(&factory, &facade);
     }
-    // the data of a component a load left for this start (System › Components, plans/Component-Deploy.md), as the
+    // the data of a component a load left for this start (System › Components, plans/archive/Component-Deploy.md), as the
     // seed data is loaded before the cluster starts
     moqui_devkit::deploy::load::load_pending(&factory);
     // the deploys and updates of components kept in the database that other cluster members make

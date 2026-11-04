@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Where each doc goes (plans/Autodoc.md, "Output layout"): the artifact type first, then the type's package structure.
+//! Where each doc goes (plans/archive/Autodoc.md, "Output layout"): the artifact type first, then the type's package structure.
 //! Entities by the segments of their package (`entity/mantle/order/OrderHeader.md`), services and screens by their path
 //! under their component's `service/` or `screen/` directory (`service/mantle/order/OrderServices/place-Order.md`,
 //! `screen/SimpleScreens/Order/OrderDetail.md`, not by where a screen is mounted), ECA rules files by their path in the

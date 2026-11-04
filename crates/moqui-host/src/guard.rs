@@ -523,7 +523,7 @@ impl Guard {
         self.conf.load()
     }
 
-    /// Take `conf` after a conf reload changed the webapp's `web-protection` (plans/Component-Deploy.md, Phase 1):
+    /// Take `conf` after a conf reload changed the webapp's `web-protection` (plans/archive/Component-Deploy.md, Phase 1):
     /// the clients seen keep their connections and bans, and their rate and ban windows start again, as the rules
     /// they count against may have changed.
     pub(crate) fn replace_conf(&self, conf: GuardConf) {

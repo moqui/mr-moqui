@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Live conf reload (plans/Component-Deploy.md, Phase 1): the conf merged again from the files (the default conf, each
+//! Live conf reload (plans/archive/Component-Deploy.md, Phase 1): the conf merged again from the files (the default conf, each
 //! component's `MoquiConf.xml` in load order, the runtime conf on top), compared with the running conf unit by unit
 //! ([`catalog`]), the changes that can be live put into the running conf and their state built again, and the rest
 //! named as waiting for a restart. Because the whole conf is merged again, a setting a later component or the runtime
@@ -143,7 +143,7 @@ pub fn apply(factory: &ExecutionContextFactory) -> Result<ConfReport, Error> {
     apply_conf(factory, &merged_from_files(factory, &factory.components())?)
 }
 
-/// [`preview`] against the merged conf `disk`: a component about to be loaded (plans/Component-Deploy.md, Phase 2).
+/// [`preview`] against the merged conf `disk`: a component about to be loaded (plans/archive/Component-Deploy.md, Phase 2).
 ///
 /// # Errors
 ///

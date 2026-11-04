@@ -1,4 +1,4 @@
-// The conf reload and the components (plans/Component-Deploy.md, Phases 1 and 2): on a server just booted, the conf
+// The conf reload and the components (plans/archive/Component-Deploy.md, Phases 1 and 2): on a server just booted, the conf
 // the files make is the running conf, so a preview finds no change (the merge done again gives the same conf, with the
 // components' test confs as moqui test merges them); the System Conf and Components screens render in qvt and tui
 // with no error; and the services need the ADMIN group (a user without it is refused even with the service's

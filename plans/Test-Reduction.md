@@ -236,7 +236,7 @@ a component is named). Each row names its section, which holds where a line numb
 | `docs/ai/Assist.md` 756 | Shell shots in light and dark at 1280 and 390 px | No screenshots (already against the rule) |
 | `plans/Comms-Framework.md` 345 | **growth:** "The `AppStructure`-style render covers every BasicComms screen in qvt ... and in tui" | Drop it: BasicComms drops its every-screen render (group F) |
 | `plans/Comms-Framework.md` 1318-1327 | Browser, interop and slow runs only with permission | The acceptance suite, with its line |
-| `plans/Crate-Split.md` 217-218, `plans/Autodoc.md` 318-320 | A phase checked by `./moq test-all`; a Chromium check (gate3, slow, with permission) and a look at 390 px | `test-framework` for the phase check; the Chromium check is an acceptance test |
+| `plans/Crate-Split.md` 217-218, `plans/archive/Autodoc.md` (its "Built" checks, done) | A phase checked by `./moq test-all`; a Chromium check (gate3, slow, with permission) and a look at 390 px | `test-framework` for the phase check; the Chromium check is an acceptance test |
 | `plans/design-dev-aide.md` 1853-1854 | **growth:** Chromium smokes per phase, with light, dark and 390 px screenshots | Acceptance tests; no screenshots |
 | `runtime/dev-component/template/test/@Class@Screens.spec.js` | **growth:** renders both template screens in qvt and tui (EditItem in tui twice), so every new component starts with an every-mode render test | Replace with one example rule spec in `test/`, and move a screen sweep example to `acceptance/` |
 | `runtime/dev-component/template/README.md` 16, 24; `runtime/dev-component/README.md` 32-42 | `test/` covers services, screens and REST; run `./moq test` | The two suites and their commands |

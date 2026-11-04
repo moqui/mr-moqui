@@ -728,7 +728,7 @@ pub(super) fn screen_entity_absent(entity: &crate::entity::EntityFacade, name: &
 }
 
 /// The count of screen configuration writes of the factory's database (0 with none installed), with the conf
-/// generation in its high bits: a `SubscreensItem` write or a conf reload (its mounts, plans/Component-Deploy.md) makes
+/// generation in its high bits: a `SubscreensItem` write or a conf reload (its mounts, plans/archive/Component-Deploy.md) makes
 /// every definition and `//` path read before it stale, also in production where the files are not checked.
 pub(super) fn screen_config_generation(factory: &ExecutionContextFactory) -> u64 {
     let rows = factory

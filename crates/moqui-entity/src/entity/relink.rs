@@ -13,7 +13,7 @@
  */
 
 //! Relink the entity model after entity files changed or a component was added (plans/design-dev-aide.md F5, 6.1;
-//! plans/Component-Deploy.md): every entity file read again with the configuration the model was loaded with, the
+//! plans/archive/Component-Deploy.md): every entity file read again with the configuration the model was loaded with, the
 //! tables of the entities the changed files define or extend checked against the new model, creating what is missing,
 //! then the new model swapped in (calls in flight keep the one they took) and the caches read from the old one dropped.
 //! The check runs before the swap, so no other thread reads a column before it exists. A model that does not load, or
@@ -60,7 +60,7 @@ pub struct RelinkPreview {
 impl EntityFacade {
     /// What relinking with the components' `entity` directories `component_dirs` would change, changing nothing: the
     /// entities added and changed, and the changes the additive table check cannot make, which a component loaded on
-    /// a running server must not bring (plans/Component-Deploy.md).
+    /// a running server must not bring (plans/archive/Component-Deploy.md).
     ///
     /// # Errors
     ///
@@ -107,7 +107,7 @@ impl EntityFacade {
     /// The model the files make, with `component_dirs` in place of the components' `entity` directories when given;
     /// an error with the problems the current model does not have.
     fn load_relinked(&self, component_dirs: Option<&[PathBuf]>) -> Result<EntityModel, Error> {
-        let conf = MNode::parse_text("conf", self.inner.model.conf_text())?;
+        let conf = MNode::parse_text("conf", &self.inner.model.conf_text())?;
         let paths = match component_dirs {
             Some(dirs) => {
                 let mut paths = vec![self.inner.framework_dir.join("entity")];
@@ -152,7 +152,7 @@ impl EntityFacade {
 
     /// [`Self::relink`] reading the components' `entity` directories `component_dirs`, when given, in place of the
     /// current ones. They are set only once the new model is in place, so a model that does not load leaves the
-    /// directories as they were: a component added to a running server (plans/Component-Deploy.md), or a site's first
+    /// directories as they were: a component added to a running server (plans/archive/Component-Deploy.md), or a site's first
     /// entity file.
     ///
     /// # Errors

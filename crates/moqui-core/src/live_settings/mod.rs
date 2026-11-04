@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Timed overrides of logging and telemetry settings (plans/Monitor-Settings.md; guide docs/tools/Monitoring.md,
+//! Timed overrides of logging and telemetry settings (plans/archive/Monitor-Settings.md; guide docs/tools/Monitoring.md,
 //! "Changing settings for a while"). An override is in memory only: it always expires, at most 24 hours on, and is gone
 //! on restart. The on-disk value (the merged conf, or `moqui_log_level`) is always known beside it. A change applies
 //! here and is published on the `runtime-settings` cluster topic, so it applies to every running instance; each
@@ -305,10 +305,18 @@ pub fn revert_all(factory: &ExecutionContextFactory, user: &str) -> Vec<Override
     let keys: Vec<String> = lock(&registry(factory).state).overrides.keys().cloned().collect();
     let ended = remove(factory, &keys);
     for ended in &ended {
-        tracing::warn!(target: AUDIT, user, key = %ended.key, value = %ended.value, "runtime setting reverted to on-disk");
+        tracing::warn!(target: AUDIT, user, key = %ended.key, on_disk = %on_disk_of(factory, &ended.key),
+            value = %ended.value, "runtime setting reverted to on-disk");
     }
     publish(factory, json!({"op": "revertAll"}));
     ended
+}
+
+/// The on-disk value of `key` for an audit line, empty for a key the catalog does not have.
+fn on_disk_of(factory: &ExecutionContextFactory, key: &str) -> String {
+    catalog::lookup(key)
+        .map(|entry| catalog::on_disk(factory, &entry).0)
+        .unwrap_or_default()
 }
 
 /// Apply a `runtime-settings` message from another instance. A key this instance does not know, or an override that
@@ -325,8 +333,10 @@ pub fn apply_message(factory: &ExecutionContextFactory, body: &Json) {
                 return;
             }
             put(factory, made.clone());
-            tracing::warn!(target: AUDIT, user = %made.set_by, key = %made.key, value = %made.value,
-                expires_at = %stamp(made.expires_at), "runtime setting set from another instance");
+            tracing::warn!(target: AUDIT, user = %made.set_by, key = %made.key,
+                on_disk = %on_disk_of(factory, &made.key), value = %made.value,
+                expires_at = %stamp(made.expires_at), reason = %made.reason,
+                "runtime setting set from another instance");
         }
         Some("revert") => {
             let Some(key) = body.get("key").and_then(Json::as_str) else {
@@ -565,7 +575,8 @@ fn expire_loop(registry: &Registry, weak: &Weak<ExecutionContextFactory>) {
         };
         if !due.is_empty() {
             for ended in &due {
-                tracing::warn!(target: AUDIT, key = %ended.key, value = %ended.value, set_by = %ended.set_by,
+                tracing::warn!(target: AUDIT, user = %ended.set_by, key = %ended.key,
+                    on_disk = %on_disk_of(&factory, &ended.key), value = %ended.value,
                     "runtime setting expired; back to on-disk");
             }
             let applies: Vec<Applies> = due.iter().map(|ended| catalog::applies(&ended.key)).collect();

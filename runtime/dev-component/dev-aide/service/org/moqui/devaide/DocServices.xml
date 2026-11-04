@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Autodoc in the Dev AIDE (plans/Autodoc.md): one doc of an artifact as the server has it now, for the Docs screen and
+<!-- Autodoc in the Dev AIDE (plans/archive/Autodoc.md): one doc of an artifact as the server has it now, for the Docs screen and
     the editors' Doc tabs (the view tier), and a tree of docs exported into a root (the extend tier, with the checks of
     every save). -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">

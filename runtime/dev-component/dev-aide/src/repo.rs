@@ -925,8 +925,9 @@ fn prune_remote(
 
 // ---- clone and cancel ----
 
-/// `clone#Repository`: a URL cloned into `runtime/component/<name>`, or `runtime/dev-component/<name>` with `dev`; it
-/// loads after a restart. The full tier's, with network git allowed.
+/// `clone#Repository`: a URL cloned into `runtime/component/<name>`, or `runtime/dev-component/<name>` with `dev`. Out
+/// as `get#Component`: `loadable` and `componentName` when it can be loaded now, else `restart`. The full tier's, with
+/// network git allowed.
 fn clone_repository(
     ec: &ExecutionContext,
     _service: &ServiceInfo<'_>,
@@ -994,7 +995,7 @@ fn clone_repository(
         "location".into(),
         Value::string(parent.join(&name).display().to_string()),
     );
-    out.insert("restart".into(), Value::Bool(true));
+    crate::repos::offer_load(&context, &parent.join(&name), &mut out);
     Ok(out)
 }
 

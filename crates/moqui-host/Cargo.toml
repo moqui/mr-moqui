@@ -155,7 +155,7 @@ moqui-drivers = { workspace = true }
 moqui-tui = { workspace = true, optional = true, features = ["ui"] }
 tungstenite = { workspace = true, optional = true }
 tracing = { workspace = true }
-# the web protection conf a conf reload replaces (plans/Component-Deploy.md)
+# the web protection conf a conf reload replaces (plans/archive/Component-Deploy.md)
 arc-swap = { workspace = true }
 # `moqui lsp` (plans/design-dev-aide.md 13.6, F13): the Language Server Protocol's messages and its stdio transport, as
 # rust-analyzer uses them; under devtools.

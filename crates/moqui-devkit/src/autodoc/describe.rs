@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The descriptions of the docs, read again from the source (plans/Autodoc.md, "Findings"): the loaded definitions keep
+//! The descriptions of the docs, read again from the source (plans/archive/Autodoc.md, "Findings"): the loaded definitions keep
 //! no `<description>` (the index keeps its first sentence), so each file is parsed once a run and each element's
 //! `<description>` is kept by the line its element starts on, the line the index has. A screen or a service file has no
 //! description element: its comment before the root element is its description, the license comment left out.

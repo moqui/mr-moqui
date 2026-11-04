@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Writing a tree of docs into a directory (plans/Autodoc.md, "CLI" and "Dev AIDE"): only the files whose text changed,
+//! Writing a tree of docs into a directory (plans/archive/Autodoc.md, "CLI" and "Dev AIDE"): only the files whose text changed,
 //! so a repository's diff is the docs that changed, and a manifest (`.autodoc.json`) of every file the generator wrote
 //! there. A file of the manifest whose doc is gone (its artifact removed or renamed) is stale and is removed when asked;
 //! a file the manifest does not list (written by hand) is never touched. A partial export adds to the manifest.

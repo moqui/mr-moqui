@@ -13,7 +13,7 @@
  */
 
 //! `org.moqui.impl.ComponentServices`: the conf reload and, later, the components loaded on a running server, as
-//! services for the System app (plans/Component-Deploy.md). They need the `ADMIN` group on any instance.
+//! services for the System app (plans/archive/Component-Deploy.md). They need the `ADMIN` group on any instance.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -33,6 +33,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     rust_service!(map, scan_components)?;
     rust_service!(map, preview_component_load)?;
     rust_service!(map, load_component)?;
+    rust_service!(map, load_component_data)?;
     rust_service!(map, remove_component)?;
     rust_service!(map, preview_component_deploy)?;
     rust_service!(map, deploy_component)?;
@@ -147,6 +148,10 @@ fn get_pending_restart(
         "changes".to_string(),
         json_value(&conf_reload::pending_restart(&factory)),
     );
+    out.insert(
+        "restartAllowed".to_string(),
+        Value::Bool(crate::service::restart_allowed()),
+    );
     Ok(out)
 }
 
@@ -187,8 +192,35 @@ fn preview_component_load(
     Ok(out)
 }
 
-/// `load#Component`: load the component `componentName` on the running server (`mode` now, the default) or at the
-/// next start (`mode` restart), and its data of `dataTypes` (seed, seed-initial and install when empty). Out: `report`.
+/// The `mode` of a load or deploy: now (the default), restart (at the next start), or restart-now (at the next start,
+/// and the server restarted right after). The second is whether to restart; `None`, with the error added, when it asks
+/// for a restart this user or server cannot make.
+fn mode_of(parameters: &BTreeMap<String, Value>, what: &str) -> Option<(crate::deploy::load::Mode, bool)> {
+    use crate::deploy::load::Mode;
+    match parameter(parameters, "mode").as_str() {
+        "restart" => Some((Mode::AtRestart, false)),
+        "restart-now" if crate::service::restart_allowed() => Some((Mode::AtRestart, true)),
+        "restart-now" => {
+            add_error(format!(
+                "{what} and restart: the restart is only for a dev instance, a server that can restart and a user \
+                 with DEV_AIDE or in ADMIN"
+            ));
+            None
+        }
+        _ => Some((Mode::Now, false)),
+    }
+}
+
+/// After a load, deploy or update that asked for it and did not fail, restart the server.
+fn restart_after(report: &crate::deploy::load::LoadReport, restart: bool, out: &mut BTreeMap<String, Value>) {
+    if restart && report.status != "failed" && crate::service::restart_soon("Restart after the component change") {
+        out.insert("restarting".to_string(), Value::Bool(true));
+    }
+}
+
+/// `load#Component`: load the component `componentName` on the running server (`mode` now, the default), at the next
+/// start (`mode` restart) or with a restart now (`mode` restart-now), and its data of `dataTypes` (seed, seed-initial
+/// and install when empty). Out: `report`, and `restarting`.
 fn load_component(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -198,20 +230,41 @@ fn load_component(
         return Ok(out);
     };
     let name = parameter(parameters, "componentName");
-    let mode = match parameter(parameters, "mode").as_str() {
-        "restart" => crate::deploy::load::Mode::AtRestart,
-        _ => crate::deploy::load::Mode::Now,
+    let Some((mode, restart)) = mode_of(parameters, "Load") else {
+        return Ok(out);
     };
     let report = crate::deploy::load::load(&factory, &name, mode, &list_parameter(parameters, "dataTypes"));
     if report.status == "failed" {
         add_error(format!("{name} was not loaded: {}", report.problems.join("; ")));
     }
+    restart_after(&report, restart, &mut out);
     out.insert("report".to_string(), json_value(&report));
     Ok(out)
 }
 
-/// `remove#Component`: leave out at the next start a component a deploy loaded; its directory is moved aside. Out:
-/// `movedTo`.
+/// `load#ComponentData`: load the data files of `dataTypes` (seed, seed-initial and install when empty) of the loaded
+/// component `componentName` again, each file on its own. Out: `report`.
+fn load_component_data(
+    parameters: &BTreeMap<String, Value>,
+    _facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let mut out = BTreeMap::new();
+    let Some(factory) = admin("Loading a component's data") else {
+        return Ok(out);
+    };
+    let name = parameter(parameters, "componentName");
+    match crate::deploy::load::load_component_data(&factory, &name, &list_parameter(parameters, "dataTypes")) {
+        Ok(report) => {
+            out.insert("report".to_string(), json_value(&report));
+        }
+        Err(err) => add_error(err),
+    }
+    Ok(out)
+}
+
+/// `remove#Component`: leave out at the next start a component a deploy loaded; its directory is moved aside. A working
+/// clone with changes that are not committed (or not pushed) is left as it is unless `confirmDirty`, with the changes
+/// in `dirty`. Out: `movedTo` or `dirty`.
 fn remove_component(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -220,9 +273,13 @@ fn remove_component(
     let Some(factory) = admin("Removing a component") else {
         return Ok(out);
     };
-    match crate::deploy::load::remove(&factory, &parameter(parameters, "componentName")) {
-        Ok(moved) => {
+    let confirm_dirty = matches!(parameter(parameters, "confirmDirty").as_str(), "true" | "Y" | "y");
+    match crate::deploy::load::remove(&factory, &parameter(parameters, "componentName"), confirm_dirty) {
+        Ok(crate::deploy::load::Removed::MovedTo(moved)) => {
             out.insert("movedTo".to_string(), Value::string(moved));
+        }
+        Ok(crate::deploy::load::Removed::Dirty(changes)) => {
+            out.insert("dirty".to_string(), json_value(&changes));
         }
         Err(err) => add_error(err),
     }
@@ -269,7 +326,7 @@ fn preview_component_deploy(
 }
 
 /// `deploy#Component`: move the files a preview staged for `componentName` into place and load the component (`mode`
-/// now or restart, `dataTypes`). Out: `report`.
+/// now, restart or restart-now as `load#Component`, `dataTypes`). Out: `report`, and `restarting`.
 fn deploy_component(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -279,14 +336,14 @@ fn deploy_component(
         return Ok(out);
     };
     let name = parameter(parameters, "componentName");
-    let mode = match parameter(parameters, "mode").as_str() {
-        "restart" => crate::deploy::load::Mode::AtRestart,
-        _ => crate::deploy::load::Mode::Now,
+    let Some((mode, restart)) = mode_of(parameters, "Deploy") else {
+        return Ok(out);
     };
     let report = crate::deploy::git::deploy(&factory, &name, mode, &list_parameter(parameters, "dataTypes"));
     if report.status == "failed" {
         add_error(format!("{name} was not deployed: {}", report.problems.join("; ")));
     }
+    restart_after(&report, restart, &mut out);
     out.insert("report".to_string(), json_value(&report));
     Ok(out)
 }
@@ -326,7 +383,8 @@ fn preview_component_update(
 }
 
 /// `update#Component`: update a component deployed from git to its branch's head, and load its changed data files of
-/// `dataTypes` (seed when empty). Out: `report`.
+/// `dataTypes` (seed when empty); with `mode` restart-now the server restarts after, for the parts that wait for a
+/// restart. Out: `report`, and `restarting`.
 fn update_component(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
@@ -336,10 +394,14 @@ fn update_component(
         return Ok(out);
     };
     let name = parameter(parameters, "componentName");
+    let Some((_, restart)) = mode_of(parameters, "Update") else {
+        return Ok(out);
+    };
     let report = crate::deploy::git::update(&factory, &name, &list_parameter(parameters, "dataTypes"));
     if report.status == "failed" {
         add_error(format!("{name} was not updated: {}", report.problems.join("; ")));
     }
+    restart_after(&report, restart, &mut out);
     out.insert("report".to_string(), json_value(&report));
     Ok(out)
 }

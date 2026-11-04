@@ -1772,7 +1772,7 @@
             instance_purpose is dev, each left out with a WARN on any other purpose. -->
         <component-dir location="dev-component" purpose="dev"/>
         <!-- Components deployed from a git URL in System > Components, their files written from the repository
-            (plans/Component-Deploy.md; docs/tools/Component-Deploy.md). -->
+            (plans/archive/Component-Deploy.md; docs/tools/Component-Deploy.md). -->
         <component-dir location="deployed-component"/>
         <!-- Here are some examples of explicitly loading the example component in different ways: -->
         <!-- <component name="example" location="component/example"/> -->

@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Export docs (plans/Autodoc.md): the Markdown docs of all or some of the artifacts written into a directory of a root,
+<!-- Export docs (plans/archive/Autodoc.md): the Markdown docs of all or some of the artifacts written into a directory of a root,
     a site repository's autodoc/ by default, as moqui autodoc writes them. Only the files whose text changed are written;
     the directory's .autodoc.json lists what was, so a later export can remove the docs of artifacts that are gone, and
     never a file written by hand. The extend tier, with the checks of every save. -->

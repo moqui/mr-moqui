@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-// The Markdown helpers of the Autodoc templates (plans/Autodoc.md, docs/dev/Autodoc.md). A template takes them with
+// The Markdown helpers of the Autodoc templates (plans/archive/Autodoc.md, docs/dev/Autodoc.md). A template takes them with
 //     <#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>
 // Names and other data are text, escaped here; a description is Markdown its author wrote, used as it is.
 

@@ -1,4 +1,4 @@
-<#-- A screen's doc (plans/Autodoc.md). The names: the doc's header, screen, usedBy, uses and diagrams; md is
+<#-- A screen's doc (plans/archive/Autodoc.md). The names: the doc's header, screen, usedBy, uses and diagrams; md is
      AutodocLib.js. A site component's template/autodoc/Screen.fancy takes the place of this one. -->
 <#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>
 # ${md.plain(title)}

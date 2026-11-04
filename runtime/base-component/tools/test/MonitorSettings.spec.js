@@ -1,4 +1,4 @@
-// Monitor › Settings (plans/Monitor-Settings.md): the runtime settings services and screen. Listing needs Monitor
+// Monitor › Settings (plans/archive/Monitor-Settings.md): the runtime settings services and screen. Listing needs Monitor
 // access; a change needs MONITOR_SETTINGS. The spec's own user has Monitor access only, through a group of its own,
 // until the second feature grants that group MONITOR_SETTINGS. The setting changed is the receiver's rate limit, which
 // the conf leaves to its default.

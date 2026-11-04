@@ -510,7 +510,7 @@ pub fn host_name() -> &'static str {
 }
 
 /// The levels, the console and the target rules are the process's [`log_filter`], which Monitor › Settings may
-/// change for a while (plans/Monitor-Settings.md); the files take every line it takes.
+/// change for a while (plans/archive/Monitor-Settings.md); the files take every line it takes.
 struct LineSubscriber {
     next_span: AtomicU64,
     /// Stderr uses the colored console header. Decided once in [`install`].

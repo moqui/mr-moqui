@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The Mermaid diagrams of the generated docs (plans/Autodoc.md, "Document content"): an artifact's users and uses in the
+//! The Mermaid diagrams of the generated docs (plans/archive/Autodoc.md, "Document content"): an artifact's users and uses in the
 //! Artifact Browser's shape, an entity package's E-R diagram, a service directory's class diagram, and the flowcharts of a
 //! screen directory, a REST API and an ECA rules file. Pure text from plain inputs, so the templates can place them and a
 //! test can parse every one with the vendored Mermaid (`WebrootVue.qvt.markdown.page.js`).

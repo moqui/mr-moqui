@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.devaide.DocServices`: Autodoc in the Dev AIDE (plans/Autodoc.md). `get#ArtifactDoc` makes one doc as
+//! `org.moqui.devaide.DocServices`: Autodoc in the Dev AIDE (plans/archive/Autodoc.md). `get#ArtifactDoc` makes one doc as
 //! the server has its artifacts now, from the dev server's artifact index (the calls observed at run time too), for the
 //! Docs screen and the editors' Doc tabs; `export#ArtifactDocs` writes a tree of them into a root, as `moqui autodoc`
 //! does, through the root's confinement and the write checks of every save (the extend tier, read-only roots, the

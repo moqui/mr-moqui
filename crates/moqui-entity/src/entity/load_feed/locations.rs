@@ -13,7 +13,7 @@
  */
 
 //! The data files a component holds, as `EntityDataLoaderImpl` gathers them: the load command's component files and
-//! the data of one component loaded on a running server (plans/Component-Deploy.md).
+//! the data of one component loaded on a running server (plans/archive/Component-Deploy.md).
 
 use std::path::Path;
 

@@ -605,7 +605,7 @@ struct Shared {
     queued_bytes: AtomicUsize,
     /// The config the factory started with. `enabled`, the capacity and the interval are read only here.
     config: Config,
-    /// [`Self::config`] with the live overrides of Monitor › Settings (plans/Monitor-Settings.md): what the sampling,
+    /// [`Self::config`] with the live overrides of Monitor › Settings (plans/archive/Monitor-Settings.md): what the sampling,
     /// artifact, metric attribute, operation and slow-root decisions read.
     live: arc_swap::ArcSwap<Config>,
     resource: Mutex<Resource>,

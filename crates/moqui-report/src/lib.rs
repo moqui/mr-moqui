@@ -24,7 +24,7 @@ moqui_core::extension::submit! {
                 tracing::error!(%error, "could not load component report definitions");
             }
         },
-        // a component loaded on a running server may ship report definitions (plans/Component-Deploy.md)
+        // a component loaded on a running server may ship report definitions (plans/archive/Component-Deploy.md)
         after_artifacts_changed: |factory| {
             if let Err(error) = load_shipped(factory) {
                 tracing::error!(%error, "could not load component report definitions again");

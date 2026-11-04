@@ -468,7 +468,7 @@ fn parse_autodoc_args(args: &[String]) -> Result<AutodocArgs, Error> {
 
 /// `moqui autodoc [--out DIR] [--kinds k,...] [--components c,...] [--packages p,...] [--include-source]
 /// [--templates DIR] [--clean] [--project DIR | --java DIR]`: the Markdown docs of the loaded artifacts written into a
-/// directory (plans/Autodoc.md), from the artifact index read into memory and a model-only boot: no database. Only the
+/// directory (plans/archive/Autodoc.md), from the artifact index read into memory and a model-only boot: no database. Only the
 /// files whose text changed are written, beside the manifest of what it wrote; `--clean` removes the files it wrote
 /// before whose artifacts are gone. A doc that does not build is reported and the others are written.
 pub(crate) fn dispatch_autodoc(args: &[String]) -> Result<(), Error> {

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Autodoc (plans/Autodoc.md): Markdown docs of the loaded artifacts, like JavaDoc for Moqui, made by templates
+//! Autodoc (plans/archive/Autodoc.md): Markdown docs of the loaded artifacts, like JavaDoc for Moqui, made by templates
 //! (`component://framework/template/autodoc/*.fancy`, which a site component's `template/autodoc/` overrides by name).
 //! One doc per entity, service, screen, ECA rules file and REST API file, a page per entity package and service and
 //! screen directory, an index per tree and a root, with Mermaid diagrams: what uses an artifact to its left and what

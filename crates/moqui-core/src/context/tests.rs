@@ -20,16 +20,16 @@ use moqui_lib::node::MNode;
 
 use super::{Authz, ExecutionContextFactory, Tarpit};
 
-fn workspace_root() -> PathBuf {
+pub(super) fn workspace_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-struct EnvGuard {
+pub(super) struct EnvGuard {
     root: PathBuf,
 }
 
 impl EnvGuard {
-    fn new(root: PathBuf) -> Self {
+    pub(super) fn new(root: PathBuf) -> Self {
         Self { root }
     }
 }
@@ -57,10 +57,10 @@ impl Drop for EnvGuard {
     }
 }
 
-struct TempRuntime(PathBuf);
+pub(super) struct TempRuntime(PathBuf);
 
 impl TempRuntime {
-    fn new(label: &str) -> Self {
+    pub(super) fn new(label: &str) -> Self {
         let nanos = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap_or_default()
@@ -70,7 +70,7 @@ impl TempRuntime {
         Self(path)
     }
 
-    fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         &self.0
     }
 }
@@ -81,7 +81,7 @@ impl Drop for TempRuntime {
     }
 }
 
-fn repo_env_stamp(root: &Path) -> Option<(u64, SystemTime)> {
+pub(super) fn repo_env_stamp(root: &Path) -> Option<(u64, SystemTime)> {
     let meta = std::fs::metadata(root.join("runtime/.env")).ok()?;
     Some((meta.len(), meta.modified().unwrap_or(SystemTime::UNIX_EPOCH)))
 }

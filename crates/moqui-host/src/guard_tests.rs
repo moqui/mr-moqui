@@ -248,7 +248,7 @@ fn bad_entries_are_left_out_and_the_rest_apply() {
     assert_eq!(status(&guard, "203.0.113.5", "GET", "/"), 429);
 }
 
-/// A conf reload gives the guard new rules in place (plans/Component-Deploy.md): a client seen before counts against
+/// A conf reload gives the guard new rules in place (plans/archive/Component-Deploy.md): a client seen before counts against
 /// the new rate limit, whose window starts again, with no index past the old rule count.
 #[test]
 fn replaced_rules_apply_to_clients_already_seen() {

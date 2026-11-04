@@ -19,7 +19,7 @@
 //! (plans/design-dev-aide.md F5): each facade call takes the model once, as an `Arc`, so a find in
 //! flight keeps the model it started with while a new one is linked and put in its place. Before the swap, the relink
 //! checks the tables against the new model on its own thread alone ([`SharedModel::with_staged`]), so a column the new
-//! model reads exists before any other thread can read it (plans/Component-Deploy.md, Phase 0).
+//! model reads exists before any other thread can read it (plans/archive/Component-Deploy.md, Phase 0).
 
 use std::cell::RefCell;
 use std::sync::{Arc, RwLock};
@@ -29,15 +29,16 @@ use moqui_db::model::EntityModel;
 /// Loaded entity model, immutable once loaded; [`Self::swap`] puts a newer one in its place.
 pub(crate) struct SharedModel {
     model: RwLock<Arc<EntityModel>>,
-    /// The configuration the model was loaded with, as text (an `MNode` is not `Send`), to load it again.
-    conf: String,
+    /// The configuration to load the model again with, as text (an `MNode` is not `Send`): the one it was loaded with
+    /// until a conf reload replaces it ([`Self::replace_conf_text`]).
+    conf: RwLock<Arc<str>>,
 }
 
 impl SharedModel {
     pub(crate) fn new(model: EntityModel, conf: String) -> Self {
         Self {
             model: RwLock::new(Arc::new(model)),
-            conf,
+            conf: RwLock::new(Arc::from(conf)),
         }
     }
 
@@ -87,8 +88,12 @@ impl SharedModel {
         std::ptr::from_ref(self) as usize
     }
 
-    pub(crate) fn conf_text(&self) -> &str {
-        &self.conf
+    pub(crate) fn conf_text(&self) -> Arc<str> {
+        Arc::clone(&moqui_lib::sync::read(&self.conf))
+    }
+
+    pub(crate) fn replace_conf_text(&self, text: &str) {
+        *moqui_lib::sync::write(&self.conf) = Arc::from(text);
     }
 }
 

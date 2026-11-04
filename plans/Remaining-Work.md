@@ -144,7 +144,6 @@ Guides [Git-Hosting](../docs/interfaces/Git-Hosting.md), [Revision-Management](.
 | Item | Source |
 |---|---|
 | `moqui lint --screens` does not check attributes against the XSD, so an unknown attribute (`display default-text`) passes silently (unknown elements are flagged) | gallery finding F24; `script/screen_lint.rs` |
-| Autodoc: a full export's time on the Dev package (18.7 s on Debug for 7,642 docs; past about 15 s the Dev AIDE's export runs in the background with progress); the Docs page looked at in a browser (light, dark, 390 px, a large package's E-R diagram, the copy button); a Chromium check that a Doc tab draws its diagrams | [Autodoc](Autodoc.md) "Built" |
 | Validating the runtime's files against the XSDs shows long-standing violations: 100 of 936 screens (`box-body` without `box-header`, `transition` out of order, `${}` in enumerated attributes, attributes not in the schema; mr-boss `Comms/Settings/MailAccounts/List.xml` puts `row-col` in `section-iterate`), 3 service files, 2 conf files and 2 entity files. Fix the files or loosen the schemas | `runtime/base-component/framework/xsd/` |
 
 ## Sessions, notifications and security

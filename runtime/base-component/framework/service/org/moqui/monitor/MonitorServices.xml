@@ -119,7 +119,7 @@
             <parameter name="allowInternal"/><parameter name="instructions"/></in-parameters>
         <out-parameters><parameter name="adapterId"/></out-parameters></service>
 
-    <!-- Monitor › Settings (plans/Monitor-Settings.md): timed in-memory overrides of logging and telemetry settings,
+    <!-- Monitor › Settings (plans/archive/Monitor-Settings.md): timed in-memory overrides of logging and telemetry settings,
          applied to every running instance, expiring on their own and gone on restart. Changing needs MONITOR_SETTINGS. -->
     <service verb="list" noun="RuntimeSettings" type="rust" location="moqui_core::monitor::list_runtime_settings">
         <description>Every setting that can be changed for a while, with its on-disk value and source (conf, default, env

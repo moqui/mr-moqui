@@ -147,11 +147,11 @@ pub struct ExecutionContextFactory {
     framework_dir: PathBuf,
     /// The framework component's directory, kept apart from the list so a borrow of it outlives a swap of the list.
     framework_component_dir: PathBuf,
-    /// The components in load order; a hot deploy swaps in a longer list (plans/Component-Deploy.md).
+    /// The components in load order; a hot deploy swaps in a longer list (plans/archive/Component-Deploy.md).
     components: ArcSwap<Vec<ComponentInfo>>,
     resource: ResourceFacade,
     cache: CacheFacade,
-    /// The merged conf; a conf reload swaps it whole (plans/Component-Deploy.md, Phase 1).
+    /// The merged conf; a conf reload swaps it whole (plans/archive/Component-Deploy.md, Phase 1).
     conf: ArcSwap<ConfState>,
     /// Whether the merge took each component's `test/MoquiConf.xml`, so a re-merge takes them too.
     test_confs: bool,
@@ -159,13 +159,13 @@ pub struct ExecutionContextFactory {
     derived: std::sync::Mutex<std::collections::HashMap<std::any::TypeId, DerivedState>>,
     /// Hit times per `userId@type:name`, for tarpit counting.
     tarpit_hits: std::sync::Mutex<TarpitHits>,
-    /// Live overrides of conf settings by `path@name` (plans/Monitor-Settings.md), read by [`Self::conf_setting`].
+    /// Live overrides of conf settings by `path@name` (plans/archive/Monitor-Settings.md), read by [`Self::conf_setting`].
     conf_overlay: RwLock<std::collections::HashMap<String, String>>,
     /// The overlay has an entry, so [`Self::conf_setting`] looks there.
     conf_overlaid: AtomicBool,
     property_names: Vec<String>,
     /// The properties a `default-property` of the conf set, with the value it set: boot's, then a conf reload's. A conf
-    /// reload changes a property only while it still has that value (plans/Component-Deploy.md, Phase 1).
+    /// reload changes a property only while it still has that value (plans/archive/Component-Deploy.md, Phase 1).
     conf_properties: std::sync::Mutex<std::collections::HashMap<String, String>>,
     extensions:
         std::sync::Mutex<std::collections::HashMap<std::any::TypeId, std::sync::Arc<dyn std::any::Any + Send + Sync>>>,
@@ -522,9 +522,16 @@ impl ExecutionContextFactory {
     }
 
     /// Put `components` in place of the components, in load order: a component loaded on a running server
-    /// (plans/Component-Deploy.md). Its `component://` root is registered first, so a location a reader of the new list
-    /// names resolves.
+    /// (plans/archive/Component-Deploy.md). Its `component://` root is registered first, so a location a reader of the new list
+    /// names resolves. The root of a component the new list leaves out (a load rolled back) is dropped.
     pub fn replace_components(&self, components: Vec<ComponentInfo>) {
+        let dropped: Vec<String> = self
+            .components()
+            .iter()
+            .filter(|old| !components.iter().any(|info| info.name == old.name))
+            .map(|old| old.name.clone())
+            .collect();
+        self.resource.unregister_components(&dropped);
         self.resource
             .register_components(components.iter().map(|info| (info.name.clone(), info.location.clone())));
         super::locate::remember(&self.framework_dir, &components);
@@ -924,8 +931,11 @@ impl ExecutionContextFactory {
 
     /// Put `text` in place of the merged conf and answer its generation, one past the one before. A read in flight
     /// keeps the conf it took; [`Self::conf_derived`] state is built again on next use. The conf reload calls this with
-    /// the conf it found live (plans/Component-Deploy.md, Phase 1).
+    /// the conf it found live (plans/archive/Component-Deploy.md, Phase 1).
     pub(crate) fn replace_conf(&self, text: String) -> u64 {
+        if let Some(facade) = self.entity() {
+            facade.replace_conf_text(&text);
+        }
         let mut generation = 0;
         self.conf.rcu(|current| {
             generation = current.generation + 1;
@@ -973,7 +983,7 @@ impl ExecutionContextFactory {
         lock(&self.conf_properties)
     }
 
-    /// Set the property `name` from a `default-property` a conf reload found (plans/Component-Deploy.md, Phase 1) as
+    /// Set the property `name` from a `default-property` a conf reload found (plans/archive/Component-Deploy.md, Phase 1) as
     /// boot sets one: `raw` expanded, or a secret at its `CHANGEME` default generated and saved to `runtime/.env`. It
     /// is remembered as set by the conf, so a later reload may change it again. Answers the value set.
     ///

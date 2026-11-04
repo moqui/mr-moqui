@@ -1,4 +1,4 @@
-<#-- An entity's or view entity's doc (plans/Autodoc.md). The names: the doc's header (title, name, location, line,
+<#-- An entity's or view entity's doc (plans/archive/Autodoc.md). The names: the doc's header (title, name, location, line,
      component, description, up, rootHref), entity, usedBy, uses and diagrams; md is AutodocLib.js. A site component's
      template/autodoc/Entity.fancy takes the place of this one. -->
 <#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>

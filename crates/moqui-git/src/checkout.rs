@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A commit's files written to a plain directory, and the paths two commits differ by (plans/Component-Deploy.md,
+//! A commit's files written to a plain directory, and the paths two commits differ by (plans/archive/Component-Deploy.md,
 //! Phase 3): a component deployed from a repository loads from those files, as components load from files, and an
 //! update of it reloads the paths that changed. The repository is a `db` or `remote` GitRepository, or a bare
 //! repository directory a branch was fetched into.

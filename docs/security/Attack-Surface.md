@@ -257,6 +257,20 @@ SQL Runner, Service Run, Data Import, Data Snapshot, and `qzSign` are designed p
 | `System/Llm.xml` | `AgentAdmin`, or the screen returns an error. The comment says every screen under it needs `AgentAdmin`. |
 | `System/Security/UserAccount/UserAccountDetail.xml` | `ADMIN_LOGIN_AS` for login-as, and a different username |
 
+### Component deploy and conf reload
+
+System › Components and System › Conf ([Component-Deploy](../tools/Component-Deploy.md)), with the services in `org.moqui.impl.ComponentServices` (`crates/moqui-devkit/src/deploy/`). Each is `allow-remote="false"`, under the `SYSTEM_APP` screen authorization, and each checks the `ADMIN` group itself.
+
+- **What a load can do.** Loading a component, from a component directory or from git, runs its code on the server: its services, ECA rules, screens, REST APIs, templates and scripts are loaded, its data is loaded with authorization off, its tables are made, and its `MoquiConf.xml` is merged into the running conf. Treat a load as a code deploy. A component with Rust code (a `Cargo.toml`, or `.rs` files in `src/`) is refused: native code loads only at a start, when the binary links it.
+- **Deploy from git** (`preview#ComponentDeploy`, `deploy#Component`, `update#Component`) also needs the sealed `COMPONENT_DEPLOY` permission. On a production instance it needs `component_deploy_enabled=true` too, and without that it is refused with a vague error.
+- **URLs.** The URL must be `https` or `ssh` (also `user@host:path`), never `file://` or a local path. On a production instance a host that resolves to a loopback, private or link-local address is refused.
+- **Fetching.** The database and bare storages fetch in-process (`moqui-git`). A working clone runs the system `git` command, with no prompt and the access token sent as an HTTP header rather than kept in the clone's conf. Both paths are refused in sim mode and by the `RemoteCall` fence. Credentials are stored encrypted (`GitRepository.accessToken`, or the `DeployedComponent` row for a clone).
+- **Files written.** Fetched files go to a dot-prefixed staging directory that discovery skips, then into `runtime/deployed-component/<name>` or the clone's component directory. Remove moves the directory to `.removed/` beside it; a working clone with changes asks again first.
+- **Restart.** "Deploy and restart", "Update and restart" and System › Conf's Restart Now go through `restart#Server`: a dev instance only, `DEV_AIDE` or `ADMIN`, and a server that can restart itself.
+- **Conf reload** (`reload#Conf`, System › Conf, the dev file watcher, and `SIGHUP` when stdin is not a terminal) applies only the units the catalog marks live or apply. Ports, datasources, keys, `instance_purpose` and the other restart-class units wait for a restart. A property that the environment set is not overridden.
+- **Cluster.** Only the database storage is fanned out, on the `component-deploy` topic (see Cluster below), and each member writes the tree from the shared database repository. The other storages, and a load from a local directory, are refused while the server has live cluster members.
+- **Audit.** Each load, deploy, update and remove writes a `DeployedComponentHistory` row and a WARN on `moqui.monitor.audit`, as does a data load again (its history row only for a component a load recorded) and each conf reload request.
+
 ### Token routes
 
 Token routes are not framework-default paths. `runtime/component/mr-boss/MoquiConf.xml` adds them on the `webroot` webapp, and `runtime/base-component/basic-comms/MoquiConf.xml` adds `call`. `screen/mod.rs` sends a match to token-route dispatch before the ordinary screen. The failure status of a bad token was not read.

@@ -51,7 +51,7 @@ pub fn component_entity_dirs(factory: &super::ExecutionContextFactory) -> Vec<Pa
     component_entity_dirs_of(factory.framework_component_dir(), &factory.components())
 }
 
-/// [`component_entity_dirs`] of `components`: a set about to be put in place (plans/Component-Deploy.md).
+/// [`component_entity_dirs`] of `components`: a set about to be put in place (plans/archive/Component-Deploy.md).
 pub fn component_entity_dirs_of(framework_component_dir: &Path, components: &[ComponentInfo]) -> Vec<PathBuf> {
     components
         .iter()
@@ -77,7 +77,7 @@ pub fn discover_components(runtime_dir: &Path, framework_dir: &Path) -> Result<V
 }
 
 /// The components a boot of `factory`'s runtime would load now, in load order, found as boot finds them: a component
-/// placed since the boot is among them (plans/Component-Deploy.md).
+/// placed since the boot is among them (plans/archive/Component-Deploy.md).
 ///
 /// # Errors
 ///
@@ -380,7 +380,7 @@ fn component_from_element(base: &Path, node: &MNode) -> Result<ComponentInfo, Er
 }
 
 /// The component in the directory `path`, from its `component.xml` (or the directory's name): a component fetched for a
-/// deploy, before it is in a component directory (plans/Component-Deploy.md).
+/// deploy, before it is in a component directory (plans/archive/Component-Deploy.md).
 ///
 /// # Errors
 ///

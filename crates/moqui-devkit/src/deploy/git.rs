@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Deploy a component from a git URL and branch (plans/Component-Deploy.md, Phase 3). Three storages, chosen per
+//! Deploy a component from a git URL and branch (plans/archive/Component-Deploy.md, Phase 3). Three storages, chosen per
 //! component:
 //! - database: a `db` GitRepository imports the branch; its files are written to `runtime/deployed-component/<name>`;
 //! - bare: a `remote` GitRepository mirror under `runtime/git`; its files are written there too;
@@ -238,6 +238,7 @@ pub fn preview(factory: &Arc<ExecutionContextFactory>, request: &DeployRequest) 
             let directory = clone_directory(&runtime, &request.directory, &component_dirs(factory))?;
             std::fs::create_dir_all(&directory).map_err(|err| err.to_string())?;
             let scratch = directory.join(format!(".staging-clone-{stamp}"));
+            network_allowed(factory, &request.url)?;
             git_command(
                 None,
                 request,
@@ -424,6 +425,7 @@ pub fn preview_update(factory: &Arc<ExecutionContextFactory>, name: &str) -> Res
         }
         Storage::Clone => {
             let request = request_of(&row);
+            network_allowed(factory, &request.url)?;
             git_command(Some(&location), &request, &["fetch", "origin"], None)?;
             let branch = text(&row, "branch");
             let to = git_command(
@@ -542,7 +544,7 @@ fn clustered(factory: &ExecutionContextFactory) -> bool {
 }
 
 /// Tell the other cluster members that a component kept in the database was deployed or updated, so each writes its
-/// files from the shared repository and loads them (plans/Component-Deploy.md, Phase 4).
+/// files from the shared repository and loads them (plans/archive/Component-Deploy.md, Phase 4).
 fn publish(factory: &ExecutionContextFactory, name: &str, action: &str, from: &str, to: &str) {
     let Some(facade) = factory.entity() else {
         return;
@@ -1007,6 +1009,20 @@ fn component_dirs(factory: &ExecutionContextFactory) -> Vec<String> {
 /// Where the files staged at `staged` (`.staging-<name>`) go: beside it, as `<name>`.
 fn final_location(staged: &Path, name: &str) -> PathBuf {
     staged.with_file_name(name)
+}
+
+/// The checks a fetch from `url` passes before the system `git` makes it for a working clone, as the in-process
+/// fetch of the other storages does (`moqui_git::checkout`): refused in sim mode and by the RemoteCall fence.
+fn network_allowed(factory: &ExecutionContextFactory, url: &str) -> Result<(), String> {
+    let redacted = moqui_core::outbound::redacted(url);
+    if factory.entity().is_some_and(|facade| facade.sim_active()) {
+        return Err(format!("fetch of {redacted} denied because sim mode is active"));
+    }
+    moqui_core::entity::fence::check_effect(
+        moqui_core::entity::fence::Effect::RemoteCall,
+        &format!("fetch of {redacted}"),
+    )
+    .map_err(|err| err.to_string())
 }
 
 /// Run the `git` command with `args` (in `dir` when given, with `target` last when given), the request's token sent as

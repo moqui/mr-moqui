@@ -411,7 +411,7 @@ impl ScreenFacade {
         self.conf.load_full()
     }
 
-    /// Read the screen part of the merged conf again after a conf reload replaced it (plans/Component-Deploy.md,
+    /// Read the screen part of the merged conf again after a conf reload replaced it (plans/archive/Component-Deploy.md,
     /// Phase 1): the render modes, the mounts and the settings, and the definitions built with the old ones dropped.
     pub fn reconf(&self, factory: &ExecutionContextFactory) {
         self.conf.store(Arc::new(ScreenConf::parse(&factory.conf_text())));
