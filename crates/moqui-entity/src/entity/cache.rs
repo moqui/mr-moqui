@@ -1107,6 +1107,31 @@ pub(crate) fn note_changed(facade: &EntityFacade, entity_name: Option<&str>) {
     (crate::hooks::get().note_write)(Some(full_name));
 }
 
+/// Whether a cluster peer may hold something a write of `entity_name` changes, so the write is worth an invalidation
+/// (plans/High-Level-Review.md HL-017): a cached find of it (any entity not marked `cache="never"`, since a find may ask
+/// for the cache), a cached find of a view it is a member of, or a cache the entity-changed notice ([`note_changed`])
+/// moves for it. True for a name the model does not know.
+pub fn peers_may_cache(facade: &EntityFacade, entity_name: &str) -> bool {
+    let Ok(meta) = read_meta(facade, entity_name) else {
+        return true;
+    };
+    if !meta.cache_never {
+        return true;
+    }
+    let name = meta.full_name.as_str();
+    let noticed = name.starts_with("moqui.screen.Subscreens")
+        || is_feed_definition(name)
+        || name == "moqui.basic.LocalizedEntityField"
+        || name == "moqui.basic.LocalizedMessage"
+        || name.starts_with("moqui.entity.view.DbViewEntity");
+    noticed
+        || views_by_member(facade).get(name).is_some_and(|views| {
+            views
+                .iter()
+                .any(|view| read_meta(facade, view).map_or(true, |meta| !meta.cache_never))
+        })
+}
+
 /// For another server's write, and do not publish: with its primary key, the cached finds that held the row or may
 /// match the key (as an update), else the entity's caches whole. Remote apply uses this.
 pub fn clear_one_cache(facade: &EntityFacade, entity_name: &str, primary_key: Option<&FieldMap>) -> Result<(), Error> {

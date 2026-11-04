@@ -291,15 +291,18 @@ fn put_member(
     .unwrap();
 }
 
-fn write_visitor(facade: &EntityFacade, id: &str, commit: bool) {
-    facade.begin("moqui.server.Visitor", None).unwrap();
-    let mut value = facade.make_value("moqui.server.Visitor").unwrap();
-    value.set("visitorId", Value::string(id));
+/// A cached entity, whose writes peers are told of.
+const ROW: &str = "moqui.basic.Enumeration";
+
+fn write_row(facade: &EntityFacade, id: &str, commit: bool) {
+    facade.begin(ROW, None).unwrap();
+    let mut value = facade.make_value(ROW).unwrap();
+    value.set("enumId", Value::string(id));
     value.create(facade).unwrap();
     if commit {
-        facade.commit("moqui.server.Visitor").unwrap();
+        facade.commit(ROW).unwrap();
     } else {
-        facade.rollback("moqui.server.Visitor").unwrap();
+        facade.rollback(ROW).unwrap();
     }
 }
 
@@ -341,10 +344,10 @@ fn commit_posts_once_and_remote_apply_does_not_repost() {
     super::start(ctx.factory()).unwrap();
     super::start(ctx.factory()).unwrap();
     assert_eq!(super::load_members(&facade).unwrap().len(), 2);
-    write_visitor(&facade, "V1", false);
+    write_row(&facade, "V1", false);
     assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
     assert!(sync::lock(&recording.calls).is_empty());
-    write_visitor(&facade, "V2", true);
+    write_row(&facade, "V2", true);
     assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
     let calls = sync::lock(&recording.calls);
     assert_eq!(calls.len(), 1);
@@ -357,8 +360,8 @@ fn commit_posts_once_and_remote_apply_does_not_repost() {
     let json: serde_json::Value = serde_json::from_slice(&calls[0].payload).unwrap();
     assert_eq!(json["origin_id"], notify::origin_id());
     assert!(!json["message_id"].as_str().unwrap_or("").is_empty());
-    assert_eq!(json["body"]["entityName"], "moqui.server.Visitor");
-    assert_eq!(json["body"]["primaryKey"]["visitorId"], "V2");
+    assert_eq!(json["body"]["entityName"], ROW);
+    assert_eq!(json["body"]["primaryKey"]["enumId"], "V2");
     let message = TopicMessage {
         origin_id: json["origin_id"].as_str().unwrap().to_string(),
         message_id: json["message_id"].as_str().unwrap().to_string(),
@@ -494,7 +497,7 @@ fn a_second_factory_does_not_post_through_the_first_ones_sender() {
     {
         let _entered = second.enter();
         let _authz = second.disable_authz();
-        write_visitor(&second_facade, "TWO-V1", true);
+        write_row(&second_facade, "TWO-V1", true);
     }
     assert!(super::wait_for_sends(first.factory(), Duration::from_secs(5)));
     assert!(super::wait_for_sends(second.factory(), Duration::from_secs(5)));
@@ -572,7 +575,7 @@ fn a_stale_peer_is_not_posted() {
         &fingerprints.session,
         &fingerprints.cert,
     );
-    write_visitor(&facade, "V3", true);
+    write_row(&facade, "V3", true);
     assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
     assert!(sync::lock(&recording.calls).is_empty());
 }
@@ -706,7 +709,7 @@ fn a_sender_retries_three_times_and_an_always_failing_sender_does_not_panic() {
         &fingerprints.session,
         &fingerprints.cert,
     );
-    write_visitor(&facade, "RETRY-V4", true);
+    write_row(&facade, "RETRY-V4", true);
     assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
     assert_eq!(scripted.calls.load(Ordering::SeqCst), 3);
 
@@ -716,17 +719,17 @@ fn a_sender_retries_three_times_and_an_always_failing_sender_does_not_panic() {
         calls: AtomicUsize::new(0),
     });
     super::install_sender(ctx.factory(), Arc::clone(&always) as Arc<dyn Sender>);
-    write_visitor(&facade, "RETRY-V5", true);
+    write_row(&facade, "RETRY-V5", true);
     assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
     assert_eq!(always.calls.load(Ordering::SeqCst), 3);
 
     *super::lock(&super::ClusterState::of(ctx.factory()).sender) = None;
-    write_visitor(&facade, "RETRY-V6", true);
+    write_row(&facade, "RETRY-V6", true);
     assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
 }
 
 #[test]
-fn many_writes_in_one_wait_reach_a_peer_as_one_invalidation_and_the_commit_does_not_wait() {
+fn many_writes_in_one_wait_reach_a_peer_as_one_invalidation_covering_them_all_and_the_commit_does_not_wait() {
     let _lock = lock();
     let _clean = Clean;
     preset("inst-batch");
@@ -755,13 +758,13 @@ fn many_writes_in_one_wait_reach_a_peer_as_one_invalidation_and_the_commit_does_
         &fingerprints.cert,
     );
     let started = std::time::Instant::now();
-    facade.begin("moqui.server.Visitor", None).unwrap();
+    facade.begin(ROW, None).unwrap();
     for index in 0..200 {
-        let mut value = facade.make_value("moqui.server.Visitor").unwrap();
-        value.set("visitorId", Value::string(format!("BATCH-{index}")));
+        let mut value = facade.make_value(ROW).unwrap();
+        value.set("enumId", Value::string(format!("BATCH-{index}")));
         value.create(&facade).unwrap();
     }
-    facade.commit("moqui.server.Visitor").unwrap();
+    facade.commit(ROW).unwrap();
     assert!(
         started.elapsed() < Duration::from_secs(2),
         "the commit waited on the peer: {:?}",
@@ -769,12 +772,34 @@ fn many_writes_in_one_wait_reach_a_peer_as_one_invalidation_and_the_commit_does_
     );
     assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(10)));
     let posted = sync::lock(&slow.0);
-    let visitor_posts = posted
+    let bodies: Vec<serde_json::Value> = posted
         .iter()
-        .filter(|text| text.contains("moqui.server.Visitor"))
-        .count();
+        .map(|text| serde_json::from_str::<serde_json::Value>(text).unwrap()["body"].clone())
+        .filter(|body| body["entityName"] == ROW)
+        .collect();
     // The first commit callback may be taken alone before the rest are queued; the rest arrive together.
-    assert!((1..=2).contains(&visitor_posts), "{visitor_posts} posts for 200 writes");
+    assert!((1..=2).contains(&bodies.len()), "{} posts for 200 writes", bodies.len());
+    // Every write is covered: by its key, or by a message for the whole entity (past the keys one message carries).
+    let whole = bodies
+        .iter()
+        .any(|body| body.get("primaryKey").is_none() && body.get("primaryKeys").is_none());
+    let mut keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for body in &bodies {
+        if let Some(key) = body["primaryKey"]["enumId"].as_str() {
+            keys.insert(key.to_string());
+        }
+        for key in body["primaryKeys"].as_array().into_iter().flatten() {
+            keys.insert(key["enumId"].as_str().unwrap().to_string());
+        }
+    }
+    assert!(
+        whole || (0..200).all(|index| keys.contains(&format!("BATCH-{index}"))),
+        "not every write is covered: {bodies:?}"
+    );
+    assert!(
+        whole,
+        "200 keys are past what one message carries, so the entity goes whole"
+    );
 }
 
 /// Peers are posted to at once: one that is slow to answer does not hold up the others. Two peers that each take
@@ -811,7 +836,7 @@ fn a_slow_peer_does_not_hold_up_the_others() {
         posts: Mutex::new(Vec::new()),
     });
     super::install_sender(ctx.factory(), Arc::clone(&timed) as Arc<dyn Sender>);
-    write_visitor(&facade, "PAR-V1", true);
+    write_row(&facade, "PAR-V1", true);
     assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
     let posts = sync::lock(&timed.posts);
     let visitor: Vec<&(String, Duration)> = posts.iter().collect();
@@ -1065,4 +1090,358 @@ fn a_direct_send_goes_to_its_member_only_and_to_this_member_locally() {
     assert_eq!(local[0]["target"], "inst-direct");
     assert!(super::for_this_member(ctx.factory(), &message("inst-direct")));
     assert!(!super::for_this_member(ctx.factory(), &message("inst-direct-media")));
+}
+
+fn invalidation(entity: &str, key: Option<&str>) -> TopicMessage {
+    let primary_key = key.map_or_else(|| serde_json::json!({}), |id| serde_json::json!({ "enumId": id }));
+    TopicMessage {
+        origin_id: "peer".into(),
+        message_id: format!("m-{entity}-{}", key.unwrap_or("")),
+        body: serde_json::json!({ "entityName": entity, "primaryKey": primary_key }),
+    }
+}
+
+/// HL-017: an invalidation joins the one waiting for its entity and carries every key, up to the cap; past it, or
+/// with a write that had no usable key, the whole entity. Past the entities bound the invalidations become one clear of
+/// every entity cache, which covers what comes after; other topics are bounded apart and do not push invalidations out.
+#[test]
+fn queued_invalidations_keep_every_key_and_widen_past_their_bounds() {
+    let limits = super::Limits {
+        others: 1,
+        entities: 2,
+        keys: 2,
+    };
+    let mut queue = super::Queue::default();
+    let take =
+        |queue: &mut super::Queue, topic, message| assert_eq!(queue.push(topic, message, limits), super::Queued::Taken);
+    take(&mut queue, "collab-update", invalidation("doc", None));
+    assert_eq!(
+        queue.push("collab-update", invalidation("doc2", None), limits),
+        super::Queued::Dropped,
+        "other topics are bounded on their own"
+    );
+    take(&mut queue, "entity-cache-invalidate", invalidation("E1", Some("A")));
+    take(&mut queue, "entity-cache-invalidate", invalidation("E1", Some("B")));
+    take(&mut queue, "entity-cache-invalidate", invalidation("E1", Some("A")));
+    take(&mut queue, "entity-cache-invalidate", invalidation("E2", None));
+    take(&mut queue, "entity-cache-invalidate", invalidation("E2", Some("C")));
+    let bodies: Vec<serde_json::Value> = queue.messages.iter().map(|(_, message)| message.body.clone()).collect();
+    assert_eq!(bodies.len(), 3);
+    assert_eq!(
+        bodies[1]["primaryKeys"],
+        serde_json::json!([{ "enumId": "A" }, { "enumId": "B" }])
+    );
+    assert!(bodies[1].get("primaryKey").is_none());
+    assert!(
+        bodies[2].get("primaryKey").is_none() && bodies[2].get("primaryKeys").is_none(),
+        "a write with no key makes the entity whole, and a later key does not narrow it: {}",
+        bodies[2]
+    );
+    take(&mut queue, "entity-cache-invalidate", invalidation("E1", Some("D")));
+    let e1 = &queue.messages[1].1.body;
+    assert!(
+        e1.get("primaryKeys").is_none(),
+        "past the cap the entity goes whole: {e1}"
+    );
+    // A third entity is past the entities bound.
+    take(&mut queue, "entity-cache-invalidate", invalidation("E3", Some("X")));
+    take(&mut queue, "entity-cache-invalidate", invalidation("E4", Some("Y")));
+    let batch = queue.take();
+    assert_eq!(batch.len(), 2, "the other topic and one clear of every entity cache");
+    assert_eq!(batch[0].0, "collab-update");
+    assert_eq!(batch[1].1.body, serde_json::json!({ "clearAll": true }));
+    assert!(queue.messages.is_empty() && queue.invalidations.is_empty() && queue.clear_all.is_none());
+}
+
+/// The peer: a facade of its own, whose database the test changes directly, as a shared database is changed by the
+/// sending member, so only the invalidations it is sent keep its cache fresh.
+struct Remote {
+    facade: EntityFacade,
+}
+
+impl Remote {
+    fn new() -> Self {
+        Self {
+            facade: crate::testing::open(),
+        }
+    }
+
+    /// The row's description as a cached find reads it.
+    fn cached(&self, id: &str) -> Option<String> {
+        self.facade
+            .find(ROW)
+            .unwrap()
+            .eq("enumId", Value::string(id))
+            .use_cache(true)
+            .one()
+            .unwrap()
+            .map(|row| row.get("description").and_then(Value::as_str).unwrap_or("").to_string())
+    }
+
+    /// Write the row in the database without this facade's cache knowing.
+    fn put(&self, id: &str, description: &str) {
+        let condition = moqui_db::sql::Condition::equals("enumId", Value::string(id));
+        let (insert, update) = self
+            .facade
+            .with_entity(ROW, |entity, dialect, _| {
+                Ok((
+                    moqui_db::sql::insert(entity, dialect, &["enumId", "description"])?,
+                    moqui_db::sql::update(entity, dialect, &["description"], Some(&condition))?,
+                ))
+            })
+            .unwrap();
+        let tx = self.facade.transactions_for(ROW).unwrap();
+        let updated =
+            crate::entity::exec::execute_tx(&tx, &update.sql, &[Value::string(description), Value::string(id)])
+                .unwrap();
+        if updated == 0 {
+            crate::entity::exec::execute_tx(&tx, &insert, &[Value::string(id), Value::string(description)]).unwrap();
+        }
+    }
+
+    fn apply(&self, topic: &str, body: serde_json::Value) {
+        let message = TopicMessage {
+            origin_id: "peer".into(),
+            message_id: crate::entity::uuid_v4().unwrap(),
+            body,
+        };
+        super::apply_remote(&self.facade, topic, &message).unwrap();
+    }
+}
+
+/// HL-017: a joined invalidation applied on a peer evicts each key's cached find, a cached miss of a row then
+/// inserted among them, and leaves another entity's alone.
+#[test]
+fn a_joined_invalidation_keeps_every_key_fresh_on_the_peer() {
+    let remote = Remote::new();
+    remote.put("J2", "old");
+    assert_eq!(remote.cached("J1"), None);
+    assert_eq!(remote.cached("J2").as_deref(), Some("old"));
+    let mut queue = super::Queue::default();
+    for id in ["J1", "J2"] {
+        queue.push("entity-cache-invalidate", invalidation(ROW, Some(id)), super::LIMITS);
+    }
+    let batch = queue.take();
+    assert_eq!(batch.len(), 1);
+    remote.put("J1", "new");
+    remote.put("J2", "new");
+    assert_eq!(remote.cached("J1"), None, "stale until the invalidation");
+    remote.apply("entity-cache-invalidate", batch[0].1.body.clone());
+    assert_eq!(remote.cached("J1").as_deref(), Some("new"));
+    assert_eq!(remote.cached("J2").as_deref(), Some("new"));
+    // A clear of every entity cache, as a peer that missed invalidations is sent.
+    remote.put("J2", "newer");
+    assert_eq!(remote.cached("J2").as_deref(), Some("new"));
+    remote.apply("entity-cache-invalidate", serde_json::json!({ "clearAll": true }));
+    assert_eq!(remote.cached("J2").as_deref(), Some("newer"));
+}
+
+/// Applies what it is posted to the remote facade, unless failing or held.
+struct Deliver {
+    remote: EntityFacade,
+    fail: AtomicBool,
+    hold: AtomicBool,
+    bodies: Mutex<Vec<serde_json::Value>>,
+}
+
+impl Sender for Deliver {
+    fn post(&self, _base_url: &str, topic: &str, payload: &[u8]) -> Result<super::PostOutcome, Error> {
+        while self.hold.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if self.fail.load(Ordering::SeqCst) {
+            return Err(Error::new("peer unreachable"));
+        }
+        let json: serde_json::Value = serde_json::from_slice(payload).unwrap();
+        sync::lock(&self.bodies).push(json["body"].clone());
+        let message = TopicMessage {
+            origin_id: json["origin_id"].as_str().unwrap_or("").to_string(),
+            message_id: json["message_id"].as_str().unwrap_or("").to_string(),
+            body: json["body"].clone(),
+        };
+        super::apply_remote(&self.remote, topic, &message)?;
+        Ok(super::PostOutcome::Accepted)
+    }
+}
+
+/// A started member over `facade` with one live peer, `remote`, posted to through a [`Deliver`].
+fn deliver_to(
+    ctx: &crate::context::ExecutionContext,
+    facade: &EntityFacade,
+    remote: &Remote,
+    peer_live: bool,
+) -> Arc<Deliver> {
+    let fingerprints = super::configured_fingerprints().unwrap();
+    let deliver = Arc::new(Deliver {
+        remote: remote.facade.clone(),
+        fail: AtomicBool::new(false),
+        hold: AtomicBool::new(false),
+        bodies: Mutex::new(Vec::new()),
+    });
+    super::install_sender(ctx.factory(), Arc::clone(&deliver) as Arc<dyn Sender>);
+    super::start(ctx.factory()).unwrap();
+    let heartbeat = if peer_live {
+        now_value()
+    } else {
+        stamp_value(now_millis() - 4 * 60 * 1000)
+    };
+    put_member(
+        facade,
+        "inst-remote",
+        PEER,
+        heartbeat,
+        &fingerprints.session,
+        &fingerprints.cert,
+    );
+    deliver
+}
+
+const PEER: &str = "https://remote.example:8443";
+
+/// A write here, with the same change made to the peer's database.
+fn write_both(facade: &EntityFacade, remote: &Remote, id: &str, description: &str) {
+    remote.put(id, description);
+    let mut value = facade.make_value(ROW).unwrap();
+    value.set("enumId", Value::string(id));
+    value.set("description", Value::string(description));
+    value.create_or_update(facade).unwrap();
+}
+
+/// The backoff of a peer whose posts failed is over, as it is after `PEER_BACKOFF`.
+fn end_backoff(ctx: &crate::context::ExecutionContext) {
+    super::lock(&super::ClusterState::of(ctx.factory()).peers)
+        .down_until
+        .clear();
+}
+
+/// HL-017: two rows written in one transaction while a batch is on its way are both fresh on the peer, a cached miss
+/// among them; a write of an entity no member caches is not posted.
+#[test]
+fn two_rows_changed_in_one_batch_are_both_fresh_on_the_peer() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-cover");
+    let (ctx, facade) = open_facade();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let remote = Remote::new();
+    let deliver = deliver_to(&ctx, &facade, &remote, true);
+    write_both(&facade, &remote, "C2", "old");
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert_eq!(remote.cached("C1"), None);
+    assert_eq!(remote.cached("C2").as_deref(), Some("old"));
+    // The sender is held on another write, so the two below wait together.
+    deliver.hold.store(true, Ordering::SeqCst);
+    write_both(&facade, &remote, "C0", "first");
+    facade.begin(ROW, None).unwrap();
+    write_both(&facade, &remote, "C1", "new");
+    write_both(&facade, &remote, "C2", "new");
+    facade.commit(ROW).unwrap();
+    deliver.hold.store(false, Ordering::SeqCst);
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert_eq!(remote.cached("C1").as_deref(), Some("new"));
+    assert_eq!(remote.cached("C2").as_deref(), Some("new"));
+    let bodies = sync::lock(&deliver.bodies).clone();
+    assert!(
+        bodies
+            .iter()
+            .any(|body| body["primaryKeys"] == serde_json::json!([{ "enumId": "C1" }, { "enumId": "C2" }])),
+        "{bodies:?}"
+    );
+    // `Visitor` is `cache="never"` and in no cacheable view: its writes are not posted.
+    let before = bodies.len();
+    let mut visitor = facade.make_value("moqui.server.Visitor").unwrap();
+    visitor.set("visitorId", Value::string("NEVER-V1"));
+    visitor.create(&facade).unwrap();
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert_eq!(sync::lock(&deliver.bodies).len(), before);
+}
+
+/// HL-018: a peer whose posts failed every try is sent a clear of every entity cache once it answers again, by the
+/// heartbeat, with no other write.
+#[test]
+fn a_peer_that_missed_invalidations_on_failed_posts_is_cleared_without_another_write() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-gap-retry");
+    let (ctx, facade) = open_facade();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let remote = Remote::new();
+    let deliver = deliver_to(&ctx, &facade, &remote, true);
+    assert_eq!(remote.cached("R1"), None);
+    deliver.fail.store(true, Ordering::SeqCst);
+    write_both(&facade, &remote, "R1", "lost");
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert_eq!(remote.cached("R1"), None, "the invalidation was lost");
+    deliver.fail.store(false, Ordering::SeqCst);
+    end_backoff(&ctx);
+    super::heartbeat(ctx.factory());
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert_eq!(remote.cached("R1").as_deref(), Some("lost"));
+    assert!(super::lock(&super::ClusterState::of(ctx.factory()).peers)
+        .dirty
+        .is_empty());
+}
+
+/// HL-018: a write while the peer is in its backoff is not posted to it; the peer gets its clear when the backoff ends.
+#[test]
+fn a_write_during_a_peers_backoff_is_recovered_without_another_write() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-gap-backoff");
+    let (ctx, facade) = open_facade();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let remote = Remote::new();
+    let deliver = deliver_to(&ctx, &facade, &remote, true);
+    write_both(&facade, &remote, "B0", "seen");
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert_eq!(remote.cached("B1"), None);
+    super::mark_peer_down(&super::ClusterState::of(ctx.factory()), PEER);
+    let posted = sync::lock(&deliver.bodies).len();
+    write_both(&facade, &remote, "B1", "skipped");
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert_eq!(
+        sync::lock(&deliver.bodies).len(),
+        posted,
+        "nothing is posted to a peer in backoff"
+    );
+    super::heartbeat(ctx.factory());
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert_eq!(remote.cached("B1"), None, "still in backoff");
+    end_backoff(&ctx);
+    super::heartbeat(ctx.factory());
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert_eq!(remote.cached("B1").as_deref(), Some("skipped"));
+}
+
+/// HL-018: a peer out of the live set misses what is written meanwhile; when it is back, the heartbeat that finds it
+/// sends it a clear of every entity cache.
+#[test]
+fn a_peer_back_in_the_live_set_is_cleared_without_another_write() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-gap-member");
+    let fingerprints = super::configured_fingerprints().unwrap();
+    let (ctx, facade) = open_facade();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let remote = Remote::new();
+    let deliver = deliver_to(&ctx, &facade, &remote, false);
+    assert_eq!(remote.cached("M1"), None);
+    write_both(&facade, &remote, "M1", "while out");
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert!(sync::lock(&deliver.bodies).is_empty(), "a stale peer is not posted to");
+    put_member(
+        &facade,
+        "inst-remote",
+        PEER,
+        now_value(),
+        &fingerprints.session,
+        &fingerprints.cert,
+    );
+    super::heartbeat(ctx.factory());
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    assert_eq!(remote.cached("M1").as_deref(), Some("while out"));
 }

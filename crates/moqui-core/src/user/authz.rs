@@ -52,16 +52,7 @@ pub(crate) fn note_entity_write(entity_name: Option<&str>) {
         bump_generation();
         return;
     };
-    if !matches!(
-        entity_name,
-        "moqui.security.ArtifactAuthz"
-            | "moqui.security.ArtifactGroupMember"
-            | "moqui.security.UserGroupMember"
-            | "moqui.security.ArtifactTarpit"
-            | "moqui.security.ArtifactAuthzFilter"
-            | "moqui.security.EntityFilterSet"
-            | "moqui.security.EntityFilter"
-    ) {
+    if !is_authz_entity(entity_name) {
         return;
     }
     bump_generation();
@@ -77,6 +68,20 @@ pub(crate) fn note_entity_write(entity_name: Option<&str>) {
             tracing::warn!(error = %err, "could not move the authorization generation on rollback");
         }
     }
+}
+
+/// An authorization table (the entity filter tables among them), whose writes move the generation.
+pub(crate) fn is_authz_entity(entity_name: &str) -> bool {
+    matches!(
+        entity_name,
+        "moqui.security.ArtifactAuthz"
+            | "moqui.security.ArtifactGroupMember"
+            | "moqui.security.UserGroupMember"
+            | "moqui.security.ArtifactTarpit"
+            | "moqui.security.ArtifactAuthzFilter"
+            | "moqui.security.EntityFilterSet"
+            | "moqui.security.EntityFilter"
+    )
 }
 
 fn bump_generation() {
