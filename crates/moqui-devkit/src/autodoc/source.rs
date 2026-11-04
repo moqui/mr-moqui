@@ -46,6 +46,19 @@ pub trait DocIndex {
     /// Returns an error when the index cannot be read.
     fn refs(&self, id: &str, direction: Direction) -> Result<Vec<RefEntry>, Error>;
 
+    /// [`DocIndex::refs`] of each of `ids`, one after another; a source that reads a database does it in a few queries.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the index cannot be read.
+    fn refs_of_ids(&self, ids: &[&str], direction: Direction) -> Result<Vec<RefEntry>, Error> {
+        let mut entries = Vec::new();
+        for id in ids {
+            entries.extend(self.refs(id, direction)?);
+        }
+        Ok(entries)
+    }
+
     /// What identifies the files read: the same files give the same stamp.
     fn stamp(&self) -> String;
 }
@@ -114,6 +127,10 @@ impl DocIndex for DbSource {
 
     fn refs(&self, id: &str, direction: Direction) -> Result<Vec<RefEntry>, Error> {
         index::refs(&self.factory, id, direction, &[])
+    }
+
+    fn refs_of_ids(&self, ids: &[&str], direction: Direction) -> Result<Vec<RefEntry>, Error> {
+        index::refs_of_ids(&self.factory, ids, direction, &[])
     }
 
     fn stamp(&self) -> String {

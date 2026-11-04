@@ -101,31 +101,31 @@ pub(super) fn service_directory(run: &mut Run<'_>, doc: &DocEntry) -> Result<Jso
             members: services.iter().map(|service| service.title.clone()).collect(),
             interface: false,
         });
-        for service in &services {
-            for entry in run.source.refs(&service.id, Direction::Out)? {
-                let Some(other) = &entry.other else { continue };
-                if other.kind != "service" {
-                    continue;
-                }
-                let Some(target) = run.plan.of_id(&other.id) else {
-                    continue;
-                };
-                if entry.ref_type == "implements" {
-                    interfaces
-                        .entry(target.name.clone())
-                        .or_insert_with(|| target.title.clone());
-                    links.push(ClassLink {
-                        from: file.file.clone(),
-                        to: target.name.clone(),
-                        kind: ClassLinkKind::Realizes,
-                    });
-                } else if target.package == doc.package && target.file != file.file {
-                    links.push(ClassLink {
-                        from: file.file.clone(),
-                        to: target.file.clone(),
-                        kind: ClassLinkKind::Depends,
-                    });
-                }
+        // what the file's services use, all read at once: a directory can have hundreds of services
+        let ids: Vec<&str> = services.iter().map(|service| service.id.as_str()).collect();
+        for entry in run.source.refs_of_ids(&ids, Direction::Out)? {
+            let Some(other) = &entry.other else { continue };
+            if other.kind != "service" {
+                continue;
+            }
+            let Some(target) = run.plan.of_id(&other.id) else {
+                continue;
+            };
+            if entry.ref_type == "implements" {
+                interfaces
+                    .entry(target.name.clone())
+                    .or_insert_with(|| target.title.clone());
+                links.push(ClassLink {
+                    from: file.file.clone(),
+                    to: target.name.clone(),
+                    kind: ClassLinkKind::Realizes,
+                });
+            } else if target.package == doc.package && target.file != file.file {
+                links.push(ClassLink {
+                    from: file.file.clone(),
+                    to: target.file.clone(),
+                    kind: ClassLinkKind::Depends,
+                });
             }
         }
         let mut file_row = row(run, doc, file);

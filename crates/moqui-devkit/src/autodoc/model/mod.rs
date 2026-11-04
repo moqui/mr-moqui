@@ -143,10 +143,7 @@ impl<'a> Run<'a> {
     /// What uses the artifacts `ids` (`In`) or what they use (`Out`), each other side as the doc it is shown in, grouped
     /// by kind; references to `doc` itself left out.
     pub fn usage(&mut self, doc: &DocEntry, ids: &[&str], direction: Direction) -> Result<Vec<Group>, Error> {
-        let mut entries: Vec<RefEntry> = Vec::new();
-        for id in ids {
-            entries.extend(self.source.refs(id, direction)?);
-        }
+        let entries: Vec<RefEntry> = self.source.refs_of_ids(ids, direction)?;
         let mut items: BTreeMap<(usize, String), Item> = BTreeMap::new();
         for entry in &entries {
             let Some(item) = self.item_of(doc, entry, direction) else {

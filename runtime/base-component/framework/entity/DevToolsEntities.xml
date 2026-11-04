@@ -51,6 +51,7 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="DEV_ARTIFACT_FILE"><index-field name="filePath"/><index-field name="lineNumber"/></index>
         <index name="DEV_ARTIFACT_KIND"><index-field name="artifactKind"/><index-field name="shortName"/></index>
         <index name="DEV_ARTIFACT_COMP"><index-field name="component"/></index>
+        <index name="DEV_ARTIFACT_PARENT"><index-field name="parentArtifactId"/></index>
     </entity>
     <entity entity-name="DevArtifactRef" package="moqui.devtools" use="nontransactional" cache="never">
         <description>One reference from an artifact to another: where it is made and how it refers. An extension's target
