@@ -24,6 +24,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
@@ -46,6 +47,10 @@ use super::value::{EntityList, EntityValue};
 use crate::driver::{DbConnection, DbRow};
 use crate::transaction::TransactionManager;
 
+mod hold;
+
+use hold::{FrameHold, Held, Overlay};
+
 const LIST_MAX: usize = 10_000;
 const PK_SEP: char = '\u{1f}';
 
@@ -53,7 +58,7 @@ static SIM_SEQ: AtomicU64 = AtomicU64::new(1);
 
 thread_local! {
     /// Held rows by transaction frame token.
-    static TX_HOLD: RefCell<HashMap<u64, Vec<Held>>> = RefCell::new(HashMap::new());
+    static TX_HOLD: RefCell<HashMap<u64, FrameHold>> = RefCell::new(HashMap::new());
     /// Entities written by each open transaction frame, by frame token. Their finds skip the one-cache until the
     /// frame ends, since a find on the enlisted connection sees the frame's uncommitted rows.
     static TX_WRITTEN: RefCell<HashMap<u64, HashSet<String>>> = RefCell::new(HashMap::new());
@@ -97,15 +102,6 @@ enum Op {
     Update,
     Delete,
     Upsert,
-}
-
-#[derive(Clone)]
-struct Held {
-    entity_name: String,
-    operation: Op,
-    plain: FieldMap,
-    sealed: FieldMap,
-    pk: String,
 }
 
 struct SealedWrite {
@@ -480,9 +476,6 @@ struct CachedCount {
 /// One frame's writes by entity; `None` once there were too many to keep.
 type FrameWrites = HashMap<String, Option<Vec<FrameWrite>>>;
 
-/// How an overlay gets the stored row a held update applies to.
-type StoredRow<'a> = &'a mut dyn FnMut(&Held) -> Result<Option<FieldMap>, Error>;
-
 /// Writes of an open frame, by entity, replayed against the caches when it ends. Past this many the entity's caches are
 /// cleared whole instead.
 const FRAME_WRITES_MAX: usize = 200;
@@ -505,7 +498,11 @@ pub fn before_find(facade: &EntityFacade, lookup: &FindLookup) -> Option<EntityL
             tracing::error!(error = %err, entity = %meta.full_name, "could not flush held rows for a view read");
         }
     } else {
-        match overlay_rows(facade, &meta, lookup.condition.as_ref(), &lookup.order) {
+        let page = LimitOffset {
+            limit: lookup.limit,
+            offset: lookup.offset,
+        };
+        match overlay_rows(facade, &meta, lookup.condition.as_ref(), &lookup.order, page) {
             Ok(Some(rows)) => {
                 return Some(EntityList::new(page_rows(rows, lookup.limit, lookup.offset)));
             }
@@ -538,7 +535,7 @@ pub fn before_count(facade: &EntityFacade, lookup: &FindLookup) -> Option<i64> {
             tracing::error!(error = %err, entity = %meta.full_name, "could not flush held rows for a view count");
         }
     } else {
-        match overlay_rows(facade, &meta, lookup.condition.as_ref(), &[]) {
+        match overlay_rows(facade, &meta, lookup.condition.as_ref(), &[], LimitOffset::default()) {
             Ok(Some(rows)) => return Some(i64::try_from(rows.len()).unwrap_or(i64::MAX)),
             Ok(None) => {}
             Err(err) => {
@@ -1328,7 +1325,7 @@ pub(super) fn sim_written_rows(facade: &EntityFacade, entity_name: &str) -> Resu
     if !view.table {
         return Ok(Vec::new());
     }
-    let rows = load_plain(facade, &meta, None, &[], Some(&view.schema))?;
+    let rows = load_plain(facade, &meta, None, &[], None, Some(&view.schema))?;
     Ok(rows
         .into_iter()
         .filter(|row| pk_of(row, &meta.pk_fields).is_some_and(|pk| view.hide.contains(&row_key(&meta.full_name, &pk))))
@@ -1563,7 +1560,7 @@ fn flush_held(facade: &EntityFacade, token: u64, conn: &mut dyn DbConnection) ->
     let held_rows = TX_HOLD
         .with(|slot| slot.borrow_mut().remove(&token))
         .unwrap_or_default();
-    for row in held_rows {
+    for row in held_rows.into_order() {
         let statement = facade.with_group(&row.entity_name, |entity, dialect, _, _| {
             statement_for(entity, dialect, row.operation, &row.sealed)
         })?;
@@ -1575,45 +1572,7 @@ fn flush_held(facade: &EntityFacade, token: u64, conn: &mut dyn DbConnection) ->
 }
 
 fn push_hold(token: u64, held: Held) -> Result<(), Error> {
-    TX_HOLD.with(|slot| {
-        let mut map = slot.borrow_mut();
-        let list = map.entry(token).or_default();
-        let mut first = None;
-        let mut last = None;
-        for existing in list.iter() {
-            if existing.entity_name == held.entity_name && existing.pk == held.pk {
-                if first.is_none() {
-                    first = Some(existing.operation);
-                }
-                last = Some(existing.operation);
-            }
-        }
-        match held.operation {
-            Op::Create => {
-                if last.is_some_and(|op| op != Op::Delete) {
-                    return Err(Error::new(format!(
-                        "create of existing transaction cache row {} {}",
-                        held.entity_name, held.pk
-                    )));
-                }
-                list.push(held);
-                Ok(())
-            }
-            Op::Update | Op::Upsert => {
-                list.push(held);
-                Ok(())
-            }
-            Op::Delete => {
-                if first == Some(Op::Create) {
-                    list.retain(|existing| existing.entity_name != held.entity_name || existing.pk != held.pk);
-                    Ok(())
-                } else {
-                    list.push(held);
-                    Ok(())
-                }
-            }
-        }
-    })
+    TX_HOLD.with(|slot| slot.borrow_mut().entry(token).or_default().push(held))
 }
 
 fn write_sim(
@@ -1780,27 +1739,40 @@ fn note_sim(entity: &str, pk: &str, op: Op, created_table: bool) {
     });
 }
 
+/// The rows of a find of `meta` with this frame's held writes and the sim overlay on them; `None` when the database
+/// answers alone. With a page (`limit`) and no sim, the database reads only as far as the page can reach: each held
+/// write moves at most one row into or out of the rows before it, and a held update of a row past that point starts
+/// from its stored row. The caller takes the page.
 fn overlay_rows(
     facade: &EntityFacade,
     meta: &ReadMeta,
     condition: Option<&Condition>,
     order: &[OrderBy],
+    page: LimitOffset,
 ) -> Result<Option<Vec<EntityValue>>, Error> {
-    let mut holds = holds_for(facade, &meta.full_name);
     let sim = if sim_session_open() {
         sim_view(&meta.full_name)
     } else {
         SimView::empty()
     };
+    let token = hold_token(facade, &meta.full_name);
+    // A find by the whole primary key sees only the held rows of that key.
+    let pinned = (!sim.affects())
+        .then(|| pinned_pk(condition, &meta.pk_fields))
+        .flatten();
+    let holds = match token {
+        Some(token) => TX_HOLD.with(|slot| {
+            slot.borrow()
+                .get(&token)
+                .map(|frame| match &pinned {
+                    Some(pk) => frame.holds_of(&meta.full_name, pk),
+                    None => frame.holds(&meta.full_name),
+                })
+                .unwrap_or_default()
+        }),
+        None => Vec::new(),
+    };
     if !sim.affects() {
-        // Nothing held and no overlay: the database answers alone.
-        if holds.is_empty() {
-            return Ok(None);
-        }
-        // A find by the whole primary key sees only the held rows of that key.
-        if let Some(pk) = pinned_pk(condition, &meta.pk_fields) {
-            holds.retain(|held| held.pk == pk);
-        }
         // With no held row that can be in the result, the database answers alone, with its limit and offset.
         if holds
             .iter()
@@ -1809,17 +1781,28 @@ fn overlay_rows(
             return Ok(None);
         }
     }
-    if holds.is_empty() && !sim.affects() {
-        return Ok(None);
-    }
-    let loaded = load_plain(facade, meta, condition, order, None)?;
-    let mut rows: Vec<MemRow> = loaded
+    let window = match page.limit {
+        Some(limit) if !sim.affects() => {
+            let held = i64::try_from(holds.len()).unwrap_or(i64::MAX);
+            Some(
+                page.offset
+                    .unwrap_or(0)
+                    .max(0)
+                    .saturating_add(limit.max(0))
+                    .saturating_add(held),
+            )
+        }
+        _ => None,
+    };
+    let loaded = load_plain(facade, meta, condition, order, window, None)?;
+    let rows: Vec<MemRow> = loaded
         .into_iter()
         .map(|fields| MemRow { fields, trusted: true })
         .collect();
+    let overlay = Overlay::new(rows, &holds, &meta.pk_fields);
     // An update of a row the condition did not load starts from the whole stored row, not the fields it set.
-    let mut stored = |held: &Held| load_by_pk(facade, &meta.full_name, &held.plain);
-    apply_holds(&mut rows, &holds, &meta.pk_fields, &mut stored)?;
+    let stored = stored_rows(facade, meta, token, &overlay)?;
+    let mut rows = overlay.apply(&stored);
     rows.retain(|row| row.trusted || row_matches(condition, &row.fields));
     if sim.affects() {
         rows.retain(|row| match pk_of(&row.fields, &meta.pk_fields) {
@@ -1827,7 +1810,7 @@ fn overlay_rows(
             None => true,
         });
         if sim.table {
-            let extra = load_plain(facade, meta, condition, order, Some(&sim.schema))?;
+            let extra = load_plain(facade, meta, condition, order, None, Some(&sim.schema))?;
             for fields in extra {
                 if let Some(pk) = pk_of(&fields, &meta.pk_fields) {
                     rows.retain(|row| pk_of(&row.fields, &meta.pk_fields).as_deref() != Some(pk.as_str()));
@@ -1847,49 +1830,62 @@ fn overlay_rows(
     Ok(Some(values))
 }
 
-fn apply_holds(
-    rows: &mut Vec<MemRow>,
-    holds: &[Held],
-    pk_fields: &[String],
-    stored: StoredRow<'_>,
-) -> Result<(), Error> {
-    for held in holds {
-        match held.operation {
-            Op::Delete => rows.retain(|row| pk_of(&row.fields, pk_fields).as_deref() != Some(held.pk.as_str())),
-            Op::Create => {
-                rows.retain(|row| pk_of(&row.fields, pk_fields).as_deref() != Some(held.pk.as_str()));
-                rows.push(MemRow {
-                    fields: held.plain.clone(),
-                    trusted: false,
-                });
-            }
-            Op::Update | Op::Upsert => {
-                if let Some(row) = rows
-                    .iter_mut()
-                    .find(|row| pk_of(&row.fields, pk_fields).as_deref() == Some(held.pk.as_str()))
-                {
-                    for (key, value) in &held.plain {
-                        row.fields.insert(key.clone(), value.clone());
-                    }
-                    row.trusted = false;
-                } else {
-                    // Not loaded: the stored row with this write on it, if there is one. An update of a row that is
-                    // not there writes nothing; an upsert of one is its whole row.
-                    let base = stored(held)?;
-                    let fields = match (base, held.operation) {
-                        (Some(mut base), _) => {
-                            base.extend(held.plain.iter().map(|(key, value)| (key.clone(), value.clone())));
-                            base
-                        }
-                        (None, Op::Upsert) => held.plain.clone(),
-                        (None, _) => continue,
-                    };
-                    rows.push(MemRow { fields, trusted: false });
-                }
+/// Held keys read in one query of [`stored_rows`].
+const STORED_BATCH: usize = 100;
+
+/// The stored row of each of the overlay's unloaded held updates. The frame keeps each stored row it reads, and the
+/// loaded rows under its held updates, so a later find reads none of them again; the rest are read in one query per
+/// [`STORED_BATCH`] keys.
+fn stored_rows<'h>(
+    facade: &EntityFacade,
+    meta: &ReadMeta,
+    token: Option<u64>,
+    overlay: &Overlay<'h>,
+) -> Result<HashMap<&'h str, Option<Rc<FieldMap>>>, Error> {
+    let needed = overlay.unloaded_updates();
+    let mut stored = HashMap::with_capacity(needed.len());
+    let mut missing = Vec::new();
+    TX_HOLD.with(|slot| {
+        let mut map = slot.borrow_mut();
+        let Some(frame) = token.and_then(|token| map.get_mut(&token)) else {
+            missing.extend(needed.iter().copied());
+            return;
+        };
+        for (pk, fields) in overlay.loaded_updates() {
+            if frame.stored(&meta.full_name, pk).is_none() {
+                frame.keep_stored(&meta.full_name, pk, Some(Rc::new(fields.clone())));
             }
         }
+        for held in &needed {
+            match frame.stored(&meta.full_name, &held.pk) {
+                Some(row) => {
+                    stored.insert(held.pk.as_str(), row);
+                }
+                None => missing.push(*held),
+            }
+        }
+    });
+    for batch in missing.chunks(STORED_BATCH) {
+        let keys: Vec<&FieldMap> = batch.iter().map(|held| &held.plain).collect();
+        let mut found: HashMap<String, Rc<FieldMap>> = HashMap::with_capacity(batch.len());
+        for row in load_by_pks(facade, &meta.full_name, &keys)? {
+            if let Some(pk) = pk_of(&row, &meta.pk_fields) {
+                found.insert(pk, Rc::new(row));
+            }
+        }
+        TX_HOLD.with(|slot| {
+            let mut map = slot.borrow_mut();
+            let mut frame = token.and_then(|token| map.get_mut(&token));
+            for held in batch {
+                let row = found.get(&held.pk).cloned();
+                if let Some(frame) = frame.as_deref_mut() {
+                    frame.keep_stored(&meta.full_name, &held.pk, row.clone());
+                }
+                stored.insert(held.pk.as_str(), row);
+            }
+        });
     }
-    Ok(())
+    Ok(stored)
 }
 
 /// The primary key text a condition pins: every key field compared by equality at the top level.
@@ -1932,11 +1928,7 @@ fn flush_for_view(facade: &EntityFacade, view: &str) -> Result<(), Error> {
             })
             .collect())
     })?;
-    let held = TX_HOLD.with(|slot| {
-        slot.borrow()
-            .get(&token)
-            .is_some_and(|list| list.iter().any(|held| members.contains(&held.entity_name)))
-    });
+    let held = TX_HOLD.with(|slot| slot.borrow().get(&token).is_some_and(|frame| frame.holds_any(&members)));
     if held {
         tx.with_connection(|conn| flush_held(facade, token, conn))?;
     }
@@ -1948,9 +1940,10 @@ fn load_plain(
     meta: &ReadMeta,
     condition: Option<&Condition>,
     order: &[OrderBy],
+    limit: Option<i64>,
     overlay_schema: Option<&str>,
 ) -> Result<Vec<FieldMap>, Error> {
-    let plan = plan_select(facade, &meta.full_name, condition, order)?;
+    let plan = plan_select(facade, &meta.full_name, condition, order, limit)?;
     let db_rows = if let Some(schema) = overlay_schema {
         query_sim(facade, schema, &plan.sql, &plan.params)?
     } else {
@@ -1977,6 +1970,35 @@ fn load_by_pk(facade: &EntityFacade, entity_name: &str, values: &FieldMap) -> Re
     Ok(plain.pop())
 }
 
+/// The stored rows of `keys` (each a held write's values, which hold the whole primary key), in one query.
+fn load_by_pks(facade: &EntityFacade, entity_name: &str, keys: &[&FieldMap]) -> Result<Vec<FieldMap>, Error> {
+    if keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    let owner = facade.clone();
+    let plan = facade.with_group(entity_name, |entity, dialect, model, tx| {
+        let mut any = Vec::with_capacity(keys.len());
+        for values in keys {
+            any.push(pk_condition(entity, values)?);
+        }
+        let condition = if any.len() == 1 {
+            any.remove(0)
+        } else {
+            Condition::Or(any)
+        };
+        let fields: Vec<FieldRef> = entity.fields.iter().map(|field| FieldRef::new(&field.name)).collect();
+        let statement = select(entity, dialect, &fields, Some(&condition), &[], LimitOffset::default())?;
+        Ok(SelectPlan {
+            sql: statement.sql,
+            params: statement.params,
+            columns: entity_columns(entity, model),
+            tx: tx.clone(),
+        })
+    })?;
+    let db_rows = query_tx(&plan.tx, &plan.sql, &plan.params)?;
+    rows_plain(&owner, entity_name, &plan.columns, db_rows)
+}
+
 struct SelectPlan {
     sql: String,
     params: Vec<Value>,
@@ -1989,13 +2011,15 @@ fn plan_select(
     entity_name: &str,
     condition: Option<&Condition>,
     order: &[OrderBy],
+    limit: Option<i64>,
 ) -> Result<SelectPlan, Error> {
     facade.with_group(entity_name, |entity, dialect, model, tx| {
         if entity.is_view {
             return Err(Error::new(format!("cannot overlay view-entity {}", entity.full_name)));
         }
         let fields: Vec<FieldRef> = entity.fields.iter().map(|field| FieldRef::new(&field.name)).collect();
-        let statement = select(entity, dialect, &fields, condition, order, LimitOffset::default())?;
+        let page = LimitOffset { limit, offset: None };
+        let statement = select(entity, dialect, &fields, condition, order, page)?;
         Ok(SelectPlan {
             sql: statement.sql,
             params: statement.params,
@@ -2220,40 +2244,44 @@ fn identity(entity: &EntityDefinition, values: &FieldMap) -> Result<String, Erro
 }
 
 fn pk_of(fields: &FieldMap, pk_fields: &[String]) -> Option<String> {
-    if pk_fields.is_empty() {
-        return None;
-    }
     let mut key = String::new();
-    for (index, name) in pk_fields.iter().enumerate() {
-        let value = fields.get(name.as_str()).filter(|value| !value.is_null())?;
-        if index > 0 {
-            key.push(PK_SEP);
-        }
-        key.push_str(name);
-        key.push('=');
-        key.push_str(&to_plain_string(value));
+    write_pk(fields, pk_fields, &mut key).then_some(key)
+}
+
+/// Write the primary key text of `fields` into `out`, as [`pk_of`] gives it; false (with `out` partly written) when a
+/// key field is missing or null, or the entity has no primary key.
+fn write_pk(fields: &FieldMap, pk_fields: &[String], out: &mut String) -> bool {
+    if pk_fields.is_empty() {
+        return false;
     }
-    Some(key)
+    for (index, name) in pk_fields.iter().enumerate() {
+        let Some(value) = fields.get(name.as_str()).filter(|value| !value.is_null()) else {
+            return false;
+        };
+        if index > 0 {
+            out.push(PK_SEP);
+        }
+        out.push_str(name);
+        out.push('=');
+        match value {
+            Value::String(text) => out.push_str(text),
+            other => out.push_str(&to_plain_string(other)),
+        }
+    }
+    true
 }
 
 fn row_key(entity: &str, pk: &str) -> String {
     format!("{entity}{PK_SEP}{pk}")
 }
 
-/// The active frame's held rows of `entity`. A suspended frame's rows are not visible.
-fn holds_for(facade: &EntityFacade, entity: &str) -> Vec<Held> {
+/// The token of the active frame of `entity` when this thread holds rows of any frame. A suspended frame's rows are
+/// not visible.
+fn hold_token(facade: &EntityFacade, entity: &str) -> Option<u64> {
     if TX_HOLD.with(|slot| slot.borrow().is_empty()) {
-        return Vec::new();
+        return None;
     }
-    let Some(token) = facade.transactions_for(entity).ok().and_then(|tx| tx.frame_token()) else {
-        return Vec::new();
-    };
-    TX_HOLD.with(|slot| {
-        slot.borrow()
-            .get(&token)
-            .map(|list| list.iter().filter(|held| held.entity_name == entity).cloned().collect())
-            .unwrap_or_default()
-    })
+    facade.transactions_for(entity).ok().and_then(|tx| tx.frame_token())
 }
 
 fn sim_session_open() -> bool {
