@@ -13,12 +13,19 @@
  */
 
 //! Sync MySQL client behind [`moqui_core::driver::DbDriver`].
+//!
+//! Network waits are bounded (plans/High-Level-Review.md HL-019): a connection connects within `CONNECT_TIMEOUT`, each
+//! read waits at most `READ_TIMEOUT` and each write `WRITE_TIMEOUT`, and TCP keepalive is on. The `mysql` crate sets a
+//! read timeout only when it connects, so it is one fixed bound, the handshake's among them, rather than the
+//! transaction's remaining time as for Postgres; the transaction deadline itself is enforced by `KILL QUERY` and the
+//! session's statement time. A cancel connects, signs in and sends `KILL QUERY` within `CANCEL_TIMEOUT` per step.
 
 #[cfg(feature = "mysql")]
 mod driver {
     use std::ptr::NonNull;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::time::Duration;
 
     use moqui_core::driver::{DbCancel, DbConnection, DbDriver, DbRow};
     use moqui_lib::error::Error;
@@ -34,6 +41,18 @@ mod driver {
     const CHARSET_BINARY: u16 = 63;
     /// `ER_UNSUPPORTED_PS`: the statement cannot be prepared.
     const ER_UNSUPPORTED_PS: u16 = 1295;
+    /// The most a TCP connection takes.
+    pub(super) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+    /// The most one read waits, the sign-in's included: past the longest transaction a statement is expected to run
+    /// in, as the bound cannot follow each transaction's own time.
+    pub(super) const READ_TIMEOUT: Duration = Duration::from_secs(600);
+    pub(super) const WRITE_TIMEOUT: Duration = Duration::from_secs(60);
+    /// The most each step of a cancel (connect, sign in, `KILL QUERY`) waits.
+    pub(super) const CANCEL_TIMEOUT: Duration = Duration::from_secs(5);
+    /// TCP keepalive: probes start after this much quiet, and go every `KEEPALIVE_INTERVAL_SECS`.
+    const KEEPALIVE_IDLE_MS: u32 = 60_000;
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    const KEEPALIVE_INTERVAL_SECS: u32 = 10;
 
     #[derive(Clone)]
     struct Endpoint {
@@ -49,13 +68,19 @@ mod driver {
     }
 
     impl Endpoint {
+        /// A session's options: [`Endpoint::opts_within`] the driver's bounds.
         fn opts(&self) -> mysql::OptsBuilder {
+            self.opts_within(CONNECT_TIMEOUT, READ_TIMEOUT, WRITE_TIMEOUT)
+        }
+
+        /// The options with these network bounds, and keepalive on.
+        pub(super) fn opts_within(&self, connect: Duration, read: Duration, write: Duration) -> mysql::OptsBuilder {
             let database = if self.database.is_empty() {
                 None
             } else {
                 Some(self.database.as_str())
             };
-            mysql::OptsBuilder::new()
+            let builder = mysql::OptsBuilder::new()
                 .ip_or_hostname(Some(self.host.as_str()))
                 .tcp_port(self.port)
                 .user(Some(self.username.as_str()))
@@ -65,6 +90,13 @@ mod driver {
                 .stmt_cache_size(0usize)
                 .ssl_opts(self.tls.then(mysql::SslOpts::default))
                 .init(self.init())
+                .tcp_connect_timeout(Some(connect))
+                .read_timeout(Some(read))
+                .write_timeout(Some(write))
+                .tcp_keepalive_time_ms(Some(KEEPALIVE_IDLE_MS));
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let builder = builder.tcp_keepalive_probe_interval_secs(Some(KEEPALIVE_INTERVAL_SECS));
+            builder
         }
 
         /// What each new connection runs first.
@@ -467,6 +499,13 @@ mod driver {
 
     impl DbCancel for MysqlCancel {
         fn cancel(&self) -> Result<(), Error> {
+            self.kill_within(CANCEL_TIMEOUT)
+        }
+    }
+
+    impl MysqlCancel {
+        /// `KILL QUERY` of the busy statement, each step (connect, sign in, the query) within `timeout`.
+        fn kill_within(&self, timeout: Duration) -> Result<(), Error> {
             if !self.state.busy.load(Ordering::Acquire) {
                 return Ok(());
             }
@@ -474,7 +513,10 @@ mod driver {
             if id == 0 {
                 return Ok(());
             }
-            let mut conn = mysql::Conn::new(self.state.endpoint.opts()).map_err(mysql_err)?;
+            // KILL QUERY needs a signed-in session of its own: each of its steps is bounded, so a server that does not
+            // answer does not hold the deadline worker
+            let opts = self.state.endpoint.opts_within(timeout, timeout, timeout);
+            let mut conn = mysql::Conn::new(opts).map_err(mysql_err)?;
             conn.query_drop(format!("KILL QUERY {id}")).map_err(mysql_err)
         }
     }

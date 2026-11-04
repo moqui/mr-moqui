@@ -121,6 +121,15 @@ pub trait DbConnection: Send {
         Ok(None)
     }
 
+    /// The longest one read from the database waits, so a host that stops answering without a reset does not hold
+    /// the caller until the kernel gives up: the manager sets the transaction's remaining time plus a margin when the
+    /// connection joins a transaction, and `None` when it goes back to the pool. A read past it fails and the
+    /// connection is closed. The default does nothing.
+    fn set_read_timeout(&mut self, timeout: Option<Duration>) -> Result<(), Error> {
+        let _ = timeout;
+        Ok(())
+    }
+
     /// Remaining statement time. `None` clears it. The default does nothing.
     ///
     /// Postgres sets `statement_timeout`. MySQL sets `max_execution_time`. The manager calls this
@@ -184,7 +193,8 @@ pub fn conf_driver(conf: &ConfDb) -> Result<Arc<dyn DbDriver>, Error> {
 }
 
 /// Cancels the statement running on another thread. A connection with no
-/// active statement returns success.
+/// active statement returns success. A cancel runs on a deadline worker: it bounds its own network work (connect,
+/// handshake, the request) with a short deadline of its own, so a host that does not answer does not hold the worker.
 pub trait DbCancel: Send + Sync {
     fn cancel(&self) -> Result<(), Error>;
 }

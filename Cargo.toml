@@ -307,6 +307,7 @@ postgres-types = { version = "0.2", default-features = false }
 fallible-iterator = "0.2"
 # minimal (not minimal-rust) links system zlib. On this crate rustls-tls means aws-lc.
 # time and chrono stay off. rustls-tls still pulls webpki 0.22, which pulls ring.
+socket2 = "0.6"
 mysql = { version = "28", default-features = false, features = [
     "minimal-rust",
     "derive",

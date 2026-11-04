@@ -34,6 +34,14 @@ use crate::driver::{DbCancel, DbConnection, DbDriver};
 use super::pool::{Pool, PoolConfig, PoolStats, PooledConn};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
+/// How much longer than the transaction's remaining time one read from the database may wait: the deadline's cancel
+/// answers first when the database is there, and this bounds the wait when it is not.
+const READ_MARGIN: Duration = Duration::from_secs(15);
+/// Threads that send deadline cancels, so a cancel that waits on an unreachable host does not hold the timer or the
+/// other cancels. Each driver bounds its own cancel's network work.
+const CANCEL_WORKERS: usize = 4;
+/// Cancels waiting for a worker; past this one is dropped with a warning (the transaction is rollback-only already).
+const CANCEL_BACKLOG: usize = 256;
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -65,7 +73,9 @@ struct Frame {
 
 impl Drop for Frame {
     fn drop(&mut self) {
-        unregister_deadline(self.deadline_token);
+        if unregister_deadline(self.deadline_token) {
+            discard_conn(&self.conn);
+        }
     }
 }
 
@@ -411,6 +421,7 @@ impl TransactionManager {
             Err(_) => return Err(Error::new("connection already in use")),
         };
         self.arm_statement_timeout(borrow.as_mut())?;
+        self.arm_read_timeout(borrow.as_mut())?;
         let pooled = borrow.as_mut().ok_or_else(|| Error::new("no connection enlisted"))?;
         let result = body(pooled.conn());
         if result.is_err() && pooled.live() && pooled.conn().is_closed() {
@@ -789,9 +800,13 @@ impl TransactionManager {
             } else {
                 rollback_enlisted(&phase.conn)
             };
-            // The deadline slot holds this connection's canceller: clear it before the connection goes back.
-            unregister_deadline(phase.token);
-            return_conn(&phase.conn);
+            // The deadline slot holds this connection's canceller: clear it before the connection goes back. One whose
+            // canceller the timer took may still get that cancel, so it is closed, never handed to another borrower.
+            if unregister_deadline(phase.token) {
+                discard_conn(&phase.conn);
+            } else {
+                return_conn(&phase.conn);
+            }
             match result {
                 Ok(()) => {
                     if commit && enlisted {
@@ -1248,6 +1263,15 @@ impl TransactionManager {
         pooled.arm_statement_timeout(remaining)
     }
 
+    /// A read waits at most the remaining time plus [`READ_MARGIN`], set once when the connection joins the frame.
+    fn arm_read_timeout(&self, pooled: Option<&mut PooledConn>) -> Result<(), Error> {
+        let Some(pooled) = pooled else {
+            return Ok(());
+        };
+        let remaining = self.time_remaining().unwrap_or(DEFAULT_TIMEOUT);
+        pooled.arm_read_timeout(remaining + READ_MARGIN)
+    }
+
     #[track_caller]
     fn absorb_deadline(&self) {
         let callsite = Location::caller();
@@ -1497,6 +1521,19 @@ fn return_conn(conn: &Rc<RefCell<Option<PooledConn>>>) {
     drop(conn.borrow_mut().take());
 }
 
+/// Close the frame's connection instead of returning it: a cancel sent for its statement may still arrive, and on a
+/// returned connection it would stop the next borrower's statement (the idle list is last-in first-out). Closed, the
+/// session the cancel names is gone.
+fn discard_conn(conn: &Rc<RefCell<Option<PooledConn>>>) {
+    let Ok(mut slot) = conn.try_borrow_mut() else {
+        return;
+    };
+    if let Some(mut pooled) = slot.take() {
+        tracing::debug!("closing a connection whose deadline cancel was sent");
+        pooled.discard();
+    }
+}
+
 fn conf_flag(raw: Option<String>, default: bool) -> bool {
     let Some(raw) = raw else {
         return default;
@@ -1515,6 +1552,8 @@ struct DeadlineSlot {
     when: Instant,
     fired: Arc<AtomicBool>,
     cancel: Option<Box<dyn DbCancel>>,
+    /// The timer took `cancel` to send: the frame's connection is closed when the frame ends.
+    taken: bool,
 }
 
 /// Deadline slots by frame token.
@@ -1547,7 +1586,10 @@ fn ensure_deadline_timer() {
             .name("moqui-tx-deadline".to_string())
             .spawn(|| loop {
                 std::thread::sleep(Duration::from_millis(50));
-                fire_due_deadlines();
+                // the one timer of the process: a pass that panics is logged, and the next pass runs
+                if std::panic::catch_unwind(fire_due_deadlines).is_err() {
+                    tracing::error!("a transaction deadline timer pass panicked; the timer goes on");
+                }
             });
         if let Err(err) = spawned {
             tracing::error!(error = %err, "could not start the transaction deadline timer");
@@ -1564,6 +1606,7 @@ fn register_deadline(token: u64, when: Instant, fired: Arc<AtomicBool>) {
             when,
             fired,
             cancel: None,
+            taken: false,
         },
     );
 }
@@ -1575,9 +1618,10 @@ pub(super) fn deadline_registered(token: u64) -> bool {
     slots.contains_key(&token)
 }
 
-fn unregister_deadline(token: u64) {
+/// Drop the frame's slot. True when the timer took its canceller, so the frame's connection must not be reused.
+fn unregister_deadline(token: u64) -> bool {
     let mut slots = lock(deadlines());
-    slots.remove(&token);
+    slots.remove(&token).is_some_and(|slot| slot.taken)
 }
 
 fn deadline_set_cancel(token: u64, cancel: Box<dyn DbCancel>) {
@@ -1594,15 +1638,69 @@ fn fire_due_deadlines() {
     for slot in slots.values_mut() {
         if now >= slot.when && !slot.fired.swap(true, Ordering::SeqCst) {
             if let Some(cancel) = slot.cancel.take() {
+                slot.taken = true;
                 due.push(cancel);
             }
         }
     }
     drop(slots);
+    // Sent by the cancel workers, never here: a cancel waits on the network, and the timer must keep its passes.
     for cancel in due {
-        if let Err(err) = cancel.cancel() {
-            tracing::warn!(error = %err, "deadline cancel failed");
+        dispatch_cancel(cancel);
+    }
+}
+
+/// The queue of the cancel workers, started with the first cancel. `None` when no worker could start.
+fn cancel_queue() -> Option<&'static std::sync::mpsc::SyncSender<Box<dyn DbCancel>>> {
+    static QUEUE: OnceLock<Option<std::sync::mpsc::SyncSender<Box<dyn DbCancel>>>> = OnceLock::new();
+    QUEUE
+        .get_or_init(|| {
+            let (sender, receiver) = std::sync::mpsc::sync_channel::<Box<dyn DbCancel>>(CANCEL_BACKLOG);
+            let receiver = Arc::new(Mutex::new(receiver));
+            let mut started = 0;
+            for index in 0..CANCEL_WORKERS {
+                let receiver = Arc::clone(&receiver);
+                let spawned = std::thread::Builder::new()
+                    .name(format!("moqui-tx-cancel-{index}"))
+                    .spawn(move || loop {
+                        let next = lock(&receiver).recv();
+                        let Ok(cancel) = next else {
+                            return;
+                        };
+                        run_cancel(cancel.as_ref());
+                    });
+                match spawned {
+                    Ok(_) => started += 1,
+                    Err(err) => tracing::error!(error = %err, "could not start a transaction cancel worker"),
+                }
+            }
+            (started > 0).then_some(sender)
+        })
+        .as_ref()
+}
+
+/// Hand a due cancel to a worker. With every worker busy and the backlog full it is dropped: its transaction is
+/// rollback-only already, and its connection's read timeout bounds the statement's wait.
+fn dispatch_cancel(cancel: Box<dyn DbCancel>) {
+    let Some(queue) = cancel_queue() else {
+        run_cancel(cancel.as_ref());
+        return;
+    };
+    match queue.try_send(cancel) {
+        Ok(()) => {}
+        Err(std::sync::mpsc::TrySendError::Full(_)) => {
+            tracing::warn!("every transaction cancel worker is busy; a deadline cancel is not sent");
         }
+        Err(std::sync::mpsc::TrySendError::Disconnected(cancel)) => run_cancel(cancel.as_ref()),
+    }
+}
+
+/// One cancel, its failure or panic logged.
+fn run_cancel(cancel: &dyn DbCancel) {
+    match std::panic::catch_unwind(AssertUnwindSafe(|| cancel.cancel())) {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => tracing::warn!(error = %err, "deadline cancel failed"),
+        Err(_) => tracing::error!("a deadline cancel panicked"),
     }
 }
 
