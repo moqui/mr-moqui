@@ -222,7 +222,8 @@ fn notified(client: &Arc<Client>, host: &Arc<dyn ClientHost>, page: &str, accoun
         Event::Text(text) => {
             let gap = client.with_store(&account.id, |store| push::keep_frame(store, &account.user_id, text));
             if gap == Some(true) {
-                feeds::start(client, host, &account.id);
+                // chat only: mail and the uncovered stores wait for an opening or the mirror
+                feeds::start_scope(client, host, &account.id, feeds::Scope::Chat);
             }
             // my message came back: its outbox operation is done
             if let Some(client_ref) = push::echo_ref(&account.user_id, text) {

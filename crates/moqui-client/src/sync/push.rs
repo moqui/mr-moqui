@@ -68,7 +68,12 @@ pub(crate) fn keep_frame(store: &Store, me: &str, text: &str) -> bool {
     let (kept, wanted) = if let Some(room) = topic.strip_prefix("chatRoom:") {
         let room = message["chatRoomId"].as_str().unwrap_or(room).to_string();
         let kept = room_push(store, me, &room, &message);
-        let wanted = kept.is_ok() && follow(store, &format!("{ROOM_CURSOR}{room}"), &message["roomChangeSeq"], true);
+        // a push that did not fold has the feeds read (where they are kept: a cursor of the room)
+        let name = format!("{ROOM_CURSOR}{room}");
+        let wanted = match &kept {
+            Ok(()) => follow(store, &name, &message["roomChangeSeq"], true),
+            Err(_) => store.sync_seq(&name).is_some(),
+        };
         (kept, wanted)
     } else {
         let kept = user_push(store, &message);
@@ -78,7 +83,10 @@ pub(crate) fn keep_frame(store: &Store, me: &str, text: &str) -> bool {
             Some("room") => message["action"].as_str() == Some("left"),
             _ => false,
         };
-        let wanted = kept.is_ok() && follow(store, CHAT_CURSOR, &message["changeSeq"], whole);
+        let wanted = match &kept {
+            Ok(()) => follow(store, CHAT_CURSOR, &message["changeSeq"], whole),
+            Err(_) => store.sync_seq(CHAT_CURSOR).is_some(),
+        };
         (kept, wanted)
     };
     if let Err(err) = kept {
@@ -160,8 +168,9 @@ fn user_push(store: &Store, message: &Value) -> Result<(), String> {
             Some(room) => read_room(store, room, message["lastReadEventSeq"].clone()),
             None => Ok(()),
         },
+        // the room and all kept of it go, as the feed's membership change does
         "room" if message["action"].as_str() == Some("left") => match message["chatRoomId"].as_str() {
-            Some(room) => store.remove_chat_room(room).map_err(|err| err.to_string()),
+            Some(room) => super::feeds::forget_room(store, room),
             None => Ok(()),
         },
         _ => Ok(()),

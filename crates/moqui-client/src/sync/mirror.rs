@@ -333,6 +333,8 @@ pub struct Mirror {
     last: Mutex<Vec<(String, Instant)>>,
     /// The accounts one of whose `/notws` dropped since their last run.
     dropped: Mutex<HashSet<String>>,
+    /// The accounts whose next run is to be a full one at once (a feed's reset), even while one is under way.
+    wanted: Mutex<HashSet<String>>,
 }
 
 impl Mirror {
@@ -348,6 +350,11 @@ impl Mirror {
         {
             return None;
         }
+        if moqui_lib::sync::lock(&self.wanted).remove(account) {
+            moqui_lib::sync::lock(&self.dropped).remove(account);
+            *running = Some((account.to_string(), generation));
+            return Some((generation, false));
+        }
         let recent = moqui_lib::sync::lock(&self.last)
             .iter()
             .any(|(id, ended)| id == account && ended.elapsed() < AGAIN_AFTER);
@@ -357,6 +364,17 @@ impl Mirror {
         }
         *running = Some((account.to_string(), generation));
         Some((generation, recent))
+    }
+
+    /// The next run of `account` is to be a full one (a feed's reset dropped what it covers): at the next start, which
+    /// one under way makes when it ends.
+    pub(crate) fn want_full(&self, account: &str) {
+        moqui_lib::sync::lock(&self.wanted).insert(account.to_string());
+    }
+
+    /// Whether a full run of `account` is wanted ([`Self::want_full`]).
+    pub(crate) fn is_wanted(&self, account: &str) -> bool {
+        moqui_lib::sync::lock(&self.wanted).contains(account)
     }
 
     /// A `/notws` of `account` dropped: pushes may have been missed, so its next start runs the heads again.
@@ -421,9 +439,15 @@ pub fn start(client: &Arc<Client>, host: &Arc<dyn ClientHost>, id: &str) -> bool
             }))
             .unwrap_or_else(|_| {
                 tracing::error!("The mirror of {thread_id} panicked");
+                // its feeds mark, if it held one, is let go
+                thread_client.feeds.end(&thread_id);
                 Ended::Cancelled
             });
             thread_client.mirror.end(&thread_id, generation, ended);
+            // a reset meanwhile wants its full run now
+            if ended != Ended::Cancelled && thread_client.mirror.is_wanted(&thread_id) {
+                start(&thread_client, &thread_host, &thread_id);
+            }
         });
     if let Err(err) = started {
         tracing::error!("The mirror of {id} did not start: {err}");
@@ -451,22 +475,14 @@ fn run_for(host: &dyn ClientHost, client: &Client, id: &str, generation: u64, he
             client.with_store(id, |store| offline::keep(store, kind, bare, query, body));
         }
     };
-    let cancelled = || client.mirror.cancelled(generation);
-    // the feeds, unless a run of them is under way (it covers this one); one asked for meanwhile runs after
+    let cancelled = || client.mirror.cancelled(generation) || client.is_stopped();
+    // the feeds and the mirror of an account run one at a time, so no older page lands over a newer change: this run
+    // waits for one of the feeds under way, holds the mark to its end, and then runs the feeds asked for meanwhile
     let syncs = feeds::server_of(client, id).syncs();
-    let read_feeds = || {
-        if !client.feeds.begin(id) {
-            return Synced::default();
-        }
-        let mut synced = feeds::run_for(host, client, id);
-        while client.feeds.finish(id) && synced.ended.is_none() {
-            let again = feeds::run_for(host, client, id);
-            synced.chat_reread |= again.chat_reread;
-            synced.mail_reread |= again.mail_reread;
-            synced.ended = again.ended;
-        }
-        synced
-    };
+    if syncs && !client.feeds.acquire(id, &cancelled) {
+        return Ended::Cancelled;
+    }
+    let read_feeds = || feeds::run_for(host, client, id, feeds::Scope::All);
     let job = Job {
         transport: &transport,
         keep: &keep,
@@ -489,7 +505,29 @@ fn run_for(host: &dyn ClientHost, client: &Client, id: &str, generation: u64, he
         if heads_only { ", heads" } else { "" },
         started.elapsed().as_secs()
     );
+    if syncs {
+        finish_feeds(host, client, id, ended);
+    }
     ended
+}
+
+/// Let go of the account's feeds mark after a mirror run that `ended` so: the feeds asked for meanwhile run first
+/// (unless the run stopped early); a reset among them wants a full run, which the mirror's thread starts.
+fn finish_feeds(host: &dyn ClientHost, client: &Client, id: &str, ended: Ended) {
+    if matches!(ended, Ended::Cancelled | Ended::Offline | Ended::Unauthorized) {
+        client.feeds.end(id);
+        return;
+    }
+    while let Some(scope) = client.feeds.finish(id) {
+        let again = feeds::run_for(host, client, id, scope);
+        if again.chat_reread || again.mail_reread {
+            client.mirror.want_full(id);
+        }
+        if again.ended.is_some() {
+            client.feeds.end(id);
+            return;
+        }
+    }
 }
 
 /// The account's server through the proxy, with its key, as the shell's requests go.

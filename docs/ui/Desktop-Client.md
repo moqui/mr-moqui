@@ -182,7 +182,8 @@ while the window is hidden.
   Compose keeps it as a draft until there is a connection. A send with an undo hold is not queued either.
 - **Conflicts and rejections (`clientApi` 4):** an operation the server met changed (a thread's `seen`, a draft's
   `baseStamp`) is `conflict`, with the server's state in `current`; a mail send's own text is then kept as a copy, a
-  new Compose draft (`current.copyKey`), and the server's draft stays. A refusal (another 4xx) is `failed` with its
+  new Compose draft (`current.copyKey`, kept as Compose keeps a draft written offline under the `clientRef`
+  `current.copyRef`), and the server's draft stays. A refusal (another 4xx) is `failed` with its
   `status`, listed as `rejected`. Neither holds up another operation; Retry of a conflict sends the user's change
   anyway (no `seen` or `baseStamp`, new references), Discard drops it. `outbox.kinds()` says what the server takes.
 - **Moved from the browser:** WebrootChat uses the host's outbox when there is one (its own flush off) and moves the
@@ -276,10 +277,15 @@ user's chat feed and its `headsSince`, each room's message changes, the mail fee
 upload's progress (`upload`), and an operation's refusal `status` and conflict `current`.
 
 **The feeds** (`moqui_client::sync::feeds`) run when a page's `/notws` opens (in the mirror's run, or a run of their
-own), when a push's `changeSeq` or `roomChangeSeq` is past the next number (or names a change the push does not carry
-whole, such as a room joined), and in the mirror; a push that is the next number and carries its change moves the
-cursor itself. A first read (no cursor) only takes the cursor; a `reset` of a cursor drops what its feed covers and the
-mirror reads it again.
+own), when a push's `changeSeq` or `roomChangeSeq` is past the next number, names a change the push does not carry
+whole (a room joined), or does not fold (chat only, then), and in the mirror; a push that is the next number and
+carries its change moves the cursor itself. A first read (no cursor) only takes the cursor; a `reset` of a cursor drops
+what its feed covers, with the new cursor in one unit, and the mirror reads it again (after the run under way, if
+one is). The mirror and the feeds of an account run one at a time, so an older page never lands over a newer change.
+
+What a change leaves to read (the room list, a room, a room's latest page, a thread), and a change that does not
+fold, is kept in the store as a pending read before the cursor moves past it, and read at the start and end of each
+run until it answers (five tries), so a stop or a failed read loses nothing.
 
 - **The user's chat feed:** a room left (`member` false) is forgotten with its cursor and answers; a new room or a room
   changed reads the room list (and the room); settings go on the room's row; a read marker clears the counts when it
@@ -287,18 +293,23 @@ mirror reads it again.
   below them and the room's cached timeline answers. The heads (all of them after a drop, else those since
   `headsSince`) restore a stale head whose stretch reaches the room's newest event, or read that room's latest page.
 - **Room feeds:** for each room held whose `lastChangeSeq` is past its cursor: a redaction folded as the push folds it,
-  another change's message read again (`timeline` by `eventSeq`, a thread reply's root too, an event gone removed);
-  past 50 messages, or on a reset, the room's held events go and its latest page is read. A room with nothing held
-  only takes its cursor.
+  another change's message read again (`timeline` by `eventSeq`, a thread reply's root too, an event gone removed),
+  in order, the room's cursor stopping at the first change not done; past 50 messages, or on a reset, the room's held
+  events go and its latest page is read. A room with nothing held only takes its cursor.
 - **The mail feed:** each change makes the thread match: `deleted` removes it everywhere, `removedMessageIds` and the
   messages no longer in it go, the kept messages and the thread's rows take its state (read, flags, archived,
   folder, label, newest message), a row of a folder none of its messages is in leaves it, and a thread with a message
-  not kept is read again. The stores it does not cover have their kept threads read again.
+  not kept is read again. A folder that lists messages has each message's row changed; a thread new to a list the
+  store keeps (the inbox, its folder) gets a row there. The stores it does not cover have their kept threads read
+  again, 50 a run, going round them.
 
-**The outbox** at 4: every operation goes with its `clientRef` (`duplicate` is done); `mail-state` sends `seen` (what
-the stored thread showed when the change was made); `mail-send` sends `baseStamp` and `saveRef`, and the send the
-stamp its save left; a file over 256 KB goes by `uploadChunk` in 1 MB chunks, its progress kept, and after a restart
-or a retry goes on from what `uploadStatus` says, then `upload` takes it by `uploadId`.
+**The outbox** at 4: every operation goes with its `clientRef` (`duplicate` is done); `mail-state` sends `seen` (the
+server's state as the stored thread showed it before the changes still queued, but for a field one of those makes,
+and the newest message of the page's row), and keeps the rows it changed, which a conflict or a refusal puts back
+(the server's state stands) with the threads read again; `mail-send` sends `baseStamp` and `saveRef`, and the send the
+stamp its save left; a retry of its conflict removes the kept copy, so the text is not sent twice. A file over 256 KB
+goes by `uploadChunk` in 1 MB chunks, its progress kept, and after a restart or a retry goes on from what
+`uploadStatus` says, then `upload` takes it by `uploadId`.
 
 ## Bundled screens and app windows
 

@@ -312,13 +312,15 @@ impl Store {
         )
     }
 
-    /// The threads whose id starts with `prefix` (`internal:`) that have messages kept, at most `limit`.
-    pub fn mail_thread_ids_with_messages(&self, prefix: &str, limit: u32) -> Vec<String> {
+    /// The threads whose id starts with `prefix` (`internal:`) that have messages kept, after `after` (none: from the
+    /// first) by id, at most `limit`: a caller goes round them a page at a time.
+    pub fn mail_thread_ids_with_messages(&self, prefix: &str, after: Option<&str>, limit: u32) -> Vec<String> {
         self.rows(
             "mail threads",
             "SELECT DISTINCT thread_id FROM mail_message WHERE substr(thread_id, 1, length(?1)) = ?1
-            ORDER BY thread_id LIMIT ?2",
-            params![prefix, limit],
+                AND (?2 IS NULL OR thread_id > ?2)
+            ORDER BY thread_id LIMIT ?3",
+            params![prefix, after, limit],
             |row| row.get(0),
         )
     }

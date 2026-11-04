@@ -270,11 +270,28 @@ fn settle(job: &Job<'_>, op: &OutboxOp, outcome: Outcome, flushed: &mut Flushed)
             with(job.store, |store| {
                 store.atomic(|store| {
                     if let Some(payload) = &payload {
-                        store.outbox_set_payload(&op.id, &payload.to_string())?;
+                        // the threads that conflict: their rows as the server has them, and read again
+                        let keys: Vec<String> = payload["targets"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(outbox::target_key)
+                            .collect();
+                        if let Err(err) = outbox::undo_mail_state(store, payload, Some(&keys)) {
+                            tracing::warn!("Outbox {}: the threads' rows were not put back: {err}", op.id);
+                        }
+                        let mut kept = payload.clone();
+                        if let Some(map) = kept.as_object_mut() {
+                            map.remove("undo");
+                        }
+                        store.outbox_set_payload(&op.id, &kept.to_string())?;
                     }
                     if op.kind == MAIL_SEND {
                         match keep_copy(store, op) {
-                            Ok(key) => current["copyKey"] = json!(key),
+                            Ok((key, reference)) => {
+                                current["copyKey"] = json!(key);
+                                current["copyRef"] = json!(reference);
+                            }
                             Err(err) => tracing::warn!("Outbox {}: the copy of the draft was not kept: {err}", op.id),
                         }
                     }
@@ -314,9 +331,16 @@ fn settle(job: &Job<'_>, op: &OutboxOp, outcome: Outcome, flushed: &mut Flushed)
                 op.kind,
                 state.state.as_str()
             );
-            // a refusal keeps its status: a rejection the user sees
+            // a refusal keeps its status: a rejection the user sees; a refused state change's threads are put back
+            // as they were and read again
             let refused = if classify(status) == Next::Fail { status } else { 0 };
             with(job.store, |store| {
+                if op.kind == MAIL_STATE && state.state == OutboxState::Failed {
+                    let payload = payload_of(op);
+                    if let Err(err) = outbox::undo_mail_state(store, &payload, None) {
+                        tracing::warn!("Outbox {}: the threads' rows were not put back: {err}", op.id);
+                    }
+                }
                 store.outbox_settle(&op.id, &state, refused, None).map(|_| ())
             })
         }
@@ -560,8 +584,8 @@ fn sent_outcome(sent: &Sent) -> Outcome {
 }
 
 /// A conflict's copy of a mail send: the user's draft kept as a new draft of Compose's (Compose.qvue `saveLocal`'s
-/// shape, under a new `clientRef`), with the files it sends; gives its key.
-fn keep_copy(store: &Store, op: &OutboxOp) -> Result<String, moqui_lib::error::Error> {
+/// shape, under a new `clientRef`), with the files it sends; gives its key and its `clientRef`.
+fn keep_copy(store: &Store, op: &OutboxOp) -> Result<(String, String), moqui_lib::error::Error> {
     let payload = payload_of(op);
     let fields = &payload["fields"];
     let list = |name: &str| -> Value {
@@ -584,7 +608,7 @@ fn keep_copy(store: &Store, op: &OutboxOp) -> Result<String, moqui_lib::error::E
         "conflictOf": { "clientRef": op.id, "emailMessageId": fields["emailMessageId"] },
     });
     store.put_draft(&key, &value.to_string(), &op.files)?;
-    Ok(key)
+    Ok((key, reference))
 }
 
 /// A mail send: the draft saved by its `clientRef`, each queued file uploaded to it, and sent, each step answering the

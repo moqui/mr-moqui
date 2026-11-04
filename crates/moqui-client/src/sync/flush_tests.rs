@@ -814,15 +814,139 @@ fn a_draft_changed_on_the_server_is_kept_as_a_copy_and_the_servers_stays() {
     assert_eq!(value["draft"]["to"][0]["value"], "a@x.org");
     assert!(value["draft"]["emailMessageId"].is_null());
     assert_eq!(copy.files, vec![file.clone()]);
-    // a retry sends it anyway, without its baseStamp; a discard keeps the copy's file
+    // the copy is reachable by its clientRef, as Compose keeps a draft written offline
+    assert_eq!(value["clientRef"], current["copyRef"]);
+    assert_eq!(
+        copy_key,
+        format!("ironstone.compose.email.{}", current["copyRef"].as_str().unwrap())
+    );
+    // a discard of the send keeps the copy, and its file
+    {
+        let locked = store.lock().unwrap();
+        let mut other = kept.clone();
+        other.id = "m2".to_string();
+        locked.outbox_add(&other).unwrap();
+        outbox::discard(&locked, "m2").unwrap();
+        assert!(locked.draft(&copy_key).is_some() && locked.read_file(&file).is_some());
+    }
+    // a retry sends the user's text anyway, without its baseStamp: the copy goes, so it is not sent twice
     let save_ref = outbox::payload_of(&kept)["fields"]["saveRef"].clone();
     outbox::retry(&store.lock().unwrap(), "m1", NOW + 2).unwrap();
     let retried = outbox::payload_of(&store.lock().unwrap().outbox_get("m1").unwrap());
     assert!(retried["fields"]["baseStamp"].is_null());
     assert_ne!(retried["fields"]["saveRef"], save_ref);
-    outbox::discard(&store.lock().unwrap(), "m1").unwrap();
-    assert!(store.lock().unwrap().read_file(&file).is_some());
+    assert!(store.lock().unwrap().draft(&copy_key).is_none());
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_state_change_the_server_did_not_make_puts_the_rows_back_and_reads_the_thread_again() {
+    let (store, dir) = store("undo");
+    {
+        let locked = store.lock().unwrap();
+        let row = |id: &str| crate::store::MailThread {
+            folder_id: "view=inbox".to_string(),
+            thread_id: format!("email:{id}"),
+            sort_ms: 1,
+            row: json!({ "threadId": id, "isUnread": true, "isArchived": false }).to_string(),
+        };
+        locked.put_mail_threads(&[row("T1"), row("T2")]).unwrap();
+    }
+    let targets = json!([{ "store": "email", "threadId": "T1", "rowKey": "email:T1" },
+        { "store": "email", "threadId": "T2", "rowKey": "email:T2" }]);
+    queue_md5(
+        &store,
+        outbox::MAIL_STATE,
+        json!({ "targets": targets, "action": "archive" }),
+        &[],
+        NOW,
+        false,
+    );
+    // archived here at once: out of the inbox
+    assert!(store.lock().unwrap().mail_threads("view=inbox", None, 10).is_empty());
+    let server = Server::default();
+    server.answer(
+        &format!("{MAIL}/state"),
+        ok(json!({ "updatedCount": 1, "failedList": [{ "key": "email:T2", "reason": "conflict", "current": {} }] })),
+    );
+    run_md5(&server, &store, NOW + 1);
+    let locked = store.lock().unwrap();
+    // the server's state stands for T2: back in the inbox, and read again; T1 was archived
+    let inbox: Vec<String> = locked
+        .mail_threads("view=inbox", None, 10)
+        .into_iter()
+        .map(|row| row.thread_id)
+        .collect();
+    assert_eq!(inbox, vec!["email:T2".to_string()]);
+    assert!(locked.sync_cursor("pending:thread:email:T2").is_some());
+    assert!(locked.sync_cursor("pending:thread:email:T1").is_none());
+    let op = locked.outbox_list().remove(0);
+    assert!(outbox::payload_of(&op)["undo"].is_null());
+    drop(locked);
+    // a refusal puts all of its threads back
+    queue_md5(
+        &store,
+        outbox::MAIL_STATE,
+        json!({ "targets": [{ "store": "email", "threadId": "T2", "rowKey": "email:T2" }], "action": "trash" }),
+        &[],
+        NOW + 2,
+        false,
+    );
+    assert!(store.lock().unwrap().mail_threads("view=inbox", None, 10).is_empty());
+    forget(&server, &format!("{MAIL}/state"));
+    server.answer(
+        &format!("{MAIL}/state"),
+        Sent::Answer(400, json!({ "errors": "No" }).to_string().into_bytes()),
+    );
+    run_md5(&server, &store, NOW + 3);
+    assert_eq!(store.lock().unwrap().mail_threads("view=inbox", None, 10).len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn seen_is_what_the_server_had_but_for_a_field_a_queued_change_makes() {
+    let (store, dir) = store("seen-baseline");
+    store
+        .lock()
+        .unwrap()
+        .put_mail_threads(&[crate::store::MailThread {
+            folder_id: "view=inbox".to_string(),
+            thread_id: "email:T1".to_string(),
+            sort_ms: 1,
+            row: json!({ "threadId": "T1", "isUnread": true, "isFlagged": false, "lastEmailMessageId": "OLD" })
+                .to_string(),
+        }])
+        .unwrap();
+    let target = json!([{ "store": "email", "threadId": "T1", "rowKey": "email:T1", "lastEmailMessageId": "M9" }]);
+    let state = |action: &str, at: i64| {
+        queue_md5(
+            &store,
+            outbox::MAIL_STATE,
+            json!({ "targets": target, "action": action }),
+            &[],
+            at,
+            false,
+        );
+        let op = store.lock().unwrap().outbox_list().pop().unwrap();
+        outbox::payload_of(&op)["targets"][0]["seen"].clone()
+    };
+    // the newest message is the page's row's
+    assert_eq!(state("read", NOW), json!({ "isRead": false, "latestMessageId": "M9" }));
+    // a flag is of another field: as the server has it
+    assert_eq!(state("flag", NOW + 1), json!({ "isFlagged": false }));
+    // unread after the queued read: as the read leaves it
+    assert_eq!(
+        state("unread", NOW + 2),
+        json!({ "isRead": true, "latestMessageId": "M9" })
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn internal_sends_keep_one_order() {
+    let send = json!({ "clientRef": "i1", "fields": { "fromValue": "internal", "subject": "Hi" } });
+    let op = outbox::check_with(outbox::MAIL_SEND, &send, &[], NOW, &md5(true)).unwrap();
+    assert_eq!(op.target, outbox::INTERNAL_SEND);
 }
 
 #[test]

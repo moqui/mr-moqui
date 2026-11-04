@@ -990,7 +990,7 @@ fn answers_go_by_prefix_and_mail_by_thread_and_store() {
         .unwrap();
     assert_eq!(store.mail_message_ids("email:T1"), vec!["email:M1".to_string()]);
     assert_eq!(
-        store.mail_thread_ids_with_messages("internal:", 10),
+        store.mail_thread_ids_with_messages("internal:", None, 10),
         vec!["internal:C1".to_string()]
     );
     store.remove_mail_threads_of_store("internal:").unwrap();

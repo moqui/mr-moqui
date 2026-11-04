@@ -103,6 +103,36 @@ impl Store {
         )
     }
 
+    /// The cursors whose name starts with `prefix`, by name.
+    pub fn sync_cursors(&self, prefix: &str) -> Vec<(String, SyncCursor)> {
+        self.rows(
+            "sync cursors",
+            "SELECT name, seq, value FROM sync_cursor WHERE substr(name, 1, length(?1)) = ?1 ORDER BY name",
+            [prefix],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    SyncCursor {
+                        seq: row.get(1)?,
+                        value: row.get(2)?,
+                    },
+                ))
+            },
+        )
+    }
+
+    /// Forget the cursor `name`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row cannot be removed.
+    pub fn remove_sync_cursor(&self, name: &str) -> Result<(), Error> {
+        self.conn
+            .execute("DELETE FROM sync_cursor WHERE name = ?1", [name])
+            .map_err(failed("sync cursor not removed"))?;
+        Ok(())
+    }
+
     /// Forget the cursors whose name starts with `prefix` (all of them for an empty one).
     ///
     /// # Errors

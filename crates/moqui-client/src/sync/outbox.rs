@@ -437,9 +437,10 @@ pub fn check_with(
                     Err(()) => return Err(format!("An internal message's {name} is a plain value")),
                 }
             }
+            // one order for the internal sends, as a page sends them
             (
                 id.clone(),
-                String::new(),
+                INTERNAL_SEND.to_string(),
                 json!({ "clientRef": id, "fields": kept_fields, "files": [] }),
                 now_ms,
             )
@@ -542,55 +543,155 @@ fn message_change(kind: &str, given: &Map<String, Value>) -> Result<(String, Str
 /// The state a stored thread shows for the fields a mail action changes, as `set#ThreadState`'s `seen` names them
 /// (`EmailClientServices.check#SeenState`): read and archive with the newest message seen, so one come since is not
 /// taken unseen. None for a target the store does not hold, of another store than email, or of one message.
-pub(crate) fn seen_of(store: &Store, action: &str, target: &Value) -> Option<Value> {
+pub(crate) fn seen_of(store: &Store, action: &str, target: &Value, earlier: &[Value]) -> Option<Value> {
     if target["store"].as_str().is_some_and(|name| name != "email") || target["emailMessageId"].is_string() {
         return None;
     }
-    let key = target["rowKey"]
+    let key = target_key(target)?;
+    let wanted_folder = target["emailFolderId"].as_str();
+    let pick = |rows: Vec<(String, Value)>| -> Option<Value> {
+        let at = rows
+            .iter()
+            .position(|(folder, _)| wanted_folder.is_some_and(|wanted| folder.ends_with(&format!("folder={wanted}"))))
+            .unwrap_or(0);
+        rows.into_iter().nth(at).map(|(_, row)| row)
+    };
+    let current = pick(
+        store
+            .mail_threads_of(&key)
+            .into_iter()
+            .filter_map(|row| Some((row.folder_id, serde_json::from_str::<Value>(&row.row).ok()?)))
+            .collect(),
+    );
+    // the server's state before the changes still queued for this thread, as the first of them kept it
+    let baseline = earlier.iter().find_map(|payload| {
+        let rows: Vec<(String, Value)> = payload["undo"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| row["threadId"].as_str() == Some(key.as_str()))
+            .filter_map(|row| {
+                Some((
+                    row["folderId"].as_str()?.to_string(),
+                    serde_json::from_str(row["row"].as_str()?).ok()?,
+                ))
+            })
+            .collect();
+        pick(rows)
+    });
+    let row = current.as_ref().or(baseline.as_ref())?;
+    // a field a queued change makes is seen as that change leaves it (the rows show it), another as the server has it,
+    // so one conflict does not make the later changes of other fields conflict too
+    let changed_before = |actions: &[&str]| {
+        earlier.iter().any(|payload| {
+            actions.contains(&payload["action"].as_str().unwrap_or(""))
+                && payload["targets"].as_array().is_some_and(|targets| {
+                    targets
+                        .iter()
+                        .any(|other| target_key(other).as_deref() == Some(key.as_str()))
+                })
+        })
+    };
+    let source = |actions: &[&str]| -> &Value {
+        match (&baseline, changed_before(actions)) {
+            (Some(baseline), false) => baseline,
+            _ => row,
+        }
+    };
+    // the newest message the user saw: the page's row's, else the newest kept, else the row's
+    let latest = target["lastEmailMessageId"]
         .as_str()
         .map(str::to_string)
-        .or_else(|| target["threadId"].as_str().map(|thread| format!("email:{thread}")))?;
-    let rows = store.mail_threads_of(&key);
-    let wanted_folder = target["emailFolderId"].as_str();
-    let row = rows
-        .iter()
-        .find(|row| wanted_folder.is_some_and(|folder| row.folder_id.ends_with(&format!("folder={folder}"))))
-        .or_else(|| rows.first())?;
-    let row: Value = serde_json::from_str(&row.row).ok()?;
-    let latest = row["lastEmailMessageId"].clone();
+        .or_else(|| {
+            store.mail_messages(&key).last().map(|message| {
+                message
+                    .message_id
+                    .strip_prefix("email:")
+                    .unwrap_or(&message.message_id)
+                    .to_string()
+            })
+        })
+        .or_else(|| row["lastEmailMessageId"].as_str().map(str::to_string));
     let truth = |value: &Value| value.as_bool() == Some(true);
     let mut seen = Map::new();
     match action {
         "read" | "unread" => {
-            seen.insert("isRead".to_string(), json!(!truth(&row["isUnread"])));
-            seen.insert("latestMessageId".to_string(), latest);
+            let from = source(&["read", "unread"]);
+            seen.insert("isRead".to_string(), json!(!truth(&from["isUnread"])));
+            seen.insert("latestMessageId".to_string(), json!(latest));
         }
         "flag" => {
             // a flag goes on the thread's newest message: its own flag when it is kept, else none flagged at all
-            let last = target["lastEmailMessageId"].as_str().or_else(|| latest.as_str());
-            let message = last.and_then(|id| store.mail_message(&format!("email:{id}")));
+            let from = source(&["flag", "unflag"]);
+            let message = latest
+                .as_deref()
+                .and_then(|id| store.mail_message(&format!("email:{id}")));
             let flagged = match message.and_then(|message| serde_json::from_str::<Value>(&message.row).ok()) {
                 Some(message) => Some(truth(&message["isFlagged"])),
-                None if !truth(&row["isFlagged"]) => Some(false),
+                None if !truth(&from["isFlagged"]) => Some(false),
                 None => None,
             };
             seen.insert("isFlagged".to_string(), json!(flagged?));
         }
         "unflag" => {
-            seen.insert("isFlagged".to_string(), json!(truth(&row["isFlagged"])));
+            let from = source(&["flag", "unflag"]);
+            seen.insert("isFlagged".to_string(), json!(truth(&from["isFlagged"])));
         }
         "archive" | "unarchive" => {
-            seen.insert("archived".to_string(), json!(truth(&row["isArchived"])));
-            seen.insert("latestMessageId".to_string(), latest);
+            let from = source(&["archive", "unarchive", "move", "trash"]);
+            seen.insert("archived".to_string(), json!(truth(&from["isArchived"])));
+            seen.insert("latestMessageId".to_string(), json!(latest));
         }
         "move" | "trash" => {
-            let folder = row["emailFolderId"].as_str()?;
+            let from = source(&["archive", "unarchive", "move", "trash"]);
+            let folder = from["emailFolderId"].as_str()?;
             seen.insert("emailFolderId".to_string(), json!(folder));
         }
         _ => return None,
     }
     seen.retain(|_, value| !value.is_null());
     (!seen.is_empty()).then_some(Value::Object(seen))
+}
+
+/// The store's key of a mail state target's thread (its `rowKey`, else `store:threadId`).
+pub(crate) fn target_key(target: &Value) -> Option<String> {
+    target["rowKey"].as_str().map(str::to_string).or_else(|| {
+        target["threadId"]
+            .as_str()
+            .map(|thread| format!("{}:{thread}", target["store"].as_str().unwrap_or("email")))
+    })
+}
+
+/// A mail state change the server did not make (a conflict, a refusal): the stored rows of its threads (those of
+/// `only`, or all) put back as they were before it (its `undo`), and the threads read again by the next feeds run, as
+/// the server's state is what stands.
+///
+/// # Errors
+///
+/// Returns an error when a row cannot be written.
+pub(crate) fn undo_mail_state(store: &Store, payload: &Value, only: Option<&[String]>) -> Result<(), String> {
+    let wanted = |key: &str| only.is_none_or(|keys| keys.iter().any(|kept| kept == key));
+    let rows: Vec<crate::store::MailThread> = payload["undo"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|row| {
+            Some(crate::store::MailThread {
+                folder_id: row["folderId"].as_str()?.to_string(),
+                thread_id: row["threadId"].as_str()?.to_string(),
+                sort_ms: number(&row["sortMs"]).unwrap_or(0),
+                row: row["row"].as_str()?.to_string(),
+            })
+        })
+        .filter(|row| wanted(&row.thread_id))
+        .collect();
+    store.put_mail_threads(&rows).map_err(|err| err.to_string())?;
+    for target in payload["targets"].as_array().into_iter().flatten() {
+        if let Some(key) = target_key(target).filter(|key| wanted(key)) {
+            super::feeds::note_pending(store, &format!("thread:{key}"))?;
+        }
+    }
+    Ok(())
 }
 
 /// Add a checked operation to the store, with its change to the stored rows, as one unit: the kept one when one of its
@@ -623,17 +724,46 @@ pub(crate) fn add(store: &Store, mut op: OutboxOp) -> Result<(OutboxOp, bool), S
                 op.payload = json!({ "chatRoomId": op.target, "lastReadEventSeq": seq }).to_string();
             }
             if op.kind == MAIL_STATE {
-                // what the user saw, before the change is shown in the rows
+                // what the user saw, before the change is shown in the rows, and the rows as they were, to put back
+                // when the server does not make it (undo_mail_state)
+                let earlier: Vec<Value> = list
+                    .iter()
+                    .filter(|other| {
+                        other.kind == MAIL_STATE
+                            && matches!(
+                                other.state,
+                                OutboxState::Queued | OutboxState::Retry | OutboxState::Held | OutboxState::Sending
+                            )
+                    })
+                    .map(payload_of)
+                    .collect();
                 let mut payload = payload_of(&op);
                 let action = payload["action"].as_str().unwrap_or("").to_string();
+                let mut undo = Vec::new();
                 if let Some(targets) = payload["targets"].as_array_mut() {
-                    for target in targets.iter_mut().filter(|target| target["seen"].is_null()) {
-                        if let Some(seen) = seen_of(store, &action, target) {
-                            target["seen"] = seen;
+                    for target in targets.iter_mut() {
+                        if let Some(key) = target_key(target) {
+                            for row in store.mail_threads_of(&key) {
+                                undo.push(json!({ "folderId": row.folder_id, "threadId": row.thread_id,
+                                    "sortMs": row.sort_ms, "row": row.row }));
+                            }
+                        }
+                        if target["seen"].is_null() {
+                            if let Some(seen) = seen_of(store, &action, target, &earlier) {
+                                target["seen"] = seen;
+                            }
                         }
                     }
                 }
-                op.payload = payload.to_string();
+                let without = payload.to_string();
+                payload["undo"] = Value::Array(undo);
+                let with_undo = payload.to_string();
+                // the rows only help: past the size of an operation it goes without them
+                op.payload = if with_undo.len() <= ITEM_BYTES {
+                    with_undo
+                } else {
+                    without
+                };
             }
             let waiting = store
                 .outbox_list()
@@ -797,6 +927,15 @@ pub fn retry(store: &Store, id: &str, now_ms: i64) -> Result<bool, String> {
                         "saveRef".to_string(),
                         json!(new_client_ref().map_err(|err| err.to_string())?),
                     );
+                }
+                // the user's text is sent after all: its copy goes, so it is not sent twice
+                let current: Value = op
+                    .current
+                    .as_deref()
+                    .and_then(|current| serde_json::from_str(current).ok())
+                    .unwrap_or(Value::Null);
+                if let Some(copy) = current["copyKey"].as_str() {
+                    store.remove_draft(copy).map_err(|err| err.to_string())?;
                 }
             }
             _ => {}

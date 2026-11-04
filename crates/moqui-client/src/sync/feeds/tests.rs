@@ -74,6 +74,10 @@ fn sync4() -> ServerSync {
 }
 
 fn feeds(server: &Server, store: &Held, sync: ServerSync) -> Synced {
+    feeds_of(server, store, sync, Scope::All)
+}
+
+fn feeds_of(server: &Server, store: &Held, sync: ServerSync, scope: Scope) -> Synced {
     run(&Job {
         transport: server,
         store,
@@ -81,6 +85,7 @@ fn feeds(server: &Server, store: &Held, sync: ServerSync) -> Synced {
         server: sync,
         cancelled: &|| false,
         pause: Duration::ZERO,
+        scope,
     })
 }
 
@@ -634,13 +639,254 @@ fn an_offline_feed_stops_the_run_and_keeps_the_cursor() {
 #[test]
 fn feeds_run_one_at_a_time_and_once_more_when_asked_meanwhile() {
     let runs = Feeds::default();
-    assert!(runs.begin("a"));
-    assert!(!runs.begin("a"));
-    assert!(runs.begin("b"));
-    assert!(runs.finish("a"));
-    assert!(!runs.finish("a"));
-    assert!(runs.begin("a"));
-    assert!(!runs.finish("b"));
+    assert!(runs.begin("a", Scope::Chat));
+    assert!(!runs.begin("a", Scope::All));
+    assert!(!runs.begin("a", Scope::Chat));
+    assert!(runs.begin("b", Scope::All));
+    // the run asked for meanwhile is of the widest scope asked
+    assert_eq!(runs.finish("a"), Some(Scope::All));
+    assert_eq!(runs.finish("a"), None);
+    assert!(runs.begin("a", Scope::All));
+    assert_eq!(runs.finish("b"), None);
+    // a run that stops early lets go, whatever was asked meanwhile: the next start runs
+    assert!(!runs.begin("a", Scope::Chat));
+    runs.end("a");
+    assert!(runs.begin("a", Scope::All));
+    // the mirror waits for a run under way, and gives up when cancelled
+    assert!(!runs.acquire("a", &|| true));
+    runs.end("a");
+    assert!(runs.acquire("a", &|| false));
+    assert!(!runs.begin("a", Scope::Chat));
+    assert_eq!(runs.finish("a"), Some(Scope::Chat));
+    assert_eq!(runs.finish("a"), None);
+}
+
+#[test]
+fn a_mark_let_go_on_another_thread_frees_a_mirror_waiting_for_it() {
+    let runs = std::sync::Arc::new(Feeds::default());
+    assert!(runs.begin("a", Scope::All));
+    let other = std::sync::Arc::clone(&runs);
+    let freer = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(30));
+        other.end("a");
+    });
+    assert!(runs.acquire("a", &|| false));
+    freer.join().unwrap();
+}
+
+#[test]
+fn a_follow_up_read_not_done_stays_pending_past_the_cursor_until_it_answers() {
+    let (store, dir) = held("pending");
+    {
+        let kept = store.0.lock().unwrap();
+        kept.set_sync_seq(CHAT_CURSOR, 1).unwrap();
+        kept.set_sync_seq(MAIL_CURSOR, 0).unwrap();
+    }
+    let server = Server::default();
+    server.answer(
+        &format!("{CHAT}/chatChanges?limit=200&afterSeq=1"),
+        changes(
+            json!([{ "changeSeq": 2, "kind": "membership", "chatRoomId": "R3", "data": { "member": true } }]),
+            2,
+        ),
+    );
+    server
+        .answers
+        .borrow_mut()
+        .insert(format!("{CHAT}/chatData?limit=200"), Fetched::Failed(500));
+    server.answer(
+        &format!("{MAIL}/mailChanges?limit=200&afterSeq=0"),
+        json!({ "changes": [], "lastSeq": 0, "more": false, "reset": false }),
+    );
+    feeds(&server, &store, sync4());
+    {
+        let kept = store.0.lock().unwrap();
+        // the cursor moved past the change, and what it left to read is kept, its tries counted
+        assert_eq!(kept.sync_seq(CHAT_CURSOR), Some(2));
+        assert!(kept.sync_seq(&format!("{PENDING}list")).is_some_and(|tries| tries >= 1));
+    }
+    // offline next time: still pending
+    server
+        .answers
+        .borrow_mut()
+        .insert(format!("{CHAT}/chatData?limit=200"), Fetched::Offline);
+    assert_eq!(feeds(&server, &store, sync4()).ended, Some(Ended::Offline));
+    assert!(store.0.lock().unwrap().sync_cursor(&format!("{PENDING}list")).is_some());
+    // it answers: read, and done
+    server.answer(
+        &format!("{CHAT}/chatData?limit=200"),
+        json!({ "roomList": [{ "chatRoomId": "R3" }] }),
+    );
+    server.answer(
+        &format!("{CHAT}/chatChanges?limit=200&afterSeq=2"),
+        changes(json!([]), 2),
+    );
+    feeds(&server, &store, sync4());
+    let kept = store.0.lock().unwrap();
+    assert!(kept.sync_cursor(&format!("{PENDING}list")).is_none());
+    assert!(kept.chat_room("R3").is_some());
+    drop(kept);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_pending_read_that_never_answers_is_given_up() {
+    let (store, dir) = held("give-up");
+    store
+        .0
+        .lock()
+        .unwrap()
+        .set_sync_seq(&format!("{PENDING}room:R9"), PENDING_TRIES - 1)
+        .unwrap();
+    let server = Server::default();
+    feeds(&server, &store, sync4());
+    assert!(server.asked(&format!("{CHAT}/room?chatRoomId=R9")));
+    assert!(store
+        .0
+        .lock()
+        .unwrap()
+        .sync_cursor(&format!("{PENDING}room:R9"))
+        .is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_room_cursor_stops_at_the_first_change_not_read_and_a_room_with_nothing_held_asks_nothing() {
+    let (store, dir) = held("room-stop");
+    {
+        let kept = store.0.lock().unwrap();
+        room_with_events(&kept);
+        room(&kept, "R2", json!({ "chatRoomId": "R2" }));
+        kept.set_sync_seq(CHAT_CURSOR, 1).unwrap();
+        kept.set_sync_seq(&format!("{ROOM_CURSOR}R1"), 7).unwrap();
+    }
+    let server = Server::default();
+    server.answer(
+        &format!("{CHAT}/chatChanges?limit=200&afterSeq=1"),
+        json!({ "changes": [], "lastSeq": 1, "more": false, "reset": false,
+            "heads": [{ "chatRoomId": "R1", "lastEventSeq": 5, "lastChangeSeq": 10 }] }),
+    );
+    server.answer(
+        &format!("{CHAT}/roomChanges?chatRoomId=R1&limit=200&afterSeq=7"),
+        json!({ "changes": [
+            { "changeSeq": 8, "eventSeq": 4, "data": { "cause": "edit" } },
+            { "changeSeq": 9, "eventSeq": 3, "data": { "cause": "edit" } },
+            { "changeSeq": 10, "eventSeq": 2, "data": { "cause": "edit" } }],
+            "lastSeq": 10, "more": false, "reset": false }),
+    );
+    server.answer(
+        &format!("{CHAT}/timeline?chatRoomId=R1&eventSeq=4"),
+        json!({ "eventList": [{ "eventSeq": 4, "body": "four" }] }),
+    );
+    server.answers.borrow_mut().insert(
+        format!("{CHAT}/timeline?chatRoomId=R1&eventSeq=3"),
+        Fetched::Failed(500),
+    );
+    feeds_of(&server, &store, sync4(), Scope::Chat);
+    let kept = store.0.lock().unwrap();
+    assert_eq!(kept.sync_seq(&format!("{ROOM_CURSOR}R1")), Some(8));
+    // a chat-only run reads no mail, and R2 (nothing held, no change known) is not asked
+    assert!(!server.asked(&format!("{MAIL}/mailChanges?limit=200")));
+    assert!(!server.asked(&format!("{CHAT}/roomChanges?chatRoomId=R2&limit=200")));
+    assert!(!server.asked(&format!("{CHAT}/timeline?chatRoomId=R1&eventSeq=2")));
+    drop(kept);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_new_thread_gets_a_row_in_the_lists_kept_and_a_message_view_row_its_own_state() {
+    let (store, dir) = held("new-rows");
+    {
+        let kept = store.0.lock().unwrap();
+        let row = |folder: &str, id: &str| MailThread {
+            folder_id: folder.to_string(),
+            thread_id: id.to_string(),
+            sort_ms: 5,
+            row: json!({ "rowKey": id, "isUnread": true }).to_string(),
+        };
+        // the inbox lists threads; the folder F1 lists messages
+        kept.put_mail_threads(&[row("view=inbox", "email:OLD"), row("account=A&folder=F1", "email:M7")])
+            .unwrap();
+        crate::offline::put_object(
+            &kept,
+            crate::offline::FOLDER_META,
+            &crate::offline::folder_meta_query("account=A&folder=F1"),
+            &json!({ "conversationView": "messages" }),
+        )
+        .unwrap();
+        kept.set_sync_seq(CHAT_CURSOR, 0).unwrap();
+        kept.set_sync_seq(MAIL_CURSOR, 1).unwrap();
+    }
+    let server = Server::default();
+    server.answer(
+        &format!("{CHAT}/chatChanges?limit=200&afterSeq=0"),
+        changes(json!([]), 0),
+    );
+    server.answer(
+        &format!("{MAIL}/mailChanges?limit=200&afterSeq=1"),
+        json!({ "changes": [{ "changeSeq": 2, "kind": "new", "threadId": "T5", "deleted": false, "messages": [
+            { "emailMessageId": "T5", "emailAccountId": "A", "emailFolderId": "F1", "isRead": false, "archived": false,
+              "messageDate": 50, "subject": "New", "snippet": "hello" },
+            { "emailMessageId": "M7", "emailAccountId": "A", "emailFolderId": "F1", "isRead": true, "isFlagged": true,
+              "archived": false, "messageDate": 60 }] }],
+            "lastSeq": 2, "more": false, "reset": false }),
+    );
+    feeds(&server, &store, sync4());
+    let kept = store.0.lock().unwrap();
+    let inbox = kept.mail_threads("view=inbox", None, 10);
+    let new_row = inbox.iter().find(|row| row.thread_id == "email:T5").unwrap();
+    let fields: Value = serde_json::from_str(&new_row.row).unwrap();
+    assert_eq!(
+        (fields["subject"].as_str(), fields["unreadCount"].as_i64()),
+        (Some("New"), Some(1))
+    );
+    assert_eq!(new_row.sort_ms, 60);
+    // the message view keeps its own rows: M7's takes M7's state, and no thread row is added there
+    let listed = kept.mail_threads("account=A&folder=F1", None, 10);
+    assert_eq!(listed.len(), 1);
+    let message_row: Value = serde_json::from_str(&listed[0].row).unwrap();
+    assert_eq!(
+        (message_row["isUnread"].as_bool(), message_row["isFlagged"].as_bool()),
+        (Some(false), Some(true))
+    );
+    drop(kept);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn the_uncovered_rereads_go_round_the_threads_kept() {
+    let (store, dir) = held("rotate");
+    {
+        let kept = store.0.lock().unwrap();
+        let messages: Vec<MailMessage> = (0..51)
+            .map(|n| MailMessage {
+                message_id: format!("internal:C{n:02}"),
+                thread_id: format!("internal:C{n:02}"),
+                sort_ms: 1,
+                row: "{}".to_string(),
+            })
+            .collect();
+        kept.put_mail_messages(&messages).unwrap();
+        kept.set_sync_seq(CHAT_CURSOR, 0).unwrap();
+        kept.set_sync_seq(MAIL_CURSOR, 5).unwrap();
+    }
+    let server = Server::default();
+    server.answer(
+        &format!("{CHAT}/chatChanges?limit=200&afterSeq=0"),
+        changes(json!([]), 0),
+    );
+    server.answer(
+        &format!("{MAIL}/mailChanges?limit=200&afterSeq=5"),
+        json!({ "changes": [], "lastSeq": 5, "more": false, "reset": false, "uncoveredStores": ["internal"] }),
+    );
+    let last = format!("{MAIL}/thread?store=internal&threadId=C50");
+    feeds(&server, &store, sync4());
+    assert!(!server.asked(&last));
+    server.asked.borrow_mut().clear();
+    feeds(&server, &store, sync4());
+    assert!(server.asked(&last));
+    assert!(!server.asked(&format!("{MAIL}/thread?store=internal&threadId=C00")));
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

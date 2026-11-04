@@ -353,3 +353,44 @@ fn a_pushed_number_next_after_the_cursor_moves_it_and_a_gap_asks_for_the_feeds()
     assert_eq!(store.sync_seq("room:R1"), Some(3));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_room_left_goes_with_all_kept_of_it() {
+    let (store, dir) = store("left");
+    let meta = crate::offline::ROOM_META;
+    store
+        .put_answer(meta, "chatRoomId=R1", "application/json", b"{}")
+        .unwrap();
+    store
+        .put_answer(
+            "/apps/BasicComms/Chat/timeline",
+            "chatRoomId=R1&limit=50",
+            "application/json",
+            b"{}",
+        )
+        .unwrap();
+    store
+        .put_answer(
+            "/apps/BasicComms/Chat/timeline",
+            "chatRoomId=R2&limit=50",
+            "application/json",
+            b"{}",
+        )
+        .unwrap();
+    store.set_sync_seq("pending:latest:R1", 0).unwrap();
+    push(
+        &store,
+        "chatUser:ME",
+        json!({ "kind": "room", "action": "left", "chatRoomId": "R1" }),
+    );
+    assert!(store.chat_room("R1").is_none() && store.chat_event("R1", 1).is_none());
+    assert!(store.answer(meta, "chatRoomId=R1").is_none());
+    assert!(store
+        .answer("/apps/BasicComms/Chat/timeline", "chatRoomId=R1&limit=50")
+        .is_none());
+    assert!(store
+        .answer("/apps/BasicComms/Chat/timeline", "chatRoomId=R2&limit=50")
+        .is_some());
+    assert!(store.sync_cursor("pending:latest:R1").is_none());
+    let _ = std::fs::remove_dir_all(&dir);
+}

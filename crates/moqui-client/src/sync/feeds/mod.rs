@@ -19,27 +19,34 @@
 //! - [`chat`]: the user's feed (`chatChanges`), then each held room's message changes (`roomChanges`).
 //! - [`mail`]: the mail change cursor (`mailChanges`), and the stores it does not cover read again.
 //!
+//! What a folded change leaves to read (the room list, a room, a room's latest page, a thread) is kept in the store as
+//! a pending read ([`note_pending`]) before the cursor moves past it, and read at the start and the end of each run
+//! until it answers (or fails [`PENDING_TRIES`] times): a stop (offline, a refused key) or an error loses none. A
+//! change that does not fold has its room or thread read again the same way.
+//!
 //! They run when a page's `/notws` opens (the mirror's run, or a run of their own when the mirror does not start), on a
-//! gap in the pushes' numbers (`push::keep_frame`), and in the mirror. A `reset` drops the cached reads the feed
-//! covers and has the mirror read them again; a first read (no cursor yet) only takes the cursor, as the mirror reads
-//! everything then. A run is bounded, stops when offline or the key is refused, and logs and passes over a change
-//! that does not fold.
+//! gap in the pushes' numbers (`push::keep_frame`, chat only: [`Scope::Chat`]), and in the mirror. A `reset` drops the
+//! cached reads the feed covers, with the new cursor in one unit, and has the mirror read them again; a first read (no
+//! cursor yet) only takes the cursor, as the mirror reads everything then. The mirror and the feeds of one account
+//! run one at a time ([`Feeds`]), so an older page of the mirror never lands over a newer change.
 
 mod chat;
 mod mail;
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
 use super::flush::StoreAccess;
-use super::mirror::{self, Ended, Fetched, Transport};
+use super::mirror::{self, encode, Ended, Fetched, Transport};
 use crate::app::{Client, ClientHost};
 use crate::login::ServerSync;
-use crate::offline;
-use crate::store::Store;
+use crate::offline::{self, chat_base, mail_base};
+use crate::store::{Store, SyncCursor};
+
+pub(crate) use chat::forget_room;
 
 /// The cursor of the user's chat feed.
 pub(crate) const CHAT_CURSOR: &str = "chat";
@@ -49,6 +56,11 @@ pub(crate) const HEADS_CURSOR: &str = "chat-heads";
 pub(crate) const MAIL_CURSOR: &str = "mail";
 /// The value of the mail cursor when the server keeps no mail feed (an app's inbox source answers without one).
 pub(crate) const UNSUPPORTED: &str = "unsupported";
+/// The prefix of a pending read's cursor: `pending:list`, `pending:room:<id>`, `pending:latest:<id>`,
+/// `pending:thread:<store>:<id>`; its seq is the tries so far.
+pub(crate) const PENDING: &str = "pending:";
+/// The tries of a pending read before it is given up (logged).
+pub(crate) const PENDING_TRIES: i64 = 5;
 
 /// Changes asked for in one page.
 const LIMIT: u32 = 200;
@@ -58,6 +70,17 @@ const MAX_PAGES: usize = 50;
 const MAX_REQUESTS: usize = 1500;
 /// The pause between two requests of a run.
 const PAUSE: Duration = Duration::from_millis(50);
+/// Events of a room's latest page read again.
+const PAGE: u32 = 50;
+
+/// Which feeds a run reads.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Scope {
+    /// Chat only: a gap in the chat pushes.
+    Chat,
+    /// Chat and mail, and the stores the mail cursor does not cover: a `/notws` opening, the mirror.
+    All,
+}
 
 /// What a run reads, and from where.
 pub(crate) struct Job<'a> {
@@ -67,6 +90,7 @@ pub(crate) struct Job<'a> {
     pub(crate) server: ServerSync,
     pub(crate) cancelled: &'a dyn Fn() -> bool,
     pub(crate) pause: Duration,
+    pub(crate) scope: Scope,
 }
 
 /// What a run did.
@@ -147,17 +171,97 @@ impl Run<'_, '_> {
     }
 
     /// `work` on the store, its error (or a closed store) logged as `what`'s: one change that does not fold never stops
-    /// the others.
-    fn fold(&self, what: &str, work: impl FnOnce(&Store) -> Result<(), String>) {
+    /// the others. Whether it was done.
+    fn fold(&self, what: &str, work: impl FnOnce(&Store) -> Result<(), String>) -> bool {
         match self.store(work) {
-            Some(Ok(())) => {}
-            Some(Err(err)) => tracing::warn!("Feeds: {what} not folded: {err}"),
-            None => tracing::warn!("Feeds: {what} not folded: the store is not open"),
+            Some(Ok(())) => true,
+            Some(Err(err)) => {
+                tracing::warn!("Feeds: {what} not folded: {err}");
+                false
+            }
+            None => {
+                tracing::warn!("Feeds: {what} not folded: the store is not open");
+                false
+            }
         }
+    }
+
+    /// Note a pending read (logged when it cannot be).
+    fn pending(&self, what: &str) {
+        self.fold(&format!("the pending read {what}"), |store| note_pending(store, what));
+    }
+
+    /// Read the pending reads of `kinds` (`list`, `room`, `latest`, `thread`), in that order; each one that answers is
+    /// done, one that does not is tried again next time, up to [`PENDING_TRIES`].
+    fn drain(&mut self, kinds: &[&str]) -> Result<(), Ended> {
+        let chat = chat_base(&self.job.comms_root);
+        let mail = mail_base(&self.job.comms_root);
+        let mut pending = self.store(|store| store.sync_cursors(PENDING)).unwrap_or_default();
+        let order = |name: &str| {
+            kinds
+                .iter()
+                .position(|kind| name.starts_with(&format!("{PENDING}{kind}")))
+        };
+        pending.retain(|(name, _)| order(name).is_some());
+        pending.sort_by_key(|(name, _)| order(name));
+        for (name, cursor) in pending {
+            let what = name.strip_prefix(PENDING).unwrap_or(&name);
+            let path = if what == "list" {
+                format!("{chat}/chatData?limit=200")
+            } else if let Some(room) = what.strip_prefix("room:") {
+                format!("{chat}/room?chatRoomId={}", encode(room))
+            } else if let Some(room) = what.strip_prefix("latest:") {
+                format!("{chat}/timeline?chatRoomId={}&limit={PAGE}", encode(room))
+            } else if let Some((store_name, thread)) =
+                what.strip_prefix("thread:").and_then(|rest| rest.split_once(':'))
+            {
+                format!("{mail}/thread?store={}&threadId={}", encode(store_name), encode(thread))
+            } else {
+                self.fold("an unknown pending read", |store| {
+                    store.remove_sync_cursor(&name).map_err(|err| err.to_string())
+                });
+                continue;
+            };
+            let answered = self.keep(&path)?.is_some();
+            let tries = cursor.seq.unwrap_or(0) + 1;
+            self.fold("a pending read", |store| {
+                if answered || tries >= PENDING_TRIES {
+                    if !answered {
+                        tracing::warn!("Feeds: {path} given up after {tries} tries");
+                    }
+                    store.remove_sync_cursor(&name).map_err(|err| err.to_string())
+                } else {
+                    store.set_sync_seq(&name, tries).map_err(|err| err.to_string())
+                }
+            });
+        }
+        Ok(())
     }
 }
 
-/// Read the feeds of `job`: chat, then mail. A server below `clientApi` 4 has none: nothing is read.
+/// Note a read that a folded change leaves (`list`, `room:<id>`, `latest:<id>`, `thread:<store>:<id>`), kept in the
+/// store until a run reads it; one noted already keeps its tries.
+///
+/// # Errors
+///
+/// Returns an error when the row cannot be written.
+pub(crate) fn note_pending(store: &Store, what: &str) -> Result<(), String> {
+    let name = format!("{PENDING}{what}");
+    if store.sync_cursor(&name).is_some() {
+        return Ok(());
+    }
+    store
+        .set_sync_cursor(
+            &name,
+            &SyncCursor {
+                seq: Some(0),
+                value: None,
+            },
+        )
+        .map_err(|err| err.to_string())
+}
+
+/// Read the feeds of `job`: chat, then (in [`Scope::All`]) mail. A server below `clientApi` 4 has none: nothing is read.
 pub(crate) fn run(job: &Job<'_>) -> Synced {
     let mut run = Run {
         job,
@@ -166,7 +270,13 @@ pub(crate) fn run(job: &Job<'_>) -> Synced {
     if !job.server.syncs() {
         return run.synced;
     }
-    let ended = chat::chat(&mut run).and_then(|()| mail::mail(&mut run));
+    let ended = chat::chat(&mut run).and_then(|()| {
+        if job.scope == Scope::All {
+            mail::mail(&mut run)
+        } else {
+            Ok(())
+        }
+    });
     if let Err(ended) = ended {
         run.synced.ended = Some(ended);
     }
@@ -176,44 +286,65 @@ pub(crate) fn run(job: &Job<'_>) -> Synced {
 /// Whether a query (of an answer's key) names `room` as its `chatRoomId`.
 fn names_room(key: &str, room: &str) -> bool {
     let query = key.split_once('?').map_or("", |(_, query)| query);
-    let wanted = format!("chatRoomId={}", mirror::encode(room));
+    let wanted = format!("chatRoomId={}", encode(room));
     query
         .split('&')
         .any(|parameter| parameter == wanted || parameter == format!("chatRoomId={room}"))
 }
 
-/// The feeds runs of the client: one at a time per account, and one more when asked while one runs.
+/// The feeds runs of the client, and the mirror's: one at a time per account, and one more when asked while one runs
+/// (of the widest scope asked).
 #[derive(Default)]
 pub struct Feeds {
-    /// The accounts with a run under way, and whether another was asked for meanwhile.
-    running: Mutex<HashMap<String, bool>>,
+    /// The accounts with a run under way, and the scope of another asked for meanwhile.
+    running: Mutex<HashMap<String, Option<Scope>>>,
+    freed: Condvar,
 }
 
 impl Feeds {
-    /// Whether a run for `account` may start now; when one is under way it is asked to run once more.
-    pub(crate) fn begin(&self, account: &str) -> bool {
+    /// Whether a run for `account` may start now; when one is under way it is asked to run once more, of `scope`.
+    pub(crate) fn begin(&self, account: &str, scope: Scope) -> bool {
         let mut running = moqui_lib::sync::lock(&self.running);
         if let Some(again) = running.get_mut(account) {
-            *again = true;
+            *again = Some(again.map_or(scope, |kept| kept.max(scope)));
             return false;
         }
-        running.insert(account.to_string(), false);
+        running.insert(account.to_string(), None);
         true
     }
 
-    /// A run for `account` ended: true when another was asked for meanwhile (it stays under way), else it is done.
-    pub(crate) fn finish(&self, account: &str) -> bool {
+    /// Wait until no run of `account` is under way, then mark one (the mirror's); false when `cancelled` first.
+    pub(crate) fn acquire(&self, account: &str, cancelled: &dyn Fn() -> bool) -> bool {
+        let mut running = moqui_lib::sync::lock(&self.running);
+        while running.contains_key(account) {
+            if cancelled() {
+                return false;
+            }
+            running = moqui_lib::sync::wait_timeout(&self.freed, running, Duration::from_millis(200)).0;
+        }
+        running.insert(account.to_string(), None);
+        true
+    }
+
+    /// A run for `account` ended: the scope of another asked for meanwhile (it stays under way), else none and it is
+    /// done.
+    pub(crate) fn finish(&self, account: &str) -> Option<Scope> {
         let mut running = moqui_lib::sync::lock(&self.running);
         match running.get_mut(account) {
-            Some(again) if *again => {
-                *again = false;
-                true
-            }
+            Some(again @ Some(_)) => again.take(),
             _ => {
                 running.remove(account);
-                false
+                self.freed.notify_all();
+                None
             }
         }
+    }
+
+    /// The run for `account` stopped early (offline, a refused key, a shutdown): no longer under way, whatever was
+    /// asked meanwhile (the next `/notws` opening runs again).
+    pub(crate) fn end(&self, account: &str) {
+        moqui_lib::sync::lock(&self.running).remove(account);
+        self.freed.notify_all();
     }
 }
 
@@ -227,10 +358,15 @@ pub fn server_of(client: &Client, id: &str) -> ServerSync {
         .unwrap_or_default()
 }
 
-/// Read the feeds of the account `id` on a thread of their own (a push's gap, a `/notws` opening the mirror did not
-/// take); one under way runs again instead. After a reset the mirror reads what it dropped.
+/// Read the feeds of the account `id` (all of them) on a thread of their own: a `/notws` opening the mirror did not
+/// take. One under way runs again instead. After a reset the mirror reads what it dropped.
 pub fn start(client: &Arc<Client>, host: &Arc<dyn ClientHost>, id: &str) {
-    if client.is_stopped() || !server_of(client, id).syncs() || !client.feeds.begin(id) {
+    start_scope(client, host, id, Scope::All);
+}
+
+/// [`start`] of `scope`: [`Scope::Chat`] for a gap in the chat pushes.
+pub fn start_scope(client: &Arc<Client>, host: &Arc<dyn ClientHost>, id: &str, scope: Scope) {
+    if client.is_stopped() || !server_of(client, id).syncs() || !client.feeds.begin(id, scope) {
         return;
     }
     let thread_client = Arc::clone(client);
@@ -238,33 +374,50 @@ pub fn start(client: &Arc<Client>, host: &Arc<dyn ClientHost>, id: &str) {
     let thread_id = id.to_string();
     let started = std::thread::Builder::new()
         .name("client-feeds".to_string())
-        .spawn(move || loop {
-            let synced = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_for(thread_host.as_ref(), &thread_client, &thread_id)
-            }))
-            .unwrap_or_else(|_| {
-                tracing::error!("The feeds of {thread_id} panicked");
-                Synced::default()
-            });
-            if synced.chat_reread || synced.mail_reread {
-                thread_client.mirror.forget(&thread_id);
-                mirror::start(&thread_client, &thread_host, &thread_id);
+        .spawn(move || {
+            let mut scope = scope;
+            loop {
+                let synced = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run_for(thread_host.as_ref(), &thread_client, &thread_id, scope)
+                }))
+                .unwrap_or_else(|_| {
+                    tracing::error!("The feeds of {thread_id} panicked");
+                    Synced {
+                        ended: Some(Ended::Cancelled),
+                        ..Synced::default()
+                    }
+                });
+                if synced.chat_reread || synced.mail_reread {
+                    // read again by a full run: now, or after the one under way (Mirror::want_full)
+                    thread_client.mirror.want_full(&thread_id);
+                }
+                if synced.ended.is_some() || thread_client.is_stopped() {
+                    thread_client.feeds.end(&thread_id);
+                    break;
+                }
+                match thread_client.feeds.finish(&thread_id) {
+                    Some(again) => scope = again,
+                    None => break,
+                }
             }
-            if thread_client.is_stopped() || !thread_client.feeds.finish(&thread_id) {
-                return;
+            if thread_client.mirror.is_wanted(&thread_id) {
+                mirror::start(&thread_client, &thread_host, &thread_id);
             }
         });
     if let Err(err) = started {
         tracing::error!("The feeds of {id} did not start: {err}");
-        client.feeds.finish(id);
+        client.feeds.end(id);
     }
 }
 
 /// One run of the feeds of the account `id`, with its key and comms app; cancelled by the mirror's cancel (an account
-/// switch, a sign-out).
-pub(crate) fn run_for(host: &dyn ClientHost, client: &Client, id: &str) -> Synced {
+/// switch, a sign-out). The caller holds the account's [`Feeds`] mark.
+pub(crate) fn run_for(host: &dyn ClientHost, client: &Client, id: &str, scope: Scope) -> Synced {
     let Some((account, Some(key))) = client.account(id) else {
-        return Synced::default();
+        return Synced {
+            ended: Some(Ended::Cancelled),
+            ..Synced::default()
+        };
     };
     let transport = mirror::ProxyTransport {
         host,
@@ -282,11 +435,12 @@ pub(crate) fn run_for(host: &dyn ClientHost, client: &Client, id: &str) -> Synce
         server: server_of(client, id),
         cancelled: &cancelled,
         pause: PAUSE,
+        scope,
     };
     let started = Instant::now();
     let synced = run(&job);
     tracing::info!(
-        "Feeds of {id}: {} requests in {}ms{}{}",
+        "Feeds of {id} ({scope:?}): {} requests in {}ms{}{}",
         synced.requests,
         started.elapsed().as_millis(),
         if synced.chat_reread { ", chat to read again" } else { "" },
