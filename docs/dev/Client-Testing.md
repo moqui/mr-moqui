@@ -592,8 +592,9 @@ The output directory has what the specs wrote and what failures left:
   feature named with its OWASP id and a comment naming the Python test), `LoadBasic`, and `Java-Port-Catalog.md`, which catalogs
   all 143 Python tests as ported, pending or not applicable. The fixtures are `framework/test/ClientFixtures.spec.js`.
 - `runtime/component/mr-marble/test/client/`: `BrowserSmoke` (pages of the flow data with their text, PrintOrder's
-  barcodes and a PDF) and `FindScreens` (a `where` row for each Find screen, found with `files`; `--param screen=` runs
-  one), with `test/ClientAccess.spec.js` and `test/MoquiConf.xml` for the server.
+  barcodes and a PDF), with `test/ClientAccess.spec.js` and `test/MoquiConf.xml` for the server; and in
+  `acceptance/client/`, `FindScreens` (a `where` row for each Find screen, found with `files`; `--param screen=` runs
+  one).
 - `crates/moqui-host/tests/fixtures/test-component/test/client/`: the harness's own specs (HTTP, sessions and the
   token, raw, WebSocket, load and parallel, skip, and a served spec), and `browser-client/Browser.spec.js` over the
   gallery screens and `browser-client/Video.spec.js` with `--video` (`cargo test -p moqui-host --test client_browser`,

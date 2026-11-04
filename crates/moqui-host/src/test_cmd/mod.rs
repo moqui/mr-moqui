@@ -566,13 +566,29 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
     crate::TEST_CONFS.store(true, std::sync::atomic::Ordering::Relaxed);
     let tree = suite_tree(args.acceptance, false);
     let mut components = discover_suite(&runtime, false, args.acceptance)?;
+    // The components the run takes: those named, and those an acceptance spec's dependsOn reaches.
+    let mut wanted = args.components.clone();
     if args.acceptance && args.specs.is_empty() {
-        components = acceptance_only(components);
+        // The acceptance specs of the components named (or of all), with what their dependsOn names from the whole pool:
+        // a sweep that depends on another component's regression flows brings them, as --spec does.
+        let names: Vec<String> = acceptance_only(components.clone())
+            .iter()
+            .filter(|component| args.components.is_empty() || args.components.contains(&component.name))
+            .flat_map(|component| component.specs.iter().map(|spec| spec.name.clone()))
+            .collect();
+        components = select_across(&components, &names)?;
+        if !wanted.is_empty() {
+            for component in &components {
+                if !wanted.contains(&component.name) {
+                    wanted.push(component.name.clone());
+                }
+            }
+        }
     }
     // With --serve a named component may have no specs: it is there for the server, and it must load.
     let mut serve_only: Vec<String> = Vec::new();
-    if !args.components.is_empty() {
-        for name in &args.components {
+    if !wanted.is_empty() {
+        for name in &wanted {
             if !components.iter().any(|component| &component.name == name) {
                 if args.serve.is_none() {
                     return Err(Error::new(format!("component {name} has no {tree}/*.spec.js files")));
@@ -580,7 +596,7 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
                 serve_only.push(name.clone());
             }
         }
-        components.retain(|component| args.components.contains(&component.name));
+        components.retain(|component| wanted.contains(&component.name));
     }
     if !args.specs.is_empty() {
         let picked = select_across(&components, &args.specs)?;

@@ -4069,7 +4069,8 @@ component_template_names() {
 # The files a part leaves out of a new component, by their template paths: --rest has no screens, --screens no REST API.
 template_part_files() {
     case $1 in
-        rest) printf '%s\n' screen MoquiConf.xml data/@Class@SecurityData.xml test/@Class@Screens.spec.js ;;
+        rest) printf '%s\n' screen MoquiConf.xml data/@Class@SecurityData.xml test/@Class@Screens.spec.js \
+            acceptance ;;
         screens) printf '%s\n' service/@component@.rest.xml data/@Class@ApiSecurityData.xml test/@Class@Api.spec.js ;;
     esac
 }

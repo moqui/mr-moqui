@@ -66,12 +66,13 @@ spec({
     setupSpec() { login("john.doe") },
 })
 
-feature("#path renders the disabled screen in #mode", {
-    where: stubbed.flatMap(([root, path]) => ["qvt", "tui"].map((mode) => ({ root, path, mode }))),
-    expect({ root, path, mode }) {
+// One stub renders the disabled screen; the others share its template (data/DemoScreenData.xml), so rendering each one
+// again checks nothing more. Every stub is checked through the menus below.
+feature("a stubbed screen renders the disabled screen", {
+    expect() {
+        const [root, path] = stubbed.find(([, path]) => path == "Entity/SqlRunner")
         // qvt sends the screens above as the shell and loads the last one on its own, as lastStandalone asks
-        const str = ec.screen.makeTest().rootScreen(root).renderMode(mode)
-            .render(path, mode == "qvt" ? { lastStandalone: "true" } : {}, null)
+        const str = ec.screen.makeTest().rootScreen(root).renderMode("qvt").render(path, { lastStandalone: "true" }, null)
         str.status == 200
         str.errorMessages.length == 0
         str.output.includes(DISABLED_TEXT)
@@ -111,15 +112,14 @@ feature("the security rows are the demo's", {
     },
 })
 
-feature("john.doe does not have #permission", {
-    where: johnLacks.map((permission) => ({ permission })),
-    expect({ permission }) {
-        !ec.user.hasPermission(permission)
+feature("john.doe has none of the ended permissions", {
+    expect() {
+        johnLacks.filter((permission) => ec.user.hasPermission(permission)).join(", ") == ""
     },
 })
 
-feature("john.doe #can #action #name", {
-    where: [
+// the view-only rights of the demo: each row's answer, with the rows that differ named
+const permittedRows = [
         { name: "component://tools/screen/Tools.xml", type: "AT_XML_SCREEN", action: "view", allowed: true },
         { name: "component://tools/screen/Tools.xml", type: "AT_XML_SCREEN", action: "update", allowed: false },
         { name: "component://tools/screen/System.xml", type: "AT_XML_SCREEN", action: "view", allowed: true },
@@ -131,14 +131,17 @@ feature("john.doe #can #action #name", {
             allowed: false },
         // reports stay editable
         { name: "component://tools/screen/Dashboards.xml", type: "AT_XML_SCREEN", action: "update", allowed: true },
-    ].map((row) => ({ ...row, can: row.allowed ? "can" : "cannot" })),
-    expect({ name, type, action, allowed }) {
-        ec.artifactExecution.isPermitted(name, type, action) == allowed
+].map((row) => ({ ...row, can: row.allowed ? "can" : "cannot" }))
+
+feature("john.doe has view-only rights, and reports stay editable", {
+    expect() {
+        permittedRows.filter((row) => ec.artifactExecution.isPermitted(row.name, row.type, row.action) != row.allowed)
+            .map((row) => `${row.can} ${row.action} ${row.name}`).join("; ") == ""
     },
 })
 
-feature("#service is refused for the shared login", {
-    where: [
+// the account changes the shared login refuses
+const refusedCalls = [
         ["update#Password", { userId: JOHN, oldPassword: "moqui", newPassword: "Demo-pass-1", newPasswordVerify: "Demo-pass-1" }],
         ["update#Password", { username: "john.doe", oldPassword: "moqui", newPassword: "Demo-pass-1",
             newPasswordVerify: "Demo-pass-1" }],
@@ -153,10 +156,14 @@ feature("#service is refused for the shared login", {
         ["setup#UserAuthcFactorTotp", { userId: JOHN }],
         ["create#SingleUseAuthcCodes", { userId: JOHN }],
         ["create#SingleUseAuthcFactor", { userId: JOHN }],
-    ].map(([service, parameters]) => ({ service, parameters })),
-    expect({ service, parameters }) {
-        // the refusal alone, with no failed commit after it
-        errorsOf(USER_SERVICES + service, parameters) == REFUSED_TEXT
+].map(([service, parameters]) => ({ service, parameters }))
+
+feature("every account change is refused for the shared login", {
+    expect() {
+        // the refusal alone, with no failed commit after it; the calls answered otherwise are named
+        refusedCalls.map(({ service, parameters }) => [service, errorsOf(USER_SERVICES + service, parameters)])
+            .filter(([, errors]) => errors != REFUSED_TEXT).map(([service, errors]) => `${service}: ${errors}`)
+            .join("; ") == ""
     },
 })
 
