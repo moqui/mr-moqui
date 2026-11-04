@@ -80,6 +80,7 @@ cat >"$R/bin/cargo" <<'EOF'
 #!/bin/sh
 # cargo stub: records its arguments, builds the stub moqui for the profile, and fails when CARGO_STUB_FAIL is set.
 echo "cargo: $*" >>"$(dirname "$0")/../cargo.log"
+echo "wrapper: ${RUSTC_WRAPPER-unset}" >>"$(dirname "$0")/../wrapper.log"
 [ -z "${CARGO_STUB_FAIL:-}" ] || exit 1
 [ "$1" != clean ] || exit 0
 p=debug
@@ -175,6 +176,47 @@ check "dry run does not call cargo" 1 '' -- test -f "$R/cargo.log"
 check "failed build" 1 'cargo build failed' -- env CARGO_STUB_FAIL=1 "$M" load
 "$R/bin/cargo" build --profile release -p moqui
 rm -f "$R/cargo.log"
+
+# sccache as the rustc wrapper, opt-in with MOQ_SCCACHE=1: a stub sccache on the PATH, a cargo home of its own, and
+# no wrapper from the caller.
+mkdir -p "$FIX/sccache-bin" "$FIX/cargo-home"
+printf '#!/bin/sh\nexec "$@"\n' >"$FIX/sccache-bin/sccache"
+chmod +x "$FIX/sccache-bin/sccache"
+nowrap() {
+    env -u RUSTC_WRAPPER -u CARGO_BUILD_RUSTC_WRAPPER -u MOQ_SCCACHE CARGO_HOME="$FIX/cargo-home" "$@"
+}
+withsc() {
+    nowrap PATH="$FIX/sccache-bin:$PATH" "$@"
+}
+lacks "sccache is off by default" 'RUSTC_WRAPPER|sccache' -- withsc MOQ_DRY_RUN=1 "$M" build
+lacks "MOQ_SCCACHE=0 is off" 'RUSTC_WRAPPER|sccache' -- withsc MOQ_SCCACHE=0 MOQ_DRY_RUN=1 "$M" build
+rm -f "$R/wrapper.log"
+check "build without MOQ_SCCACHE" 0 '' -- withsc "$M" build --debug
+check "cargo saw no wrapper" 0 '^wrapper: unset$' -- cat "$R/wrapper.log"
+check "MOQ_SCCACHE=1 makes sccache the wrapper" 0 "export RUSTC_WRAPPER=$FIX/sccache-bin/sccache" -- \
+    withsc MOQ_SCCACHE=1 MOQ_DRY_RUN=1 "$M" build
+rm -f "$R/wrapper.log"
+check "build with MOQ_SCCACHE=1" 0 '' -- withsc MOQ_SCCACHE=1 "$M" build --debug
+check "cargo saw sccache" 0 "^wrapper: $FIX/sccache-bin/sccache$" -- cat "$R/wrapper.log"
+lacks "RUSTC_WRAPPER kept" 'export RUSTC_WRAPPER' -- withsc MOQ_SCCACHE=1 RUSTC_WRAPPER=other MOQ_DRY_RUN=1 "$M" build
+lacks "empty RUSTC_WRAPPER kept" 'export RUSTC_WRAPPER' -- withsc MOQ_SCCACHE=1 RUSTC_WRAPPER= MOQ_DRY_RUN=1 "$M" build
+lacks "CARGO_BUILD_RUSTC_WRAPPER kept" 'export RUSTC_WRAPPER' -- \
+    withsc MOQ_SCCACHE=1 CARGO_BUILD_RUSTC_WRAPPER=other MOQ_DRY_RUN=1 "$M" build
+mkdir -p "$FIX/cargo-home-wrapped"
+printf '[build]\nrustc-wrapper = "other"\n' >"$FIX/cargo-home-wrapped/config.toml"
+lacks "rustc-wrapper in the cargo config kept" 'export RUSTC_WRAPPER' -- \
+    withsc MOQ_SCCACHE=1 CARGO_HOME="$FIX/cargo-home-wrapped" MOQ_DRY_RUN=1 "$M" build
+if have sccache; then
+    skipped="$skipped sccache-missing"
+else
+    rm -f "$R/wrapper.log"
+    check "MOQ_SCCACHE=1, no sccache: the build goes on with a warning" 0 'cargo binstall sccache' -- \
+        nowrap MOQ_SCCACHE=1 "$M" build --debug
+    check "MOQ_SCCACHE=1, no sccache: no wrapper" 0 '^wrapper: unset$' -- cat "$R/wrapper.log"
+    lacks "no sccache, not asked for: no warning" 'sccache' -- nowrap "$M" build --debug
+    lacks "no sccache, a wrapper set: no warning" 'sccache' -- nowrap MOQ_SCCACHE=1 RUSTC_WRAPPER=other "$M" build --debug
+fi
+rm -f "$R/cargo.log" "$R/wrapper.log"
 check "release flag is gone" 1 'unknown option -r' -- "$M" run -r
 check "load default all" 0 'moqui load types=all$' -- dry "$M" load
 check "load types" 0 'load types=seed\\?,demo components=x$' -- dry "$M" load seed demo components=x

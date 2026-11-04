@@ -16,7 +16,8 @@
  * The Artifact Browser canvas (plans/design-dev-aide.md 7.3, D9, P9): the current artifact in the center, what uses it
  * in a card to its left and what it uses in a card to its right (above and below in the vertical orientation), each
  * card a section per kind; expanding a row adds a card in the next column out with that row's own users or uses, joined
- * to the row by one connector. Absolutely placed Quasar cards on m-pan-zoom with one SVG of connectors beneath them; the
+ * to the row by one connector. Absolutely placed Quasar cards on m-pan-zoom (the wheel zooms at the pointer, a drag pans,
+ * its buttons zoom out, to 100%, in and to fit) with one SVG of connectors beneath them; the
  * layout is a pure function (columns by generation, cards in their source rows' order, each at its row's height and
  * pushed past the card above it, in one sweep) over the sizes measured after render. The data is the index's
  * (get#ArtifactDetail and get#Refs, the Workspace's transitions); Refs is the same as lists, for the keyboard and the
@@ -244,7 +245,7 @@
     <q-btn dense flat no-caps label="Center" @click="centerView"></q-btn>
   </div>
   <div v-if="error" class="q-pa-md text-negative">{{error}}</div>
-  <m-pan-zoom v-else ref="layer" class="col" height="100%">
+  <m-pan-zoom v-else ref="layer" class="col" height="100%" wheel-zoom controls :max-zoom="3">
     <template v-slot:under>
       <svg width="1" height="1"><path v-for="line in connectors" :key="line.id" :d="line.d" fill="none" stroke="currentColor" stroke-opacity=".45"
           stroke-width="1.5" :stroke-dasharray="line.dashed ? '5 4' : null" :data-connector="line.id"></path></svg>

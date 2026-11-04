@@ -3366,6 +3366,83 @@
               ]), 1040, ["label", "model-value", "onUpdate:modelValue", "rules", "mask", "for", "name", "form", "disable", "size", "bg-color"]))
             }
         } },
+        "m-diagram-zoom": { hash: "36b2b70c", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withCtx: _withCtx, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, resolveDynamicComponent: _resolveDynamicComponent, createBlock: _createBlock } = Vue
+
+            return function render(_ctx, _cache) {
+              const _component_q_space = _resolveComponent("q-space")
+              const _component_q_btn = _resolveComponent("q-btn")
+              const _component_q_card_section = _resolveComponent("q-card-section")
+              const _component_q_separator = _resolveComponent("q-separator")
+              const _component_q_spinner = _resolveComponent("q-spinner")
+              const _component_q_card = _resolveComponent("q-card")
+              const _component_q_dialog = _resolveComponent("q-dialog")
+              const _directive_close_popup = _resolveDirective("close-popup")
+
+              return (_openBlock(), _createBlock(_component_q_dialog, {
+                "model-value": _ctx.modelValue,
+                "onUpdate:modelValue": $event => (_ctx.$emit('update:modelValue', $event)),
+                onShow: _ctx.onShow,
+                onHide: $event => (_ctx.shown = false),
+                maximized: _ctx.$q.screen.lt.sm
+              }, {
+                default: _withCtx(() => [
+                  _createVNode(_component_q_card, { class: "m-diagram-zoom column no-wrap" }, {
+                    default: _withCtx(() => [
+                      _createVNode(_component_q_card_section, { class: "row items-center no-wrap q-py-xs q-pr-xs" }, {
+                        default: _withCtx(() => [
+                          _createElementVNode("div", { class: "text-subtitle1 text-weight-medium ellipsis" }, _toDisplayString(_ctx.title || _ctx.label), 1),
+                          _createVNode(_component_q_space),
+                          _withDirectives(_createVNode(_component_q_btn, {
+                            icon: "close",
+                            flat: "",
+                            round: "",
+                            dense: "",
+                            "aria-label": _ctx.closeLabel
+                          }, null, 8, ["aria-label"]), [
+                            [_directive_close_popup]
+                          ])
+                        ]),
+                        _: 1
+                      }),
+                      _createVNode(_component_q_separator),
+                      (_ctx.failed)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 0,
+                            class: "col q-pa-md text-negative"
+                          }, _toDisplayString(_ctx.failed), 1))
+                        : (_ctx.panZoom)
+                          ? (_openBlock(), _createBlock(_resolveDynamicComponent(_ctx.panZoom), {
+                              key: 1,
+                              ref: "layer",
+                              class: "col m-diagram-zoom-frame",
+                              "wheel-zoom": "",
+                              controls: "",
+                              "min-zoom": 0.01,
+                              "max-zoom": 4
+                            }, {
+                              default: _withCtx(() => [
+                                _createElementVNode("div", {
+                                  ref: "diagram",
+                                  class: "m-diagram-zoom-diagram"
+                                }, null, 512)
+                              ]),
+                              _: 1
+                            }, 512))
+                          : (_openBlock(), _createElementBlock("div", {
+                              key: 2,
+                              class: "col flex flex-center"
+                            }, [
+                              _createVNode(_component_q_spinner, { size: "2em" })
+                            ]))
+                    ]),
+                    _: 1
+                  })
+                ]),
+                _: 1
+              }, 8, ["model-value", "onUpdate:modelValue", "onShow", "onHide", "maximized"]))
+            }
+        } },
         "m-dialog": { hash: "353c53eb", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeStyle: _normalizeStyle, withCtx: _withCtx, renderSlot: _renderSlot, openBlock: _openBlock, createBlock: _createBlock } = Vue
 
@@ -5517,12 +5594,13 @@
               ], 10, ["id", "data-view"]))
             }
         } },
-        "m-markdown": { hash: "b4ad8c5", make: function (Vue) {
+        "m-markdown": { hash: "94bdf7ee", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, withModifiers: _withModifiers, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, normalizeClass: _normalizeClass } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_tooltip = _resolveComponent("q-tooltip")
               const _component_q_btn = _resolveComponent("q-btn")
+              const _component_m_diagram_zoom = _resolveComponent("m-diagram-zoom")
 
               return (_openBlock(), _createElementBlock("div", {
                 class: _normalizeClass(["m-markdown", {'m-markdown-copyable': _ctx.copyable}]),
@@ -5561,7 +5639,14 @@
                       key: 2,
                       class: "m-markdown-body",
                       innerHTML: _ctx.html
-                    }, null, 8, ["innerHTML"]))
+                    }, null, 8, ["innerHTML"])),
+                _createVNode(_component_m_diagram_zoom, {
+                  modelValue: _ctx.zoom.open,
+                  "onUpdate:modelValue": $event => ((_ctx.zoom.open) = $event),
+                  source: _ctx.zoom.source,
+                  at: _ctx.zoom.at,
+                  title: _ctx.zoom.title
+                }, null, 8, ["modelValue", "onUpdate:modelValue", "source", "at", "title"])
               ], 10, ["id", "onClick"]))
             }
         } },
@@ -5672,13 +5757,16 @@
                   }, null, 8, ["name", "size"]))
             }
         } },
-        "m-mermaid": { hash: "981f6b40", make: function (Vue) {
-            const { renderSlot: _renderSlot, createElementVNode: _createElementVNode, normalizeStyle: _normalizeStyle, openBlock: _openBlock, createElementBlock: _createElementBlock } = Vue
+        "m-mermaid": { hash: "b855053f", make: function (Vue) {
+            const { renderSlot: _renderSlot, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, normalizeStyle: _normalizeStyle, openBlock: _openBlock, createElementBlock: _createElementBlock } = Vue
 
             return function render(_ctx, _cache) {
+              const _component_m_diagram_zoom = _resolveComponent("m-diagram-zoom")
+
               return (_openBlock(), _createElementBlock("div", {
                 class: "mermaid-container",
-                style: _normalizeStyle({height:_ctx.height,width:_ctx.width})
+                style: _normalizeStyle({height:_ctx.height,width:_ctx.width}),
+                onClick: _ctx.onClick
               }, [
                 _createElementVNode("pre", {
                   ref: "source",
@@ -5686,8 +5774,17 @@
                 }, [
                   _renderSlot(_ctx.$slots, "default")
                 ], 512),
-                _createElementVNode("div", { ref: "target" }, null, 512)
-              ], 4))
+                _createElementVNode("div", {
+                  ref: "target",
+                  class: "m-mermaid-target"
+                }, null, 512),
+                _createVNode(_component_m_diagram_zoom, {
+                  modelValue: _ctx.zoom.open,
+                  "onUpdate:modelValue": $event => ((_ctx.zoom.open) = $event),
+                  source: _ctx.zoom.source,
+                  at: _ctx.zoom.at
+                }, null, 8, ["modelValue", "onUpdate:modelValue", "source", "at"])
+              ], 12, ["onClick"]))
             }
         } },
         "m-number-card": { hash: "4e5c1196", make: function (Vue) {

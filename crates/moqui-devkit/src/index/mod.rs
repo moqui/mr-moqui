@@ -2154,56 +2154,105 @@ pub fn refs(
     direction: Direction,
     kinds: &[String],
 ) -> Result<Vec<RefEntry>, Error> {
+    refs_of_ids(factory, &[id], direction, kinds)
+}
+
+/// The ids in an `IN` list of one query at most.
+const IN_CHUNK: usize = 500;
+
+/// [`refs`] of several artifacts at once, in a few queries for all of them (an autodoc page of many services): the
+/// references of each, those from the files in file and line order.
+///
+/// # Errors
+///
+/// Returns an error when the index is not kept here or cannot be read.
+pub fn refs_of_ids(
+    factory: &Arc<ExecutionContextFactory>,
+    ids: &[&str],
+    direction: Direction,
+    kinds: &[String],
+) -> Result<Vec<RefEntry>, Error> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
     ensure(factory)?;
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
     let _lifted = fence::lift();
-    let parameters = with_parameters(id, kinds);
-    let mut ids: Vec<Value> = vec![Value::string(id)];
-    for child in facade
-        .find(ARTIFACT)?
-        .disable_authz()
-        .eq("parentArtifactId", Value::string(id))
-        .select_field("artifactId")
-        .select_field("artifactKind")
-        .list()?
-        .values()
-    {
-        // a data file's records refer to nothing and nothing refers to them: not asked for, one id each
-        let kind = text(child, "artifactKind");
-        if kind != "record" && (parameters || kind != "parameter") {
-            ids.push(Value::string(text(child, "artifactId")));
+    let parameters = ids.iter().any(|id| with_parameters(id, kinds));
+    let mut near_list: Vec<String> = ids.iter().map(|id| (*id).to_string()).collect();
+    for chunk in ids.chunks(IN_CHUNK) {
+        for child in facade
+            .find(ARTIFACT)?
+            .disable_authz()
+            .condition(Condition::is_in(
+                "parentArtifactId",
+                chunk.iter().map(|id| Value::string(*id)).collect(),
+            ))
+            .select_field("artifactId")
+            .select_field("artifactKind")
+            .list()?
+            .values()
+        {
+            // a data file's records refer to nothing and nothing refers to them: not asked for, one id each
+            let kind = text(child, "artifactKind");
+            if kind != "record" && (parameters || kind != "parameter") {
+                near_list.push(text(child, "artifactId"));
+            }
         }
     }
     let (near, far) = match direction {
         Direction::In => ("toArtifactId", "fromArtifactId"),
         Direction::Out => ("fromArtifactId", "toArtifactId"),
     };
-    let rows = facade
-        .find(REF)?
-        .disable_authz()
-        .condition(Condition::is_in(near, ids.clone()))
-        .order_by("filePath", false)
-        .order_by("lineNumber", false)
-        .list()?;
+    let mut rows: Vec<EntityValue> = Vec::new();
+    for chunk in near_list.chunks(IN_CHUNK) {
+        rows.extend(
+            facade
+                .find(REF)?
+                .disable_authz()
+                .condition(Condition::is_in(
+                    near,
+                    chunk.iter().map(|id| Value::string(id.as_str())).collect(),
+                ))
+                .order_by("filePath", false)
+                .order_by("lineNumber", false)
+                .list()?
+                .values()
+                .iter()
+                .cloned(),
+        );
+    }
+    if near_list.len() > IN_CHUNK {
+        rows.sort_by(|a, b| {
+            text(a, "filePath")
+                .cmp(&text(b, "filePath"))
+                .then(number(a, "lineNumber").cmp(&number(b, "lineNumber")))
+        });
+    }
     // a call is observed under a transition's method-less id: the near ids by that form, to put back the indexed id
     let mut near_ids: HashMap<String, String> = HashMap::new();
-    for value in &ids {
-        let indexed = moqui_lib::object::to_plain_string(value);
+    for indexed in near_list {
         near_ids.entry(observed_form(&indexed)).or_insert(indexed);
     }
-    let calls = facade
-        .find(CALL)?
-        .disable_authz()
-        .condition(Condition::is_in(
-            near,
-            near_ids
-                .keys()
-                .map(|observed| Value::string(observed.as_str()))
-                .collect(),
-        ))
-        .list()?;
+    let observed_ids: Vec<&String> = near_ids.keys().collect();
+    let mut calls: Vec<EntityValue> = Vec::new();
+    for chunk in observed_ids.chunks(IN_CHUNK) {
+        calls.extend(
+            facade
+                .find(CALL)?
+                .disable_authz()
+                .condition(Condition::is_in(
+                    near,
+                    chunk.iter().map(|observed| Value::string(observed.as_str())).collect(),
+                ))
+                .list()?
+                .values()
+                .iter()
+                .cloned(),
+        );
+    }
     let mut observed: Vec<(String, String, i64)> = Vec::new();
-    for row in calls.values() {
+    for row in &calls {
         let near_id = text(row, near);
         let near_id = near_ids.get(&near_id).cloned().unwrap_or(near_id);
         let far_id = indexed_transition(&facade, &text(row, far))?;
@@ -2214,7 +2263,7 @@ pub fn refs(
         observed.push((from, to, number(row, "callCount")));
     }
     let mut other_ids: BTreeSet<String> = BTreeSet::new();
-    for row in rows.values() {
+    for row in &rows {
         let other = text(row, far);
         if !other.is_empty() {
             other_ids.insert(other);
@@ -2233,7 +2282,7 @@ pub fn refs(
         *call_counts.entry((from, to)).or_insert(0) += count;
     }
     let mut entries: Vec<RefEntry> = Vec::new();
-    for row in rows.values() {
+    for row in &rows {
         let reference = ref_of(row);
         if direction == Direction::Out && !parameters && to_parameter(&reference) {
             continue;

@@ -6,7 +6,7 @@ that test a running server from outside are in [Client-Testing](dev/Client-Testi
 
 - [Build](#build)
 - [Packages](#packages): [features](#features), [profiles](#profiles), the [embedded Postgres
-  archive](#embedded-postgres-archive), the [instance archive](#instance-archive), [build cost](#build-cost), the
+  archive](#embedded-postgres-archive), the [instance archive](#instance-archive), [build cost](#build-cost), the [compile cache](#compile-cache), the
   [desktop app](#desktop-app)
 - [The moq script](#the-moq-script)
 - [Rust tests and lints](#rust-tests-and-lints)
@@ -228,6 +228,28 @@ What a clean build still spends: aws-lc-sys (the TLS crypto every package links)
 chain, then rustls, reqwest and moqui-core itself; QuickJS is compiled twice because rquickjs's `macro` proc-macro links
 its own copy; postgresql_embedded's build script still compiles reqwest and tokio (without TLS) though it no longer
 uses them. `cargo build --timings` writes the chart to `target/cargo-timings/`.
+
+### Compile cache
+
+Each worktree of this repo has its own `target/`, so without a shared cache every worktree compiles the same
+dependencies (aws-lc-sys, oxc, tokio, ...) again. [sccache](https://github.com/mozilla/sccache) shares them. It is
+opt-in: with `MOQ_SCCACHE=1` in the environment (in `~/.bashrc`, say), the cargo runs of `./moq` (build, desktop,
+test-all, and the build before a task that runs moqui) use sccache as the rustc wrapper, so a dependency compiled in
+one worktree comes from the cache in the next. Without it, `./moq` leaves the wrapper alone, as before. A crate
+compiled incrementally (the workspace and path crates in the `dev` and `lite` profiles) goes straight to rustc, so
+incremental rebuilds after an edit work as before; profiles and `CARGO_INCREMENTAL` are not changed.
+
+- With `MOQ_SCCACHE=1` and no sccache on the PATH, the build goes on without it, and `./moq` warns once with how to
+  install it: `cargo binstall sccache`, `cargo install sccache --locked`, the distribution package (`brew`, `dnf` or
+  `apt install sccache`), or a release binary from [github.com/mozilla/sccache](https://github.com/mozilla/sccache/releases).
+- A wrapper already chosen is kept: `RUSTC_WRAPPER` or `CARGO_BUILD_RUSTC_WRAPPER` set (even to empty, which turns
+  any wrapper off), or `rustc-wrapper` in a cargo config (`~/.cargo/config.toml` or a `.cargo/config.toml` at or
+  above the repo).
+- The cache directory and its size are sccache's own settings, such as `SCCACHE_DIR` and `SCCACHE_CACHE_SIZE`
+  (default 10G); `sccache --show-stats` shows the hits.
+
+The repo's `.cargo/config.toml` does not set `rustc-wrapper`: cargo fails at once when that binary is missing. To use
+sccache outside `./moq` too, set `RUSTC_WRAPPER=sccache` in the shell.
 
 ### Desktop app
 

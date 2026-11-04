@@ -3334,18 +3334,125 @@
             return next;
         }
     };
+    // The size of a drawn diagram at 100%: its viewBox ("minX minY width height"), else its box on the page.
+    moqui.mermaid.size = (svg) => {
+        const box = String((svg && svg.getAttribute && svg.getAttribute("viewBox")) || "").trim().split(/[\s,]+/).map(Number);
+        if (box.length === 4 && box[2] > 0 && box[3] > 0) return { width: box[2], height: box[3] };
+        const rect = svg && svg.getBoundingClientRect ? svg.getBoundingClientRect() : null;
+        return { width: Math.max(1, rect ? rect.width : 1), height: Math.max(1, rect ? rect.height : 1) };
+    };
+    // Where `event` is in the diagram `svg`, as fractions of its width and height (for m-diagram-zoom's `at`), or null
+    // when it is not on it.
+    moqui.mermaid.pointIn = (svg, event) => {
+        const rect = svg && svg.getBoundingClientRect ? svg.getBoundingClientRect() : null;
+        if (!rect || !rect.width || !rect.height || !event || event.clientX === undefined) return null;
+        const fx = (event.clientX - rect.left) / rect.width, fy = (event.clientY - rect.top) / rect.height;
+        return fx >= 0 && fx <= 1 && fy >= 0 && fy <= 1 ? { fx, fy } : null;
+    };
+    // The button that opens a drawn diagram in m-diagram-zoom, in the corner of the element that holds it.
+    moqui.mermaid.zoomButton = (holder) => {
+        if (!holder || !root.document || holder.querySelector(":scope > .m-md-mermaid-zoom")) return null;
+        const label = moqui.l10n ? moqui.l10n.localize("Zoom diagram") : "Zoom diagram";
+        const button = root.document.createElement("button");
+        button.type = "button";
+        button.className = "m-md-mermaid-zoom";
+        button.title = label;
+        button.setAttribute("aria-label", label);
+        const icon = root.document.createElement("i");
+        icon.className = "q-icon notranslate material-symbols-outlined";
+        icon.setAttribute("aria-hidden", "true");
+        icon.textContent = "zoom_out_map";
+        button.appendChild(icon);
+        holder.appendChild(button);
+        return button;
+    };
+
     component("m-mermaid", {
         name: "mMermaid",
         // The diagram comes in the text prop: the Vue compiler condenses the whitespace of slot content, and a diagram
         // needs its line breaks. The slot is kept for a single-line diagram or one written with explicit newlines.
+        // Once drawn, a click on it (or its corner button) opens it in m-diagram-zoom.
         props: { text: String, config: { type: Object, default: () => ({ startOnLoad: false, securityLevel: "strict" }) }, height: { type: String, default: "400px" }, width: { type: String, default: "100%" } },
-        template: '<div class="mermaid-container" :style="{height:height,width:width}"><pre ref="source" style="display:none;"><slot></slot></pre><div ref="target"></div></div>',
+        data() { return { zoom: { open: false, source: null, at: null } }; },
+        template: '<div class="mermaid-container" :style="{height:height,width:width}" @click="onClick"><pre ref="source" style="display:none;"><slot></slot></pre><div ref="target" class="m-mermaid-target"></div>' +
+            '<m-diagram-zoom v-model="zoom.open" :source="zoom.source" :at="zoom.at"></m-diagram-zoom></div>',
         mounted() {
             const diagram = root.document.createElement("pre");
             diagram.className = "mermaid";
             diagram.textContent = (this.text || this.$refs.source.textContent).trim();
             this.$refs.target.appendChild(diagram);
-            moqui.mermaid.run([diagram], this.config).catch((err) => console.error("m-mermaid: " + err));
+            moqui.mermaid.run([diagram], this.config).then(() => {
+                diagram.classList.add("m-md-mermaid-drawn");
+                moqui.mermaid.zoomButton(diagram);
+            }, (err) => console.error("m-mermaid: " + err));
+        },
+        methods: {
+            onClick(event) {
+                const drawn = event.target && event.target.closest ? event.target.closest("pre.m-md-mermaid-drawn") : null;
+                const svg = drawn && this.$refs.target.contains(drawn) ? drawn.querySelector("svg") : null;
+                if (!svg) return;
+                const onButton = !!event.target.closest(".m-md-mermaid-zoom");
+                this.zoom = { open: true, source: svg, at: onButton ? null : moqui.mermaid.pointIn(svg, event) };
+            }
+        }
+    });
+
+    // A drawn diagram (the `source` svg, cloned) in a dialog nearly the size of the window, on m-pan-zoom (js/WebrootCode.js,
+    // loaded on first use): the wheel zooms at the pointer, a drag pans, and the buttons zoom out, to 100%, in and to fit.
+    // With `at` ({fx, fy}, where the diagram was clicked) it opens at 100% with that point in the middle, else fit.
+    component("m-diagram-zoom", {
+        name: "mDiagramZoom",
+        props: { modelValue: Boolean, source: Object, at: Object, title: String },
+        emits: ["update:modelValue"],
+        data() { return { ready: !!(moqui.codeEditor && moqui.codeEditor.components), failed: "", shown: false }; },
+        template:
+            '<q-dialog :model-value="modelValue" @update:model-value="$emit(\'update:modelValue\', $event)" @show="onShow" @hide="shown = false" :maximized="$q.screen.lt.sm">' +
+                '<q-card class="m-diagram-zoom column no-wrap">' +
+                    '<q-card-section class="row items-center no-wrap q-py-xs q-pr-xs">' +
+                        '<div class="text-subtitle1 text-weight-medium ellipsis">{{title || label}}</div><q-space></q-space>' +
+                        '<q-btn icon="close" flat round dense v-close-popup :aria-label="closeLabel"></q-btn>' +
+                    '</q-card-section><q-separator></q-separator>' +
+                    '<div v-if="failed" class="col q-pa-md text-negative">{{failed}}</div>' +
+                    '<component :is="panZoom" v-else-if="panZoom" ref="layer" class="col m-diagram-zoom-frame" wheel-zoom controls :min-zoom="0.01" :max-zoom="4">' +
+                        '<div ref="diagram" class="m-diagram-zoom-diagram"></div></component>' +
+                    '<div v-else class="col flex flex-center"><q-spinner size="2em"></q-spinner></div>' +
+                '</q-card>' +
+            '</q-dialog>',
+        computed: {
+            // m-pan-zoom by its definition, not its name: the dialog's content is a compiled slot that keeps what it
+            // resolved before js/WebrootCode.js loaded, while this is read each time it renders
+            panZoom() { return this.ready ? moqui.codeEditor.components["m-pan-zoom"] : null; },
+            label() { return moqui.l10n ? moqui.l10n.localize("Diagram") : "Diagram"; },
+            closeLabel() { return moqui.l10n ? moqui.l10n.localize("Close") : "Close"; }
+        },
+        methods: {
+            onShow() {
+                this.shown = true;
+                if (this.ready) { this.place(); return; }
+                moqui.loadScript("/js/WebrootCode.js", null, () => !!(moqui.codeEditor && moqui.codeEditor.components)).then(() => {
+                    this.ready = true;
+                    this.$nextTick(() => this.place());
+                }, (err) => { this.failed = (moqui.l10n ? moqui.l10n.localize("The zoom view did not load") : "The zoom view did not load") + ": " + (err && err.message || err); });
+            },
+            place() {
+                const holder = this.$refs.diagram, layer = this.$refs.layer;
+                if (!this.shown || !holder || !layer || !this.source) return;
+                const size = moqui.mermaid.size(this.source);
+                const svg = this.source.cloneNode(true);
+                svg.style.maxWidth = "none";
+                svg.setAttribute("width", String(size.width));
+                svg.setAttribute("height", String(size.height));
+                holder.textContent = "";
+                holder.style.width = size.width + "px";
+                holder.style.height = size.height + "px";
+                holder.appendChild(svg);
+                const frame = layer.size();
+                if (this.at && (size.width > frame.width || size.height > frame.height)) {
+                    layer.setView({ x: 0, y: 0, k: 1 });
+                    layer.centerOn({ x: this.at.fx * size.width, y: this.at.fy * size.height });
+                } else layer.fit();
+                if (layer.$el && layer.$el.focus) layer.$el.focus({ preventScroll: true });
+            }
         }
     });
 
@@ -7140,13 +7247,14 @@
         // outline: the headings [{id, level, text}] once rendered; rendered: the root element; link: {href, event, anchor, preventDefault()}
         // before an application link is followed through the shell (preventDefault: the host follows it)
         emits: ["outline", "rendered", "link"],
-        data() { return { html: "", failed: false, loaded: false }; },
+        data() { return { html: "", failed: false, loaded: false, zoom: { open: false, source: null, at: null, title: "" } }; },
         template:
             '<div class="m-markdown" :class="{\'m-markdown-copyable\': copyable}" :id="id" @click="onClick">' +
                 '<q-btn v-if="copyable" class="m-markdown-copy" flat round dense size="sm" icon="sym_o_content_copy" :aria-label="copyLabel" @click.stop="copy">' +
                     '<q-tooltip>{{copyLabel}}</q-tooltip></q-btn>' +
                 '<div v-if="failed" class="m-markdown-plain">{{text}}</div>' +
                 '<div v-else class="m-markdown-body" v-html="html"></div>' +
+                '<m-diagram-zoom v-model="zoom.open" :source="zoom.source" :at="zoom.at" :title="zoom.title"></m-diagram-zoom>' +
             '</div>',
         computed: {
             renderKey() { return [this.text || "", this.basePath || "", this.headingPrefix, this.stripTitle || "", this.wikiLinks ? "w" : "", this.resolveLink ? "r" : "", this.mermaid ? "m" : ""].join("\u0000"); },
@@ -7175,7 +7283,7 @@
                 return nodes.reduce((done, node) => done.then(() => {
                     if (text !== this.text || !node.isConnected) return null;
                     const source = node.textContent;
-                    return moqui.mermaid.run([node], config).then(() => node.classList.add("m-md-mermaid-drawn"), (err) => {
+                    return moqui.mermaid.run([node], config).then(() => { node.classList.add("m-md-mermaid-drawn"); moqui.mermaid.zoomButton(node); }, (err) => {
                         console.warn("m-markdown: a mermaid diagram did not draw", err);
                         node.removeAttribute("data-processed");
                         node.textContent = source;
@@ -7194,8 +7302,20 @@
                 const el = this.$el && this.$el.querySelector ? this.$el.querySelector('[id="' + String(id).replace(/["\\]/g, "") + '"]') : null;
                 if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
             },
+            // a drawn diagram opens in m-diagram-zoom: its corner button fit, a click on it at 100% where clicked; the
+            // title is the heading above it
+            zoomDiagram(drawn, event) {
+                const svg = drawn.querySelector("svg");
+                if (!svg) return;
+                let title = "";
+                for (let el = drawn.previousElementSibling; el && !title; el = el.previousElementSibling) if (/^H[1-6]$/.test(el.tagName)) title = el.textContent.trim();
+                const onButton = !!event.target.closest(".m-md-mermaid-zoom");
+                this.zoom = { open: true, source: svg, at: onButton ? null : moqui.mermaid.pointIn(svg, event), title };
+            },
             onClick(event) {
                 const anchor = event.target && event.target.closest ? event.target.closest("a[href]") : null;
+                const drawn = !anchor && event.target && event.target.closest ? event.target.closest("pre.m-md-mermaid-drawn") : null;
+                if (drawn && this.$el.contains(drawn)) { this.zoomDiagram(drawn, event); return; }
                 if (!anchor || !this.$el.contains(anchor)) return;
                 if (anchor.hasAttribute("data-md-anchor")) { event.preventDefault(); this.scrollTo(anchor.getAttribute("data-md-anchor")); return; }
                 if (!anchor.hasAttribute("data-md-link") || event.ctrlKey || event.metaKey || event.shiftKey || event.button) return;

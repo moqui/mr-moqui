@@ -79,6 +79,7 @@ fn get_artifact_doc(
     parameters: &Parameters,
 ) -> Result<Parameters, LibError> {
     let context = Context::of(ec, Tier::View)?;
+    let started = std::time::Instant::now();
     let source = DbSource::new(std::sync::Arc::clone(&context.factory));
     let plan = autodoc::cached_plan(&context.factory, &source)?;
     let key = [text(parameters, "docPath"), text(parameters, "artifactId")]
@@ -99,6 +100,7 @@ fn get_artifact_doc(
             .ok_or_else(|| LibError::new(format!("No doc of {key}")))?
     };
     let doc = autodoc::render_doc(&context.factory, &source, &plan, &options, &key)?;
+    tracing::debug!("Autodoc: the doc {} made in {} ms", doc.path, started.elapsed().as_millis());
     let entry = plan
         .at_path(&doc.path)
         .ok_or_else(|| LibError::new(format!("no doc at {}", doc.path)))?;
