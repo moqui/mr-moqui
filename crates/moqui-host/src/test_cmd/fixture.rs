@@ -68,6 +68,7 @@ impl Drop for TestFixture {
         drop(self.pdf.take());
         drop(self.db.take());
         if let Some(scratch) = self.scratch.take() {
+            super::interrupt::untrack(&scratch);
             if let Err(err) = std::fs::remove_dir_all(&scratch) {
                 tracing::warn!("could not remove the scratch runtime {}: {err}", scratch.display());
             }
@@ -95,8 +96,21 @@ pub fn open(runtime: &Path, framework: &Path, mode: DbMode, keep: bool) -> Resul
         DbMode::None => return Err(Error::new("--db none does not open a database")),
         DbMode::Existing => (runtime.clone(), None),
         DbMode::Fresh | DbMode::Snapshot => {
+            let install = crate::db::embedded::shared_install_dir(&runtime, &runtime.join("db/embedded"));
+            super::interrupt::remove_stale(&install);
             let scratch = scratch_runtime(&runtime)?;
-            prepare_database(&runtime, &framework, &scratch, mode)?;
+            // from here a signal stops its Postgres and removes it; the drop of the fixture does when the run ends
+            super::interrupt::track(&scratch, install, keep);
+            if keep {
+                let _ = std::fs::write(scratch.join(super::interrupt::KEEP_MARK), "");
+            }
+            if let Err(err) = prepare_database(&runtime, &framework, &scratch, mode) {
+                if !keep {
+                    super::interrupt::untrack(&scratch);
+                    let _ = std::fs::remove_dir_all(&scratch);
+                }
+                return Err(err);
+            }
             (scratch.clone(), (!keep).then_some(scratch))
         }
     };
@@ -121,6 +135,7 @@ pub fn open(runtime: &Path, framework: &Path, mode: DbMode, keep: bool) -> Resul
         }),
         Err(err) => {
             if let Some(scratch) = scratch {
+                super::interrupt::untrack(&scratch);
                 let _ = std::fs::remove_dir_all(scratch);
             }
             Err(err)

@@ -99,6 +99,7 @@ struct Scratch(Option<PathBuf>);
 impl Drop for Scratch {
     fn drop(&mut self) {
         if let Some(dir) = self.0.take() {
+            super::interrupt::untrack(&dir);
             if let Err(err) = std::fs::remove_dir_all(&dir) {
                 tracing::warn!("could not remove the scratch runtime {}: {err}", dir.display());
             }
@@ -171,6 +172,8 @@ fn serve_on(
         }
     }
     let server = crate::start_server(runtime, framework, runtime.join("db/embedded"), address)?;
+    // the server stops on a signal now, and the scratch runtime goes after it
+    super::interrupt::server_started();
     let url = format!("http://{}", server.address());
     println!("Serving {url} (Ctrl-C to stop)");
     if let Some(path) = ready_file {
