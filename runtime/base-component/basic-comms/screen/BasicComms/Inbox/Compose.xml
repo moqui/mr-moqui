@@ -135,8 +135,9 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- the held message goes as soon as its undo hold ends (the job sends it otherwise, within the minute) -->
-    <transition name="sendDue">
+    <!-- the held message goes as soon as its undo hold ends (the job sends it otherwise, within the minute); no transaction,
+        so none is held during the SMTP session (deliver#DraftMessage) -->
+    <transition name="sendDue" begin-transaction="false">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.send#DueDrafts').parameter('emailMessageId', emailMessageId || '').call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {sentCount: out.sentCount, failedCount: out.failedCount})

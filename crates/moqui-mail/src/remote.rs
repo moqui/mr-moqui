@@ -88,6 +88,12 @@ fn queue(facade: &EntityFacade, account_id: &str, change_type: &str, fields: &[(
     row.create(facade)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// A test's failure of `push#RemoteChanges` on this thread, so the service that calls it fails after it.
+    pub(crate) static FAIL_PUSH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// `push#RemoteChanges`: queue the server side of a local change of an IMAP account (internal: the filing services
 /// call it with authorization disabled). Nothing for an account without an IMAP server, or for a message kept only here.
 pub(super) fn push_changes(
@@ -98,6 +104,10 @@ pub(super) fn push_changes(
     if !ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false) {
         note_error("push#RemoteChanges is internal");
         return Ok(out);
+    }
+    #[cfg(test)]
+    if FAIL_PUSH.with(std::cell::Cell::get) {
+        return Err(LibError::new("push#RemoteChanges failed for the test"));
     }
     let account_id = param_text(parameters, "emailAccountId");
     let change_type = param_text(parameters, "changeType");

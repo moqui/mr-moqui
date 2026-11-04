@@ -1343,6 +1343,8 @@ pub(super) struct FakeSmtpState {
     /// Each message: the envelope sender, the recipients and the data.
     pub(super) messages: Vec<(String, Vec<String>, String)>,
     pub(super) refuse_recipient: bool,
+    /// How long the server waits before its answer to the end of a message's data (a message is kept as it arrives).
+    pub(super) data_reply_delay: Duration,
 }
 
 /// An ESMTP server offering AUTH XOAUTH2 on 127.0.0.1; mail is taken only after a sign-in.
@@ -1476,9 +1478,14 @@ fn serve_smtp(stream: TcpStream, state: &Mutex<FakeSmtpState>) -> std::io::Resul
                 }
                 data.push_str(&part);
             }
-            lock(state)
-                .messages
-                .push((from.clone(), std::mem::take(&mut recipients), data));
+            let delay = {
+                let mut state = lock(state);
+                state
+                    .messages
+                    .push((from.clone(), std::mem::take(&mut recipients), data));
+                state.data_reply_delay
+            };
+            std::thread::sleep(delay);
             write(&mut writer, "250 OK queued\r\n")?;
         } else if upper.starts_with("QUIT") {
             write(&mut writer, "221 Bye\r\n")?;
