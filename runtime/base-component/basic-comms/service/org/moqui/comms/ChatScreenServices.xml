@@ -236,9 +236,9 @@ along with this software (see the LICENSE.md file). If not, see
                     try {
                         const account = ec.entity.find('moqui.security.UserAccount').condition('userId', userId).one()
                         if (!account || account.disabled === 'Y') continue
-                        // the user's local time: the time zone of this run is the user's for the formatting
-                        ec.user.setTimeZone(account.timeZone || null)
-                        const now = toMinutes(ec.l10n.format(ec.user.nowTimestamp, 'HH:mm'))
+                        // the user's local time, formatted in the user's zone (with none, the session's). Not
+                        // ec.user.setTimeZone, which also saves the zone on the signed-in caller's own account.
+                        const now = toMinutes(ec.l10n.format(ec.user.nowTimestamp, 'HH:mm', null, account.timeZone || null))
                         const inside = from != null && to != null && from !== to && (from < to ? (now >= from && now < to) : (now >= from || now < to))
                         const status = ec.entity.find('moqui.security.UserStatus').condition('userId', userId).one()
                         const statusId = status ? (status.statusEnumId || 'UpsOnline') : 'UpsOnline'
@@ -261,7 +261,6 @@ along with this software (see the LICENSE.md file). If not, see
                     } finally { ec.message.clearErrors(); ec.message.popErrors() }
                 }
             } finally {
-                ec.user.setTimeZone(null)
                 if (!wasDisabled) ec.artifactExecution.enableAuthz()
             }
         ]]></script></actions>
