@@ -49,6 +49,10 @@ const DRAIN_WAIT: Duration = Duration::from_secs(30);
 /// Java's `job-pool-core` and `job-pool-max` defaults.
 const DEFAULT_JOB_POOL_CORE: usize = 2;
 const DEFAULT_JOB_POOL_MAX: usize = 8;
+/// How long a stop waits for job runs in progress before it leaves their threads (HL-026).
+const JOB_JOIN_WAIT: Duration = Duration::from_secs(30);
+/// The job worker threads' name prefix.
+const JOB_THREAD: &str = "moqui-job-";
 
 type TickHook = Arc<dyn Fn() + Send + Sync>;
 
@@ -268,6 +272,7 @@ pub(crate) enum Work {
     Call(CallJob),
     Job(Box<super::jobs::JobRun>),
     Closure(ClosureJob),
+    Rules(RulesJob),
     #[cfg(test)]
     Task(Box<dyn FnOnce() + Send>),
 }
@@ -275,6 +280,27 @@ pub(crate) enum Work {
 pub(crate) struct ClosureJob {
     run: ClosureFn,
     reply: Sender<ClosureOut>,
+    trace_context: Option<crate::telemetry::TraceContext>,
+    /// What a fire-and-forget [`ServicePools::spawn`] runs, named in the log when it is dropped at shutdown.
+    what: Option<&'static str>,
+}
+
+/// The tx-commit or tx-rollback rules of a service call, run after its transaction ends: the service, the phase
+/// (`when`), and the call's parameters and results.
+#[derive(Clone, Debug)]
+pub(crate) struct TxRules {
+    pub(crate) service: String,
+    pub(crate) when: String,
+    pub(crate) parameters: BTreeMap<String, Value>,
+    pub(crate) results: Option<BTreeMap<String, Value>>,
+}
+
+/// [`TxRules`] waiting for a service worker, with the caller they run as.
+pub(crate) struct RulesJob {
+    rules: TxRules,
+    factory: Arc<ExecutionContextFactory>,
+    user_name: Option<String>,
+    origin: Option<crate::context::AgentOrigin>,
     trace_context: Option<crate::telemetry::TraceContext>,
 }
 
@@ -488,7 +514,7 @@ impl ServicePools {
         let rx = if in_worker() {
             reserve_closure(&shared, run)?
         } else {
-            queue_closure(&shared, run)?
+            queue_closure(&shared, run, None)?
         };
         let boxed = rx
             .recv()
@@ -522,9 +548,38 @@ impl ServicePools {
             }
             Ok(Box::new(()) as Box<dyn Any + Send>)
         });
-        if let Err(err) = queue_closure(shared, run) {
+        if let Err(err) = queue_closure(shared, run, Some(what)) {
             tracing::error!(error = %err, "{what} was not run");
         }
+    }
+
+    /// Run the tx rules of a service call on a service worker, as the current user and agent run, without waiting.
+    /// When the queue is full or the pool is stopping they are stored as a queued job, which the scheduler runs later
+    /// (here or on another member); a failure to store them is logged with the service and phase. With no worker
+    /// threads they run now.
+    pub(crate) fn spawn_rules(&self, factory: &Arc<ExecutionContextFactory>, rules: TxRules) {
+        let job = RulesJob {
+            rules,
+            factory: Arc::clone(factory),
+            user_name: crate::user::current_username().ok().flatten(),
+            origin: current_origin(),
+            trace_context: crate::telemetry::capture(),
+        };
+        let Some(shared) = &self.shared else {
+            run_rules(job, false);
+            return;
+        };
+        let job = {
+            let mut state = lock(&shared.state);
+            if !state.stop && state.queue.len() < shared.queue_cap {
+                state.queue.push_back(Work::Rules(job));
+                drop(state);
+                shared.wake.notify_all();
+                return;
+            }
+            job
+        };
+        spill_rules(job, "the service worker queue is full or stopping");
     }
 
     /// Start the call and return its pending result. See [`Shared::submit_future`].
@@ -546,8 +601,8 @@ impl ServicePools {
         }
     }
 
-    /// Fire-and-forget. A full queue stores the call as a one-shot service job, which the scheduler
-    /// pass submits when a worker is free. With no database to store it in, a full queue is an error.
+    /// Fire-and-forget. A full or stopping queue stores the call as a one-shot service job, which the scheduler
+    /// pass submits when a job worker is free. With no database to store it in, that is an error.
     ///
     /// The call is checked first, as Java's `validateCall` (see `call::prepare_async`): parameters that fail
     /// validation leave their errors in the message facade and queue nothing, and nothing is queued in a sim session.
@@ -571,10 +626,8 @@ impl ServicePools {
         let user_name = crate::user::current_username().ok().flatten();
         {
             let mut state = lock(&shared.state);
-            if state.stop {
-                return Err(Error::new("service worker pool is not running"));
-            }
-            if state.queue.len() < shared.queue_cap {
+            // A stopping pool stores the call too: the database is still up while the queue drains (HL-025).
+            if !state.stop && state.queue.len() < shared.queue_cap {
                 state
                     .queue
                     .push_back(Work::service(name.to_string(), parameters, factory, user_name));
@@ -586,11 +639,15 @@ impl ServicePools {
         // stored with its caller, as a queued call carries them
         super::jobs::persist_queued(
             &factory,
-            name,
-            &parameters,
-            user_name.as_deref(),
-            current_origin().as_ref(),
+            &super::jobs::QueuedCall {
+                service: name.to_string(),
+                parameters,
+                user_name,
+                origin: current_origin(),
+                rules: None,
+            },
         )
+        .map_err(|err| Error::new(format!("async call of {name} was not queued: {err}")))
     }
 
     /// One scheduler pass now, as the scheduler thread runs it on its interval. With no job runner only the hooks run.
@@ -647,6 +704,12 @@ impl ServicePools {
     /// fails. Queued job runs are abandoned at once, as Java never shuts down its `jobWorkerPool`.
     pub(crate) fn shutdown(&self) {
         self.shutdown_within(DRAIN_WAIT);
+    }
+
+    /// Stop with no wait for the queue, as a shutdown whose drain time has run out.
+    #[cfg(test)]
+    pub(crate) fn shutdown_now(&self) {
+        self.shutdown_within(Duration::ZERO);
     }
 
     fn shutdown_within(&self, limit: Duration) {
@@ -898,7 +961,7 @@ fn spawn_worker(shared: &Arc<Shared>, index: usize) -> Result<JoinHandle<()>, Er
 fn spawn_job_worker(shared: &Arc<Shared>, index: usize) -> Result<JoinHandle<()>, Error> {
     let shared = Arc::clone(shared);
     thread::Builder::new()
-        .name(format!("moqui-job-{index}"))
+        .name(format!("{JOB_THREAD}{index}"))
         .spawn(move || job_loop(shared))
         .map_err(|err| Error::new(format!("service job worker did not start: {err}")))
 }
@@ -977,6 +1040,7 @@ fn run_work(shared: &Shared, work: Work) {
     match work {
         Work::Job(run) => run_job_work(run),
         Work::Closure(job) => run_closure(shared, job),
+        Work::Rules(job) => run_rules(job, true),
         other => {
             if let Some(job) = call_job(other) {
                 run_call(job);
@@ -989,7 +1053,7 @@ fn run_work(shared: &Shared, work: Work) {
 fn call_job(work: Work) -> Option<CallJob> {
     match work {
         Work::Call(job) => Some(job),
-        Work::Job(_) | Work::Closure(_) => None,
+        Work::Job(_) | Work::Closure(_) | Work::Rules(_) => None,
         #[cfg(test)]
         Work::Task(task) => {
             run_task(task);
@@ -1133,10 +1197,12 @@ fn run_inline(work: Work) {
                 run,
                 reply,
                 trace_context,
+                what: _,
             } = job;
             let _trace = crate::telemetry::attach(trace_context);
             let _ = reply.send(closure_outcome(catch_unwind(AssertUnwindSafe(run))));
         }
+        Work::Rules(job) => run_rules(job, false),
         #[cfg(test)]
         Work::Task(task) => {
             let _ = catch_unwind(AssertUnwindSafe(task));
@@ -1232,24 +1298,37 @@ fn fail_pending(shared: &Shared) {
     }
 }
 
+/// Work still queued when the pool stops. Fire-and-forget calls and tx rules are stored as queued jobs, which run
+/// on the next start or on another member (HL-025); a caller waiting for a result gets an error. What is not kept is
+/// logged by name.
 fn fail_one(work: Work) {
     let stopped = Error::new("service worker pool is not running");
     match work {
-        Work::Call(job) => {
-            if let Some(reply) = job.reply {
+        Work::Call(job) => match job.reply {
+            Some(reply) => {
+                tracing::warn!(service = %job.name, "the service worker pool stopped before a waited-for call ran");
                 let _ = reply.send(Err(stopped));
             }
-        }
+            None => spill_call(job),
+        },
         Work::Closure(job) => {
+            if let Some(what) = job.what {
+                tracing::error!("{what} was not run: the service worker pool stopped first");
+            }
             let _ = job.reply.send(Err(stopped));
         }
+        Work::Rules(job) => spill_rules(job, "the service worker pool stopped before they ran"),
         Work::Job(run) => super::jobs::abandon(*run),
         #[cfg(test)]
         Work::Task(_) => {}
     }
 }
 
-fn queue_closure(shared: &Shared, run: ClosureFn) -> Result<mpsc::Receiver<ClosureOut>, Error> {
+fn queue_closure(
+    shared: &Shared,
+    run: ClosureFn,
+    what: Option<&'static str>,
+) -> Result<mpsc::Receiver<ClosureOut>, Error> {
     let (tx, rx) = mpsc::channel();
     {
         let mut state = lock(&shared.state);
@@ -1263,6 +1342,7 @@ fn queue_closure(shared: &Shared, run: ClosureFn) -> Result<mpsc::Receiver<Closu
             run,
             reply: tx,
             trace_context: crate::telemetry::capture(),
+            what,
         }));
     }
     shared.wake.notify_all();
@@ -1299,6 +1379,7 @@ fn run_closure(shared: &Shared, job: ClosureJob) {
         run,
         reply,
         trace_context,
+        what: _,
     } = job;
     let _trace = crate::telemetry::attach(trace_context);
     let outcome = {
@@ -1336,15 +1417,126 @@ fn caller_factory(shared: &Shared) -> Result<Arc<ExecutionContextFactory>, Error
     attached_factory(shared)
 }
 
+/// Run tx rules in a context of their own, as the caller that committed. `own_cleanup` is false on the inline path,
+/// whose caller ends the work. A failure is logged with the service and phase.
+fn run_rules(job: RulesJob, own_cleanup: bool) {
+    let RulesJob {
+        mut rules,
+        factory,
+        user_name,
+        origin,
+        trace_context,
+    } = job;
+    let _trace = crate::telemetry::attach(trace_context);
+    let _cleanup = own_cleanup.then(|| WorkCleanup::new(Some(Arc::clone(&factory))));
+    let outcome = unwind_result(catch_unwind(AssertUnwindSafe(|| {
+        let _flag = own_cleanup.then(WorkerFlag::enter);
+        let ctx = factory.new_context();
+        let _entered = ctx.enter();
+        // As a job's user: a user that cannot be logged in is logged, and the rules still run, as before they carried
+        // the caller.
+        if let Some(user_name) = user_name.as_deref() {
+            if let Err(err) = crate::user::internal_login_user(user_name) {
+                tracing::warn!(service = %rules.service, when = %rules.when, error = %err, "could not log in the user of tx rules");
+            }
+        }
+        ctx.set_agent_origin(origin);
+        super::call::run_tx_rules(&factory, &mut rules).map(|()| BTreeMap::new())
+    })));
+    if let Err(err) = outcome {
+        tracing::error!(service = %rules.service, when = %rules.when, error = %err, "service tx rules failed");
+    }
+}
+
+/// Store tx rules the queue could not take as a queued job. A failure loses them, so it is an error naming them.
+fn spill_rules(job: RulesJob, why: &str) {
+    let RulesJob {
+        rules,
+        factory,
+        user_name,
+        origin,
+        trace_context: _,
+    } = job;
+    let (service, when) = (rules.service.clone(), rules.when.clone());
+    let call = super::jobs::QueuedCall {
+        service: rules.service,
+        parameters: rules.parameters,
+        user_name,
+        origin,
+        rules: Some(super::jobs::QueuedRules {
+            when: rules.when,
+            results: rules.results,
+        }),
+    };
+    match super::jobs::persist_queued(&factory, &call) {
+        Ok(()) => tracing::warn!(service = %service, when = %when, "{why}: the service tx rules are queued as a job"),
+        Err(err) => tracing::error!(
+            service = %service,
+            when = %when,
+            error = %err,
+            "{why}, and the service tx rules could not be queued as a job: they are not run"
+        ),
+    }
+}
+
+/// Store a fire-and-forget call the stopping pool did not run as a queued job.
+fn spill_call(job: CallJob) {
+    let CallJob {
+        name,
+        parameters,
+        factory,
+        user_name,
+        origin,
+        ..
+    } = job;
+    let call = super::jobs::QueuedCall {
+        service: name.clone(),
+        parameters,
+        user_name,
+        origin,
+        rules: None,
+    };
+    match super::jobs::persist_queued(&factory, &call) {
+        Ok(()) => {
+            tracing::warn!(service = %name, "the service worker pool stopped before an async call ran; it is queued as a job")
+        }
+        Err(err) => tracing::error!(
+            service = %name,
+            error = %err,
+            "the service worker pool stopped before an async call ran, and it could not be queued as a job: it is not run"
+        ),
+    }
+}
+
 fn stop_joined(shared: &Shared, handles: Vec<JoinHandle<()>>) {
     fail_pending(shared);
     join_all(handles);
 }
 
 fn join_all(handles: Vec<JoinHandle<()>>) {
+    let deadline = std::time::Instant::now() + JOB_JOIN_WAIT;
     for handle in handles {
+        // A job can run for hours: a stop waits for it only so long, so an orchestrator's kill does not find the
+        // locks of every running job still held. One left running keeps its lock, which its next start takes over.
+        if handle.thread().name().is_some_and(|name| name.starts_with(JOB_THREAD)) {
+            while !handle.is_finished() && std::time::Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            if !handle.is_finished() {
+                tracing::warn!(
+                    "service job thread {} still running after {} seconds of shutdown; not waiting for it",
+                    name_of(&handle),
+                    JOB_JOIN_WAIT.as_secs()
+                );
+                continue;
+            }
+        }
         join_one(handle);
     }
+}
+
+fn name_of(handle: &JoinHandle<()>) -> String {
+    handle.thread().name().unwrap_or("(unnamed)").to_string()
 }
 
 fn join_one(handle: JoinHandle<()>) {
@@ -1547,7 +1739,7 @@ mod tests {
         started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
         let shared = pools.shared_handle();
         let run: super::ClosureFn = Box::new(|| Ok(Box::new(()) as Box<dyn std::any::Any + Send>));
-        let queued = super::queue_closure(&shared, run).unwrap();
+        let queued = super::queue_closure(&shared, run, None).unwrap();
         let releaser = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(300));
             let _ = release_tx.send(());
