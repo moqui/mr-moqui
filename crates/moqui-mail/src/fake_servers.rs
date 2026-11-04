@@ -61,6 +61,8 @@ pub(super) struct FakeImapState {
     pub(super) oauth_tokens: Vec<String>,
     /// A message that comes into INBOX when the server next gets this command ([`FakeImap::arrive_on`]).
     arrive_on: Option<(String, String)>,
+    /// A command the server answers by closing the connection, as a server that drops a client does.
+    pub(super) drop_on: Option<String>,
     next_validity: u32,
 }
 
@@ -141,6 +143,7 @@ impl FakeImap {
             log: Vec::new(),
             oauth_tokens: Vec::new(),
             arrive_on: None,
+            drop_on: None,
             next_validity: 5000,
         }));
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -433,6 +436,9 @@ fn serve_imap(stream: TcpStream, state: &Mutex<FakeImapState>) -> std::io::Resul
         } else {
             rest.clone()
         });
+        if lock(state).drop_on.as_deref() == Some(command.as_str()) {
+            return Ok(());
+        }
         let arrived = {
             let mut state = lock(state);
             if state.arrive_on.as_ref().is_some_and(|(on, _)| *on == command) {
