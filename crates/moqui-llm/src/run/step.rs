@@ -1060,6 +1060,8 @@ impl Turn {
         self.call_model(target, started)
     }
 
+    /// The run's own caps, then whether the user's quota is used up (with the calls in flight); each attempt of the
+    /// step's model call is then admitted with what it may use at most (`CallOptions::quota`).
     fn exhausted(&self) -> Result<Option<Exhausted>, Error> {
         if let Some(exhausted) = self.budget.exhausted() {
             return Ok(Some(exhausted));
@@ -1334,6 +1336,7 @@ impl Turn {
         options.cancel = self.local.cancel.clone();
         options.deadline = Some(Instant::now() + limit);
         options.length_retry = false;
+        options.quota = Some("agent");
         options.recorder = Some(Recorder {
             llm,
             facade: &self.facade,
@@ -1463,6 +1466,8 @@ impl Turn {
         options.cancel = self.local.cancel.clone();
         options.deadline = deadline;
         options.nudge = Some(provider::EMPTY_NUDGE.to_string());
+        // each attempt (a retry, the larger-output re-ask, the nudge) is admitted with what it may use
+        options.quota = Some("agent");
         options.compact = Some(&mut compact);
         options.recorder = Some(Recorder {
             llm: &llm,
@@ -1587,6 +1592,10 @@ impl Turn {
         let canceled = self.local.cancel.is_canceled() || reply.finish == Finish::Canceled;
         if canceled {
             return self.end_canceled();
+        }
+        // an attempt the quota refused (the user's other calls hold what was left): stopped as at a used-up quota
+        if provider::quota_refused(&reply.finish) {
+            return self.budget_stop(Exhausted::Quota);
         }
         match &reply.finish {
             Finish::Stop | Finish::ToolCalls | Finish::Length => {
@@ -2638,6 +2647,7 @@ impl Compactor<'_> {
         options.cancel = self.cancel.clone();
         options.deadline = Some(Instant::now() + Duration::from_secs(120));
         options.length_retry = false;
+        options.quota = Some("agent");
         options.recorder = Some(Recorder {
             llm: &llm,
             facade: self.facade,

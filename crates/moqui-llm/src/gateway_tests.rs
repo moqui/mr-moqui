@@ -219,3 +219,72 @@ fn a_usage_chunk_is_known_and_output_is_counted() {
     assert_eq!(outcome.output_chars, 7);
     assert!(outcome.usage.is_zero());
 }
+
+/// Six gateway calls admitted at once, the callers from `caller_of`, against `limits`: how many were admitted, and the
+/// statuses of those refused. The admitted ones hold their reservations until all six are answered.
+fn admit_race(
+    facade: &EntityFacade,
+    limits: &crate::conf::LimitsConf,
+    caller_of: &dyn Fn(usize) -> Caller,
+) -> (usize, Vec<u16>) {
+    let reserve = Reserve {
+        tokens: 1000,
+        cost: Decimal::ZERO,
+    };
+    let barrier = Arc::new(std::sync::Barrier::new(6));
+    let handles: Vec<_> = (0..6)
+        .map(|index| {
+            let (facade, limits, reserve, caller) = (facade.clone(), limits.clone(), reserve.clone(), caller_of(index));
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                let open = |_: &str| -> Result<Held, Reply> { Ok(Box::new(())) };
+                admit(
+                    &facade,
+                    &limits,
+                    &caller,
+                    "fast",
+                    &reserve,
+                    Duration::from_secs(60),
+                    &open,
+                )
+            })
+        })
+        .collect();
+    let results: Vec<_> = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
+    let refused: Vec<u16> = results
+        .iter()
+        .filter_map(|result| result.as_ref().err().map(|reply| reply.status))
+        .collect();
+    (results.len() - refused.len(), refused)
+}
+
+/// Concurrent gateway calls of one user, and of one API client, whose remaining quota fits one call's reserve: one is
+/// admitted and holds its reservation while its call runs, the others get 429 (plans/High-Level-Review.md HL-030).
+#[test]
+fn one_of_concurrent_gateway_calls_takes_the_room_left() {
+    let facade = moqui_core::testing::open();
+    let limits = crate::conf::LimitsConf {
+        user_daily_tokens: 1500,
+        ..crate::conf::LimitsConf::default()
+    };
+    let (admitted, refused) = admit_race(&facade, &limits, &|_| Caller {
+        user_id: "GU1".to_string(),
+        client: None,
+    });
+    assert_eq!(admitted, 1, "{refused:?}");
+    assert!(refused.iter().all(|status| *status == 429), "{refused:?}");
+    // a client's daily limit, its users each with room of their own
+    let (admitted, refused) = admit_race(&facade, &limits, &|index| Caller {
+        user_id: format!("GU2-{index}"),
+        client: Some(Client {
+            client_id: "GC1".to_string(),
+            aliases: Vec::new(),
+            daily_tokens: Some(1500),
+            daily_cost: None,
+            requests_per_minute: None,
+        }),
+    });
+    assert_eq!(admitted, 1, "{refused:?}");
+    assert!(refused.iter().all(|status| *status == 429), "{refused:?}");
+}

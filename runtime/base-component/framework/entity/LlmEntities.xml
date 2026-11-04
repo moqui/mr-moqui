@@ -225,6 +225,29 @@ along with this software (see the LICENSE.md file). If not, see
         <index name="LLM_CALL_DATE"><index-field name="startDate"/></index>
         <index name="LLM_CALL_RUN"><index-field name="runId"/><index-field name="stepSeq"/></index>
         <index name="LLM_CALL_MODEL"><index-field name="modelId"/><index-field name="startDate"/></index>
+        <index name="LLM_CALL_CLIENT_DATE"><index-field name="clientId"/><index-field name="startDate"/></index>
+    </entity>
+
+    <entity entity-name="LlmQuotaReservation" package="moqui.llm" use="transactional" cache="never">
+        <description>What a model call admitted against the quotas may use at most (its prompt and its output limit, and
+            their cost), counted with the finished calls until the call's LlmCall row is written, then deleted. One left
+            past expiresDate (a node that stopped mid-call) no longer counts and is deleted at a later admission.
+            source is the quota scope it was admitted for (agent, gateway, api).</description>
+        <field name="reservationId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="clientId" type="id"/>
+        <field name="source" type="text-short"/>
+        <field name="tokens" type="number-integer"/>
+        <field name="cost" type="currency-precise"/>
+        <field name="createdDate" type="date-time"/>
+        <field name="expiresDate" type="date-time"/>
+        <index name="LLM_QRES_USER"><index-field name="userId"/><index-field name="expiresDate"/></index>
+        <index name="LLM_QRES_CLIENT"><index-field name="clientId"/><index-field name="expiresDate"/></index>
+    </entity>
+    <entity entity-name="LlmQuotaLock" package="moqui.llm" use="transactional" cache="never">
+        <description>The row an admission locks (user:userId, client:clientId), so admissions of one user or client on
+            any node check and reserve one at a time.</description>
+        <field name="lockKey" type="text-medium" is-pk="true"/>
     </entity>
 
     <entity entity-name="LlmUsageDaily" package="moqui.llm" use="transactional" cache="never">

@@ -358,6 +358,8 @@ const SIM_PRODUCTION_ENTITIES: &[&str] = &[
     "moqui.agent.AgentApproval",
     "moqui.llm.LlmCall",
     "moqui.llm.LlmUsageDaily",
+    "moqui.llm.LlmQuotaReservation",
+    "moqui.llm.LlmQuotaLock",
     "moqui.entity.SequenceValueItem",
 ];
 

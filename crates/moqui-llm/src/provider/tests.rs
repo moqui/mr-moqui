@@ -1134,3 +1134,89 @@ fn a_completion_ends_by_its_timeout() {
     assert!(error.to_string().contains("timeout"), "{error}");
     assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
 }
+
+const QUOTA_CONF: &str = r#"<llm-facade>
+    <endpoint id="quota-fake" protocol="fake"/>
+    <model id="quota-model" endpoint="quota-fake" name="fake-1" max-output="1000"/>
+    <limits user-daily-tokens="1500"/>
+</llm-facade>"#;
+
+/// Agent calls of one user at once, whose quota fits one attempt's prompt and output limit: the first admitted holds
+/// its reservation while the fake holds its reply at a gate, and the others end with the quota's refusal, which the
+/// run stops on (plans/High-Level-Review.md HL-030).
+#[test]
+fn one_of_concurrent_agent_calls_takes_the_room_left() {
+    let facade = moqui_core::testing::open();
+    let llm = crate::LlmFacade::new(LlmConf::from_conf_text(QUOTA_CONF).unwrap());
+    let mut target = fake_target("quota-fake");
+    target.model.max_output = Some(1000);
+    fake::script(
+        "quota-fake",
+        (0..4)
+            .map(|_| {
+                fake::Reply::steps(vec![
+                    Step::Gate("quota-held".to_string()),
+                    Step::Text("Done".to_string()),
+                    Step::Finish("stop".to_string()),
+                ])
+            })
+            .collect(),
+    );
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+    let replies: Vec<Reply> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let (facade, llm, target, barrier) = (&facade, &llm, &target, &barrier);
+                scope.spawn(move || {
+                    let mut options = fast(CallSource::Agent);
+                    options.idle = Some(Duration::from_secs(10));
+                    options.user_id = Some("QA1".to_string());
+                    options.quota = Some("agent");
+                    options.recorder = Some(Recorder { llm, facade });
+                    barrier.wait();
+                    call(target, &simple_request(), &mut options)
+                })
+            })
+            .collect();
+        // the refused ones end at once; then the admitted one is let through
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while handles.iter().filter(|handle| handle.is_finished()).count() < 3 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        fake::open_gate("quota-held");
+        handles.into_iter().map(|handle| handle.join().unwrap()).collect()
+    });
+    let answered = replies.iter().filter(|reply| reply.finish == Finish::Stop).count();
+    let refused = replies.iter().filter(|reply| quota_refused(&reply.finish)).count();
+    assert_eq!(
+        (answered, refused),
+        (1, 3),
+        "{:?}",
+        replies.iter().map(|reply| &reply.finish).collect::<Vec<_>>()
+    );
+    // the reservation went once the call's row was written
+    let open = facade
+        .find(usage::LLM_QUOTA_RESERVATION)
+        .unwrap()
+        .eq("userId", moqui_lib::object::Value::string("QA1"))
+        .count()
+        .unwrap();
+    assert_eq!(open, 0);
+}
+
+/// The content log of an agent or API call keeps at most 1 MiB of a streamed reply, as the gateway's does.
+#[test]
+fn the_content_log_of_a_stream_is_capped() {
+    let mut log = EventsLog::default();
+    let piece = json!({"type": "text", "delta": "x".repeat(10_000)});
+    for _ in 0..200 {
+        log.push(piece.clone());
+    }
+    let text = log.into_json();
+    assert!(text.len() <= MAX_LOGGED_EVENTS + 100, "{}", text.len());
+    assert!(
+        text.ends_with(r#"{"maxBytes":1048576,"type":"log_cut"}]"#),
+        "{}",
+        &text[text.len() - 60..]
+    );
+}
