@@ -5,7 +5,8 @@ The client of a remote MR Moqui server, for the desktop app's client mode and la
 [docs/ui/Desktop-Client.md](../../docs/ui/Desktop-Client.md)). It has no Tauri, no framework and no async API (reqwest's blocking
 client, so callers run on a plain thread), and builds for Android as well as the desktops. TLS is checked against the
 OS trust store; on Android that needs the app to bundle `rustls-platform-verifier`'s Android component (its Maven
-artifact) and call `rustls_platform_verifier::android::init_hosted` before the first request.
+artifact) and call `rustls_platform_verifier::android::init_with_env` before the first request (as
+[moqui-mobile](../moqui-mobile/README.md) does).
 
 Each installed client is a device with its own login key. The host keeps the key and adds it to every request as the
 `login_key` header; the page never holds it.
@@ -65,6 +66,6 @@ The threads are plain threads with blocking requests. The patterns follow `moqui
 
 ```sh
 cargo test -p moqui-client
-scripts/check-android.sh   # clippy for aarch64-linux-android: rustup target add aarch64-linux-android, and an NDK
+scripts/check-android.sh   # clippy on this crate and moqui-mobile for both Android targets (an NDK, ~/Android/Sdk)
                            # (ANDROID_NDK_HOME, an SDK's, or brew install --cask android-ndk)
 ```
