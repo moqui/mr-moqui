@@ -417,15 +417,17 @@ shared device's hint of what is kept, and the sign-out's list of what is unsent.
 
 ## Tests
 
+All of these are framework tests in the regression suite, run while working on the client and before a commit
+([the two suites](../Build-Test.md#the-two-suites)).
+
 - `cargo test -p moqui-client`: accounts, keys, sign-in, proxy, sockets, the store and the conf;
   `scripts/check-android.sh` for the Android build.
 - `cd crates/moqui-desktop && CARGO_TARGET_DIR=../../target cargo test`: the schemes, offline answers, pushes, the
   mirror, modes, the outbox and flusher, windows.
 - `moqui test-client webroot --offline`: MoquiLib's drafts and connection, WebrootChat's host outbox and import.
-- `moqui test-client basic-comms --offline`: the bundled screens in the shell (`ShellComms`, `ShellCalls`), and
-  MD5's states in them (`ShellSync`: a lost answer then a retry, a duplicate push, a reconnect after a feed reset, a
-  thread change's and a send's conflict with the copy opened, a refusal with Retry and Discard, a revoked key
-  mid-queue).
+- `moqui test-client basic-comms --offline`: MD5's states in the shell (`ShellSync`: a lost answer then a retry, a
+  duplicate push, a reconnect after a feed reset, a thread change's and a send's conflict with the copy opened, a
+  refusal with Retry and Discard, a revoked key mid-queue).
 - `moqui test basic-comms`: Compose by `clientRef` (`BasicCommsComposeRef`); the mail change cursor, requests once by
   `clientRef`, conflicts, chunked uploads and their clean-up (`BasicCommsSync`); `cargo test -p moqui-mail`: a sync's
   arrivals, flag scan and expunges on the change cursor.

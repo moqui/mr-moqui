@@ -26,8 +26,11 @@ connection", the gaps of what is kept) shows only there
 ([docs/ui/Desktop-Client.md](../../../docs/ui/Desktop-Client.md#bundled-screens-and-app-windows)). After a change to one of them:
 `UPDATE_GOLDEN=1 cargo test -p moqui-core --lib bundled_screens_are_precompiled`.
 
-Test: `./moq test basic-comms`; the bundled screens in the page (no server) `./moq test-client basic-comms --offline`; the browser specs `./moq test-client basic-comms --serve` with a binary that has the
-`rtc` feature (calls: [docs/interfaces/WebRTC.md](../../../docs/interfaces/WebRTC.md); voicemail, the Voicemail tab, Calls/Voicemail and Settings/Phone:
+Test ([the two suites](../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test basic-comms`,
+the shell's sync states (no server) `./moq test-client basic-comms --offline` and the crypto walk
+`./moq test-client basic-comms --serve`; the acceptance suite, the call and encrypted chat walks
+(`acceptance/client/`), is `./moq accept basic-comms` with a binary that has the `rtc` feature
+(calls: [docs/interfaces/WebRTC.md](../../../docs/interfaces/WebRTC.md); voicemail, the Voicemail tab, Calls/Voicemail and Settings/Phone:
 [docs/interfaces/Voicemail.md](../../../docs/interfaces/Voicemail.md); the Dialer and Settings/Call handling:
 [docs/interfaces/SIP.md](../../../docs/interfaces/SIP.md#call-handling); Calls/Queues and transfer in the call:
 [SIP, Queues](../../../docs/interfaces/SIP.md#queues); recordings, Calls/Recordings:

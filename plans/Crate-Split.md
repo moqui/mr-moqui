@@ -214,16 +214,16 @@ Verification of a phase:
 - `cargo lint`, `cargo lint-min` and `scripts/check-packages.sh` (Clippy on every package's feature set);
 - `cargo test -p <new crate>`, `cargo test -p moqui-core`, `cargo test -p moqui-host --test it`, `cargo test -p
   moqui-llm`; or `cargo test --workspace` (about 80 s with its build since e98c1c8e);
-- `./moq build`, then `./moq test-all` (every suite but the slow ones; never `--slow` without the user's permission,
-  AGENTS.md) or, for a narrower check, `./moq test <component>`;
+- `./moq build`, then `./moq test-framework` (the framework's regression suite; the acceptance suite only when the
+  user asks, [Build-Test](../docs/Build-Test.md#the-two-suites)) or, for a narrower check, `./moq test <component>`;
 - the wasm browser build when core's features or the entity facade change;
 - `cargo tree -p moqui-core -e normal` to confirm the dependencies that left;
 - the touch set below, before and after, in the commit message and the table.
 
 Test infrastructure since Phase 2: a host integration test is a module of `crates/moqui-host/
 tests/it`, not a new file under `tests/`; one that starts a server begins with `if !crate::common::own_process() {
-return; }` (78b74633); a test over about 15 seconds is for special cases and one over 30 seconds is marked slow
-(docs/Build-Test.md "Slow tests"); the dev profile keeps dependency debug info to line tables and splits the rest out
+return; }` (78b74633); a test over 15 seconds is an acceptance test, `#[ignore]` or opt-in (docs/Build-Test.md
+"The two suites"); the dev profile keeps dependency debug info to line tables and splits the rest out
 of the binaries (e98c1c8e); the `cargo test --no-run` row below was measured again under it for Phase 3.
 
 ## Measuring

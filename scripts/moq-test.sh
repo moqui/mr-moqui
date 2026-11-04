@@ -448,20 +448,39 @@ else
     check "opensearch-download needs force" 1 'add --force' -- "$M" opensearch-download
 fi
 check "help chromium-download" 0 'AppArmor profile' -- "$M" help chromium-download
-check "help test-all" 0 'every test suite' -- "$M" help test-all
-check "test-all dry run" 0 'moqui test-client --serve$' -- dry "$M" test-all
+check "help test-all" 0 'whole regression suite' -- "$M" help test-all
 check "test-all dry run offline webroot" 0 'moqui test-client webroot --offline$' -- dry "$M" test-all
 check "test-all dry run offline dev-aide" 0 'moqui test-client runtime/dev-component/dev-aide --offline$' -- dry "$M" test-all
 check "test-all dry run turns the demo component on" 0 'moq test --nobuild -D demo_disabled=false demo$' -- dry "$M" test-all
+check "test-all dry run runs cargo test" 0 'cargo test --workspace$' -- dry "$M" test-all
 lacks "test-all dry run has no node suite" 'node --test' -- dry "$M" test-all
-lacks "test-all dry run runs no slow test" 'gate3|client_browser|tui_screens|test-slow|--slow' -- dry "$M" test-all
-check "test-all slow runs the opt-in host tests" 0 'cargo test -p moqui-host --test gate3 --test client_browser --test tui_screens$' -- dry "$M" test-all --slow
-check "test-all slow" 0 'cargo test-slow' -- dry "$M" test-all --slow
-check "test-all slow runs gate3_browser" 0 'cargo test -p moqui-host --test gate3_browser$' -- dry "$M" test-all --slow
-check "test-all slow passes --slow to moqui test" 0 'moq test --slow$' -- dry "$M" test-all --slow
-check "test-all slow passes --slow to test-client" 0 'moq test-client --nobuild -- --serve --slow$' -- dry "$M" test-all --slow
-check "test-all passes the package on" 0 'moq test-client --debug --nobuild -- --serve' -- dry "$M" test-all --debug
+lacks "test-all dry run runs no acceptance test" 'gate3|client_browser|tui_screens|test-slow|--slow|--acceptance' -- dry "$M" test-all
+check "test-all has no --slow" 1 'unknown option --slow' -- "$M" test-all --slow
+check "test-all passes the package on" 0 'moq test-client --debug --nobuild -- webroot --offline' -- dry "$M" test-all --debug
 check "test-all unknown option" 1 'unknown option --fast' -- "$M" test-all --fast
+check "help test-apps" 0 'runtime/component' -- "$M" help test-apps
+check "help test-framework" 0 'base-component and dev-component' -- "$M" help test-framework
+check "test-apps with no app component" 0 'No application component' -- dry "$M" test-apps
+lacks "test-apps runs no cargo" 'cargo|moq-test.sh' -- dry "$M" test-apps
+lacks "test-framework runs no app suite" '\(apps\)' -- dry "$M" test-framework
+# an app component and a framework component with specs, a served client suite and an offline one
+mkdir -p "$R/runtime/component/app-x/test/client" "$R/runtime/base-component/fw-x/test/client" \
+    "$R/runtime/component/app-y/test/client"
+printf '<component name="app-x"/>\n' >"$R/runtime/component/app-x/component.xml"
+printf '<component name="app-y"/>\n' >"$R/runtime/component/app-y/component.xml"
+printf '<component name="fw-x"/>\n' >"$R/runtime/base-component/fw-x/component.xml"
+: >"$R/runtime/component/app-x/test/Rule.spec.js"
+: >"$R/runtime/component/app-x/test/client/Walk.spec.js"
+printf 'suite(["Walk"], { server: { components: ["app-x"] } })\n' >"$R/runtime/component/app-x/test/client/suite.js"
+: >"$R/runtime/component/app-y/test/client/Page.spec.js"
+printf '// No server: offline\nsuite(["Page"])\n' >"$R/runtime/component/app-y/test/client/suite.js"
+: >"$R/runtime/base-component/fw-x/test/Fw.spec.js"
+check "test-apps runs the app specs" 0 'moq test --nobuild app-x$' -- dry "$M" test-apps
+check "test-apps serves the app client specs" 0 'moq test-client --nobuild -- --serve app-x$' -- dry "$M" test-apps
+check "test-framework runs the framework specs" 0 'moq test fw-x$' -- dry "$M" test-framework
+lacks "test-framework leaves the app specs out" 'app-x' -- dry "$M" test-framework
+check "test-all runs both" 0 'moq test --nobuild app-x$' -- dry "$M" test-all
+rm -rf "$R/runtime/component/app-x" "$R/runtime/component/app-y" "$R/runtime/base-component/fw-x"
 check "test still resolves to test" 0 'moqui test$' -- dry "$M" test
 check "chromium-download unknown option" 1 'unknown option --full' -- "$M" chromium-download --full
 check "chromium-download bad revision" 1 'snapshot number' -- "$M" chromium-download 12x

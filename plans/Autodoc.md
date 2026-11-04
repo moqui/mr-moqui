@@ -232,8 +232,9 @@ passes its site components' directories; the CLI takes `--templates <dir>`.
 
 ## Tests
 
-The tests named here are new. None are slow, all run on small fixtures, and the existing Chromium (gate3) tests are
-not run without your permission.
+The tests named here are new. They are regression tests on small fixtures, run while working and by
+`./moq test-framework` before a commit; the Chromium (gate3) tests are acceptance tests, run only when asked
+([Build-Test](../docs/Build-Test.md#the-two-suites)).
 
 - **`cargo test -p moqui-devkit autodoc`:**
   - `mermaid.rs` goldens (each diagram kind, escaping, caps, collisions);
@@ -317,4 +318,5 @@ Still to do:
 - **The Dev package time** of a full export.
 - **A look in a browser:** the Docs page in light, dark and at 390 px, the diagrams of a large package (`mantle.order`,
   about 60 entities, drawn with key fields), and the copy button.
-- **A Chromium check** (gate3, slow, run only with permission) that a Doc tab draws its diagrams.
+- **A Chromium check** that a Doc tab draws its diagrams: an acceptance test in `gate3_browser.rs`, run by
+  `./moq accept-all`.

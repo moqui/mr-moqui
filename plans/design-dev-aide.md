@@ -1850,8 +1850,9 @@ the `.qvue` buffer, not an unsaved sibling XML.
   refused an upstream write and a destructive DDL, allowed an `extend-entity`), saves with a stale base, audit rows,
   git operations on scratch repositories with git isolated from the desktop (author and committer identities), Try in
   sim, Save as spec, a Picklist's seed rows.
-- **Chromium smokes** in the `gate3_browser.rs` style: per phase, as §18 names them, with light, dark and 390 px
-  screenshots for the reading views.
+- **Chromium smokes** in the `gate3_browser.rs` style, as §18 names them: acceptance tests
+  ([Build-Test](../docs/Build-Test.md#the-two-suites)), run when one is added or changed and by `./moq accept-all`;
+  no screenshots.
 - **Agents**: the evaluation tasks of P4 on recordings (`moqui test dev-aide --agents`); the same with a live model
   (`--llm-profile`, a key from the environment; nightly and before P4 closes; scored by `moqui check` clean, the spec passed
   and the diff confined to the expected files, against a pass rate; passing runs recorded into the replay set), since

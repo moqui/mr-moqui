@@ -5,9 +5,10 @@ file is plain ES2020 and is served as it is. About 8 KB gzipped. `ScreenHtml.js`
 writes the markup; this file binds the data attributes below. A page without JavaScript still works: forms post,
 links follow, and a select shows its current option.
 
-Tests: `moqui test-client webroot --offline` (`test/client/*.spec.js`: `moqui-html.spec.js` for the pure functions, the
-others for dialogs, keys, downloads and the saved-find popup). A full screen is also in the Gate 3 Chromium smoke
-(`crates/moqui-host/tests/gate3_browser.rs`).
+Tests: the regression suite is `moqui test-client webroot --offline` (`test/client/*.spec.js`: `moqui-html.spec.js` for
+the pure functions, the others for dialogs, keys, downloads and the saved-find popup). A full screen is also in the
+Gate 3 Chromium smoke (`crates/moqui-host/tests/gate3_browser.rs`), an acceptance test that `./moq accept-all` runs
+([the two suites](../../../../../../docs/Build-Test.md#the-two-suites)).
 
 ## Attributes
 
@@ -87,8 +88,8 @@ the shell in app windows (`elsewhere`), and the bundled shell runs on the runtim
 after it (`UPDATE_GOLDEN=1 cargo test -p moqui-core --lib call_components_are_precompiled`). All of this is
 [Qvt-Client, In the desktop app](../../../../../../docs/ui/Qvt-Client.md#in-the-desktop-app).
 
-Tests: `moqui test-client webroot --offline` runs the page specs under `test/client/`; what needs a real browser is the
-Gate 3 Chromium smoke (`crates/moqui-host/tests/gate3_browser.rs`).
+Tests: `moqui test-client webroot --offline` runs the page specs under `test/client/`, in the regression suite; what
+needs a real browser is the Gate 3 Chromium smoke (`crates/moqui-host/tests/gate3_browser.rs`), in the acceptance suite.
 
 Sections of the reference: Page shell and settings · Loading a screen · The components the macros write · Shell data
 and providers · Preferences (and a screen's handheld density) · Appearance · Record panels, rich text, avatars and record

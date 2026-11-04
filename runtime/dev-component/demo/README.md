@@ -57,5 +57,5 @@ Assist, and the browser terminal (`/termws`, the same screens checked as the use
 ./moq test -D demo_disabled=false demo
 ```
 
-`test/Demo.spec.js` renders each stubbed screen in qvt and tui, checks the security rows and what John Doe may still do,
-calls each guarded account service, and checks that WebDAV and SFTP are off. `./moq test-all` runs it.
+`test/Demo.spec.js` checks the security rows and what John Doe may still do, calls each guarded account service, and
+checks that WebDAV and SFTP are off. It is in the regression suite, which `./moq test-framework` runs.

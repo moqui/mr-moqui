@@ -259,8 +259,8 @@ IronStone BOSS is the worked example: `runtime/component/mr-boss/screen/Comms.xm
 
 ## Tests
 
-`./moq test basic-comms`: every screen in qvt and tui (the System Voice screens too), a bridged room and System, Chat
-Bridges (`BasicCommsBridges`), the mail settings and Inbox of a
+`./moq test basic-comms`: the user search, the System Voice screens and no call into Mantle or an app component
+(`BasicComms`), a bridged room and System, Chat Bridges (`BasicCommsBridges`), the mail settings and Inbox of a
 user with no party, Compose retried by `clientRef` (`BasicCommsComposeRef`), the change cursor, requests once by `clientRef`, conflicts and chunked uploads (`BasicCommsSync`), the drive picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the
 provider hooks and the app's parts through both mounts, Text a number (`BasicCommsTexts`). `cargo test -p moqui-channels`:
 texts and MMS against a fake Telnyx ([SMS, Tests](../interfaces/SMS.md#tests)). `./moq test framework --spec Voice`: caller ID, international

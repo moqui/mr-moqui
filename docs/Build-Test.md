@@ -425,7 +425,11 @@ the tasks, and `./moq help <task>` describes one. Task names match by partial pa
 ./moq load                     # all data types; ./moq load seed seed-initial install
 ./moq test mr-mantle           # run a component's JavaScript specs; extra args go to moqui test (--spec, --db snapshot)
 ./moq test-client framework    # a component's test/client specs against the running server (docs/dev/Client-Testing.md)
-./moq test-all                 # every suite: cargo, moq, moqui test, test-client --serve; no slow test
+./moq test-apps                # the application tests: the specs of runtime/component, no cargo
+./moq test-framework           # the framework tests: cargo, moq, the specs of base-component and dev-component
+./moq test-all                 # the whole regression suite: test-framework, then test-apps
+./moq accept mr-boss           # a component's acceptance suite (acceptance/), only when asked
+./moq accept-all               # every acceptance test, with the Rust opt-in and ignored tests
 ./moq save-db before-upgrade   # and later: ./moq reload-save before-upgrade
 ./moq archive                  # mr-moqui-YYYYMMDD.zip (or --tgz): runtime/ without logs, with the binary in it
 ./moq git-status               # or any git command in every repo: ./moq git pull
@@ -444,7 +448,7 @@ cargo lint-min                         # clippy on the host with no features
 scripts/check-packages.sh              # clippy on each package's feature set
 
 # The Gate 3 tests, left out of the default run (embedded Postgres per test, Chromium: ./moq chromium-download, or
-# moqui_chromium_path, or an installed Chromium or Chrome); gate3_browser is slow (below)
+# moqui_chromium_path, or an installed Chromium or Chrome): acceptance tests of the framework, run by ./moq accept-all
 cargo test -p moqui-host --test gate3
 ```
 
@@ -454,37 +458,66 @@ cargo test -p moqui-host --test gate3
 runs the scripted TUI screens, which `cargo test` leaves out. A gate that only one package sees still has to compile
 there.
 
-`./moq test-all` runs every suite in turn and lists which passed: `cargo test`, `scripts/moq-test.sh` (the tests of
-`./moq`), `moqui test` for every component, the demo component's specs (it is off by default, so the suite turns it on),
-and the client specs. `./moq help test-all` lists them. It runs no slow test; `./moq test-all --slow` adds them, and the
-opt-in host tests (Gate 3, the client browser and TUI screen tests), which run in under a minute but build their own
-feature set first, minutes on every run.
+`./moq test-framework` runs the framework's suites in turn and lists which passed: `cargo test`,
+`scripts/moq-test.sh` (the tests of `./moq`), `moqui test` for the components of `runtime/base-component` and
+`runtime/dev-component`, the demo component's specs (it is off by default, so the suite turns it on), the offline client
+specs of webroot and dev-aide, and the served client specs of those components. `./moq test-apps` runs `moqui test` and
+`moqui test-client --serve` over the components of `runtime/component` only, with no cargo build or test; it builds the
+binary only when it is missing. `./moq test-all` is both in turn. `./moq help <task>` lists each one's suites.
 
-### Slow tests
+### The two suites
 
-A test over about 15 seconds is slow, and is only for a special case: a specific scenario that is checked when its
-result is needed, not code coverage or the quality of the code at the unit level. Write a test to run in well under
-15 seconds. One over 30 seconds is marked slow, and no command runs a marked test unless it is given `--slow`, also
-when the test is named:
+| | Regression suite | Acceptance suite |
+|---|---|---|
+| Purpose | Catch a regression while developing: does what I changed break a rule? | Validate the system: complete scenarios, access and isolation walks, one screen sweep per app and mode, browser walks, load and media |
+| When | While working (the specs of what you touch) and before every commit | On a schedule, before a release, and when asked |
+| Where | `test/**/*.spec.js`, `test/client/**/*.spec.js` | `acceptance/**/*.spec.js`, `acceptance/client/**/*.spec.js` |
+| Command | `moqui test`, `moqui test-client`, `./moq test-apps`, `./moq test-framework`, `./moq test-all` | `./moq accept [component...]` (`moqui test --acceptance`, `moqui test-client --acceptance`), `./moq accept-all` |
+| Failure | Blocks the commit | Reported; a test that fails on two runs in a row is fixed or deleted |
 
-- a spec or feature: `slow: true` on `spec({...})` or `feature(name, {...})`. `moqui test` and `moqui test-client` list
-  it as ignored (`slow: run with --slow`) and run it only with `--slow`; `test-client --serve` passes `--slow` to the
-  server's own specs, and starts no server for a component whose specs are all slow;
-- a Rust test: `#[ignore = "slow: ..."]`, run by `cargo test-slow`;
-- an opt-in host test binary (`gate3`, `gate3_browser`, `client_browser`, `tui_screens`), run by name.
+A spec is in one suite or the other by the directory it is in. No option of the regression commands pulls in an
+acceptance test. A regression test checks one rule or a fixed bug: a service's result and refusals, a posting, a state
+change, the one render of a screen with logic of its own, one golden-path walk per app. An acceptance test checks a
+scenario or the system: a plan's "usable when" walk (server side or in a browser), an access or isolation walk over
+every route and group, a sweep of every screen of an app in a mode, a browser walk of a flow, a load or media test.
+Acceptance tests can be deleted freely, since nothing depends on them.
 
-`./moq test-all --slow` runs all of them. An agent never runs a slow test without the user's permission (AGENTS.md).
+- **Discovery.** `moqui test` and `moqui test-client` never read `acceptance/`. With `--acceptance` they run only the
+  acceptance specs (`acceptance/*.spec.js` and `acceptance/client/*.spec.js`, with `acceptance/suite.js` and
+  `acceptance/client/suite.js` giving the order and the server). `--spec` and `dependsOn` resolve across both trees, so
+  an acceptance spec can depend on a regression fixture. A spec's name is unique across both trees of a component.
+- **Fixtures.** Acceptance fixtures live under `acceptance/`, never in `test/`. Helper libraries a spec loads by
+  `component://<component>/test/...` stay in `test/`, for both suites.
+- **Rust.** Rust has no such directory: its acceptance tests are `#[ignore = "..."]` (`cargo test-slow`) or opt-in
+  `[[test]]`s (`gate3`, `gate3_browser`, `client_browser`, `tui_screens`). `./moq accept-all` runs them, and no
+  regression command does.
+- **Who runs it.** `./moq accept-all` on a schedule (nightly, or weekly while it is long) and before a release, with
+  `--junit` for a dated summary. An agent runs an acceptance test only when the user asks, or when it adds or changes
+  one (then that test, and its component's acceptance suite), never because code it uses changed (AGENTS.md).
 
-A slow test is banned from normal runs, and every slow test is a candidate for deletion: delete one rather than mark it
-when its scenario does not need checking on its own. `moqui test` and `moqui test-client` name, at the end of a run, any
-spec not marked slow that took over 30 seconds.
+### The regression budget
+
+Each component declares its regression budget, in seconds of feature time (the serial sum, so parallel workers do not
+hide growth), in `test/budget`, beside the specs it limits:
+
+```
+server = 195
+client = 30
+```
+
+`server` limits `moqui test`, `client` `moqui test-client`. A run warns when a component's feature time goes over its
+budget, and fails over 1.5 times it, or when one spec takes over 15 seconds. The margin keeps a slower machine from
+failing a run; the warning keeps the growth visible. A new app adds its own budget. A budget is raised only with the
+user's agreement, like any other performance regression; cut duplicates or move scenarios to acceptance instead.
 
 ### Rendering screens in tests
 
-- No test walks every screen of an app or of all apps, or every screen in every render mode. These have been deleted
-  before and keep coming back; do not add one. Rendering as such is the framework's (its goldens and `moqui lint
+These rules are the regression suite's. A sweep has one place, `acceptance/`, and one per app per mode.
+
+- No regression test walks every screen of an app or of all apps, or every screen in every render mode. These have been
+  deleted before and keep coming back; do not add one. Rendering as such is the framework's (its goldens and `moqui lint
   --screens`).
-- Across the whole suite a screen is rendered at most once in each render mode, and that one render carries every check
+- Across the regression suite a screen is rendered at most once in each render mode, and that one render carries every check
   of the screen (its content, its access, a value that must not show).
 - A screen is rendered in more than one mode only where its modes differ: a screen with its own qvt or tui template
   (`.qvue`, `.tui.json`, or a `render-mode` section). Say in the check which template it covers.
@@ -527,7 +560,7 @@ binary.
 |---|---|
 | `--spec Name[,Name]` | The specs to run, by file name without `.spec.js`, with the specs their `dependsOn` names, in suite order. A `dependsOn` name the spec's own component lacks is found in the run's other components |
 | `--feature text` | Only the features whose names contain the text |
-| `--slow` | Also the specs and features marked `slow: true`, which a run lists as ignored without it, also when named ([Slow tests](#slow-tests)) |
+| `--acceptance` | The acceptance specs (`acceptance/`) in place of the regression specs; `--spec` and `dependsOn` resolve across both ([The two suites](#the-two-suites)) |
 | `--db fresh` | The default: load every data type into a scratch runtime, removed at the end unless `--keep`. Needs `embedded-postgres` |
 | `--db snapshot` | As fresh, but save the load under `runtime/save` and restore it while the components the run loads (which the conf and the instance purpose decide: a dev component loads only on a dev instance), their entity and data files and the binary are unchanged |
 | `--db existing` | The runtime's embedded database as it is. The specs change its data |
@@ -542,7 +575,7 @@ The console has a line per feature, and the failures in full at the end. Any fai
 
 ### Files and order
 
-A spec is `<component>/test/<Name>.spec.js`, or in a subdirectory of `test/` to group a busy component's specs (mr-mantle
+A regression spec is `<component>/test/<Name>.spec.js`, and an acceptance spec `<component>/acceptance/<Name>.spec.js`, or in a subdirectory of `test/` to group a busy component's specs (mr-mantle
 by service directory, `test/order/OrderToCashBasicFlow.spec.js`; mr-boss by screen directory). Its name is the file
 name, wherever it is, so it must be unique in the component. `test/suite.js`, `suite(["SpecA", "SpecB"])`, gives the
 order; the other spec files run after it, by name. Each spec runs in its own execution context, on the one
@@ -608,8 +641,6 @@ Once per file:
 - `tempSequences: { start, banks }`: sequenced ids from `start`, with the bank size for each entity, set before
   `setupSpec` and reset after `cleanupSpec`.
 - `allowMessageErrors`, and `timeout` in seconds per block.
-- `slow: true`: the spec runs over 30 seconds; a run lists its features as ignored and does not load it unless given
-  `--slow` ([Slow tests](#slow-tests)).
 - `setupSpec`, `cleanupSpec`, `setup` and `cleanup`, as in Spock. Cleanups always run. These get no `ctx`.
 
 #### `feature(name, {...})`
@@ -621,7 +652,6 @@ A statement at the top level of the file; features run in the order they are wri
 - `where`: an array of row objects, or a function that returns one. Each row is its own case, and `#field` in the name is
   the row's value.
 - `ignore: "reason"`, `timeout`, `allowMessageErrors`.
-- `slow: true`: the feature runs over 30 seconds; it is ignored unless the run is given `--slow`.
 - `requires: ["git"]`: build features the feature needs, as on `spec()`; in a binary without one it is reported as
   skipped. A `where` row may have its own `requires`, for a row that needs a feature the others do not.
 - A case that does not say `requires`, and fails only because the binary reports that a tool is not built in

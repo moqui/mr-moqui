@@ -342,7 +342,6 @@ A0 covers the XSD, parser, screen-extend merge, serialization and both renderers
     `runtime/base-component/basic-comms/test`, with users-only data.
   - A new `CommsExtension.spec.js` proves each provider, action and panel. It covers two providers for one hook, a
     failing provider and a denied user.
-  - The `AppStructure`-style render covers every BasicComms screen in qvt (with its qvue component) and in tui.
 - **BOSS specs.**
   - InboxMailboxes, Consent, CommsModeration, Chatter and CommsHome stay in BOSS.
   - Inbox and Compose keep a BOSS spec for the Mantle parts.
@@ -1321,10 +1320,10 @@ or a Projects stand-up, by `chatRoomId`. Embedding never bypasses call or room a
 - **Browser and interoperability.**
   - Fake-media Chromium proves the application flow.
   - Independent clients and provider-approved live checks prove the selected interop and deployment cases.
-  - Browser, real-provider, interop and other slow runs need explicit permission for the specific scenario, when its
-    result is needed.
-  - Over about 15 seconds is slow, and over 30 seconds is marked ([Build-Test](../docs/Build-Test.md#slow-tests)).
-    Never pass `--slow` without that permission.
+  - Browser, real-provider, interop and other long runs are acceptance tests
+    ([Build-Test](../docs/Build-Test.md#the-two-suites)). An agent runs them only when the user asks, or when it adds
+    or changes one: then that test and its component's acceptance suite.
+  - A regression spec over 15 seconds fails the run; it moves to the acceptance suite or is deleted.
   - Record versions, topology, results and the cases left unverified.
 - **Rollout.**
   - Pilot each connector and listener with bounded users and rooms, with the switches off elsewhere.

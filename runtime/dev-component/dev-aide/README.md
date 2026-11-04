@@ -44,9 +44,10 @@ Who may use it (`data/DevAideSecurityData.xml`):
 Its Rust crate is linked into the Dev and Debug packages (the `devtools` feature). In another package the screens load
 and the services say they are not built in.
 
-- **Tests:** `./moq test dev-aide` (the screens, the docs), `cargo test -p dev-aide` (confinement, the git parsers),
+- **Tests** ([the two suites](../../../docs/Build-Test.md#the-two-suites)): the regression suite is `./moq test
+  dev-aide` (the screens, the docs), `cargo test -p dev-aide` (confinement, the git parsers),
   `moqui test-client runtime/dev-component/dev-aide --offline` (the client), `cargo test -p moqui-host --test it devaide` (saves, the lock and tiers, git and Publish on scratch
-  repositories, an entity save's relink, a docs export), and `cargo test -p moqui-host --test gate3_browser the_workspace` and
-  `the_entity_modeler`, `the_screen_builder` and `the_service_writer` (Chromium). `test/vectors/` are the visual views' operations, which the page tests make and the
+  repositories, an entity save's relink, a docs export). The Chromium smokes are acceptance tests, run by
+  `./moq accept-all`: `cargo test -p moqui-host --test gate3_browser the_workspace` and
+  `the_entity_modeler`, `the_screen_builder` and `the_service_writer`. `test/vectors/` are the visual views' operations, which the page tests make and the
   crate's tests apply (`MOQUI_REGENERATE_VECTORS=1 cargo test -p dev-aide` writes their outlines and texts again).
-- **Screenshots:** `MOQUI_DEV_SHOTS=<dir>` writes them in light, dark and 390 px.

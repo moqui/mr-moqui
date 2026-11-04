@@ -753,7 +753,8 @@ run re-attaches and ends with its text once; the drawer on a `webapp_qvt_static_
 saves; two tabs, where only the sender follows, the other shows "Following in another tab" and a chip, an approval shows in
 both and executes from the first while the second sees it executed; the user's own navigation while the agent's command runs
 wins (the agent's navigation is a chip); and Edit in screen from the tab that does not follow, after it moved on its own,
-follows there. With `MOQUI_SHELL_SHOTS=<dir>` they save `assist-<thread|approval|elsewhere|handoff>-<light|dark>-<1280|390>.png`.
+follows there. They are acceptance tests of the framework, run by `./moq accept-all`
+([the two suites](../Build-Test.md#the-two-suites)).
 
 **The extras of 13.14** (the calls are "The calls of 13.14").
 
@@ -914,9 +915,9 @@ the canvas is hidden), a canvas Button `[data-assist-canvas-button=<label>]`, a 
 `[data-assist-canvas-form]`. The smoke `the_canvas_shows_over_the_page_and_a_canvas_mutation_yields_a_card_in_chromium` (the
 `assist` module of `gate3_browser.rs`, on the scripted fake): `skill`, then `write_ui` shows a canvas whose Query reads a
 screen list through the proxy; typing on it and clicking Save runs its Mutation with no card; the agent's `write_ui` `run`
-is a card, and approving it writes; Back to the page shows the screen (`MOQUI_SHELL_SHOTS` saves `assist-canvas-*` and
-`assist-canvas-card-*`). `crates/moqui-host/tests/it/assist.rs` `the_canvas_over_http_on_postgres` covers the calls over
-HTTP; `WebrootAssistCanvas.test.js` the library spec golden, lang-core's parses, the state reconciliation and the drawer's
+is a card, and approving it writes; Back to the page shows the screen.
+`crates/moqui-host/tests/it/assist.rs` `the_canvas_over_http_on_postgres` covers the calls over HTTP;
+`WebrootAssistCanvas.test.js` the library spec golden, lang-core's parses, the state reconciliation and the drawer's
 canvas state; `crates/moqui-llm/src/ui/` the checks, the sections, the merge, the stream and the dialects. The
 evaluation task "chart fallback" (`tools/test/agent/assist.agent.js`) passes on its hand-authored recording in two
 `write_ui` calls.
@@ -1073,8 +1074,8 @@ another site's image, this site's image outside the static paths and a form post
 bridge answers, a transition that writes is refused by the proxy (403) and the paths that are not `/apps` never leave the
 page; a submit on mount is ignored, and a message posted to the page window is nothing; a real click in the frame shows
 the confirm with what it saves, a scripted click on its Save arms nothing, the user's click saves; a component that
-navigates its frame is closed and recorded as a `vue-sfc#sandbox` problem (`MOQUI_SHELL_SHOTS` saves `assist-sfc-*` and
-`assist-sfc-killed-*`). `WebrootAssistCanvas.test.js` covers the validator, the blocks and actions, the read paths,
+navigates its frame is closed and recorded as a `vue-sfc#sandbox` problem.
+`WebrootAssistCanvas.test.js` covers the validator, the blocks and actions, the read paths,
 the link targets, the watchdog, the submit gate and the read limits; `crates/moqui-llm/src/ui/vue_sfc_tests.rs` the
 checks and their sections, the merge, the actions' request, the skill, and the policy; `crates/moqui-host/src/llm/
 sandbox.rs` the route's headers.

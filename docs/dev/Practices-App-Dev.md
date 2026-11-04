@@ -71,6 +71,8 @@ Each component is its own git repository. Commit in each repository that a chang
 | `./moq run` | Start the server on the dev conf. |
 | `./moq test <component> [--spec S] [--feature F]` | Server specs on a fresh database ([Testing](../Build-Test.md#component-specs)). |
 | `./moq test-client <component> --serve -- --spec S` | Client specs against a started server ([Client-Testing](Client-Testing.md)). |
+| `./moq test-apps` | The regression suite of every app component, before a commit ([The two suites](../Build-Test.md#the-two-suites)). |
+| `./moq accept <component> [--spec S]` | The acceptance suite (`acceptance/`), only when asked or when you add or change an acceptance test. |
 | `target/release/moqui lint --screens [report-file]` | Screen expression lint. The argument is the report's **output** file, not a screen to check: passing a screen path overwrites that screen. |
 | `moqui lint [service-file]`, `moqui lint --groovy <dir>` | Service expression lint; leftover Groovy. |
 | `moqui tui`, `moqui tui --server` | The terminal UI, to see a screen's `tui` rendering. |
@@ -109,8 +111,8 @@ Each component is its own git repository. Commit in each repository that a chang
   gateway interfaces; invoices print over `get#InvoicePrintInfo` and send through an `EmailTemplate`. Accounting P4–P5
   first rebuilt each of these beside Mantle, with its own entities and guards, and the review removed the copies.
 - **Business rules lean to Mantle.** A rule about the records (validation, effective dating, rounding, policy, totals)
-  is a Mantle service in the package of the records it changes, with its own spec, passing under
-  `./moq test mr-mantle` alone. The app keeps its access check, its screen context and its settings forms. Products'
+  is a Mantle service in the package of the records it changes, with its own rule test in Mantle, passing under
+  `./moq test mr-mantle` alone; an app's specs do not test it again. The app keeps its access check, its screen context and its settings forms. Products'
   review moved catalog settings writers, bulk price changes, stock totals and cost subtotals from BOSS scripts into
   Mantle (`CatalogSettings.js`, `PriceChanges.js`, `get#ProductStockTotals`).
 - **No pass-throughs.** A BOSS service that only renames a Mantle service adds nothing. A screen calls the Mantle
@@ -362,15 +364,22 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 
 ## 7. Tests
 
+There are two suites ([The two suites](../Build-Test.md#the-two-suites), the
+[testing skill](../../.agents/skills/testing/SKILL.md)): the **regression suite** (`test/`), small rule tests run while
+working and before every commit, and the **acceptance suite** (`acceptance/`), complete scenarios run on a schedule,
+before a release or when asked. Say which suite a new test goes in, and why. Regression tests check rules, not pages:
+write one for a business rule you add or change (its result and its refusals) and for a bug you fix.
+
 ### Server specs (`test/*.spec.js`)
 
 - Each expression statement **directly** in `then` or `expect` is a condition. A comparison inside an `if`, a loop or
   a helper function is not checked. Products' first shots specs had their page checks in `if` blocks, and those
   checks never ran (F46). Use `assert(condition, message)` for a nested check, or compute a problem string and compare
   it at the top level.
-- **No full walks.** No spec walks every screen of an app or of all apps, or renders every screen in every mode; these
+- **No full walks.** No regression spec walks every screen of an app or of all apps, or renders every screen in every mode; these
   have been deleted before and keep coming back. Rendering as such is the framework's (its goldens and `moqui lint
-  --screens`). A screen is rendered at most once in each mode across the suite, and that one render carries all of its
+  --screens`); a sweep is an acceptance test, one per app per mode. A screen is rendered at most once in each mode
+  across the regression suite, and that one render carries all of its
   checks (content, access, a value that must not show). Render a screen in a second mode only where the modes differ,
   that is, where it has its own qvt or tui template (`.qvue`, `.tui.json`, a `render-mode` section); say which
   template the check covers. A screen whose content depends on data needs a check text present whatever the data.
@@ -378,8 +387,10 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
   error messages passes a broken page. Check the output for `Error rendering` and `Exception in render`, and check
   a text the page shows. List rows are in the html render; a qvt render needs `withStaticData()` and the app root with
   `lastStandalone: "-2"`, and a chip that has only qvt and tui texts is in neither html nor print.
-- Every new service with an access rule gets a spec with a user who has the permission and one who lacks it
-  (Products' `ProductsAccess`). **The negative case must fail for the permission:** use the same parameters as a
+- **Access is checked per rule, not per service or route.** An access rule gets one holder and one non-holder on one
+  verb of the rule, and another organization's record refused, in the app's one access spec (about seven features,
+  with authorization on; no `where:` doubling of authorization on and off). An access or isolation walk over every
+  route and group is an acceptance test. **The negative case must fail for the permission:** use the same parameters as a
   positive case that succeeds, or compare a reason code. A helper that counts any error as a refusal passes on a
   validation error (Accounting's `store#DraftEntry` without its fields was "refused" for everyone).
 - A spec of a control's absence also checks its presence for a user who has it: Accounting checked that readers do
@@ -389,13 +400,12 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 - A spec line that begins with `(` or `[` continues the line before it (no semicolons): compute the value in `when`
   and compare it in `then`.
 - A Mantle spec creates its own data and does not depend on BOSS.
-- Run the specs of the screens and services you touched while working, and the whole component before a commit.
-  Those runs leave out the slow specs (`slow: true`), and so does every command unless given `--slow`.
-- **Keep a spec fast.** A spec or feature over about 15 seconds is slow and only for a special case: a specific
-  scenario, checked when its result is needed, not coverage. One over 30 seconds is marked `slow: true`
-  ([Slow tests](../Build-Test.md#slow-tests)), and an agent runs it only with the user's permission (AGENTS.md). A
-  slow spec is banned from normal runs and a candidate for deletion: delete it rather than mark it unless its
-  scenario must stay checkable. The end of a run names any unmarked spec over 30 seconds.
+- Run the specs of the screens and services you touched while working (`./moq test <component> --spec ...`), and
+  `./moq test-apps` before a commit. Run an acceptance test only when the user asks, or when you add or change one.
+- **Keep a spec fast.** A regression spec runs in well under a second as a rule; one over 15 seconds fails the run,
+  and a component over 1.5 times its budget (`test/budget`) fails it too
+  ([The regression budget](../Build-Test.md#the-regression-budget)). Cut duplicates or move the scenario to
+  acceptance rather than raise the budget, which needs the user's agreement.
 - **A test earns its place by the regression it catches.** Do not add a feature that repeats another with a different
   user, mode or flag (`where: both` doubling, every role of a group) unless that difference is the rule under test.
 
@@ -404,12 +414,12 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 - **No screenshot specs.** A spec asserts what a page shows; it does not save images that no one compares or looks at.
   To look at a screen, take a screenshot while working (the browser tools, or `page.screenshot` in a spec run by hand)
   and do not keep it in the suite. A failed browser feature still writes its own `failed-*.png` for debugging.
-  The specs of a phone layout check overflow at 390 px; a theme is checked only where a feature depends on it.
+  A phone-width (390 px) check is an acceptance test; a theme is checked only where a feature depends on it.
 - Open the browser pages in `setupSpec`, one per user and width. Module variables are not shared between cases.
-- **Walks** only where the browser is the thing under test: one golden-path walk per app, and a walk for a scenario
-  a server spec cannot check (a dialog, a client-side state, the phone layout). A walk has a user with only the needed
-  grants, every click a user makes, and an assertion of the result. A plan's scenario is checked by a server spec
-  through the screens' transitions, not a walk of its own.
+- **Walks.** The regression suite has one golden-path client walk per app (`test/client/`), kept current. Every other
+  walk is an acceptance test (`acceptance/client/`): a plan's "usable when" scenario, server side through the screens'
+  transitions or in a browser, a phone-width check, an access or isolation walk. A walk has a user with only the
+  needed grants, every click a user makes, and an assertion of the result.
 - Click what the user clicks. A menu item that holds a dialog or link is a `q-item` around a button: click the button
   (`.q-menu button, .q-menu a`), not the `q-item`, which does nothing (F43 was this test mistake). Scope a header
   menu to its own actions container: a 360 screen has more than one "More".
@@ -444,13 +454,15 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
 - Every list has phone columns with name and amount or state, names not IDs, amounts with currency, states as chips.
 - Records chosen with server-search drop-downs; no typed IDs.
 - Empty boxes hidden, empty states explained, user wording in titles and buttons.
-- `tui` texts built with `JSON.stringify`; the screen renders in `tui`.
+- `tui` texts built with `JSON.stringify`.
 - Every detail screen has the record header and a not-available state; every ending, bulk or irreversible action
   confirms, naming the record or the count.
 - Screens that differ by record kind share a template; each screen declares only the parameters it reads.
 - Mantle's services used or extended, not rebuilt beside them; service implementations in inline XML Actions, script
   modules only for complex logic; no caller-name guards, no self-guarding EECAs, nothing for tests in production files.
-- `./moq test` for the app and Mantle, `moqui lint --screens` with no new idiom sites, and the walks run.
+- The phase's regression tests for the rules it added pass, `./moq test-apps` passes within budget, and `moqui lint
+  --screens` has no new idiom sites. The plan's "usable when" scenarios are acceptance tests to write, named in the
+  plan; running them is not part of done.
 - A mechanical pass over the changed files:
   - `isInGroup(` in a service or script;
   - `PageRangeHigh` set in a screen;

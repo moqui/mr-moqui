@@ -65,7 +65,9 @@ load|Run|[types] [name=value] [opts]|Load data, all types by default, with the d
 load-production|Run|[types] [name=value] [opts]|Load data with the production conf
 test|Run|[component...] [test opts]|Run component tests (moqui test) with the dev conf
 test-client|Run|[component...] [-p N] [opts]|Run component client tests (moqui test-client) against a running server
-test-all|Run|[--slow] [--lite/--debug/--release/--enterprise] [--nobuild]|Run every test suite: cargo, the opt-in cargo tests, moq, moqui test and test-client
+test-apps|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the application tests: moqui test and test-client --serve over runtime/component
+test-framework|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the framework tests: cargo, moq, and the specs of base-component and dev-component
+test-all|Run|[--lite/--debug/--release/--enterprise] [--nobuild]|Run the whole regression suite: test-framework, then test-apps
 autodoc|Run|[--out dir] [--kinds k,...] [opts]|Markdown docs of the artifacts with Mermaid diagrams, into ./autodoc (moqui autodoc)
 load-save|Run|[-n name] [load args...]|clean-all, load, then save-db
 save-db|Database|[name]|Save the embedded database and OpenSearch data to runtime/save/<name>
@@ -578,37 +580,61 @@ Options: --lite, --debug, --release, --enterprise, --nobuild, and
 EOF
 }
 
-help_test_all() {
+help_test_framework() {
     cat <<EOF
-Runs every test suite in turn, each whatever the ones before it did, then lists which passed and
-exits 1 when any failed:
+Runs the framework's regression tests in turn, each whatever the ones before it did, then lists which
+passed and exits 1 when any failed. For work on the framework: crates/, runtime/base-component,
+runtime/dev-component, moq or the scripts.
   cargo test --workspace            the unit and integration tests of every crate
   scripts/moq-test.sh               the tests of this script
-  moqui test                        the specs of every component with test/*.spec.js, including the
-                                    database-free screen template specs
+  moqui test <components>           the specs of base-component and dev-component (test/*.spec.js),
+                                    including the database-free screen template specs
   moqui test demo                   the demo component's specs, with -D demo_disabled=false (it is off
-                                    by default, so moqui test leaves it out)
+                                    by default)
   moqui test-client webroot --offline
   moqui test-client runtime/dev-component/dev-aide --offline
                                     the offline client specs: pages at https://moqui.test, no server
-  moqui test-client --serve         the client specs of every component with test/client/, each against
-                                    the server its suite.js declares
-None of them runs a slow test (over 30 seconds): a spec or feature marked slow: true is listed as
-ignored, a Rust test marked #[ignore = "slow: ..."] is left out, and so are the opt-in host tests
-(gate3, gate3_browser, client_browser, tui_screens), whose own build takes minutes.
-The Chromium is the one PDF and moqui test-client use: moqui_chromium_path, else
-runtime/chromium (./moq chromium-download), else an installed Chromium, Google Chrome or Edge.
+  moqui test-client --serve <components>
+                                    the client specs of base-component and dev-component whose
+                                    test/client/suite.js declares a server, each against it
+None of them runs an acceptance test (docs/Build-Test.md#the-two-suites). The Chromium is the one PDF
+and moqui test-client use: moqui_chromium_path, else runtime/chromium (./moq chromium-download), else an
+installed Chromium, Google Chrome or Edge.
 Left out: the timings (cargo test --release --test entity_speed and the other *_speed tests) and
 Clippy over every feature set (scripts/check-packages.sh, which runs tui_screens too).
-  ./moq test-all
-  ./moq test-all --slow             also the slow tests: the opt-in host tests (gate3, client_browser,
-                                    tui_screens, gate3_browser), cargo test-slow, the binary's
-                                    ignored cli tests (hours with the mantle components), and moqui test
-                                    and test-client with --slow. Only with the user's permission, when
-                                    their results are needed (AGENTS.md).
 
 Options:
-  --slow               Also the tests marked slow
+$PACKAGE_OPTIONS_HELP
+      --nobuild        Skip the build before moqui test and test-client
+EOF
+}
+
+help_test_apps() {
+    cat <<EOF
+Runs the application tests, the regression suite of the components under runtime/component, then lists
+which passed and exits 1 when any failed. The command for application work, before a commit:
+  moqui test <components>           the specs (test/*.spec.js) of each component under
+                                    runtime/component that has them
+  moqui test-client --serve <components>
+                                    their client specs, each against the server its
+                                    test/client/suite.js declares
+No cargo build or test, no moq-test.sh, and no base-component or dev-component spec. The binary is
+built only when it is missing (as --nobuild).
+
+Options:
+$PACKAGE_OPTIONS_HELP
+      --nobuild        Accepted; the binary is built only when it is missing in any case
+EOF
+}
+
+help_test_all() {
+    cat <<EOF
+Runs the whole regression suite: the suites of test-framework, then those of test-apps (./moq help
+test-framework, ./moq help test-apps), each whatever the ones before it did, then lists which passed
+and exits 1 when any failed. Before a release, after a framework change that apps depend on, or when
+asked; not for application work. The acceptance suite is not part of it (./moq accept-all).
+
+Options:
 $PACKAGE_OPTIONS_HELP
       --nobuild        Skip the build before moqui test and test-client
 EOF
@@ -2067,63 +2093,124 @@ task_autodoc() {
     exec_cmd "$bin" autodoc "${args[@]}"
 }
 
-# Every suite, each run whatever the last did, then a summary; exits 1 when any failed.
-task_test_all() {
-    local slow='' arg failed=0 line
-    local -a moq_opts results
-    moq_opts=()
-    results=()
+# The suites of test-framework, test-apps and test-all: each runs whatever the last did, then a summary lists them
+# and the task exits 1 when any failed. SUITE_RESULTS and SUITE_FAILED are the run's.
+suite() {
+    local name=$1 status
+    shift
+    heading "== $name"
+    run_cmd "$@"
+    status=$?
+    if [ $status -eq 0 ]; then
+        SUITE_RESULTS+=("passed  $name")
+    else
+        SUITE_RESULTS+=("FAILED  $name (exit $status)")
+        SUITE_FAILED=1
+    fi
+}
+
+# suite_summary <title>: the list of the suites run, and the exit status.
+suite_summary() {
+    local line
+    printf '\n'
+    heading "$1"
+    for line in "${SUITE_RESULTS[@]}"; do
+        printf '  %s\n' "$line"
+    done
+    return $SUITE_FAILED
+}
+
+# parse_suite_opts <task> <args...>: the package options and --nobuild into SUITE_MOQ_OPTS.
+parse_suite_opts() {
+    local task=$1 arg
+    shift
+    SUITE_MOQ_OPTS=()
+    SUITE_RESULTS=()
+    SUITE_FAILED=0
     while [ $# -gt 0 ]; do
         arg=$1
         case $arg in
-            --slow) slow=1 ;;
-            --lite | --debug | --release | --enterprise | --nobuild) moq_opts+=("$arg") ;;
-            *) die "unknown option $arg (test-all takes --slow, a package option and --nobuild)" ;;
+            --lite | --debug | --release | --enterprise | --nobuild) SUITE_MOQ_OPTS+=("$arg") ;;
+            *) die "unknown option $arg ($task takes a package option and --nobuild)" ;;
         esac
         shift
     done
-    # suite <name> <command...>: run it and keep how it ended
-    suite() {
-        local name=$1 status
-        shift
-        heading "== $name"
-        run_cmd "$@"
-        status=$?
-        if [ $status -eq 0 ]; then
-            results+=("passed  $name")
-        else
-            results+=("FAILED  $name (exit $status)")
-            failed=1
-        fi
-    }
+}
+
+# The framework's suites: cargo test, the tests of this script, and the specs and client specs of base-component and
+# dev-component.
+framework_suites() {
+    local name
+    local -a server client
+    server=()
+    client=()
+    while IFS= read -r name; do
+        [ "$name" = demo ] || server+=("$name")
+    done < <(spec_components test base-component dev-component)
+    while IFS= read -r name; do
+        client+=("$name")
+    done < <(served_components test/client base-component dev-component)
     need_cargo
     suite "cargo test --workspace" cargo test --workspace
-    # the slow tests (over 30 seconds), only with --slow; the spec harnesses list theirs as ignored without it. The opt-in
-    # host tests run in under a minute but build their own feature set first, minutes on every run, so they are slow too.
-    local -a slow_specs
-    slow_specs=()
-    if [ -n "$slow" ]; then
-        slow_specs=(--slow)
-        suite "opt-in host tests" cargo test -p moqui-host --test gate3 --test client_browser --test tui_screens
-        suite "gate3_browser" cargo test -p moqui-host --test gate3_browser
-        suite "cargo test-slow" cargo test-slow
-        suite "moqui cli slow tests" cargo test -p moqui --test cli -- --ignored
-    fi
     suite "scripts/moq-test.sh" bash scripts/moq-test.sh
-    suite "moqui test" "$MOQ" test "${moq_opts[@]}" "${slow_specs[@]}"
-    suite "moqui test demo" "$MOQ" test "${moq_opts[@]}" --nobuild -D demo_disabled=false demo "${slow_specs[@]}"
+    if [ ${#server[@]} -gt 0 ]; then
+        suite "moqui test (framework)" "$MOQ" test "${SUITE_MOQ_OPTS[@]}" "${server[@]}"
+    fi
+    suite "moqui test demo" "$MOQ" test "${SUITE_MOQ_OPTS[@]}" --nobuild -D demo_disabled=false demo
     # the binary is built by now. Offline specs open no server; --serve runs the suites that declare one.
-    suite "moqui test-client webroot --offline" "$MOQ" test-client "${moq_opts[@]}" --nobuild -- webroot --offline \
-        "${slow_specs[@]}"
-    suite "moqui test-client runtime/dev-component/dev-aide --offline" "$MOQ" test-client "${moq_opts[@]}" --nobuild -- \
-        runtime/dev-component/dev-aide --offline "${slow_specs[@]}"
-    suite "moqui test-client --serve" "$MOQ" test-client "${moq_opts[@]}" --nobuild -- --serve "${slow_specs[@]}"
-    printf '\n'
-    heading "test-all"
-    for line in "${results[@]}"; do
-        printf '  %s\n' "$line"
-    done
-    return $failed
+    suite "moqui test-client webroot --offline" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" --nobuild -- webroot --offline
+    suite "moqui test-client runtime/dev-component/dev-aide --offline" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" \
+        --nobuild -- runtime/dev-component/dev-aide --offline
+    if [ ${#client[@]} -gt 0 ]; then
+        suite "moqui test-client --serve (framework)" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" --nobuild -- --serve \
+            "${client[@]}"
+    fi
+}
+
+# The applications' suites: the specs and client specs of the components under runtime/component. No cargo; the
+# binary is built only when it is missing.
+apps_suites() {
+    local name
+    local -a server client
+    server=()
+    client=()
+    while IFS= read -r name; do
+        server+=("$name")
+    done < <(spec_components test component)
+    while IFS= read -r name; do
+        client+=("$name")
+    done < <(served_components test/client component)
+    if [ ${#server[@]} -eq 0 ] && [ ${#client[@]} -eq 0 ]; then
+        info "No application component under runtime/component has specs."
+        return 0
+    fi
+    if [ ${#server[@]} -gt 0 ]; then
+        suite "moqui test (apps)" "$MOQ" test "${SUITE_MOQ_OPTS[@]}" --nobuild "${server[@]}"
+    fi
+    if [ ${#client[@]} -gt 0 ]; then
+        suite "moqui test-client --serve (apps)" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" --nobuild -- --serve \
+            "${client[@]}"
+    fi
+}
+
+task_test_framework() {
+    parse_suite_opts test-framework "$@"
+    framework_suites
+    suite_summary test-framework
+}
+
+task_test_apps() {
+    parse_suite_opts test-apps "$@"
+    apps_suites
+    suite_summary test-apps
+}
+
+# Every regression suite: the framework's, then the applications'.
+task_test_all() {
+    parse_suite_opts test-all "$@"
+    framework_suites
+    apps_suites
+    suite_summary test-all
 }
 
 # $1 conf, $2 default types ("" for moqui's default), then the load arguments.
@@ -4388,13 +4475,46 @@ save_names() {
 # Components with server specs, in runtime/base-component, runtime/component and runtime/dev-component; not a template,
 # whose name is a placeholder (runtime/dev-component/template).
 test_components() {
-    local d name
-    for d in "$RUNTIME_DIR"/base-component/*/ "$RUNTIME_DIR"/component/*/ "$RUNTIME_DIR"/dev-component/*/; do
-        [ -d "${d}test" ] && [ -f "${d}component.xml" ] || continue
-        [ -n "$(find "${d}test" \( -path "${d}test/client" -o -path "${d}test/agent" \) -prune -o -name '*.spec.js' -print -quit)" ] || continue
-        name=$(component_name_of "${d%/}")
-        case $name in *@*) ;; *) printf '%s\n' "$name" ;; esac
+    spec_components test base-component component dev-component
+}
+
+# spec_component_dirs <tree> <parent...>: the directories under runtime/<parent> of the components with a *.spec.js
+# in <tree> (test, test/client, acceptance or acceptance/client), outside its reserved directories; not the template.
+spec_component_dirs() {
+    local tree=$1 parent d
+    local -a prune
+    shift
+    case $tree in
+        */client) prune=(-path "@/process") ;;
+        *) prune=(-path "@/client" -o -path "@/agent") ;;
+    esac
+    for parent in "$@"; do
+        for d in "$RUNTIME_DIR/$parent"/*/; do
+            [ -d "${d}$tree" ] && [ -f "${d}component.xml" ] || continue
+            [ -n "$(find "${d}$tree" \( "${prune[@]//@/${d}$tree}" \) -prune -o -name '*.spec.js' -print -quit)" ] ||
+                continue
+            printf '%s\n' "${d%/}"
+        done
     done
+}
+
+# spec_components <tree> <parent...>: the names of the components of spec_component_dirs.
+spec_components() {
+    local d name
+    while IFS= read -r d; do
+        name=$(component_name_of "$d")
+        case $name in *@*) ;; *) printf '%s\n' "$name" ;; esac
+    done < <(spec_component_dirs "$@")
+}
+
+# served_components <tree> <parent...>: the components of spec_components whose <tree>/suite.js declares a server.
+served_components() {
+    local tree=$1 d name
+    while IFS= read -r d; do
+        [ -f "$d/$tree/suite.js" ] && grep -Eq 'server *: *[{]' "$d/$tree/suite.js" || continue
+        name=$(component_name_of "$d")
+        case $name in *@*) ;; *) printf '%s\n' "$name" ;; esac
+    done < <(spec_component_dirs "$@")
 }
 
 component_names_local() {
@@ -4410,12 +4530,7 @@ git_refs() {
 
 # Components with client specs, in runtime/base-component, runtime/component and runtime/dev-component.
 client_test_components() {
-    local d
-    for d in "$RUNTIME_DIR"/base-component/*/ "$RUNTIME_DIR"/component/*/ "$RUNTIME_DIR"/dev-component/*/; do
-        [ -d "${d}test/client" ] && [ -f "${d}component.xml" ] || continue
-        [ -n "$(find "${d}test/client" -path "${d}test/client/process" -prune -o -name '*.spec.js' -print -quit)" ] || continue
-        component_name_of "${d%/}"
-    done
+    spec_components test/client base-component component dev-component
 }
 
 # Candidate lists below come from $(...) and are split on purpose: names hold no spaces or glob characters.
@@ -4516,7 +4631,7 @@ complete_task() {
         chromium-download) filter_prefix "$cur" --latest ;;
         desktop) filter_prefix "$cur" dev build --release ;;
         android) filter_prefix "$cur" emulator init dev build --release --window ;;
-        test-all) filter_prefix "$cur" --slow --lite --debug --release --enterprise --nobuild ;;
+        test-all | test-apps | test-framework) filter_prefix "$cur" --lite --debug --release --enterprise --nobuild ;;
         autodoc)
             case $prev in
                 --out | --templates | --project | --java) echo @dirs; return ;;

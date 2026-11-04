@@ -211,4 +211,4 @@ engine's next start queues what the spool still holds.
   another user with the same id, the PIN with its refusal and its limits per box and per source, the notices
   (attachments off by default), a failed transcription and its retry, the trash's retention, greeting uploads.
 - `./moq test basic-comms --spec BasicCommsCalls`: the Voicemail tab and its audio transition for its owner only;
-  `BasicComms`: every screen in qvt and tui.
+  `BasicComms`: the System Voice screens through the System app, and History's Call a number.

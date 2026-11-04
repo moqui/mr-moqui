@@ -345,7 +345,8 @@ binds.
 - **No color, ASCII.** Color is never the only signal: every cue has a glyph or text too. `NO_COLOR` (or `--no-color`)
   draws in reverse and underline only, and `--ascii` (also a `TERM` of `linux` or `vt100`, or a locale that is not
   UTF-8) draws borders, symbols and the client's own marks (`…`, `–`, `·`) in plain ASCII. The Gallery snapshots check
-  both on every screen (`crates/moqui-host/tests/tui_screens.rs`).
+  both on every screen (`crates/moqui-host/tests/tui_screens.rs`), an acceptance test of the framework that
+  `./moq accept-all` runs ([the two suites](../Build-Test.md#the-two-suites)).
 
 ## For screen authors
 
