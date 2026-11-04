@@ -1165,7 +1165,8 @@
             lib("sortable");
             const formId = cfg.formId;
             const inColumns = new Set(cols.flat().map((f) => f.name));
-            const notIn = allFields.filter((f) => !inColumns.has(f.name));
+            // a field its hide condition hides is not offered either, as its column is not shown
+            const notIn = allFields.filter((f) => !inColumns.has(f.name) && !(f.hide && f.hide()));
             const item = (f) => '<li id="' + e(f.name) + '"><div>' + e(f.title()) + "</div></li>";
             let out = '<dialog id="' + e(formId) + '_SelColsDialog" style="--w:600px"><header><h4>' + e(L("Column Fields")) + '</h4><button type="button" class="close" data-close aria-label="Close">&times;</button></header><div class="body"><p>' +
                 e(L("Drag fields to the desired column or do not display")) + '</p><ul id="' + e(formId) + '_SelColsSortable" data-sortable-tree="' + e(formId) + '_SelColsForm_columnsTree">' +
@@ -2027,7 +2028,7 @@
                     ${finalCells.join(",\n")}
                 ],
                 "allFields": [
-                    ${fields.filter((field) => !S.listFieldHiddenWidget(field)).map((field) => `{"name": ${lit(attr(field, "name"))}, "title": () => ${titleCode(S.headerSub(field))}}`).join(",\n")}
+                    ${fields.filter((field) => !S.listFieldHiddenWidget(field)).map((field) => `{"name": ${lit(attr(field, "name"))}, "title": () => ${titleCode(S.headerSub(field))}${attr(field, "hide") ? `, "hide": () => (${raw(attr(field, "hide"))})` : ""}}`).join(",\n")}
                 ],
                 "summaryFields": [
                     ${fields.map(columnField).join(",\n")}
