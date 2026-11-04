@@ -814,48 +814,62 @@ through the room's `update` push. `chat.typingText(roomId, userId)` is an agent'
 **The pushes** are NotificationMessages that are not persisted and show no alert, routed by the socket to their users only:
 
 ```
-chatRoom:<chatRoomId>  {kind: 'event', chatRoomId, eventSeq, event}           // to the room's members: a new event, as get#Timeline lists one
+chatRoom:<chatRoomId>  {kind: 'event', chatRoomId, eventSeq, event, roomChangeSeq}   // to the room's members: a new event, as get#Timeline lists one
                        {kind: 'typing', chatRoomId, userId, typing, statusText}   // to the other members (signal#Typing; nothing stored; statusText: an agent's "Searching…")
                        {kind: 'read', chatRoomId, userId, lastReadEventSeq}    // a member's read marker (read receipts; none when CHAT_READ_RECEIPTS is N)
-                       {kind: 'update', chatRoomId, eventSeq, threadRootEventSeq, fields}   // a message's linkPreviews, poll or assist card changed; the same for everyone
+                       {kind: 'update', chatRoomId, eventSeq, threadRootEventSeq, fields, roomChangeSeq}   // a message's linkPreviews, poll or assist card changed; the same for everyone
 chatUser:<userId>      {kind: 'room', action: 'joined'|'left'|'changed'|'role'|'settings', chatRoomId, changeSeq}
                        {kind: 'read', chatRoomId, lastReadEventSeq, changeSeq} | {kind: 'read', all: true, changeSeq}   // read in another tab or device
 userStatus             {userId, presence, statusText, emoji, clearAtDate, inCall}   // to the user's room members; self and status to the user
 ```
 
-`presence` is `online`, `away`, `dnd` or `offline` (an invisible user is offline to others). `changeSeq` on a `room` or `read` push of `chatUser:`
-is the number of the change it goes with in the user's changes feed (below), so a client whose cursor is further behind
-than one sees a gap and reads the feed; the `chatRoom:` pushes go to every member at once and carry none.
+`presence` is `online`, `away`, `dnd` or `offline` (an invisible user is offline to others). `changeSeq` on a `room` or
+`read` push of `chatUser:` is that change's number in the user's changes feed, and `roomChangeSeq` on a `chatRoom:` event
+or update push is the number of the message change it made in the room's feed (below). A number more than one past the
+client's cursor is normal, not a sign of falling behind: not every change is pushed (a room change for the other
+members, retention) and a change replaces an earlier one of the same thing with a new number. It only means "read the
+feed" after the cursor.
 
-**The changes feed** is what a client that keeps chat offline (the desktop client's store) reads to catch up, one cursor per
-user across all rooms: `GET <comms root>/Chat/chatChanges?afterSeq=&limit=&heads=` (`ChatServices.get#UserChanges`, the
-current user's only), answering
+**The changes feeds** are what a client that keeps chat offline (the desktop client's store) reads to catch up. There
+are two, so a change of a room's messages costs one row however many members it has:
 
-```
-{changes: [{changeSeq, kind, chatRoomId, eventSeq, changeDate, data}], lastSeq, more, reset, heads}
-```
+- **The user's**, one cursor across all rooms: `GET <comms root>/Chat/chatChanges?afterSeq=&limit=&heads=&headsSince=`
+  (`ChatServices.get#UserChanges`, the current user's only), answering
+  `{changes: [{changeSeq, kind, chatRoomId, eventSeq, changeDate, data}], lastSeq, more, reset, heads, headsSince}`.
+- **The room's**, of its messages changed after they were sent, one cursor per room:
+  `GET <comms root>/Chat/roomChanges?chatRoomId=&afterSeq=&limit=` (`get#RoomChanges`, for a user who may read the room;
+  another room is not found), answering `{changes: [{changeSeq, eventSeq, changeDate, data}], lastSeq, more, reset}`, where
+  `eventSeq` is the message's and `data` is `{cause: edit | reaction | redaction | pin | update, causeEventSeq, redacted,
+  threadRootEventSeq}`: read the message again (`timeline?eventSeq=`), or drop it when `redacted`. The room's
+  `lastChangeSeq` is in `room` (`roomView`, `room`) and in the heads.
 
-oldest first, `limit` 200 (at most 1000), `lastSeq` the cursor to keep (the last change answered, or `afterSeq`), `more`
-when there are more after it. `reset` is true, with no changes and `lastSeq` the user's last number, when `afterSeq` is not
-given (a first sync), is older than what the purge kept, or is past the user's last number (another database): the client
-reads its rooms again and goes on from `lastSeq`. The page that ends the feed has `heads` (unless `heads=false`), the rooms
-the user is in now as `{chatRoomId, lastEventSeq, lastMessageSeq, lastEventDate, lastReadEventSeq}`: a new message is not
-a change, so new activity is a head past what the client holds, read with `timeline?afterSeq=`. The kinds and their `data`:
+Both are oldest first, `limit` 200 (at most 1000), `lastSeq` the cursor to keep (the last change answered, or `afterSeq`),
+`more` when there are more after it. `reset` is true, with no changes and `lastSeq` the last number, when `afterSeq` is not
+given (a first sync), is older than what the purge kept, or is past the last number (another database): the client reads
+its rooms (or that room's held messages) again and goes on from `lastSeq`. The page that ends the user's feed has `heads`
+(unless `heads=false`), the rooms the user is in as `{chatRoomId, lastEventSeq, lastMessageSeq, lastEventDate,
+lastChangeSeq, lastReadEventSeq}`: new messages are in neither feed, so new activity is a head past what the client holds
+(read with `timeline?afterSeq=`), and a `lastChangeSeq` past the room's cursor means reading `roomChanges`. Give the answer's
+`headsSince` back next time and only the rooms with an event or a message change since then come (it overlaps by two
+minutes, so a late commit is not missed; a room joined since is a `membership` change). The user's kinds and their `data`:
 
 | `kind` | `eventSeq` | `data` | For |
 |---|---|---|---|
-| `membership` | the membership event (none for a direct room) | `{action: joined \| left \| role, roleEnumId, byUserId}` | the user's own membership: joined (a new room, a direct room back), left (left, taken out, a direct room hidden), role |
+| `membership` | the membership event (none for a direct room) | `{member, roleEnumId, action: joined \| left \| role, byUserId}` | the user's own membership as it is now: `member` false after leaving, being taken out or hiding a direct room; a join and a role change unseen are one state |
 | `room` | the event, when one | `{reason}`: `members`, `renamed`, `topic`, `archived`, `unarchived`, `details` | the room's details or members changed: read it again (`room`) |
 | `settings` | | `{notificationLevelEnumId, isMuted, isPinned}` | the user's settings in the room |
 | `read` | | `{lastReadEventSeq}` | the user's read marker, from another tab or device (`markAllRead` gives one per room) |
-| `message` | the message's | `{cause: edit \| reaction \| redaction \| pin \| update, causeEventSeq, redacted}` | a message changed after it was sent (an edit, a reaction or its removal, a delete, a pin, its link previews or poll): read it again (`timeline?eventSeq=`), or drop it when `redacted` |
-| `retention` | the last event deleted | `{deletedCount}` | the room's retention deleted everything up to `eventSeq` (a range tombstone) |
+| `retention` | the last event deleted | `{deletedCount}` | the room's retention deleted everything up to `eventSeq` (a range tombstone; the room's changes of those messages go with them) |
 
-A change replaces the user's earlier change of the same kind and room (and message), with a new number, so the feed holds
-one row per thing that changed. Changes older than `chat_changes_keep_days` (30) are purged daily
-(`clean#UserChanges`); a thread reply is a new message and changes no `message` row of its root (read the room's threads).
-The server side, and why new messages are left out (one row per member per write), is in `ChatServices.xml`
-(record#UserChange) and `ChatEntities.xml` (`ChatUserChange`, `ChatUserState`). The shell's own `shellCounts` topic carries the
+A change replaces the earlier change of the same thing (a user's kind and room; a room's message) with a new number, so
+each feed holds one row per thing that changed. An agent's chat user and system users get no user changes. Changes older
+than `chat_changes_keep_days` (30) are purged daily (`clean#ChatChanges`). A thread reply is a new message and is in no
+feed; when a reply is deleted its `redaction` change has the reply's `eventSeq` and its `threadRootEventSeq`, and the
+root's `threadReplyCount` and last reply change with it: read the root again (or the room's threads). The server side,
+and why it is split this way, is in `ChatServices.xml` (`record#UserChange`, `record#RoomChange`) and `ChatEntities.xml`
+(`ChatUserChange`, `ChatUserState`, `ChatRoomChange`).
+
+The shell's own `shellCounts` topic carries the
 header's Chat badge (`counts.chat`, the app's counts service adding `get#UnreadCounts`).
 
 **The store** (`moqui.chat`; its `state` is a Vue reactive object):

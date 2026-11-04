@@ -80,14 +80,25 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- the user's changes in all their rooms after a cursor, for a client that keeps chat offline (ChatServices.get#UserChanges) -->
+    <!-- the user's own changes in all their rooms after a cursor, for a client that keeps chat offline (ChatServices.get#UserChanges) -->
     <transition name="chatChanges" method="get" read-only="true">
         <actions><script><![CDATA[
             const number = (value) => value == null || value === '' ? null : Number(value)
             const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#UserChanges').parameters({afterSeq: number(afterSeq),
-                limit: number(limit) || 200, heads: String(heads) !== 'false'}).call()
+                limit: number(limit) || 200, heads: String(heads) !== 'false', headsSince: number(headsSince)}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {changes: out.changeList || [], lastSeq: out.lastSeq, more: !!out.more,
-                reset: !!out.reset, heads: out.headList ?? null})
+                reset: !!out.reset, heads: out.headList ?? null, headsSince: out.headsSince ?? null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a room's changes of its messages after a cursor (edits, reactions, deletes, pins, previews, polls; ChatServices.get#RoomChanges) -->
+    <transition name="roomChanges" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const number = (value) => value == null || value === '' ? null : Number(value)
+            const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomChanges').parameters({chatRoomId: chatRoomId || '',
+                afterSeq: number(afterSeq), limit: number(limit) || 200}).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {changes: out.changeList || [], lastSeq: out.lastSeq, more: !!out.more,
+                reset: !!out.reset})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

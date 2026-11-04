@@ -35,11 +35,12 @@ along with this software (see the LICENSE.md file). If not, see
 
     The pushes. Each new event goes to the room's member users as a NotificationMessage that is not persisted, on the
     topic chatRoom:<chatRoomId> (push#Signal, after the commit), so the notification socket delivers it only to them:
-      {kind: 'event', chatRoomId, eventSeq, event}       a new event, as get#Timeline lists one (without aggregates)
+      {kind: 'event', chatRoomId, eventSeq, event, roomChangeSeq}   a new event, as get#Timeline lists one (without
+                                                         aggregates); roomChangeSeq when it changed a message (ChatRoomChange)
       {kind: 'typing', chatRoomId, userId, typing}       signal#Typing, nothing stored
       {kind: 'read', chatRoomId, userId, lastReadEventSeq}   a member's read marker moved (read receipts; none for a
                                                          member whose preference CHAT_READ_RECEIPTS is N)
-      {kind: 'update', chatRoomId, eventSeq, threadRootEventSeq, fields}   a message changed with no event of its own:
+      {kind: 'update', chatRoomId, eventSeq, threadRootEventSeq, fields, roomChangeSeq}   a message changed with no event of its own:
                                                          its linkPreviews, its poll (push#Update; the same for everyone)
     A user's room list changes go on chatUser:<userId>, each with changeSeq, its number in the user's changes feed:
       {kind: 'room', action: 'joined' | 'left' | 'changed' | 'role' | 'settings', chatRoomId, changeSeq}
@@ -61,16 +62,19 @@ along with this software (see the LICENSE.md file). If not, see
     Read receipts are a user's choice: CHAT_READ_RECEIPTS of N pushes no read marker of theirs to the room and blanks it
     (null) in the member lists others read.
 
-    The changes feed of each user (ChatUserChange, numbered per user from ChatUserState, which record#UserChange locks as
-    append#Event locks the room): what a client that keeps chat offline reads after its cursor (get#UserChanges, the
-    Chat screen's chatChanges), across all its rooms: the user's membership (a removed user hears of it there), a room's
-    details and members, the user's settings and read marker, a message changed after it was sent (edit, reaction,
-    redaction, pin, push#Update) and retention as a range tombstone. Write amplification: a change of a room is one row
-    and one counter update for each member, so the feed leaves out what is most frequent: a new message, a thread reply
-    and a typing or read receipt of others are no changes (the heads get#UserChanges answers give each room's newest
-    event), and a change replaces the user's earlier one of the same thing (kind, room and, for a message, its eventSeq),
-    so the rows are bounded by what changed, not by how often. The counters are locked in userId order within a call; a
-    service makes one call per event. Old changes are purged (clean#UserChanges); a cursor before them is a reset.
+    The changes feeds, what a client that keeps chat offline reads after its cursors to catch up. Each room's
+    (ChatRoomChange, numbered from ChatRoom.lastChangeSeq with the room row locked, as append#Event holds it): a message
+    changed after it was sent (edit, reaction or its removal, redaction, pin, push#Update), one row per change however
+    many members the room has, read with get#RoomChanges (the Chat screen's roomChanges); the room's pushes of those
+    carry roomChangeSeq. Each user's (ChatUserChange, numbered per user from ChatUserState, which record#UserChange
+    locks to the commit): only what is the user's, so a change of a room's messages never locks its members' counters:
+    the user's membership as state (a removed user hears of it there), a room's details and members, the user's
+    settings and read marker, and retention as a range tombstone; read with get#UserChanges (chatChanges), whose heads
+    give each room's lastEventSeq and lastChangeSeq, since new messages are in no feed. Agents' chat users and system
+    users (_NA_) get no user changes. A change replaces the earlier one of the same thing (a room's message; a user's
+    kind and room), so the rows are bounded by what changed, not by how often. A service makes one record#UserChange
+    call per transaction, so the counters are locked once, in userId order. Old changes are purged (clean#ChatChanges);
+    a cursor before them is a reset.
 
     Sends tried again. A client keeps a message until it is answered (WebrootChat.js's outbox, which sends what waited
     when the page is back online) and sends it with its clientRef; send#Message answers a clientRef the sender already
@@ -226,7 +230,7 @@ along with this software (see the LICENSE.md file). If not, see
                 visibilityEnumId: row.visibilityEnumId || DEFAULT_VISIBILITY[row.roomTypeEnumId] || 'CrvMembers',
                 recordEntityName: row.recordEntityName ?? null, recordId: row.recordId ?? null, retentionDays: row.retentionDays ?? null,
                 createdByUserId: row.createdByUserId ?? null, createdDate: toMillis(row.createdDate), archivedDate: toMillis(row.archivedDate),
-                lastEventSeq: Number(row.lastEventSeq || 0), lastEventDate: toMillis(row.lastEventDate),
+                lastEventSeq: Number(row.lastEventSeq || 0), lastEventDate: toMillis(row.lastEventDate), lastChangeSeq: Number(row.lastChangeSeq || 0),
                 lastMessageSeq: row.lastMessageSeq != null ? Number(row.lastMessageSeq) : null, lastMessageUserId: row.lastMessageUserId ?? null,
                 lastMessageDate: toMillis(row.lastMessageDate), lastMessageSnippet: row.lastMessageSnippet ?? null,
                 callE2eeRequired: row.callE2eeRequired === 'Y', encrypted: row.encrypted === 'Y', verifiedDevicesOnly: row.verifiedDevicesOnly === 'Y'}
@@ -297,8 +301,9 @@ along with this software (see the LICENSE.md file). If not, see
             sourceChatBridgeId's; an edit, reaction or delete only where what it is about reached that network), and the
             delivery worker is woken after the commit. encrypted (C7) marks an event whose content.encrypted is Megolm
             ciphertext: no bodyText and no snippet are kept, and it goes to no bridge. An edit, reaction, redaction or pin is
-            a message change in the members' changes feeds, a membership event a room change for them and a membership
-            change for the user it is about (record#UserChange; none with noPush, whose caller records its own).</description>
+            a change of the room's message (record#RoomChange; the push carries its roomChangeSeq), a membership event a
+            room change in the members' feeds and a membership change for the user it is about (record#UserChange). With
+            noPush neither is recorded: the caller records its own.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="eventTypeEnumId" required="true"/>
@@ -314,6 +319,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="noPush" type="Boolean" default="false"/>
             <parameter name="sourceChatBridgeId"><description>The bridge the event came from: nothing goes back to it</description></parameter>
             <parameter name="encrypted" type="Boolean" default="false"/>
+            <parameter name="noUserChanges" type="Boolean" default="false"><description>A membership event whose caller
+                records the users' changes itself (add#Member, one call for all it adds)</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="eventSeq" type="Integer"/>
@@ -377,40 +384,48 @@ along with this software (see the LICENSE.md file). If not, see
                 replyToEventSeq: replyToEventSeq ?? null, threadRootEventSeq: threadRootEventSeq ?? null,
                 editsEventSeq: editsEventSeq ?? null, relatesToEventSeq: relatesToEventSeq ?? null, clientRef: clientRef || null}
 
+            // a message changed after it was sent is the room's change (record#RoomChange): one row, however many members
+            const about = content || {}
+            let changed = null
+            if (eventTypeEnumId === 'CetEdit' && editsEventSeq != null) changed = {target: editsEventSeq, cause: 'edit'}
+            else if (eventTypeEnumId === 'CetReaction' && relatesToEventSeq != null) changed = {target: relatesToEventSeq, cause: 'reaction'}
+            else if (eventTypeEnumId === 'CetPin' && relatesToEventSeq != null) changed = {target: relatesToEventSeq, cause: 'pin'}
+            else if (eventTypeEnumId === 'CetRedaction' && relatesToEventSeq != null) {
+                if (about.target === 'reaction') { if (about.messageSeq != null) changed = {target: about.messageSeq, cause: 'reaction'} }
+                else changed = {target: relatesToEventSeq, cause: 'redaction', redacted: true}
+            }
+            let roomChangeSeq = null
+            if (changed && !noPush) {
+                const change = {cause: changed.cause, causeEventSeq: eventSeq, threadRootEventSeq: threadRootEventSeq ?? null}
+                if (changed.redacted) change.redacted = true
+                roomChangeSeq = ec.service.sync().name('org.moqui.impl.ChatServices.record#RoomChange').parameters({chatRoomId: chatRoomId,
+                    eventSeq: Number(changed.target), change: change}).call()?.roomChangeSeq ?? null
+                if (ec.message.hasError()) return
+            }
+
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
             memberUserIdList = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId)
                     .selectField('userId').selectField('leftDate').list()).filter((member) => member.userId && (isDirect || !member.leftDate))
                     .map((member) => member.userId)
             if (!noPush && memberUserIdList.length) {
+                const pushed = {kind: 'event', chatRoomId: chatRoomId, eventSeq: eventSeq, event: event}
+                if (roomChangeSeq != null) pushed.roomChangeSeq = roomChangeSeq
                 ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
-                    userIdList: memberUserIdList, message: {kind: 'event', chatRoomId: chatRoomId, eventSeq: eventSeq, event: event}}).call()
+                    userIdList: memberUserIdList, message: pushed}).call()
             }
 
-            // the members' changes feeds: a message changed after it was sent, and a membership. A new message is no change
-            // (the room's lastEventSeq is its head), nor a system event (update#Room records the room's change)
+            // a membership event: a room change in the members' feeds and the membership of the user it is about, as it
+            // is now (record#UserChange). Not with noUserChanges: the caller records them, in one call
             changeSeqMap = {}
-            if (!noPush) {
-                const about = content || {}
-                const changes = []
-                const messageChange = (target, cause, extra) => changes.push({userIdList: memberUserIdList, changeKind: 'message',
-                    chatRoomId: chatRoomId, eventSeq: Number(target), change: Object.assign({cause: cause, causeEventSeq: eventSeq}, extra || {})})
-                if (eventTypeEnumId === 'CetEdit' && editsEventSeq != null) messageChange(editsEventSeq, 'edit')
-                else if (eventTypeEnumId === 'CetReaction' && relatesToEventSeq != null) messageChange(relatesToEventSeq, 'reaction')
-                else if (eventTypeEnumId === 'CetPin' && relatesToEventSeq != null) messageChange(relatesToEventSeq, 'pin')
-                else if (eventTypeEnumId === 'CetRedaction' && relatesToEventSeq != null) {
-                    if (about.target === 'reaction') { if (about.messageSeq != null) messageChange(about.messageSeq, 'reaction') }
-                    else messageChange(relatesToEventSeq, 'redaction', {redacted: true})
-                } else if (eventTypeEnumId === 'CetMembership') {
-                    changes.push({userIdList: memberUserIdList, changeKind: 'room', chatRoomId: chatRoomId, eventSeq: eventSeq, change: {reason: 'members'}})
-                    const action = {join: 'joined', add: 'joined', leave: 'left', remove: 'left', role: 'role'}[about.action]
-                    if (about.userId && action) changes.push({userIdList: [about.userId], changeKind: 'membership', chatRoomId: chatRoomId,
-                        eventSeq: eventSeq, change: {action: action, roleEnumId: about.roleEnumId ?? null, byUserId: about.byUserId ?? null}})
-                }
-                if (changes.length) {
-                    changeSeqMap = ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameter('changeList', changes)
-                            .call()?.changeSeqMap || {}
-                    if (ec.message.hasError()) return
-                }
+            if (!noPush && !noUserChanges && eventTypeEnumId === 'CetMembership') {
+                const changes = [{userIdList: memberUserIdList, changeKind: 'room', chatRoomId: chatRoomId, eventSeq: eventSeq, change: {reason: 'members'}}]
+                const action = {join: 'joined', add: 'joined', leave: 'left', remove: 'left', role: 'role'}[about.action]
+                if (about.userId && action) changes.push({userIdList: [about.userId], changeKind: 'membership', chatRoomId: chatRoomId,
+                    eventSeq: eventSeq, change: {member: action !== 'left', roleEnumId: action !== 'left' ? about.roleEnumId ?? null : null,
+                    action: action, byUserId: about.byUserId ?? null}})
+                changeSeqMap = ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameter('changeList', changes)
+                        .call()?.changeSeqMap || {}
+                if (ec.message.hasError()) return
             }
 
             // the bridges it goes out to: a delivery row per mapping, in this transaction (C1)
@@ -455,39 +470,116 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="fields" type="Map" required="true"/>
         </in-parameters>
         <actions><script><![CDATA[
-            const room = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).one()
             const row = ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).one()
-            if (!room || !row) return
+            if (!row) return
+            const threadRoot = row.threadRootEventSeq != null ? Number(row.threadRootEventSeq) : null
+            // the room's change of the message, for a reader who missed the push (it locks the room)
+            const recorded = ec.service.sync().name('org.moqui.impl.ChatServices.record#RoomChange').parameters({chatRoomId: chatRoomId,
+                eventSeq: eventSeq, change: {cause: 'update', threadRootEventSeq: threadRoot}}).call()
+            if (ec.message.hasError()) return
+            const room = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).one()
             const isDirect = room.roomTypeEnumId === 'CrtDirect'
             const users = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId)
                     .selectField('userId').selectField('leftDate').list()).filter((member) => member.userId && (isDirect || !member.leftDate))
                     .map((member) => member.userId)
             if (users.length) ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatRoom:' + chatRoomId,
-                userIdList: users, message: {kind: 'update', chatRoomId: chatRoomId, eventSeq: eventSeq,
-                threadRootEventSeq: row.threadRootEventSeq != null ? Number(row.threadRootEventSeq) : null, fields: fields}}).call()
-            ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameters({userIdList: users, changeKind: 'message',
-                chatRoomId: chatRoomId, eventSeq: eventSeq, change: {cause: 'update'}}).call()
+                userIdList: users, message: {kind: 'update', chatRoomId: chatRoomId, eventSeq: eventSeq, threadRootEventSeq: threadRoot,
+                fields: fields, roomChangeSeq: recorded?.roomChangeSeq ?? null}}).call()
         ]]></script></actions>
     </service>
 
-    <!-- ========== The changes feed of each user ========== -->
+    <!-- ========== The changes feeds: each room's, of its messages, and each user's ========== -->
+
+    <service verb="record" noun="RoomChange" allow-remote="false">
+        <description>Internal: a message of a room changed after it was sent (ChatRoomChange), in the caller's transaction,
+            numbered from ChatRoom.lastChangeSeq with the room row locked (append#Event holds it already). It replaces the
+            room's earlier change of the same message. change is {cause: edit | reaction | redaction | pin | update,
+            causeEventSeq, redacted, threadRootEventSeq}. Out: roomChangeSeq, which the room's push carries.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="eventSeq" type="Long" required="true"/>
+            <parameter name="change" type="Map"/>
+        </in-parameters>
+        <out-parameters><parameter name="roomChangeSeq" type="Long"/></out-parameters>
+        <actions><script><![CDATA[
+            roomChangeSeq = null
+            const room = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).forUpdate(true).disableAuthz().one()
+            if (!room) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+            const now = ec.user.nowTimestamp
+            const seq = Number(room.lastChangeSeq || 0) + 1
+            ec.entity.find('moqui.chat.ChatRoomChange').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq).disableAuthz().deleteAll()
+            const row = ec.entity.makeValue('moqui.chat.ChatRoomChange')
+            row.setFields({chatRoomId: chatRoomId, changeSeq: seq, eventSeq: eventSeq, changeJson: change ? JSON.stringify(change) : null,
+                changeDate: now}, true, null, null)
+            row.create()
+            room.set('lastChangeSeq', seq)
+            room.set('lastChangeDate', now)
+            room.update()
+            roomChangeSeq = seq
+        ]]></script></actions>
+    </service>
+
+    <service verb="get" noun="RoomChanges">
+        <description>A room's changes of its messages after afterSeq (ChatRoomChange), oldest first, up to limit (200; at
+            most 1000), for a user who may read the room: changeList [{changeSeq, eventSeq, changeDate, data}] (data is
+            {cause, causeEventSeq, redacted, threadRootEventSeq}: read the message again, or drop it when redacted), lastSeq
+            (the cursor to keep), more. reset is true, with no changes and lastSeq the room's last number, when afterSeq is
+            not given, is older than what clean#ChatChanges kept, or is past the room's last number: read the room's held
+            messages again. A room the user may not read is not found.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="afterSeq" type="Long"/>
+            <parameter name="limit" type="Integer" default="200"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="changeList" type="List"><parameter name="change" type="Map"/></parameter>
+            <parameter name="lastSeq" type="Long"/>
+            <parameter name="more" type="Boolean"/>
+            <parameter name="reset" type="Boolean"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const toMillis = (value) => {
+                if (value == null || value === '') return null
+                const number = Number(value)
+                return Number.isNaN(number) ? new Date(String(value)).getTime() : number
+            }
+            const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
+            changeList = []; lastSeq = 0; more = false; reset = false
+            const access = ec.service.sync().name('org.moqui.impl.ChatServices.get#RoomAccess').parameter('chatRoomId', chatRoomId).call()
+            if (ec.message.hasError()) return
+            if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
+            // the counter first: a change committed after it is still in the rows read next
+            const room = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).selectField('lastChangeSeq')
+                    .selectField('purgedChangeSeq').disableAuthz().one()
+            const last = Number((room && room.lastChangeSeq) || 0)
+            const purged = Number((room && room.purgedChangeSeq) || 0)
+            if (afterSeq == null || Number(afterSeq) < purged || Number(afterSeq) > last) { reset = true; lastSeq = last; return }
+            const size = Math.max(1, Math.min(1000, Number(limit) || 200))
+            const rows = Array.from(ec.entity.find('moqui.chat.ChatRoomChange').condition('chatRoomId', chatRoomId)
+                    .condition('changeSeq', 'greater', Number(afterSeq)).orderBy('changeSeq').limit(size + 1).disableAuthz().list())
+            more = rows.length > size
+            changeList = rows.slice(0, size).map((row) => ({changeSeq: Number(row.changeSeq), eventSeq: row.eventSeq != null ? Number(row.eventSeq) : null,
+                changeDate: toMillis(row.changeDate), data: parse(row.changeJson)}))
+            lastSeq = changeList.length ? changeList[changeList.length - 1].changeSeq : Number(afterSeq)
+        ]]></script></actions>
+    </service>
 
     <service verb="record" noun="UserChange" allow-remote="false">
         <description>Internal: add a change to the feed of each user of userIdList (ChatUserChange), in the caller's
             transaction, numbered from the user's ChatUserState, which stays locked to the commit. changeKind (a code or
             its CucXxx id) with chatRoomId, eventSeq and change (the detail, kept as changeJson); or changeList, a list of
-            {userIdList, changeKind, chatRoomId, eventSeq, change}, written in one call so the users are locked once, in
-            userId order. A change replaces the user's earlier one of the same kind and room (and eventSeq for message),
-            which takes a new changeSeq. pushMessage, when given, goes on chatUser:userId to each user after the commit
-            with changeSeq, the user's last number of this call, so a client sees a gap. Out: changeSeqMap, userId to that
-            number.
+            {userIdList, changeKind, chatRoomId, eventSeq, change, pushMessage}. A service makes one call per transaction,
+            so its users are locked once, in userId order. Agents' chat users (AgentDefinition.chatUserId) and system users
+            (a userId starting with _) get no changes. A change replaces the user's earlier one of the same kind and room,
+            with a new changeSeq. pushMessage (of an entry, or the call's: once to each user) goes on chatUser:userId to
+            each of its users after the commit with changeSeq, the user's last number of this call. Out: changeSeqMap,
+            userId to that number.
 
-            The kinds and their change: membership {action: joined | left | role, roleEnumId, byUserId} (the user's own
-            membership: left also when taken out, and when a direct room is hidden); room {reason} (the room's details or
-            members changed: read it again); settings {notificationLevelEnumId, isMuted, isPinned}; read
-            {lastReadEventSeq}; message {cause: edit | reaction | redaction | pin | update, causeEventSeq, redacted}
-            (eventSeq is the message's: read it again); retention {deletedCount} (eventSeq is the last event deleted: drop everything
-            up to it).</description>
+            The kinds and their change: membership {member, roleEnumId, action: joined | left | role, byUserId} (the
+            user's own membership as it is now: member false when they left, were taken out or hid a direct room);
+            room {reason} (the room's details or members changed: read it again); settings {notificationLevelEnumId,
+            isMuted, isPinned}; read {lastReadEventSeq}; retention {deletedCount} (eventSeq is the last event deleted:
+            drop everything up to it).</description>
         <in-parameters>
             <parameter name="userIdList" type="List"/>
             <parameter name="changeKind"/>
@@ -499,21 +591,32 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="changeSeqMap" type="Map"/></out-parameters>
         <actions><script><![CDATA[
-            const KINDS = {membership: 'CucMembership', room: 'CucRoom', settings: 'CucSettings', read: 'CucRead', message: 'CucMessage',
-                retention: 'CucRetention'}
+            const KINDS = {membership: 'CucMembership', room: 'CucRoom', settings: 'CucSettings', read: 'CucRead', retention: 'CucRetention'}
             changeSeqMap = {}
             const entries = []
-            const add = (entry) => {
+            const add = (entry, push) => {
                 const kind = KINDS[entry.changeKind] || entry.changeKind
                 if (!Object.values(KINDS).includes(kind)) { ec.message.addError(`Unknown chat change kind ${entry.changeKind}`); return false }
-                const users = Array.from(new Set(Array.from(entry.userIdList || []).map((id) => String(id || '').trim()).filter((id) => id)))
+                const users = Array.from(new Set(Array.from(entry.userIdList || []).map((id) => String(id || '').trim())
+                        .filter((id) => id && !id.startsWith('_'))))
                 if (users.length) entries.push({users: users, kind: kind, chatRoomId: entry.chatRoomId || null,
-                    eventSeq: entry.eventSeq != null ? Number(entry.eventSeq) : null, json: entry.change ? JSON.stringify(entry.change) : null})
+                    eventSeq: entry.eventSeq != null ? Number(entry.eventSeq) : null, json: entry.change ? JSON.stringify(entry.change) : null,
+                    push: push || null})
                 return true
             }
-            if (changeKind && !add({userIdList: userIdList, changeKind: changeKind, chatRoomId: chatRoomId, eventSeq: eventSeq, change: change})) return
-            for (const entry of Array.from(changeList || [])) if (entry && !add(entry)) return
-            const users = Array.from(new Set(entries.flatMap((entry) => entry.users))).sort()
+            if (changeKind && !add({userIdList: userIdList, changeKind: changeKind, chatRoomId: chatRoomId, eventSeq: eventSeq, change: change}, pushMessage)) return
+            for (const entry of Array.from(changeList || [])) if (entry && !add(entry, entry.pushMessage)) return
+            let users = Array.from(new Set(entries.flatMap((entry) => entry.users))).sort()
+            if (!users.length) return
+            // an agent's chat user keeps no client
+            const agents = new Set()
+            for (let start = 0; start < users.length; start += 500)
+                for (const row of ec.entity.find('moqui.agent.AgentDefinition').condition('chatUserId', 'in', users.slice(start, start + 500))
+                        .selectField('chatUserId').disableAuthz().list()) agents.add(row.chatUserId)
+            if (agents.size) {
+                users = users.filter((id) => !agents.has(id))
+                for (const entry of entries) entry.users = entry.users.filter((id) => !agents.has(id))
+            }
             if (!users.length) return
 
             // each user's counter, locked in userId order; a missing one is made with an insert that waits for another's
@@ -536,13 +639,11 @@ along with this software (see the LICENSE.md file). If not, see
             }
             const now = ec.user.nowTimestamp
             for (const entry of entries) {
+                if (!entry.users.length) continue
                 // the earlier change of the same thing: this one stands for it
-                for (let start = 0; start < entry.users.length; start += 500) {
-                    let earlier = ec.entity.find('moqui.chat.ChatUserChange').condition('userId', 'in', entry.users.slice(start, start + 500))
-                            .condition('chatRoomId', entry.chatRoomId).condition('changeKindEnumId', entry.kind)
-                    if (entry.kind === 'CucMessage') earlier = earlier.condition('eventSeq', entry.eventSeq)
-                    earlier.disableAuthz().deleteAll()
-                }
+                for (let start = 0; start < entry.users.length; start += 500)
+                    ec.entity.find('moqui.chat.ChatUserChange').condition('userId', 'in', entry.users.slice(start, start + 500))
+                            .condition('chatRoomId', entry.chatRoomId).condition('changeKindEnumId', entry.kind).disableAuthz().deleteAll()
                 for (const id of entry.users) {
                     const state = states[id]
                     if (!state) { ec.message.addError(`No chat change counter for user ${id}`); return }
@@ -556,10 +657,12 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             }
             for (const id of users) if (changeSeqMap[id] != null) states[id].update()
-            if (pushMessage) for (const id of users) {
-                if (changeSeqMap[id] == null) continue
-                ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatUser:' + id, userIdList: [id],
-                    message: Object.assign({}, pushMessage, {changeSeq: changeSeqMap[id]})}).call()
+            const push = (id, message) => ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatUser:' + id,
+                userIdList: [id], message: Object.assign({}, message, {changeSeq: changeSeqMap[id]})}).call()
+            if (changeKind || !pushMessage) {
+                for (const entry of entries) if (entry.push) for (const id of entry.users) push(id, entry.push)
+            } else {
+                for (const id of users) if (changeSeqMap[id] != null) push(id, pushMessage)
             }
         ]]></script></actions>
     </service>
@@ -569,15 +672,19 @@ along with this software (see the LICENSE.md file). If not, see
             1000): changeList [{changeSeq, kind, chatRoomId, eventSeq, changeDate, data}] (data is the kind's detail, see
             record#UserChange), lastSeq (the cursor to keep: the last change answered, or afterSeq when none), more (there
             are more after lastSeq). reset is true, with no changes and lastSeq the user's last number, when afterSeq is not
-            given (a first sync), is older than what clean#UserChanges kept, or is past the user's last number (another
+            given (a first sync), is older than what clean#ChatChanges kept, or is past the user's last number (another
             database): the client reads its rooms again and goes on from lastSeq. With heads (the default), the page that
             ends the feed (more false) has headList [{chatRoomId, lastEventSeq, lastMessageSeq, lastEventDate,
-            lastReadEventSeq}], the rooms the user is in now and their newest event, as new messages are not changes.
+            lastChangeSeq, lastReadEventSeq}], the rooms the user is in now with their newest event and message change
+            (new messages and message changes are the room's, not the user's: get#RoomChanges reads the latter), and
+            headsSince, to give as headsSince next time: then only the rooms with an event or a message change since come
+            back (headsSince overlaps the last answer by two minutes, so a transaction that committed late is not missed).
             Only the user's own changes: there is no userId.</description>
         <in-parameters>
             <parameter name="afterSeq" type="Long"/>
             <parameter name="limit" type="Integer" default="200"/>
             <parameter name="heads" type="Boolean" default="true"/>
+            <parameter name="headsSince" type="Long"/>
         </in-parameters>
         <out-parameters>
             <parameter name="changeList" type="List"><parameter name="change" type="Map"/></parameter>
@@ -585,6 +692,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="more" type="Boolean"/>
             <parameter name="reset" type="Boolean"/>
             <parameter name="headList" type="List"><parameter name="head" type="Map"/></parameter>
+            <parameter name="headsSince" type="Long"/>
         </out-parameters>
         <actions><script><![CDATA[
             const toMillis = (value) => {
@@ -593,9 +701,9 @@ along with this software (see the LICENSE.md file). If not, see
                 return Number.isNaN(number) ? new Date(String(value)).getTime() : number
             }
             const parse = (text) => { if (!text) return {}; try { const value = JSON.parse(text); return value && typeof value === 'object' ? value : {} } catch (err) { return {} } }
-            const CODES = {CucMembership: 'membership', CucRoom: 'room', CucSettings: 'settings', CucRead: 'read', CucMessage: 'message',
-                CucRetention: 'retention'}
-            changeList = []; lastSeq = 0; more = false; reset = false; headList = null
+            const CODES = {CucMembership: 'membership', CucRoom: 'room', CucSettings: 'settings', CucRead: 'read', CucRetention: 'retention'}
+            const since = headsSince != null ? Number(headsSince) : null
+            changeList = []; lastSeq = 0; more = false; reset = false; headList = null; headsSince = null
             const me = ec.user.userId
             if (!me) { ec.message.addError(ec.l10n.localize('No user')); return }
             // the counter first: a change committed after it is still in the rows read next
@@ -617,65 +725,84 @@ along with this software (see the LICENSE.md file). If not, see
             }
             if (more || !heads) return
             headList = []
+            headsSince = Number(ec.user.nowTimestamp) - 120000
+            const cf = ec.entity.conditionFactory
             const members = Array.from(ec.entity.find('moqui.chat.ChatRoomMember').condition('userId', me).condition('leftDate', null)
                     .selectField('chatRoomId').selectField('lastReadEventSeq').disableAuthz().list())
             const readOf = {}
             for (const row of members) readOf[row.chatRoomId] = Number(row.lastReadEventSeq || 0)
             const ids = Object.keys(readOf)
-            for (let start = 0; start < ids.length; start += 500)
-                for (const room of ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', ids.slice(start, start + 500))
-                        .selectField('chatRoomId').selectField('lastEventSeq').selectField('lastMessageSeq').selectField('lastEventDate')
-                        .orderBy('chatRoomId').disableAuthz().list())
+            for (let start = 0; start < ids.length; start += 500) {
+                let find = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', 'in', ids.slice(start, start + 500))
+                if (since != null) find = find.condition(cf.makeCondition([cf.makeCondition('lastEventDate', 'greater-equals', String(since)),
+                    cf.makeCondition('lastChangeDate', 'greater-equals', String(since))], 'or'))
+                for (const room of find.selectField('chatRoomId').selectField('lastEventSeq').selectField('lastMessageSeq').selectField('lastEventDate')
+                        .selectField('lastChangeSeq').orderBy('chatRoomId').disableAuthz().list())
                     headList.push({chatRoomId: room.chatRoomId, lastEventSeq: Number(room.lastEventSeq || 0),
                         lastMessageSeq: room.lastMessageSeq != null ? Number(room.lastMessageSeq) : null, lastEventDate: toMillis(room.lastEventDate),
-                        lastReadEventSeq: readOf[room.chatRoomId]})
+                        lastChangeSeq: Number(room.lastChangeSeq || 0), lastReadEventSeq: readOf[room.chatRoomId]})
+            }
         ]]></script></actions>
     </service>
 
-    <service verb="clean" noun="UserChanges" authenticate="anonymous-all" transaction="ignore">
-        <description>The daily job of the changes feed: each user's changes older than keepDays (the property
-            chat_changes_keep_days, 30 by default) are removed (purge#UserChanges), and a client whose cursor is older reads
-            everything again (get#UserChanges reset). beforeDate (epoch millis) in place of keepDays, and userIdList to
-            only some users, are for tests. Each user is on their own, in their own transaction: one that fails is logged
-            and the rest go on.</description>
+    <service verb="clean" noun="ChatChanges" authenticate="anonymous-all" transaction="ignore">
+        <description>The daily job of the changes feeds: each user's changes (purge#UserChanges) and each room's
+            (purge#RoomChanges) older than keepDays (the property chat_changes_keep_days, 30 by default) are removed, and a
+            client whose cursor is older reads again (reset). beforeDate (epoch millis) in place of keepDays, and
+            userIdList or chatRoomIdList to only those users or rooms (the one given alone leaves the other kind out), are
+            for tests. Each user and room is on its own, in its own transaction: one that fails is logged and the rest go
+            on.</description>
         <in-parameters>
             <parameter name="keepDays" type="Integer"/>
             <parameter name="beforeDate" type="Long"/>
             <parameter name="userIdList" type="List"/>
+            <parameter name="chatRoomIdList" type="List"/>
         </in-parameters>
         <out-parameters>
             <parameter name="userCount" type="Integer"/>
+            <parameter name="roomCount" type="Integer"/>
             <parameter name="deletedCount" type="Integer"/>
             <parameter name="failedCount" type="Integer"/>
         </out-parameters>
         <actions><script><![CDATA[
-            userCount = 0; deletedCount = 0; failedCount = 0
+            userCount = 0; roomCount = 0; deletedCount = 0; failedCount = 0
             const days = keepDays != null ? Number(keepDays) : Number(System.getProperty('chat_changes_keep_days') || 30)
             const before = beforeDate != null ? Number(beforeDate) : Number(ec.user.nowTimestamp) - Math.max(1, days || 30) * 86400000
-            let find = ec.entity.find('moqui.chat.ChatUserChange').condition('changeDate', 'less', String(before))
-            if (userIdList && Array.from(userIdList).length) find = find.condition('userId', 'in', Array.from(userIdList))
-            const users = Array.from(find.selectField('userId').distinct(true).disableAuthz().list()).map((row) => row.userId)
-            for (const userId of users) {
+            const userIds = userIdList ? Array.from(userIdList) : []
+            const roomIds = chatRoomIdList ? Array.from(chatRoomIdList) : []
+            const run = (what, id, serviceName, parameters) => {
                 ec.message.pushErrors()
                 try {
-                    const out = ec.service.sync().name('org.moqui.impl.ChatServices.purge#UserChanges').parameters({userId: userId, beforeDate: before})
-                            .requireNewTransaction(true).disableAuthz().call()
+                    const out = ec.service.sync().name(serviceName).parameters(parameters).requireNewTransaction(true).disableAuthz().call()
                     if (ec.message.hasError()) {
                         failedCount++
-                        ec.logger.error(`Could not clean the chat changes of user ${userId}: ${ec.message.errorsString}`)
-                    } else {
-                        userCount++
-                        deletedCount += Number((out && out.deletedCount) || 0)
+                        ec.logger.error(`Could not clean the chat changes of ${what} ${id}: ${ec.message.errorsString}`)
+                        return false
                     }
+                    deletedCount += Number((out && out.deletedCount) || 0)
+                    return true
                 } catch (err) {
                     failedCount++
-                    ec.logger.error(`Could not clean the chat changes of user ${userId}: ${err && err.message ? err.message : err}`)
+                    ec.logger.error(`Could not clean the chat changes of ${what} ${id}: ${err && err.message ? err.message : err}`)
+                    return false
                 } finally {
                     ec.message.clearErrors()
                     ec.message.popErrors()
                 }
             }
-            if (deletedCount || failedCount) ec.logger.info(`Chat changes: ${deletedCount} removed for ${userCount} users, ${failedCount} users failed`)
+            if (userIds.length || !roomIds.length) {
+                let find = ec.entity.find('moqui.chat.ChatUserChange').condition('changeDate', 'less', String(before))
+                if (userIds.length) find = find.condition('userId', 'in', userIds)
+                for (const row of Array.from(find.selectField('userId').distinct(true).disableAuthz().list()))
+                    if (run('user', row.userId, 'org.moqui.impl.ChatServices.purge#UserChanges', {userId: row.userId, beforeDate: before})) userCount++
+            }
+            if (roomIds.length || !userIds.length) {
+                let find = ec.entity.find('moqui.chat.ChatRoomChange').condition('changeDate', 'less', String(before))
+                if (roomIds.length) find = find.condition('chatRoomId', 'in', roomIds)
+                for (const row of Array.from(find.selectField('chatRoomId').distinct(true).disableAuthz().list()))
+                    if (run('room', row.chatRoomId, 'org.moqui.impl.ChatServices.purge#RoomChanges', {chatRoomId: row.chatRoomId, beforeDate: before})) roomCount++
+            }
+            if (deletedCount || failedCount) ec.logger.info(`Chat changes: ${deletedCount} removed for ${userCount} users and ${roomCount} rooms, ${failedCount} failed`)
         ]]></script></actions>
     </service>
 
@@ -701,6 +828,30 @@ along with this software (see the LICENSE.md file). If not, see
                 state.update()
             }
             deletedCount = ec.entity.find('moqui.chat.ChatUserChange').condition('userId', userId).condition('changeSeq', 'less-equals', through)
+                    .disableAuthz().deleteAll()
+        ]]></script></actions>
+    </service>
+
+    <service verb="purge" noun="RoomChanges" allow-remote="false">
+        <description>Internal: remove a room's message changes up to the last one older than beforeDate (epoch millis), and
+            keep that number as the room's purgedChangeSeq, so get#RoomChanges answers reset to a cursor before it.</description>
+        <in-parameters>
+            <parameter name="chatRoomId" required="true"/>
+            <parameter name="beforeDate" type="Long" required="true"/>
+        </in-parameters>
+        <out-parameters><parameter name="deletedCount" type="Integer"/></out-parameters>
+        <actions><script><![CDATA[
+            deletedCount = 0
+            const room = ec.entity.find('moqui.chat.ChatRoom').condition('chatRoomId', chatRoomId).forUpdate(true).disableAuthz().one()
+            const old = Array.from(ec.entity.find('moqui.chat.ChatRoomChange').condition('chatRoomId', chatRoomId)
+                    .condition('changeDate', 'less', String(beforeDate)).orderBy('-changeSeq').limit(1).selectField('changeSeq').disableAuthz().list())
+            if (!old.length) return
+            const through = Number(old[0].changeSeq)
+            if (room && through > Number(room.purgedChangeSeq || 0)) {
+                room.set('purgedChangeSeq', through)
+                room.update()
+            }
+            deletedCount = ec.entity.find('moqui.chat.ChatRoomChange').condition('chatRoomId', chatRoomId).condition('changeSeq', 'less-equals', through)
                     .disableAuthz().deleteAll()
         ]]></script></actions>
     </service>
@@ -1194,9 +1345,11 @@ along with this software (see the LICENSE.md file). If not, see
             const ownLevels = type === 'CrtDirect' ? {} : ec.service.sync().name('org.moqui.impl.ChatServices.get#DefaultNotifyLevels')
                     .parameter('userIdList', [userId].concat(others)).call().levelMap || {}
             const levelFor = (memberId) => ownLevels[memberId] || roomLevel
-            const pushRoom = (users, action) => ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameters({userIdList: users,
-                changeKind: 'membership', chatRoomId: chatRoomId, change: {action: action, byUserId: userId},
-                pushMessage: {kind: 'room', action: action, chatRoomId: chatRoomId}}).call()
+            // the members' feeds, in one call: each is in the room, with their role
+            const pushRoom = (users, roleOf) => ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameters({
+                changeList: users.map((user) => ({userIdList: [user], changeKind: 'membership', chatRoomId: chatRoomId,
+                    change: {member: true, roleEnumId: roleOf(user), action: 'joined', byUserId: userId}})),
+                pushMessage: {kind: 'room', action: 'joined', chatRoomId: chatRoomId}}).call()
             let directKey = null
             if (type === 'CrtDirect') {
                 directKey = (encrypted ? 'e2ee:' : '') + [userId].concat(others).sort().join(',')
@@ -1205,7 +1358,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (existing.length) {
                     chatRoomId = existing[0].chatRoomId
                     const mine = ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', userId).one()
-                    if (mine && mine.leftDate) { mine.set('leftDate', null); mine.update(); pushRoom([userId], 'joined') }
+                    if (mine && mine.leftDate) { mine.set('leftDate', null); mine.update(); pushRoom([userId], () => mine.roleEnumId ?? 'CmrMember') }
                     return
                 }
             } else if (type === 'CrtRecord') {
@@ -1263,7 +1416,7 @@ along with this software (see the LICENSE.md file). If not, see
                 if (ec.message.hasError()) return
                 ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).updateAll({lastReadEventSeq: appended.eventSeq})
             }
-            pushRoom(members, 'joined')
+            pushRoom(members, (memberId) => type === 'CrtDirect' || memberId !== userId ? 'CmrMember' : 'CmrOwner')
         ]]></script></actions>
     </service>
 
@@ -1522,17 +1675,26 @@ along with this software (see the LICENSE.md file). If not, see
                 }
                 addedUserIdList.push(target)
             }
+            // the users' feeds in one call after the events, so their counters are locked once, in order
+            const userChanges = []
+            let lastAppended = null
             for (const target of addedUserIdList) {
                 const appended = ec.service.sync().name('org.moqui.impl.ChatServices.append#Event').parameters({chatRoomId: chatRoomId,
                     eventTypeEnumId: 'CetMembership', senderUserId: me, content: {action: joining ? 'join' : 'add', userId: target,
-                    roleEnumId: role, byUserId: me}}).call()
+                    roleEnumId: role, byUserId: me}, noUserChanges: true}).call()
                 if (ec.message.hasError()) return
+                lastAppended = appended
                 // the membership event itself is read for the new member
                 ec.entity.find('moqui.chat.ChatRoomMember').condition('chatRoomId', chatRoomId).condition('userId', target)
                         .updateAll({lastReadEventSeq: appended.eventSeq})
-                ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatUser:' + target,
-                    userIdList: [target], message: {kind: 'room', action: 'joined', chatRoomId: chatRoomId,
-                    changeSeq: (appended.changeSeqMap || {})[target] ?? null}}).call()
+                userChanges.push({userIdList: [target], changeKind: 'membership', chatRoomId: chatRoomId, eventSeq: appended.eventSeq,
+                    change: {member: true, roleEnumId: role, action: 'joined', byUserId: me},
+                    pushMessage: {kind: 'room', action: 'joined', chatRoomId: chatRoomId}})
+            }
+            if (lastAppended) {
+                ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameter('changeList', [{userIdList: lastAppended.memberUserIdList,
+                    changeKind: 'room', chatRoomId: chatRoomId, eventSeq: lastAppended.eventSeq, change: {reason: 'members'}}].concat(userChanges)).call()
+                if (ec.message.hasError()) return
             }
         ]]></script></actions>
     </service>
@@ -1592,7 +1754,7 @@ along with this software (see the LICENSE.md file). If not, see
             if (!userId) return
             // a direct room is left with no event: the user's change is recorded here
             if (isDirect) ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameters({userIdList: [userId],
-                changeKind: 'membership', chatRoomId: chatRoomId, change: {action: 'left', byUserId: me},
+                changeKind: 'membership', chatRoomId: chatRoomId, change: {member: false, roleEnumId: null, action: 'left', byUserId: me},
                 pushMessage: {kind: 'room', action: 'left', chatRoomId: chatRoomId}}).call()
             else ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({topic: 'chatUser:' + userId,
                 userIdList: [userId], message: {kind: 'room', action: 'left', chatRoomId: chatRoomId, changeSeq: leftSeq}}).call()
@@ -2279,14 +2441,16 @@ along with this software (see the LICENSE.md file). If not, see
             // the sender has read it; in a direct room the members who left are back
             const senderRow = memberRows.find((row) => row.chatActorId === senderActor)
             if (senderRow) { senderRow.set('lastReadEventSeq', eventSeq); senderRow.set('lastReadDate', now); senderRow.update() }
+            const backIn = []
             if (isDirect) for (const row of memberRows) {
                 if (!row.leftDate) continue
                 row.set('leftDate', null)
                 row.update()
-                if (row.userId) ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameters({userIdList: [row.userId],
-                    changeKind: 'membership', chatRoomId: chatRoomId, change: {action: 'joined'},
-                    pushMessage: {kind: 'room', action: 'joined', chatRoomId: chatRoomId}}).call()
+                if (row.userId) backIn.push({userIdList: [row.userId], changeKind: 'membership', chatRoomId: chatRoomId,
+                    change: {member: true, roleEnumId: row.roleEnumId ?? null, action: 'joined'}})
             }
+            if (backIn.length) ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameters({changeList: backIn,
+                pushMessage: {kind: 'room', action: 'joined', chatRoomId: chatRoomId}}).call()
             // mentions: counted, and notified unless the member's level is none
             if (mentionIds.length) {
                 const mentionActors = ec.service.sync().name('org.moqui.impl.ChatServices.get#LocalActors').parameter('userIdList', mentionIds)
@@ -3172,6 +3336,9 @@ along with this software (see the LICENSE.md file). If not, see
                     .selectField('leftDate').list()).filter((member) => member.userId && (isDirect || !member.leftDate)).map((member) => member.userId)
             ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameters({userIdList: holders, changeKind: 'retention',
                 chatRoomId: chatRoomId, eventSeq: seqs[seqs.length - 1], change: {deletedCount: deletedCount}}).call()
+            // the room's changes of the messages gone go with them: the tombstone stands for them
+            ec.entity.find('moqui.chat.ChatRoomChange').condition('chatRoomId', chatRoomId).condition('eventSeq', 'less-equals', seqs[seqs.length - 1])
+                    .disableAuthz().deleteAll()
             if (ec.message.hasError()) return
             if (counted.size) ec.service.sync().name('org.moqui.impl.ChatServices.publish#ChatCounts').parameter('userIdList', Array.from(counted)).call()
         ]]></script></actions>
