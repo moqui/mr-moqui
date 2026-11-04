@@ -48,6 +48,15 @@ static PUSH: Mutex<()> = Mutex::new(());
 /// The app's host, once its setup ran: a background send tells its pages what changed.
 static APP_HOST: Mutex<Option<Arc<dyn ClientHost>>> = Mutex::new(None);
 
+/// Set once the app ends its client to end the process: no client is made again, so none recovers the outbox's
+/// operations that were sending (and sends them a second time) in the moment before the process ends.
+static ENDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The process is ending (the app's client stopped before its exit).
+pub(crate) fn process_ending() {
+    ENDING.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// The longest a background send takes operations ([`flush_background`]); WorkManager stops a run at ten minutes.
 const FLUSH_BUDGET_MAX: Duration = Duration::from_secs(5 * 60);
 /// The call links the native code made and not yet taken.
@@ -127,6 +136,9 @@ pub(crate) fn core_in(dir: &Path) -> Result<Arc<Client>, String> {
     let mut held = moqui_lib::sync::lock(&CORE);
     if let Some(core) = held.as_ref().filter(|core| !core.is_stopped()) {
         return Ok(Arc::clone(core));
+    }
+    if ENDING.load(std::sync::atomic::Ordering::SeqCst) {
+        return Err("the process is ending".to_string());
     }
     let keys = crate::keystore::open_keys(&dir.join("keys"));
     let conf = ClientConf::parse(crate::client_conf_element());
@@ -316,8 +328,12 @@ impl ClientHost for NoPages {
 
 /// Send what the outbox has due, taking nothing after `budget_ms` (at most [`FLUSH_BUDGET_MAX`]): the background run
 /// of `FlushWorker.kt`, with the app asleep or its process started for it. Gives the milliseconds until the next
-/// operation waiting is due, or -1 when none waits for a time (nothing left, or only held or refused ones).
+/// operation waiting is due, or -1 when none waits for a time (nothing left, or only held or refused ones). In a
+/// process that is ending it sends nothing and gives 0, so the job runs again, in a process of its own.
 pub(crate) fn flush_background(dir: &Path, budget_ms: i64) -> i64 {
+    if ENDING.load(std::sync::atomic::Ordering::SeqCst) {
+        return 0;
+    }
     if !network_ready() {
         return -1;
     }
@@ -483,11 +499,21 @@ mod entries {
         data_dir: JString<'caller>,
         budget_ms: jlong,
     ) -> jlong {
+        // -1 (nothing to run again for) on an error or a panic, not the policy's default 0, which is "due now"
         env.with_env(|env| -> Result<i64, jni::errors::Error> {
-            Ok(super::flush_background(
-                &client_dir(&data_dir.try_to_string(env)?),
-                budget_ms,
-            ))
+            let dir = match data_dir.try_to_string(env) {
+                Ok(dir) => client_dir(&dir),
+                Err(err) => {
+                    log::error!("Outbox: the background send's directory was not read: {err}");
+                    return Ok(-1);
+                }
+            };
+            Ok(
+                std::panic::catch_unwind(|| super::flush_background(&dir, budget_ms)).unwrap_or_else(|_| {
+                    log::error!("Outbox: the background send panicked");
+                    -1
+                }),
+            )
         })
         .resolve::<LogErrorAndDefault>()
     }

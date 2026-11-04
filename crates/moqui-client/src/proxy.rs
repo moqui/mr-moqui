@@ -140,6 +140,23 @@ impl Proxy {
     /// Returns an error for a request another site started, a method a page does not send, a path that is not one on
     /// the server, or the transport's when the server does not answer.
     pub fn send(&self, base: &str, key: Option<&str>, origin: &str, request: Request) -> Result<Upstream, Error> {
+        self.send_within(base, key, origin, request, None)
+    }
+
+    /// [`Self::send`] with its own `timeout` (the whole request, its answer's body read included) in place of the
+    /// proxy's, when given: a bounded run in the background.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::send`].
+    pub fn send_within(
+        &self,
+        base: &str,
+        key: Option<&str>,
+        origin: &str,
+        request: Request,
+        timeout: Option<Duration>,
+    ) -> Result<Upstream, Error> {
         if cross_site(&request.headers, origin) {
             return Err(Error::new(format!("a request from another site: {}", request.path)));
         }
@@ -159,6 +176,9 @@ impl Proxy {
         }
         if !request.body.is_empty() {
             builder = builder.body(request.body);
+        }
+        if let Some(timeout) = timeout {
+            builder = builder.timeout(timeout);
         }
         let response = builder.send().map_err(|err| Error::new(format!("{url}: {err}")))?;
         let status = response.status().as_u16();

@@ -41,8 +41,6 @@ class MainActivity : TauriActivity() {
     super.onCreate(savedInstanceState)
     CallManager.know(this)
     CallManager.appScreenShown(this)
-    // the outbox sent in the background, once the app is there (WorkManager)
-    FlushWorker.watch(this)
     // the native code's library and context, then push (FCM, when the build has Firebase)
     Native.work {
       Native.ensure(applicationContext)
@@ -82,10 +80,18 @@ class MainActivity : TauriActivity() {
     askForCallsOnce()
   }
 
+  override fun onStop() {
+    super.onStop()
+    // the outbox sent in the background (WorkManager)
+    FlushWorker.background(this)
+  }
+
   override fun onDestroy() {
     CallManager.appScreenShown(null)
     // before Rust hears of the end (super.onDestroy)
     ActivityEnd.note(this)
+    // the process ends with a finished activity: the background send kept first
+    if (isFinishing && !isChangingConfigurations) FlushWorker.background(this, ending = true)
     super.onDestroy()
   }
 
