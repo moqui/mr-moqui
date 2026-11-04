@@ -57,7 +57,7 @@ polls until it answers, for CI that starts the server in the background. Any fai
 | `--out dir` | Where saved bodies, screenshots, PDFs, failure files, load results and `--serve` logs go. The default is `runtime/tmp/test-client/<yyyyMMdd-HHmmss>-<pid>`, or `test-client-out/<run>` in the working directory without a runtime. The run prints it at the end when anything was written |
 | `--wait seconds` | Poll until the server answers |
 | `--timeout seconds` | What `waitUntil`, a raw request, a WebSocket connect and receive, and a browser action wait by default. 10 |
-| `--chromium path` | The browser, else `MOQUI_CHROMIUM`, else `runtime/chromium` (`./moq chromium-download`), `chromium` or `chromium-browser` on the PATH, then `google-chrome` |
+| `--chromium path` | The browser, else `moqui_chromium_path`, else `runtime/chromium` (`./moq chromium-download`), else an installed Chromium, then Google Chrome or Microsoft Edge (on the PATH or where the OS installs them) |
 | `--headed` | A visible browser, for debugging |
 | `--video` | Record each spec's pages into `<out>/video/<Spec>.webm`, with `<Spec>.timeline.json` ([Video](#video)). Needs `ffmpeg` |
 | `--insecure` | Accept an invalid server certificate (a WARN says so); Chromium gets `--ignore-certificate-errors` too |
@@ -122,8 +122,8 @@ run against it; then the pipe closes, and the child stops and removes its scratc
 the client dies without cleaning up, since its standard input closes. A component with no declaration, or a child that
 exits or does not start within 30 minutes, fails that group's specs with the last lines of its log; the other groups
 still run. The child gets `--slow` when the client has it; a component whose specs are all slow starts no server
-without it. When nothing names a browser for PDF (`pdf_chromium_path`), the child renders PDF with the browser the
-client drives, so the specs that check a PDF have one where the child's own search finds only Google Chrome.
+without it. When `--chromium` names the browser and `moqui_chromium_path` is not set, the child renders PDF with that
+browser too.
 
 The child is an ordinary `moqui test` run, so it writes what one writes: a scratch runtime, and the saved load under
 `runtime/save` that `--db snapshot` restores on later runs while the components it loads, their entity and data files

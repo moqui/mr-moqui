@@ -5,7 +5,7 @@
 # Embedded Postgres also loads libssl.so.3, libcrypto.so.3, libzstd.so.1, liblz4.so.1, libz.so.1,
 # libgssapi_krb5.so.2, and libxml2.so.2. Debian 13's libxml2 package still provides that soname.
 # A newer host that only has libxml2.so.16 is handled by the server's shim; this image does not
-# need the compiler. Chromium is not installed; PDF stays unavailable until pdf_chromium_path is set.
+# need the compiler. Chromium is not installed; PDF stays unavailable until moqui_chromium_path is set.
 
 FROM docker.io/library/debian:13-slim
 

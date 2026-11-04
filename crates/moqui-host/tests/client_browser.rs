@@ -16,8 +16,8 @@
 //! `tests/fixtures/test-component/browser-client/Browser.spec.js` over the gallery screens of `/qapps` and the login
 //! form, with goto, roles and names, fill, click, a dialog, settle, a provoked console error that fails its feature
 //! and leaves its screenshot and text, allowPageProblems, allowProblems and takeProblems, a screenshot and a PDF. Opt-in
-//! as `gate3_browser` is, because it needs Chromium (`--chromium`, `MOQUI_CHROMIUM`, `runtime/chromium`, or chromium,
-//! chromium-browser or google-chrome on the `PATH`):
+//! as `gate3_browser` is, because it needs Chromium (`--chromium`, `moqui_chromium_path`, `runtime/chromium`, or an
+//! installed Chromium, Google Chrome or Microsoft Edge):
 //!
 //! ```sh
 //! cargo test -p moqui-host --test client_browser
@@ -137,8 +137,7 @@ fn a_browser_spec_drives_the_gallery_and_its_problems_fail_a_feature() {
 /// reads with a duration, and a timeline of both features. Without Chromium, ffmpeg or ffprobe it says so and passes.
 #[test]
 fn video_records_a_spec_and_its_timeline() {
-    let chromium = std::env::var("MOQUI_CHROMIUM").unwrap_or_default();
-    if let Err(reason) = moqui_host::chromium::find_test_browser(None, &chromium) {
+    if let Err(reason) = moqui_host::chromium::find_test_browser(None, "") {
         eprintln!("skipped: {reason}");
         return;
     }

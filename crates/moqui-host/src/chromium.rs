@@ -22,17 +22,86 @@ use std::time::{Duration, Instant};
 
 use moqui_lib::error::Error;
 
+/// The property (or environment variable, or `runtime/.env` entry) that names the Chromium for PDF and the browser
+/// tests.
+pub const CHROMIUM_PATH: &str = "moqui_chromium_path";
+
+/// The browser `moqui_chromium_path` names, or empty.
+#[must_use]
+pub fn configured_chromium() -> String {
+    moqui_lib::env::get_prop_or_env(CHROMIUM_PATH).trim().to_string()
+}
+
 /// A Chromium or Chrome binary found, and where it was found.
 struct Found {
     place: String,
     path: PathBuf,
-    chrome: bool,
+}
+
+/// The names looked for on the `PATH`, Chromium first, then Google Chrome and Microsoft Edge.
+const PATH_NAMES: [&str; 6] = [
+    "chromium",
+    "chromium-browser",
+    "google-chrome",
+    "google-chrome-stable",
+    "microsoft-edge",
+    "microsoft-edge-stable",
+];
+
+/// The places a package or installer puts the browser on this OS, Chromium first, then Google Chrome and Microsoft
+/// Edge: the distro and snap paths on Linux (which a service's short `PATH` may not reach), `/Applications` and
+/// `~/Applications` on macOS, and Program Files and the per-user `LOCALAPPDATA` on Windows.
+fn common_locations() -> Vec<PathBuf> {
+    if cfg!(target_os = "macos") {
+        let apps = [
+            "Chromium.app/Contents/MacOS/Chromium",
+            "Google Chrome.app/Contents/MacOS/Google Chrome",
+            "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        ];
+        let mut dirs = vec![PathBuf::from("/Applications")];
+        if let Some(home) = std::env::var_os("HOME") {
+            dirs.push(PathBuf::from(home).join("Applications"));
+        }
+        apps.iter()
+            .flat_map(|app| dirs.iter().map(move |dir| dir.join(app)))
+            .collect()
+    } else if cfg!(windows) {
+        let apps = [
+            r"Chromium\Application\chrome.exe",
+            r"Google\Chrome\Application\chrome.exe",
+            r"Microsoft\Edge\Application\msedge.exe",
+        ];
+        let dirs: Vec<PathBuf> = ["ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"]
+            .iter()
+            .filter_map(|name| std::env::var_os(name).map(PathBuf::from))
+            .collect();
+        apps.iter()
+            .flat_map(|app| dirs.iter().map(move |dir| dir.join(app)))
+            .collect()
+    } else {
+        [
+            "/usr/bin/chromium",
+            "/usr/bin/chromium-browser",
+            "/snap/bin/chromium",
+            "/usr/lib/chromium/chromium",
+            "/usr/lib64/chromium-browser/chromium-browser",
+            "/usr/local/bin/chromium",
+            "/usr/bin/google-chrome",
+            "/usr/bin/google-chrome-stable",
+            "/opt/google/chrome/chrome",
+            "/usr/bin/microsoft-edge",
+            "/opt/microsoft/msedge/msedge",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect()
+    }
 }
 
 /// Every Chromium and Chrome there is, in order: `configured` when it names a file (`configured_name` says where it
-/// came from, for the warning when it does not), the one of [`downloaded_chromium`], `chromium`, `chromium-browser`,
-/// `google-chrome` and `google-chrome-stable` on the `PATH`, and on macOS those in `/Applications`. One binary under
-/// several names (chromium-browser a link to chromium, google-chrome-stable to google-chrome) is there once.
+/// came from, for the warning when it does not), the one of [`downloaded_chromium`], then [`PATH_NAMES`] on the
+/// `PATH` and the [`common_locations`] of this OS, Chromium before Google Chrome and Microsoft Edge. One binary under
+/// several names (chromium-browser a link to chromium, /usr/bin/google-chrome to /opt/google/chrome) is there once.
 fn found_binaries(runtime_dir: Option<&Path>, configured: &str, configured_name: &str, what: &str) -> Vec<Found> {
     let mut found = Vec::new();
     if !configured.is_empty() {
@@ -41,7 +110,6 @@ fn found_binaries(runtime_dir: Option<&Path>, configured: &str, configured_name:
             found.push(Found {
                 place: configured_name.to_string(),
                 path,
-                chrome: false,
             });
         } else {
             tracing::warn!("Chromium for {what}: {configured_name} names {configured}, which is not a file");
@@ -56,46 +124,28 @@ fn found_binaries(runtime_dir: Option<&Path>, configured: &str, configured_name:
                 ),
                 Err(_) => "runtime/chromium".to_string(),
             };
-            found.push(Found {
-                place,
-                path,
-                chrome: false,
-            });
+            found.push(Found { place, path });
         }
     }
     let search = std::env::var_os("PATH").unwrap_or_default();
-    for (name, chrome) in [
-        ("chromium", false),
-        ("chromium-browser", false),
-        ("google-chrome", true),
-        ("google-chrome-stable", true),
-    ] {
+    let mut installed = Vec::new();
+    for name in PATH_NAMES {
+        let file = format!("{name}{}", std::env::consts::EXE_SUFFIX);
         if let Some(path) = std::env::split_paths(&search)
-            .map(|dir| dir.join(name))
+            .map(|dir| dir.join(&file))
             .find(|path| path.is_file())
         {
-            found.push(Found {
-                place: format!("{name} on the PATH"),
-                path,
-                chrome,
-            });
+            installed.push((is_chromium(&path), format!("{name} on the PATH"), path));
         }
     }
-    if cfg!(target_os = "macos") {
-        for (app, chrome) in [
-            ("/Applications/Chromium.app/Contents/MacOS/Chromium", false),
-            ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", true),
-        ] {
-            let path = PathBuf::from(app);
-            if path.is_file() {
-                found.push(Found {
-                    place: "/Applications".to_string(),
-                    path,
-                    chrome,
-                });
-            }
+    for path in common_locations() {
+        if path.is_file() {
+            installed.push((is_chromium(&path), "a common install location".to_string(), path));
         }
     }
+    // Chromium before Google Chrome and Edge; a stable sort keeps the PATH before the common locations.
+    installed.sort_by_key(|(chromium, _, _)| !chromium);
+    found.extend(installed.into_iter().map(|(_, place, path)| Found { place, path }));
     let mut seen = Vec::new();
     found.retain(|one| {
         let real = std::fs::canonicalize(&one.path).unwrap_or_else(|_| one.path.clone());
@@ -106,27 +156,26 @@ fn found_binaries(runtime_dir: Option<&Path>, configured: &str, configured_name:
     found
 }
 
+/// Whether a binary is Chromium itself rather than Google Chrome or Microsoft Edge, from its path.
+fn is_chromium(path: &Path) -> bool {
+    let text = path.to_string_lossy().to_ascii_lowercase();
+    text.contains("chromium")
+}
+
 /// Look at every place a Chromium may be, log each one found, and choose one for PDF: `configured` (the `pdf`
-/// `chromium-path`, `pdf_chromium_path`) when it names a file,
-/// else the first Chromium of [`downloaded_chromium`], `chromium` then `chromium-browser` on the `PATH`, and on macOS
-/// `/Applications/Chromium.app`. Google Chrome is logged when it is found but is used only when `pdf_chromium_path`
-/// names it.
+/// `chromium-path`, `moqui_chromium_path`) when it names a file, else the first of [`found_binaries`]: the one of
+/// [`downloaded_chromium`], then an installed Chromium, then an installed Google Chrome or Microsoft Edge.
 ///
 /// # Errors
 ///
 /// Returns the reason PDF is not available, already logged, when no Chromium is chosen.
 pub fn find_chromium(runtime_dir: &Path, configured: &str) -> Result<PathBuf, String> {
     let configured = configured.trim();
-    let found = found_binaries(Some(runtime_dir), configured, "pdf_chromium_path", "PDF");
+    let found = found_binaries(Some(runtime_dir), configured, CHROMIUM_PATH, "PDF");
     for one in &found {
-        let note = if one.chrome {
-            ", Google Chrome: used only when pdf_chromium_path names it"
-        } else {
-            ""
-        };
-        tracing::info!("Chromium for PDF: found {} at {}{note}", one.place, one.path.display());
+        tracing::info!("Chromium for PDF: found {} at {}", one.place, one.path.display());
     }
-    if let Some(chosen) = found.iter().find(|one| !one.chrome) {
+    if let Some(chosen) = found.first() {
         tracing::info!(
             "Chromium for PDF: using {} from {}",
             chosen.path.display(),
@@ -137,38 +186,33 @@ pub fn find_chromium(runtime_dir: &Path, configured: &str) -> Result<PathBuf, St
         }
         return Ok(chosen.path.clone());
     }
-    let mut reason = if configured.is_empty() {
+    let reason = if configured.is_empty() {
         moqui_core::screen::PDF_UNAVAILABLE.to_string()
     } else {
-        format!("PDF is not available: pdf_chromium_path names {configured}, which is not a file, and no other Chromium was found")
+        format!("PDF is not available: {CHROMIUM_PATH} names {configured}, which is not a file, and no other Chromium was found")
     };
-    if let Some(chrome) = found.first() {
-        reason.push_str(&format!(
-            "; Google Chrome at {} is used when pdf_chromium_path names it",
-            chrome.path.display()
-        ));
-    }
     tracing::warn!("Chromium for PDF: {reason}");
     Err(reason)
 }
 
-/// The browser of `moqui test-client`: `configured` (`--chromium`, else `MOQUI_CHROMIUM`) when it names a file, else
-/// the one in `runtime/chromium` (with a runtime), `chromium` and `chromium-browser` on the `PATH`, then Google Chrome,
-/// which the browser tests may use as they always have.
+/// The browser of `moqui test-client`: `configured` (`--chromium`) when it names a file, else `moqui_chromium_path`
+/// when that does, else the first of [`found_binaries`], as for PDF.
 ///
 /// # Errors
 ///
 /// Returns why there is none, naming the places looked at.
 pub fn find_test_browser(runtime_dir: Option<&Path>, configured: &str) -> Result<PathBuf, String> {
-    let configured = configured.trim();
-    if !configured.is_empty() && !Path::new(configured).is_file() {
-        return Err(format!(
-            "--chromium (or MOQUI_CHROMIUM) names {configured}, which is not a file"
-        ));
+    let mut configured = configured.trim().to_string();
+    let mut name = "--chromium";
+    if configured.is_empty() {
+        configured = configured_chromium();
+        name = CHROMIUM_PATH;
     }
-    let found = found_binaries(runtime_dir, configured, "--chromium", "the browser tests");
-    let chosen = found.iter().find(|one| !one.chrome).or_else(|| found.first());
-    match chosen {
+    if !configured.is_empty() && !Path::new(&configured).is_file() {
+        return Err(format!("{name} names {configured}, which is not a file"));
+    }
+    let found = found_binaries(runtime_dir, &configured, name, "the browser tests");
+    match found.first() {
         Some(one) => {
             tracing::debug!(
                 "Chromium for the browser tests: {} from {}",
@@ -180,11 +224,10 @@ pub fn find_test_browser(runtime_dir: Option<&Path>, configured: &str) -> Result
             }
             Ok(one.path.clone())
         }
-        None => Err(
-            "no Chromium: pass --chromium or set MOQUI_CHROMIUM, run ./moq chromium-download, or put chromium, \
-             chromium-browser or google-chrome on the PATH"
-                .to_string(),
-        ),
+        None => Err(format!(
+            "no Chromium: pass --chromium or set {CHROMIUM_PATH}, run ./moq chromium-download, or install Chromium, \
+             Google Chrome or Microsoft Edge"
+        )),
     }
 }
 

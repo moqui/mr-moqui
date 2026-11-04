@@ -12,9 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The Chromium PDF engine on its own: no database and no server. The browser is `pdf_chromium_path`, else the one in
-//! `runtime/chromium`, else `chromium`, `chromium-browser` or `google-chrome` on the `PATH`; with none the test logs
-//! that and passes.
+//! The Chromium PDF engine on its own: no database and no server. The browser is the one PDF finds
+//! (`moqui_chromium_path`, else `runtime/chromium`, else an installed Chromium, Google Chrome or Microsoft Edge); with
+//! none the test logs that and passes.
 #![cfg(feature = "pdf")]
 
 use std::io::Read;
@@ -28,16 +28,11 @@ use moqui_core::screen::PdfEngine;
 use moqui_host::pdf::ChromiumPdf;
 
 fn browser() -> Option<PathBuf> {
-    if let Ok(found) = moqui_host::chromium::find_chromium(
+    moqui_host::chromium::find_chromium(
         &crate::common::repo_runtime(),
-        &moqui_lib::env::get_prop_or_env("pdf_chromium_path"),
-    ) {
-        return Some(found);
-    }
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    std::env::split_paths(&path)
-        .map(|dir| dir.join("google-chrome"))
-        .find(|candidate| candidate.is_file())
+        &moqui_host::chromium::configured_chromium(),
+    )
+    .ok()
 }
 
 #[test]

@@ -35,7 +35,7 @@ use crate::context::{Error, ExecutionContext};
 
 /// What a caller sees when it asks for PDF bytes and the host installed no engine.
 pub const PDF_UNAVAILABLE: &str =
-    "PDF is not available: no Chromium binary was found (run ./moq chromium-download or set pdf_chromium_path)";
+    "PDF is not available: no Chromium binary was found (run ./moq chromium-download or set moqui_chromium_path)";
 
 /// Turns an `html-print` document into PDF bytes. It blocks the calling worker until the bytes come back, so a
 /// caller renders the document first and holds no enlisted connection while it waits.

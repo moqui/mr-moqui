@@ -16,7 +16,7 @@
 //! "PDF"): a hidden window that is never shown, driven over the DevTools Protocol through CEF
 //! (`tauri_runtime_cef::WebviewCefExt`), with the server's own page sequence (`moqui_host::pdf::print_page` and
 //! `preview_page`), so a PDF, a PNG and a preview come out as the headless Chromium makes them. Installed only where
-//! the node found no Chromium of its own (`pdf_chromium_path`, `runtime/chromium` or one on the `PATH`), in process
+//! the node found no Chromium of its own (`moqui_chromium_path`, `runtime/chromium` or an installed one), in process
 //! only: a sidecar node is another process.
 //!
 //! As there, the document reaches no network: `Fetch` pauses every request, and the page fails each one. The window has

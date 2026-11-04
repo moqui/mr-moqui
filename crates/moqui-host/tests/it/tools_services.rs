@@ -70,25 +70,13 @@ fn page(address: SocketAddr, auth: &str, path: &str) -> String {
     text
 }
 
-/// A browser for the PDF check: `pdf_chromium_path` when set, else the one in `runtime/chromium`, else `chromium`,
-/// `chromium-browser` or `google-chrome` on the `PATH`. With none the screen document reports that PDF is not available, which also passes gate 4.
+/// A browser for the PDF check: the one PDF finds (`moqui_chromium_path`, else `runtime/chromium`, else an installed
+/// Chromium, Google Chrome or Microsoft Edge). With none the screen document reports that PDF is not available, which
+/// also passes gate 4.
 fn browser() -> Option<String> {
-    let configured = moqui_lib::env::get_prop_or_env("pdf_chromium_path");
-    if !configured.is_empty() {
-        return Some(configured);
-    }
-    if let Some(found) = crate::common::downloaded_chromium() {
-        return Some(found.display().to_string());
-    }
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    ["chromium", "chromium-browser", "google-chrome"]
-        .iter()
-        .find_map(|name| {
-            std::env::split_paths(&path)
-                .map(|dir| dir.join(name))
-                .find(|candidate| candidate.is_file())
-                .map(|found| found.display().to_string())
-        })
+    moqui_host::chromium::find_test_browser(Some(&crate::common::repo_runtime()), "")
+        .ok()
+        .map(|found| found.display().to_string())
 }
 
 #[test]
@@ -99,7 +87,7 @@ fn tools_services_run_on_postgres() {
     let browser = browser();
     let chromium: Vec<(&str, &str)> = browser
         .iter()
-        .map(|binary| ("pdf_chromium_path", binary.as_str()))
+        .map(|binary| ("moqui_chromium_path", binary.as_str()))
         .collect();
     let gate = crate::common::start_with_properties("tools-services", Some(DATA), &chromium);
     let address = gate.server.address();

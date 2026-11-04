@@ -48,8 +48,7 @@ fn prepared() -> Option<(PathBuf, PathBuf)> {
         return None;
     }
     let runtime = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
-    let configured = std::env::var("MOQUI_CHROMIUM").unwrap_or_default();
-    match moqui_host::chromium::find_test_browser(Some(&runtime), &configured) {
+    match moqui_host::chromium::find_test_browser(Some(&runtime), "") {
         Ok(binary) => Some((pkg, binary)),
         Err(reason) => {
             eprintln!("skipping: {reason}");

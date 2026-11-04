@@ -177,19 +177,15 @@ struct ServeChild {
     names: String,
 }
 
-/// The browser the child renders PDF with: the one this client drives, when nothing names one for PDF
-/// (`pdf_chromium_path` as a property, in the environment or in `runtime/.env`). The child's own search would leave out
-/// Google Chrome, which PDF uses only when named, and the specs that check a PDF would wait for one that never comes.
+/// The browser the child renders PDF with: the one `--chromium` names, when nothing names one for PDF
+/// (`moqui_chromium_path` as a property, in the environment or in `runtime/.env`). Otherwise the child's own search
+/// finds the one this client drives.
 fn pdf_browser(args: &ClientArgs) -> Option<PathBuf> {
-    if !moqui_lib::env::get_prop_or_env("pdf_chromium_path").trim().is_empty() {
+    if !crate::chromium::configured_chromium().is_empty() {
         return None;
     }
-    let configured = args
-        .chromium
-        .clone()
-        .or_else(|| std::env::var("MOQUI_CHROMIUM").ok())
-        .unwrap_or_default();
-    crate::chromium::find_test_browser(Some(&crate::runtime_framework_dirs().0), &configured).ok()
+    let configured = args.chromium.as_deref().filter(|text| !text.trim().is_empty())?;
+    crate::chromium::find_test_browser(Some(&crate::runtime_framework_dirs().0), configured).ok()
 }
 
 fn start(server: &SuiteServer, log: &Path, index: usize, args: &ClientArgs) -> Result<ServeChild, Error> {
@@ -220,7 +216,7 @@ fn start(server: &SuiteServer, log: &Path, index: usize, args: &ClientArgs) -> R
         command.env(name, value);
     }
     if let Some(browser) = pdf_browser(args) {
-        command.env("pdf_chromium_path", browser);
+        command.env(crate::chromium::CHROMIUM_PATH, browser);
     }
     let mut process = command
         .spawn()

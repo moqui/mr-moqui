@@ -21,7 +21,7 @@
 //! column picker, a form post with the session token, Quasar menus and popups, the lazy Chart.js and Mermaid, and the pages and sort of a
 //! form-list. The server-static compatibility report, and the fixture's clean verdict in it, is `it::qvt_report`.
 //!
-//! The browser is `pdf-chromium-path`, else `chromium`, `chromium-browser` or `google-chrome` on the `PATH`. A missing binary fails.
+//! The browser is `moqui_chromium_path`, else `runtime/chromium`, else an installed Chromium, Google Chrome or Edge. A missing binary fails.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
 

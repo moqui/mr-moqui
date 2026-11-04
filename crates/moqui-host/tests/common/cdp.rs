@@ -25,34 +25,13 @@ use serde_json::Value;
 
 pub use cdp::Problem;
 
-/// The browser of the smoke: `pdf-chromium-path` when it is set, else the Chromium of `./moq chromium-download` in
-/// `runtime/chromium`, else `chromium`, `chromium-browser` or `google-chrome` on the `PATH`. A missing binary fails
-/// the smoke.
+/// The browser of the smoke: the one `moqui test-client` finds (`moqui_chromium_path`, else `runtime/chromium`, else
+/// an installed Chromium, Google Chrome or Microsoft Edge). A missing binary fails the smoke.
 pub fn chromium_binary() -> PathBuf {
-    for name in ["pdf-chromium-path", "pdf_chromium_path"] {
-        let configured = moqui_lib::env::get_prop_or_env(name);
-        if !configured.is_empty() {
-            let path = PathBuf::from(&configured);
-            assert!(path.is_file(), "{name} names {configured}, which is not a file");
-            return path;
-        }
+    match moqui_host::chromium::find_test_browser(Some(&super::repo_runtime()), "") {
+        Ok(found) => found,
+        Err(reason) => panic!("no Chromium for the Gate 3 browser smoke: {reason}"),
     }
-    if let Some(found) = super::downloaded_chromium() {
-        return found;
-    }
-    let path = std::env::var_os("PATH").unwrap_or_default();
-    for name in ["chromium", "chromium-browser", "google-chrome"] {
-        for dir in std::env::split_paths(&path) {
-            let candidate = dir.join(name);
-            if candidate.is_file() {
-                return candidate;
-            }
-        }
-    }
-    panic!(
-        "no Chromium for the Gate 3 browser smoke: set pdf-chromium-path, run ./moq chromium-download, or put chromium, \
-         chromium-browser or google-chrome on the PATH"
-    );
 }
 
 pub struct Browser(cdp::Browser);

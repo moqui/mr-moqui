@@ -743,8 +743,8 @@ update. The composer's id is on its textarea through `q-input`'s `for`.
 `moqui.assist.state` (its `convo` the store) and `moqui.assist.clientId` can be read from the page.
 
 **The Chromium smokes** are the `assist` module of `crates/moqui-host/tests/gate3_browser.rs` (`cargo test -p moqui-host
---test gate3_browser assist::`; the browser is `pdf-chromium-path`, for instance `pdf_chromium_path="/Applications/Google
-Chrome.app/Contents/MacOS/Google Chrome"`, else the downloaded or `PATH` Chromium), against the scripted fake provider
+--test gate3_browser assist::`; the browser is `moqui_chromium_path`, for instance `moqui_chromium_path="/Applications/Google
+Chrome.app/Contents/MacOS/Google Chrome"`, else the downloaded or an installed one), against the scripted fake provider
 (`fake::script` of the endpoint `gate-assist`) and a fixture component (`assistgate`: Edit saves an `EnumerationType`, Slow
 takes 5 s to render): a run streams (Mod+J, Enter, the text in pieces, the done line) and a reload in the middle of the next
 run re-attaches and ends with its text once; the drawer on a `webapp_qvt_static_only` page under a policy without

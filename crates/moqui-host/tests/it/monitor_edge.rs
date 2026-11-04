@@ -341,12 +341,7 @@ fn scheduled_reports_recheck_owner_and_export_the_panel_frame() {
     if !crate::common::own_process() {
         return;
     }
-    let chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-    let properties = if std::path::Path::new(chrome).is_file() {
-        vec![("pdf_chromium_path", chrome)]
-    } else {
-        Vec::new()
-    };
+    let properties: Vec<(&str, &str)> = Vec::new();
     let gate = common::start_with_properties(
         "monitor-reports",
         Some(
@@ -517,12 +512,7 @@ fn chromium_report_pdf_png_wait_for_ready_and_block_network() {
     if !crate::common::own_process() {
         return;
     }
-    let chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-    let properties = if std::path::Path::new(chrome).is_file() {
-        vec![("pdf_chromium_path", chrome)]
-    } else {
-        Vec::new()
-    };
+    let properties: Vec<(&str, &str)> = Vec::new();
     let _gate = common::start_with_properties("monitor-print", None, &properties);
     if !moqui_core::screen::PdfRenderer::available() {
         eprintln!("Chromium unavailable; report print integration is not verified");

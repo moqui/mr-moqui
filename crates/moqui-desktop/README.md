@@ -65,7 +65,7 @@ the node's router in this process (`moqui_host::in_process`), on worker threads 
 - **Event streams** cannot pass a scheme that answers whole bodies: 503, so the Assist drawer polls its `events.json`.
 - **Ports:** the tray's "Open ports for other devices" (`node-ports` in the config directory) restarts the node with its
   ports, as `moqui tui --serve` does, for a browser or another device; the window stays on the scheme.
-- **PDF:** where the node finds no Chromium of its own (`pdf_chromium_path`, `runtime/chromium` or one on the `PATH`),
+- **PDF:** where the node finds no Chromium of its own (`moqui_chromium_path`, `runtime/chromium` or an installed one),
   it prints on the app's own CEF (`src/pdf.rs`): a hidden window with no capability, driven over the DevTools Protocol
   with the server's page sequence (`moqui_host::pdf::print_page`), its requests failed. The bundle carries Chromium's
   notices as `notices/chromium-credits.html`.

@@ -6,7 +6,7 @@ There is no nginx-proxy container. Nothing here publishes port 80 or 443. HTTP i
 
 ## Image
 
-The image is the Maximal package: embedded Postgres and the MySQL driver, no dev tools. Debian 13 supplies glibc (the binary needs 2.38 or newer) and the libraries embedded Postgres loads, including `libxml2.so.2`. Chromium is not in the image. PDF stays unavailable until `pdf_chromium_path` points at one.
+The image is the Maximal package: embedded Postgres and the MySQL driver, no dev tools. Debian 13 supplies glibc (the binary needs 2.38 or newer) and the libraries embedded Postgres loads, including `libxml2.so.2`. Chromium is not in the image. PDF stays unavailable until `moqui_chromium_path` points at one.
 
 ```sh
 podman/build.sh            # ./moq build --release, then the image localhost/moqui:latest

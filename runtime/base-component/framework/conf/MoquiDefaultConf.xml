@@ -89,13 +89,14 @@
     <default-property name="email_oauth_microsoft_tenant" value=""/>
 
     <!--
-        PDF (the html-print render through headless Chromium). pdf_chromium_path names the executable; empty, or a path
-        that names no file, looks in runtime/chromium (from ./moq chromium-download), then for chromium, then
-        chromium-browser, on the PATH. Google Chrome is used only when pdf_chromium_path names it. Startup logs each one
+        Chromium for PDF and the browser tests (PDF is the html-print render through headless Chromium).
+        moqui_chromium_path names the executable; empty, or a path that names no file, looks in runtime/chromium (from
+        ./moq chromium-download), then for an installed Chromium, then Google Chrome or Microsoft Edge, on the PATH and
+        where this OS installs them (/usr/bin, /snap/bin, /opt; /Applications; Program Files). Startup logs each one
         found and the one used. With none the server starts and PDF reports it is not available. The limits are on
         screen-facade pdf.
     -->
-    <default-property name="pdf_chromium_path" value=""/>
+    <default-property name="moqui_chromium_path" value=""/>
 
     <!--
         The built-in SSH server (ssh-server below). Off while ssh_port is empty or ssh-server enabled is false; 0 binds an
@@ -863,9 +864,9 @@
     <screen-facade boundary-comments="false" default-autocomplete-rows="20" default-paginate-rows="20"
             check-interval-ms="">
         <!-- PDF, the html-print render through headless Chromium. chromium-path names the executable (see
-            pdf_chromium_path); page-limit is the pages that print (or preview) at once; timeout is the seconds one
+            moqui_chromium_path); page-limit is the pages that print (or preview) at once; timeout is the seconds one
             document may take; preview-max-size is the largest PDF, in bytes, that Files previews. -->
-        <pdf chromium-path="${pdf_chromium_path}" page-limit="4" timeout="60" preview-max-size="26214400"/>
+        <pdf chromium-path="${moqui_chromium_path}" page-limit="4" timeout="60" preview-max-size="26214400"/>
         <!-- Each type is written by a JavaScript macro module, see framework/template/screen/. These are the only render
             modes: there are none built in. output-kind is how a failed section is written (text, html, vue or json);
             without it the mime type decides: application/json is json, text/html is html, anything else text. -->

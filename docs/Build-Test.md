@@ -331,7 +331,7 @@ cargo lint-min                         # clippy on the host with no features
 scripts/check-packages.sh              # clippy on each package's feature set
 
 # The Gate 3 tests, left out of the default run (embedded Postgres per test, Chromium: ./moq chromium-download, or
-# pdf_chromium_path, or chromium on the PATH); gate3_browser is slow (below)
+# moqui_chromium_path, or an installed Chromium or Chrome); gate3_browser is slow (below)
 cargo test -p moqui-host --test gate3
 ```
 
@@ -500,7 +500,7 @@ A statement at the top level of the file; features run in the order they are wri
   (`git is not built into this host`, `scheme git is not supported`, and the same messages for the other tools), is
   skipped the same way. A stepwise file that is entirely about that tool says so on `spec()`, so its later features
   are not started without their setup. So is a case that fails only because PDF is not available, on a machine with
-  no Chromium (`./moq chromium-download`, or `pdf_chromium_path`); the skip reason is that message.
+  no Chromium (`./moq chromium-download`, or `moqui_chromium_path`); the skip reason is that message.
 - A feature with `then` and no `when`, or a block name that is not one of these, is an error when the file loads.
 
 ### Conditions

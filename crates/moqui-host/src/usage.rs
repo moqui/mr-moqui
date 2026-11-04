@@ -471,9 +471,9 @@ Options:
   --wait seconds                  Poll until the server answers, for a server started in the background.
   --timeout seconds               What waitUntil, a WebSocket receive and a browser action wait by
                                   default (10).
-  --chromium path                 The browser, else MOQUI_CHROMIUM, else runtime/chromium (./moq
-                                  chromium-download), chromium or chromium-browser on the PATH, then
-                                  google-chrome.
+  --chromium path                 The browser, else moqui_chromium_path, else runtime/chromium (./moq
+                                  chromium-download), else an installed Chromium, then Google Chrome
+                                  or Microsoft Edge.
   --headed                        A visible browser, for debugging.
   --video                         Record each spec's pages (the CDP screencast) into
                                   <out>/video/<Spec>.webm, with <Spec>.timeline.json: each feature's

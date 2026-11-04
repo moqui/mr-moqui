@@ -506,7 +506,7 @@ help_test_client() {
     cat <<EOF
 Runs moqui test-client, the client specs in each component's test/client/ directory, against a
 server that is already running (./moq run in another terminal), over HTTP, WebSocket and headless
-Chromium (the one of ./moq chromium-download, or chromium or google-chrome on the PATH). It opens
+Chromium (moqui_chromium_path, else the one of ./moq chromium-download, else an installed one). It opens
 no database, binds no port and writes only its output directory, so it runs beside the server in
 the same runtime directory. Arguments go to moqui test-client; the moq options below are read first
 and any other option is passed on:
@@ -545,8 +545,8 @@ exits 1 when any failed:
                                     the server its suite.js declares
 None of them runs a slow test (over 30 seconds): a spec or feature marked slow: true is listed as
 ignored, a Rust test marked #[ignore = "slow: ..."] is left out, and so is gate3_browser.
-The Chromium is the one PDF and moqui test-client use: pdf_chromium_path (or MOQUI_CHROMIUM), else
-runtime/chromium (./moq chromium-download), else chromium, chromium-browser or google-chrome on the PATH.
+The Chromium is the one PDF and moqui test-client use: moqui_chromium_path, else
+runtime/chromium (./moq chromium-download), else an installed Chromium, Google Chrome or Edge.
 Left out: the timings (cargo test --release --test entity_speed and the other *_speed tests) and
 Clippy over every feature set (scripts/check-packages.sh, which runs tui_screens too).
   ./moq test-all
@@ -716,9 +716,9 @@ help_opensearch_stop() {
 help_chromium_download() {
     cat <<'EOF'
 Downloads a Chromium snapshot build into runtime/chromium, replacing what is there. The server
-uses it for PDF when pdf_chromium_path is not set or names no file, before chromium on the PATH;
-the browser tests use it too. To use a Chromium installed another way (a distro package, which
-is smaller), set pdf_chromium_path to it.
+uses it for PDF when moqui_chromium_path is not set or names no file, before an installed Chromium,
+Google Chrome or Edge; the browser tests use it too. Without it an installed one is found on the
+PATH or where the OS installs it; set moqui_chromium_path to use another.
 
 The default build is the one at the main-branch position the current Stable release branched
 from (from chromiumdash.appspot.com), or the nearest snapshot before it; it has the Stable code
@@ -2087,7 +2087,7 @@ task_chromium_download() {
             dash=Mac
             zip=chrome-mac.zip
             ;;
-        *) die "no Chromium snapshot for $(uname -s) $(uname -m); install Chromium another way and set pdf_chromium_path" ;;
+        *) die "no Chromium snapshot for $(uname -s) $(uname -m); install Chromium another way and set moqui_chromium_path" ;;
     esac
     need_tool curl unzip
     if [ -z "$revision" ]; then

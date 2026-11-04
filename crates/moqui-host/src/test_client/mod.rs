@@ -89,7 +89,7 @@ pub struct ClientArgs {
     pub log_level: Option<String>,
     /// `--serve`: start each suite's declared server as a child `moqui test ... --serve` and run against it.
     pub serve: bool,
-    /// `--chromium path`: the browser, else `MOQUI_CHROMIUM`, else the first found ([`crate::chromium::find_test_browser`]).
+    /// `--chromium path`: the browser, else `moqui_chromium_path`, else the first found ([`crate::chromium::find_test_browser`]).
     pub chromium: Option<String>,
     /// `--headed`: a visible browser, for debugging.
     pub headed: bool,
@@ -271,11 +271,7 @@ fn run_against(
     if !all_offline {
         check_server(&client, &server, wait)?;
     }
-    let chromium = args.chromium.clone().or_else(|| {
-        std::env::var("MOQUI_CHROMIUM")
-            .ok()
-            .filter(|text| !text.trim().is_empty())
-    });
+    let chromium = args.chromium.clone();
     let encode_video = args.video && video_tools(chromium.as_deref());
     let host = Arc::new_cyclic(|me| ClientHost {
         me: me.clone(),

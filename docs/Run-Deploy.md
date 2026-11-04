@@ -239,7 +239,7 @@ The properties most deployments set or should know. Their defaults are in `Moqui
 | `webapp_client_ip_header` | empty | The header those proxies put the client address in |
 | `webapp_status_ips` | `127.0.0.1` | Addresses, besides loopback, that `/health` answers |
 | `scheduled_job_check_time` | `60` | Seconds between job checks; `0` runs no scheduled jobs |
-| `pdf_chromium_path` | empty | The Chromium that prints PDF; empty looks in `runtime/chromium`, then on the PATH |
+| `moqui_chromium_path` | empty | The Chromium for PDF and the browser tests; empty looks in `runtime/chromium`, then for an installed Chromium, Google Chrome or Microsoft Edge (the PATH and the OS's install locations) |
 | `ssh_port`, `ssh_host` | empty, `127.0.0.1` | The SSH server (SFTP, git, the apps in a terminal); off while `ssh_port` is empty (`2222` in the dev conf) |
 | `rtc_media_port`, `rtc_media_host`, `rtc_public_address` | empty, `127.0.0.1`, empty | Call media ([WebRTC](interfaces/WebRTC.md)); off while `rtc_media_port` is empty; the public address is what browsers are told, for a server behind 1:1 NAT |
 | `call_ring_seconds` | `45` | How long a call rings before it is missed |
@@ -669,7 +669,7 @@ Loading the file again does nothing.
 
 | Service | How |
 |---|---|
-| PDF | Chromium: `./moq chromium-download` into `runtime/chromium`, or `pdf_chromium_path`. The server starts without it, and PDF is unavailable |
+| PDF | Chromium: `./moq chromium-download` into `runtime/chromium`, or `moqui_chromium_path`. The server starts without it, and PDF is unavailable |
 | OpenSearch | [Search](#search) |
 | Outbound mail | SMTP through a `moqui.basic.email.EmailServer` record; every package has it |
 | Inbound mail | IMAP polling, or the SMTP listener behind a gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)); Maximal and Enterprise |

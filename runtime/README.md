@@ -15,7 +15,7 @@ first with `base-component/` in it). `./moq archive` zips this directory, withou
 | `db/` | no | Embedded database cluster and related files |
 | `log/` | no | Log files |
 | `opensearch/` | no | Managed OpenSearch install and data |
-| `chromium/` | no | Chromium from `./moq chromium-download`, for PDF when `pdf_chromium_path` is not set |
+| `chromium/` | no | Chromium from `./moq chromium-download`, for PDF when `moqui_chromium_path` is not set |
 | `tmp/` | no | Scratch files |
 | `txlog/` | no | Transaction logs |
 | `.env` | no | Generated secrets and local overrides |

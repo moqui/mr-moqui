@@ -223,7 +223,7 @@ fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
         text.lines().any(|line| line
             .starts_with("Browser > the login form signs in with fill, click and waitForURL  SKIPPED")
             && line
-                .ends_with("no browser: --chromium (or MOQUI_CHROMIUM) names /nowhere/chromium, which is not a file")),
+                .ends_with("no browser: --chromium names /nowhere/chromium, which is not a file")),
         "{text}"
     );
     assert!(

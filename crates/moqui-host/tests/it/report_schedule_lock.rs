@@ -128,11 +128,7 @@ fn workers_restart_and_revocation_preserve_single_authorized_delivery() {
       <moqui.basic.email.EmailTemplate emailTemplateId="REPORT_LEASE_CAPTURE" emailServerId="REPORT_LEASE_CAPTURE" fromAddress="reports@example.test" subject="Lease report" bodyScreenLocation="component://framework/screen/DashboardReportEmail.xml" webappName="webroot"/>
       <moqui.basic.email.EmailTemplate emailTemplateId="REPORT_LEASE_FAIL_NO_BODY" emailServerId="REPORT_LEASE_CAPTURE" fromAddress="reports@example.test" subject="Intentionally invalid delivery template"/>
     </entity-facade-xml>"#;
-    let mut properties = vec![("scheduled_job_check_time", "0")];
-    let chrome = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-    if std::path::Path::new(chrome).exists() {
-        properties.push(("pdf_chromium_path", chrome));
-    }
+    let properties = vec![("scheduled_job_check_time", "0")];
     let mut gate = common::start_with_files(
         "report-schedule-lock",
         Some(fixture),
