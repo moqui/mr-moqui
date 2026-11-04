@@ -206,6 +206,49 @@ need_tool() {
     done
 }
 
+# cargo, with sccache as its rustc wrapper when MOQ_SCCACHE=1 asks for it (opt-in), so the worktrees of this repo
+# share compiled dependencies instead of each building them into its own target/ (docs/Build-Test.md, Compile cache).
+# A crate compiled incrementally goes straight to rustc, so incremental builds work as before. A wrapper already
+# chosen (RUSTC_WRAPPER or CARGO_BUILD_RUSTC_WRAPPER set, even empty, or rustc-wrapper in a cargo config) is kept.
+# Asked for without sccache on the PATH, the build goes on without it, with a warning once per moq run.
+need_cargo() {
+    need_tool cargo
+    [ -z "${MOQ_SCCACHE_CHECKED:-}" ] || return 0
+    MOQ_SCCACHE_CHECKED=1
+    case ${MOQ_SCCACHE:-} in 1 | yes | on | true) ;; *) return 0 ;; esac
+    [ -z "${RUSTC_WRAPPER+set}" ] && [ -z "${CARGO_BUILD_RUSTC_WRAPPER+set}" ] || return 0
+    local dir=$ROOT conf
+    for conf in "${CARGO_HOME:-$HOME/.cargo}"/config "${CARGO_HOME:-$HOME/.cargo}"/config.toml; do
+        cargo_conf_has_wrapper "$conf" && return 0
+    done
+    while :; do
+        for conf in "$dir"/.cargo/config "$dir"/.cargo/config.toml; do
+            cargo_conf_has_wrapper "$conf" && return 0
+        done
+        [ "$dir" != / ] && [ -n "$dir" ] || break
+        dir=$(dirname "$dir")
+    done
+    local sccache
+    if sccache=$(command -v sccache 2>/dev/null) && [ -n "$sccache" ]; then
+        export_var RUSTC_WRAPPER "$sccache"
+        return 0
+    fi
+    # A moq that this one runs (test-all runs moq test) says it once only.
+    [ -z "${MOQ_SCCACHE_WARNED:-}" ] || return 0
+    export MOQ_SCCACHE_WARNED=1
+    cat >&2 <<'EOF'
+moq: MOQ_SCCACHE=1 asks for sccache, which is not on the PATH; building without it. Any one of these installs it:
+       cargo binstall sccache
+       cargo install sccache --locked
+       brew install sccache, dnf install sccache, or apt install sccache
+       a release binary from https://github.com/mozilla/sccache/releases
+EOF
+}
+
+cargo_conf_has_wrapper() {
+    [ -f "$1" ] && grep -Eq '^[[:space:]]*(build\.)?rustc-wrapper[[:space:]]*=' "$1"
+}
+
 # kill -0 fails for another user's live process, which ps -p sees (busybox ps has no -p, but kill -0 covers our own).
 pid_alive() {
     kill -0 "$1" 2>/dev/null || ps -p "$1" >/dev/null 2>&1
@@ -439,6 +482,14 @@ runtime/dev-component is linked only into the packages with the dev tools (Maxim
 
 A build for distribution also strips psql from the bundled Postgres first; see README.md
 (scripts/pg-payload.sh strip, then check).
+
+With MOQ_SCCACHE=1 (opt-in; off by default) the cargo runs of moq (build, desktop, test-all, and
+the builds of the tasks that run moqui) use sccache as the rustc wrapper, so worktrees of this repo
+share compiled dependencies; incremental builds of the workspace crates work as before. When sccache
+is not on the PATH, moq warns, says how to install it, and builds without it. A wrapper you set
+(RUSTC_WRAPPER, CARGO_BUILD_RUSTC_WRAPPER, or rustc-wrapper in a cargo config) is kept. The cache
+directory and size are sccache's own settings, SCCACHE_DIR and SCCACHE_CACHE_SIZE
+(docs/Build-Test.md, Compile cache).
 
 Options:
 $PACKAGE_OPTIONS_HELP
@@ -1100,7 +1151,7 @@ binary_path() {
 build_binary() {
     local package=$1
     shift
-    need_tool cargo
+    need_cargo
     [ "$package" = enterprise ] || ensure_pg_archive
     local -a package_args
     package_args=(--profile "$(package_profile "$package")" --no-default-features
@@ -1374,7 +1425,7 @@ task_desktop() {
         esac
         shift
     done
-    need_tool cargo
+    need_cargo
     local version
     version=$(cargo tauri --version 2>/dev/null) \
         || die "the Tauri CLI is not installed: cargo install tauri-cli --version $TAURI_CLI_VERSION --locked"
@@ -1749,7 +1800,7 @@ task_test_all() {
             failed=1
         fi
     }
-    need_tool cargo
+    need_cargo
     suite "cargo test --workspace" cargo test --workspace
     suite "opt-in host tests" cargo test -p moqui-host --test gate3 --test client_browser --test tui_screens
     # the slow tests (over 30 seconds), only with --slow; the spec harnesses list theirs as ignored without it
