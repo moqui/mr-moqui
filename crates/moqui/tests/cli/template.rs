@@ -51,7 +51,7 @@ fn a_component_from_the_template_passes_its_specs() {
     let (out, err, ok) = moqui_test(&runtime, &["tpl-shop", "tpl-api"]);
     assert!(ok, "{out}\n{err}");
     assert!(
-        out.contains("TplShopScreens > \"EditItem\" renders in \"tui\"  PASSED"),
+        out.contains("TplShopScreens > the item detail shows the item  PASSED"),
         "{out}"
     );
     assert!(
@@ -64,4 +64,13 @@ fn a_component_from_the_template_passes_its_specs() {
     );
     assert!(out.contains("TplApiApi > GET lists the demo items  PASSED"), "{out}");
     assert!(!out.contains("TplApiScreens"), "{out}");
+    // the screen sweep is the template's acceptance test; the REST-only component has none
+    let (out, err, ok) = moqui_test(&runtime, &["tpl-shop", "--acceptance"]);
+    assert!(ok, "{out}\n{err}");
+    assert!(
+        out.contains("TplShopScreenSweep > \"EditItem\" renders in \"tui\"  PASSED"),
+        "{out}"
+    );
+    let (_, err, ok) = moqui_test(&runtime, &["tpl-api", "--acceptance"]);
+    assert!(!ok && err.contains("has no acceptance/*.spec.js files"), "{err}");
 }

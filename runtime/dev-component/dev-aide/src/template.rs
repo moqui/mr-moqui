@@ -110,6 +110,7 @@ impl Part {
                 "MoquiConf.xml",
                 "data/@Class@SecurityData.xml",
                 "test/@Class@Screens.spec.js",
+                "acceptance",
             ],
             Part::Screens => &[
                 "service/@component@.rest.xml",

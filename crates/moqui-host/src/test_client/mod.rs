@@ -225,9 +225,24 @@ pub fn run(args: &ClientArgs, print: &mut dyn FnMut(&str)) -> Result<(), Error> 
     if let Some(dir) = &args.junit {
         report::write_junit(dir, &results, ".client")?;
     }
-    let (text, failed) = report::summary(&results, started.elapsed());
+    let (text, mut failed) = report::summary(&results, started.elapsed());
     for line in text.trim_end_matches('\n').split('\n') {
         print(line);
+    }
+    // the regression budget of the client specs (test/budget's client line); not the acceptance suite
+    if !args.acceptance {
+        let (text, over) = report::budget_check(&results, &|name| {
+            crate::test_cmd::component_dir_named(&runtime, name).and_then(|dir| report::read_budget(&dir, "client"))
+        });
+        for line in text
+            .trim_start_matches('\n')
+            .trim_end_matches('\n')
+            .split('\n')
+            .filter(|line| !line.is_empty())
+        {
+            print(line);
+        }
+        failed += over;
     }
     if out_dir.is_dir() {
         print(&format!("Output: {}", out_dir.display()));

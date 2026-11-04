@@ -86,33 +86,88 @@ fn indent(text: &str) -> String {
     text.lines().map(|line| format!("    {line}\n")).collect()
 }
 
-/// A regression spec that runs longer than this is named at the end of a run (docs/Build-Test.md, "The regression
-/// budget"): it belongs in the acceptance suite, or is deleted. An acceptance spec has no limit.
+/// A regression spec that runs longer than this fails the run (docs/Build-Test.md, "The regression budget"): it belongs
+/// in the acceptance suite, or is deleted. An acceptance spec has no limit.
 pub(crate) const SPEC_LIMIT: Duration = Duration::from_secs(15);
+
+/// A component over its budget by more than this share fails the run; over the budget alone, it is a warning.
+const BUDGET_MARGIN: f64 = 1.5;
 
 /// Whether a spec result is of the acceptance suite: its display name is `<component>/acceptance/...`.
 pub(crate) fn acceptance_result(spec: &ComponentSpec) -> bool {
     spec.result.display.split('/').nth(1) == Some("acceptance")
 }
 
-/// The regression specs that took longer than [`SPEC_LIMIT`], as a note for the end of a run; empty when none did.
-fn over_limit(specs: &[ComponentSpec]) -> String {
+/// The budget a component's `test/budget` gives `key` (`server` for `moqui test`, `client` for `moqui test-client`),
+/// in seconds of feature time: lines `server = 195` and `client = 30`, `#` for a comment.
+pub fn read_budget(component_dir: &Path, key: &str) -> Option<f64> {
+    let text = std::fs::read_to_string(component_dir.join("test/budget")).ok()?;
+    text.lines()
+        .map(|line| line.split('#').next().unwrap_or("").trim())
+        .filter_map(|line| line.split_once('='))
+        .find(|(name, _)| name.trim() == key)
+        .and_then(|(_, value)| value.trim().parse::<f64>().ok())
+}
+
+/// The budget check of a run of the regression suite: each regression spec over [`SPEC_LIMIT`] fails, and each
+/// component's feature time (the serial sum of its cases, so workers do not hide growth) is set against its budget,
+/// with a warning over it and a failure over [`BUDGET_MARGIN`] times it. `budget` gives a component's budget, if it
+/// has one. Returns the text for the end of the run and the failures. Acceptance results are left out.
+pub fn budget_check(specs: &[ComponentSpec], budget: &dyn Fn(&str) -> Option<f64>) -> (String, usize) {
+    let mut out = String::new();
+    let mut failures = 0;
     let mut slow: Vec<&ComponentSpec> = specs
         .iter()
         .filter(|spec| !acceptance_result(spec) && spec.result.duration > SPEC_LIMIT)
         .collect();
-    if slow.is_empty() {
-        return String::new();
+    if !slow.is_empty() {
+        slow.sort_by_key(|spec| std::cmp::Reverse(spec.result.duration));
+        out.push_str("\nFAILED: regression specs over 15 seconds (move each to acceptance/ or delete it):\n");
+        for spec in slow {
+            failures += 1;
+            let _ = writeln!(out, "  {} ({})", spec.result.display, seconds(spec.result.duration));
+        }
     }
-    slow.sort_by_key(|spec| std::cmp::Reverse(spec.result.duration));
-    let mut out = String::from("\nRegression specs over 15 seconds (move each to acceptance/ or delete it):\n");
-    for spec in slow {
-        let _ = writeln!(out, "  {} ({})", spec.result.display, seconds(spec.result.duration));
+    let mut components: Vec<(&str, f64)> = Vec::new();
+    for spec in specs.iter().filter(|spec| !acceptance_result(spec)) {
+        let time: f64 = spec.result.cases.iter().map(|case| case.duration.as_secs_f64()).sum();
+        match components.iter_mut().find(|(name, _)| *name == spec.component) {
+            Some((_, sum)) => *sum += time,
+            None => components.push((spec.component.as_str(), time)),
+        }
     }
-    out
+    let mut lines = String::new();
+    for (name, time) in &components {
+        match budget(name) {
+            Some(limit) if *time > limit * BUDGET_MARGIN => {
+                failures += 1;
+                let _ = writeln!(
+                    lines,
+                    "  {name}: {time:.1}s, FAILED: over 1.5 times its budget of {limit:.0}s (test/budget)"
+                );
+            }
+            Some(limit) if *time > limit => {
+                let _ = writeln!(
+                    lines,
+                    "  {name}: {time:.1}s, over its budget of {limit:.0}s (test/budget): cut duplicates or move scenarios to acceptance/"
+                );
+            }
+            Some(limit) => {
+                let _ = writeln!(lines, "  {name}: {time:.1}s of {limit:.0}s");
+            }
+            None => {
+                let _ = writeln!(lines, "  {name}: {time:.1}s (no test/budget)");
+            }
+        }
+    }
+    if !lines.is_empty() {
+        out.push_str("\nFeature time by component (serial):\n");
+        out.push_str(&lines);
+    }
+    (out, failures)
 }
 
-/// The failures in full, the regression specs over 15 seconds, then the summary line. Returns the text and how many
+/// The failures in full, then the summary line. Returns the text and how many
 /// features and specs failed.
 pub fn summary(specs: &[ComponentSpec], elapsed: Duration) -> (String, usize) {
     let mut out = String::new();
@@ -159,7 +214,6 @@ pub fn summary(specs: &[ComponentSpec], elapsed: Duration) -> (String, usize) {
         out.push_str("\nFailures:\n");
         out.push_str(&details);
     }
-    out.push_str(&over_limit(specs));
     let _ = writeln!(
         out,
         "\n{} features: {passed} passed, {failed} failed, {ignored} ignored, {skipped} skipped; {} specs{} in {}",
@@ -343,19 +397,53 @@ mod tests {
     }
 
     #[test]
-    fn summary_names_a_regression_spec_over_15_seconds() {
+    fn the_budget_check_fails_a_long_spec_and_a_component_far_over_its_budget() {
+        // sample(): 1.27 s of case time, 2 s of spec time
         let mut long = sample();
         long.result.duration = Duration::from_secs(16);
         let mut accepted = sample();
         accepted.result.name = "Walk".to_string();
         accepted.result.display = "comp-a/acceptance/Walk.spec.js".to_string();
         accepted.result.duration = Duration::from_secs(50);
-        let (text, _) = summary(&[long, accepted], Duration::from_secs(66));
+        let (text, failures) = budget_check(&[long, accepted], &|_| None);
+        assert_eq!(failures, 1, "{text}");
         assert!(
-            text.contains("Regression specs over 15 seconds (move each to acceptance/ or delete it):\n  comp-a/test/OrderFlow.spec.js (16.00s)\n"),
+            text.contains("FAILED: regression specs over 15 seconds (move each to acceptance/ or delete it):\n  comp-a/test/OrderFlow.spec.js (16.00s)\n"),
             "{text}"
         );
         assert!(!text.contains("Walk.spec.js"), "{text}");
+        assert!(text.contains("  comp-a: 1.3s (no test/budget)"), "{text}");
+        // within, over (a warning) and over 1.5 times (a failure)
+        let spec = || vec![sample()];
+        assert_eq!(
+            budget_check(&spec(), &|_| Some(2.0)),
+            (
+                "\nFeature time by component (serial):\n  comp-a: 1.3s of 2s\n".to_string(),
+                0
+            )
+        );
+        let (over, failures) = budget_check(&spec(), &|_| Some(1.0));
+        assert!(over.contains("over its budget of 1s") && failures == 0, "{over}");
+        let (far, failures) = budget_check(&spec(), &|_| Some(0.5));
+        assert!(
+            far.contains("FAILED: over 1.5 times its budget") && failures == 1,
+            "{far}"
+        );
+    }
+
+    #[test]
+    fn a_budget_file_names_each_part() {
+        let dir = std::env::temp_dir().join(format!("moqui-budget-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("test")).unwrap();
+        std::fs::write(
+            dir.join("test/budget"),
+            "# seconds of feature time\nserver = 195\nclient = 30 # walks\n",
+        )
+        .unwrap();
+        assert_eq!(read_budget(&dir, "server"), Some(195.0));
+        assert_eq!(read_budget(&dir, "client"), Some(30.0));
+        assert_eq!(read_budget(&dir, "other"), None);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -378,7 +466,6 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("      attachment: out/failed-ship-1.png"), "{text}");
-        assert!(!text.contains("over 15 seconds"), "{text}");
         let xml = junit_xml(&spec, "");
         assert!(
             xml.contains("<testsuite name=\"comp-a.OrderFlow\" tests=\"3\" failures=\"1\" errors=\"0\" skipped=\"1\""),

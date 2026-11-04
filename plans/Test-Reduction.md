@@ -7,7 +7,7 @@ take the multiplication out of the regression suite: the walk-everything renders
 access walks and the browser walks beyond one per app. Scenario checks move to the acceptance suite, duplicates are
 deleted, and the rule tests stay. The regression suite's feature time drops by about 70% (1,729 s to about 510 s), and
 walk-everything and every-mode render tests are gone from it for good. Nothing is moved or deleted yet: this document
-is for review, and the changes follow area by area once it is approved.
+was for review; it is now implemented ([Implemented](#implemented), Nov 4, 2026).
 
 **The 10 minutes is a goal for `test-all` without the Rust build time, not a constraint.** The cut alone takes the
 tests of `test-all` from about 37 minutes to about 13½; parallel spec workers ([Cheaper machinery](#cheaper-machinery))
@@ -17,6 +17,56 @@ build takes about 5 minutes and the debug build for `cargo test` about 8, so wit
 10 minutes. Builds are measured apart: a test run should need a rebuild only after a change to the Rust code or to what
 it embeds, and more test runs over time should reuse the binaries already built (`--nobuild`, sccache) rather than
 rebuild.
+
+## Implemented
+
+Steps 0 to 7 are in, one commit per step in each repository. The measured `./moq test-all --nobuild` (Nov 4, 2026, this
+machine): **7 min 39 s in all**, the 30 s incremental cargo build included, against about 37 minutes of tests before.
+
+| Stage | Wall | Features |
+|---|--:|--:|
+| `moqui test` (framework, 4 workers) | 30 s | 342 |
+| `moqui test demo` | 17 s | 10 |
+| `test-client webroot --offline` | 50 s | 376 |
+| `test-client dev-aide --offline` | 5 s | 44 |
+| `test-client --serve` (framework, 3 servers) | 46 s | 147 |
+| `moqui test` (apps, 4 workers) | 158 s | 2,777 |
+| `test-client --serve` (apps, 3 servers) | 81 s | 13 |
+| cargo build and test, `moq-test.sh` | about 72 s | |
+
+Feature time by component (the serial sum, against its `test/budget`): mr-mantle 270 s of 300, mr-boss 201 of 220 and
+its walks 32 of 36, webroot 30 of 34, dev-aide 27 of 30, mr-pass 13 of 15, framework 10 of 12, the others under 10.
+`./moq test-apps` is the two app stages, about 4 minutes.
+
+Where the implementation differs from the text below:
+
+- **Budget file.** `test/budget` has a `server` and a `client` line, since `moqui test` and `moqui test-client` each see
+  only their part. The budgets were set from the measured test-all at about 10% over it; the run reports each
+  component's feature time against its budget.
+- **Acceptance runs resolve `dependsOn`.** With no `--spec`, `--acceptance` takes what its specs' `dependsOn` names from
+  the whole pool (mr-marble's sweeps bring Mantle's flows). `--spec component/Name` names one component's spec, which
+  the workers use, as mr-boss and mr-mantle share spec names.
+- **Kept, not as the tables say:** InvoiceOrderApply and InvoicePostOrder (E): their rules (apply, unapply, item
+  details, bill-through items, the F429 posting order) are not in OrderToCashBasicFlow. SecurityCors stays its own
+  spec: its setupSpec needs a conf with no foreign origin. CallClientFixtures stays in `test/`: CryptoClientFixtures
+  depends on it. ProductsMethodFixtures and ProductsCostFixtures stay in `test/`: ProductsMethods and ProductsCosts
+  depend on them. ArtifactIndex already built its index once; its 9 s is the build under test. The two Forum
+  duplicate renders render other users over other data, so no check could move.
+- **Not merged:** the sweeps moved to `acceptance/` as they were (the four Products sweeps, the four mr-marble ones);
+  acceptance has no budget, so merging them is left to whoever next changes them.
+- **The call walks** passed in acceptance in 3 to 7 s each; their 61 s timeouts did not reproduce.
+- **Contacts** is split by rule: its duplicate pairs are ContactsDuplicates.
+- **Found by the workers:** basic-comms `apply#DndHours` saved each do-not-disturb user's zone on the signed-in
+  caller's account (fixed); mantle AccountingPortals left the token-lookup tarpit full for ten minutes (it now cleans
+  up); ArtifactIndex reads files other specs write (it catches up before its unchanged-file check).
+- **Per-feature cost.** The harness costs under 10 ms a case (260 of 3,163 app cases); the time is the specs' own
+  service and data work, half of it in cases of 0.1 to 0.5 s.
+- **Left for later:** duplicate renders the static scan missed (ProductsPriceLists renders PriceListDetail and three
+  other screens in every mode; PaymentDetail/Refunds in qvt by AccountingPaymentRefunds and AccountingPayments; Review
+  rendered in three modes without its own templates; OrderDetail tui by Payables and Collections), the column
+  chooser's html and tui rule (a framework test now, since ColumnChooser's qvt check joined TimeEntries), and
+  `create#InvoiceCreditMemo`, which artifact authorization refuses to finance.ar and finance.admin (AccountingAccess
+  makes its fixtures with authorization off).
 
 ## Why
 

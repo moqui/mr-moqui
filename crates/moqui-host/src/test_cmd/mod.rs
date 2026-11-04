@@ -318,6 +318,20 @@ pub(crate) fn discover(runtime: &Path, sub: &str) -> Result<Vec<TestComponent>, 
     Ok(found)
 }
 
+/// The directory of the component named `name` under `runtime/base-component`, `runtime/component` or
+/// `runtime/dev-component`.
+pub(crate) fn component_dir_named(runtime: &Path, name: &str) -> Option<PathBuf> {
+    ["base-component", "component", "dev-component"]
+        .iter()
+        .find_map(|parent| {
+            std::fs::read_dir(runtime.join(parent))
+                .ok()?
+                .flatten()
+                .map(|entry| entry.path())
+                .find(|dir| dir.is_dir() && component_name(dir) == name)
+        })
+}
+
 /// The `name` of `component.xml`, else the directory name.
 pub(crate) fn component_name(dir: &Path) -> String {
     let dir_name = dir
@@ -496,9 +510,7 @@ pub(crate) fn select_across(components: &[TestComponent], names: &[String]) -> R
             None => (None, name.clone()),
         };
         for (index, component) in components.iter().enumerate() {
-            if only.is_none_or(|only| only == component.name)
-                && component.specs.iter().any(|spec| spec.name == name)
-            {
+            if only.is_none_or(|only| only == component.name) && component.specs.iter().any(|spec| spec.name == name) {
                 pending.push((index, name.clone()));
             }
         }
@@ -988,8 +1000,18 @@ fn finish_report(
     if let Some(path) = &args.results_json {
         workers::write_results(path, results)?;
     }
-    let (text, failed) = report::summary(results, started.elapsed());
+    let (text, mut failed) = report::summary(results, started.elapsed());
     print!("{text}");
+    // the regression budget: not a worker's part of a run (its parent checks the whole), not the acceptance suite, not
+    // the fixture run of a served suite
+    if !args.acceptance && args.results_json.is_none() && args.serve.is_none() {
+        let runtime = crate::runtime_framework_dirs().0;
+        let (text, over) = report::budget_check(results, &|name| {
+            component_dir_named(&runtime, name).and_then(|dir| report::read_budget(&dir, "server"))
+        });
+        print!("{text}");
+        failed += over;
+    }
     if failed > 0 {
         if serving {
             println!("Not serving: the specs did not pass");
