@@ -30,8 +30,8 @@ use zip::{CompressionMethod, ZipWriter};
 use super::feed::{probe_query, Touch, TOUCHES};
 use super::xml::decode_xml_entities;
 use super::{
-    conf_data_locations, eca_rules, error_chain, feed_service_names, load_entity_data, match_rules,
-    register_feed_insert, LoadOptions,
+    component_data_locations, conf_data_locations, data_directory_locations, eca_rules, error_chain,
+    feed_service_names, load_entity_data, match_rules, register_feed_insert, LoadOptions,
 };
 use crate::driver::{DbCancel, DbConnection, DbDriver, DbRow};
 use crate::entity::{EntityFacade, EntityGroup};
@@ -321,6 +321,47 @@ fn eca_rules_are_stored_and_disable_matches_nothing() {
     facade.set_disable_entity_eca(true);
     assert!(match_rules(&facade, "moqui.screen.form.DbForm", "update").is_empty());
     facade.rollback("moqui.screen.form.DbForm").unwrap();
+}
+
+#[test]
+fn data_directory_includes_one_level_of_subdirectories() {
+    let (dir, _guard) = temp_dir();
+    let data = dir.join("data");
+    std::fs::create_dir_all(data.join("es/more")).unwrap();
+    std::fs::write(data.join("Seed.xml"), "<entity-facade-xml/>").unwrap();
+    std::fs::write(data.join("notes.txt"), "skip").unwrap();
+    std::fs::write(data.join("es/EsGeo.xml"), "<entity-facade-xml/>").unwrap();
+    std::fs::write(data.join("es/more/Nested.xml"), "<entity-facade-xml/>").unwrap();
+    assert_eq!(
+        data_directory_locations("mr-l10n", &data),
+        [
+            "component://mr-l10n/data/Seed.xml".to_string(),
+            "component://mr-l10n/data/es/EsGeo.xml".to_string(),
+        ]
+    );
+}
+
+/// A component's entity files come first when seed data loads (their `seed-data` blocks), never its entity ECA files,
+/// then its data files.
+#[test]
+fn component_data_locations_take_entity_files_for_seed() {
+    let (dir, _guard) = temp_dir();
+    std::fs::create_dir_all(dir.join("entity")).unwrap();
+    std::fs::create_dir_all(dir.join("data")).unwrap();
+    std::fs::write(dir.join("entity/SiteEntities.xml"), "<entities/>").unwrap();
+    std::fs::write(dir.join("entity/Site.eecas.xml"), "<eecas/>").unwrap();
+    std::fs::write(dir.join("data/SiteSeedData.xml"), "<entity-facade-xml/>").unwrap();
+    assert_eq!(
+        component_data_locations("site", &dir, true),
+        [
+            "component://site/entity/SiteEntities.xml".to_string(),
+            "component://site/data/SiteSeedData.xml".to_string(),
+        ]
+    );
+    assert_eq!(
+        component_data_locations("site", &dir, false),
+        ["component://site/data/SiteSeedData.xml".to_string()]
+    );
 }
 
 #[test]

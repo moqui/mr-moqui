@@ -25,6 +25,7 @@ mod eca;
 mod feed;
 mod json;
 mod loader;
+mod locations;
 mod pull;
 mod xml;
 mod zip;
@@ -50,6 +51,7 @@ pub(crate) use feed::{feed_wants_old, note_touch};
 pub use loader::{
     is_restricted_entity, load_entity_data, load_entity_text_file, load_entity_xml_text, location_in_components,
 };
+pub use locations::{component_data_locations, data_directory_locations};
 
 /// A data-file service element. It is called as it is read, and kept here for [`data_file_services`].
 #[derive(Clone, Debug, PartialEq, Eq)]

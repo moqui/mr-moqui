@@ -297,25 +297,6 @@ fn types_all_clears_the_filter() {
 }
 
 #[test]
-fn data_directory_includes_one_level_of_subdirectories() {
-    let dir = std::env::temp_dir().join(format!("moqui-data-dirs-{}", std::process::id()));
-    let _guard = DirGuard(dir.clone());
-    let data = dir.join("data");
-    std::fs::create_dir_all(data.join("es/more")).unwrap();
-    std::fs::write(data.join("Seed.xml"), "<entity-facade-xml/>").unwrap();
-    std::fs::write(data.join("notes.txt"), "skip").unwrap();
-    std::fs::write(data.join("es/EsGeo.xml"), "<entity-facade-xml/>").unwrap();
-    std::fs::write(data.join("es/more/Nested.xml"), "<entity-facade-xml/>").unwrap();
-    assert_eq!(
-        super::data_directory_locations("mr-l10n", &data),
-        [
-            "component://mr-l10n/data/Seed.xml".to_string(),
-            "component://mr-l10n/data/es/EsGeo.xml".to_string(),
-        ]
-    );
-}
-
-#[test]
 fn camel_case_flags_are_independent() {
     let flags = parse_load_args(&[
         "disableEntityEca=true",

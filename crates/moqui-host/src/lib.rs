@@ -2246,10 +2246,8 @@ pub(crate) fn same_dir(left: &std::path::Path, right: &std::path::Path) -> bool 
     left == right || matches!((std::fs::canonicalize(left), std::fs::canonicalize(right)), (Ok(a), Ok(b)) if a == b)
 }
 
-/// For each component, as `EntityDataLoaderImpl` gathers them: when seed data loads, `component://name/entity/file` for each
-/// entity definition file (their `seed-data` blocks; not `*.eecas.xml`), then each `.xml`, `.csv`, and `.json` file in the
-/// `data` directory and in each directory directly under it, by file name. A file in `data/es/` is
-/// `component://name/data/es/file`. Deeper directories are not walked. The framework is not here: its files come from the
+/// For each component, its data files in load order (`moqui_core::entity::load_feed::component_data_locations`): its
+/// entity files when seed data loads, then its `data` directory. The framework is not here: its files come from the
 /// conf. Only the components in `flags.components` when it names some.
 fn component_data_locations(factory: &moqui_core::context::ExecutionContextFactory, flags: &LoadFlags) -> Vec<String> {
     let seed = flags
@@ -2263,71 +2261,11 @@ fn component_data_locations(factory: &moqui_core::context::ExecutionContextFacto
         {
             continue;
         }
-        if seed {
-            if let Ok(read) = std::fs::read_dir(info.location.join("entity")) {
-                let mut names: Vec<String> = read
-                    .filter_map(Result::ok)
-                    .filter(|entry| entry.path().is_file())
-                    .filter_map(|entry| entry.file_name().into_string().ok())
-                    .filter(|name| name.ends_with(".xml") && !name.ends_with(".eecas.xml"))
-                    .collect();
-                names.sort();
-                locations.extend(
-                    names
-                        .into_iter()
-                        .map(|name| format!("component://{}/entity/{name}", info.name)),
-                );
-            }
-        }
-        locations.extend(data_directory_locations(&info.name, &info.location.join("data")));
-    }
-    locations
-}
-
-fn is_data_file(name: &str) -> bool {
-    [".xml", ".csv", ".json"].iter().any(|ext| name.ends_with(ext))
-}
-
-/// Files in `data_dir`, then files in each immediate subdirectory. Names sort within each directory.
-/// A directory under a subdirectory is not walked.
-fn data_directory_locations(component_name: &str, data_dir: &std::path::Path) -> Vec<String> {
-    let Ok(read) = std::fs::read_dir(data_dir) else {
-        return Vec::new();
-    };
-    let mut files = Vec::new();
-    let mut directories = Vec::new();
-    for entry in read.filter_map(Result::ok) {
-        let Ok(name) = entry.file_name().into_string() else {
-            continue;
-        };
-        if entry.path().is_file() && is_data_file(&name) {
-            files.push(name);
-        } else if entry.path().is_dir() {
-            directories.push(name);
-        }
-    }
-    files.sort();
-    directories.sort();
-    let mut locations: Vec<String> = files
-        .into_iter()
-        .map(|name| format!("component://{component_name}/data/{name}"))
-        .collect();
-    for directory in directories {
-        let Ok(read) = std::fs::read_dir(data_dir.join(&directory)) else {
-            continue;
-        };
-        let mut nested: Vec<String> = read
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().is_file())
-            .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|name| is_data_file(name))
-            .collect();
-        nested.sort();
-        locations.extend(
-            nested
-                .into_iter()
-                .map(|name| format!("component://{component_name}/data/{directory}/{name}")),
-        );
+        locations.extend(moqui_core::entity::load_feed::component_data_locations(
+            &info.name,
+            &info.location,
+            seed,
+        ));
     }
     locations
 }
