@@ -34,8 +34,16 @@ class CallService : Service() {
         private const val RING_CHANNEL = "calls-ring"
         private const val CALL_CHANNEL = "calls-ongoing"
         private const val NOTIFICATION_ID = 7301
+
+        /** The id of the notification posted last: each ring has its own, so a ring that follows another is posted
+         *  anew, and its full-screen intent fires (an update of a notification fires none). */
+        @Volatile private var postedId = NOTIFICATION_ID
+
+        private fun idFor(ringId: String?): Int =
+            if (ringId == null) NOTIFICATION_ID else NOTIFICATION_ID + 1 + (ringId.hashCode() and 0xffff)
         const val ACTION_ANSWER = "org.moqui.mobile.ANSWER"
         const val ACTION_DECLINE = "org.moqui.mobile.DECLINE"
+        const val ACTION_HANG_UP = "org.moqui.mobile.HANG_UP"
 
         @Volatile private var running = false
 
@@ -49,16 +57,27 @@ class CallService : Service() {
                     // Android 12+ refuses a foreground service started from the background without an exemption (a
                     // high-priority FCM message is one): the ring is a notification of its own then
                     Log.w(CallManager.TAG, "The call service did not start (${err.javaClass.simpleName}): the ring is a plain notification")
-                    channels(app)
-                    try {
-                        NotificationManagerCompat.from(app).notify(NOTIFICATION_ID, notification(app, false))
-                    } catch (denied: SecurityException) {
-                        Log.w(CallManager.TAG, "Notifications are off for this app: the ring is not shown")
-                    }
+                    postPlain(app)
                 }
             } else {
-                NotificationManagerCompat.from(app).cancel(NOTIFICATION_ID)
+                NotificationManagerCompat.from(app).cancel(postedId)
                 if (running) app.stopService(Intent(app, CallService::class.java))
+            }
+        }
+
+        /** The service's notification posted on its own, when the service cannot be a foreground one. */
+        fun postPlain(context: Context) {
+            channels(context)
+            try {
+                val id = idFor(CallManager.ringing()?.id)
+                val manager = NotificationManagerCompat.from(context)
+                manager.notify(id, notification(context, false))
+                if (id != postedId) manager.cancel(postedId)
+                postedId = id
+            } catch (denied: SecurityException) {
+                Log.w(CallManager.TAG, "Notifications are off for this app: the ring is not shown")
+            } catch (err: Exception) {
+                Log.e(CallManager.TAG, "The call notification was not shown", err)
             }
         }
 
@@ -110,10 +129,9 @@ class CallService : Service() {
                 flags()
             )
 
-        private fun appLink(context: Context, link: String?): PendingIntent {
+        private fun appLink(context: Context): PendingIntent {
             val intent = Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            if (link != null) intent.setAction(Intent.ACTION_VIEW).setData(Uri.parse(link))
-            return PendingIntent.getActivity(context, if (link == null) 4 else 5, intent, flags())
+            return PendingIntent.getActivity(context, 4, intent, flags())
         }
 
         /** The service's notification: the ring of the first call ringing, else the call in progress. */
@@ -152,10 +170,15 @@ class CallService : Service() {
                     .setContentTitle(if (answered != null) "Call in progress" else "Declining the call")
                     .setCategory(NotificationCompat.CATEGORY_CALL)
                     .setOngoing(true)
-                    .setContentIntent(appLink(context, null))
+                    .setContentIntent(appLink(context))
                 if (answered != null && foreground) {
                     val person = Person.Builder().setName(answered.caller.ifBlank { "MR Moqui" }).build()
-                    val hangUp = appLink(context, "org.moqui.mobile:/call?callSessionId=${answered.id}&hangUp=true")
+                    val hangUp = PendingIntent.getBroadcast(
+                        context, 6,
+                        Intent(context, CallActionReceiver::class.java).setAction(ACTION_HANG_UP)
+                            .putExtra(CallManager.EXTRA_CALL, answered.id),
+                        flags()
+                    )
                     builder.setStyle(NotificationCompat.CallStyle.forOngoingCall(person, hangUp))
                 }
             }
@@ -172,10 +195,15 @@ class CallService : Service() {
         val notification = notification(this, true)
         try {
             val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL else 0
-            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
+            val id = idFor(CallManager.ringing()?.id)
+            ServiceCompat.startForeground(this, id, notification, type)
+            if (id != postedId) NotificationManagerCompat.from(this).cancel(postedId)
+            postedId = id
             running = true
         } catch (err: Exception) {
+            // the ring is not lost: its notification is posted on its own
             Log.e(CallManager.TAG, "The call service could not be a foreground service", err)
+            postPlain(this)
             stopSelf()
             return START_NOT_STICKY
         }
@@ -196,6 +224,9 @@ class CallService : Service() {
 class CallActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val id = intent.getStringExtra(CallManager.EXTRA_CALL) ?: return
-        if (intent.action == CallService.ACTION_DECLINE) CallManager.decline(context, id)
+        when (intent.action) {
+            CallService.ACTION_DECLINE -> CallManager.decline(context, id)
+            CallService.ACTION_HANG_UP -> CallManager.hangUp(context, id)
+        }
     }
 }

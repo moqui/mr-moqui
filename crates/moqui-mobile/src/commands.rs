@@ -101,27 +101,52 @@ pub(crate) fn notify(
     builder.show().map_err(|err| err.to_string())
 }
 
-/// The shell's call `callSessionId` is joined (`active`) or left or ended: the native call screen's call (MT2) is kept
-/// while the page has it and ended after, with its foreground service and the lock-screen showing. The shell's only
-/// (it owns the calls); the native code acts only on a call it shows.
+/// What the shell says of a call to the native code (MT2): `joined` (its media is up), `left` (left, ended, or never
+/// joined), `screen` and `offScreen` (its call screen shown or left: over the lock screen the app shows the call's
+/// screen only).
+pub(crate) const CALL_STATES: [&str; 4] = ["joined", "left", "screen", "offScreen"];
+
+/// The shell's call `callSessionId` is in `state` ([`CALL_STATES`]): the native call (the Telecom call, the foreground
+/// service, the showing over the lock screen) is kept while the page has the call and ended after. The shell's only
+/// (it owns the calls); the native code acts only on a call it answered.
 #[tauri::command(async)]
 pub(crate) fn call_state(
     app: AppHandle,
     webview: tauri::Webview,
     nonce: Option<String>,
     call_session_id: String,
-    active: bool,
+    state: String,
 ) -> Result<(), String> {
     let host = host(&app)?;
     if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
         return Err("Not the shell's page".to_string());
     }
     let id = crate::calls::call_id(&call_session_id).ok_or("Not a call id")?;
+    let state = CALL_STATES
+        .iter()
+        .find(|known| **known == state)
+        .ok_or("Not a call state")?;
     #[cfg(target_os = "android")]
-    crate::android::page_call_state(id, active)?;
+    crate::android::page_call_state(id, state)?;
     #[cfg(not(target_os = "android"))]
-    log::info!("The call {id} is {}", if active { "active" } else { "over" });
+    log::info!("The call {id} is {state}");
     Ok(())
+}
+
+/// Whether the shell's call screen of `callSessionId` answers it by itself: only once, for the call the user answered
+/// on the phone's call screen (the host hands it over), never for a link of a page's.
+#[tauri::command(async)]
+pub(crate) fn call_take_answer(
+    app: AppHandle,
+    webview: tauri::Webview,
+    nonce: Option<String>,
+    call_session_id: String,
+) -> Result<bool, String> {
+    let host = host(&app)?;
+    if !moqui_client_tauri::ShellHost::is_shell_page(host.as_ref(), &webview, nonce.as_deref()) {
+        return Err("Not the shell's page".to_string());
+    }
+    Ok(host.take_answer(&call_session_id))
 }
 
 /// Open `url` outside the app: http and https on the web, mailto, tel and sip.

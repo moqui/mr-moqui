@@ -137,17 +137,28 @@ pub(crate) fn activity_ended_for_good() -> bool {
     })
 }
 
-/// The page's call `id` is active (joined) or not (left, ended): the native code keeps or ends its call
-/// (`CallManager.pageCallState`).
-pub(crate) fn page_call_state(id: &str, active: bool) -> Result<(), String> {
+/// Whether the native code has a call or a decline under way (`CallManager.busyNow`); not when it cannot be asked.
+pub(crate) fn call_busy() -> bool {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.CallManager"))?;
+        env.call_static_method(&class, jni_str!("busyNow"), jni_sig!("()Z"), &[])?
+            .z()
+    })
+    .unwrap_or(false)
+}
+
+/// The page's call `id` is in `state` (`crate::commands::CALL_STATES`; an empty id with `offScreen` for the shell
+/// leaving for a server page): the native code keeps or ends its call (`CallManager.pageCallState`).
+pub(crate) fn page_call_state(id: &str, state: &str) -> Result<(), String> {
     with_context(|env, app| {
         let class = app_class(env, app, jni_str!("org.moqui.mobile.CallManager"))?;
         let id = env.new_string(id)?;
+        let state = env.new_string(state)?;
         env.call_static_method(
             &class,
             jni_str!("pageCallState"),
-            jni_sig!("(Ljava/lang/String;Z)V"),
-            &[JValue::Object(&id), JValue::Bool(active)],
+            jni_sig!("(Ljava/lang/String;Ljava/lang/String;)V"),
+            &[JValue::Object(&id), JValue::Object(&state)],
         )?;
         Ok(())
     })

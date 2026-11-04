@@ -71,11 +71,9 @@ impl PageState {
     /// A load of `url` began: its document is the page from now on, with no nonce yet.
     pub(crate) fn started(&self, url: &Url) {
         let mut shown = moqui_lib::sync::lock(&self.shown);
-        let origin = url.origin().ascii_serialization();
-        if origin == SHELL_ORIGIN {
-            shown.host_shell = false;
-        }
-        shown.origin = Some(origin);
+        // any load began: the host's own showing of the shell, if it was one, is over
+        shown.host_shell = false;
+        shown.origin = Some(url.origin().ascii_serialization());
         shown.nonce = None;
     }
 
@@ -244,6 +242,8 @@ pub(crate) struct MobileHost {
     pub(crate) network: AtomicBool,
     /// The client's directory (`push.json` beside the accounts).
     pub(crate) dir: PathBuf,
+    /// The call answered on the phone whose screen has not yet taken the answer ([`Self::take_answer`]).
+    answer: Mutex<Option<String>>,
 }
 
 impl MobileHost {
@@ -254,35 +254,59 @@ impl MobileHost {
             page: PageState::default(),
             network: AtomicBool::new(network),
             dir,
+            answer: Mutex::new(None),
         }
     }
 
-    /// An incoming call answered in the native call screen (MT2): the shell shows the call's screen of the current
-    /// account's comms app, which answers it and joins (`answer=true`, WebrootCall.js). The shell takes it as it loads
-    /// (`client_take_open`), or now when it is loaded; with no account signed in, after the sign-in. Not on the main
-    /// thread: the comms app may be read from the store.
-    pub(crate) fn open_call(&self, answer: &crate::calls::Answer) {
-        if answer.hang_up {
-            // the shell's call, left by the page (which then tells the native code it is over)
-            if self.is_shell(MAIN) && self.page.has_nonce() {
-                self.eval(&crate::calls::hang_up_script(&answer.call_session_id));
-            }
+    /// A call link the native code made and the activity was opened with (MT2), its nonce already taken
+    /// ([`crate::native::take_link`]). An Answer shows the call's screen of the ring's account's comms app (that account
+    /// made current first), and the page answers and joins once it takes the answer ([`Self::take_answer`]); the shell
+    /// takes the path as it loads (`client_take_open`), or now when it is loaded. A Hang up has the shell's call left.
+    /// Not on the main thread: the comms app may be read from the store.
+    pub(crate) fn open_call(&self, link: &crate::calls::CallLink) {
+        if link.hang_up {
+            self.hang_up(&link.call_session_id);
             return;
         }
         let Ok(state) = moqui_client_tauri::state(&self.app) else {
             return;
         };
-        let root = self.signed_in().map_or_else(
-            || moqui_client::offline::DEFAULT_COMMS_ROOT.to_string(),
-            |id| state.core.comms_root_of(&id),
-        );
-        *moqui_lib::sync::lock(&state.open_pending) = Some(crate::calls::call_path(&root, answer));
-        if self.is_shell(MAIN) && self.page.has_nonce() {
+        let switched = self.signed_in().as_deref() != Some(link.account.as_str());
+        if switched {
+            if let Err(err) = moqui_client_tauri::commands::switch_account(&state, &link.account) {
+                log::warn!("moqui-mobile: the call {} is not opened: {err}", link.call_session_id);
+                return;
+            }
+        }
+        let root = state.core.comms_root_of(&link.account);
+        *moqui_lib::sync::lock(&self.answer) = Some(link.call_session_id.clone());
+        *moqui_lib::sync::lock(&state.open_pending) = Some(crate::calls::call_path(&root, link));
+        if switched {
+            // the shell is loading for the account, and takes it then
+        } else if self.is_shell(MAIN) && self.page.has_nonce() {
             self.eval("window.moquiShell && window.moquiShell.poke()");
         } else {
             self.navigate(&moqui_client_tauri::shell_url(None, None));
         }
-        log::info!("moqui-mobile: the call {} opens in the shell", answer.call_session_id);
+        log::info!("moqui-mobile: the call {} opens in the shell", link.call_session_id);
+    }
+
+    /// The answer the native code handed over for the call `id`, taken once by its call screen: only a call the user
+    /// answered on the phone is answered by the page by itself.
+    pub(crate) fn take_answer(&self, id: &str) -> bool {
+        let mut answer = moqui_lib::sync::lock(&self.answer);
+        if answer.as_deref() == Some(id) {
+            *answer = None;
+            return true;
+        }
+        false
+    }
+
+    /// The shell leaves the call `id`, if it is in it (the call notification's Hang up, a headset's).
+    pub(crate) fn hang_up(&self, id: &str) {
+        if self.is_shell(MAIN) && self.page.has_nonce() {
+            self.eval(&crate::calls::hang_up_script(id));
+        }
     }
 
     fn core(&self) -> Option<Arc<Client>> {
@@ -388,6 +412,11 @@ impl ShellHost for MobileHost {
 
     fn open_remote(&self, path: &str) -> Result<(), String> {
         let path = server_path(path)?;
+        // the shell, and its call screen, go: over the lock screen the app does not show a server page
+        #[cfg(target_os = "android")]
+        if let Err(err) = crate::android::page_call_state("", "offScreen") {
+            log::warn!("The native code was not told the call screen went: {err}");
+        }
         let account = self.signed_in().ok_or("No account is signed in")?;
         let url = Url::parse(&format!("{APP_ORIGIN}{path}")).map_err(|err| err.to_string())?;
         self.page.bind_app(&account);

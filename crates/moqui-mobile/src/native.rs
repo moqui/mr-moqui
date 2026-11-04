@@ -13,8 +13,9 @@
  */
 
 //! What the app's native code asks of Rust without the WebView (plans/Mobile-Desktop.md MD6, MT2): the FCM token to
-//! register, a ring declined, whether an account is signed in, and a bounded send of the outbox in the background
-//! (`FlushWorker.kt`, WorkManager). A push can start the process with no activity, so no
+//! register, which account a ring is for, a ring declined, the one-shot links of an Answer or a Hang up, a headset's
+//! hang-up, whether an account is signed in, and a bounded send of the outbox in the background (`FlushWorker.kt`,
+//! WorkManager). A push can start the process with no activity, so no
 //! Tauri app: the client ([`core_in`]) is then made here from the client's directory, and the app's setup takes the
 //! same one when the activity starts, so there is one client, with one set of stores, per process.
 //!
@@ -35,7 +36,8 @@ use moqui_client::proxy::Request;
 use moqui_client_tauri::SHELL_ORIGIN;
 use serde_json::Value;
 
-use crate::calls::{self, Asked, Declined, Poster, PushRecord};
+use crate::calls::{self, Asked, CallLink, CallLinks, Declined, Poster, PushRecord};
+use crate::host::MobileHost;
 
 /// The process's client, whoever made it first: the app's setup or a push.
 static CORE: Mutex<Option<Arc<Client>>> = Mutex::new(None);
@@ -48,6 +50,76 @@ static APP_HOST: Mutex<Option<Arc<dyn ClientHost>>> = Mutex::new(None);
 
 /// The longest a background send takes operations ([`flush_background`]); WorkManager stops a run at ten minutes.
 const FLUSH_BUDGET_MAX: Duration = Duration::from_secs(5 * 60);
+/// The call links the native code made and not yet taken.
+static LINKS: Mutex<Option<CallLinks>> = Mutex::new(None);
+
+/// The app's host, once the activity's setup made it: what the native code tells the page goes through it.
+static HOST: Mutex<Option<Arc<MobileHost>>> = Mutex::new(None);
+
+/// The host made by the app's setup.
+pub(crate) fn set_host(host: &Arc<MobileHost>) {
+    *moqui_lib::sync::lock(&HOST) = Some(Arc::clone(host));
+}
+
+/// The host, when the app's activity has set it up.
+pub(crate) fn host() -> Option<Arc<MobileHost>> {
+    moqui_lib::sync::lock(&HOST).clone()
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX))
+}
+
+/// A link for the native code's Answer or Hang up of the call `id` of `account`: its nonce, or none when the call id
+/// is not one.
+pub(crate) fn make_link(id: &str, account: &str, video: bool, hang_up: bool) -> Option<String> {
+    let id = calls::call_id(id)?;
+    let link = CallLink {
+        call_session_id: id.to_string(),
+        account: account.to_string(),
+        video,
+        hang_up,
+    };
+    let mut links = moqui_lib::sync::lock(&LINKS);
+    match links.get_or_insert_with(CallLinks::default).make(link, now_ms()) {
+        Ok(nonce) => Some(nonce),
+        Err(err) => {
+            log::error!("Calls: no link for {id}: {err}");
+            None
+        }
+    }
+}
+
+/// The link of `nonce` for the call `id`, taken once ([`CallLinks::take`]).
+pub(crate) fn take_link(nonce: &str, id: &str) -> Option<CallLink> {
+    moqui_lib::sync::lock(&LINKS)
+        .get_or_insert_with(CallLinks::default)
+        .take(nonce, id, now_ms())
+}
+
+/// The account a push with `push_id` is for ([`calls::ring_account`]); none for a push that is no account's here.
+pub(crate) fn ring_account(dir: &Path, push_id: &str) -> Option<String> {
+    let core = core_in(dir).ok()?;
+    let (keyed, current) = {
+        let accounts = moqui_lib::sync::lock(core.accounts());
+        let current = accounts.current().map(|account| account.id.clone());
+        let ids: Vec<String> = accounts.list().iter().map(|account| account.id.clone()).collect();
+        (ids, current)
+    };
+    let keyed: Vec<String> = keyed.into_iter().filter(|id| core.keys().get(id).is_some()).collect();
+    let _one = moqui_lib::sync::lock(&PUSH);
+    calls::ring_account(&PushRecord::load(dir), push_id, &keyed, current.as_deref())
+}
+
+/// Telecom ended an answered call (a headset's or a car's hang-up): the page leaves it.
+pub(crate) fn hang_up(id: &str) {
+    match (calls::call_id(id), host()) {
+        (Some(id), Some(host)) => host.hang_up(id),
+        _ => log::info!("Calls: no page to leave the call {id}"),
+    }
+}
 
 /// The client of `dir` (the app's data directory's `client`): the one this process has, unless it was stopped, else
 /// a new one.
@@ -125,8 +197,8 @@ impl Poster for ProxyPoster<'_> {
     }
 }
 
-/// Decline the ringing call `id` on its server, with no WebView: what happened, for the log.
-pub(crate) fn decline_call(dir: &Path, id: &str) -> String {
+/// Decline the ringing call `id` on the server of `account`, the ring's, with no WebView: what happened, for the log.
+pub(crate) fn decline_call(dir: &Path, id: &str, account: &str) -> String {
     let Some(id) = calls::call_id(id) else {
         return "not a call id".to_string();
     };
@@ -137,11 +209,13 @@ pub(crate) fn decline_call(dir: &Path, id: &str) -> String {
         Ok(core) => core,
         Err(err) => return format!("no client: {err}"),
     };
-    let poster = ProxyPoster(&core);
-    match calls::decline(&asked(&core), id, &poster) {
-        Declined::Told(account) => format!("declined on the server of {account}"),
-        Declined::NotFound => "no account's server knows the call".to_string(),
-        Declined::Failed(why) => format!("no server was told: {}", why.join("; ")),
+    let Some(asked) = asked(&core).into_iter().find(|asked| asked.account.id == account) else {
+        return format!("the account {account} is not signed in here");
+    };
+    match calls::decline(&asked, id, &ProxyPoster(&core)) {
+        Declined::Told => format!("declined on the server of {account}"),
+        Declined::Refused(reason) => format!("the server of {account} did not decline it: {reason}"),
+        Declined::Failed(why) => format!("the server of {account} was not told: {why}"),
     }
 }
 
@@ -314,22 +388,78 @@ mod entries {
         .resolve::<LogErrorAndDefault>();
     }
 
-    /// `Native.decline(dataDir, callSessionId)`: what happened.
+    /// `Native.decline(dataDir, callSessionId, account)`: what happened.
     #[no_mangle]
     pub extern "system" fn Java_org_moqui_mobile_Native_decline<'caller>(
         mut env: EnvUnowned<'caller>,
         _class: JClass<'caller>,
         data_dir: JString<'caller>,
         call_session_id: JString<'caller>,
+        account: JString<'caller>,
     ) -> JString<'caller> {
         env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
             let dir = client_dir(&data_dir.try_to_string(env)?);
             let id = call_session_id.try_to_string(env)?;
-            let done = super::decline_call(&dir, &id);
+            let account = account.try_to_string(env)?;
+            let done = super::decline_call(&dir, &id, &account);
             log::info!("Calls: the ring of {id}: {done}");
             env.new_string(done)
         })
         .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.ringAccount(dataDir, pushId)`: the account a push is for, or null.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_ringAccount<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        push_id: JString<'caller>,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let dir = client_dir(&data_dir.try_to_string(env)?);
+            let push_id = push_id.try_to_string(env)?;
+            match super::ring_account(&dir, &push_id) {
+                Some(account) => env.new_string(account),
+                None => Ok(JString::default()),
+            }
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.callLink(callSessionId, account, video, hangUp)`: the nonce of a link the native code makes, or null.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_callLink<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        call_session_id: JString<'caller>,
+        account: JString<'caller>,
+        video: jboolean,
+        hang_up: jboolean,
+    ) -> JString<'caller> {
+        env.with_env(|env| -> Result<JString<'caller>, jni::errors::Error> {
+            let id = call_session_id.try_to_string(env)?;
+            let account = account.try_to_string(env)?;
+            match super::make_link(&id, &account, video, hang_up) {
+                Some(nonce) => env.new_string(nonce),
+                None => Ok(JString::default()),
+            }
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.hangUp(callSessionId)`: Telecom ended an answered call.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_hangUp<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        call_session_id: JString<'caller>,
+    ) {
+        env.with_env(|env| -> Result<(), jni::errors::Error> {
+            super::hang_up(&call_session_id.try_to_string(env)?);
+            Ok(())
+        })
+        .resolve::<LogErrorAndDefault>();
     }
 
     /// `Native.hasAccount(dataDir)`.

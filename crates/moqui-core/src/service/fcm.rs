@@ -606,8 +606,31 @@ impl Sender<'_> {
 
     /// [`Self::deliver`] of `notice` to the device with `token`, with the notice's deadline.
     pub(crate) fn deliver_notice(&self, device: &str, token: &str, notice: &Notice, now: i64) -> Outcome {
-        self.deliver(device, &message(token, notice), now, notice.deadline())
+        self.deliver(
+            device,
+            &device_message(token, device, notice, now),
+            now,
+            notice.deadline(),
+        )
     }
+}
+
+/// [`message`] for the registration `device` (its `subscriptionId`), at `now` (Unix seconds), with what only the
+/// send knows: `pushId`, the registration's id, which the app was answered at its registration and so tells which of
+/// its accounts a ring or its end is for; and a ring's `ringSeconds`, how long it rings from now, so the app does not
+/// go by its own clock.
+pub(crate) fn device_message(token: &str, device: &str, notice: &Notice, now: i64) -> serde_json::Value {
+    let mut body = message(token, notice);
+    if let Some(data) = body["message"]["data"].as_object_mut() {
+        data.insert("pushId".to_string(), cut_bytes(device, MAX_FIELD_BYTES).into());
+        if let Kind::Ring(ring) = &notice.kind {
+            if ring.expires_at > 0 {
+                let seconds = (ring.expires_at / 1000 - now).max(0);
+                data.insert("ringSeconds".to_string(), seconds.to_string().into());
+            }
+        }
+    }
+    body
 }
 
 /// The production sender: the configuration, the process's token and [`crate::outbound::send`] (refused under the read

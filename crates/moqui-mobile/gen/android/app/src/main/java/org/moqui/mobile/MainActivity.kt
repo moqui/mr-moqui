@@ -34,8 +34,9 @@ object ActivityEnd {
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     ActivityEnd.started()
+    replayed(intent)
     // a call answered on the ring screen: the app shows over the lock screen until the call is over
-    showOverLock(isCallLink(intent))
+    showOverLock(CallManager.ownsLink(intent?.data))
     enableEdgeToEdge()
     super.onCreate(savedInstanceState)
     CallManager.know(this)
@@ -60,8 +61,20 @@ class MainActivity : TauriActivity() {
   }
 
   override fun onNewIntent(intent: Intent) {
-    if (isCallLink(intent)) showOverLock(true)
+    replayed(intent)
+    if (CallManager.ownsLink(intent.data)) showOverLock(true)
     super.onNewIntent(intent)
+  }
+
+  /** A call link the activity is started with again from the recent apps is not taken again (its nonce is gone
+   *  anyway): it goes before tao reads the intent. */
+  private fun replayed(intent: Intent?) {
+    val data = intent?.data ?: return
+    if (intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0 && data.scheme == "org.moqui.mobile" &&
+      data.path == "/call"
+    ) {
+      intent.data = null
+    }
   }
 
   override fun onResume() {
@@ -85,12 +98,6 @@ class MainActivity : TauriActivity() {
     }
     @Suppress("DEPRECATION")
     super.onBackPressed()
-  }
-
-  private fun isCallLink(intent: Intent?): Boolean {
-    val data = intent?.data ?: return false
-    // an answered call, not the call notification's Hang up
-    return data.scheme == "org.moqui.mobile" && data.path == "/call" && data.getQueryParameter("hangUp") != "true"
   }
 
   /** Show over the lock screen and turn the screen on (a call), or not (the call is over). */

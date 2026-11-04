@@ -15,15 +15,19 @@
 //! The incoming call on a locked phone (plans/Mobile-Desktop.md MD6, MT2), the part that is Rust's: the native code
 //! (`gen/android/.../CallManager.kt`) shows the ring and the WebView carries the media.
 //!
-//! - **Answer** comes back as the deep link `org.moqui.mobile:/call?callSessionId=...&video=...` (an intent of the
-//!   activity, `RunEvent::Opened`): the shell is shown at the call's screen of the current account's comms app, with
-//!   `answer=true`, so the page answers and joins through WebrootCall.js ([`call_path`]).
-//! - **Decline** is the server's `declineCall` transition, posted with the device key without the WebView
-//!   ([`decline`]). A ring does not say which account it is for, so each account with a key is asked, the current one
-//!   first, until one's server knows the call.
-//! - **Push registration:** the FCM token, kept in `push.json` of the client's directory with the accounts it is
-//!   registered for, goes to each account's server (`/qapps/registerClientPush`) once per token, at a sign-in, and is
-//!   taken back (`unregisterClientPush`) before a sign-out or a removal revokes the key ([`PushRecord`]).
+//! - **Which account.** The server's push names the registration it went to (`pushId`, the `subscriptionId` its
+//!   `registerClientPush` answered), kept per account in [`PushRecord`]: a ring is that account's ([`ring_account`]),
+//!   and one that is no account's here is dropped.
+//! - **Answer and Hang up** come back as the deep link `org.moqui.mobile:/call?callSessionId=...&nonce=...` (an intent
+//!   of the activity, `RunEvent::Opened`). The activity is exported, so any app could send such a link: only one whose
+//!   nonce the native code had made for that call ([`CallLinks`], once, within [`LINK_MS`]) is taken. An answered one
+//!   shows the shell at the call's screen of the ring's account ([`call_path`]), where the page answers and joins
+//!   through WebrootCall.js once the host hands it the answer.
+//! - **Decline** is the server's `declineCall` transition, posted with the ring's account's device key without the
+//!   WebView ([`decline`]); only that account's server is told of the call.
+//! - **Push registration:** the FCM token, kept in `push.json` of the client's directory with each account's
+//!   registration, goes to each account's server once per token, at a sign-in, and is taken back before a sign-out or a
+//!   removal revokes the key.
 //!
 //! The requests go through a [`Poster`], which is the client's proxy in the app (`crate::native`), so this module runs
 //! in the tests with no network.
@@ -31,13 +35,17 @@
 // Declines and registrations are the native code's, on Android; they are tested on the desktop.
 #![cfg_attr(not(target_os = "android"), allow(dead_code))]
 
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use moqui_client::account::Account;
 use serde_json::Value;
 
-/// The deep link's path an Answer opens the app with.
+/// The deep link's path an Answer or a Hang up opens the app with.
 pub(crate) const CALL_LINK_PATH: &str = "/call";
+
+/// How long a link the native code made may be taken, in milliseconds: an Answer opens the app at once.
+pub(crate) const LINK_MS: i64 = 120_000;
 
 /// The longest call id taken from a link or a push.
 const ID_MAX: usize = 64;
@@ -53,52 +61,75 @@ pub(crate) fn call_id(text: &str) -> Option<&str> {
     plain.then_some(text)
 }
 
-/// What a call's deep link asks: the call answered (whether with the camera), or hung up (the call notification's Hang
-/// up).
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Answer {
+/// What a link the native code made does: answer the call of `account` (with the camera or not), or hang it up.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CallLink {
     pub(crate) call_session_id: String,
+    pub(crate) account: String,
     pub(crate) video: bool,
     pub(crate) hang_up: bool,
 }
 
-/// The Answer of an `org.moqui.mobile:/call?...` link; none for any other link or a bad call id.
-pub(crate) fn answer_link(url: &tauri::Url) -> Option<Answer> {
+/// The links the native code made and not yet taken, by nonce.
+#[derive(Default)]
+pub(crate) struct CallLinks {
+    made: HashMap<String, (CallLink, i64)>,
+}
+
+impl CallLinks {
+    /// A link made at `now` (Unix milliseconds): its nonce, which the native code puts in the link.
+    pub(crate) fn make(&mut self, link: CallLink, now: i64) -> Result<String, String> {
+        self.made.retain(|_, (_, made)| now - *made < LINK_MS);
+        let nonce = moqui_client::store::new_client_ref().map_err(|err| err.to_string())?;
+        self.made.insert(nonce.clone(), (link, now));
+        Ok(nonce)
+    }
+
+    /// The link of `nonce` for the call `id`, taken once: none for a nonce not made, made for another call, taken
+    /// already or too old.
+    pub(crate) fn take(&mut self, nonce: &str, id: &str, now: i64) -> Option<CallLink> {
+        let (link, made) = self.made.remove(nonce)?;
+        (link.call_session_id == id && now - made < LINK_MS && now >= made).then_some(link)
+    }
+}
+
+/// The call id and nonce of an `org.moqui.mobile:/call?...` link; none for any other link, a bad call id or no nonce.
+pub(crate) fn link_of(url: &tauri::Url) -> Option<(String, String)> {
     if url.scheme() != "org.moqui.mobile" || url.path() != CALL_LINK_PATH {
         return None;
     }
     let mut id = None;
-    let mut video = true;
-    let mut hang_up = false;
+    let mut nonce = None;
     for (name, value) in url.query_pairs() {
         match name.as_ref() {
             "callSessionId" => id = call_id(&value).map(str::to_string),
-            "video" => video = value != "false",
-            "hangUp" => hang_up = value == "true",
+            "nonce" if !value.is_empty() && value.len() <= 64 => nonce = Some(value.into_owned()),
             _ => {}
         }
     }
-    Some(Answer {
-        call_session_id: id?,
-        video,
-        hang_up,
-    })
+    Some((id?, nonce?))
 }
 
-/// What the shell runs to leave the call `id` it is in (the call notification's Hang up).
+/// Whether `url` is a call link at all (taken or refused, never another kind of link).
+pub(crate) fn is_call_link(url: &tauri::Url) -> bool {
+    url.scheme() == "org.moqui.mobile" && url.path() == CALL_LINK_PATH
+}
+
+/// What the shell runs to leave the call `id` it is in (the call notification's Hang up, a headset's).
 pub(crate) fn hang_up_script(id: &str) -> String {
     let quoted = serde_json::to_string(id).unwrap_or_else(|_| "\"\"".to_string());
     format!("window.moqui && moqui.call && moqui.call.state.current === {quoted} && moqui.call.leave()")
 }
 
-/// The call's screen under the comms app at `root` (`/qapps/BasicComms`), answered by the page as it opens.
-pub(crate) fn call_path(root: &str, answer: &Answer) -> String {
+/// The call's screen under the comms app at `root` (`/qapps/BasicComms`), which answers when the host hands it the
+/// answer (`call_take_answer`).
+pub(crate) fn call_path(root: &str, link: &CallLink) -> String {
     let mut path = format!(
         "{}/Calls/Call?callSessionId={}&answer=true",
         root.trim_end_matches('/'),
-        answer.call_session_id
+        link.call_session_id
     );
-    if !answer.video {
+    if !link.video {
         path.push_str("&video=false");
     }
     path
@@ -127,45 +158,35 @@ pub(crate) struct Asked {
 /// How a decline went.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Declined {
-    /// The server of this account was told (or the call was over there already).
-    Told(String),
-    /// No account's server knows the call.
-    NotFound,
-    /// No server could be told: why, for each account.
-    Failed(Vec<String>),
+    /// The server declined the call for the user (or it was over there already).
+    Told,
+    /// The server answered, and did not decline it: why (`notFound`, `notRinging`...).
+    Refused(String),
+    /// The server was not told: why.
+    Failed(String),
 }
 
-/// Decline the call `id` on the first of `accounts` whose server knows it. A server that is down or refuses is noted
-/// and the next account asked.
-pub(crate) fn decline(accounts: &[Asked], id: &str, poster: &dyn Poster) -> Declined {
-    let mut failures = Vec::new();
-    for asked in accounts {
-        let path = transition_path(&asked.comms_root, "declineCall");
-        match poster.post(&asked.account, &asked.key, &path, &[("callSessionId", id)]) {
-            Ok((status, json)) if status < 400 => match json["reasonCode"].as_str() {
-                // not this account's call: the next one
-                Some("notFound") => {}
-                // declined, ended already, or no longer ringing for this user (answered elsewhere): the server knows
-                _ => return Declined::Told(asked.account.id.clone()),
-            },
-            Ok((status, _)) => failures.push(format!("{}: HTTP {status}", asked.account.id)),
-            Err(err) => failures.push(format!("{}: {err}", asked.account.id)),
-        }
-    }
-    if failures.is_empty() {
-        Declined::NotFound
-    } else {
-        Declined::Failed(failures)
+/// Decline the call `id` on the server of `asked`, the ring's account.
+pub(crate) fn decline(asked: &Asked, id: &str, poster: &dyn Poster) -> Declined {
+    let path = transition_path(&asked.comms_root, "declineCall");
+    match poster.post(&asked.account, &asked.key, &path, &[("callSessionId", id)]) {
+        Ok((status, json)) if status < 400 => match json["reasonCode"].as_str() {
+            None => Declined::Told,
+            Some(reason) => Declined::Refused(reason.to_string()),
+        },
+        Ok((status, _)) => Declined::Failed(format!("HTTP {status}")),
+        Err(err) => Declined::Failed(err),
     }
 }
 
-/// The push token and the accounts it is registered for, in `push.json` of the client's directory.
+/// The push token and each account's registration of it (account id → `subscriptionId`), in `push.json` of the
+/// client's directory.
 #[derive(Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PushRecord {
     #[serde(default)]
     pub(crate) token: Option<String>,
     #[serde(default)]
-    pub(crate) registered: Vec<String>,
+    pub(crate) registered: BTreeMap<String, String>,
 }
 
 impl PushRecord {
@@ -173,7 +194,7 @@ impl PushRecord {
         dir.join("push.json")
     }
 
-    /// The record of `dir`, or an empty one.
+    /// The record of `dir`, or an empty one (also for one of an earlier shape, which registers again).
     pub(crate) fn load(dir: &Path) -> Self {
         std::fs::read(Self::file(dir))
             .ok()
@@ -207,14 +228,15 @@ impl PushRecord {
     }
 
     /// Register the token with each of `accounts` it is not registered with yet; one that fails is logged and tried
-    /// again at the next start, sign-in or token. Whether the record changed.
+    /// again at the next start, sign-in or token. A registration the server answers with no `subscriptionId` is not
+    /// kept, as no push could be told apart for it. Whether the record changed.
     pub(crate) fn register(&mut self, accounts: &[Asked], poster: &dyn Poster) -> bool {
         let Some(token) = self.token.clone() else {
             return false;
         };
         let mut changed = false;
         for asked in accounts {
-            if self.registered.contains(&asked.account.id) {
+            if self.registered.contains_key(&asked.account.id) {
                 continue;
             }
             let form = [
@@ -225,7 +247,28 @@ impl PushRecord {
             ];
             match poster.post(&asked.account, &asked.key, "/qapps/registerClientPush", &form) {
                 Ok((status, json)) if status < 400 && json["registered"].as_bool() == Some(true) => {
-                    self.registered.push(asked.account.id.clone());
+                    let Some(push_id) = json["subscriptionId"].as_str().filter(|id| !id.is_empty()) else {
+                        log::warn!("Push: {} registered this device with no id", asked.account.id);
+                        continue;
+                    };
+                    // the server keeps one user per token: another account of this server registered it before, and
+                    // its pushes are no longer
+                    let server = &asked.account.server;
+                    let moved: Vec<String> = self
+                        .registered
+                        .iter()
+                        .filter(|(id, registered)| {
+                            *registered == push_id
+                                && accounts
+                                    .iter()
+                                    .any(|other| &other.account.id == *id && &other.account.server == server)
+                        })
+                        .map(|(id, _)| id.clone())
+                        .collect();
+                    for id in moved {
+                        self.registered.remove(&id);
+                    }
+                    self.registered.insert(asked.account.id.clone(), push_id.to_string());
                     changed = true;
                     log::info!("Push: registered with {}", asked.account.id);
                 }
@@ -243,9 +286,7 @@ impl PushRecord {
 
     /// The account signs in again (a new key): registered again at the next [`Self::register`].
     pub(crate) fn forget(&mut self, account: &str) -> bool {
-        let before = self.registered.len();
-        self.registered.retain(|id| id != account);
-        before != self.registered.len()
+        self.registered.remove(account).is_some()
     }
 
     /// Take the token back from `asked`'s server before its key is revoked (which would delete it there too); a failure
@@ -269,6 +310,27 @@ impl PushRecord {
         }
         self.forget(&asked.account.id)
     }
+}
+
+/// The account a push with `push_id` is for: one registered here with it and signed in (in `keyed`), the current one
+/// first should two servers have given the same id. None for a push that is no account's here.
+pub(crate) fn ring_account(
+    record: &PushRecord,
+    push_id: &str,
+    keyed: &[String],
+    current: Option<&str>,
+) -> Option<String> {
+    if push_id.is_empty() {
+        return None;
+    }
+    let mut matching: Vec<&String> = record
+        .registered
+        .iter()
+        .filter(|(account, registered)| *registered == push_id && keyed.contains(account))
+        .map(|(account, _)| account)
+        .collect();
+    matching.sort_by_key(|account| Some(account.as_str()) != current);
+    matching.first().map(|account| (*account).clone())
 }
 
 #[cfg(test)]

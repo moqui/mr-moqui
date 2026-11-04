@@ -19,7 +19,10 @@ object Native {
 
     @JvmStatic external fun init(context: Context): Boolean
     @JvmStatic external fun pushToken(dataDir: String, token: String)
-    @JvmStatic external fun decline(dataDir: String, callSessionId: String): String?
+    @JvmStatic external fun decline(dataDir: String, callSessionId: String, account: String): String?
+    @JvmStatic external fun ringAccount(dataDir: String, pushId: String): String?
+    @JvmStatic external fun callLink(callSessionId: String, account: String, video: Boolean, hangUp: Boolean): String?
+    @JvmStatic external fun hangUp(callSessionId: String)
     @JvmStatic external fun hasAccount(dataDir: String): Boolean
     @JvmStatic external fun flush(dataDir: String, budgetMs: Long): Long
 

@@ -1051,8 +1051,10 @@ and one whose key ended otherwise is deleted at the next push. `POST /qapps/unre
 
 `send#WebPush` sends to these through FCM's HTTP v1 API (`service/fcm.rs`) as a data message, which the app's own code
 shows: `{kind, title, link, topic, tag}`, `kind` `notification` or `ring`; a call's ring adds `callSessionId`,
-`chatRoomId`, `caller` (FCM reserves `from`), `video` and `expiresAt`, with `android.priority` `HIGH` and the ring time
-as its `ttl`, so the app can show the incoming call with the screen locked. When the ring is over a `ringEnded` message
+`chatRoomId`, `caller` (FCM reserves `from`), `video`, `expiresAt` and `ringSeconds` (the time left when it is sent),
+with `android.priority` `HIGH` and the ring time as its `ttl`, so the app can show the incoming call with the screen
+locked. Every message carries `pushId`, the registration's `subscriptionId` (which `registerClientPush` answered), so
+the app knows which of its accounts it is for. When the ring is over a `ringEnded` message
 (`callSessionId`, `reason`: answered or declined to that user's other devices, timedOut or ended to everyone; high
 priority, a minute to live, the ring's tag) lets its ring screen stop; browsers get none. A message carries what Web
 Push carries, never a message's body, and its data is cut to 3 KB. FCM answering 404, `UNREGISTERED`,

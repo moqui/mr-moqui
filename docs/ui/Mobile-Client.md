@@ -112,38 +112,50 @@ A call rings on a locked phone without the WebView: native code shows it, and th
 answered (plans/Mobile-Desktop.md MD6, MT2; a Rust native audio client is later). The Kotlin is in
 `gen/android/app/src/main/java/org/moqui/mobile/`; the Rust is `src/calls.rs` and `src/native.rs`.
 
-- **The ring** comes as the server's FCM data message (`kind` `ring`: `callSessionId`, `caller`, `video`, `expiresAt`;
-  [Qvt-Client, Native apps](Qvt-Client.md#install-and-web-push)) to `PushService`, which hands it to `CallManager` with
-  no WebView, also when the push started the process. `CallManager` adds a self-managed call to Android Telecom
+- **The ring** comes as the server's FCM data message (`kind` `ring`: `callSessionId`, `caller`, `video`, `expiresAt`,
+  `ringSeconds`, `pushId`; [Qvt-Client, Native apps](Qvt-Client.md#install-and-web-push)) to `PushService`, which
+  hands it to `CallManager` with no WebView, also when the push started the process. It is the account's whose
+  registration `pushId` names (the `subscriptionId` its `registerClientPush` answered, kept in `client/push.json`); a
+  ring that is no account's here is dropped. `CallManager` adds a self-managed call to Android Telecom
   (`CallConnectionService`, `android.telecom` directly: no new library or coroutines in the Gradle project Tauri made,
   its callbacks map one to one onto the JNI path, and Jetpack Core-Telecom wraps the same `ConnectionService` below
   Android 14), which gives it the audio focus and a headset's answer and hang-up. When Telecom asks for the ring's UI,
   the `phoneCall` foreground service (`CallService`) shows it: a call notification (CallStyle) with Answer and Decline,
   ringing with the ringtone, and a full-screen intent to `IncomingCallActivity`, the ring on the screen over the lock
-  screen. Where Android 14+ does not let the app use full-screen intents (`canUseFullScreenIntent`), the ring is a
-  heads-up notification. It rings until the server's `ringEnded`, its `expiresAt`, or the user's Answer or Decline.
+  screen. Where Android 14+ does not let the app use full-screen intents (`canUseFullScreenIntent`), or the service
+  cannot start, the ring is a notification of its own. It rings for `ringSeconds` from its arrival (the server's time
+  left, not the phone's clock), until the server's `ringEnded` (one that comes first is remembered for two minutes),
+  or the user's Answer or Decline.
 - **Answer** opens the app over the lock screen (`MainActivity` with `setShowWhenLocked` and `setTurnScreenOn`) with
-  the link `org.moqui.mobile:/call?callSessionId=...&video=...`; tao hands it to Rust as `RunEvent::Opened`, and the
-  host shows the shell at the call's screen of the current account's comms app with `answer=true` (`client_take_open`,
-  or the loaded shell poked), where `m-call` answers and joins through WebrootCall.js. A process that was dead starts
-  the activity cold: the shell starts signed in from the store and then joins. The Telecom call and the foreground
-  service last while the page has the call: WebrootCall.js tells the host when it joins and leaves
-  (`moquiDesktop.callState`, the shell's `call_state` command, then `CallManager.pageCallState` through JNI), and the
-  app stops showing over the lock screen when the call is over. The ongoing call's notification has Hang up, the same
-  link with `hangUp=true`, which the shell's call leaves. Backing out of the app during a call puts it in the
-  background rather than end the process.
-- **Decline** is the server's `declineCall` transition, posted from Rust with the device key through the client's
-  proxy (`Native.decline`, a JNI entry point, on a thread of the native code's), with no WebView. A ring does not say
-  which account it is for, so each account with a key is asked, the current one first, until one's server knows the
-  call.
+  `org.moqui.mobile:/call?callSessionId=...&nonce=...`. The activity is exported, so any app could send a call link:
+  the nonce is one Rust made for this Answer (`Native.callLink`), and Rust takes the link once, within two minutes,
+  only for that call (`CallLinks`); any other is refused, and a link the recent apps replay is dropped before tao sees
+  it. The host makes the ring's account the current one and shows the shell at its call screen; the screen answers and
+  joins through WebrootCall.js only when the host hands it the answer, once (`moquiDesktop.takeAnswer`,
+  `call_take_answer`), so a link to a call screen on the web or in a page never answers. A process that was dead
+  starts the activity cold: the link waits for the host, the shell starts signed in from the store and then joins.
+- **The call in the app.** WebrootCall.js tells the host what the call does (`moquiDesktop.callState`, the shell's
+  `call_state` command, then `CallManager.pageCallState` through JNI): `joined` once its media is up, `left` when it is
+  left or could not be joined (an encrypted call this WebView cannot take, offline, not ringing for this account),
+  `screen` and `offScreen` as its call screen shows and goes. The Telecom call and the foreground service last while
+  the page has the call; one the page has not joined in 30 seconds is given up, and a `ringEnded` (timed out,
+  declined, canceled) ends one not yet joined. Over the lock screen the app shows only the call screen of a call
+  answered on the ring screen: leaving it (another screen, a server page) shows the lock screen, which asks for the
+  unlock, and the app stops showing over it when no such call is left. The ongoing call's Hang up, and a headset's or
+  a car's hang-up through Telecom, have the page leave the call. Backing out of the app during a call puts it in the
+  background, and the process does not end while a call or a decline is under way.
+- **Decline** is the server's `declineCall` transition, posted from Rust with the ring's account's device key through
+  the client's proxy (`Native.decline`, a JNI entry point, on a thread of the native code's), with no WebView; only
+  that account's server hears of the call, and only its decline counts as told.
 - **One client per process.** A push can start the process with no activity: Rust is then given the application
   context by `Native.init` (not tao's `ndk-context`, which tao sets once) and makes the client from the app's data
   directory; the app's setup takes the same one when the activity starts.
-- **Push registration.** Firebase's token goes to Rust (`Native.pushToken`), kept in `client/push.json` with the
-  accounts it is registered with, and registered with each account's server (`/qapps/registerClientPush`) once per
+- **Push registration.** Firebase's token goes to Rust (`Native.pushToken`), kept in `client/push.json` with each
+  account's registration (its `subscriptionId`), and registered with each account's server (`/qapps/registerClientPush`) once per
   token: when it comes, at the app's start for one not yet registered, and at each sign-in (a new key). It is taken
   back (`unregisterClientPush`) before a sign-out or a removal revokes the key. The server keeps one user per token, so
-  of two accounts on one server the last registered gets the rings.
+  of two accounts on one server the last registered gets the rings (and the other's registration is forgotten here).
+  Two servers could give the same `subscriptionId`; the current account is then taken first.
 - **Permissions:** `POST_NOTIFICATIONS` (Android 13+) and `RECORD_AUDIO` are asked once an account is signed in, not at
   the first start's sign-in; Android's permission dialog asks for the unlock first, so on a locked phone the Answer does
   not ask and the page asks after the unlock. `CAMERA` is asked at a video call's Answer or by the page.
@@ -166,11 +178,16 @@ it again:
 
 ```sh
 adb shell cmd deviceidle tempwhitelist -d 60000 org.moqui.mobile
+adb shell run-as org.moqui.mobile cat files/../client/push.json   # the account's registration, its pushId
 adb shell am broadcast -f 32 -n org.moqui.mobile/.DebugRingReceiver --es kind ring --es callSessionId 100100 \
-    --es caller "'Joe Developer'" --es video false --el ringSeconds 40
+    --es pushId 100050 --es caller "'Joe Developer'" --es video false --el ringSeconds 40
 adb shell am broadcast -n org.moqui.mobile/.DebugRingReceiver --es kind ringEnded --es callSessionId 100100 --es reason answered
 adb shell am broadcast -n org.moqui.mobile/.DebugRingReceiver --es kind token --es token debug-token-1
 ```
+
+The Kotlin rules (`CallRules`: the ring's time, the join watchdog, which `ringEnded` ends a call, which link shows
+over the lock screen) have JVM unit tests: `./gradlew :app:testUniversalDebugUnitTest` in `gen/android`, with the
+environment of `scripts/android-env.sh`.
 
 A real call to ring: another user starts it on the local server (with `rtc_media_port` set, so it has a media node),
 for example `curl -u joe.developer:moqui -H 'X-Requested-With: XMLHttpRequest' -X POST
@@ -193,7 +210,6 @@ What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans
   for a server with one.
 - The emulator image's WebView (133) is below the 141 encrypted calls need: the ring screen says so, and the page
   refuses such a call.
-- Telecom's hang-up from a headset or a car ends the native call but not the page's; the user leaves it in the app.
 
 ## Tests
 

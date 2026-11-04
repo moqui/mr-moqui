@@ -57,6 +57,7 @@ const COMMANDS: &[&str] = &[
     "notify",
     "open_external",
     "call_state",
+    "call_take_answer",
 ];
 
 fn main() {

@@ -120,7 +120,8 @@ pub fn run() {
             commands::open_in_shell,
             commands::notify,
             commands::open_external,
-            commands::call_state
+            commands::call_state,
+            commands::call_take_answer
         ])
         .setup(move |app| {
             let embedded = files.take().ok_or("the app was set up twice")?;
@@ -168,6 +169,12 @@ fn start(app: &AppHandle, files: Box<dyn tauri::Assets<tauri::DynRuntime>>) -> R
         Box::new(shell),
     ));
     app.manage(Arc::clone(&host));
+    native::set_host(&host);
+    // a call link that came before the host was made (a cold start's Answer)
+    if let Some(link) = moqui_lib::sync::lock(&EARLY_CALL).take() {
+        let early = Arc::clone(&host);
+        std::thread::spawn(move || early.open_call(&link));
+    }
     core.warm();
     shell_webview(app, &host)?;
     if network {
@@ -268,6 +275,20 @@ fn navigation(host: &Arc<MobileHost>, url: &Url) -> bool {
     }
 }
 
+/// A call link taken before the app's host was made, opened once it is.
+static EARLY_CALL: std::sync::Mutex<Option<calls::CallLink>> = std::sync::Mutex::new(None);
+
+/// A call link the native code made: opened by the host, off the main thread, or kept until the host is made.
+fn opened_call(app: &AppHandle, link: calls::CallLink) {
+    match app.try_state::<Arc<MobileHost>>() {
+        Some(host) => {
+            let host = Arc::clone(&host);
+            std::thread::spawn(move || host.open_call(&link));
+        }
+        None => *moqui_lib::sync::lock(&EARLY_CALL) = Some(link),
+    }
+}
+
 /// The app's events: the SSO hand-back, and the lifecycle.
 // on the desktop host, where tests build it, the mobile-only arms are gone and clippy would have the match collapsed
 #[cfg_attr(not(mobile), allow(clippy::collapsible_match))]
@@ -277,11 +298,12 @@ fn on_event(app: &AppHandle, event: RunEvent) {
             for url in urls {
                 if url.scheme() == "org.moqui.mobile" && url.path() == "/sso" {
                     moqui_client_tauri::commands::sso_returned(app, &url);
-                } else if let Some(answer) = calls::answer_link(&url) {
-                    // an incoming call answered in the native call screen: the shell joins it
-                    if let Some(host) = app.try_state::<Arc<MobileHost>>() {
-                        let host = Arc::clone(&host);
-                        std::thread::spawn(move || host.open_call(&answer));
+                } else if calls::is_call_link(&url) {
+                    // the activity is exported, so any app may send a call link: only one the native code made for
+                    // the user's Answer or Hang up (its nonce, taken once) is taken
+                    match calls::link_of(&url).and_then(|(id, nonce)| native::take_link(&nonce, &id)) {
+                        Some(link) => opened_call(app, link),
+                        None => log::warn!("A call link the app did not make is refused"),
                     }
                 } else {
                     log::warn!("A link the app does not take: {}", url.scheme());
@@ -298,7 +320,10 @@ fn on_event(app: &AppHandle, event: RunEvent) {
             // stopped client and no webview for a new activity. An activity made again (a configuration change it does
             // not handle) keeps both.
             WindowEvent::Destroyed => {
-                if activity_ended_for_good() {
+                if activity_ended_for_good() && call_busy() {
+                    // a ring, a call or a decline still being sent: the process stays for it (the native code's)
+                    log::info!("moqui-mobile: the activity ended during a call; the process stays for it");
+                } else if activity_ended_for_good() {
                     shut_down(app, "the activity ended");
                     app.exit(0);
                 } else {
@@ -310,6 +335,14 @@ fn on_event(app: &AppHandle, event: RunEvent) {
         RunEvent::Exit => shut_down(app, "the app exits"),
         _ => {}
     }
+}
+
+/// Whether the native code has a call or a decline under way.
+fn call_busy() -> bool {
+    #[cfg(target_os = "android")]
+    return android::call_busy();
+    #[cfg(not(target_os = "android"))]
+    false
 }
 
 /// Whether the activity ended for good (it finished), rather than being made again.

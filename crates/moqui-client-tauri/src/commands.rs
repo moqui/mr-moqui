@@ -447,19 +447,29 @@ pub fn client_switch_account(
     id: String,
 ) -> Result<(), String> {
     let state = shell_state(&app, &webview, nonce.as_deref())?;
-    if moqui_lib::sync::lock(state.core.accounts()).get(&id).is_none() {
+    switch_account(&state, &id)
+}
+
+/// Make the account `id` the current one and load its shell (the shell's switch, or the host's: the mobile app's
+/// answered call is its account's).
+///
+/// # Errors
+///
+/// Returns an error for an account not kept here, or a list that is not saved.
+pub fn switch_account(state: &ClientState, id: &str) -> Result<(), String> {
+    if moqui_lib::sync::lock(state.core.accounts()).get(id).is_none() {
         return Err("No such account".to_string());
     }
     // the other account's pages go before this one is current, so none of them is ever taken for this one's
     state.shell.close_remotes(None);
     {
         let mut accounts = moqui_lib::sync::lock(state.core.accounts());
-        if !accounts.set_current(&id) {
+        if !accounts.set_current(id) {
             return Err("No such account".to_string());
         }
         accounts.save().map_err(|err| err.to_string())?;
     }
-    switched(&state);
+    switched(state);
     Ok(())
 }
 

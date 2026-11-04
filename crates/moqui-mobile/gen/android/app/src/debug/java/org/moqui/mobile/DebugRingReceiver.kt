@@ -13,11 +13,12 @@ import android.util.Log
  *
  *   adb shell cmd deviceidle tempwhitelist -d 60000 org.moqui.mobile   # as a high-priority FCM message allows
  *   adb shell am broadcast -n org.moqui.mobile/.DebugRingReceiver --es kind ring --es callSessionId 100100 \
- *       --es caller 'John Doe' --es video false --el ringSeconds 40
+ *       --es pushId 100050 --es caller 'John Doe' --es video false --el ringSeconds 40
  *   adb shell am broadcast -n org.moqui.mobile/.DebugRingReceiver --es kind ringEnded --es callSessionId 100100 --es reason timedOut
  *   adb shell am broadcast -n org.moqui.mobile/.DebugRingReceiver --es kind token --es token debug-token-1
  *
- * `ringSeconds` makes `expiresAt` from now; `expiresAt` (Unix milliseconds) may be given instead.
+ * `pushId` is the account's registration (`subscriptionId` in the app's `client/push.json`); a ring that is no
+ * account's here is dropped. `ringSeconds` is the time it rings, as the server sends it.
  */
 class DebugRingReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -27,7 +28,6 @@ class DebugRingReceiver : BroadcastReceiver() {
             @Suppress("DEPRECATION")
             extras.get(key)?.let { data[key] = it.toString() }
         }
-        data.remove("ringSeconds")?.toLongOrNull()?.let { data["expiresAt"] = (System.currentTimeMillis() + it * 1000).toString() }
         Log.i("moqui-push", "A debug push of kind ${data["kind"]}")
         if (data["kind"] == "token") {
             data["token"]?.let { Push.token(context, it) }

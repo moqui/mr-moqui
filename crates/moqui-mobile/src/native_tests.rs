@@ -54,10 +54,13 @@ fn one_client_per_process_until_it_stops_and_the_current_account_is_asked_first(
     assert_eq!(order, vec!["b".to_string(), "a".to_string()]);
     assert_eq!(asked(&core)[0].comms_root, "/qapps/BasicComms");
     assert!(has_account(&dir));
-    // a bad id is never sent
-    assert_eq!(decline_call(&dir, "1/../x"), "not a call id");
     // a background send with nothing queued: nothing waits for a time
     assert_eq!(flush_background(&dir, 1000), -1);
+    // a bad id is never sent, nor one for an account not signed in here
+    assert_eq!(decline_call(&dir, "1/../x", "a"), "not a call id");
+    assert_eq!(decline_call(&dir, "1", "c"), "the account c is not signed in here");
+    // a push that is no registration's here is no account's
+    assert_eq!(ring_account(&dir, "100050"), None);
     core.shutdown();
     let again = core_in(&dir).unwrap();
     assert!(!Arc::ptr_eq(&core, &again), "a stopped client is made again");

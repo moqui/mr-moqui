@@ -575,6 +575,7 @@ Before mobile distribution, check the actual remote-application and local-code m
 - A Decline does not need the WebView: Rust posts `declineCall` with the device key, asking each account with a key until one's server knows the call (a ring names no account).
 - The push token is registered from Rust once per token and account, at the token, the start and each sign-in, and taken back before a key's revoke; the server keeps one user per token.
 - The permissions calls need are asked once an account is signed in; none is asked at the Answer on a locked phone (Android's permission dialog wants the unlock first).
+- Review fixes (2026-11-04): a call link is taken only with a nonce Rust made for that Answer, once (the activity is exported, so another app's link is refused), and the page answers by itself only when the host hands it the answer; the app shows over the lock screen only for a call answered on the ring screen, and only its call screen; the page says when it joined and left, an answered call it never joins is given up after 30 seconds, and a headset's hang-up leaves the page's call; a ring is tied to its account by the registration's `pushId` and rings for the server's `ringSeconds`, and one that is no account's here is dropped; a decline goes to that account's server only. Checked on the emulator, with an external `/call` link refused.
 
 **Android (MD6), settled by stage 9, as built:**
 
