@@ -16,7 +16,7 @@ Java's Spock suite (`Security*.groovy`) was not ported. A row below that names o
 ./moq test-client framework --serve
 ```
 
-`--serve` starts `moqui test framework --spec ClientFixtures --db snapshot --serve` on a scratch database, under `conf/MoquiLoadTestConf.xml` (`test/client/suite.js`). That file is the production conf with the screen, transition, and service tarpits off, so `LoadBasic` is not answered 429. `SecurityTarpit` skips on that conf. A skip there is the expected result of `--serve`.
+`--serve` starts `moqui test framework --spec ClientFixtures --db snapshot --serve` on a scratch database, under `conf/MoquiLoadTestConf.xml` (`test/client/suite.js`, and `acceptance/client/suite.js` for the acceptance specs). That file is the production conf with the screen, transition, and service tarpits off, so `LoadBasic` (an acceptance test) is not answered 429. `SecurityTarpit`, an acceptance test too (`./moq accept framework`), skips on that conf. A skip there is the expected result of `--serve`.
 
 `SecurityCors` fails its spec when the server allows every origin (the dev conf, `webapp_allow_origins=*`). The foreign-origin `/notws` proof skips on that conf. The other specs run on any conf.
 
@@ -38,7 +38,7 @@ MOQUI_CONF=conf/MoquiProductionConf.xml \
   ./moq test framework --spec ClientFixtures --db snapshot \
   --serve 127.0.0.1:0 --ready-file /tmp/moqui-tarpit.url
 # when the ready file holds a URL:
-./moq test-client framework --spec SecurityTarpit --server "$(cat /tmp/moqui-tarpit.url)"
+./moq test-client framework --acceptance --spec SecurityTarpit --server "$(cat /tmp/moqui-tarpit.url)"
 ```
 
 Stop the server when the client exits (its standard input is the terminal). The screen proof is the demo `ALL_SCREENS` row (120 hits in 60 seconds) on `GET /apps/tools/dashboard` as `john.doe`. The transition proof is `sec.tap.user`, 3 hits in 60 seconds, on `POST /apps/setPreference`.
@@ -56,8 +56,8 @@ Stop the server when the client exits (its standard input is the terminal). The 
 | A user with no artifact authz cannot open Tools | A01 | `SecurityAccess` |
 | A VIEW-only user cannot open SQL Runner | A01 | `SecurityAccess` |
 | Login `returnTo` off the site is refused; a path on the site is followed | A01 | `SecurityAccess` |
-| Login `Referer` off the site is refused | A01 | `SecurityMisc` |
-| Login `returnTo` with `Host: evil.example` does not redirect to that host | A01 | `SecurityMisc` |
+| Login `Referer` off the site is refused | A01 | `SecurityHeaders` |
+| Login `returnTo` with `Host: evil.example` does not redirect to that host | A01 | `SecurityHeaders` |
 | CSP (`frame-ancestors`, `form-action`), `X-Frame-Options`, nosniff | A02 | `SecurityHeaders` |
 | Session cookie is `moqui.session`, HttpOnly, SameSite=Lax | A02 | `SecurityHeaders` |
 | Login HTML is not publicly cacheable | A02 | `SecurityHeaders` |
@@ -71,24 +71,24 @@ Stop the server when the client exits (its standard input is the terminal). The 
 | Login issues a new session id | A07 | `SecurityAuthn` |
 | `api_key` in the query, or a garbage `api_key` header, does not log in | A07 | `SecurityAuthn` |
 | Basic on `/rest/e1`: unknown user 401, valid user is authenticated | A07 | `SecurityAuthn` |
-| A REST 401 in JSON has no stack frames | A10 | `SecurityErrors` |
-| `/notws` from a foreign origin is refused (logged-in session) | A01 | `SecurityWebSocket` |
-| An anonymous `/notws` upgrade is 401 | A01 | `SecurityWebSocket` |
-| The server's host on another port or scheme is refused for `/notws` | A01 | `SecurityWebSocket` |
+| A REST 401 in JSON has no stack frames | A10 | `SecurityHeaders` |
+| `/notws` from a foreign origin is refused (logged-in session) | A01 | `SecurityAccess` |
+| An anonymous `/notws` upgrade is 401 | A01 | `SecurityAccess` |
+| The server's host on another port or scheme is refused for `/notws` | A01 | `SecurityAccess` |
 | Screen proofs: escaped extra path, FOP without login, login form action, VIEW-only service run, anonymous data import, `qzSign`, `GET` login with a password, `WEB-INF`, `GET /notws`, SQL Runner query string, menu data, FOP `filename`, DataSnapshot download and parent segments, `/resources` put, Tools CSV, remote data import | A01, A03, A05 | `SecurityScreens` |
 | `/email/NOTAREALID.png` is HTTP 200, `image/png` with no charset, inline, and the 1x1 tracking PNG | A01 | `SecurityScreens` |
 | `/htmlr` and `/htmlr/...` are 404, not a PDF and not a stack trace | A10 | `SecurityScreens` (the renderer is not mounted) |
-| `/status` from loopback is public JSON (no heap, datasources, or VmVendor) | A01 | `SecurityStatus` |
-| `X-Forwarded-For` and `Forwarded` do not change that loopback result | A01 | `SecurityStatus` |
-| `/search` and `/dashboard` without a login are 401; without `SearchRemote` the denial is not 401 | A01 | `SecurityProxy` |
-| Basic and `api_key` on `/search`: no permission 403, bad password 401, garbage key does not authenticate, `SearchRemote` is past authorization | A01 | `SecurityProxy` |
+| `/status` from loopback is public JSON (no heap, datasources, or VmVendor) | A01 | `SecurityAccess` |
+| `X-Forwarded-For` and `Forwarded` do not change that loopback result | A01 | `SecurityAccess` |
+| `/search` and `/dashboard` without a login are 401; without `SearchRemote` the denial is not 401 | A01 | `SecurityAccess` |
+| Basic and `api_key` on `/search`: no permission 403, bad password 401, garbage key does not authenticate, `SearchRemote` is past authorization | A01 | `SecurityAccess` |
 | Entity REST and service REST authz, method override, CSRF on create, password fields omitted, identity fields, email server host, `UserLoginKey` | A01 | `SecurityRest` |
 | `/rest/entity.json`: anonymous 401, no `REST_SCHEMA` 403, ADMIN 200 on one entity document | A01 | `SecurityRest` |
-| `/rest/sm` HMAC missing or bad is 403; a valid signature needs no login; timestamp outside the window is 403; inside the window is accepted; a replay is rejected; `SmatNone` accepts an anonymous post; an unknown remote is rejected | A01 | `SecurityMessages` |
-| Service Run session token, `api_key` and `login_key` headers from the fixture login key, Basic on a screen, shared wrong-password text, OTP pre-auth, MFA, initial admin, short password, login JSON omits credentials, password-reset enumeration, IP allow list, lockout | A07 | `SecurityAuthnMore` |
-| Unauthorized and error HTML have no script tag or stack frame | A10 | `SecurityMisc` |
-| A SQL-looking preference is stored as data | A05 | `SecurityMisc` |
-| Multipart upload: `MZ` and a `#!` script are rejected; a ZIP is accepted | A02 | `SecurityMisc` |
+| `/rest/sm` HMAC missing or bad is 403; a valid signature needs no login; timestamp outside the window is 403; inside the window is accepted; a replay is rejected; `SmatNone` accepts an anonymous post; an unknown remote is rejected | A01 | `SecurityAccess` |
+| Service Run session token, `api_key` and `login_key` headers from the fixture login key, Basic on a screen, shared wrong-password text, OTP pre-auth, MFA, initial admin, short password, login JSON omits credentials, password-reset enumeration, IP allow list, lockout | A07 | `SecurityAuthn` |
+| Unauthorized and error HTML have no script tag or stack frame | A10 | `SecurityHeaders` |
+| A SQL-looking preference is stored as data | A05 | `SecurityHeaders` |
+| Multipart upload: `MZ` and a `#!` script are rejected; a ZIP is accepted | A02 | `SecurityHeaders` |
 | Screen tarpit and the `sec.tap.user` transition tarpit are 429 | A01 | `SecurityTarpit` (production conf; skips under `--serve`) |
 
 HMAC signing in the client is `hmac.sha256Base64` and `hmac.sha256Timestamp` ([Client-Testing](../dev/Client-Testing.md)). They match `SmatHmacSha256` and `SmatHmacSha256Timestamp`.
@@ -126,7 +126,7 @@ Kept on purpose, and asserted by the specs. The parity notes are [Parity-Diffs](
 - CORS and `/notws` compare scheme, host, and port. The same host on another port or scheme is refused.
 - An IP-refused REST login is 401 and not logged in. The body names the user and the client address (`check_ip_allowed`). The spec does not require Java's shared invalid-login sentence. `X-Forwarded-For` does not supply the allow-list address while `webapp_client_ip_header` is empty.
 
-`WebUtilities.isSameOriginRedirect` with no host argument uses the webapp `http-host`, which is empty in the default conf, so an absolute `returnTo` is refused. The login screen calls that one-argument form. The request `Host` header is not a configured host. `SecurityMisc` is the proof.
+`WebUtilities.isSameOriginRedirect` with no host argument uses the webapp `http-host`, which is empty in the default conf, so an absolute `returnTo` is refused. The login screen calls that one-argument form. The request `Host` header is not a configured host. `SecurityHeaders` is the proof.
 
 Three `SecurityScreens` assertions are tighter than the Python ones they port. A VIEW-only service run counts only 401 or 403 (a 302 would be the run succeeding). An anonymous data import counts a 302 only when `Location` is the login. A `GET` of the login with the demo password must still leave the session on the login page.
 
@@ -142,4 +142,4 @@ Three `SecurityScreens` assertions are tighter than the Python ones they port. A
 - `/htmlr` features prove the path is 404. They do not prove an HTML renderer's error page.
 - Positive controls sit next to the refusals: a session token that stores a preference, a same-origin CORS allow, a valid HMAC and a timestamp inside the window, `SmatNone` ingest, a loopback-allowed user logging in, an ADMIN schema document, a catch-all entity ALL that creates, a Tools CSV for a user who may open Tools, and a ZIP upload that is accepted. A refusal alone would still pass if the feature had stopped working.
 - `requireFixture` skips only on HTTP 401. An MFA password-only login is 200 with `secondFactorRequired` and no `loggedIn`, so those features run. The success feature consumes the single-use code and is last. `ClientFixtures` refreshes the code, and `--db snapshot` is a fresh database.
-- The lockout feature is last in `SecurityAuthnMore` and does not log `sec.lock.test` in afterwards.
+- The lockout feature is last in `SecurityAuthn` and does not log `sec.lock.test` in afterwards.

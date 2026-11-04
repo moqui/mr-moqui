@@ -26,7 +26,7 @@ moqui test-client framework --serve                    # start the server suite.
 moqui test-client webroot --offline                   # client specs with no server and no listening port
 moqui test-client runtime/dev-component/dev-aide --offline
 moqui test-client mr-marble --serve --junit build/test-results
-moqui test-client framework --spec LoadBasic --param users=50 --param duration=60
+moqui test-client framework --acceptance --spec LoadBasic --param users=50 --param duration=60
 moqui test-client mr-marble --serve --spec FindScreens --param screen=Survey/FindSurvey --headed
 moqui test-client mr-marble --serve --spec FindScreens --param phase=before --video --out /tmp/run
 moqui test-client --server http://localhost:8081 --wait 120 --junit build/test-results --fail-on-skip
@@ -101,8 +101,7 @@ files.
 A suite declares the server it needs in `test/client/suite.js`, beside the order:
 
 ```js
-suite(["SecurityAccess", "SecurityHeaders", "SecurityCors", "SecurityAuthn", "SecurityErrors", "SecurityWebSocket",
-    "LoadBasic"], {
+suite(["SecurityAccess", "SecurityHeaders", "SecurityCors", "SecurityAuthn", "SecurityScreens", "SecurityRest"], {
     server: { components: ["framework"], specs: ["ClientFixtures"], conf: "conf/MoquiLoadTestConf.xml" },
 })
 ```
@@ -589,9 +588,10 @@ The output directory has what the specs wrote and what failures left:
 ## Examples in the repository
 
 - `runtime/base-component/framework/test/client/`: the security proofs ported from Moqui Java's pytest suite
-  (`SecurityAccess`, `SecurityHeaders`, `SecurityCors`, `SecurityAuthn`, `SecurityErrors`, `SecurityWebSocket`; each
-  feature named with its OWASP id and a comment naming the Python test), `LoadBasic`, and `Java-Port-Catalog.md`, which catalogs
-  all 143 Python tests as ported, pending or not applicable. The fixtures are `framework/test/ClientFixtures.spec.js`.
+  (`SecurityAccess`, `SecurityHeaders`, `SecurityCors`, `SecurityAuthn`, `SecurityScreens`, `SecurityRest`; each
+  feature named with its OWASP id and a comment naming the Python test), and `Java-Port-Catalog.md`, which catalogs
+  all 143 Python tests as ported, pending or not applicable; `LoadBasic` and `SecurityTarpit` are in
+  `framework/acceptance/client/`. The fixtures are `framework/test/ClientFixtures.spec.js`.
 - `runtime/component/mr-marble/test/client/`: `BrowserSmoke` (pages of the flow data with their text, PrintOrder's
   barcodes and a PDF), with `test/ClientAccess.spec.js` and `test/MoquiConf.xml` for the server; and in
   `acceptance/client/`, `FindScreens` (a `where` row for each Find screen, found with `files`; `--param screen=` runs

@@ -246,7 +246,7 @@ yrs = { workspace = true }
 name = "gate3"
 test = false
 
-# Slow (about 3 minutes, docs/Build-Test.md "Slow tests"): ./moq test-all runs it only with --slow.
+# About 3 minutes: an acceptance test of the framework (docs/Build-Test.md "The two suites"), run by ./moq accept-all.
 [[test]]
 name = "gate3_browser"
 test = false

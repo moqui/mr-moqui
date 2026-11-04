@@ -243,5 +243,5 @@ page sequence (`pdf`) are tested in their crates: `cargo test -p moqui-host -p m
 sockets, accounts, renewal, store, conf, offline answers, pushes, outbox, sender and mirror in
 `cargo test -p moqui-client`, the device key renewal on the server in
 `cargo test -p moqui-core --lib a_device_`, and the bundled screens in
-`cargo test -p moqui-core --lib bundled_screens_are_precompiled`; the bundled Comms screens in the shell, in the page,
-with `moqui test-client basic-comms --offline` (`ShellComms`, `ShellCalls`).
+`cargo test -p moqui-core --lib bundled_screens_are_precompiled`; the shell's sync states in the page with
+`moqui test-client basic-comms --offline` (`ShellSync`).
