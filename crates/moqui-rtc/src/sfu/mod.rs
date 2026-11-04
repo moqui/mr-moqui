@@ -32,7 +32,7 @@ mod relay;
 
 pub use relay::{RelayMessage, RelayRole, RelayTrack, RelayWant};
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -408,8 +408,12 @@ pub struct SfuStats {
 }
 
 /// The rooms of one media node.
+///
+/// Only the peers with work are polled (plans/High-Level-Review.md HL-008): the peer a datagram or a command was for,
+/// the peers a peer's output fans out to, and the peers whose deadline (str0m's timeout, or the next look at the
+/// layers) has come.
 pub struct Sfu {
-    config: SfuConfig,
+    config: Arc<SfuConfig>,
     rooms: HashMap<Arc<str>, Room>,
     peers: HashMap<PeerId, Peer>,
     by_leg: HashMap<LegKey, PeerId>,
@@ -424,7 +428,17 @@ pub struct Sfu {
     out: VecDeque<SfuOutput>,
     next_timeout: Option<Instant>,
     stats: SfuStats,
+    /// The peers the next drive polls.
+    pending: HashSet<PeerId>,
+    /// Each polled peer's deadline, and the peers by deadline.
+    deadline_of: HashMap<PeerId, Instant>,
+    deadlines: BTreeSet<(Instant, PeerId)>,
 }
+
+/// A peer's deadline this close is due now. str0m's pacer asks to be woken a microsecond after each packet it sends;
+/// a clock that does not move between calls (the test network's, or two datagrams in one tick) would otherwise send
+/// one packet per tick. Waking a timer early does nothing in str0m but look at it.
+const DUE_EARLY: Duration = Duration::from_micros(10);
 
 /// How many passes [`Sfu::drive`] makes before leaving the rest for the next input; each pass forwards what the last
 /// produced, so this bounds the work of one input.
@@ -433,7 +447,7 @@ const MAX_PASSES: usize = 64;
 impl Sfu {
     pub fn new(config: SfuConfig) -> Self {
         Sfu {
-            config,
+            config: Arc::new(config),
             rooms: HashMap::new(),
             peers: HashMap::new(),
             by_leg: HashMap::new(),
@@ -448,6 +462,9 @@ impl Sfu {
             out: VecDeque::new(),
             next_timeout: None,
             stats: SfuStats::default(),
+            pending: HashSet::new(),
+            deadline_of: HashMap::new(),
+            deadlines: BTreeSet::new(),
         }
     }
 
@@ -558,6 +575,7 @@ impl Sfu {
         room.peers.push(id);
         self.peers.insert(id, peer);
         self.by_leg.insert(key.clone(), id);
+        self.pending.insert(id);
         self.drive(now);
         Ok(answer.to_sdp_string())
     }
@@ -572,7 +590,9 @@ impl Sfu {
         answer: &str,
     ) -> Result<(), SfuError> {
         let answer = SdpAnswer::from_sdp_string(answer).map_err(|e| SfuError::BadSdp(e.to_string()))?;
-        let peer = self.peer_mut(key, generation)?;
+        let id = self.peer_id(key, generation)?;
+        self.pending.insert(id);
+        let peer = self.peers.get_mut(&id).ok_or(SfuError::UnknownLeg)?;
         peer.handle_answer(offer_id, answer)?;
         self.drive(now);
         Ok(())
@@ -587,7 +607,9 @@ impl Sfu {
         offer: &str,
     ) -> Result<String, SfuError> {
         let offer = SdpOffer::from_sdp_string(offer).map_err(|e| SfuError::BadSdp(e.to_string()))?;
-        let peer = self.peer_mut(key, generation)?;
+        let id = self.peer_id(key, generation)?;
+        self.pending.insert(id);
+        let peer = self.peers.get_mut(&id).ok_or(SfuError::UnknownLeg)?;
         let answer = peer.handle_offer(offer)?;
         self.drive(now);
         Ok(answer.to_sdp_string())
@@ -597,12 +619,16 @@ impl Sfu {
     pub fn add_candidate(&mut self, key: &LegKey, generation: u64, candidate: &str) -> Result<(), SfuError> {
         let text = candidate.strip_prefix("a=").unwrap_or(candidate);
         let c = Candidate::from_sdp_string(text).map_err(|e| SfuError::BadSdp(e.to_string()))?;
+        let id = self.peer_id(key, generation)?;
+        self.pending.insert(id);
         self.peer_mut(key, generation)?.rtc.add_remote_candidate(c);
         Ok(())
     }
 
     /// What a leg's track at `mid` carries (camera, screen ...), from its `publish` frame.
     pub fn set_source(&mut self, key: &LegKey, generation: u64, mid: &str, source: Source) -> Result<(), SfuError> {
+        let id = self.peer_id(key, generation)?;
+        self.pending.insert(id);
         self.peer_mut(key, generation)?.set_source(mid, source);
         Ok(())
     }
@@ -616,8 +642,10 @@ impl Sfu {
         publisher: &str,
         layer: Option<Layer>,
     ) -> Result<(), SfuError> {
-        let config = self.config.clone();
-        let peer = self.peer_mut(key, generation)?;
+        let config = Arc::clone(&self.config);
+        let id = self.peer_id(key, generation)?;
+        self.pending.insert(id);
+        let peer = self.peers.get_mut(&id).ok_or(SfuError::UnknownLeg)?;
         peer.set_wanted(publisher, layer);
         peer.choose_layers(&config, now);
         self.drive(now);
@@ -652,6 +680,7 @@ impl Sfu {
         for id in r.peers.clone() {
             if let Some(p) = self.peers.get_mut(&id) {
                 p.request_video_keyframes(now);
+                self.pending.insert(id);
             }
         }
         self.drive(now);
@@ -722,6 +751,7 @@ impl Sfu {
         for pid in &r.peers {
             if let Some(p) = self.peers.get_mut(pid) {
                 p.handle_track_open(Arc::downgrade(&track));
+                self.pending.insert(*pid);
             }
         }
         r.injected.push(Injected { leg: key.leg, track });
@@ -747,11 +777,11 @@ impl Sfu {
             keyframe: false,
             audio_level: None,
         });
-        let pids = r.peers.clone();
         let time = MediaTime::new(rtp_time, Frequency::FORTY_EIGHT_KHZ);
-        for pid in pids {
-            if let Some(p) = self.peers.get_mut(&pid) {
+        for pid in &r.peers {
+            if let Some(p) = self.peers.get_mut(pid) {
                 p.write_injected(&track, now, time, data);
+                self.pending.insert(*pid);
             }
         }
         self.drive(now);
@@ -761,6 +791,7 @@ impl Sfu {
     /// Removes an injected source.
     pub fn remove_injected_source(&mut self, now: Instant, room: &str, leg: &str) {
         if let Some(r) = self.rooms.get_mut(room) {
+            self.pending.extend(r.peers.iter().copied());
             if let Some(at) = r.injected.iter().position(|i| &*i.leg == leg) {
                 let gone = r.injected.remove(at);
                 r.leave(&gone.leg);
@@ -798,27 +829,64 @@ impl Sfu {
         );
         self.stats.received += 1;
         let checks = &mut self.stats.accept_checks;
-        let Some(peer) = self.peers.values_mut().find(|p| {
-            *checks += 1;
-            p.rtc.accepts(&input)
-        }) else {
+        let Some(id) = self
+            .peers
+            .values()
+            .find(|p| {
+                *checks += 1;
+                p.rtc.accepts(&input)
+            })
+            .map(|p| p.id)
+        else {
             return false;
         };
         self.stats.accepted += 1;
-        peer.handle_input(input);
+        if let Some(peer) = self.peers.get_mut(&id) {
+            peer.handle_input(input);
+        }
+        self.pending.insert(id);
         self.drive(now);
         true
     }
 
     /// Time passed.
     pub fn handle_timeout(&mut self, now: Instant) {
-        let config = self.config.clone();
-        for p in self.peers.values_mut() {
-            p.handle_input(Input::Timeout(now));
-            p.tick(&config, now);
+        let config = Arc::clone(&self.config);
+        while let Some(&(due, id)) = self.deadlines.first() {
+            if due > now + DUE_EARLY {
+                break;
+            }
+            self.deadlines.pop_first();
+            self.deadline_of.remove(&id);
+            if let Some(p) = self.peers.get_mut(&id) {
+                p.handle_input(Input::Timeout(now));
+                p.tick(&config, now);
+                self.pending.insert(id);
+            }
         }
         self.look_for_speakers(now);
         self.drive(now);
+    }
+
+    /// Keeps `id`'s deadline: the earlier of its str0m timeout and its next look at the layers.
+    fn set_deadline(&mut self, id: PeerId, deadline: Instant) {
+        if let Some(old) = self.deadline_of.insert(id, deadline) {
+            self.deadlines.remove(&(old, id));
+        }
+        self.deadlines.insert((deadline, id));
+    }
+
+    /// Drops what this node keeps of a peer that is gone besides the peer itself: its deadline and its pending work.
+    fn forget_peer(&mut self, id: PeerId) {
+        if let Some(old) = self.deadline_of.remove(&id) {
+            self.deadlines.remove(&(old, id));
+        }
+        self.pending.remove(&id);
+    }
+
+    /// Every peer of the node has work: for the commands that may change any of them (relay links).
+    fn touch_all(&mut self) {
+        self.pending.extend(self.peers.keys().copied());
     }
 
     fn look_for_speakers(&mut self, now: Instant) {
@@ -900,6 +968,7 @@ impl Sfu {
             return;
         }
         let Some(mut peer) = self.peers.remove(&id) else { return };
+        self.forget_peer(id);
         peer.rtc.disconnect();
         if self.by_leg.get(&peer.key) == Some(&id) {
             self.by_leg.remove(&peer.key);
@@ -919,6 +988,8 @@ impl Sfu {
         }));
         if let Some(room) = self.rooms.get_mut(&peer.key.room) {
             room.peers.retain(|p| *p != id);
+            // the others' tracks from it end
+            self.pending.extend(room.peers.iter().copied());
             room.leave(&peer.key.leg);
             if room.is_empty() {
                 self.rooms.remove(&peer.key.room);
@@ -928,36 +999,43 @@ impl Sfu {
         }
     }
 
-    /// Polls every peer to its timeout and forwards what they produced, until nothing is left to forward.
+    /// Polls the peers with work to their timeouts and forwards what they produced, which gives the peers it reaches
+    /// work, until nothing is left to forward.
     fn drive(&mut self, now: Instant) {
-        let config = self.config.clone();
-        let mut next: Option<Instant> = None;
+        let config = Arc::clone(&self.config);
         self.stats.drives += 1;
         for _ in 0..MAX_PASSES {
-            let mut propagated: Vec<Propagated> = Vec::new();
-            next = None;
-            self.stats.drive_passes += 1;
-            self.stats.peer_polls += self.peers.len() as u64;
-            for p in self.peers.values_mut() {
-                let t = p.poll_to_timeout(&config, now, &mut self.out, &mut propagated);
-                next = Some(next.map_or(t, |n: Instant| n.min(t)));
+            if self.pending.is_empty() {
+                break;
             }
-            let dead: Vec<PeerId> = self
-                .peers
-                .values()
-                .filter(|p| !p.rtc.is_alive())
-                .map(|p| p.id)
-                .collect();
+            let mut propagated: Vec<Propagated> = Vec::new();
+            let polled: Vec<PeerId> = self.pending.drain().collect();
+            self.stats.drive_passes += 1;
+            self.stats.peer_polls += polled.len() as u64;
+            let mut dead: Vec<PeerId> = Vec::new();
+            for &id in &polled {
+                let Some(p) = self.peers.get_mut(&id) else { continue };
+                let t = p.poll_to_timeout(&config, now, &mut self.out, &mut propagated);
+                if !p.rtc.is_alive() {
+                    dead.push(id);
+                    continue;
+                }
+                let deadline = t.min(p.next_own_deadline());
+                self.set_deadline(id, deadline);
+            }
             for id in dead {
                 self.remove_peer(id);
-            }
-            if propagated.is_empty() {
-                break;
             }
             for item in propagated {
                 self.propagate(item, now);
             }
         }
+        // work left past the passes: the next timeout is now
+        let mut next = if self.pending.is_empty() {
+            self.deadlines.first().map(|(due, _)| *due)
+        } else {
+            Some(now)
+        };
         self.relays_tick(now, &mut next);
         self.next_timeout = next;
     }
@@ -988,20 +1066,27 @@ impl Sfu {
                 });
             }
         }
-        let peers = room.peers.clone();
-        let config = self.config.clone();
-        for pid in peers {
+        let config = &self.config;
+        for &pid in &room.peers {
             let Some(p) = self.peers.get_mut(&pid) else { continue };
+            let reaches = match &item {
+                Propagated::TrackOpen(..) | Propagated::MediaData(..) => pid != origin,
+                Propagated::KeyframeRequest { to, .. } => pid == *to,
+            };
+            if !reaches {
+                continue;
+            }
             match &item {
                 Propagated::TrackOpen(_, track) if pid != origin => p.handle_track_open(track.clone()),
                 Propagated::MediaData(_, data, track) if pid != origin => {
-                    p.handle_media_data_out(&config, track, data, now)
+                    p.handle_media_data_out(config, track, data, now)
                 }
                 Propagated::KeyframeRequest { to, mid, rid, kind, .. } if pid == *to => {
                     p.request_keyframe(*mid, *rid, *kind, now)
                 }
-                _ => {}
+                _ => continue,
             }
+            self.pending.insert(pid);
         }
     }
 }

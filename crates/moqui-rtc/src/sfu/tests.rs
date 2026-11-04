@@ -24,7 +24,7 @@ use str0m::media::MediaKind;
 use str0m::net::Protocol;
 
 use super::testnet::{Net, LAYER_BYTES, ROOM, SCREEN_BYTES};
-use super::{Layer, LegKey, SfuConfig, SfuError, SfuEvent, Source};
+use super::{Layer, LegKey, SfuConfig, SfuError, SfuEvent, SfuOutput, Source};
 use crate::tap::{Kind, MediaTap, TapFrame};
 
 fn secs(s: u64) -> Duration {
@@ -95,7 +95,8 @@ fn a_subscriber_below_the_floor_gets_audio_only() {
     net.join("B", false);
     net.run(secs(2));
     net.client_mut("B").downlink_bps = Some(60_000);
-    net.run(secs(8));
+    // the switch to audio only comes about 4 s in; what was queued before it is then paced out at the low estimate
+    net.run(secs(10));
     let video = net.received("B", "A", MediaKind::Video);
     let audio = net.received("B", "A", MediaKind::Audio);
     net.run(secs(2));
@@ -464,4 +465,60 @@ fn sfu_work_per_packet_by_rooms() {
             timeout_micros / received as f64,
         );
     }
+}
+
+/// HL-008: a datagram drives the peers it reaches, not every peer of the node: with one busy room and ten idle ones,
+/// the polls per datagram received are those of the busy room.
+#[test]
+fn an_idle_rooms_peers_are_not_polled_by_another_rooms_traffic() {
+    let mut net = Net::new();
+    for room in 0..11 {
+        net.join_room(&format!("R{room}"), &format!("A{room}"));
+        net.join_room(&format!("R{room}"), &format!("B{room}"));
+    }
+    net.run(secs(2));
+    assert!(net.clients.iter().all(|c| c.connected));
+    // the other rooms stop sending media
+    for c in net.clients.iter_mut().filter(|c| &*c.key.room != "R0") {
+        c.audio_mid = None;
+        c.video_mid = None;
+    }
+    net.run(secs(1));
+    let (received, polls) = (net.sfu.stats().received, net.receive_polls);
+    net.run(secs(2));
+    let received = net.sfu.stats().received - received;
+    let polls = net.receive_polls - polls;
+    let per_datagram = polls as f64 / received as f64;
+    // two peers in the busy room, a few passes; every peer of the node would be 22 a pass
+    assert!(per_datagram < 6.0, "{per_datagram:.1} peer polls per datagram");
+    assert!(
+        net.received("B0", "A0", MediaKind::Video) > 50,
+        "the busy room's media flows"
+    );
+}
+
+/// HL-008: a peer's own timer fires with no datagram: its deadline is kept, and a timeout before it polls no one.
+#[test]
+fn a_peers_timer_fires_with_no_traffic() {
+    let mut net = Net::new();
+    net.join("A", false);
+    net.run(secs(1));
+    let deadline = loop {
+        if let SfuOutput::Timeout(t) = net.sfu.poll_output() {
+            break t;
+        }
+    };
+    let polls = net.sfu.stats().peer_polls;
+    let received = net.sfu.stats().received;
+    if deadline > net.now + Duration::from_millis(1) {
+        net.sfu.handle_timeout(net.now);
+        assert_eq!(net.sfu.stats().peer_polls, polls, "nothing is due yet");
+    }
+    net.sfu.handle_timeout(deadline);
+    assert!(net.sfu.stats().peer_polls > polls, "the due peer was polled");
+    assert_eq!(net.sfu.stats().received, received, "with no datagram");
+    assert!(matches!(
+        net.sfu.poll_output(),
+        SfuOutput::Transmit(_) | SfuOutput::Event(_) | SfuOutput::Timeout(_)
+    ));
 }

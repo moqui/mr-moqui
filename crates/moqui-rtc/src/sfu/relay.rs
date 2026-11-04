@@ -251,6 +251,7 @@ impl Sfu {
             self.send_close(id, reason);
             self.remove_relay(id, reason);
         }
+        self.touch_all();
         self.drive(now);
     }
 
@@ -335,7 +336,7 @@ impl Sfu {
             }
             RelayMessage::Want { wants, .. } => {
                 let Some(id) = same else { return Ok(()) };
-                let config = self.config.clone();
+                let config = std::sync::Arc::clone(&self.config);
                 if let Some(p) = self.peers.get_mut(&id) {
                     for w in wants {
                         p.set_wanted(&w.leg, w.layer.as_deref().and_then(Layer::parse));
@@ -357,6 +358,7 @@ impl Sfu {
                 Ok(())
             }
         };
+        self.touch_all();
         self.drive(now);
         result
     }
@@ -423,6 +425,7 @@ impl Sfu {
         }
         self.peers.insert(id, peer);
         self.relays.insert((room.clone(), node.into()), id);
+        self.touch_all();
         self.drive(now);
         id
     }
@@ -462,6 +465,7 @@ impl Sfu {
                 sdp: answer.to_sdp_string(),
             },
         }));
+        self.touch_all();
         self.drive(now);
         Ok(())
     }
@@ -484,6 +488,7 @@ impl Sfu {
     /// ([`SfuEvent::RelayDown`]).
     pub(super) fn remove_relay(&mut self, id: PeerId, reason: &str) {
         let Some(mut peer) = self.peers.remove(&id) else { return };
+        self.forget_peer(id);
         peer.rtc.disconnect();
         let Some(relay) = peer.relay.take() else { return };
         self.relays.remove(&(peer.key.room.clone(), relay.node.clone()));
@@ -517,6 +522,7 @@ impl Sfu {
         }));
         if let Some(room) = self.rooms.get_mut(&peer.key.room) {
             room.peers.retain(|p| *p != id);
+            self.pending.extend(room.peers.iter().copied());
             if room.is_empty() {
                 self.rooms.remove(&peer.key.room);
             }
@@ -584,6 +590,8 @@ impl Sfu {
                     self.remove_relay(id, "unreachable");
                 }
                 self.update_relays();
+                // the links' changed wants are polled at the next drive, as every peer was before
+                self.pending.extend(self.relays.values().copied());
                 now + RELAY_LOOK_EVERY
             }
         };
