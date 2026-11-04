@@ -2402,7 +2402,10 @@ along with this software (see the LICENSE.md file). If not, see
             try { available = ec.search.isAvailable() } catch (e) { available = false }
             if (!available) return
             try {
-                const drive = ec.entity.find('moqui.resource.ResourceDrive').condition('driveId', driveId).one()
+                // the drive's row locked for this transaction: an index that runs while another one that changed the
+                // drive's files or tags is still open (the async extract#DriveFileText after set#Tags) waits for it and
+                // reads what it committed, so a document built from older rows never replaces a newer one
+                const drive = ec.entity.find('moqui.resource.ResourceDrive').condition('driveId', driveId).forUpdate(true).one()
                 if (drive == null) return
                 const root = String(drive.rootLocation).replace(/\/+$/, '')
                 for (const removed of Array.from(removePathList || [])) {
