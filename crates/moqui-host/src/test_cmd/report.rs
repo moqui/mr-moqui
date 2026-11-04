@@ -86,7 +86,29 @@ fn indent(text: &str) -> String {
     text.lines().map(|line| format!("    {line}\n")).collect()
 }
 
-/// The failures in full, then the summary line. Returns the text and how many features and specs failed.
+/// A spec not marked slow that runs longer than this is named at the end of a run (AGENTS.md: one over 30 seconds is
+/// marked slow, and a slow test is a candidate for deletion).
+const SLOW_SPEC: Duration = Duration::from_secs(30);
+
+/// The specs not marked slow that took longer than [`SLOW_SPEC`], as a note for the end of a run; empty when none did.
+fn unmarked_slow(specs: &[ComponentSpec]) -> String {
+    let mut slow: Vec<&ComponentSpec> = specs
+        .iter()
+        .filter(|spec| !spec.result.slow && spec.result.duration > SLOW_SPEC)
+        .collect();
+    if slow.is_empty() {
+        return String::new();
+    }
+    slow.sort_by_key(|spec| std::cmp::Reverse(spec.result.duration));
+    let mut out = String::from("\nOver 30 seconds and not marked slow (mark it slow: true, or better remove it):\n");
+    for spec in slow {
+        let _ = writeln!(out, "  {} ({})", spec.result.display, seconds(spec.result.duration));
+    }
+    out
+}
+
+/// The failures in full, the specs over 30 seconds not marked slow, then the summary line. Returns the text and how many
+/// features and specs failed.
 pub fn summary(specs: &[ComponentSpec], elapsed: Duration) -> (String, usize) {
     let mut out = String::new();
     let (mut passed, mut failed, mut ignored, mut skipped, mut spec_failures) = (0, 0, 0, 0, 0);
@@ -132,6 +154,7 @@ pub fn summary(specs: &[ComponentSpec], elapsed: Duration) -> (String, usize) {
         out.push_str("\nFailures:\n");
         out.push_str(&details);
     }
+    out.push_str(&unmarked_slow(specs));
     let _ = writeln!(
         out,
         "\n{} features: {passed} passed, {failed} failed, {ignored} ignored, {skipped} skipped; {} specs{} in {}",
@@ -310,8 +333,26 @@ mod tests {
                 setup_failure: None,
                 cleanup_failure: None,
                 duration: Duration::from_secs(2),
+                slow: false,
             },
         }
+    }
+
+    #[test]
+    fn summary_names_an_unmarked_spec_over_30_seconds() {
+        let mut long = sample();
+        long.result.duration = Duration::from_secs(41);
+        let mut marked = sample();
+        marked.result.name = "Walk".to_string();
+        marked.result.display = "comp-a/test/Walk.spec.js".to_string();
+        marked.result.duration = Duration::from_secs(50);
+        marked.result.slow = true;
+        let (text, _) = summary(&[long, marked], Duration::from_secs(91));
+        assert!(
+            text.contains("Over 30 seconds and not marked slow (mark it slow: true, or better remove it):\n  comp-a/test/OrderFlow.spec.js (41.00s)\n"),
+            "{text}"
+        );
+        assert!(!text.contains("Walk.spec.js"), "{text}");
     }
 
     #[test]
@@ -334,6 +375,7 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("      attachment: out/failed-ship-1.png"), "{text}");
+        assert!(!text.contains("not marked slow"), "{text}");
         let xml = junit_xml(&spec, "");
         assert!(
             xml.contains("<testsuite name=\"comp-a.OrderFlow\" tests=\"3\" failures=\"1\" errors=\"0\" skipped=\"1\""),

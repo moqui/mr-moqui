@@ -153,6 +153,8 @@ pub struct SpecResult {
     pub setup_failure: Option<Failure>,
     pub cleanup_failure: Option<Failure>,
     pub duration: Duration,
+    /// The spec is marked `slow: true`, so a run's summary does not name it as an unmarked slow spec.
+    pub slow: bool,
 }
 
 impl SpecResult {
@@ -324,6 +326,7 @@ pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&
         setup_failure: None,
         cleanup_failure: None,
         duration: Duration::ZERO,
+        slow: false,
     };
     let plan = match load(spec, host.as_deref()) {
         Ok(plan) => plan,
@@ -334,6 +337,7 @@ pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&
             return result;
         }
     };
+    result.slow = plan.spec.slow;
     // A slow spec in a run without --slow: its features are listed as ignored, and setupSpec does not run.
     if plan.spec.slow && !options.slow {
         for case in &plan.cases {

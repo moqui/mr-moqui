@@ -368,8 +368,12 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
   a helper function is not checked. Products' first shots specs had their page checks in `if` blocks, and those
   checks never ran (F46). Use `assert(condition, message)` for a nested check, or compute a problem string and compare
   it at the top level.
-- Every new screen is in `AppStructure.spec.js` (it renders, with a text that is there in every data state) and in
-  `TuiRender.spec.js`. A screen whose content depends on data needs a check text present whatever the data.
+- **No full walks.** No spec walks every screen of an app or of all apps, or renders every screen in every mode; these
+  have been deleted before and keep coming back. Rendering as such is the framework's (its goldens and `moqui lint
+  --screens`). A screen is rendered at most once in each mode across the suite, and that one render carries all of its
+  checks (content, access, a value that must not show). Render a screen in a second mode only where the modes differ,
+  that is, where it has its own qvt or tui template (`.qvue`, `.tui.json`, a `render-mode` section); say which
+  template the check covers. A screen whose content depends on data needs a check text present whatever the data.
 - **A widget that fails renders its error into the output**, not into `errorMessages`: a check of status 200 and no
   error messages passes a broken page. Check the output for `Error rendering` and `Exception in render`, and check
   a text the page shows. List rows are in the html render; a qvt render needs `withStaticData()` and the app root with
@@ -389,7 +393,11 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
   Those runs leave out the slow specs (`slow: true`), and so does every command unless given `--slow`.
 - **Keep a spec fast.** A spec or feature over about 15 seconds is slow and only for a special case: a specific
   scenario, checked when its result is needed, not coverage. One over 30 seconds is marked `slow: true`
-  ([Slow tests](../Build-Test.md#slow-tests)), and an agent runs it only with the user's permission (AGENTS.md).
+  ([Slow tests](../Build-Test.md#slow-tests)), and an agent runs it only with the user's permission (AGENTS.md). A
+  slow spec is banned from normal runs and a candidate for deletion: delete it rather than mark it unless its
+  scenario must stay checkable. The end of a run names any unmarked spec over 30 seconds.
+- **A test earns its place by the regression it catches.** Do not add a feature that repeats another with a different
+  user, mode or flag (`where: both` doubling, every role of a group) unless that difference is the rule under test.
 
 ### Client specs (`test/client/*.spec.js`)
 
@@ -398,8 +406,10 @@ Follow the style guide's archetype for each screen, as the Projects app does. In
   and do not keep it in the suite. A failed browser feature still writes its own `failed-*.png` for debugging.
   The specs of a phone layout check overflow at 390 px; a theme is checked only where a feature depends on it.
 - Open the browser pages in `setupSpec`, one per user and width. Module variables are not shared between cases.
-- **Walks** for each scenario in the implementation plan: a user with only the needed grants, every click a user
-  makes, and an assertion of the result.
+- **Walks** only where the browser is the thing under test: one golden-path walk per app, and a walk for a scenario
+  a server spec cannot check (a dialog, a client-side state, the phone layout). A walk has a user with only the needed
+  grants, every click a user makes, and an assertion of the result. A plan's scenario is checked by a server spec
+  through the screens' transitions, not a walk of its own.
 - Click what the user clicks. A menu item that holds a dialog or link is a `q-item` around a button: click the button
   (`.q-menu button, .q-menu a`), not the `q-item`, which does nothing (F43 was this test mistake). Scope a header
   menu to its own actions container: a 360 screen has more than one "More".
