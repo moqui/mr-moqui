@@ -29,8 +29,10 @@
         android:label="@string/app_name"
         android:theme="@style/Theme.moqui_mobile"
         android:usesCleartextTraffic="${usesCleartextTraffic}">
+        <!-- Every configuration change the activity handles itself: one it did not would make it again, and the app's
+            one webview and the client go with the activity's end (src/lib.rs; the process ends only when it finishes). -->
         <activity
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|density|fontScale|layoutDirection|colorMode|fontWeightAdjustment|navigation|touchscreen|mcc|mnc"
             android:launchMode="singleTask"
             android:label="@string/main_activity_title"
             android:name=".MainActivity"

@@ -550,6 +550,7 @@ Before mobile distribution, check the actual remote-application and local-code m
 - Android's WebView gives an app scheme no request body and takes no redirect status: a page's `fetch` with a body goes to the host as a command, and a document's redirect is answered as a page that goes there.
 - The SSO redirect of the mobile app is `org.moqui.mobile:/sso`, allowed by the server by default beside the desktop's.
 - A development server is reached as `http://localhost:8080` through `adb reverse`: the client's requests are Rust's, outside Android's network security config, and plain http is refused but to this device.
+- Hardening from the review of the stage 6 fixes (2026-11-04): the activity handles every configuration change and the process ends only when it finishes; a socket started for a page that has since gone is refused; with no page shown only the host goes to the shell's origin; no `window.open` without a gesture (wry patch); an old WebView with no web message listeners is told to update; `./moq android` stops if the app's wry is not the patched copy.
 
 **Android (MD6), settled by MT2 (stage 8), as built:**
 

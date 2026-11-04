@@ -29,5 +29,6 @@
 # The native code Rust calls (the page's call state) and the library's entry points (src/native.rs).
 -keep class org.moqui.mobile.CallManager { *; }
 -keep class org.moqui.mobile.Native { *; }
+-keep class org.moqui.mobile.ActivityEnd { *; }
 # Asked for by name (Push.kt) in a build with Firebase.
 -keep class org.moqui.mobile.FcmPush { *; }

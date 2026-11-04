@@ -15,6 +15,23 @@
     // the main frame only: a frame of the app's origins in a page gets no adapter (the host takes no IPC from frames,
     // and gives frames of other origins no scripts at all: patches/README.md)
     if (window.moquiDesktop || !(shell || appPage) || window.top !== window.self) return;
+    // the app's IPC is a web message listener (patches/README.md), which an old Android System WebView does not have:
+    // nothing the page asks of the app would be answered, so the page says why
+    if (typeof window.ipc === "undefined") {
+        const tooOld = () => {
+            if (!document.body || document.getElementById("moqui-webview-too-old")) return;
+            const notice = document.createElement("div");
+            notice.id = "moqui-webview-too-old";
+            notice.setAttribute("role", "alert");
+            notice.textContent = "This app needs a newer Android System WebView: update it from the Play Store, then open the app again.";
+            notice.style.cssText = "position:fixed;left:0;right:0;top:0;z-index:2147483647;padding:12px 16px;" +
+                "background:#b71c1c;color:#fff;font:15px/1.4 sans-serif;";
+            document.body.appendChild(notice);
+        };
+        if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", tooOld);
+        else tooOld();
+        console.error("moqui-mobile: this WebView has no web message listeners, so the app cannot answer the page");
+    }
     const invoke = (cmd, args) => {
         const ipc = window.__TAURI_INTERNALS__;
         if (!ipc || !ipc.invoke) return Promise.resolve(null);

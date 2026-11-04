@@ -23,7 +23,9 @@ class RustWebView(context: Context, val initScripts: Array<String>, val id: Stri
         settings.setGeolocationEnabled(true)
         settings.databaseEnabled = true
         settings.mediaPlaybackRequiresUserGesture = false
-        settings.javaScriptCanOpenWindowsAutomatically = true
+        // MR Moqui patch: no window.open without the user's gesture (wry sets true), so a page cannot send the phone to
+        // the web or another app on its own
+        settings.javaScriptCanOpenWindowsAutomatically = false
 
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
             isDocumentStartScriptEnabled = true

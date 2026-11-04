@@ -120,8 +120,15 @@ fn the_one_webview_goes_to_the_shell_and_the_servers_pages_and_the_web_goes_outs
         goes(&url("http://moqui-shell.localhost/qapps/x"), Some(APP), true),
         Goes::Nowhere
     );
-    // the first load, with no page yet
-    assert_eq!(goes(&url("http://moqui-shell.localhost/"), None, true), Goes::Here);
+    // with no page (a load under way) only the host goes to the shell (PageState::from)
+    assert_eq!(goes(&url("http://moqui-shell.localhost/"), None, true), Goes::Nowhere);
+    let page = PageState::default();
+    assert_eq!(page.from(), None);
+    page.host_shows_shell();
+    assert_eq!(page.from().as_deref(), Some(SHELL));
+    page.started(&url("http://moqui-shell.localhost/"));
+    page.navigating();
+    assert_eq!(page.from(), None, "the host's showing ends as the shell's load begins");
     assert_eq!(
         goes(&url("http://moqui-app.localhost/qapps/x"), Some(APP), true),
         Goes::Here

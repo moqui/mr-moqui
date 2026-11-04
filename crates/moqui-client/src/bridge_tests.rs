@@ -97,6 +97,25 @@ fn a_page_closes_only_its_own_sockets() {
 }
 
 #[test]
+fn a_socket_read_for_a_page_that_has_since_gone_is_not_held() {
+    let sockets = Sockets::default();
+    let before = sockets.generation("main");
+    // the page loads again (or the account changes) between the account read and the socket's start
+    sockets.close_for("main");
+    let refused = sockets.open_since("main", before, |_| panic!("not started for a page that went"));
+    assert!(refused.is_err());
+    let now = sockets.generation("main");
+    sockets.close_all();
+    assert!(sockets
+        .open_since("main", now, |_| panic!("not started after a switch"))
+        .is_err());
+    // another page's close does not touch this one's
+    let now = sockets.generation("main");
+    sockets.close_for("remote-1");
+    assert_eq!(sockets.generation("main"), now);
+}
+
+#[test]
 fn a_socket_that_does_not_start_is_not_held() {
     let sockets = Sockets::default();
     let failed = sockets.open("main", |_| Err("refused".to_string()));

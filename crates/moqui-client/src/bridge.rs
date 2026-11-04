@@ -73,6 +73,10 @@ type Held = (String, Box<dyn PageSocket>);
 pub struct Sockets {
     open: Mutex<HashMap<u64, Held>>,
     next: AtomicU64,
+    /// How often each page's sockets were closed ([`Self::close_for`]), and every page's ([`Self::close_all`]): a socket
+    /// whose account was read before a close is not taken after it ([`Self::open_since`]). Locked after `open`.
+    closed: Mutex<HashMap<String, u64>>,
+    closed_all: AtomicU64,
 }
 
 impl Sockets {
@@ -90,6 +94,34 @@ impl Sockets {
     ) -> Result<u64, String> {
         let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         let mut open = moqui_lib::sync::lock(&self.open);
+        let socket = start(id)?;
+        open.insert(id, (page.to_string(), socket));
+        Ok(id)
+    }
+
+    /// Where `page`'s sockets are: it changes each time they are closed (the page loads again, the account changes).
+    pub fn generation(&self, page: &str) -> u64 {
+        let own = moqui_lib::sync::lock(&self.closed).get(page).copied().unwrap_or(0);
+        own.wrapping_add(self.closed_all.load(Ordering::SeqCst))
+    }
+
+    /// [`Self::open`], unless `page`'s sockets were closed since `generation` ([`Self::generation`], read before the
+    /// account the socket is for): a socket started for the page that was there is not left to the next one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the page's sockets were closed since, or `start`'s error.
+    pub fn open_since(
+        &self,
+        page: &str,
+        generation: u64,
+        start: impl FnOnce(u64) -> Result<Box<dyn PageSocket>, String>,
+    ) -> Result<u64, String> {
+        let id = self.next.fetch_add(1, Ordering::Relaxed) + 1;
+        let mut open = moqui_lib::sync::lock(&self.open);
+        if self.generation(page) != generation {
+            return Err("The page changed while its socket was opened".to_string());
+        }
         let socket = start(id)?;
         open.insert(id, (page.to_string(), socket));
         Ok(id)
@@ -124,12 +156,18 @@ impl Sockets {
 
     /// Close the sockets of a page: it is loading again, or it closed.
     pub fn close_for(&self, page: &str) {
-        moqui_lib::sync::lock(&self.open).retain(|_, (owner, _)| owner != page);
+        let mut open = moqui_lib::sync::lock(&self.open);
+        open.retain(|_, (owner, _)| owner != page);
+        let mut closed = moqui_lib::sync::lock(&self.closed);
+        let count = closed.entry(page.to_string()).or_insert(0);
+        *count = count.wrapping_add(1);
     }
 
     /// Close every socket: the account changed.
     pub fn close_all(&self) {
-        moqui_lib::sync::lock(&self.open).clear();
+        let mut open = moqui_lib::sync::lock(&self.open);
+        open.clear();
+        self.closed_all.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Let a socket go: it closed. For the host's own sockets' events only: it has no page check, so it is never
@@ -181,12 +219,14 @@ pub fn open_remote(client: &Arc<Client>, host: &Arc<dyn ClientHost>, page: &str,
     if client.is_stopped() {
         return Err("The client is stopped".to_string());
     }
+    // before the account is read: a close of the page's sockets from here on (a load, a switch) refuses this one
+    let generation = client.sockets.generation(page);
     let (account, key) = client
         .account_of(host.as_ref(), page)
         .ok_or("No account is signed in")?;
     let key = key.ok_or("The account is signed out")?;
     let notifications = path.split_once('?').map_or(path, |(bare, _)| bare) == "/notws";
-    client.sockets.open(page, |id| {
+    client.sockets.open_since(page, generation, |id| {
         // weakly: the socket is in the client's own set, and must not keep the client after a shutdown
         let sink_client: Weak<Client> = Arc::downgrade(client);
         let sink_host = Arc::clone(host);

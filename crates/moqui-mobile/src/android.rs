@@ -123,6 +123,20 @@ pub(crate) fn init_verifier() -> Result<(), String> {
     Ok(())
 }
 
+/// Whether the app's activity ended for good (`ActivityEnd.endedForGood`): it finished, and is not made again for a
+/// configuration change. When it cannot be asked, it did, as before.
+pub(crate) fn activity_ended_for_good() -> bool {
+    with_context(|env, app| {
+        let class = app_class(env, app, jni_str!("org.moqui.mobile.ActivityEnd"))?;
+        env.call_static_method(&class, jni_str!("endedForGood"), jni_sig!("()Z"), &[])?
+            .z()
+    })
+    .unwrap_or_else(|err| {
+        log::warn!("Whether the activity finished was not read: {err}");
+        true
+    })
+}
+
 /// The page's call `id` is active (joined) or not (left, ended): the native code keeps or ends its call
 /// (`CallManager.pageCallState`).
 pub(crate) fn page_call_state(id: &str, active: bool) -> Result<(), String> {

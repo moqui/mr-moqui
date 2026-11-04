@@ -1582,6 +1582,9 @@ task_android() {
         run_cmd cp "$ROOT/Cargo.lock" "$app/Cargo.lock" || die "could not copy Cargo.lock"
     fi
     export_var CARGO_TARGET_DIR "$ROOT/target"
+    # The app's wry is its patched copy, whose IPC is the main frame's only (crates/moqui-mobile/patches/README.md): a
+    # Tauri or wry update that the patch no longer applies to fails here, never builds with the unpatched wry.
+    case $command in dev | build) android_wry_patched "$app" ;; esac
     # The shell the app embeds (its frontendDist), from the same files as the desktop's.
     [ "$command" = init ] || stage_client_shell "$ROOT/target/mobile-shell"
     if [ "$command" = dev ]; then
@@ -1602,6 +1605,23 @@ task_android() {
     esac
     (cd "$app" && run_cmd cargo tauri android "$command" ${args[@]+"${args[@]}"} \
         ${tauri_args[@]+"${tauri_args[@]}"}) || die "cargo tauri android $command failed"
+}
+
+# Dies unless every wry in the mobile app's dependency tree ($1, its crate directory) is its patched copy
+# (patches/wry, through [patch.crates-io]): cargo builds a wry the patch no longer matches from crates.io, with a warning only.
+android_wry_patched() {
+    local tree line
+    dry_run && return 0
+    tree=$(cd "$1" && cargo tree -i wry --target all -e normal --depth 0 2>/dev/null) \
+        || die "cargo tree -i wry failed in $(rel "$1"): is wry still a dependency of the app?"
+    [ -n "$tree" ] || die "no wry in the dependency tree of $(rel "$1")"
+    while IFS= read -r line; do
+        case $line in
+            "wry v"*"/patches/wry)"*) ;;
+            "wry v"*) die "the mobile app's wry is not its patched copy ($line): port patches/wry to it" \
+                "(crates/moqui-mobile/patches/README.md)" ;;
+        esac
+    done <<<"$tree"
 }
 
 # The serial of the first emulator adb lists (in any state), or nothing. $1 is adb.

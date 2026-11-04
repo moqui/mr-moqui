@@ -54,6 +54,9 @@ struct Shown {
     /// The nonce of the shell's current load, handed to its document once it loaded; none while it loads, after a
     /// navigation, and on any other origin.
     nonce: Option<String>,
+    /// The host itself is showing the shell (its first load, a sign-out, the way back), until the shell's load begins:
+    /// only then may a navigation with no page yet go to the shell's origin.
+    host_shell: bool,
 }
 
 impl PageState {
@@ -68,8 +71,28 @@ impl PageState {
     /// A load of `url` began: its document is the page from now on, with no nonce yet.
     pub(crate) fn started(&self, url: &Url) {
         let mut shown = moqui_lib::sync::lock(&self.shown);
-        shown.origin = Some(url.origin().ascii_serialization());
+        let origin = url.origin().ascii_serialization();
+        if origin == SHELL_ORIGIN {
+            shown.host_shell = false;
+        }
+        shown.origin = Some(origin);
         shown.nonce = None;
+    }
+
+    /// The host shows the shell (not a page): a navigation to the shell's origin is its own until the load begins.
+    pub(crate) fn host_shows_shell(&self) {
+        moqui_lib::sync::lock(&self.shown).host_shell = true;
+    }
+
+    /// Where a navigation comes from, for [`goes`]: the origin shown; with none (a load under way), the shell's only
+    /// while the host itself is showing the shell, else none.
+    pub(crate) fn from(&self) -> Option<String> {
+        let shown = moqui_lib::sync::lock(&self.shown);
+        match &shown.origin {
+            Some(origin) => Some(origin.clone()),
+            None if shown.host_shell => Some(SHELL_ORIGIN.to_string()),
+            None => None,
+        }
     }
 
     /// The shell's load of `url` finished: a new nonce for it, to hand its document; none when the page is not the
@@ -171,14 +194,15 @@ pub(crate) enum Goes {
     Nowhere,
 }
 
-/// Where a navigation the page at `from` (its origin) starts to `url` goes, with an account signed in or not. A server
-/// page never goes to the shell itself: only the host shows it (`client_show_shell`). With no page yet (`from` none),
-/// the webview's first load, it goes.
+/// Where a navigation the page at `from` (its origin, [`PageState::from`]) starts to `url` goes, with an account signed
+/// in or not. Only the shell and the host go to the shell's origin: a server page never does (only the host shows the
+/// shell, `client_show_shell`), nor does a navigation while a load is under way (`from` none) that the host did not
+/// start.
 pub(crate) fn goes(url: &Url, from: Option<&str>, signed_in: bool) -> Goes {
     let at = url.origin().ascii_serialization();
     if at == SHELL_ORIGIN {
-        // none yet: the webview's first load, the shell; a server page's link: nowhere (the nonce guards the rest)
-        if from.is_some_and(|from| from != SHELL_ORIGIN) {
+        // a server page's link, or one while a load is under way: nowhere (the nonce guards the rest)
+        if from != Some(SHELL_ORIGIN) {
             return Goes::Nowhere;
         }
         return if matches!(url.path(), "/" | "/index.html") {
@@ -274,6 +298,9 @@ impl MobileHost {
     /// Show `url` in the one webview; its sockets go with the page that leaves.
     pub(crate) fn navigate(&self, url: &Url) {
         self.page.navigating();
+        if url.origin().ascii_serialization() == SHELL_ORIGIN {
+            self.page.host_shows_shell();
+        }
         if let Some(core) = self.core() {
             core.sockets().close_for(MAIN);
         }

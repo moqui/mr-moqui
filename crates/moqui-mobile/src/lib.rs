@@ -204,6 +204,8 @@ fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
     let load_host = Arc::clone(host);
     let name = serde_json::to_string(&device_name()).unwrap_or_else(|_| "\"\"".to_string());
     let script = format!("window.__moquiDeviceName = {name};\n{BRIDGE}");
+    // the webview's first load is the host's own showing of the shell
+    host.page.host_shows_shell();
     WebviewWindowBuilder::new(
         app,
         MAIN,
@@ -233,7 +235,7 @@ fn shell_webview(app: &AppHandle, host: &Arc<MobileHost>) -> tauri::Result<()> {
 /// A navigation the page starts (a link, `location`): the shell's page and the server's pages stay in the webview, a
 /// server path on the shell's origin goes to the app origin, and the web opens outside.
 fn navigation(host: &Arc<MobileHost>, url: &Url) -> bool {
-    match goes(url, host.page.origin().as_deref(), host.signed_in().is_some()) {
+    match goes(url, host.page.from().as_deref(), host.signed_in().is_some()) {
         Goes::Here => {
             host.page.navigating();
             true
@@ -290,16 +292,29 @@ fn on_event(app: &AppHandle, event: RunEvent) {
             WindowEvent::Resumed => resumed(app),
             // the activity ended (back out of the app): the client stops and the process ends with it, so the next
             // start, which runs the setup again, recovers from the store; a process Android kept cached would have a
-            // stopped client and no webview for a new activity
+            // stopped client and no webview for a new activity. An activity made again (a configuration change it does
+            // not handle) keeps both.
             WindowEvent::Destroyed => {
-                shut_down(app, "the activity ended");
-                app.exit(0);
+                if activity_ended_for_good() {
+                    shut_down(app, "the activity ended");
+                    app.exit(0);
+                } else {
+                    log::info!("moqui-mobile: the activity is made again; the client goes on");
+                }
             }
             _ => {}
         },
         RunEvent::Exit => shut_down(app, "the app exits"),
         _ => {}
     }
+}
+
+/// Whether the activity ended for good (it finished), rather than being made again.
+fn activity_ended_for_good() -> bool {
+    #[cfg(target_os = "android")]
+    return android::activity_ended_for_good();
+    #[cfg(not(target_os = "android"))]
+    true
 }
 
 /// End the client's threads and sockets; what is unsent stays in the store for the next start.

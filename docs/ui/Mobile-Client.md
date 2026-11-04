@@ -16,11 +16,13 @@ own `/qapps`), never both:
 - **A server page** opens in the same webview (the shell's `openRemote`, a link to a server path); it has a small button
   at the bottom left back to the shell (`moquiDesktop.backToShell`), and Android's back goes back through the pages.
   A sign-out, a switch of account or a removal shows the shell again. A server page never goes to the shell's origin
-  by itself (its link there goes nowhere); only the host shows the shell.
+  by itself (its link there goes nowhere), nor does a navigation while a load is under way; only the shell and the
+  host go there (the host's own showing of the shell, until its load begins).
 - **A server page is its account's.** The account it was opened for is noted when the host opens it, and the page has
   that account (its requests' key, its sockets, outbox and drafts) only while that account is the current one; none
   while a navigation is under way. A switch, sign-in or sign-out closes the server's pages before the current account
-  changes.
+  changes. A socket whose account was read before the page's sockets were closed (a load, a switch) is refused as it
+  starts, so none outlives its page.
 - **The bundled comms screens** (Chat, Mail, Compose, Calls) are the shell's, as on the desktop; an encrypted room in a
   server page offers Open in Chat, which shows it in the shell (`open_in_shell`).
 - **The boundary is the command set.** Tauri counts both schemes' pages as local, so the one capability
@@ -36,7 +38,11 @@ own `/qapps`), never both:
   android init`): the scripts run in the app's two origins only, and the IPC is a web message listener for those
   origins that drops any message not from the main frame. The bridge defines nothing in a frame either. On the desktop
   CEF already runs Tauri's scripts in the main frame only and tags each IPC message with its frame's URL.
-  `scripts/android-frames.py` (run by `scripts/android-smoke.sh`) checks it on the device.
+  `scripts/android-frames.py` (run by `scripts/android-smoke.sh`) checks it on the device. `./moq android dev` and
+  `build` stop when the app's wry is not the patched copy. A WebView with no web message listeners (an old Android
+  System WebView) has no IPC at all: the bridge then shows "This app needs a newer Android System WebView".
+- **No window without a gesture.** The patch also turns off `javaScriptCanOpenWindowsAutomatically`, which wry turns
+  on, so a page opens no window (and so sends the phone to the web or another app) on its own.
 - **A server page's storage scope** (MoquiLib `scopedKey`) and the scopes it is to clear are asked of the host as the
   page starts (`/__moqui-app/page`, the host's own path on the app origin), since one init script serves every page.
 
@@ -82,7 +88,10 @@ own `/qapps`), never both:
 - **Resumed:** the outbox is woken, and the mirror reads ahead again for the shell's account.
 - **The activity ends** (backing out of the app): the client stops (`Client::shutdown`) and the app ends the process
   (`exit`), so a process Android would keep cached never has a stopped client; the next start, as after Android kills
-  the process, runs the setup again, opens the stores and sends what the outbox kept.
+  the process, runs the setup again, opens the stores and sends what the outbox kept. Only an activity that finished
+  does this (`isFinishing` and not `isChangingConfigurations`, `ActivityEnd` read through JNI): the activity handles
+  every configuration change itself (`configChanges`: orientation, size, density, font scale and weight, locale,
+  layout direction, colour mode, keyboard, navigation, touchscreen, mcc and mnc), and one made again keeps the client.
 - **A page's request with a body** (`scheme_fetch`) is made on Tauri's blocking pool: reqwest's blocking client
   panics on an async runtime's thread, so until MT2 every such POST from the shell answered 500.
 - **Notifications:** the page bridge's `notify` shows a native notification (tauri-plugin-notification), asking for
@@ -169,7 +178,8 @@ setting; Bluetooth and speaker routing; two-way audio; and encrypted calls on a 
 - No background flush: the outbox is sent while the process lives (WorkManager is next).
 - A notification's link and tag are not used; the counts and presence (`setCounts`, `setPresence`) do nothing.
 - Downloads and attachments a server page opens are not saved by the host, and an event stream is answered 503.
-- A form posted by navigation loses its body (above); the bridge's `fetch` covers the webroot's requests.
+- A form posted by navigation is refused with 405 (above), not sent without its body; the bridge's `fetch` covers the
+  webroot's requests.
 - SSO is checked to the hand-back's intent and its refusal of an unknown sign-in; a sign-in through a provider waits
   for a server with one.
 - The emulator image's WebView (133) is below the 141 encrypted calls need: the ring screen says so, and the page

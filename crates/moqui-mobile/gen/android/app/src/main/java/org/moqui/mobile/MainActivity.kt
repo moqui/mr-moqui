@@ -14,8 +14,26 @@ import androidx.activity.enableEdgeToEdge
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 
+/** Whether the app's activity ended for good (it finished, not made again for a configuration change): Rust ends the
+ *  client and the process only then (src/lib.rs, through JNI). */
+object ActivityEnd {
+  @Volatile private var forGood = true
+
+  fun note(activity: MainActivity) {
+    forGood = activity.isFinishing && !activity.isChangingConfigurations
+  }
+
+  fun started() {
+    forGood = false
+  }
+
+  @JvmStatic
+  fun endedForGood(): Boolean = forGood
+}
+
 class MainActivity : TauriActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
+    ActivityEnd.started()
     // a call answered on the ring screen: the app shows over the lock screen until the call is over
     showOverLock(isCallLink(intent))
     enableEdgeToEdge()
@@ -51,6 +69,8 @@ class MainActivity : TauriActivity() {
 
   override fun onDestroy() {
     CallManager.appScreenShown(null)
+    // before Rust hears of the end (super.onDestroy)
+    ActivityEnd.note(this)
     super.onDestroy()
   }
 
