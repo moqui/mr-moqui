@@ -362,6 +362,8 @@ fn sent_event(op: &OutboxOp, answer: Value) -> Value {
         "clientRef": op.id,
         "chatRoomId": payload["chatRoomId"],
         "threadRootEventSeq": payload["threadRootEventSeq"],
+        // a message's change (edit, redaction, reaction, vote): the message it changed
+        "eventSeq": payload["eventSeq"],
         "json": answer,
     })
 }

@@ -3592,17 +3592,9 @@ const chatRoom = {
             if (this.side === 'threads') this.loadThreads(false);
             if (this.hasMoreAfter || !this.events.length) return;
             const last = this.events.reduce((max, event) => Math.max(max, Number(event.eventSeq)), 0);
-            // the desktop client: the messages shown are read again too (up to 200), as its store has them now, since the
-            // changes feeds (or a reset of them) may have edited or removed them while the socket was closed
-            const first = this.events.reduce((min, event) => (Number(event.eventSeq) > 0 ? Math.min(min, Number(event.eventSeq)) : min), last);
-            const again = !!(moqui.hostOutbox && moqui.hostOutbox()) && last - first < 200;
-            this.get('timeline', { chatRoomId: this.roomId, afterSeq: again ? first - 1 : last, limit: 200 }).then((page) => (again ? this.openPage(page) : page)).then((page) => {
+            this.get('timeline', { chatRoomId: this.roomId, afterSeq: last, limit: 200 }).then((page) => {
                 this.mergeNames(page.userNames);
                 const wasAtBottom = this.atBottom;
-                if (again) {
-                    const fresh = new Map((page.eventList || []).map((event) => [Number(event.eventSeq), event]));
-                    this.events = this.events.map((event) => fresh.get(Number(event.eventSeq)) || event);
-                }
                 const have = new Set(this.events.map((event) => Number(event.eventSeq)));
                 const added = (page.eventList || []).filter((event) => !have.has(Number(event.eventSeq)));
                 if (added.length) this.events = this.events.concat(added).sort((left, right) => Number(left.eventSeq) - Number(right.eventSeq));
@@ -3610,6 +3602,24 @@ const chatRoom = {
                 this.gapsOf(page, false, true);
                 if (wasAtBottom) this.$nextTick(() => { this.scrollToBottom(); this.maybeMarkRead(); });
                 else this.newBelow += added.filter((event) => event.type === 'message' && event.senderUserId !== this.me.userId).length;
+            }, () => {});
+        },
+        // The desktop client's changes feeds changed this room's held messages (or were reset) while the page showed them:
+        // the messages shown are read again from the store (up to 200), but those with a change of this page still waiting,
+        // which keep what the page shows of it.
+        onRoomsChanged(payload) {
+            if (!payload || this.state !== 'ready' || !this.events.length) return;
+            if (!payload.reset && !(payload.rooms || []).includes(this.roomId)) return;
+            const seqs = this.events.map((event) => Number(event.eventSeq)).filter((seq) => seq > 0);
+            if (!seqs.length) return;
+            const first = Math.min(...seqs);
+            const last = Math.max(...seqs);
+            if (last - first >= 200) return;
+            this.get('timeline', { chatRoomId: this.roomId, afterSeq: first - 1, limit: 200 }).then((page) => {
+                const waiting = new Set((moqui.chat.state.changes || []).filter((change) => change.chatRoomId === this.roomId && change.status !== 'failed')
+                    .map((change) => change.eventSeq));
+                const fresh = new Map((page.eventList || []).filter((event) => !waiting.has(Number(event.eventSeq))).map((event) => [Number(event.eventSeq), event]));
+                this.events = this.events.map((event) => fresh.get(Number(event.eventSeq)) || event);
             }, () => {});
         },
         startReply(item) {
@@ -3726,6 +3736,13 @@ const chatRoom = {
             const reactions = item.event.reactions = item.event.reactions || [];
             let entry = reactions.find((reaction) => reaction.key === key);
             const mine = !!entry && entry.mine;
+            // a reaction of this key still waiting in the app's outbox is taken back by dropping it: the server never had it
+            const waiting = moqui.chat && moqui.chat.changesOf ? moqui.chat.changesOf(this.roomId, item.eventSeq)
+                .filter((change) => change.kind === 'chat-react' && change.key === key) : [];
+            if (waiting.some((change) => change.status === 'sending')) {
+                moqui.notifyMessages([{ type: 'info', message: t('The reaction is being sent: change it once it shows') }]);
+                return;
+            }
             // shown at once; the push of the reaction (or of its removal) leaves it as it is
             if (mine) {
                 entry.userIds = entry.userIds.filter((id) => id !== me);
@@ -3737,23 +3754,35 @@ const chatRoom = {
                 if (!entry.userIds.includes(me)) { entry.userIds.push(me); entry.count++; }
                 entry.mine = true;
             }
+            if (waiting.length) {
+                waiting.forEach((change) => moqui.chat.discard(change.clientRef));
+                return;
+            }
+            const note = { key, add: !mine };
             if (this.sealed) {
                 // an encrypted reaction (C7): the key is encrypted; mine is taken back by its own eventSeq
                 const taken = mine ? moqui.chat.myReaction(this.roomId, item.eventSeq, key, me) : null;
-                if (mine && taken != null) this.change('chat-react', 'react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, reactionEventSeq: taken }).catch(() => {});
+                if (mine && taken != null) this.change('chat-react', 'react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, reactionEventSeq: taken }, note).catch(() => {});
                 else if (!mine) moqui.chat.sealReaction(this.roomId, this.memberIds(), key).then((encryptedJson) => this.change('chat-react', 'react', { chatRoomId: this.roomId,
-                    eventSeq: item.eventSeq, encryptedJson })).catch(() => {});
+                    eventSeq: item.eventSeq, encryptedJson }, note)).catch(() => {});
                 return;
             }
-            this.change('chat-react', 'react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, key }).catch(() => {});
+            this.change('chat-react', 'react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, key }, note).catch(() => {});
+        },
+        // the options my vote has: the latest still waiting in the app's outbox, else the poll's as the server answered it
+        myOptions(item) {
+            const waiting = moqui.chat && moqui.chat.changesOf ? moqui.chat.changesOf(this.roomId, item.eventSeq)
+                .filter((change) => change.kind === 'poll-vote' && change.status !== 'failed' && Array.isArray(change.optionIds)) : [];
+            if (waiting.length) return waiting[waiting.length - 1].optionIds.slice();
+            return item.poll.options.filter((other) => other.mine).map((other) => other.id);
         },
         // ---- a message's changes through the desktop client's outbox ----
         // the app's outbox takes this change of a message (a server at clientApi 4): it waits there, offline too; never on the web
         queues(kind) { return !!(moqui.chat && moqui.chat.state.hostKinds && moqui.chat.state.hostKinds.includes(kind) && moqui.hostOutbox && moqui.hostOutbox()); },
         // A message's change (chat-edit, chat-redact, chat-react, poll-vote): through the app's outbox where it takes it,
         // resolving {queued: true} (it shows under the message until it is answered), else the transition name asked now.
-        change(kind, name, params) {
-            const queued = moqui.chat && moqui.chat.queueChange ? moqui.chat.queueChange(kind, params) : null;
+        change(kind, name, params, note) {
+            const queued = moqui.chat && moqui.chat.queueChange ? moqui.chat.queueChange(kind, params, note) : null;
             if (!queued) return this.post(name, params);
             return queued.catch((err) => {
                 moqui.notifyMessages(null, (err && err.message) || t('This change cannot wait for the connection'));
@@ -3805,6 +3834,10 @@ const chatRoom = {
                 this.applyRedaction(payload.eventSeq);
             } else if (payload.kind === 'poll-vote' && json.poll) {
                 this.applyFields(payload.eventSeq, { poll: json.poll });
+            } else if (payload.kind === 'chat-react') {
+                // the server made it the other way than shown (a toggle it had already): the message read again as it has it
+                const add = payload.note && payload.note.add;
+                if (json.added != null && add != null && !!json.added !== !!add) this.rereadMessage(payload.eventSeq);
             }
         },
         applyRedaction(seq) {
@@ -4028,9 +4061,14 @@ const chatRoom = {
         pollOpen(poll) { return !!poll && !poll.closed && !(poll.closesDate && poll.closesDate <= this.tick); },
         canVote(item) { return this.canPost && this.pollOpen(item.poll); },
         canClosePoll(item) { return this.pollOpen(item.poll) && this.isMember && (item.poll.createdByUserId === this.me.userId || this.canModerate); },
+        // my choice as it will be once a vote waiting in the app's outbox is counted
         optionIcon(item, option) {
-            if (item.poll.multiple) return option.mine ? 'sym_o_check_box' : 'sym_o_check_box_outline_blank';
-            return option.mine ? 'sym_o_radio_button_checked' : 'sym_o_radio_button_unchecked';
+            const mine = this.myOptions(item).map(Number).includes(Number(option.id));
+            if (item.poll.multiple) return mine ? 'sym_o_check_box' : 'sym_o_check_box_outline_blank';
+            return mine ? 'sym_o_radio_button_checked' : 'sym_o_radio_button_unchecked';
+        },
+        waitingVote(item) {
+            return !!(moqui.chat && moqui.chat.changesOf) && moqui.chat.changesOf(this.roomId, item.eventSeq).some((change) => change.kind === 'poll-vote' && change.status !== 'failed');
         },
         optionShare(item, option) { return Number(option.voteCount || 0) / Math.max(1, Number(item.poll.voterCount || item.poll.totalVotes || 0)); },
         votersText(option) { return (option.voterIds || []).map((id) => (id === this.me.userId ? t('You') : this.nameOf(id))).join(', '); },
@@ -4046,10 +4084,18 @@ const chatRoom = {
         vote(item, option) {
             if (!this.canVote(item)) return;
             this.tapKey = null;
-            const mine = item.poll.options.filter((other) => other.mine).map((other) => other.id);
-            const chosen = item.poll.multiple ? (option.mine ? mine.filter((id) => id !== option.id) : mine.concat([option.id])) : (option.mine ? [] : [option.id]);
-            // a vote taken back (no option) is asked now: the app's outbox keeps only a vote for options
+            // from my vote as it will be once what waits is counted
+            const mine = this.myOptions(item).map(Number);
+            const has = mine.includes(Number(option.id));
+            const chosen = item.poll.multiple ? (has ? mine.filter((id) => id !== Number(option.id)) : mine.concat([Number(option.id)])) : (has ? [] : [Number(option.id)]);
             const params = { chatRoomId: this.roomId, eventSeq: item.eventSeq, optionIds: chosen.join(',') };
+            const queued = this.queues('poll-vote');
+            if (!chosen.length && queued) {
+                // a vote taken back (no option): the app's outbox keeps only a vote for options, so it is asked now, and
+                // never ahead of a vote still waiting
+                if (this.waitingVote(item)) { moqui.notifyMessages([{ type: 'info', message: t('Your vote is waiting to be counted: take it back once it is') }]); return; }
+                if (needsConnection()) return;
+            }
             (chosen.length ? this.change('poll-vote', 'votePoll', params) : this.post('votePoll', params)).then((json) => {
                 if (json.poll) this.applyFields(item.eventSeq, { poll: json.poll });
             }, () => {});
@@ -4186,6 +4232,7 @@ const chatRoom = {
             this.unsubscribe.push(moqui.chat.on('update', (payload) => this.onUpdate(payload)));
             this.unsubscribe.push(moqui.chat.on('sent', (payload) => this.onSent(payload)));
             this.unsubscribe.push(moqui.chat.on('changed', (payload) => this.onChangeAnswered(payload)));
+            this.unsubscribe.push(moqui.chat.on('rooms', (payload) => this.onRoomsChanged(payload)));
             this.unsubscribe.push(moqui.chat.on('connection', (payload) => this.onConnection(payload)));
         }
         this.onVisibleBound = () => this.onVisible();
@@ -9318,6 +9365,8 @@ module.exports = {
                 retitle: (key, title) => { const dock = self.docks.find((item) => item.key === key); if (dock) dock.title = title; },
                 draftSaved: (key, emailMessageId) => {
                     const dock = self.docks.find((item) => item.key === key);
+                    // a kept copy saved on the server is a draft there now, no longer a copy here
+                    if (dock && emailMessageId && dock.query.copyRef) self.keptCopies = self.keptCopies.filter((copy) => copy.ref !== dock.query.copyRef);
                     if (dock && emailMessageId && dock.query.emailMessageId !== emailMessageId) { dock.query = { emailMessageId }; self.saveDocks(); }
                 },
                 sent: (key, info) => self.onComposeSent(key, info)
@@ -9343,7 +9392,7 @@ module.exports = {
             // the desktop client's outbox (moqui.hostOutbox()): its mail sends and thread changes waiting; empty on the web
             outbox: [],
             // the copies the app kept of a draft changed elsewhere ({key, ref, subject}), whose operation is gone (discarded)
-            keptCopies: []
+            keptCopies: [], copiesOf: null, actedAt: {}
         };
     },
     computed: {
@@ -9596,7 +9645,28 @@ module.exports = {
             }, (err) => { this.failed(err); throw err; });
         },
         // a thread change the desktop client may keep while the server is out of reach goes through its outbox (stateOrQueue)
-        post(name, params) { return name === 'state' && this.queueable(params) ? this.stateOrQueue(params) : this.request(name, params, 'POST'); },
+        post(name, params) {
+            if (name === 'state') this.noteActed(params);
+            return name === 'state' && this.queueable(params) ? this.stateOrQueue(params) : this.request(name, params, 'POST');
+        },
+        // the desktop client: when this page last changed each thread (by its row's key), so a Retry of an older change
+        // that conflicted asks first instead of undoing a later one
+        noteActed(params) {
+            if (!moqui.hostOutbox()) return;
+            let targets = [];
+            try { targets = JSON.parse((params && params.targetsJson) || '[]'); } catch (err) { targets = []; }
+            const now = Date.now();
+            (Array.isArray(targets) ? targets : []).forEach((target) => { const key = this.targetKey(target); if (key) this.actedAt[key] = now; });
+        },
+        targetKey(target) { return target ? (target.rowKey || ((target.store || 'email') + ':' + (target.threadId || target.emailMessageId || target.communicationEventId || ''))) : null; },
+        // a change of one of its threads made here after it: waiting in the outbox, or asked of the server
+        laterChange(op) {
+            const keys = ((op.payload && op.payload.targets) || []).map((target) => this.targetKey(target)).filter((key) => key);
+            const created = Number(op.createdMs || 0);
+            const waiting = this.outbox.some((other) => other.id !== op.id && other.kind === 'mail-state' && Number(other.createdMs || 0) > created
+                && ((other.payload && other.payload.targets) || []).some((target) => keys.includes(this.targetKey(target))));
+            return waiting || keys.some((key) => Number(this.actedAt[key] || 0) > created);
+        },
         // an error of a request: the desktop client's server out of reach says it needs a connection, else as the page shows errors
         failed(err) { if (moqui.unreachable && moqui.unreachable(err)) this.needsConnection(true); else moqui.handleAjaxError(err); },
         // the desktop client offline (never the web): an action that needs the server says so and is not taken
@@ -9642,6 +9712,10 @@ module.exports = {
                 // a thread change the server did not make: its rows are the server's again in the app's store, so the list
                 // and the open thread are read again
                 if (this.outboxProblems.some((op) => !before.has(op.id))) { this.loadList(true); if (this.openKey) this.reloadThread(); }
+                // the kept copies, on the first read and when the sends that conflicted change (one kept a copy, or went)
+                const conflicts = this.outbox.filter((op) => op.kind === 'mail-send' && op.state === 'conflict').map((op) => op.id).sort().join(',');
+                if (this.copiesOf === conflicts) return null;
+                this.copiesOf = conflicts;
                 return this.readCopies();
             }, (err) => console.info('Inbox: the outbox was not read from the app', err));
         },
@@ -9654,7 +9728,9 @@ module.exports = {
                 this.keptCopies = (Array.isArray(list) ? list : []).map((draft) => {
                     let value = null;
                     try { value = JSON.parse(draft.value || 'null'); } catch (err) { value = null; }
-                    if (!value || !value.conflictOf || !value.clientRef || listed.has(value.conflictOf.clientRef)) return null;
+                    // a copy the server has as a draft of its own (emailMessageId) is in Drafts, no longer a copy here
+                    if (!value || !value.conflictOf || !value.clientRef || (value.draft && value.draft.emailMessageId)
+                        || draft.key !== COPY_PREFIX + value.clientRef || listed.has(value.conflictOf.clientRef)) return null;
                     return { key: draft.key, ref: value.clientRef, subject: (value.draft && value.draft.subject) || '' };
                 }).filter((copy) => copy);
             }, (err) => console.info('Inbox: the kept copies were not read from the app', err));
@@ -9701,7 +9777,17 @@ module.exports = {
             if (op.state === 'conflict') return 'sym_o_sync_problem';
             return op.state === 'failed' ? 'sym_o_error' : (op.state === 'sending' ? 'sym_o_send' : 'sym_o_schedule');
         },
-        outboxRetry(op) { const host = moqui.hostOutbox(); if (host) host.retry(op.id).then(() => this.readOutbox(), (err) => moqui.notifyMessages(null, (err && err.message) || String(err))); },
+        outboxRetry(op) {
+            const host = moqui.hostOutbox();
+            if (!host) return;
+            const go = () => host.retry(op.id).then(() => this.readOutbox(), (err) => moqui.notifyMessages(null, (err && err.message) || String(err)));
+            // a thread change that conflicted, with a later change of the same thread made here since: retried, it would
+            // land after that one and undo it, so the user chooses
+            if (op.kind !== 'mail-state' || op.state !== 'conflict' || !this.laterChange(op)) { go(); return; }
+            this.$q.dialog({ title: t('Retry this change?'), message: t('You changed this thread again since. Retried now, this older change is made after that one and undoes it.'),
+                cancel: { label: t('Keep the later change'), flat: true, noCaps: true }, ok: { label: t('Retry anyway'), color: 'primary', unelevated: true, noCaps: true } })
+                .onOk(() => go());
+        },
         outboxDiscard(op) {
             const host = moqui.hostOutbox();
             if (!host) return;
@@ -10878,7 +10964,10 @@ module.exports = {
         // the desktop client's outbox: what waits, as it changes
         const host = moqui.hostOutbox();
         if (host && typeof host.on === 'function') {
-            this.outboxOff = host.on((event) => { this.readOutbox(); if (event && event.kind === 'sent' && event.op === 'mail-send') this.loadList(true); });
+            this.outboxOff = host.on((event) => {
+                // the chat feeds' news is not the outbox's
+                if (event && event.kind === 'rooms') return;
+                this.readOutbox(); if (event && event.kind === 'sent' && event.op === 'mail-send') this.loadList(true); });
             this.readOutbox();
         }
     },
@@ -16596,7 +16685,8 @@ module.exports = {
             let key = this.draftStorageKey;
             if (email) {
                 Object.assign(value, { email: true, clientRef: this.clientRef, queued: this.queued });
-                if (this.copyOf) value.conflictOf = this.copyOf;
+                // a conflict's copy until the server has it as a draft of its own
+                if (this.copyOf && !this.draft.emailMessageId) value.conflictOf = this.copyOf;
                 this.offlineDraft = true;
                 key = this.emailLocalKey;
                 // kept by its clientRef until the server saved it, then by its id
@@ -16633,11 +16723,15 @@ module.exports = {
         // (its outbox's conflict, current.copyRef): a new email draft under its own clientRef, opened by copyRef. It is saved
         // on the server as a new draft once it can be; the server's draft stays as it is.
         restoreCopy(ref) {
+            const gone = () => { this.offlineNote = t('This copy is no longer kept on this computer.'); };
+            // a clientRef, never a message's id: only a copy the app kept is opened, and nothing else is touched
+            if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(ref)) { gone(); return; }
             const key = 'ironstone.compose.email.' + ref;
             moqui.drafts.fetch(key).then((text) => {
                 let saved = null;
                 try { saved = JSON.parse(text || 'null'); } catch (err) { saved = null; }
-                if (!saved || !saved.draft || !saved.email) { this.offlineNote = t('This copy is no longer kept on this computer.'); return; }
+                // a conflict's copy: an email of its own clientRef, not on the server (a draft of the server's kept offline is not one)
+                if (!saved || !saved.draft || !saved.email || !saved.conflictOf || saved.draft.emailMessageId || saved.clientRef !== ref) { gone(); return; }
                 // the email it was: its identity and the message it answers
                 const kept = saved.draft;
                 if (kept.fromValue) this.draft.fromValue = kept.fromValue;

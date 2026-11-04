@@ -356,8 +356,8 @@ What MD5 adds (built):
   - All of it only with a server at `clientApi` 4 (the client's `CLIENT_API` is 4); at 3, MD4's behavior.
 - the screens' presentation of it: built (MD5 stage 4, [Desktop-Client](../docs/ui/Desktop-Client.md#offline-in-the-screens)).
   Chat queues a message's edit, deletion, reaction and poll vote through the outbox where `kinds()` has them, shows
-  each under its message as waiting until it is answered, and a refusal with its reason; a reconnect reads the
-  messages shown again from the store. The Inbox's Outbox lists a thread change the server met changed ("Changed on
+  each under its message as waiting until it is answered, and a refusal with its reason; a room the changes feeds
+  changed (the host's `rooms` event) reads its messages shown again from the store. The Inbox's Outbox lists a thread change the server met changed ("Changed on
   the server", the list read again as the server has it) or refused, and a send whose draft changed elsewhere
   ("your version is kept as a copy"), whose copy Compose opens by `copyRef` as a new draft; each with Retry and
   Discard, and a copy left by a discarded send stays listed. Compose queues an internal message where the server takes
@@ -521,8 +521,12 @@ Before mobile distribution, check the actual remote-application and local-code m
   anyway) and Discard; the thread rows already show the server's state, and the list is read again when a conflict
   arrives. A draft's copy is a Compose draft of its own (`copyRef`), saved on the server as a new draft when opened;
   a discarded send leaves its copy listed in the Outbox until it is opened or deleted.
-- After a reconnect Chat reads the messages it shows again (up to 200) from the store, which the changes feeds keep,
-  so a reset or a long offline shows edits and deletions made meanwhile without a reload.
+- A run of the changes feeds that changed held messages, or a reset that dropped them, tells the pages which rooms
+  (`rooms`), and only a room shown among them reads its messages again (up to 200, but those with a change of the
+  page waiting); a reconnect alone reads what came after, so the pages do not re-read on every drop.
+- The changes a page queues are judged against what still waits: a reaction toggled back while it waits is dropped,
+  a vote counts from the last one waiting, a vote taken back waits for it, and Retry of a thread change that
+  conflicted asks first when the thread was changed again since.
 
 **Client (MD5), open:**
 

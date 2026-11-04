@@ -591,7 +591,8 @@ module.exports = {
             let key = this.draftStorageKey;
             if (email) {
                 Object.assign(value, { email: true, clientRef: this.clientRef, queued: this.queued });
-                if (this.copyOf) value.conflictOf = this.copyOf;
+                // a conflict's copy until the server has it as a draft of its own
+                if (this.copyOf && !this.draft.emailMessageId) value.conflictOf = this.copyOf;
                 this.offlineDraft = true;
                 key = this.emailLocalKey;
                 // kept by its clientRef until the server saved it, then by its id
@@ -628,11 +629,15 @@ module.exports = {
         // (its outbox's conflict, current.copyRef): a new email draft under its own clientRef, opened by copyRef. It is saved
         // on the server as a new draft once it can be; the server's draft stays as it is.
         restoreCopy(ref) {
+            const gone = () => { this.offlineNote = t('This copy is no longer kept on this computer.'); };
+            // a clientRef, never a message's id: only a copy the app kept is opened, and nothing else is touched
+            if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(ref)) { gone(); return; }
             const key = 'ironstone.compose.email.' + ref;
             moqui.drafts.fetch(key).then((text) => {
                 let saved = null;
                 try { saved = JSON.parse(text || 'null'); } catch (err) { saved = null; }
-                if (!saved || !saved.draft || !saved.email) { this.offlineNote = t('This copy is no longer kept on this computer.'); return; }
+                // a conflict's copy: an email of its own clientRef, not on the server (a draft of the server's kept offline is not one)
+                if (!saved || !saved.draft || !saved.email || !saved.conflictOf || saved.draft.emailMessageId || saved.clientRef !== ref) { gone(); return; }
                 // the email it was: its identity and the message it answers
                 const kept = saved.draft;
                 if (kept.fromValue) this.draft.fromValue = kept.fromValue;

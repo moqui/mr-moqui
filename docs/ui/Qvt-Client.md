@@ -1097,7 +1097,8 @@ web and in the client:
   mail send there, with its files, when the server cannot be reached; an internal message only where `kinds()` says
   `internalSend`. With a server at `clientApi` 4, `moqui.chat.queueChange(kind, payload)` queues a message's edit,
   redaction, reaction or poll vote there (null where `kinds()` lacks the kind), `moqui.chat.state.changes` lists those
-  waiting, and `changed` tells a screen one was answered
+  waiting, `changed` tells a screen one was answered, and `rooms` that the host's changes feeds changed the held
+  messages of rooms
   ([Desktop-Client](Desktop-Client.md#offline-in-the-screens)).
 - `moqui.drafts` (`ready`, `get`, `keys`, `files`, `put`, `remove`, `saveFile`, `fetch`) is the drafts of Chat and
   Compose: the host's where there is one, else `localStorage` under `scopedKey`. `ready()` resolves once the host's are

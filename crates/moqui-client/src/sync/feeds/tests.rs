@@ -150,6 +150,8 @@ fn a_first_read_takes_the_cursors_and_has_the_mirror_read() {
     );
     let synced = feeds(&server, &store, sync4());
     assert!(synced.chat_reread && synced.mail_reread && synced.ended.is_none());
+    // a first read drops nothing a page shows: no pages' event
+    assert!(!synced.chat_dropped && rooms_event(&synced).is_none());
     let kept = store.0.lock().unwrap();
     assert_eq!(kept.sync_seq(CHAT_CURSOR), Some(12));
     assert_eq!(kept.sync_seq(MAIL_CURSOR), Some(40));
@@ -291,6 +293,8 @@ fn a_reset_with_a_cursor_drops_chat_and_has_it_read_again() {
     server.answer(&format!("{MAIL}/mailChanges?limit=200"), json!({ "unsupported": true }));
     let synced = feeds(&server, &store, sync4());
     assert!(synced.chat_reread && synced.mail_unsupported && !synced.mail_reread);
+    // the pages hear of the reset, so a room shown is read again
+    assert_eq!(rooms_event(&synced).unwrap()["reset"], true);
     let kept = store.0.lock().unwrap();
     assert!(kept.chat_room_ids().is_empty());
     assert!(kept.answer(&format!("{CHAT}/chatData"), "limit=200").is_none());
@@ -409,7 +413,12 @@ fn a_room_feed_folds_a_redaction_and_reads_changed_messages_again() {
         &format!("{MAIL}/mailChanges?limit=200&afterSeq=0"),
         json!({ "changes": [], "lastSeq": 0, "more": false, "reset": false }),
     );
-    feeds(&server, &store, sync4());
+    let synced = feeds(&server, &store, sync4());
+    // the pages hear which room's held messages changed
+    assert_eq!(
+        rooms_event(&synced).unwrap(),
+        json!({ "kind": "rooms", "rooms": ["R1"], "reset": false })
+    );
     let kept = store.0.lock().unwrap();
     let event = |seq: i64| -> Value { serde_json::from_str(&kept.chat_event("R1", seq).unwrap().event).unwrap() };
     assert_eq!(event(3)["redacted"], true);
@@ -455,7 +464,8 @@ fn a_room_without_held_events_takes_its_cursor_and_a_room_reset_reads_its_latest
         &format!("{MAIL}/mailChanges?limit=200&afterSeq=0"),
         json!({ "changes": [], "lastSeq": 0, "more": false, "reset": false }),
     );
-    feeds(&server, &store, sync4());
+    let synced = feeds(&server, &store, sync4());
+    assert!(synced.rooms_changed.contains("R1") && !synced.rooms_changed.contains("R2"));
     assert!(!server.asked(&format!("{CHAT}/roomChanges?chatRoomId=R2&limit=200")));
     let kept = store.0.lock().unwrap();
     assert_eq!(kept.sync_seq(&format!("{ROOM_CURSOR}R2")), Some(33));

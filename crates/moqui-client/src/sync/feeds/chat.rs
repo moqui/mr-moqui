@@ -96,6 +96,7 @@ pub(super) fn chat(run: &mut Run<'_, '_>) -> Result<(), Ended> {
             if reset {
                 if cursor.is_some() {
                     tracing::info!("Feeds: the chat feed was reset; chat is read again");
+                    run.synced.chat_dropped = true;
                 }
                 run.synced.chat_reread = true;
             }
@@ -349,6 +350,9 @@ fn room_feed(run: &mut Run<'_, '_>, base: &str, room: &str, last_change: Option<
             let reset_to = number(&page["lastSeq"]).unwrap_or(0);
             // the room's events dropped, its latest page left to read, and the cursor, in one unit
             let forget = cursor.is_some() && has_events;
+            if forget {
+                run.synced.rooms_changed.insert(room.to_string());
+            }
             run.fold("a room reset", |store| {
                 store
                     .atomic(|store| {
@@ -395,6 +399,7 @@ fn room_feed(run: &mut Run<'_, '_>, base: &str, room: &str, last_change: Option<
         .unwrap_or_default();
     if held.len() > REREAD_MAX {
         let to = last;
+        run.synced.rooms_changed.insert(room.to_string());
         run.fold("a room's events", |store| {
             store
                 .atomic(|store| {
@@ -420,6 +425,7 @@ fn room_feed(run: &mut Run<'_, '_>, base: &str, room: &str, last_change: Option<
             }) {
                 break;
             }
+            run.synced.rooms_changed.insert(room.to_string());
             read.insert(change.event_seq);
         } else {
             for seq in std::iter::once(change.event_seq).chain(change.root) {
@@ -449,6 +455,7 @@ fn room_feed(run: &mut Run<'_, '_>, base: &str, room: &str, last_change: Option<
                 if !written {
                     break 'changes;
                 }
+                run.synced.rooms_changed.insert(room.to_string());
             }
         }
         done = Some(change.change_seq);

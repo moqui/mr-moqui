@@ -370,23 +370,32 @@ shared device's hint of what is kept, and the sign-out's list of what is unsent.
 (`outbox.kinds()`), and show its conflict and refused states where they show what waits, each with Retry and Discard:
 
 - **Chat:** a message's edit, deletion, reaction and poll vote go through the outbox when `kinds()` has them
-  (`moqui.chat.queueChange`; a vote taken back, with no option, is asked of the server), offline too, so they no
-  longer need a connection. Each shows under its message (`.m-chat-change`) as waiting, sending, held ("sign in again
-  to send it") or not made with the server's reason, and the message shows the change when its answer (the host's
-  `sent`, which the page hears as `changed`) or its push brings it; a reaction shows at once, as before, and is read
-  again from the store when its refusal is discarded. A chat send refused shows its error, as in MD4. After a
-  reconnect the room reads the messages it shows again (up to 200), so edits and deletions the changes feeds brought
-  into the store, or a reset of them, show.
+  (`moqui.chat.queueChange`), offline too, so they no longer need a connection. Each shows under its message
+  (`.m-chat-change`) as waiting, sending, held ("sign in again to send it") or not made with the server's reason, and
+  the message shows the change when its answer (the host's `sent`, which names the room and message and which the page
+  hears as `changed`) or its push brings it. A reaction shows at once, as before; toggled back while it still waits,
+  it is dropped from the outbox (an encrypted room's too, which has no reaction event to take back yet), and a
+  refused one discarded has its message read again from the store. A vote shows at once and the next one counts
+  from it (several choices add up); a vote taken back, with no option, is asked of the server, and refused while a
+  vote still waits. A chat send refused shows its error, as in MD4.
+- **The changes feeds:** when a run changed the held messages of rooms (one read again or redacted, a room's events
+  dropped) or a chat cursor's reset dropped them, the host tells the pages (`{kind: "rooms", rooms, reset}`, which
+  `moqui.chat` hands on as `rooms`), and a room shown among them reads its messages again (up to 200), but those with
+  a change of the page still waiting. A reconnect alone reads only what came after the last message shown.
 - **Mail:** the Inbox's Outbox lists a thread change the server met changed ("Changed on the server: the thread shows
   its state there", with the server's reason) or refused ("Not made"), apart from the changes still waiting, which it
   counts; the list and the open thread are read again when one arrives, so the rows show the server's state. Retry
-  sends the change anyway; Discard leaves the thread as the server has it. An internal message waiting is listed with
-  the mail.
+  sends the change anyway, but asks first when the same thread was changed again here since (a later change waiting,
+  or one this page made), as the older one would land after it and undo it; Discard leaves the thread as the server
+  has it. An internal message waiting is listed with the mail.
 - **Compose:** a send whose draft changed elsewhere says "Changed elsewhere: your version is kept as a copy" in the
   Outbox, with Open the copy: Compose opened with `copyRef` reads the copy the host kept
   (`ironstone.compose.email.<copyRef>`, `moqui.drafts.fetch`), says it is the user's version kept as a copy, and saves
   it on the server as a new draft by that `clientRef`; the server's draft stays. Retry sends the user's version and the
-  host deletes the copy; Discard keeps it, listed in the Outbox (Open, Delete) until it is opened or deleted. A
+  host deletes the copy; Discard keeps it, listed in the Outbox (Open, Delete) until it is opened or deleted (the
+  list is read when the Inbox opens and when the sends in conflict change). A `copyRef` opens only such a copy: a
+  `clientRef`, kept with its conflict and not yet on the server; anything else opens nothing and changes nothing, and a
+  copy once on the server (kept here only for its files) is a draft, no longer a copy. A
   queued send of a server draft carries `baseStamp`, the `draftStamp` Compose last saw, so the conflict is found. An
   internal message offline waits in the outbox when `kinds().internalSend` is true, else it is kept as a draft as in MD4.
 

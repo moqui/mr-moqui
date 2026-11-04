@@ -102,6 +102,11 @@ pub(crate) struct Synced {
     pub(crate) mail_reread: bool,
     /// The server keeps no mail feed: mail is read as before (MD4).
     pub(crate) mail_unsupported: bool,
+    /// The rooms whose held messages the room feeds changed (a message read again or redacted, a room's events
+    /// dropped): a page showing one reads it again (the pages' `rooms` event).
+    pub(crate) rooms_changed: std::collections::BTreeSet<String>,
+    /// A reset of a chat cursor the store had dropped what the feed covers.
+    pub(crate) chat_dropped: bool,
     pub(crate) requests: usize,
     /// Why the run stopped early, if it did.
     pub(crate) ended: Option<Ended>,
@@ -446,7 +451,20 @@ pub(crate) fn run_for(host: &dyn ClientHost, client: &Client, id: &str, scope: S
         if synced.chat_reread { ", chat to read again" } else { "" },
         if synced.mail_reread { ", mail to read again" } else { "" }
     );
+    if let Some(event) = rooms_event(&synced) {
+        host.notify_pages(id, &event);
+    }
     synced
+}
+
+/// The pages' `rooms` event of a run that changed held messages: `{kind: "rooms", rooms, reset}`, `reset` when the
+/// chat feed was reset (every room's held messages may be stale). None when nothing a page shows changed.
+pub(crate) fn rooms_event(synced: &Synced) -> Option<Value> {
+    let reset = synced.chat_dropped;
+    if synced.rooms_changed.is_empty() && !reset {
+        return None;
+    }
+    Some(serde_json::json!({ "kind": "rooms", "rooms": synced.rooms_changed, "reset": reset }))
 }
 
 #[cfg(test)]

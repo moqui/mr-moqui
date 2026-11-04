@@ -627,7 +627,13 @@ fn a_message_change_goes_once_by_its_ref_in_the_order_of_its_message() {
         ok(json!({ "poll": {}, "duplicate": true })),
     );
     server.answer(&format!("{CHAT}/redact"), ok(json!({ "redactionEventSeq": 9 })));
-    run_md5(&server, &store, NOW + 10);
+    let flushed = run_md5(&server, &store, NOW + 10);
+    // the pages hear each answered change with its room and message
+    let vote_sent = flushed.sent.iter().find(|event| event["op"] == "poll-vote").unwrap();
+    assert_eq!(
+        (&vote_sent["chatRoomId"], &vote_sent["eventSeq"]),
+        (&json!("R1"), &json!(7))
+    );
     let asked = server.take();
     let paths: Vec<&str> = asked.iter().map(|(path, _)| path.as_str()).collect();
     assert_eq!(

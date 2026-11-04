@@ -937,6 +937,8 @@ module.exports = {
                 retitle: (key, title) => { const dock = self.docks.find((item) => item.key === key); if (dock) dock.title = title; },
                 draftSaved: (key, emailMessageId) => {
                     const dock = self.docks.find((item) => item.key === key);
+                    // a kept copy saved on the server is a draft there now, no longer a copy here
+                    if (dock && emailMessageId && dock.query.copyRef) self.keptCopies = self.keptCopies.filter((copy) => copy.ref !== dock.query.copyRef);
                     if (dock && emailMessageId && dock.query.emailMessageId !== emailMessageId) { dock.query = { emailMessageId }; self.saveDocks(); }
                 },
                 sent: (key, info) => self.onComposeSent(key, info)
@@ -962,7 +964,7 @@ module.exports = {
             // the desktop client's outbox (moqui.hostOutbox()): its mail sends and thread changes waiting; empty on the web
             outbox: [],
             // the copies the app kept of a draft changed elsewhere ({key, ref, subject}), whose operation is gone (discarded)
-            keptCopies: []
+            keptCopies: [], copiesOf: null, actedAt: {}
         };
     },
     computed: {
@@ -1215,7 +1217,28 @@ module.exports = {
             }, (err) => { this.failed(err); throw err; });
         },
         // a thread change the desktop client may keep while the server is out of reach goes through its outbox (stateOrQueue)
-        post(name, params) { return name === 'state' && this.queueable(params) ? this.stateOrQueue(params) : this.request(name, params, 'POST'); },
+        post(name, params) {
+            if (name === 'state') this.noteActed(params);
+            return name === 'state' && this.queueable(params) ? this.stateOrQueue(params) : this.request(name, params, 'POST');
+        },
+        // the desktop client: when this page last changed each thread (by its row's key), so a Retry of an older change
+        // that conflicted asks first instead of undoing a later one
+        noteActed(params) {
+            if (!moqui.hostOutbox()) return;
+            let targets = [];
+            try { targets = JSON.parse((params && params.targetsJson) || '[]'); } catch (err) { targets = []; }
+            const now = Date.now();
+            (Array.isArray(targets) ? targets : []).forEach((target) => { const key = this.targetKey(target); if (key) this.actedAt[key] = now; });
+        },
+        targetKey(target) { return target ? (target.rowKey || ((target.store || 'email') + ':' + (target.threadId || target.emailMessageId || target.communicationEventId || ''))) : null; },
+        // a change of one of its threads made here after it: waiting in the outbox, or asked of the server
+        laterChange(op) {
+            const keys = ((op.payload && op.payload.targets) || []).map((target) => this.targetKey(target)).filter((key) => key);
+            const created = Number(op.createdMs || 0);
+            const waiting = this.outbox.some((other) => other.id !== op.id && other.kind === 'mail-state' && Number(other.createdMs || 0) > created
+                && ((other.payload && other.payload.targets) || []).some((target) => keys.includes(this.targetKey(target))));
+            return waiting || keys.some((key) => Number(this.actedAt[key] || 0) > created);
+        },
         // an error of a request: the desktop client's server out of reach says it needs a connection, else as the page shows errors
         failed(err) { if (moqui.unreachable && moqui.unreachable(err)) this.needsConnection(true); else moqui.handleAjaxError(err); },
         // the desktop client offline (never the web): an action that needs the server says so and is not taken
@@ -1261,6 +1284,10 @@ module.exports = {
                 // a thread change the server did not make: its rows are the server's again in the app's store, so the list
                 // and the open thread are read again
                 if (this.outboxProblems.some((op) => !before.has(op.id))) { this.loadList(true); if (this.openKey) this.reloadThread(); }
+                // the kept copies, on the first read and when the sends that conflicted change (one kept a copy, or went)
+                const conflicts = this.outbox.filter((op) => op.kind === 'mail-send' && op.state === 'conflict').map((op) => op.id).sort().join(',');
+                if (this.copiesOf === conflicts) return null;
+                this.copiesOf = conflicts;
                 return this.readCopies();
             }, (err) => console.info('Inbox: the outbox was not read from the app', err));
         },
@@ -1273,7 +1300,9 @@ module.exports = {
                 this.keptCopies = (Array.isArray(list) ? list : []).map((draft) => {
                     let value = null;
                     try { value = JSON.parse(draft.value || 'null'); } catch (err) { value = null; }
-                    if (!value || !value.conflictOf || !value.clientRef || listed.has(value.conflictOf.clientRef)) return null;
+                    // a copy the server has as a draft of its own (emailMessageId) is in Drafts, no longer a copy here
+                    if (!value || !value.conflictOf || !value.clientRef || (value.draft && value.draft.emailMessageId)
+                        || draft.key !== COPY_PREFIX + value.clientRef || listed.has(value.conflictOf.clientRef)) return null;
                     return { key: draft.key, ref: value.clientRef, subject: (value.draft && value.draft.subject) || '' };
                 }).filter((copy) => copy);
             }, (err) => console.info('Inbox: the kept copies were not read from the app', err));
@@ -1320,7 +1349,17 @@ module.exports = {
             if (op.state === 'conflict') return 'sym_o_sync_problem';
             return op.state === 'failed' ? 'sym_o_error' : (op.state === 'sending' ? 'sym_o_send' : 'sym_o_schedule');
         },
-        outboxRetry(op) { const host = moqui.hostOutbox(); if (host) host.retry(op.id).then(() => this.readOutbox(), (err) => moqui.notifyMessages(null, (err && err.message) || String(err))); },
+        outboxRetry(op) {
+            const host = moqui.hostOutbox();
+            if (!host) return;
+            const go = () => host.retry(op.id).then(() => this.readOutbox(), (err) => moqui.notifyMessages(null, (err && err.message) || String(err)));
+            // a thread change that conflicted, with a later change of the same thread made here since: retried, it would
+            // land after that one and undo it, so the user chooses
+            if (op.kind !== 'mail-state' || op.state !== 'conflict' || !this.laterChange(op)) { go(); return; }
+            this.$q.dialog({ title: t('Retry this change?'), message: t('You changed this thread again since. Retried now, this older change is made after that one and undoes it.'),
+                cancel: { label: t('Keep the later change'), flat: true, noCaps: true }, ok: { label: t('Retry anyway'), color: 'primary', unelevated: true, noCaps: true } })
+                .onOk(() => go());
+        },
         outboxDiscard(op) {
             const host = moqui.hostOutbox();
             if (!host) return;
@@ -2497,7 +2536,10 @@ module.exports = {
         // the desktop client's outbox: what waits, as it changes
         const host = moqui.hostOutbox();
         if (host && typeof host.on === 'function') {
-            this.outboxOff = host.on((event) => { this.readOutbox(); if (event && event.kind === 'sent' && event.op === 'mail-send') this.loadList(true); });
+            this.outboxOff = host.on((event) => {
+                // the chat feeds' news is not the outbox's
+                if (event && event.kind === 'rooms') return;
+                this.readOutbox(); if (event && event.kind === 'sent' && event.op === 'mail-send') this.loadList(true); });
             this.readOutbox();
         }
     },
