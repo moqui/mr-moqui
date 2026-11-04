@@ -237,6 +237,11 @@
                 this.rendering = true;
                 const files = this.tab.text !== this.tab.saved ? [{ rootId: this.ctx.rootId, path: this.tab.path, text: this.tab.text }] : [];
                 this.ctx.post("canvasBuffer", { bufferId: this.bufferId, files: JSON.stringify(files) }).then(() => {
+                    // Replacing the preview can cancel its fetches before its pagehide listener runs.
+                    try {
+                        const win = this.$refs.frame && this.$refs.frame.contentWindow;
+                        if (win && win.moqui) win.moqui.pageLeaving = true;
+                    } catch (_) { /* A preview may have followed a link to another origin. */ }
                     const aide = this.mode === "design" ? "&moquiAide=source" : "";
                     const query = this.view.query ? this.view.query + "&" : "";
                     this.frameSrc = this.view.urlPath + "?" + query + "moquiPreview=buffer:" + this.bufferId + aide + "&v=" + (++this.version);

@@ -9,7 +9,7 @@ const CLIENT = "BASIC_COMMS_INBOX_CLIENT"
 const ACCOUNT = "BASIC_COMMS_INBOX_ACCT"
 const FOLDER = "BASIC_COMMS_INBOX_INBOX"
 const MESSAGE = "BASIC_COMMS_INBOX_M1"
-const bossInstalled = ec.resource.getLocationReference("component://mr-boss/screen/Comms.xml").getExists()
+const bossInstalled = !!ec.resource.getLocationReference("component://mr-boss/screen/Comms.xml")?.getExists()
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()

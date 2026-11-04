@@ -374,7 +374,15 @@
                     .map((buffer) => ({ rootId: buffer === this.tab ? this.ctx.rootId : buffer.rootId, path: buffer.path, text: buffer.text }));
                 this.ctx.post("canvasBuffer", { bufferId: this.bufferId, files: JSON.stringify(files) }).then(() => {
                     const frame = this.$refs.frame;
-                    this.scrollY = frame && frame.contentWindow ? frame.contentWindow.scrollY : 0;
+                    this.scrollY = 0;
+                    // Replacing the preview can cancel its fetches before its pagehide listener runs.
+                    try {
+                        const win = frame && frame.contentWindow;
+                        if (win) {
+                            this.scrollY = win.scrollY;
+                            if (win.moqui) win.moqui.pageLeaving = true;
+                        }
+                    } catch (_) { /* A preview may have followed a link to another origin. */ }
                     const query = this.query ? this.query + "&" : "";
                     const aide = this.mode === "design" ? "&moquiAide=source" : "";
                     this.frameSrc = this.view.urlPath + "?" + query + "moquiPreview=buffer:" + this.bufferId + aide + "&v=" + (++this.version);

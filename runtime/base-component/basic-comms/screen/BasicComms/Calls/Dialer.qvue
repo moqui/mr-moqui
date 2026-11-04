@@ -23,8 +23,8 @@ along with this software (see the LICENSE.md file). If not, see
 <template><div class="m-dialer column q-gutter-sm" :class="compact ? 'q-pa-sm' : 'q-pa-md'" :style="compact ? '' : 'max-width:420px'">
     <div v-if="!compact" class="text-h6">{{t('Dialer')}}</div>
     <q-banner v-if="noConnection" dense rounded class="m-tonal text-warning m-dialer-offline">{{t('Calls need a connection to the server: try again when it is back.')}}</q-banner>
-    <q-banner v-else-if="loaded && !data.phoneActive" dense rounded class="bg-warning text-black">{{t('Phone calls are not available here.')}}</q-banner>
-    <q-banner v-else-if="loaded && !data.callerIdList.length" dense rounded class="bg-grey-3 text-black">
+    <q-banner v-else-if="loaded && !data.phoneActive" dense rounded class="m-tonal">{{t('Phone calls are not available here.')}}</q-banner>
+    <q-banner v-else-if="loaded && !data.callerIdList.length" dense rounded class="m-tonal">
         {{t('You have no number to call from; an administrator can give you one.')}}</q-banner>
     <q-input outlined v-model="text" :label="t('Name or number')" autofocus clearable class="text-h6" @keyup.enter="call"
             @update:model-value="search" input-class="text-mono" aria-label="Name or number">

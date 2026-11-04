@@ -11,6 +11,9 @@ test("columnar frames retain ragged nulls and CSV protects spreadsheet formulas"
     assert.equal(report.format(null, { noValue: "Missing" }), "Missing");
 });
 test("chart configs use the frame and retain missing intervals", () => {
+    const previous = document.body.style.getPropertyValue('--q-primary'), priority = document.body.style.getPropertyPriority('--q-primary');
+    document.body.style.setProperty('--q-primary', '#123456');
+    try {
     const config = report.chart({ fields: [
         { name: "day", type: "string", values: ["Mon", "Tue", "Wed"] },
         { name: "total", type: "number", values: [1, null, 3] },
@@ -21,6 +24,11 @@ test("chart configs use the frame and retain missing intervals", () => {
     assert.equal(config.data.datasets[0].spanGaps, false);
     assert.equal(config.data.datasets[0].fill, true);
     assert.equal(config.options.animation, false);
+    assert.equal(config.data.datasets[0].borderColor, '#123456');
+    } finally {
+        if (previous) document.body.style.setProperty('--q-primary', previous, priority);
+        else document.body.style.removeProperty('--q-primary');
+    }
 });
 test("waterfalls preserve nanosecond order and identify missing parents", () => {
     const spans = [

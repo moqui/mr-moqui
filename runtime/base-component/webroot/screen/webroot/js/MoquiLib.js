@@ -458,28 +458,34 @@
                 }
                 return moqui.drafts.localKeys(prefix);
             },
-            // value: text, or empty to remove it
+            // value: text, or empty to remove it. Always resolves: true when persisted, false on failure, so a caller
+            // closing an editor can keep it open without making fire-and-forget draft updates reject.
+            // The host cache reflects current UI intent immediately; it is not proof that the host saved it.
             put(key, value, files) {
                 if (value === null || value === undefined || value === "") return moqui.drafts.remove(key);
                 const text = String(value);
                 const host = moqui.drafts.host();
                 if (host) {
                     if (moqui.drafts.cache) moqui.drafts.cache.set(key, { value: text, files: files || [], updatedMs: Date.now() });
-                    return host.put(key, text, files || []).catch((err) => { console.info("draft " + key + " not kept", err); });
+                    return Promise.resolve().then(() => host.put(key, text, files || [])).then(() => true,
+                        (err) => { console.info("draft " + key + " not kept", err); return false; });
                 }
                 const storage = moqui.drafts.local();
-                try { if (storage) storage.setItem(moqui.scopedKey(key), text); } catch (err) { console.info("draft " + key + " not kept", err); }
-                return Promise.resolve();
+                if (!storage) return Promise.resolve(false);
+                try { storage.setItem(moqui.scopedKey(key), text); return Promise.resolve(true); }
+                catch (err) { console.info("draft " + key + " not kept", err); return Promise.resolve(false); }
             },
             remove(key) {
                 const host = moqui.drafts.host();
                 if (host) {
                     if (moqui.drafts.cache) moqui.drafts.cache.delete(key);
-                    return host.remove(key).catch((err) => { console.info("draft " + key + " not removed", err); });
+                    return Promise.resolve().then(() => host.remove(key)).then(() => true,
+                        (err) => { console.info("draft " + key + " not removed", err); return false; });
                 }
                 const storage = moqui.drafts.local();
-                try { if (storage) storage.removeItem(moqui.scopedKey(key)); } catch (err) { /* no storage */ }
-                return Promise.resolve();
+                if (!storage) return Promise.resolve(false);
+                try { storage.removeItem(moqui.scopedKey(key)); return Promise.resolve(true); }
+                catch (err) { return Promise.resolve(false); }
             },
             // a File kept by the host for a draft or a queued send: resolves to its name in the store, or null on the web
             saveFile(file) {

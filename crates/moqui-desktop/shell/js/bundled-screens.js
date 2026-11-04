@@ -11056,7 +11056,7 @@ module.exports = {
                               round: "",
                               dense: "",
                               icon: _ctx.railCollapsed ? 'sym_o_left_panel_open' : 'sym_o_left_panel_close',
-                              "aria-label": _ctx.t('Collapse the folders'),
+                              "aria-label": _ctx.railCollapsed ? _ctx.t('Show the folders') : _ctx.t('Collapse the folders'),
                               onClick: _ctx.toggleRail
                             }, {
                               default: _withCtx(() => [
@@ -16336,12 +16336,12 @@ module.exports = {
         return {
             uid: composeCount, query: {}, state: 'loading', error: null, draft: this.emptyDraft(), identities: [], me: {}, undoSeconds: 10, kind: 'new',
             adding: { to: null, cc: null, bcc: null }, showCc: false, showBcc: false, showQuote: false, dragOver: false, uploading: false, picked: null,
-            sending: false, sent: false, savedAt: null, saving: false, dirty: false, saveTimer: null, scheduleOpen: false, scheduleCustom: '',
+            sending: false, sent: false, savedAt: null, saving: false, saveError: null, dirty: false, saveTimer: null, scheduleOpen: false, scheduleCustom: '',
             blocksOpen: false, blocks: [], blockSearch: '', slashPending: false, signature: null, signaturePlacement: 'above', belowSignature: null,
             loadedOnce: false, pageLayoutOverride: null, hasDrive: false,
             // the desktop client offline (MD4): the files kept by the app until the message is sent from its outbox, the
             // message's clientRef, and whether the email's draft is kept here, not yet on the server
-            queued: [], clientRef: null, offlineDraft: false, localEmailKey: null, offlineNote: null,
+            queued: [], clientRef: null, offlineDraft: false, localEmailKey: null, offlineNote: null, refreshingIdentities: false, identityError: null,
             // MD5: the server's draftStamp of the draft as this composer last saw it (a queued send's baseStamp), whether the
             // app's outbox takes an internal message's send (its kinds().internalSend), and the conflict this copy was kept from
             draftStamp: null, internalSend: false, copyOf: null,
@@ -16360,8 +16360,12 @@ module.exports = {
         minimized() { return !!(this.hostDock && this.hostDock.minimized); },
         // the desktop client's server out of reach (moqui.connection; never on the web)
         noConnection() { return !!(moqui.connection && moqui.connection.offline); },
-        // the desktop client started offline with no mail account known here: nothing to send from until the server answers
-        noFrom() { return !!moqui.hostOutbox() && this.state === 'ready' && !this.identities.length; },
+        noFrom() { return this.state === 'ready' && !this.identityOptions.some((identity) => identity.value === this.draft.fromValue); },
+        fromMessage() {
+            if (this.noConnection) return t('No mail account is known on this computer yet: send it once the server can be reached');
+            return this.identityOptions.length ? t('Choose a sending identity in From before saving or sending this message.')
+                : t('No sending identity is available. Add a mail account or ask its owner for sending access before saving or sending email.');
+        },
         mode() { return this.draft.fromValue === 'internal' ? 'internal' : 'email'; },
         draftId() { return this.draft.emailMessageId || null; },
         title() {
@@ -16388,7 +16392,10 @@ module.exports = {
         },
         savedText() {
             if (this.saving) return t('Saving…');
+            if (this.saveError) return t('Not saved');
+            if (this.dirty) return t('Unsaved changes');
             if (this.mode === 'internal') return this.dirty ? '' : (this.savedAt ? t('Kept in this browser') : '');
+            if (this.offlineDraft && this.savedAt) return t('Kept on this computer');
             return this.savedAt ? t('Saved') + ' ' + new Date(this.savedAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '';
         },
         shownBlocks() {
@@ -16415,7 +16422,7 @@ module.exports = {
     watch: {
         draft: { handler() { this.onChange(); }, deep: true },
         title(value) { if (this.mComposeHost && this.dockKey) this.mComposeHost.retitle(this.dockKey, value); },
-        'draft.fromValue'(value, old) { if (this.state === 'ready' && old && value !== old) this.swapSignature(old, value); },
+        'draft.fromValue'(value, old) { if (this.state === 'ready' && !this.refreshingIdentities && old && value !== old) this.swapSignature(old, value); },
         // the page: a new query is a new message
         'mScreen.parameters': { handler() { if (this.layout === 'page' && this.loadedOnce && this.queryChanged()) this.start(); }, deep: true }
     },
@@ -16441,10 +16448,28 @@ module.exports = {
         },
         url(name) { return this.base() + '/' + name; },
         go(target) { if (target) this.$root.setUrl(target); },
+        refreshIdentities() {
+            if (this.refreshingIdentities) return;
+            this.refreshingIdentities = true;
+            this.identityError = null;
+            // No draft/reply/forward parameters: read the available identities without reinitializing this message.
+            return moqui.request(this.url('composeData')).then((result) => {
+                const compose = result.json && result.json.compose;
+                if (!compose || !Array.isArray(compose.identityList)) throw new Error('No identities in compose data');
+                this.identities = compose.identityList;
+                if (!this.identityOptions.some((identity) => identity.value === this.draft.fromValue)) {
+                    this.draft.fromValue = (this.identityOptions.find((identity) => identity.value === compose.fromValue) || this.identityOptions[0] || {}).value || null;
+                }
+                if (!this.noFrom) this.saveError = null;
+            }).catch(() => {
+                this.identityError = t('Sending identities could not be refreshed. Check your connection and try again.');
+            }).finally(() => { this.refreshingIdentities = false; });
+        },
         start() {
             this.query = this.readQuery();
             this.state = 'loading';
             this.error = null;
+            this.saveError = null;
             this.queued = [];
             this.offlineDraft = false;
             this.localEmailKey = null;
@@ -16628,6 +16653,19 @@ module.exports = {
             if (this.saveTimer) clearTimeout(this.saveTimer);
             this.saveTimer = setTimeout(() => { this.saveTimer = null; this.save(); }, this.mode === 'internal' ? 800 : 3000);
         },
+        draftContent() {
+            const draft = Object.assign({}, this.draft);
+            // A first save assigns this id; it does not change the content the user wrote.
+            delete draft.emailMessageId;
+            return JSON.stringify([draft, this.belowSignature, this.queued]);
+        },
+        acknowledgeSave(content) {
+            // Flush the deep draft watcher, including the server-assigned id, before acknowledging this snapshot.
+            return this.$nextTick().then(() => {
+                this.dirty = this.draftContent() !== content;
+                if (!this.dirty && this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
+            });
+        },
         chipsJson(field) { return JSON.stringify(this.draft[field].map((chip) => ({ value: chip.value, label: chip.label }))); },
         draftParams() {
             const d = this.draft;
@@ -16649,37 +16687,59 @@ module.exports = {
             return params;
         },
         save(force) {
-            if (this.sent) return Promise.resolve();
-            if (this.mode === 'internal') { this.saveLocal(); return Promise.resolve(); }
-            if (!force && this.isEmpty && !this.draftId) return Promise.resolve();
-            if (this.saving) { this.saveAgain = true; return this.savePromise || Promise.resolve(); }
+            if (this.sent) return Promise.resolve(true);
+            if (this.saving) return this.savePromise || Promise.resolve(false);
+            if (this.mode !== 'internal' && !force && this.isEmpty && !this.draftId && !this.offlineDraft) return Promise.resolve(true);
+            if (this.saveTimer) { clearTimeout(this.saveTimer); this.saveTimer = null; }
+            // A connected email needs an identity to save. Offline desktop drafts retain their existing local fallback.
+            if (this.mode !== 'internal' && this.noFrom && !this.noConnection) return Promise.resolve(this.saveFailed({message: this.fromMessage}));
             this.saving = true;
-            this.savePromise = moqui.request(this.url('saveDraft'), { method: 'POST', params: this.draftParams() }).then((result) => {
-                this.saving = false;
+            const content = this.draftContent();
+            const persisted = this.mode === 'internal' ? this.saveLocal() : moqui.request(this.url('saveDraft'), { method: 'POST', params: this.draftParams() }).then((result) => {
                 const json = result.json || {};
+                if (json.errors || json.conflict || !json.emailMessageId) {
+                    throw { json, message: json.conflict ? t('This draft changed elsewhere. Your changes are still open here.') : null };
+                }
                 if (json.emailMessageId && !this.draft.emailMessageId) {
                     this.draft.emailMessageId = json.emailMessageId;
                     if (this.mComposeHost && this.dockKey) this.mComposeHost.draftSaved(this.dockKey, json.emailMessageId);
                 }
                 this.savedAt = Date.now();
                 if (json.draftStamp != null) this.draftStamp = json.draftStamp;
-                this.$nextTick(() => { this.dirty = false; });
-                // kept offline, on the server now: kept here only while files wait for the send
-                if (this.offlineDraft && json.emailMessageId) { this.offlineDraft = false; if (this.queued.length) this.saveLocal(); else this.clearLocal(); }
-                if (this.saveAgain) { this.saveAgain = false; return this.save(); }
-                return json;
+                return this.acknowledgeSave(content).then(() => {
+                    // Keep the local recovery copy until the server has the current content, not an older snapshot.
+                    if (this.offlineDraft && json.emailMessageId && !this.dirty) {
+                        this.offlineDraft = false;
+                        if (this.queued.length) return this.saveLocal();
+                        this.clearLocal();
+                    }
+                });
+            }, (err) => {
+                // the desktop client with no server: kept in the app, and saved on the server once it is back
+                if (this.unreachable(err)) return this.saveLocal();
+                throw err;
+            });
+            this.savePromise = persisted.then((saved) => {
+                this.saving = false;
+                if (saved === false) return false;
+                this.saveError = null;
+                if (this.dirty) return this.save(force);
+                return true;
             }, (err) => {
                 this.saving = false;
-                // the desktop client with no server: kept in the app, and saved on the server once it is back
-                if (this.unreachable(err)) { this.saveLocal(); return; }
-                // an autosave that fails is told once; the send says it again
-                if (force) moqui.handleAjaxError(err); else console.info('Draft not saved', err && err.status);
+                return this.saveFailed(err);
             });
             return this.savePromise;
+        },
+        saveFailed(err) {
+            this.dirty = true;
+            this.saveError = String((err && err.json && err.json.errors) || (err && err.message) || t('The draft could not be saved.'));
+            return false;
         },
         // an internal message's draft, kept in this browser (moqui.drafts); in the desktop client also an email's written
         // offline, with its clientRef and the files kept for it
         saveLocal() {
+            const content = this.draftContent();
             const email = this.mode === 'email' && !!this.clientRef;
             const value = { at: Date.now(), draft: Object.assign({}, this.draft, { attachments: [] }) };
             let key = this.draftStorageKey;
@@ -16687,17 +16747,23 @@ module.exports = {
                 Object.assign(value, { email: true, clientRef: this.clientRef, queued: this.queued });
                 // a conflict's copy until the server has it as a draft of its own
                 if (this.copyOf && !this.draft.emailMessageId) value.conflictOf = this.copyOf;
-                this.offlineDraft = true;
                 key = this.emailLocalKey;
-                // kept by its clientRef until the server saved it, then by its id
-                if (this.localEmailKey && this.localEmailKey !== key) moqui.drafts.remove(this.localEmailKey);
-                this.localEmailKey = key;
-                if (!this.draft.emailMessageId) moqui.drafts.put(this.emailRefKey, JSON.stringify({ clientRef: this.clientRef }));
             }
-            return moqui.drafts.put(key, JSON.stringify(value), this.queued.map((file) => file.file)).then(() => {
+            const requireSaved = (saved) => { if (saved === false) throw new Error(t('This device could not keep the draft. Check available storage and try again.')); };
+            return moqui.drafts.put(key, JSON.stringify(value), this.queued.map((file) => file.file)).then((saved) => {
+                requireSaved(saved);
+                // A new offline email needs its pointer too before the composer may close.
+                if (email && !this.draft.emailMessageId) return moqui.drafts.put(this.emailRefKey, JSON.stringify({ clientRef: this.clientRef })).then(requireSaved);
+            }).then(() => {
+                if (email) {
+                    this.offlineDraft = true;
+                    // Keep the old copy until the replacement is persisted.
+                    if (this.localEmailKey && this.localEmailKey !== key) moqui.drafts.remove(this.localEmailKey);
+                    this.localEmailKey = key;
+                }
                 this.savedAt = Date.now();
-                this.$nextTick(() => { this.dirty = false; });
-            });
+                return this.acknowledgeSave(content).then(() => true);
+            }, (err) => this.saveFailed(err));
         },
         restoreLocal() {
             // what Undo send gave back, an internal message's draft from this browser, or an email's kept offline in the desktop client
@@ -16989,7 +17055,7 @@ module.exports = {
         send(options) {
             const opts = options || {};
             if (this.sending) return;
-            if (this.noFrom) { moqui.notifyMessages(null, t('No mail account is known on this computer yet: send it once the server can be reached')); return; }
+            if (this.noFrom) { moqui.notifyMessages(null, this.fromMessage); return; }
             this.collectPending();
             const d = this.draft;
             if (!d.to.length && !d.cc.length && !d.bcc.length) { moqui.notifyMessages(null, t('Add a recipient in To')); return; }
@@ -17085,8 +17151,10 @@ module.exports = {
                 else if (this.mSubmitHide && this.mSubmitHide.hide) this.mSubmitHide.hide();
                 else if (this.layout === 'page') this.$root.setUrl(this.appLink() + 'Inbox');
             };
-            if (this.state === 'ready' && !this.sent && this.dirty) this.save().then(finish, finish);
-            else finish();
+            if (this.state === 'ready' && !this.sent && (this.dirty || this.saving)) {
+                return this.save().then((saved) => { if (saved) finish(); });
+            }
+            finish();
         },
         // Discard: asked first when there is something to lose
         discard() {
@@ -17263,6 +17331,75 @@ module.exports = {
                                           class: "q-mx-md q-mt-sm text-caption text-warning"
                                         }, _toDisplayString(_ctx.offlineNote), 1))
                                       : _createCommentVNode("", true),
+                                  (_ctx.noFrom && !_ctx.noConnection)
+                                    ? (_openBlock(), _createBlock(_component_q_banner, {
+                                        key: 3,
+                                        dense: "",
+                                        rounded: "",
+                                        role: "status",
+                                        class: "q-mx-md q-mt-sm m-tonal m-compose-no-from"
+                                      }, {
+                                        action: _withCtx(() => [
+                                          _createVNode(_component_q_btn, {
+                                            flat: "",
+                                            dense: "",
+                                            "no-caps": "",
+                                            color: "primary",
+                                            href: _ctx.appLink() + 'Settings/MailAccounts',
+                                            target: "_blank",
+                                            rel: "noopener",
+                                            label: _ctx.t('Mail accounts (new tab)')
+                                          }, null, 8, ["href", "label"]),
+                                          _createVNode(_component_q_btn, {
+                                            flat: "",
+                                            dense: "",
+                                            "no-caps": "",
+                                            color: "primary",
+                                            label: _ctx.t('Refresh sending identities'),
+                                            loading: _ctx.refreshingIdentities,
+                                            onClick: _ctx.refreshIdentities
+                                          }, null, 8, ["label", "loading", "onClick"])
+                                        ]),
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(_ctx.fromMessage) + " ", 1),
+                                          _createElementVNode("div", { class: "text-caption" }, _toDisplayString(_ctx.t('Keep this message open while you set up an account. Return here and refresh sending identities to continue.')), 1),
+                                          (_ctx.identityError)
+                                            ? (_openBlock(), _createElementBlock("div", {
+                                                key: 0,
+                                                role: "alert",
+                                                class: "text-negative text-caption"
+                                              }, _toDisplayString(_ctx.identityError), 1))
+                                            : _createCommentVNode("", true)
+                                        ]),
+                                        _: 1
+                                      }))
+                                    : _createCommentVNode("", true),
+                                  (_ctx.saveError)
+                                    ? (_openBlock(), _createBlock(_component_q_banner, {
+                                        key: 4,
+                                        dense: "",
+                                        rounded: "",
+                                        role: "alert",
+                                        class: "q-mx-md q-mt-sm m-tonal text-negative m-compose-save-error"
+                                      }, {
+                                        action: _withCtx(() => [
+                                          _createVNode(_component_q_btn, {
+                                            flat: "",
+                                            dense: "",
+                                            "no-caps": "",
+                                            color: "primary",
+                                            label: _ctx.t('Retry save'),
+                                            loading: _ctx.saving,
+                                            onClick: $event => (_ctx.save(true))
+                                          }, null, 8, ["label", "loading", "onClick"])
+                                        ]),
+                                        default: _withCtx(() => [
+                                          _createTextVNode(_toDisplayString(_ctx.t('Your changes have not been saved. Keep this message open and try again.')) + " ", 1),
+                                          _createElementVNode("div", { class: "text-caption" }, _toDisplayString(_ctx.saveError), 1)
+                                        ]),
+                                        _: 1
+                                      }))
+                                    : _createCommentVNode("", true),
                                   _createElementVNode("div", { class: "q-px-md q-pt-sm" }, [
                                     _createElementVNode("div", { class: "row items-center no-wrap" }, [
                                       _createElementVNode("span", {
@@ -17270,13 +17407,19 @@ module.exports = {
                                         style: {"width":"52px"}
                                       }, _toDisplayString(_ctx.t('From')), 1),
                                       _createElementVNode("div", { class: "col" }, [
-                                        _createVNode(_component_m_drop_down, {
-                                          modelValue: _ctx.draft.fromValue,
-                                          "onUpdate:modelValue": $event => ((_ctx.draft.fromValue) = $event),
-                                          name: "fromValue",
-                                          options: _ctx.identityOptions,
-                                          disable: _ctx.identityOptions.length < 2
-                                        }, null, 8, ["modelValue", "onUpdate:modelValue", "options", "disable"])
+                                        (_ctx.identityOptions.length)
+                                          ? (_openBlock(), _createBlock(_component_m_drop_down, {
+                                              key: 0,
+                                              modelValue: _ctx.draft.fromValue,
+                                              "onUpdate:modelValue": $event => ((_ctx.draft.fromValue) = $event),
+                                              name: "fromValue",
+                                              options: _ctx.identityOptions,
+                                              disable: _ctx.identityOptions.length < 2
+                                            }, null, 8, ["modelValue", "onUpdate:modelValue", "options", "disable"]))
+                                          : (_openBlock(), _createElementBlock("span", {
+                                              key: 1,
+                                              class: "text-caption m-muted"
+                                            }, _toDisplayString(_ctx.t('No sending identity available')), 1))
                                       ])
                                     ]),
                                     (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.recipientFields, (field) => {
@@ -18422,7 +18565,7 @@ module.exports = {
                             key: 2,
                             dense: "",
                             rounded: "",
-                            class: "bg-warning text-black"
+                            class: "m-tonal"
                           }, {
                             default: _withCtx(() => [
                               _createTextVNode(_toDisplayString(_ctx.t('Phone calls are not available here.')), 1)
@@ -18434,7 +18577,7 @@ module.exports = {
                               key: 3,
                               dense: "",
                               rounded: "",
-                              class: "bg-grey-3 text-black"
+                              class: "m-tonal"
                             }, {
                               default: _withCtx(() => [
                                 _createTextVNode(_toDisplayString(_ctx.t('You have no number to call from; an administrator can give you one.')), 1)

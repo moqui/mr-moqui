@@ -105,9 +105,20 @@
         if (cursor) options.cursor = JSON.parse(cursor)
         const exporting = pageNoLimit === true || String(pageNoLimit) === 'true'
         if (exporting) { options.pageIndex = 0; options.pageSize = 1000; delete options.cursor }
-        let result = {hits:[],total:0,notices:[]}; queryError = ''
-        try { result = ec.service.sync().name('org.moqui.report.ReportServices.query#Documents').parameters(options).call() }
-        catch (error) { queryError = String(error) }
+        // A read failure belongs beside the query controls. Ordinary service failures are message errors, not thrown
+        // exceptions; isolate only this call's errors and transaction. Thrown authorization failures still propagate.
+        const exploreQuery = (service, parameters) => {
+            ec.message.pushErrors()
+            try {
+                const result = ec.service.sync().name(service).parameters(parameters).requireNewTransaction(true).call() || {}
+                const error = ec.message.errorsString || ''
+                ec.message.clearErrors()
+                return {result,error}
+            } finally { ec.message.popErrors() }
+        }
+        const queried = exploreQuery('org.moqui.report.ReportServices.query#Documents', options)
+        const result = queried.result; queryError = queried.error
+        if (exporting && queryError) throw new Error(queryError)
         const allHits = [...(result.hits || [])]
         if (exporting) {
             let next = result.nextCursor
@@ -167,31 +178,34 @@
         histogramFrame = {fields:[]};topValues = []
         if (!queryError) {
             const base = {datasetId,from,thru,queryString:queryString || '',filters:filterPills}
-            try {
-                const histogram = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query:Object.assign({},base,{
-                    aggregations:[{id:'time',type:'date_histogram',role:'x-axis',params:{field:datasetInfo.timeField,interval:'auto',targetBars:60}}]
-                })}).call()
-                histogramFrame = (histogram.frames || [])[0] || {fields:[]}
-                if (fieldName) {
-                    const terms = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query:Object.assign({},base,{
-                        aggregations:[{id:'value',type:'terms',role:'x-axis',params:{field:fieldName,size:20}}]
-                    })}).call()
-                    const frame=(terms.frames || [])[0] || {fields:[]},values=frame.fields.find(field=>field.name==='value'),counts=frame.fields.find(field=>field.name==='count')
+            const histogram = exploreQuery('org.moqui.report.ReportServices.run#Query', {query:Object.assign({},base,{
+                aggregations:[{id:'time',type:'date_histogram',role:'x-axis',params:{field:datasetInfo.timeField,interval:'auto',targetBars:60}}]
+            })})
+            if (histogram.error) queryNotices.push('Documents over time: '+histogram.error)
+            else histogramFrame = (histogram.result.frames || [])[0] || {fields:[]}
+            if (fieldName) {
+                const terms = exploreQuery('org.moqui.report.ReportServices.run#Query', {query:Object.assign({},base,{
+                    aggregations:[{id:'value',type:'terms',role:'x-axis',params:{field:fieldName,size:20}}]
+                })})
+                if (terms.error) queryNotices.push('Top field values: '+terms.error)
+                else {
+                    const frame=(terms.result.frames || [])[0] || {fields:[]},values=frame.fields.find(field=>field.name==='value'),counts=frame.fields.find(field=>field.name==='count')
                     if (values) topValues=values.values.map((value,index)=>({value,count:counts?counts.values[index]:null}))
                 }
-            } catch (error) { ec.logger.error('Explore field analysis failed: '+String(error));queryNotices.push(String(error)) }
+            }
         }
         // Log patterns: the newest 1000 matching lines grouped by template (report/patterns.rs), on datasets with a body.
         patternsAvailable = (datasetInfo.fields || []).some(field=>field.name==='body')
         patternList = [];patternLines = 0
         if (!queryError && patternsAvailable && showPatterns === 'Y') {
-            try {
-                const patterns = ec.service.sync().name('org.moqui.report.ReportServices.run#Query').parameters({query:{datasetId,from,thru,queryString:queryString || '',filters:filterPills,
-                    mode:'documents',sort:['-time','-__cursor'],pageSize:1000,transformations:[{type:'patterns',field:'body',limit:50}]}}).call()
-                const frame=(patterns.frames || [])[0] || {fields:[]},rows=frame.fields.length?frame.fields[0].values.length:0
+            const patterns = exploreQuery('org.moqui.report.ReportServices.run#Query', {query:{datasetId,from,thru,queryString:queryString || '',filters:filterPills,
+                mode:'documents',sort:['-time','-__cursor'],pageSize:1000,transformations:[{type:'patterns',field:'body',limit:50}]}})
+            if (patterns.error) queryNotices.push('Log patterns: '+patterns.error)
+            else {
+                const frame=(patterns.result.frames || [])[0] || {fields:[]},rows=frame.fields.length?frame.fields[0].values.length:0
                 for (let row=0;row<rows;row++) patternList.push(Object.fromEntries(frame.fields.map(field=>[field.name,field.values[row]])))
-                patternLines = Number(patterns.sourceCount || 0)
-            } catch (error) { ec.logger.error('Explore log patterns failed: '+String(error));queryNotices.push(String(error)) }
+                patternLines = Number(patterns.result.sourceCount || 0)
+            }
         }
     ]]></script></actions>
     <widgets>
@@ -200,6 +214,7 @@
             <field name="savedSearchId"><default-field title="Saved search"><drop-down allow-empty="true"><list-options list="savedSearches" key="${id}" text="${title}"/></drop-down></default-field></field>
             <field name="open"><default-field><submit text="Open saved search"/></default-field></field>
         </form-single>
+        <section name="ExploreSaveAvailable" condition="!queryError"><widgets>
         <container-dialog id="SaveExplore" button-text="Save search / add to dashboard">
             <form-single name="SaveSearch" transition="saveSearch">
             <field name="filtersJson"><default-field><hidden/></default-field></field>
@@ -225,6 +240,7 @@
                 <field name="add"><default-field><submit text="Add to dashboard"/></default-field></field>
             </form-single>
         </container-dialog>
+        </widgets></section>
         <form-single name="DatasetOptions" transition=".">
             <field name="datasetId"><default-field title="Dataset"><drop-down><list-options list="datasetList" key="${id}" text="${title || id}"/></drop-down></default-field></field>
             <field name="choose"><default-field><submit text="Choose dataset"/></default-field></field>
@@ -250,6 +266,12 @@
             <field name="pageSize"><default-field title="Page size"><drop-down><option key="50"/><option key="100"/><option key="250"/></drop-down></default-field></field>
             <field name="find"><default-field><submit text="Search"/></default-field></field>
         </form-single>
+        <section name="ExploreQueryFailed" condition="queryError"><widgets>
+            <container id="ExploreQueryError" style="q-pa-sm">
+                <label text="${queryError}" type="p" style="text-negative"/>
+                <label text="The search could not run. Correct the query and search again." type="p"/>
+            </container>
+        </widgets></section>
         <render-mode><text type="tui"><![CDATA[${JSON.stringify({t:'component',id:'ExploreQueryEditorNative',name:'report-query-editor',props:{value:queryString,filters:filterPills,form:'SearchOptions',field:'queryString',filtersField:'filtersJson',fields:datasetInfo.fields || [],values:autocompleteValues,datasetId:datasetId}})}]]></text></render-mode>
         <section name="AccessibleExploreFilters" condition="sri.getRenderMode() !== 'qvt'"><widgets>
             <link url="remember" text="Remember query and pinned filters" link-type="hidden-form-link" parameter-map="{datasetId:datasetId,from:from,thru:thru,queryString:queryString,filtersJson:filtersJson}"/>
@@ -278,6 +300,8 @@
                 <field name="add"><default-field><submit text="Add filter"/></default-field></field>
             </form-single>
         </widgets></section>
+        <label text="Queries run with your dataset permissions and row filters. Search syntax: field:value, AND, OR, NOT, quoted text, term~ for native typo matching, and clause^2 for relevance boosts. Fuzzy matches can differ between PostgreSQL and OpenSearch. Use attributes.key:value, attributes.key:*, and keyword wildcards for custom attributes. Numbered fuzziness and phrase slop are unsupported." type="p"/>
+        <section name="ExploreResults" condition="!queryError"><widgets>
         <report-panel frame="histogramFrame" panel="{title:'Documents over time',visualization:'timeSeries'}"/>
         <section name="LogPatterns" condition="patternsAvailable"><widgets>
             <link condition="showPatterns !== 'Y'" url="." text="Show log patterns" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru,filtersJson:filtersJson,showPatterns:'Y'}"/>
@@ -305,7 +329,6 @@
             <field name="value"><default-field title="Value"><link url="." text="${value}" link-type="anchor" parameter-map="{datasetId:datasetId,from:from,thru:thru,filtersJson:filtersJson,fieldName:fieldName,queryString:(queryString ? '('+queryString+') AND ' : '')+fieldName+':'+JSON.stringify(String(value))}"/></default-field></field>
             <field name="count"><default-field><display/></default-field></field>
         </form-list>
-        <label condition="queryError" text="${queryError}" type="p" style="text-negative"/>
         <link condition="nextCursor != null &amp;&amp; (!retrievalMode || retrievalMode === 'lexical')" url="." text="Next page using cursor" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru,order:order,pageSize:pageSize,filtersJson:filtersJson,cursor:JSON.stringify(nextCursor)}"/>
         <label text="Exports use cursor paging, with a 50,000 row limit." type="p"/>
         <render-mode>
@@ -314,7 +337,6 @@
             <text type="html,html-print,text"><![CDATA[<p>Refresh this search to read new entries.</p>]]></text>
         </render-mode>
         <section-iterate name="QueryNotices" list="queryNotices" entry="notice"><widgets><label text="${notice}" type="p"/></widgets></section-iterate>
-        <label text="Queries run with your dataset permissions and row filters. Search syntax: field:value, AND, OR, NOT, quoted text, term~ for native typo matching, and clause^2 for relevance boosts. Fuzzy matches can differ between PostgreSQL and OpenSearch. Use attributes.key:value, attributes.key:*, and keyword wildcards for custom attributes. Numbered fuzziness and phrase slop are unsupported." type="p"/>
         <form-list name="ExploreDocuments" list="documentList" skip-form="true" show-page-size="true" select-columns="true" show-csv-button="true" show-xlsx-button="true">
 
             <field name="timestampText"><default-field title="Time"><display/></default-field></field>
@@ -360,5 +382,6 @@
                 parameter-map="{datasetId:datasetId,documentId:documentId,documentType:documentType,anchorTime:anchorTime,from:from,thru:thru,filtersJson:filtersJson,queryString:queryString}"/></default-field></field>
             <field name="documentJson"><default-field title="Document"><display style="m-report-export-only"/><container-dialog id="ExploreDocument" button-text="View document"><code-view text="${documentJson}" language="json"/></container-dialog></default-field></field>
         </form-list>
+        </widgets></section>
     </widgets>
 </screen>

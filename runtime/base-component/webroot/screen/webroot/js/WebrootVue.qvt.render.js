@@ -5702,8 +5702,8 @@
               ], 10, ["id", "onClick"]))
             }
         } },
-        "m-menu-drawer": { hash: "34b4b165", make: function (Vue) {
-            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, withCtx: _withCtx, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle } = Vue
+        "m-menu-drawer": { hash: "fd49ce92", make: function (Vue) {
+            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, withCtx: _withCtx, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withModifiers: _withModifiers, withKeys: _withKeys, normalizeClass: _normalizeClass, normalizeStyle: _normalizeStyle } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_icon = _resolveComponent("q-icon")
@@ -5724,6 +5724,7 @@
                       to: row.to || undefined,
                       clickable: !!row.to,
                       title: _ctx.mini ? undefined : row.title,
+                      onKeydown: _withKeys(_withModifiers(() => {}, ["prevent"]), ["enter"]),
                       class: _normalizeClass(_ctx.rowClass(row)),
                       style: _normalizeStyle(_ctx.rowStyle(row))
                     }, {
@@ -5784,7 +5785,7 @@
                           : _createCommentVNode("", true)
                       ]),
                       _: 2
-                    }, 1032, ["to", "clickable", "title", "class", "style"]))
+                    }, 1032, ["to", "clickable", "title", "onKeydown", "class", "style"]))
                   }), 128))
                 ]),
                 _: 1
@@ -5965,8 +5966,8 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-qapps-root": { hash: "a9cd92db", make: function (Vue) {
-            const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent, createElementVNode: _createElementVNode, vShow: _vShow, withModifiers: _withModifiers } = Vue
+        "m-qapps-root": { hash: "9ce340b9", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, withModifiers: _withModifiers, withKeys: _withKeys, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent, createElementVNode: _createElementVNode, vShow: _vShow } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_btn = _resolveComponent("q-btn")
@@ -6099,7 +6100,8 @@
                                                 clickable: "",
                                                 active: subscreen.active,
                                                 "active-class": "text-primary text-weight-medium",
-                                                to: subscreen.pathWithParams
+                                                to: subscreen.pathWithParams,
+                                                onKeydown: _withKeys(_withModifiers(() => {}, ["prevent"]), ["enter"])
                                               }, {
                                                 default: _withCtx(() => [
                                                   _createVNode(_component_q_item_section, { avatar: "" }, {
@@ -6134,7 +6136,7 @@
                                                   }, 1024)
                                                 ]),
                                                 _: 2
-                                              }, 1032, ["active", "to"])), [
+                                              }, 1032, ["active", "to", "onKeydown"])), [
                                                 [_directive_close_popup]
                                               ])
                                             }), 128))
@@ -6208,7 +6210,8 @@
                                                                     clickable: "",
                                                                     active: subscreen.active,
                                                                     "active-class": "text-primary text-weight-medium",
-                                                                    to: subscreen.pathWithParams
+                                                                    to: subscreen.pathWithParams,
+                                                                    onKeydown: _withKeys(_withModifiers(() => {}, ["prevent"]), ["enter"])
                                                                   }, {
                                                                     default: _withCtx(() => [
                                                                       _createVNode(_component_q_item_section, { avatar: "" }, {
@@ -6243,7 +6246,7 @@
                                                                       }, 1024)
                                                                     ]),
                                                                     _: 2
-                                                                  }, 1032, ["active", "to"])), [
+                                                                  }, 1032, ["active", "to", "onKeydown"])), [
                                                                     [_directive_close_popup]
                                                                   ])
                                                                 }), 128))

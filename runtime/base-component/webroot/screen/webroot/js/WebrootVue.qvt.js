@@ -3319,10 +3319,15 @@
         name: "mChart",
         props: { config: { type: Object, required: true }, height: { type: String, default: "400px" }, width: { type: String, default: "100%" } },
         template: '<div class="chart-container" style="position:relative;" :style="{height:height,width:width}"><canvas ref="canvas"></canvas></div>',
+        computed: { themeDark() { return !!(this.$q && this.$q.dark && this.$q.dark.isActive); } },
         mounted() {
             moqui.loadScript("/libs/chartjs/chart.umd.min.js", null, () => !!root.Chart).then(() => {
+                if (!this.$refs.canvas) return;
                 // the chart keeps its own copy of the config, a reactive object would be walked by Chart.js
-                this.instance = new root.Chart(this.$refs.canvas, moqui.deepCopy(this.config));
+                const config = moqui.deepCopy(this.config);
+                // Scales are resolved by Chart.js before this hook, including implicit x/y or radial scales.
+                config.plugins = (config.plugins || []).concat({ id: "moquiTheme", beforeUpdate: (chart) => this.applyTheme(chart) });
+                this.instance = new root.Chart(this.$refs.canvas, config);
             }, (err) => console.error("Error loading m-chart script: " + err));
         },
         watch: {
@@ -3335,6 +3340,42 @@
                     if (val.options) this.instance.options = moqui.deepCopy(val.options);
                     this.instance.update();
                 }
+            },
+            themeDark() {
+                this.$nextTick(() => {
+                    // Repaint the existing instance so interactive bounds and dataset state survive.
+                    if (this.instance) this.instance.update("none");
+                });
+            }
+        },
+        methods: {
+            applyTheme(chart) {
+                const authored = this.config.options || {};
+                const style = root.getComputedStyle(this.$refs.canvas);
+                const color = authored.color === undefined ? style.color : authored.color;
+                const surface = style.getPropertyValue("--m-panel-bg").trim() || (this.themeDark ? "#1d1d1d" : "#fff");
+                // Chart.js routes these defaults to its global color, not the canvas or chart-level color.
+                const text = (target, source) => { if (target && (!source || source.color === undefined)) target.color = color; };
+                text(chart.options, authored);
+                const plugins = chart.options.plugins, specified = authored.plugins || {};
+                if (plugins) {
+                    text(plugins.title, specified.title);
+                    text(plugins.subtitle, specified.subtitle);
+                    if (plugins.legend) {
+                        text(plugins.legend.labels, specified.legend && specified.legend.labels);
+                        text(plugins.legend.title, specified.legend && specified.legend.title);
+                    }
+                }
+                Object.keys(chart.scales).forEach((id) => {
+                    const scale = chart.scales[id].options, source = (authored.scales || {})[id] || {};
+                    text(scale.ticks, source.ticks);
+                    // Radial ticks have a pale default backdrop; theme the pair so dark text defaults stay readable.
+                    if (scale.ticks && scale.ticks.showLabelBackdrop && (!source.ticks || source.ticks.backdropColor === undefined)) {
+                        scale.ticks.backdropColor = surface;
+                    }
+                    text(scale.title, source.title);
+                    text(scale.pointLabels, source.pointLabels);
+                });
             }
         },
         beforeUnmount() { if (this.instance) { this.instance.destroy(); this.instance = null; } }
@@ -5169,13 +5210,13 @@
     };
 
     // The shell drawer: the rows of moqui.drawerRows, or in mini (the rail) the apps alone as icons. An app with no image has the
-    // first letter of its title.
+    // first letter of its title. Routed QItems activate on keyup; prevent a second, native Enter click on keydown.
     component("m-menu-drawer", {
         name: "mMenuDrawer",
         props: { mini: Boolean },
         template:
             '<q-list dense class="m-drawer" :class="{\'m-drawer-mini\': mini}">' +
-                '<q-item v-for="row in shownRows" :key="row.key" :to="row.to || undefined" :clickable="!!row.to" :title="mini ? undefined : row.title"' +
+                '<q-item v-for="row in shownRows" :key="row.key" :to="row.to || undefined" :clickable="!!row.to" :title="mini ? undefined : row.title" @keydown.enter.prevent' +
                         ' :class="rowClass(row)" :style="rowStyle(row)">' +
                     '<q-item-section v-if="row.kind === \'app\' || row.image || row.kind === \'find\'" avatar>' +
                         '<q-icon v-if="row.kind === \'find\' && !row.image" name="sym_o_bookmark" size="xs"></q-icon>' +
@@ -8885,11 +8926,12 @@
         "        </q-btn>\n" +
         // the current app's title; the theme's title outside an app (the AppList). In an app the title opens the menu of the
         // app root's subscreens (the top-level screens): the menu the app-root breadcrumb had before the trail started below it.
+        // The routed menu items leave keyboard activation to Quasar's keyup handler, as the drawer does.
         // (below 600 px the launcher stands for it: the title is hidden, style-guide §2.2 and §7)
         "        <q-btn v-if=\"appScreenMenu\" flat dense no-caps id=\"m-app-screens\" class=\"m-app-screens text-subtitle1 text-weight-medium\" :class=\"handheld ? '' : 'gt-xs'\">\n" +
         "            {{headerTitle}}<q-icon name=\"arrow_drop_down\" size=\"xs\"></q-icon>\n" +
         "            <q-menu anchor=\"bottom left\" self=\"top left\"><q-list dense style=\"min-width:200px;\">\n" +
-        "                <q-item v-for=\"subscreen in appScreenMenu.subscreens\" :key=\"subscreen.name\" clickable v-close-popup :active=\"subscreen.active\" active-class=\"text-primary text-weight-medium\" :to=\"subscreen.pathWithParams\">\n" +
+        "                <q-item v-for=\"subscreen in appScreenMenu.subscreens\" :key=\"subscreen.name\" clickable v-close-popup :active=\"subscreen.active\" active-class=\"text-primary text-weight-medium\" :to=\"subscreen.pathWithParams\" @keydown.enter.prevent>\n" +
         "                    <q-item-section avatar>\n" +
         "                        <m-menu-icon v-if=\"subscreen.image && subscreen.imageType === 'icon'\" :name=\"subscreen.image\" size=\"xs\"></m-menu-icon>\n" +
         "                        <img v-else-if=\"subscreen.image\" :src=\"subscreen.image\" :alt=\"subscreen.title\" width=\"18\" class=\"invertible\">\n" +
@@ -8907,7 +8949,7 @@
         "                <q-breadcrumbs-el v-else-if=\"navMenuItem.subscreens && navMenuItem.subscreens.length && !navMenuItem.hasTabMenu\" class=\"cursor-pointer\">\n" +
         "                    {{navMenuItem.title}}<q-icon name=\"arrow_drop_down\" size=\"xs\"></q-icon>\n" +
         "                    <q-menu anchor=\"bottom left\" self=\"top left\"><q-list dense style=\"min-width:200px;\">\n" +
-        "                        <q-item v-for=\"subscreen in navMenuItem.subscreens\" :key=\"subscreen.name\" clickable v-close-popup :active=\"subscreen.active\" active-class=\"text-primary text-weight-medium\" :to=\"subscreen.pathWithParams\">\n" +
+        "                        <q-item v-for=\"subscreen in navMenuItem.subscreens\" :key=\"subscreen.name\" clickable v-close-popup :active=\"subscreen.active\" active-class=\"text-primary text-weight-medium\" :to=\"subscreen.pathWithParams\" @keydown.enter.prevent>\n" +
         "                            <q-item-section avatar>\n" +
         "                                <m-menu-icon v-if=\"subscreen.image && subscreen.imageType === 'icon'\" :name=\"subscreen.image\" size=\"xs\"></m-menu-icon>\n" +
         "                                <img v-else-if=\"subscreen.image\" :src=\"subscreen.image\" :alt=\"subscreen.title\" width=\"18\" class=\"invertible\">\n" +

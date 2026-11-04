@@ -10,6 +10,30 @@ const ops = moqui.devAide.screenOps;
 const blocks = moqui.devAide.blocks;
 const el = (name, path, attrs, children, line) => ({ name, path, attrs: attrs || [], children: children || [], line: line || 0 });
 
+test("a new screen preview retires its old frame without hiding buffer preparation errors", () => {
+    const render = moqui.qvt.components["m-dev-screen-view"].methods.render;
+    let complete, fail, failure;
+    const old = {pageLeaving: false};
+    const vm = {view: {urlPath: "/qapps/upapp"}, buffers: () => [], mode: "design", version: 0,
+        bufferId: "test", frameSrc: "old", $refs: {frame: {contentWindow: {moqui: old, scrollY: 80}}},
+        ctx: {post: () => ({then: (ok, error) => {complete = ok; fail = error;}}), fail: error => {failure = error;}}};
+    render.call(vm);
+    assert.equal(old.pageLeaving, false);
+    fail("buffer unavailable");
+    assert.equal(failure, "buffer unavailable");
+    assert.equal(old.pageLeaving, false);
+    render.call(vm);
+    complete();
+    assert.equal(old.pageLeaving, true);
+    assert.equal(vm.scrollY, 80);
+    assert.ok(vm.frameSrc.includes("moquiPreview=buffer:test"));
+    vm.$refs.frame.contentWindow = {get scrollY() {throw new DOMException("Other origin", "SecurityError");}};
+    render.call(vm);
+    complete();
+    assert.equal(vm.scrollY, 0);
+    assert.ok(vm.frameSrc.endsWith("&v=2"));
+});
+
 // a screen: widgets with a named box holding a list, an unnamed container, a named one, a form with a layout
 const screen = el("screen", [], [], [
     el("transition", [0], [["name", "save"]]),

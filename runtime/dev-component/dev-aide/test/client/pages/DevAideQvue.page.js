@@ -6,6 +6,28 @@
 
 const pure = moqui.devAide.pure;
 
+test("a new preview marks only the departing frame after its buffer is ready", () => {
+    const render = moqui.qvt.components["m-dev-qvue-view"].methods.render;
+    let complete, fail, failure;
+    const old = {pageLeaving: false};
+    const vm = {view: {urlPath: "/qapps/board"}, tab: {text: "", saved: ""}, mode: "design", version: 0,
+        bufferId: "test", frameSrc: "old", $refs: {frame: {contentWindow: {moqui: old}}},
+        ctx: {post: () => ({then: (ok, error) => {complete = ok; fail = error;}}), fail: error => {failure = error;}}};
+    render.call(vm);
+    assert.equal(old.pageLeaving, false, "the visible preview remains active while its replacement is prepared");
+    fail("buffer unavailable");
+    assert.equal(failure, "buffer unavailable");
+    assert.equal(old.pageLeaving, false);
+    render.call(vm);
+    complete();
+    assert.equal(old.pageLeaving, true);
+    assert.ok(vm.frameSrc.includes("moquiPreview=buffer:test"));
+    vm.$refs.frame.contentWindow = {get moqui() {throw new DOMException("Other origin", "SecurityError");}};
+    render.call(vm);
+    complete();
+    assert.ok(vm.frameSrc.endsWith("&v=2"), "an inaccessible old preview does not prevent its replacement");
+});
+
 const TEXT = "<!-- a screen -->\n<template><div class=\"row\">\n  <q-btn label=\"a > b\" @click=\"go\"/>\n  " +
     "<!-- <span>not</span> -->{{ a < b }}<template v-slot:x><b>x</b></template>\n</div></template>\n<script>const x = '<p>';</script>";
 

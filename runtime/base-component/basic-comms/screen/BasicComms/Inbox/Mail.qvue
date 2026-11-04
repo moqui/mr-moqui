@@ -28,7 +28,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- the search line and the view's tools -->
     <div class="row items-center no-wrap q-px-sm q-py-xs q-gutter-x-xs">
         <q-btn v-if="isPhone" flat round dense icon="sym_o_menu" :aria-label="t('Folders')" @click="railDialog = true"><q-tooltip>{{t('Folders')}}</q-tooltip></q-btn>
-        <q-btn v-else flat round dense :icon="railCollapsed ? 'sym_o_left_panel_open' : 'sym_o_left_panel_close'" :aria-label="t('Collapse the folders')"
+        <q-btn v-else flat round dense :icon="railCollapsed ? 'sym_o_left_panel_open' : 'sym_o_left_panel_close'" :aria-label="railCollapsed ? t('Show the folders') : t('Collapse the folders')"
                 @click="toggleRail"><q-tooltip>{{railCollapsed ? t('Show the folders') : t('Collapse the folders')}}</q-tooltip></q-btn>
         <div class="col" style="max-width:760px" @keydown.enter.prevent="runSearch" @keydown.esc="clearSearchInput">
             <m-text-line v-model="searchInput" name="inboxSearch" id="InboxSearch" :label="t('Search mail and messages')"

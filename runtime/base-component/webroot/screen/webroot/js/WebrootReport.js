@@ -72,7 +72,7 @@
     report.color = (at) => {
         const names = ["primary", "positive", "warning", "info", "negative", "secondary", "accent"];
         const name = names[at % names.length];
-        return root.getComputedStyle && root.document ? root.getComputedStyle(root.document.documentElement).getPropertyValue("--q-" + name).trim() || name : name;
+        return root.getComputedStyle && root.document ? root.getComputedStyle(root.document.body || root.document.documentElement).getPropertyValue("--q-" + name).trim() || name : name;
     };
     report.annotationPositions = (frame, annotations) => {
         const field = report.fields(frame).find((item) => item.type === "time" || ["time", "timestamp", "bucket_start", "start"].includes(item.name));
@@ -1407,10 +1407,10 @@
             const h = root.Vue.h, panels = this.dashboard.panels || {};
             const entries = Array.isArray(panels) ? panels.map((panel, at) => [panel.id || String(at), panel]) : Object.entries(panels);
             const byId = Object.fromEntries(entries);
-            const panel = (id, position) => byId[id] ? h("div", { key: id, style: position || {},onFocusin:()=>{this.selectedPanel=id;},onMouseenter:()=>{this.selectedPanel=id;} }, [h(components["m-report-panel"], { ref:instance=>{this.panelRefs[id]=instance;},panel: byId[id], frames: this.frames[id] || byId[id].frames,
+            const panel = (id, position) => byId[id] ? h("div", { key: id, style: Object.assign({minWidth:"0"},position),onFocusin:()=>{this.selectedPanel=id;},onMouseenter:()=>{this.selectedPanel=id;} }, [h(components["m-report-panel"], { ref:instance=>{this.panelRefs[id]=instance;},panel: byId[id], frames: this.frames[id] || byId[id].frames,
                 frame: byId[id].frame || { fields: [] }, dashboardId: this.dashboard.definitionId, panelId: id, screenUrl: this.dashboard.screenUrl, range: this.dashboard.absoluteTime, variables: this.dashboard.variableValues, syncGroup:this.syncGroup,filters:this.dashboard.filters || [],onFilter:this.addFilter,
                 editable: !!this.dashboard.editable && !this.dashboard.embedded, embedded: !!this.dashboard.embedded, single: !!this.dashboard.panelId })]) : h("p", { role: "alert" }, "Panel " + id + " is unavailable");
-            const auto = (items) => h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,360px),1fr))", gap: "12px" } }, items);
+            const auto = (items) => h("div", { style: { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,640px),1fr))", gap: "12px" } }, items);
             const layout = (node, path) => {
                 if (!node) return auto(entries.map(([id]) => panel(id)));
                 if (node.panelId) return panel(node.panelId);

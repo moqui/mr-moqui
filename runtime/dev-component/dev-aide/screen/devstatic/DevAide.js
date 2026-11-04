@@ -293,8 +293,8 @@
                 tabs: [], active: null, cursor: { line: 1, column: 1 }, lastReload: "", restartNeeded: false,
                 search: { query: "", regex: false, caseSensitive: false, pathFilter: "", results: [], running: false, truncated: false },
                 diff: null, commitForm: { summary: "", body: "", amend: false, signOff: false, skipHooks: false, task: "" },
-                log: [], commitDetail: null, goto: { open: false, filter: "", files: [] }, busy: "", schemas: {},
-                refs: { title: "", items: [], loading: false }, artifactGoto: { open: false, text: "", results: [] },
+                log: [], commitDetail: null, goto: { open: false, filter: "", files: [], loading: false, error: "" }, busy: "", schemas: {},
+                refs: { title: "", items: [], loading: false }, artifactGoto: { open: false, text: "", results: [], loading: false, error: "" },
                 // an agent's change set under review (?review=<approvalId>): its files with their texts on disk and as proposed
                 review: null, editorView: null, viewsLoaded: {},
                 narrow: !!(root.innerWidth && root.innerWidth < 1024), offReload: null, reloadTimer: null,
@@ -834,10 +834,17 @@
                 }, (error) => { this.search.running = false; this.fail(error); });
             },
             openGoto() {
-                this.goto.open = true; this.goto.filter = "";
-                this.get("files", { rootId: this.rootId }).then((answer) => { this.goto.files = answer.files || []; }, this.fail);
+                this.goto = { open: true, filter: "", files: [], loading: true, error: "" };
+                const dialog = this.goto;
+                return this.get("files", { rootId: this.rootId }).then((answer) => {
+                    if (this.goto !== dialog) return;
+                    dialog.files = answer.files || []; dialog.loading = false;
+                }, (error) => {
+                    if (this.goto !== dialog) return;
+                    dialog.loading = false; dialog.error = pure.errorText(error);
+                });
             },
-            gotoFile(path) { this.goto.open = false; if (path) this.openFile(path); },
+            gotoFile(path) { if (!path || this.goto.loading) return; this.goto.open = false; this.openFile(path); },
             // ---- Assist on this page (plans/design-dev-aide.md 13.4) ----
             editorState() {
                 const tab = this.current;
@@ -962,15 +969,21 @@
                     this.refs.loading = false;
                 }, (error) => { this.refs.loading = false; this.fail(error); });
             },
-            openArtifactGoto() { this.artifactGoto = { open: true, text: "", results: [] }; },
+            openArtifactGoto() { this.artifactGoto = { open: true, text: "", results: [], loading: false, error: "" }; },
             searchArtifacts() {
-                const text = this.artifactGoto.text;
-                if (!text || text.length < 2) { this.artifactGoto.results = []; return; }
-                this.get("artifacts", { text, limit: 30 }).then((answer) => {
-                    if (this.artifactGoto.text === text) this.artifactGoto.results = answer.artifacts || [];
-                }, this.fail);
+                const dialog = this.artifactGoto, text = dialog.text;
+                dialog.results = []; dialog.error = "";
+                if (!text || text.length < 2) { dialog.loading = false; return; }
+                dialog.loading = true;
+                return this.get("artifacts", { text, limit: 30 }).then((answer) => {
+                    if (this.artifactGoto !== dialog || dialog.text !== text) return;
+                    dialog.results = answer.artifacts || []; dialog.loading = false;
+                }, (error) => {
+                    if (this.artifactGoto !== dialog || dialog.text !== text) return;
+                    dialog.loading = false; dialog.error = pure.errorText(error);
+                });
             },
-            gotoArtifact(artifact) { this.artifactGoto.open = false; if (artifact) this.openArtifact(artifact); },
+            gotoArtifact(artifact) { if (!artifact || this.artifactGoto.loading) return; this.artifactGoto.open = false; this.openArtifact(artifact); },
             // ---- changes and commits ----
             paths(entries) { return entries.map((entry) => entry.path).join(","); },
             stage(entries) { this.post("stage", { rootId: this.rootId, paths: this.paths(entries) }).then(() => this.refreshStatus(), this.fail); },
@@ -1265,7 +1278,8 @@
       <span class="text-caption m-muted" v-if="status.upstream">↑{{status.ahead}} ↓{{status.behind}}</span>
       <span class="text-caption" id="DevChangeCount">{{changeCount}} changed</span>
     </template>
-    <q-chip v-else-if="root" dense square icon="sym_o_folder_off" id="DevNotGit">{{root.label}} · Not a git repository</q-chip>
+    <span v-else-if="isGit" class="text-caption m-muted" role="status">Loading repository status…</span>
+    <q-chip v-else-if="root" dense square icon="sym_o_folder_off" id="DevNotGit">{{root.label}} · {{root.kind === 'git' ? 'Git is unavailable' : 'Not a git repository'}}</q-chip>
     <q-space></q-space>
     <q-btn dense flat no-caps label="Fetch" :disable="!isGit || !canWrite" :loading="busy === 'fetch'" @click="network('fetch')"><q-tooltip v-if="!isGit">Not a git repository</q-tooltip></q-btn>
     <q-btn dense flat no-caps label="Pull" :disable="!isGit || !canWrite" :loading="busy === 'pull'" @click="network('pull')"></q-btn>
@@ -1309,10 +1323,10 @@
         <q-btn-toggle dense flat no-caps v-model="rail" :options="[{ label: 'Files', value: 'files' }, { label: 'Search', value: 'search' }, { label: 'Tasks', value: 'tasks' }]"
             @update:model-value="$event === 'tasks' && loadTasks()" id="DevRail"></q-btn-toggle>
         <q-space></q-space>
-        <q-btn dense flat round size="sm" icon="sym_o_note_add" :disable="!canWrite" @click="newFile(null)"><q-tooltip>New file</q-tooltip></q-btn>
-        <q-btn dense flat round size="sm" icon="sym_o_create_new_folder" :disable="!canWrite" @click="newFolder(null)"><q-tooltip>New folder</q-tooltip></q-btn>
-        <q-btn dense flat round size="sm" icon="sym_o_search" @click="openGoto"><q-tooltip>Go to file (Ctrl+P)</q-tooltip></q-btn>
-        <q-btn dense flat round size="sm" icon="sym_o_data_object" @click="openArtifactGoto" id="DevGotoArtifact"><q-tooltip>Go to artifact (Ctrl+Shift+O)</q-tooltip></q-btn>
+        <q-btn dense flat round size="sm" icon="sym_o_note_add" aria-label="New file" :disable="!canWrite" @click="newFile(null)"><q-tooltip>New file</q-tooltip></q-btn>
+        <q-btn dense flat round size="sm" icon="sym_o_create_new_folder" aria-label="New folder" :disable="!canWrite" @click="newFolder(null)"><q-tooltip>New folder</q-tooltip></q-btn>
+        <q-btn dense flat round size="sm" icon="sym_o_search" aria-label="Go to file" @click="openGoto"><q-tooltip>Go to file (Ctrl+P)</q-tooltip></q-btn>
+        <q-btn dense flat round size="sm" icon="sym_o_data_object" aria-label="Go to artifact" @click="openArtifactGoto" id="DevGotoArtifact"><q-tooltip>Go to artifact (Ctrl+Shift+O)</q-tooltip></q-btn>
       </div>
       <div v-show="rail === 'files'" class="col scroll">
         <m-file-tree v-if="rootId" :key="rootId" :load="loadDir" :reload-key="treeKey" v-model:selected="selected" @open="openFile" @menu="treeMenu"></m-file-tree>
@@ -1558,21 +1572,31 @@
       <m-diff-view v-if="diff && !tree" class="col" :original="diff.original" :modified="diff.modified" :file-name="diff.path"></m-diff-view>
     </div>
   </div>
-  <q-dialog v-model="artifactGoto.open">
+  <q-dialog v-model="artifactGoto.open" aria-labelledby="DevGotoArtifactTitle">
     <q-card style="width: 44rem; max-width: 95vw">
-      <q-card-section class="q-pb-none"><q-input dense outlined autofocus v-model="artifactGoto.text" placeholder="Go to artifact: OrdHdr, place#Order"
+      <q-card-section class="q-pb-none"><h2 class="text-h6 q-my-none" id="DevGotoArtifactTitle">Go to artifact</h2></q-card-section>
+      <q-card-section><q-input dense outlined autofocus v-model="artifactGoto.text" label="Artifact name" hint="Use a name or abbreviation, such as UserAccount or UsrAcct."
           debounce="200" @update:model-value="searchArtifacts" @keyup.enter="gotoArtifact(artifactGoto.results[0])" id="DevGotoArtifactInput"></q-input></q-card-section>
+      <q-card-section v-if="artifactGoto.loading" role="status" class="m-muted">Searching artifacts…</q-card-section>
+      <q-card-section v-else-if="artifactGoto.error" role="alert"><p class="text-negative">{{artifactGoto.error}}</p><q-btn flat no-caps label="Try again" @click="searchArtifacts"></q-btn></q-card-section>
+      <q-card-section v-else-if="!artifactGoto.results.length" class="m-muted" role="status">{{artifactGoto.text.length &lt; 2 ? 'Enter at least two characters to find an entity, service, screen or other artifact.' : 'No artifacts match. Try a shorter name or a different abbreviation.'}}</q-card-section>
       <q-list dense class="scroll" style="max-height: 50vh"><q-item v-for="artifact in artifactGoto.results" :key="artifact.id" clickable @click="gotoArtifact(artifact)">
         <q-item-section><q-item-label>{{artifact.shortName}} <span class="m-muted">{{artifact.kind}}</span></q-item-label>
           <q-item-label caption>{{artifact.component}}{{artifact.upstream ? '' : ' · site'}} · {{artifact.name}}</q-item-label></q-item-section></q-item></q-list>
+      <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn></q-card-actions>
     </q-card>
   </q-dialog>
-  <q-dialog v-model="goto.open">
+  <q-dialog v-model="goto.open" aria-labelledby="DevGotoTitle">
     <q-card style="width: 40rem; max-width: 95vw">
-      <q-card-section class="q-pb-none"><q-input dense outlined autofocus v-model="goto.filter" placeholder="Go to file"
+      <q-card-section class="q-pb-none"><h2 class="text-h6 q-my-none" id="DevGotoTitle">Go to file</h2></q-card-section>
+      <q-card-section><q-input dense outlined autofocus v-model="goto.filter" label="File name or path"
           @keyup.enter="gotoFile(gotoMatches[0])" id="DevGotoInput"></q-input></q-card-section>
+      <q-card-section v-if="goto.loading" role="status" class="m-muted">Loading files…</q-card-section>
+      <q-card-section v-else-if="goto.error" role="alert"><p class="text-negative">{{goto.error}}</p><q-btn flat no-caps label="Try again" @click="openGoto"></q-btn></q-card-section>
+      <q-card-section v-else-if="!gotoMatches.length" class="m-muted" role="status">{{goto.filter ? 'No files match. Try a shorter name or another part of the path.' : 'This root has no files to open.'}}</q-card-section>
       <q-list dense class="scroll" style="max-height: 50vh"><q-item v-for="path in gotoMatches" :key="path" clickable @click="gotoFile(path)">
         <q-item-section>{{path}}</q-item-section></q-item></q-list>
+      <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn></q-card-actions>
     </q-card>
   </q-dialog>
 </div>`

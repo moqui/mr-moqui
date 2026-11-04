@@ -71,6 +71,8 @@ body:not(.body--dark) .q-page { background:var(--m-page-bg); }
    q-ma-sm, 8px) lets the content breathe the way the consumer apps do. The dashboard's 8px sides are the q-mx-sm class
    the template writes, so its cards stay flush with the boxes, which carry q-ma-sm. */
 .m-container-box { margin-top:12px; margin-bottom:12px; }
+/* Opt-in section jumps leave the heading below the fixed 50px shell toolbar. */
+.m-anchor-section { scroll-margin-top:66px; }
 .m-dashboard { margin-top:12px; margin-bottom:0; }
 /* the container-row's gutter: cancels the columns' q-px-xs (4px) on the outside, so the boxes in the columns stay flush
    with the full-width boxes. This Quasar build's q-gutter-x-* rules are left-only (no right margin), so the row margin

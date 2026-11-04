@@ -669,7 +669,7 @@ test("drafts: this browser's storage under the scope on the web", async () => {
     try {
         moqui.storageScope = "s1";
         await moqui.drafts.ready();
-        await moqui.drafts.put("ironstone.compose.t1", "{\"a\":1}");
+        assert.equal(await moqui.drafts.put("ironstone.compose.t1", "{\"a\":1}"), true);
         assert.equal(localStorage.getItem("s1:ironstone.compose.t1"), "{\"a\":1}");
         assert.equal(moqui.drafts.get("ironstone.compose.t1"), "{\"a\":1}");
         assert.deepEqual(moqui.drafts.keys("ironstone.compose."), ["ironstone.compose.t1"]);
@@ -681,6 +681,13 @@ test("drafts: this browser's storage under the scope on the web", async () => {
         assert.equal(moqui.drafts.get("ironstone.compose.t2"), null);
         assert.equal(await moqui.drafts.saveFile(new Blob(["x"])), null, "no files kept on the web");
         assert.equal(moqui.hostOutbox(), null);
+        const local = moqui.drafts.local;
+        try {
+            moqui.drafts.local = () => ({setItem() { throw new Error("quota exceeded"); }});
+            assert.equal(await moqui.drafts.put("ironstone.compose.t1", "lost"), false, "a refused write is not reported as saved");
+            moqui.drafts.local = () => null;
+            assert.equal(await moqui.drafts.put("ironstone.compose.t1", "lost"), false, "unavailable storage is not a successful save");
+        } finally { moqui.drafts.local = local; }
     } finally {
         moqui.storageScope = savedScope;
         localStorage.removeItem("s1:ironstone.compose.t1");
@@ -743,11 +750,37 @@ test("drafts: the desktop client's store, with this browser's drafts moved in on
         assert.equal(calls.length, 1);
         // through the host from now on
         assert.equal(moqui.drafts.get("boss.chat.draft.R1"), "<p>old</p>");
-        await moqui.drafts.put("ironstone.compose.y", "{}", ["ab12-a.txt"]);
+        assert.equal(await moqui.drafts.put("ironstone.compose.y", "{}", ["ab12-a.txt"]), true);
         assert.deepEqual(kept.get("ironstone.compose.y"), { value: "{}", files: ["ab12-a.txt"] });
         assert.deepEqual(moqui.drafts.files("ironstone.compose.y"), ["ab12-a.txt"]);
         assert.deepEqual(moqui.drafts.keys("ironstone.compose.").sort(), ["ironstone.compose.n", "ironstone.compose.x", "ironstone.compose.y"]);
         assert.equal(localStorage.getItem("acct1:ironstone.compose.y"), null, "not in this browser");
+        const put = host.put, remove = host.remove;
+        try {
+            const pending = [];
+            host.put = () => new Promise((resolve, reject) => pending.push({resolve, reject}));
+            const first = moqui.drafts.put("boss.chat.draft.R2", "first text");
+            assert.equal(moqui.drafts.get("boss.chat.draft.R2"), "first text", "chat can read its write before host persistence");
+            assert.ok(moqui.drafts.keys("boss.chat.draft.").includes("boss.chat.draft.R2"), "the synchronous draft-change event sees the new key");
+            const latest = moqui.drafts.put("boss.chat.draft.R2", "latest text");
+            await Promise.resolve();
+            pending[0].reject(new Error("storage full"));
+            assert.equal(await first, false, "a refused host write is not reported as saved");
+            assert.equal(moqui.drafts.get("boss.chat.draft.R2"), "latest text", "a late failure cannot roll back newer UI text");
+            pending[1].reject(new Error("storage full"));
+            assert.equal(await latest, false);
+            assert.equal(moqui.drafts.get("boss.chat.draft.R2"), "latest text", "unsaved text stays in memory for recovery");
+            host.remove = () => new Promise((resolve, reject) => pending.push({resolve, reject}));
+            const removed = moqui.drafts.remove("boss.chat.draft.R2");
+            assert.equal(moqui.drafts.get("boss.chat.draft.R2"), null, "clearing is visible before the host answers");
+            assert.ok(!moqui.drafts.keys("boss.chat.draft.").includes("boss.chat.draft.R2"));
+            host.put = put;
+            assert.equal(await moqui.drafts.put("boss.chat.draft.R2", "new draft after clearing"), true);
+            pending[2].reject(new Error("host unavailable"));
+            assert.equal(await removed, false, "a refused removal is reported truthfully");
+            assert.equal(moqui.drafts.get("boss.chat.draft.R2"), "new draft after clearing", "a late removal cannot erase newer text");
+        } finally { host.put = put; host.remove = remove; }
+        await moqui.drafts.remove("boss.chat.draft.R2");
         await moqui.drafts.remove("ironstone.compose.y");
         assert.equal(kept.has("ironstone.compose.y"), false);
         assert.equal(moqui.drafts.get("ironstone.compose.y"), null);

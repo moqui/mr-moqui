@@ -25,16 +25,24 @@ feature("shipped definitions explain the copy workflow and expose version histor
         page.text().includes("Export with references")
     },
 })
-feature("the authorized log search is usable without the qvt shell", {
+feature("the authorized log search retains controls after an invalid query without the qvt shell", {
     expect() {
         const page = monitoringPage()
         page.goto("/apps/monitor/Logs?from=now-1h&thru=now").status == 200
         page.text().includes("Queries run with your dataset permissions")
         page.text().includes("Query")
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
+        page.evaluate(()=>{const input=document.querySelector('form[name="SearchOptions"] input[name="queryString"]');input.value='(';input.closest('form').querySelector('[type="submit"]').click();return true})
+        page.waitFor(()=>!!document.querySelector('#ExploreQueryError'))
+        page.evaluate(()=>document.querySelector('form[name="SearchOptions"] input[name="queryString"]').value)==='('
+        page.text().includes('Correct the query and search again')
+        page.evaluate(()=>{const input=document.querySelector('form[name="SearchOptions"] input[name="queryString"]');input.value='severity_text:ERROR';input.closest('form').querySelector('[type="submit"]').click();return true})
+        page.waitFor(()=>!document.querySelector('#ExploreQueryError') && !!document.querySelector('form[name="SearchOptions"] input[name="queryString"]'))
+        page.evaluate(()=>document.querySelector('form[name="SearchOptions"] input[name="queryString"]').value)==='severity_text:ERROR'
+        page.text().includes('Queries run with your dataset permissions')
     },
 })
-feature("Explore renders the compiler-free query editor and applies a typed filter through its form", {
+feature("Explore applies a typed filter and recovers from an invalid query through its form", {
     expect() {
         const page=monitoringPage()
         page.goto("/qapps/dashboards/Explore?datasetId=otel_logs&from=now-1h&thru=now").status==200
@@ -54,8 +62,21 @@ feature("Explore renders the compiler-free query editor and applies a typed filt
             Array.from(editor.querySelectorAll('button')).find(button=>button.textContent==='Disable').click();return true
         })
         page.waitFor(()=>document.querySelector('[aria-label="Query filters"]').textContent.includes('(disabled)'))
-        page.evaluate(()=>{document.querySelector('input[aria-label="Search query"]').closest('form').requestSubmit();return true})
-        page.waitFor(()=>!!document.querySelector('input[aria-label="Search query"]'))
+        page.evaluate(()=>{const input=document.querySelector('input[aria-label="Search query"]');input.value='(';input.dispatchEvent(new Event('input',{bubbles:true}));return true})
+        page.evaluate(()=>{document.querySelector('input[aria-label="Search query"]').closest('form').querySelector('[type="submit"]').click();return true})
+        page.waitFor(()=>!!document.querySelector('#ExploreQueryError'))
+        page.evaluate(()=>document.querySelector('input[aria-label="Search query"]').value)==='('
+        page.evaluate(()=>document.querySelector('[aria-label="Query filters"]').textContent.includes('(disabled)'))
+        page.evaluate(()=>document.querySelector('input[aria-label="Search query"]').closest('form').querySelector('[name="from"]').value)==='now-1h'
+        page.evaluate(()=>!document.querySelector('.m-report-panel'))
+        page.getByRole('button',{name:'Save search / add to dashboard'}).count()===0
+        page.text().includes('Correct the query and search again')
+        page.evaluate(()=>{const input=document.querySelector('input[aria-label="Search query"]');input.value='severity_text:ERROR';input.dispatchEvent(new Event('input',{bubbles:true}));return true})
+        page.evaluate(()=>{document.querySelector('input[aria-label="Search query"]').closest('form').querySelector('[type="submit"]').click();return true})
+        page.waitFor(()=>!document.querySelector('#ExploreQueryError') && !!document.querySelector('.m-report-panel'))
+        page.getByRole('button',{name:'Save search / add to dashboard'}).count()===1
+        page.evaluate(()=>document.querySelector('input[aria-label="Search query"]').value)==='severity_text:ERROR'
+        page.evaluate(()=>document.querySelector('[aria-label="Query filters"]').textContent.includes('(disabled)'))
         !/Error rendering|Exception in render|Internal Server Error/.test(page.text())
     },
 })

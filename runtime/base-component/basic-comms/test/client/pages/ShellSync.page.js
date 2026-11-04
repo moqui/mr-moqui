@@ -29,7 +29,7 @@ const room = { chatRoomId: "R1", roomTypeEnumId: "CrtPrivate", roomName: "Ops", 
 const server = {
     online: true,
     events: [message(4, "an older one"), message(5, "kept here"), message(6, "my own words", { senderUserId: "ann", senderName: "Ann" })],
-    compose: null
+    compose: null, saveError: null
 };
 // an encrypted room, its messages as the store keeps them (decrypted in the page: moqui.chat.openEvents, stood in for)
 const sealedRoom = Object.assign({}, room, { chatRoomId: "R3", roomName: "Sealed", displayName: "Sealed", encrypted: true, lastEventSeq: 3 });
@@ -70,6 +70,9 @@ moqui.request = (url, options) => {
     if (!server.online && method !== "GET") {
         moqui.noteAnswer(502, unreachableHeaders);
         return Promise.reject({ ok: false, status: 502, headers: unreachableHeaders, text: "The server could not be reached", json: undefined });
+    }
+    if (path === "/apps/BasicComms/Inbox/Compose/saveDraft" && server.saveError) {
+        return Promise.reject({ ok: false, status: 503, headers: plainHeaders, json: { errors: server.saveError } });
     }
     const headers = server.online ? plainHeaders : offlineHeaders;
     moqui.noteAnswer(200, headers);
@@ -413,6 +416,234 @@ test("Compose: offline, an internal message waits in the outbox where the server
     assert.equal(mail.id, "mE5", "by the draft's clientRef");
     server.online = true;
     server.compose = null;
+});
+
+test("Compose keeps unsaved changes open without an identity or after storage failures, and recovery preserves the message", async () => {
+    server.online = true;
+    server.compose = { identityList: [], fromValue: null, to: [],
+        subject: "Retain this draft", kind: "new" };
+    await open("/qapps/BasicComms/Inbox/Compose?subject=RetainThisDraft", "compose");
+    const compose = await until(() => root.$refs.view && root.$refs.view.state === "ready"
+        && root.$refs.view.draft.subject === "Retain this draft" && root.$refs.view, "the composer");
+    const setUrl = root.setUrl;
+    const desktop = window.moquiDesktop;
+    const put = drafts.put;
+    const local = moqui.drafts.local;
+    const request = moqui.request;
+    const closed = [];
+    root.setUrl = (url) => closed.push(url);
+    try {
+        compose.draft.body = "<p>Keep these words until they are saved.</p>";
+        delete window.moquiDesktop;
+        await window.Vue.nextTick();
+        const identityBanner = document.querySelector(".m-compose-no-from");
+        assert.ok(identityBanner && identityBanner.textContent.includes("No sending identity is available"));
+        const accounts = identityBanner.querySelector("a");
+        assert.equal(accounts.getAttribute("target"), "_blank", "account setup leaves the unsaved message open");
+        assert.ok(accounts.getAttribute("href").endsWith("/BasicComms/Settings/MailAccounts"));
+        const beforeSave = asked("/apps/BasicComms/Inbox/Compose/saveDraft", "POST").length;
+        await compose.close();
+        await window.Vue.nextTick();
+        assert.equal(closed.length, 0);
+        assert.equal(asked("/apps/BasicComms/Inbox/Compose/saveDraft", "POST").length, beforeSave, "missing From is explained before calling the service");
+        assert.ok(compose.saveError.includes("Add a mail account"));
+        assert.equal(compose.draft.subject, "Retain this draft");
+        assert.equal(compose.draft.body, "<p>Keep these words until they are saved.</p>");
+        compose.draft.fromValue = "identity:removed";
+        server.compose = { identityList: [{ value: "acct1", label: "ann@example.com", signatureHtml: "<p>Ann</p>" }], fromValue: "acct1", to: [], subject: "", body: "" };
+        button(identityBanner, "Refresh sending identities").click();
+        await until(() => !compose.refreshingIdentities && !compose.noFrom, "the sending identity is available");
+        assert.equal(compose.draft.fromValue, "acct1");
+        assert.equal(compose.draft.subject, "Retain this draft");
+        assert.equal(compose.draft.body, "<p>Keep these words until they are saved.</p>");
+        assert.deepEqual(asked("/apps/BasicComms/Inbox/Compose/composeData").slice(-1)[0].params, {}, "identity refresh cannot repeat draft/reply initialization");
+        window.moquiDesktop = desktop;
+        compose.savedAt = 1;
+        await window.Vue.nextTick();
+        server.saveError = "Draft storage is temporarily unavailable";
+        await compose.close();
+        await window.Vue.nextTick();
+        assert.equal(closed.length, 0, "closing cannot discard unsaved changes");
+        assert.equal(compose.dirty, true);
+        assert.equal(compose.draft.body, "<p>Keep these words until they are saved.</p>");
+        assert.equal(compose.savedText, "Not saved", "the previous Saved time is no longer presented as current");
+        let banner = document.querySelector(".m-compose-save-error");
+        assert.ok(banner && banner.textContent.includes(server.saveError), "the save failure is visible beside the draft");
+        assert.equal(banner.getAttribute("role"), "alert");
+        server.saveError = null;
+        const beforeRetry = asked("/apps/BasicComms/Inbox/Compose/saveDraft", "POST").length;
+        button(banner, "Retry save").click();
+        await until(() => !compose.saving && !compose.saveError && !compose.dirty, "the retry saved");
+        assert.equal(asked("/apps/BasicComms/Inbox/Compose/saveDraft", "POST").length, beforeRetry + 1,
+            "the first server-assigned draft id does not trigger another save");
+        assert.equal(compose.saveTimer, null, "the assigned id does not leave a redundant autosave timer");
+        assert.ok(!document.querySelector(".m-compose-save-error"));
+        assert.equal(asked("/apps/BasicComms/Inbox/Compose/saveDraft", "POST").slice(-1)[0].params.body,
+            "<p>Keep these words until they are saved.</p>");
+        await compose.close();
+        assert.equal(closed.length, 1, "closing now keeps the saved draft");
+        assert.ok(closed[0].endsWith("/Inbox"));
+
+        // A slow save acknowledges its own content, not edits made while it was in flight. Close waits for those too.
+        const pending = [];
+        moqui.request = (url, options) => {
+            const answer = request(url, options);
+            if (!String(url).endsWith("/Compose/saveDraft")) return answer;
+            return answer.then((result) => new Promise((resolve, reject) => {
+                pending.push({ params: clone(options.params), resolve: () => resolve(result), reject });
+            }));
+        };
+        compose.draft.body = "<p>The first server snapshot.</p>";
+        await window.Vue.nextTick();
+        const firstSave = compose.save();
+        await until(() => pending.length === 1, "the first server save waiting");
+        compose.draft.body = "<p>New words while the server saves.</p>";
+        await window.Vue.nextTick();
+        pending[0].resolve();
+        await until(() => pending.length === 2 || !compose.saving, "the old server answer handled");
+        assert.equal(compose.dirty, true, "an old server answer cannot mark newer text saved");
+        assert.equal(pending.length, 2, "newer text is saved without waiting for the debounce timer");
+        assert.equal(pending[1].params.body, "<p>New words while the server saves.</p>");
+        const closingServer = compose.close();
+        assert.equal(closed.length, 1, "Close waits for the current content");
+        pending[1].reject({ ok: false, status: 503, headers: plainHeaders, json: { errors: "The follow-up save failed" } });
+        await Promise.all([firstSave, closingServer]);
+        assert.equal(closed.length, 1, "a failed follow-up retains the composer");
+        assert.equal(compose.dirty, true);
+        assert.equal(compose.draft.body, "<p>New words while the server saves.</p>");
+        assert.ok(compose.saveError.includes("follow-up save failed"));
+        moqui.request = request;
+        await compose.save();
+        assert.equal(compose.dirty, false);
+        assert.equal(compose.saveTimer, null, "acknowledged content leaves no redundant autosave");
+
+        // An offline email cannot close just because the server failed: the host must persist the fallback.
+        server.online = false;
+        drafts.put = () => Promise.reject(new Error("Device storage is full"));
+        compose.draft.body = "<p>These offline changes must stay open.</p>";
+        await window.Vue.nextTick();
+        await compose.close();
+        await window.Vue.nextTick();
+        assert.equal(closed.length, 1);
+        assert.equal(compose.dirty, true);
+        assert.ok(compose.saveError.includes("This device could not keep the draft"));
+        drafts.put = put;
+        button(document.querySelector(".m-compose-save-error"), "Retry save").click();
+        await until(() => !compose.saving && !compose.saveError && !compose.dirty, "the offline draft persisted");
+        assert.equal(JSON.parse(kept.get(compose.emailLocalKey)).draft.body, "<p>These offline changes must stay open.</p>");
+        await compose.close();
+        assert.equal(closed.length, 2);
+
+        // The host's asynchronous local write has the same race; the local fallback survives an older server answer.
+        const localPending = [];
+        drafts.put = (key, value) => new Promise((resolve, reject) => {
+            localPending.push({ key, value, resolve: () => { kept.set(key, String(value)); resolve(); }, reject });
+        });
+        compose.draft.body = "<p>The first device snapshot.</p>";
+        await window.Vue.nextTick();
+        const localSave = compose.save();
+        await until(() => localPending.length === 1, "the first device write waiting");
+        compose.draft.body = "<p>New words while the device saves.</p>";
+        await window.Vue.nextTick();
+        localPending[0].resolve();
+        await until(() => localPending.length === 2 || !compose.saving, "the old device answer handled");
+        assert.equal(compose.dirty, true, "an old device answer cannot mark newer text saved");
+        assert.equal(localPending.length, 2);
+        assert.equal(JSON.parse(localPending[1].value).draft.body, "<p>New words while the device saves.</p>");
+        const closingLocal = compose.close();
+        assert.equal(closed.length, 2);
+        localPending[1].resolve();
+        await Promise.all([localSave, closingLocal]);
+        assert.equal(closed.length, 3, "Close follows persistence of the newest device content");
+        assert.equal(localPending.length, 2, "Close does not create an unchanged third write");
+        drafts.put = put;
+
+        server.online = true;
+        moqui.request = (url, options) => {
+            const answer = request(url, options);
+            if (!String(url).endsWith("/Compose/saveDraft")) return answer;
+            return answer.then((result) => new Promise((resolve, reject) => {
+                pending.push({ params: clone(options.params), resolve: () => resolve(result), reject });
+            }));
+        };
+        const fallbackKey = compose.localEmailKey;
+        const reconnectSave = compose.save();
+        await until(() => pending.length === 3, "the reconnect save waiting");
+        compose.draft.subject = "New subject during reconnection";
+        await window.Vue.nextTick();
+        pending[2].resolve();
+        await until(() => pending.length === 4, "the newer reconnect content waiting");
+        assert.ok(kept.has(fallbackKey), "an older server snapshot does not delete the local fallback");
+        pending[3].reject({ ok: false, status: 503, headers: plainHeaders, json: { errors: "Reconnection save failed" } });
+        await reconnectSave;
+        assert.ok(kept.has(fallbackKey), "a failed newer save still has its previous local recovery copy");
+        assert.equal(compose.draft.subject, "New subject during reconnection");
+        assert.equal(compose.dirty, true);
+        moqui.request = request;
+        await compose.save();
+        await until(() => !kept.has(fallbackKey), "the current server content replaces its local fallback");
+
+        // Clearing a new offline email during its first write must replace that snapshot even without a server id.
+        server.online = false;
+        compose.draft.emailMessageId = null;
+        compose.draft.subject = "";
+        compose.draft.body = "<p>Clear this before its first offline save finishes.</p>";
+        localPending.length = 0;
+        drafts.put = (key, value) => {
+            if (key === compose.emailRefKey) return put(key, value);
+            return new Promise((resolve) => {
+                localPending.push({ key, value, resolve: () => { kept.set(key, String(value)); resolve(); } });
+            });
+        };
+        await window.Vue.nextTick();
+        const clearingSave = compose.save();
+        await until(() => localPending.length === 1, "the new offline draft's first write waiting");
+        compose.draft.body = "";
+        await window.Vue.nextTick();
+        assert.equal(compose.isEmpty, true);
+        const closingEmpty = compose.close();
+        await window.Vue.nextTick();
+        assert.equal(closed.length, 3, "an empty draft still waits for its in-flight save before closing");
+        localPending[0].resolve();
+        await until(() => localPending.length === 2 || !compose.saving, "the cleared offline draft acknowledged");
+        assert.equal(localPending.length, 2, "an empty draft replaces already-persisted offline content");
+        assert.equal(JSON.parse(localPending[1].value).draft.body, "");
+        assert.equal(closed.length, 3, "the empty shortcut cannot close while clearing is still being saved");
+        localPending[1].resolve();
+        await Promise.all([clearingSave, closingEmpty]);
+        assert.equal(closed.length, 4);
+        assert.equal(JSON.parse(kept.get(compose.emailLocalKey)).draft.body, "", "reopening cannot restore the cleared text");
+        drafts.put = put;
+
+        // Internal messages on the web use localStorage; a failed write must have the same recovery.
+        server.online = true;
+        delete window.moquiDesktop;
+        moqui.drafts.local = () => ({setItem() { throw new Error("Storage quota exceeded"); }});
+        compose.draft.fromValue = "internal";
+        compose.draft.body = "<p>These browser changes must stay open.</p>";
+        await window.Vue.nextTick();
+        await compose.close();
+        await window.Vue.nextTick();
+        assert.equal(closed.length, 4);
+        assert.equal(compose.dirty, true);
+        assert.ok(document.querySelector(".m-compose-save-error"));
+        moqui.drafts.local = local;
+        button(document.querySelector(".m-compose-save-error"), "Retry save").click();
+        await until(() => !compose.saving && !compose.saveError && !compose.dirty, "the browser draft persisted");
+        assert.equal(JSON.parse(moqui.drafts.get(compose.draftStorageKey)).draft.body, "<p>These browser changes must stay open.</p>");
+        await compose.close();
+        assert.equal(closed.length, 5);
+        await moqui.drafts.remove(compose.draftStorageKey);
+    } finally {
+        root.setUrl = setUrl;
+        window.moquiDesktop = desktop;
+        drafts.put = put;
+        moqui.drafts.local = local;
+        moqui.request = request;
+        server.online = true;
+        server.saveError = null;
+        server.compose = null;
+    }
 });
 
 test("a revoked key holds what waits, each saying to sign in again; a held item stops no other", async () => {

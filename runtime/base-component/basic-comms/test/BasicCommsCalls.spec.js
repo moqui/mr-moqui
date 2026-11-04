@@ -11,7 +11,7 @@ const bossRoot = "component://mr-boss/screen/Comms.xml"
 const CALLER = "BASIC_COMMS_CALLER"
 const STRANGER = "BASIC_COMMS_CALL_STRANGER"
 const NODE = "basic-comms-calls-spec"
-const bossInstalled = ec.resource.getLocationReference(bossRoot).getExists()
+const bossInstalled = !!ec.resource.getLocationReference(bossRoot)?.getExists()
 let callId = null
 
 function sys(run) {

@@ -143,3 +143,18 @@ Established patterns: readable semantic foregrounds are independent from brand f
 sorting and actions in that order; optional scheduling follows saved-find management; entry pages prioritize work
 that can be resumed; unsupported platform metrics say Unavailable; errors retain entered data and offer a useful
 recovery action. Preserve routes and preference/service contracts while refining these surfaces.
+
+
+Review screenshots remain local under the ignored `plans/ui-refinement-evidence/` directory. Record evidence filenames and observations in the active review document, but do not commit the image directory.
+
+Further patterns established during the review:
+
+- A save acknowledges a particular content snapshot. Compare it after reactive watchers settle; retain dirty state
+  for later edits, and let Close await the latest successful write. Do not discard a local recovery copy until the
+  server has the current content. Test deferred responses and failed follow-up saves in the existing component fixture.
+- Fragment-only section jumps preserve form state and browser Back/Forward. Use an explicit `m-anchor-section`
+  container for targets that need clearance below the fixed Material toolbar; keep existing fragment identifiers.
+- Canvas charts need explicit readable text defaults, including legend and axis options. DOM text color alone
+  does not recolor pixels already drawn. Preserve caller colors and the existing chart instance on theme changes.
+
+For native change-on-blur editor fields, verify the rendered sibling/model changes after input. If an automation fill helper changes only the DOM value, use native typing and Tab before Save; do not report a product persistence defect from that helper alone.

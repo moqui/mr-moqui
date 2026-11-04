@@ -42,16 +42,30 @@ along with this software (see the LICENSE.md file). If not, see
             </drop-down></default-field></field>
             <field name="component"><default-field title="Component"><text-line size="20"/></default-field></field>
             <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+            <field-layout>
+                <field-row><field-ref name="text"/><field-ref name="kind"/><field-ref name="component"/></field-row>
+                <field-row-big><field-ref name="submitButton"/></field-row-big>
+            </field-layout>
         </form-single>
-        <form-list name="ArtifactResults" list="artifacts" skip-form="true">
-            <field name="kind"><default-field title="Kind"><display/></default-field></field>
-            <field name="shortName"><default-field title="Name">
-                <link url="refs" text="${shortName}" parameter-map="{artifactId: id}" link-type="anchor"/></default-field></field>
-            <field name="component"><default-field title="Component"><display text="${component}${upstream ? '' : ' · site'}"/></default-field></field>
-            <field name="summary"><default-field title="Summary"><display/></default-field></field>
-            <field name="open"><default-field title="File">
-                <link url="${url || ''}" url-type="plain" text="${(relativePath || path || '').split('/').slice(-2).join('/')}:${line}" link-type="anchor" condition="url"/>
-            </default-field></field>
-        </form-list>
+        <section name="SearchPrompt" condition="!text"><widgets>
+            <label type="p" text="Find entities, services, screens and their references by name. Try UserAccount, UsrAcct or create#UserAccount; narrow the results by kind or component."/>
+        </widgets></section>
+        <section name="SearchEmpty" condition="text &amp;&amp; !artifacts.length"><widgets>
+            <label type="h6" text="No artifacts match '${text}'"/>
+            <label type="p" text="Try a shorter name or clear the kind and component filters."/>
+        </widgets></section>
+        <section name="SearchResults" condition="artifacts.length"><widgets>
+            <label type="p" text="Showing ${artifacts.length} matches${artifacts.length === 100 ? '; narrow the search to see more specific results' : ''}. Open a name for references or a file to edit its source."/>
+            <form-list name="ArtifactResults" list="artifacts" skip-form="true">
+                <field name="kind"><default-field title="Kind"><display/></default-field></field>
+                <field name="shortName"><default-field title="Name">
+                    <link url="refs" text="${shortName}" parameter-map="{artifactId: id}" link-type="anchor"/></default-field></field>
+                <field name="component"><default-field title="Component"><display text="${component}${upstream ? '' : ' · site'}"/></default-field></field>
+                <field name="summary"><default-field title="Summary"><display/></default-field></field>
+                <field name="open"><default-field title="File">
+                    <link url="${url || ''}" url-type="plain" text="${(relativePath || path || '').split('/').slice(-2).join('/')}:${line}" link-type="anchor" condition="url"/>
+                </default-field></field>
+            </form-list>
+        </widgets></section>
     </widgets>
 </screen>

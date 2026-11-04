@@ -122,3 +122,164 @@ feature("column moves retain focus on the moved field through reorder, hide and 
         assert.deepEqual(focusState(), { field: "Alpha", action: "Hide field", column: "Column 1" })
     },
 })
+
+feature("routed shell menu items activate once from the keyboard", {
+    expect() {
+        const page = browser.newPage()
+        page.setContent(`<!doctype html><html><head>
+            <link rel="stylesheet" href="/libs/quasar/quasar.prod.css">
+            </head><body><div id="app"></div>
+            <script src="/libs/vue/vue.global.prod.js"></script>
+            <script src="/libs/quasar/quasar.umd.prod.js"></script>
+            <script src="/js/MoquiLib.js"></script>
+            <script src="/js/WebrootVue.qvt.js"></script>
+            <script>
+            // Mount the actual shell app-menu markup, without fetching or rendering an application screen.
+            const source = moqui.qvt.components['m-qapps-root'].template;
+            const start = source.indexOf('<q-btn v-if="appScreenMenu"');
+            const template = source.slice(start, source.indexOf('</q-btn>', start) + 8);
+            window.menu = { subscreens: [{ name: 'Home', title: 'Home', pathWithParams: '/qapps/dev/Home' }] };
+            window.visits = []; window.vueErrors = []; window.enterPrevented = [];
+            const app = Vue.createApp({ template, data() { return { appScreenMenu: window.menu, headerTitle: 'Dev AIDE', handheld: false }; },
+                methods: { getLinkPath(path) { return path; }, setUrl(path) { visits.push(path); this.appScreenMenu = null; } } });
+            app.use(Quasar);
+            app.component('m-menu-icon', moqui.qvt.components['m-menu-icon']);
+            app.config.globalProperties.$router = moqui.qvt.makeRouter();
+            app.config.globalProperties.$route = { path: '/qapps/dev/Workspace', matched: [], params: {} };
+            app.config.errorHandler = error => vueErrors.push(String(error));
+            window.vm = moqui.webrootVue = app.mount('#app');
+            document.addEventListener('keydown', event => { if (event.key === 'Enter') enterPrevented.push(event.defaultPrevented); });
+            // Observe modified clicks without opening an unrelated browser tab.
+            document.addEventListener('click', event => { if (event.ctrlKey || event.metaKey) event.preventDefault(); });
+            </script></body></html>`)
+        const openMenu = () => {
+            page.evaluate(async () => { vm.appScreenMenu = window.menu; await Vue.nextTick(); return true })
+            page.locator("#m-app-screens").click()
+        }
+        openMenu()
+        assert.equal(page.locator(".q-menu a").evaluate(item => item.getAttribute("href")), "/qapps/dev/Home")
+        page.locator(".q-menu a").press("Enter")
+        assert.deepEqual(page.evaluate(() => ({ visits, vueErrors, enterPrevented })),
+            { visits: ["/qapps/dev/Home"], vueErrors: [], enterPrevented: [true] })
+        assert.equal(page.locator(".q-menu").count(), 0)
+        openMenu()
+        page.locator(".q-menu a").press("Space")
+        assert.equal(page.evaluate(() => visits.length), 2)
+        openMenu()
+        page.locator(".q-menu a").evaluate(item => {
+            item.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true }))
+            item.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true }))
+            return true
+        })
+        assert.equal(page.evaluate(() => visits.length), 2, "modified clicks retain native link handling")
+        openMenu()
+        page.locator(".q-menu a").click()
+        assert.equal(page.evaluate(() => visits.length), 3)
+        assert.deepEqual(page.evaluate(() => vueErrors), [])
+    },
+})
+
+feature("chart text follows the rendered theme without replacing chart state or explicit colors", {
+    expect() {
+        const page = browser.newPage()
+        page.setContent(`<!doctype html><html><head>
+            <link rel="stylesheet" href="/libs/quasar/quasar.prod.css">
+            <link rel="stylesheet" href="/css/WebrootVue.qvt.css">
+            <style>.chart-container { background:var(--m-panel-bg); }</style>
+            </head><body><div id="app">
+            <m-chart id="theme-chart" :config="config" height="220px" width="420px"></m-chart>
+            <m-chart id="explicit-chart" :config="explicit" height="220px" width="420px"></m-chart>
+            <m-chart id="radial-chart" :config="radial" height="220px" width="420px"></m-chart>
+            <m-chart id="radial-explicit" :config="radialExplicit" height="220px" width="420px"></m-chart>
+            </div>
+            <script src="/libs/vue/vue.global.prod.js"></script>
+            <script src="/libs/quasar/quasar.umd.prod.js"></script>
+            <script src="/libs/chartjs/chart.umd.min.js"></script>
+            <script src="/js/MoquiLib.js"></script>
+            <script src="/js/WebrootVue.qvt.js"></script>
+            <script>
+            window.drawnText = [];
+            const fillText = CanvasRenderingContext2D.prototype.fillText;
+            const fillRect = CanvasRenderingContext2D.prototype.fillRect;
+            CanvasRenderingContext2D.prototype.fillRect = function() {
+                this.lastTextBackdrop = this.fillStyle;
+                return fillRect.apply(this, arguments);
+            };
+            CanvasRenderingContext2D.prototype.fillText = function(text) {
+                drawnText.push({ chart: this.canvas.parentElement && this.canvas.parentElement.id, text: String(text), color: this.fillStyle, backdrop: this.lastTextBackdrop });
+                return fillText.apply(this, arguments);
+            };
+            const config = { type: 'line', data: { labels: ['Alpha', 'Beta', 'Gamma'], datasets: [{ label: 'Requests', data: [1, 2, 3] }] },
+                options: { animation: false, responsive: false, maintainAspectRatio: false } };
+            const explicit = moqui.deepCopy(config);
+            explicit.options.color = '#123456';
+            explicit.options.plugins = { legend: { labels: { color: '#a12345' } } };
+            explicit.options.scales = { x: { ticks: { color: () => '#345678' } }, y: { ticks: { color: '#56789a' } } };
+            const radial = moqui.deepCopy(config); radial.type = 'radar';
+            const radialExplicit = moqui.deepCopy(config); radialExplicit.type = 'polarArea';
+            radialExplicit.options.scales = { r: { ticks: { color: '#234567', backdropColor: '#cdefab' } } };
+            const app = Vue.createApp({ data() { return { config, explicit, radial, radialExplicit }; } });
+            app.use(Quasar); Quasar.Dark.set(true);
+            app.component('m-chart', moqui.qvt.components['m-chart']);
+            window.vm = app.mount('#app');
+            window.chart = id => Chart.getChart(document.querySelector('#' + id + ' canvas'));
+            window.chartState = () => {
+                const current = chart('theme-chart'), authored = chart('explicit-chart'), round = chart('radial-chart'), roundAuthored = chart('radial-explicit');
+                const radialText = drawnText.filter(item => item.chart === 'radial-chart' && /^[0-9.]+$/.test(item.text));
+                if (!current || !authored || !round || !roundAuthored || !radialText.length || !drawnText.some(item => item.chart === 'theme-chart' && item.text === 'Requests')) return null;
+                const luminance = (color, background) => {
+                    const context = document.createElement('canvas').getContext('2d');
+                    if (background) { context.fillStyle = background; context.fillRect(0, 0, 1, 1); }
+                    context.fillStyle = color; context.fillRect(0, 0, 1, 1);
+                    const rgb = Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3).map(value => {
+                        const c = value / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+                    });
+                    return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+                };
+                const background = luminance(getComputedStyle(document.getElementById('theme-chart')).backgroundColor);
+                const labels = drawnText.filter(item => item.chart === 'theme-chart');
+                const ratios = labels.map(item => { const foreground = luminance(item.color); return (Math.max(background, foreground) + 0.05) / (Math.min(background, foreground) + 0.05); });
+                const radialBackground = getComputedStyle(document.getElementById('radial-chart')).backgroundColor;
+                const radialRatios = radialText.map(item => {
+                    const foreground = luminance(item.color), backdrop = luminance(item.backdrop, radialBackground);
+                    return (Math.max(backdrop, foreground) + 0.05) / (Math.min(backdrop, foreground) + 0.05);
+                });
+                return { dark: Quasar.Dark.isActive, id: current.id, minimumContrast: Math.min(...ratios),
+                    color: current.options.color, legend: labels.filter(item => item.text === 'Requests').pop().color,
+                    zoom: [current.options.scales.x.min, current.options.scales.x.max],
+                    explicit: { color: authored.options.color, legend: authored.legend.legendItems[0].fontColor,
+                        x: authored.scales.x.options.ticks.color, y: authored.scales.y.options.ticks.color },
+                    radialContrast: Math.min(...radialRatios), radialBackdrop: round.scales.r.options.ticks.backdropColor,
+                    radialExplicit: { color: roundAuthored.scales.r.options.ticks.color, backdrop: roundAuthored.scales.r.options.ticks.backdropColor },
+                    untouched: Chart.defaults.color === '#666' && vm.config.options.color === undefined && vm.radial.options.scales === undefined };
+            };
+            </script></body></html>`)
+        const initial = page.waitFor(() => chartState())
+        assert.equal(initial.dark, true)
+        assert.ok(initial.minimumContrast >= 4.5, "fresh-dark canvas text contrast: " + initial.minimumContrast)
+        assert.ok(initial.radialContrast >= 4.5, "fresh-dark radial tick/backdrop contrast: " + initial.radialContrast)
+        assert.deepEqual(initial.radialExplicit, { color: "#234567", backdrop: "#cdefab" })
+        const explicit = { color: "#123456", legend: "#a12345", x: "#345678", y: "#56789a" }
+        assert.deepEqual(initial.explicit, explicit)
+        page.evaluate(() => {
+            const current = chart("theme-chart")
+            current.options.scales.x.min = 1; current.options.scales.x.max = 2
+            window.initialData = current.data
+            current.update("none")
+            return true
+        })
+        for (const dark of [false, true, false]) {
+            page.evaluate(mode => { drawnText.length = 0; Quasar.Dark.set(mode); return true }, dark)
+            const state = page.waitFor(() => chartState())
+            assert.equal(state.dark, dark)
+            assert.equal(state.id, initial.id)
+            assert.deepEqual(state.zoom, [1, 2])
+            assert.deepEqual(state.explicit, explicit)
+            assert.ok(state.minimumContrast >= 4.5, "rendered canvas text contrast: " + state.minimumContrast)
+            assert.ok(state.radialContrast >= 4.5, "radial tick/backdrop contrast: " + state.radialContrast)
+            assert.deepEqual(state.radialExplicit, { color: "#234567", backdrop: "#cdefab" })
+            assert.equal(state.untouched, true)
+            assert.equal(page.evaluate(() => chart("theme-chart").data === initialData), true)
+        }
+    },
+})

@@ -138,3 +138,37 @@ test("the artifact doc component is registered with the workspace", () => {
     assert.ok(comp && comp.template.indexOf("copyable") > 0, "its markdown has the copy button");
     assert.deepEqual(Object.keys(comp.props).sort(), ["artifactId", "base", "docPath", "stamp"]);
 });
+
+test("Go to dialogs keep empty or loading searches open and open a selected result", () => {
+    const methods = moqui.devAide.components["m-dev-workspace"].methods;
+    const opened = [];
+    const ws = { goto: { open: true, loading: false }, artifactGoto: { open: true, loading: false },
+        openFile: path => opened.push(path), openArtifact: artifact => opened.push(artifact.id) };
+    methods.gotoFile.call(ws, undefined); methods.gotoArtifact.call(ws, undefined);
+    assert.equal(ws.goto.open, true); assert.equal(ws.artifactGoto.open, true);
+    ws.goto.loading = true; ws.artifactGoto.loading = true;
+    methods.gotoFile.call(ws, "README.md"); methods.gotoArtifact.call(ws, { id: "entity:Example" });
+    assert.deepEqual(opened, []);
+    ws.goto.loading = false; ws.artifactGoto.loading = false;
+    methods.gotoFile.call(ws, "README.md"); methods.gotoArtifact.call(ws, { id: "entity:Example" });
+    assert.deepEqual(opened, ["README.md", "entity:Example"]);
+    assert.equal(ws.goto.open, false); assert.equal(ws.artifactGoto.open, false);
+});
+
+test("artifact search ignores stale answers and keeps failures available for retry", async () => {
+    const methods = moqui.devAide.components["m-dev-workspace"].methods, pending = [];
+    const ws = { artifactGoto: { open: true, text: "User", results: [], loading: false, error: "" },
+        get: () => new Promise((resolve, reject) => pending.push({ resolve, reject })) };
+    const first = methods.searchArtifacts.call(ws);
+    ws.artifactGoto.text = "Service";
+    const second = methods.searchArtifacts.call(ws);
+    pending[0].resolve({ artifacts: [{ id: "entity:User" }] }); await first;
+    assert.deepEqual(ws.artifactGoto.results, []); assert.equal(ws.artifactGoto.loading, true);
+    pending[1].reject(new Error("Search is unavailable")); await second;
+    assert.equal(ws.artifactGoto.open, true); assert.equal(ws.artifactGoto.loading, false);
+    assert.equal(ws.artifactGoto.error, "Search is unavailable");
+    const retry = methods.searchArtifacts.call(ws);
+    pending[2].resolve({ artifacts: [{ id: "service:Example" }] }); await retry;
+    assert.equal(ws.artifactGoto.error, "");
+    assert.equal(ws.artifactGoto.results[0].id, "service:Example");
+});

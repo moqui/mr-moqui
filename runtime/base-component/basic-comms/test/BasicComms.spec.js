@@ -9,7 +9,7 @@ const root = "component://basic-comms/screen/BasicComms.xml"
 const webroot = "component://webroot/screen/webroot.xml"
 const USER = "BASIC_COMMS_SPEC"
 const DISABLED = "BASIC_COMMS_SPEC_OFF"
-const bossInstalled = ec.resource.getLocationReference("component://mr-boss/screen/Comms.xml").getExists()
+const bossInstalled = !!ec.resource.getLocationReference("component://mr-boss/screen/Comms.xml")?.getExists()
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()

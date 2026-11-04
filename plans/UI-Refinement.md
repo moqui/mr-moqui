@@ -121,7 +121,7 @@ before/after evidence use the agreed 1920×1080 target.
 | Gallery | Archetypes and shared widget reference | Automated journey passed | GallerySmoke 23/23 at 1280×900; 1920 visual activities remain in the inventory. |
 | Embedded TUI | Navigation, dialogs, themes and focus | Refined; partial retest | System and F1 help readable across live light/dark switches; fresh dark launch and F1 help after saved appearance reload also passed. |
 | System and Tools | Administration and data/service tools | Refined; partial activities | Overview both themes, Components, SQL success/error/recovery, service XML and echo output/validation/retry observed. Deep administration groups remain pending. |
-| Monitor and Dashboards | Diagnosis, reporting and authoring | Refined; partial activities | Monitoring 19/19 at 1440×1000; dashboard copy/edit/save visually observed at 1920. See assertion limits and screen map below. |
+| Monitor and Dashboards | Diagnosis, reporting and authoring | Refined; partial activities | Monitoring 19/19 at 1440×1000; dashboard copy/edit/save/open, CSV export and filter/remove visually observed at 1920; saved log search restores query/range. See assertion limits and screen map below. |
 | Dev AIDE | Artifact discovery, editing, simulation, previews and Git | Refined; verification in progress | Home, creation-dialog cancellation, search empty states, source navigation and Search → References → Docs/copy/package/diagram navigation observed. All eight disposable-repository journeys passed; detailed limits are recorded below. |
 | BasicComms | Mail, chat, calls and settings | Recovery fixes tested; partial visual | Local fake-media/encrypted-call/chat 10/10; failed-save retention/retry regression passed. No-account Inbox and Compose inspected at 1920/390; failed Close and identity refresh retain text. Remaining mail/settings activities are pending. |
 | Integration | Cross-app patterns and remaining routes | In progress | Shared styles observed in System, Tools, Dashboards and Dev AIDE; full remaining inventory is explicit below. |
@@ -151,23 +151,31 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-010 | T06, `/tools/Service/ServiceRun`: successful BasicServices.echo#Data returns blank output fields | P2 observed functional defect | Screen-local session result envelope replaces unavailable `ec.webImpl` method; bind output form separately, clear stale failed-run result | Echo text, default ping and numeric 0 visible; invalid number rejected, corrected 2 succeeds. `service-output-after-1920.jpg`; AdminOverview |
 | UI-011 | Appearance → Dark → reload: mode returns to Light | P2 observed functional defect | Core appearance serialization preserves forced mode; QvtConfig distinguishes permission boolean from mode string | Rust roundtrip, QvtConfig and dark selection → reload browser retest passed |
 | UI-012 | Find Options at 390×844: full-screen dialog body retains 80vh limit and clips actions | P2 observed layout defect | Shared m-dialog body class and maximized height correction | 390×844 final screenshot confirms visible actions; keyboard filter submitted and returned the expected row |
-| UI-013 | B03 Compose: failed server/device save followed by Close | P1 source-confirmed with focused browser regression | Compose closes only after confirmed persistence, retains text and exposes Retry save; draft storage returns boolean outcome and preserves persisted cache on failure | ShellSync server/host/localStorage refusal+retry passed; live missing-identity Close and Refresh preserve subject/body at 1920/390 |
-| UI-014 | DA-01/05 Home and Workspace: creation forms precede work; GoTo lacks title/cancel and can close on empty Enter | P2 observed hierarchy/labels plus focused reproduction | Dev AIDE home task-first, compact creation dialogs; labelled GoTo with loading/error/empty/retry and stale-result guard | Home, Escape cancellation and initial/no-match search inspected; 26 client and 6 ArtifactIndex checks pass; workspace retest pending |
+| UI-013 | B03 Compose: failed server/device save followed by Close | P1 source-confirmed with focused browser regression | Compose closes only after confirmed persistence, retains text and exposes Retry save; draft storage returns the persistence outcome while preserving synchronous in-memory draft reads | ShellSync server/host/localStorage refusal+retry passed; live missing-identity Close and Refresh preserve subject/body at 1920/390 |
+| UI-014 | DA-01/05 Home and Workspace: creation forms precede work; GoTo lacks title/cancel and can close on empty Enter | P2 observed hierarchy/labels plus focused reproduction | Dev AIDE home task-first, compact creation dialogs; labelled GoTo with loading/error/empty/retry and stale-result guard | Home, Escape cancellation, empty Enter, missing-name recovery and successful workspace lookup inspected; 26 client and 6 ArtifactIndex checks pass |
 | UI-015 | T06 ServiceRun: select unknown service name | P2 observed raw rendering error | Existence guard and helpful message/recovery link; implicit entity services preserved | 5 AdminOverview checks pass; live unknown-service message and Browse Service List recovery link verified |
 | UI-016 | S01 Components: no deployment-history rows says no component was loaded above six loaded components | P3 observed misleading empty state | Screen-local wording; deferred to next administration batch | Distinguish deployment history from loaded components |
 | UI-017 | Appearance color editor: new semantic foreground tokens are not listed | P3 source-inspection gap | Core appearance token inventory; deferred | Schemes can override CSS tokens, editor discovery remains pending |
-| UI-018 | D04 shipped dashboard definition/panel editor: copy action below long editor; query selector disabled in read-only view | P2 observed hierarchy and focused component rule | Copy-first layout, grouped labelled panel fields, read-only query inspection, Open dashboard action | Manual copy/native edit/Save version persisted; 47 WebrootReport and 19 Monitoring checks pass; Open dashboard retest pending |
+| UI-018 | D04 shipped dashboard definition/panel editor: copy action below long editor; query selector disabled in read-only view | P2 observed hierarchy and focused component rule | Copy-first layout, grouped labelled panel fields, read-only query inspection, Open dashboard action | Copy/native edit/Save version/Open dashboard passed with changed title visible; CSV headers/row verified, filter applied and removed; 47 WebrootReport and 19 Monitoring checks pass |
 
 | UI-019 | DA-08: replace a live designer preview iframe | P2 observed console/network warnings | DevAideQvue/Screen mark the old same-origin frame as leaving immediately before replacement; retain real network error reporting | QVue and XML screen acceptance passed; 12/12 focused client checks; cancelled old shellData request identified in netlog |
 | UI-020 | Columns: Enter on Move/Hide/Display | P2 observed keyboard workflow defect | Shared component restores focus to the moved field/action after Vue update; Display activation belongs to its clickable menu item | Failure reproduced before fix; widget 28/28 and live keyboard move/hide/redisplay passed; Escape returns to Columns |
 | UI-021 | G01/G03: Landing counters and Detail subtitle in light mode | P2 observed readability; P3 layout judgment | Gallery uses m-muted instead of text-grey-6 for nine captions; Landing minimum card width 260px | Subtitle changes from rgb158 to rgb97; all six counter labels fit at 1920; Example 7/7 |
 | UI-022 | B03: Compose with no sending identity | P2 observed raw save error / missing recovery | Explicit unavailable From state, Mail accounts new-tab link and identity-only refresh; save validates before POST and retains draft | Live 1920/390 Close and refresh retain subject/body; ShellSync 9/9 and focused server 18/18; no external provider configured |
-| UI-023 | DA-05 References: outgoing Uses follows more than 300 incoming references; native section jump reloads the screen | P2 observed navigation defect | References adds counted section links; shared history handler preserves fragment-only navigation and unsent form state | Live Uses, Back/Forward and Back to artifact retain entered text and reach the section; existing shell regression 28/28. Fixed header can cover the target title, a P3 follow-up. |
+| UI-023 | DA-05 References: outgoing Uses follows more than 300 incoming references; native section jump reloads the screen | P2 observed navigation defect | References adds counted section links; shared history handler preserves fragment-only navigation and unsent form state | Live Uses, Back/Forward and Back to artifact retain entered text and reach the section; existing shell regression 28/28. Follow-up adds an opt-in section scroll margin: Back to artifact now places its heading at 66px below the 51px toolbar, preserving unsent input. |
 | UI-024 | DA-12 Docs: dark Markdown links and light→dark package diagram | P2 measured contrast and observed stale SVG | Markdown uses semantic link text; shared Markdown/Mermaid retain source and redraw default diagrams on theme change, preserving explicit themes | Link 4.07:1→8.46:1. Fresh dark and dark→light→dark observed; edges change rgb211→rgb51→rgb211; zoom reopens with current diagram. Markdown 38/38, CSS 10/10. |
-| UI-025 | M01 Monitor overview, dark at 1920: faint canvas labels and five narrow panels | P2 observed contrast/layout | Shared chart theme defaults and automatic report grid; next reporting batch | Before screenshot inspected; source cause confirmed. Explicit saved layouts must remain unchanged. |
-| UI-026 | M02 Logs: Search query `(` | P2 observed recovery defect | Shared Explore screen: service-message errors suppress the whole included screen; retain query controls and a local error message | Before screenshot shows only parser text. Browser Back recovers; inline correction is not available. Next reporting batch. |
-| UI-027 | B03: edit a draft while an earlier save is in flight, then Close | P1 source-confirmed race | Compose persistence acknowledgement must compare the saved content to current content before clearing dirty; Close must await newer edits | Both server and local save paths clear dirty unconditionally. Deferred-response regression and correction planned for the communication batch. |
-| UI-028 | Shared app menu: keyboard Enter on Dev AIDE → Home | P3 observed console defect; navigation completes | Routed QItem anchor activates on native Enter keydown and Quasar keyup; prevent duplicate native activation while keeping normal link behavior | Reproduced twice as null.dispatchEvent in Quasar's keyup callback. App-layer fix and focused keyboard check planned. |
+| UI-025 | M01 Monitor overview, dark at 1920: faint canvas labels and five narrow panels | P2 observed contrast/layout | Shared chart theme defaults, radial tick backdrops and 640px minimum automatic report grid; explicit layouts preserved | Real canvas text meets 4.5:1; default radar baseline reproduced at 1.71:1 then fixed. 30/30 shared and 47/47 report checks. Live 1920 light/dark and 1280/390 layouts inspected. Same-mode custom scheme repaint remains a limitation. |
+| UI-026 | M02 Logs: Search query `(` | P2 observed recovery defect | Explore isolates ordinary query errors/transactions and retains controls; hides results and Save Explore until correction; authorization exceptions propagate | Live invalid→`severity_text:INFO` succeeds without Back and retains the range. Error/after evidence captured; changed recovery journey 1/1, full Tools acceptance 19/19 including Standard. |
+| UI-027 | B03: edit a draft while an earlier save is in flight, then Close | P1 reproduced data-loss race | Acknowledge the content snapshot after watchers settle; Close awaits newer writes, with local recovery retained through reconnect failure | Before failed; ShellSync 9/9 after. Deferred server/device saves, failed follow-up/retry, assigned ID and clearing an initially pending offline draft covered. |
+| UI-028 | Shared app menu: keyboard Enter on Dev AIDE → Home | P3 observed console defect; navigation completes | Routed QItems prevent native Enter keydown activation, leaving Quasar keyup as the single activation | 30/30 focused checks include Enter, Space, modified click and popup closure. Live Monitor menu→Logs Enter navigates with no console warning/error. |
+
+| UI-029 | M01 Overview time-series labels | P2 observed readability / deferred next reporting batch | Full ISO timestamps consume much of the chart and repeat date/offset on each tick | 1920, 1280 and 390 screenshots; keep full precision in tooltips/export while shortening display labels. |
+| UI-030 | M02 Explore filters and reporting native controls | P2 observed layout/theme inconsistency / deferred next reporting batch | Full-width stacked filters consume the desktop; raw query/select/table buttons retain browser-white fills in dark mode | Dark recovery and overview screenshots; group related controls, style native controls consistently and retain responsive access. |
+
+| UI-031 | S01 Cache List → populated native cache → Cache Elements | P2 observed misleading blank detail | Reported count can be nonzero while the generic entry facade cannot enumerate native cache entries; distinguish unavailable details from empty cache | ScreenColorScheme count 1, zero detail rows observed; source ownership confirmed. Screen-only correction proposed, pending next administration batch. |
+| UI-032 | S01 Thread List and S05 Service Job List, macOS | P2 observed misleading metric and raw timestamp | Empty platform thread enumeration is shown as Threads: 0; scheduler last-execute value is raw milliseconds | ThreadList screenshot; use nullable Process.Threads and localized scheduler timestamp/clear labels. Pending next administration batch. |
+| UI-033 | S11 Usage → Check a Quota → empty Check | P3 observed validation gap | Empty form closes silently; valid EX_JOHN_DOE displays quota without a clear cost currency | Empty and valid checks observed; no model request. Required user input and clearer quota presentation deferred. |
+| UI-034 | Shared nested breadcrumb menu, System → LLM and Agents → Models | P2 observed keyboard-access defect | Menu opener is a span with tabIndex -1 and no role; Tab from System skips to Search | Native pointer opens it; keyboard skips it. Routed child Enter is fixed, but opener semantics/focus remain a follow-up. |
 
 ## Running implementation notes
 
@@ -274,12 +282,14 @@ served framework 148/148. The five environmental host failures were rerun succes
 5435 expression sites, zero parse failures and 87 unchanged idiom flags. Generated clients/goldens and whitespace
 checks passed. UI-025 through UI-028 are next-batch findings, not claims that this batch fixed them.
 
-### Batch 2 — communication recovery and Dev AIDE workspaces (verification in progress)
+Local commits so far (unpushed): `67d3270f` establishes this plan and baseline; `883fffe8` contains the foundations, administration entry points, GroovyShell removal, guide. The evidence directory is retained locally and ignored by Git at the user’s request; the original foundations commit was rewritten to exclude it.
+
+### Batch 2 — retained work, diagnostic recovery and workspace navigation
 
 Intent: retain entered work on failure, prioritize ongoing tasks, and keep designer refreshes and Git exercises predictable.
 
 - Compose closes only after a confirmed server/device save. Failed saves keep entered content, show Not saved and
-  provide Retry save. Device storage returns its persistence outcome; its cached draft updates only after success.
+  provide Retry save. Device storage returns its persistence outcome. Its in-memory cache still updates synchronously so chat badges and reopening a room see current text while host persistence is pending; failure retains that text in memory and reports false.
 - A missing sending identity is explained before save/send. Mail accounts opens separately, and Refresh sending
   identities updates only identity choices without resetting the subject, body, attachments or signature already
   entered. The desktop offline save fallback remains available.
@@ -307,7 +317,72 @@ Local chat activity: created the private `UI review local room` with John Doe as
 message and thread reply; inspected desktop and 390px thread layouts and used Back to return to the room. Attached
 an 85-byte synthetic text file, sent it locally, found it in Files, and downloaded it. Downloaded bytes matched the
 fixture exactly; only the review-created download was removed afterward. No external recipients or bridges were
-configured. Multi-participant access, encryption/recovery, polls and call handoffs remain separate activities.
+configured. Room Settings also saved a new topic, verified in the room header. Multi-participant access, encryption/recovery, polls and call handoffs remain separate activities. The review runtime was then reset to a fresh isolated demo fixture; screenshots preserve this disposable activity evidence.
+
+The second batch also includes UI-025–028: theme-aware canvas text (including radial tick backdrops), readable
+automatic dashboard columns, inline query correction, save-snapshot acknowledgement and single keyboard menu
+activation. References now opts into a section scroll margin; Standard keeps its normal document flow. The live
+invalid-query recovery retains `now-15m`, hides Save Explore and restores results/save after `severity_text:INFO`.
+Monitor automatic panels fit at 1920, 1280 and 390 without document horizontal overflow. Full timestamp labels
+and unstyled report controls are newly recorded follow-ups, not visual sign-off of every report widget.
+
+Cross-review corrected a draft-cache compatibility regression before commit: delayed host writes must not prevent
+synchronous chat reads/badges from seeing current text. MoquiLib's cache again represents immediate UI intent,
+while its returned boolean reports durable success. Delayed puts/removes and failure ordering pass in the existing
+29/29 fixture. The line-chart test was also extended with real radar/polar canvases after reproducing white radial
+text on the default pale backdrop at 1.71:1. Explicit chart colors/backdrops remain authored.
+
+Gate 6 was intentionally interrupted during core Rust checks to include these review corrections and the invalid
+query save guard; it is not a completed result. Gate 7 completed on frozen source with exit 1: all six non-Cargo
+stages passed, but three unchanged SIP unit fixtures require loopback aliases unavailable on this macOS host.
+All three fail at `ua_tests.rs:46` while binding `127.0.0.2`, `.4` or `.6`, with `AddrNotAvailable`, before their
+source-isolation assertions. No host network configuration or SIP assertion was changed. The SIP crate had 57
+passed and 3 failed; Cargo stopped there, so later crates/doc tests are not claimed as run by gate 7.
+Host integration passed 166 with 23 intentionally ignored (701.74s), including all prior PostgreSQL failures.
+The shell checks passed 342/342; framework server specs 348/348 (31.97s); demo 10/10 (16.82s); offline webroot
+385/385 (49.51s); offline Dev AIDE 48/48 (4.48s); served framework clients 148/148 (48.87s).
+Log: `/tmp/moqui-ui-framework-gate7.log`. This is a failed global gate with passing affected UI checks, not an
+exit-zero full framework result; the loopback fixture portability issue remains separate follow-up work.
+Final focused results: ShellSync 9/9 (4.69s), MoquiLib 29/29 (1.09s), shared chart/menu 30/30 (6.23s),
+WebrootReport 47/47 (1.25s), changed query recovery acceptance 1/1 (6.93s), full Tools acceptance 19/19 (29.61s).
+Final lint: 362 screens, 5437 expression sites, zero parse failures, 87 existing idiom flags. The client and desktop
+screen bundles were regenerated successfully. Screenshots remain local in the ignored evidence directory.
+
+
+Additional live activities during gate 7 (default dark, 1920×1080, John Doe):
+
+- Saved `severity_text:INFO`/`now-15m` as `ui-review-info`, reopened with the saved title, query and range intact.
+- Copied `monitor-overview` to `ui-review-overview`; native keyboard editing changed a panel title, Save version
+  persisted it, and Open dashboard displayed it. The browser tool's fill helper does not commit these native
+  change-on-blur inputs; native typing plus Tab does. Exported Job runs CSV has `outcome,runs` and `success,145`;
+  only the review-created download was removed after verification, with a copy under `/tmp`. Applied the success
+  filter, inspected its dataset scope, removed it and restored zero filters. No console warnings/errors.
+- S01/S02: Cache filter `screen` → ScreenColorScheme summary/detail → Back; unsupported pattern `[` returns no
+  literal matches, and correcting it recovers. Native-cache detail availability is UI-031. Thread availability and
+  scheduler timestamp are UI-032. Application Instances has no rows; inspected Create App Instance and cancelled
+  without provisioning. It manages configured deployments, not the list of currently running processes.
+- S05: filtered `expire_UserStatuses`, inspected settings and error-only history policy, opened its empty history,
+  cleared filters to all runs, opened run 100205 (`clean_ClientUploads_hourly`), read `removedCount:0`, and followed
+  its correlated 2.78ms trace. Manual Run Job was not invoked because its native browser confirmation shares the
+  previously observed automation blocker; no manual-run success is claimed.
+- S11/S12: inspected LLM Dashboard zero-use state, Usage, empty/valid quota checks, Models/Endpoints and feature
+  bindings. The default model clearly reports no provider model name. No external provider was invoked. Nested
+  menu Enter worked with a clean console; its opener itself was found to lack keyboard focus (UI-034).
+
+
+- S16: unpaired Edge Status → pairing wizard; empty Next reports required address; `http://` reports invalid URL
+  and retains the fields; Edge node link cancels back to unpaired status. Edge Clients explains the full-node role
+  and links back. No pairing/trust/apply action or external connection occurred; a successful peer fixture remains pending.
+- B12/B13: Voice Status distinguishes supported/configured/active, no SIP server and an active local media server;
+  Trunks explains its empty state and next setup step. Chat Bridges explains no adapters and queued-message behavior.
+  No trunk, bridge, PSTN call or external provider was configured or invoked.
+- S03 limited role: existing `sec.view.only` fixture on a separate origin, default light at 1920. Launcher exposes
+  Comms/System/Tools; Monitor/Dashboards/Dev AIDE/Gallery are absent. System diagnostic links needing Monitor are
+  disabled. Create User Account opens a fully disabled form, with disabled Create; no account or credential write.
+  Direct Monitor bookmark reports View not permitted; All applications recovers to the allowed launcher. The enabled
+  create-dialog opener gives no explanation for its disabled form, a deferred shared affordance refinement.
+- T05 repeat on the final isolated runtime: `SELECT 1 AS ui_review_value` returns one row; `SELECT FROM` displays
+  a syntax error with inputs retained; correction to `SELECT 2 AS ui_review_value` returns one row without navigation.
 
 ### Verification environment corrections
 
@@ -407,9 +482,9 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | XML file / logical route | Presentation and companions | Activity | Review status |
 |---|---|---|---|
 | `System/AuditLog.xml` | XML widgets | S06 | P |
-| `System/Cache/CacheElements.xml` | XML widgets | S01 | P |
-| `System/Cache/CacheList.xml` | XML widgets | S01 | R/P |
-| `System/Cache.xml` | Container → CacheList | S01 | P |
+| `System/Cache/CacheElements.xml` | XML widgets | S01 | V/P: native-cache unavailable detail observed (UI-031); generic populated entries/clear pending |
+| `System/Cache/CacheList.xml` | XML widgets | S01 | V/P: valid/literal-fallback filter and recovery, summary→detail/back; cache clearing pending |
+| `System/Cache.xml` | Container → CacheList | S01 | V/P: normal parent navigation |
 | `System/Components.xml` | XML widgets | S02 | V/P; parent observation |
 | `System/Conf.xml` | XML widgets | S02 | P |
 | `System/DataDocument/Edit/DataDocFields/FieldList.xml` | hidden menu | S08 | P |
@@ -422,21 +497,21 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/DataDocument/Index.xml` | XML widgets | S08 | P |
 | `System/DataDocument/ViewDocument.xml` | hidden menu | S08 | P |
 | `System/DataDocument.xml` | Container → Search | S08 | P |
-| `System/EdgeClients.xml` | XML widgets | S16 | P |
+| `System/EdgeClients.xml` | XML widgets | S16 | V/P: wrong-role guidance and recovery link inspected; local peer success pending |
 | `System/EdgeNode/Pair/Apply.xml` | XML widgets | S16 | P |
 | `System/EdgeNode/Pair/Connect.xml` | XML widgets | S16 | P |
 | `System/EdgeNode/Pair/Discover.xml` | XML widgets | S16 | P |
-| `System/EdgeNode/Pair/EdgeUrl.xml` | XML widgets | S16 | P |
+| `System/EdgeNode/Pair/EdgeUrl.xml` | XML widgets | S16 | V/P: required/invalid address and return to status; no trust or pairing change |
 | `System/EdgeNode/Pair/Test.xml` | XML widgets | S16 | P |
 | `System/EdgeNode/Pair.xml` | Container → EdgeUrl; hidden menu | S16 | P |
-| `System/EdgeNode/Status.xml` | hidden menu | S16 | P |
+| `System/EdgeNode/Status.xml` | hidden menu | S16 | V/P: unpaired guidance and pairing navigation/cancel passed |
 | `System/EdgeNode.xml` | Container → Status | S16 | P |
 | `System/EntitySync/EntitySyncDetail.xml` | XML widgets | S07 | P |
 | `System/EntitySync/EntitySyncHistory.xml` | XML widgets | S07 | P |
 | `System/EntitySync/EntitySyncList.xml` | hidden menu | S07 | P |
 | `System/EntitySync.xml` | Container → EntitySyncList | S07 | P |
 | `System/Instance/InstanceDetail.xml` | XML widgets | S01 | P |
-| `System/Instance/InstanceList.xml` | hidden menu | S01 | P |
+| `System/Instance/InstanceList.xml` | hidden menu | S01 | V/P: empty state and creation dialog cancellation; no provisioning |
 | `System/Instance.xml` | Container → InstanceList | S01 | P |
 | `System/Llm/Approvals/ApprovalDetail.xml` | hidden menu | S14 | P |
 | `System/Llm/Approvals/ApprovalList.xml` | XML widgets | S14 | P |
@@ -447,7 +522,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Llm/Conversations/ConversationDetail.xml` | hidden menu | S11 | P |
 | `System/Llm/Conversations/ConversationList.xml` | XML widgets | S11 | P |
 | `System/Llm/Conversations.xml` | Container → ConversationList | S11 | P |
-| `System/Llm/Dashboard.xml` | XML widgets | S11 | P |
+| `System/Llm/Dashboard.xml` | XML widgets | S11 | V/P: zero-use default state inspected; recorded-call fixture and limited role pending |
 | `System/Llm/Gateway/AliasList.xml` | XML widgets | S12 | P |
 | `System/Llm/Gateway/ClientDetail.xml` | hidden menu | S12 | P |
 | `System/Llm/Gateway/ClientList.xml` | XML widgets | S12 | P |
@@ -456,7 +531,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Llm/Lessons.xml` | XML widgets | S14 | P |
 | `System/Llm/Models/EndpointDetail.xml` | hidden menu | S12 | P |
 | `System/Llm/Models/ModelDetail.xml` | hidden menu | S12 | P |
-| `System/Llm/Models/ModelList.xml` | XML widgets | S12 | P |
+| `System/Llm/Models/ModelList.xml` | XML widgets | S12 | V/P: configured endpoint, unusable default model and bindings inspected; write/stub/limited-role pending |
 | `System/Llm/Models.xml` | Container → ModelList | S12 | P |
 | `System/Llm/PromptPreview.xml` | XML widgets | S14 | P |
 | `System/Llm/Remote/AgentDetail.xml` | hidden menu | S15 | P |
@@ -478,7 +553,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Llm/Triggers/TriggerDetail.xml` | hidden menu | S14 | P |
 | `System/Llm/Triggers/TriggerList.xml` | XML widgets | S14 | P |
 | `System/Llm/Triggers.xml` | Container → TriggerList | S14 | P |
-| `System/Llm/Usage.xml` | XML widgets | S11 | P |
+| `System/Llm/Usage.xml` | XML widgets | S11 | V/P: empty/valid quota check and no-use state; UI-033 |
 | `System/Llm.xml` | Container → Dashboard | S11 | P |
 | `System/Localization/EntityFields.xml` | XML widgets | S09 | P |
 | `System/Localization/Messages.xml` | XML widgets | S09 | P |
@@ -507,11 +582,11 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Security/UserGroup/UserGroupList.xml` | hidden menu | S03 | P |
 | `System/Security/UserGroup.xml` | Container → UserGroupList | S03 | P |
 | `System/Security.xml` | Container → UserAccount | S03 | P |
-| `System/ServiceJob/JobRuns/JobRunDetail.xml` | XML widgets | S05 | P |
-| `System/ServiceJob/JobRuns/JobRunList.xml` | hidden menu | S05 | P |
+| `System/ServiceJob/JobRuns/JobRunDetail.xml` | XML widgets | S05 | V/P: result and correlated trace inspected for successful run100205 |
+| `System/ServiceJob/JobRuns/JobRunList.xml` | hidden menu | S05 | V/P: filtered empty history→clear→all runs→detail |
 | `System/ServiceJob/JobRuns.xml` | Container → JobRunList | S05 | P |
-| `System/ServiceJob/Jobs/ServiceJobDetail.xml` | XML widgets | S05 | P |
-| `System/ServiceJob/Jobs/ServiceJobList.xml` | hidden menu | S05 | P |
+| `System/ServiceJob/Jobs/ServiceJobDetail.xml` | XML widgets | S05 | V/P: safe job settings and history inspected; manual-run native confirmation unverified |
+| `System/ServiceJob/Jobs/ServiceJobList.xml` | hidden menu | S05 | V/P: filter→detail; scheduler timestamp UI-032 |
 | `System/ServiceJob/Jobs.xml` | Container → ServiceJobList | S05 | P |
 | `System/ServiceJob.xml` | Container → Jobs | S05 | P |
 | `System/SystemMessage/Message/SystemMessageDetail/EditMessageText.xml` | XML widgets | S06 | P |
@@ -525,7 +600,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/SystemMessage/Type/MessageTypeList.xml` | hidden menu | S06 | P |
 | `System/SystemMessage/Type.xml` | Container → MessageTypeList | S06 | P |
 | `System/SystemMessage.xml` | Container → Message | S06 | P |
-| `System/ThreadList.xml` | XML widgets | S01 | P |
+| `System/ThreadList.xml` | XML widgets | S01 | V/P: unavailable platform state and scheduler timestamp inspected (UI-032) |
 | `System/Visit/VisitDetail.xml` | hidden menu | S06 | P |
 | `System/Visit/VisitList.xml` | XML widgets | S06 | P |
 | `System/Visit.xml` | Container → VisitList | S06 | P |
@@ -625,7 +700,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `BasicComms/Settings.xml` | Container → Index | B01/B05/B11 | S/P |
 | `BasicComms.xml` | Container → Inbox | B01 | S/P |
 | `CallGuest.xml` | hidden menu; modes vue,qvue,tui; `CallGuest.qvue`; public `/call/<token>` | B08 | P |
-| `System/ChatBridges.xml` | XML widgets | B13 | S/P |
+| `System/ChatBridges.xml` | XML widgets | B13 | V/P: empty/disconnected guidance inspected; no adapter configured |
 | `System/Voice/CallerIds.xml` | XML widgets | B12 | P |
 | `System/Voice/Emergency.xml` | XML widgets | B12 | P |
 | `System/Voice/Fraud.xml` | XML widgets | B12 | P |
@@ -635,8 +710,8 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/Voice/Queues.xml` | XML widgets | B12 | P |
 | `System/Voice/RingGroups.xml` | XML widgets | B12 | P |
 | `System/Voice/Schedules.xml` | XML widgets | B12 | P |
-| `System/Voice/Status.xml` | XML widgets | B12 | S/P |
-| `System/Voice/Trunks.xml` | XML widgets | B12 | P |
+| `System/Voice/Status.xml` | XML widgets | B12 | V/P: supported/configured/active and server availability inspected; fake trunk flow pending |
+| `System/Voice/Trunks.xml` | XML widgets | B12 | V/P: empty guidance inspected; no provider configured |
 | `System/Voice.xml` | Container → Status | B12 | P |
 
 ### Optional public-demo override (not enabled merely by loading demo data)
@@ -931,7 +1006,7 @@ Keep `MOQUI_DEV_SHOTS` unset. The existing optional screenshot branches are not 
 4. **Accessible names:** new file/folder and Go to file/artifact now have names in source. Do not infer that every icon-only control is repaired: tab-close, task refresh/more and file menu still require actual accessible-name inspection.
 5. **XML headers (P3 source defect, still present):** 14 UI definitions contain a nested `<!--` before the license comment closes. Standard ElementTree parsing still fails at line 14 in Repositories, Tasks, Data, Eca, Entities, Services, Screens, Artifacts/Browse, Screens/Tree, Screens/Design, Entities/List, Entities/Edit, Services/List and Services/Edit. The framework parser/linter and several affected browser routes succeed, so this is interoperability/tooling debt, not an observed runtime outage. No source edit was made during this audit.
 6. **Resolved acceptance failures:** merge automation clicked disabled Commit before status refresh (readiness condition fixed); simulation fixture exceeded macOS socket limit (short cluster basename fixed); preview frame replacement reported canceled old-frame shell requests (teardown marker fixed). All affected existing journeys passed afterward; no broad console filtering or weakened functional assertion was used.
-7. **Component creation evidence:** `new_components_come_from_the_component_template` failed in the older framework gate log. Its successful later rerun, if any, must be supplied by the coordinator; no pass is inferred from other test successes. The Home creation UI remains unverified regardless.
+7. **Component creation evidence:** `new_components_come_from_the_component_template` passed in framework gate 5 after canonicalizing the expected temporary path. The Home creation UI remains unverified; a backend pass does not close its visible activity.
 
 ## Executed acceptance journeys — 2026-11-04
 
@@ -1428,7 +1503,7 @@ Paths are relative to `runtime/dev-component/example/screen/`. The Gallery root 
 
 ## Remaining coverage and next bounded review choices
 
-1. Complete native1920 light/dark **M01→M02** and **D01→D04**, including recovery after an invalid filter, Copy→edit→save→Open dashboard and saved-preference lifecycle. Existing automated assertions provide data fixtures but not visual sign-off.
+1. Refine the newly observed Monitor/Dashboards timestamp axes and native controls (UI-029/030), then retest at 1920 in light/dark and narrow widths. Overview → Logs invalid-query recovery, saved-search reopen, and dashboard Copy → edit → save → Open/export/filter have now been exercised; the remaining per-screen inventory is still open.
 2. Run a real **G02/G04/G08/G10** keyboard/responsive pass, explicitly including hidden Contact/EditExample/CodeField and wizard child routes absent from the generic browser sweep. Carry shared fixes back to actual System/Tools/Monitor pages.
 3. Give **D06 alerts**, **D07 reports/playlists/schedules**, **M08 replay**, **M09 release detail**, **M10 incident/recovery** and **M11 diagnostic settings** separate bounded fixtures and activity reviews. Their administrative lists currently have little or no functional acceptance coverage.
 4. Verify one **Monitor-only** actor can follow Monitor-local trace/context/compare/export paths, and one denied dataset yields useful refusal. The admin19-feature run is not permission-isolation proof.

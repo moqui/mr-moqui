@@ -19,7 +19,7 @@ along with this software (see the LICENSE.md file). If not, see
         <div class="text-h6">{{t('Call handling')}}</div><q-space></q-space>
         <q-btn flat dense no-caps color="primary" icon="sym_o_voicemail" :label="t('Phone and voicemail settings')" @click="$root.setUrl(sibling('Phone'))"></q-btn>
     </div>
-    <q-banner v-if="loaded && !phoneActive" dense rounded class="bg-grey-3 text-black">{{t('Phone calls are not available here yet; these settings apply once they are.')}}</q-banner>
+    <q-banner v-if="loaded && !phoneActive" dense rounded class="m-tonal">{{t('Phone calls are not available here; these settings apply when calls are enabled.')}}</q-banner>
 
     <q-card flat bordered><q-card-section class="column q-gutter-sm">
         <q-toggle v-model="s.dnd" :label="t('Do not disturb: calls go straight to voicemail')" @update:model-value="save({dnd: s.dnd})"></q-toggle>

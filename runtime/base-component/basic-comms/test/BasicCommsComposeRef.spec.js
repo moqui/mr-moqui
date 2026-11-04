@@ -10,7 +10,7 @@ const capture = ec.factory.getTool("MailCapture")
 let ownerIdentity = null
 let otherIdentity = null
 let johnIdentity = null
-const bossInstalled = ec.resource.getLocationReference("component://mr-boss/screen/Comms.xml").getExists()
+const bossInstalled = !!ec.resource.getLocationReference("component://mr-boss/screen/Comms.xml")?.getExists()
 
 function sys(run) {
     const wasDisabled = ec.artifactExecution.disableAuthz()

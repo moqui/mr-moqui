@@ -8,7 +8,7 @@ const root = "component://basic-comms/screen/BasicComms.xml"
 const webroot = "component://webroot/screen/webroot.xml"
 const USER = "BASIC_COMMS_CHAT"
 const CLIENT = "BASIC_COMMS_CHAT_CLIENT"
-const bossInstalled = ec.resource.getLocationReference("component://mr-boss/screen/Comms.xml").getExists()
+const bossInstalled = !!ec.resource.getLocationReference("component://mr-boss/screen/Comms.xml")?.getExists()
 let roomId = null
 let firstSeq = null
 
