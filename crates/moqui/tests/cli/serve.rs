@@ -232,7 +232,8 @@ fn a_server_that_does_not_start_fails_its_suite_only() {
     let broken = client_component(
         "broken-component",
         "moqui-test-broken",
-        "suite([\"Probe\"], { server: { components: [\"moqui-test-fixture\"], specs: [\"NoSuchSpec\"] } })\n",
+        // its own properties keep it off the working suite's server: suites of one conf and properties share one
+        "suite([\"Probe\"], { server: { components: [\"moqui-test-fixture\"], specs: [\"NoSuchSpec\"], properties: { probe_broken: \"true\" } } })\n",
         probe,
     );
     let working = client_component(
