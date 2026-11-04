@@ -24,8 +24,15 @@
 //!   subscription and posts it to its push service with a VAPID token. An endpoint answered 404 or 410 is disabled; one
 //!   that fails [`MAX_FAILURES`] times in a row too. Each endpoint fails on its own, logged by subscription id.
 //!
+//! - `register#PushDevice` and `unregister#PushDevice` keep a native app's FCM registration (plans/Mobile-Desktop.md §5,
+//!   "Native push") in the same entity, as provider `PushFcm`, tied to the device key the request signed in with: the
+//!   key's revoke deletes it ([`forget_device_key`]), its renewal moves it ([`move_device_key`]), and one whose key has
+//!   ended is deleted at the next push. `send#WebPush` sends to these through [`super::fcm`], with a call's ring as a
+//!   high-priority data message.
+//!
 //! Push is a hint: the notification list and counts are the server's, and the client reads them again when it
-//! reconnects. Without the `web-push` feature the services answer that push is not supported.
+//! reconnects. Without the `web-push` feature the Web Push services answer that push is not supported; FCM needs only
+//! HTTP.
 
 use std::collections::BTreeMap;
 #[cfg(feature = "web-push")]
@@ -41,6 +48,13 @@ use crate::notify::push_crypto;
 use crate::transaction::TransactionAttribute;
 
 const SUBSCRIPTION: &str = "moqui.security.user.WebPushSubscription";
+const USER_LOGIN_KEY: &str = "moqui.security.UserLoginKey";
+/// `pushProviderEnumId`: a browser's Web Push subscription, or a native app's FCM registration.
+const PROVIDER_WEB: &str = "PushWeb";
+const PROVIDER_FCM: &str = "PushFcm";
+/// The longest FCM token and app id stored, in characters (a token is about 160).
+const MAX_TOKEN: usize = 4096;
+const MAX_APP_ID: usize = 255;
 const SEND_SERVICE: &str = "org.moqui.impl.NotificationServices.send#WebPush";
 const KEY_PROPERTY: &str = "web_push_vapid_key";
 const SUBJECT_PROPERTY: &str = "web_push_subject";
@@ -61,6 +75,9 @@ pub(in crate::service) fn register(
     rust_service!(map, delete_subscription)?;
     rust_service!(map, get_status)?;
     rust_service!(map, send_web_push)?;
+    rust_service!(map, register_device)?;
+    rust_service!(map, unregister_device)?;
+    rust_service!(map, get_device_status)?;
     Ok(())
 }
 
@@ -140,6 +157,7 @@ fn get_status(
     let active = || {
         facade.find(SUBSCRIPTION).map(|find| {
             find.eq("userId", Value::string(&user_id))
+                .eq("pushProviderEnumId", Value::string(PROVIDER_WEB))
                 .condition(moqui_db::sql::Condition::is_null("disabledDate"))
         })
     };
@@ -212,6 +230,7 @@ fn store_subscription(
         );
     }
     row.set("userId", Value::string(&user_id));
+    row.set("pushProviderEnumId", Value::string(PROVIDER_WEB));
     row.set("endpoint", Value::string(&endpoint));
     row.set("endpointHash", Value::string(&hash));
     row.set("p256dhKey", Value::string(&p256dh));
@@ -253,8 +272,220 @@ fn delete_subscription(
         .find(SUBSCRIPTION)?
         .eq("endpointHash", Value::string(endpoint_hash(&endpoint)))
         .eq("userId", Value::string(&user_id))
+        .eq("pushProviderEnumId", Value::string(PROVIDER_WEB))
         .delete_all()?;
     Ok(BTreeMap::new())
+}
+
+/// The stored hash of the device key this request signed in with (its `login_key` header), when that is an unexpired
+/// device key (one with a `deviceName`) of `user_id`. Authorization is the caller's to turn off.
+fn request_device_key(facade: &EntityFacade, user_id: &str) -> Result<Option<String>, LibError> {
+    let Some(hashed) = crate::web::current_request()
+        .and_then(|request| request.header("login_key").map(str::to_string))
+        .filter(|key| !key.is_empty())
+        .and_then(|key| crate::user::hash_login_key(&key).ok())
+    else {
+        return Ok(None);
+    };
+    let Some(row) = facade
+        .find(USER_LOGIN_KEY)?
+        .eq("loginKey", Value::string(&hashed))
+        .one()?
+    else {
+        return Ok(None);
+    };
+    let live = row
+        .get("thruDate")
+        .and_then(crate::user::value_millis)
+        .is_none_or(|thru| thru > crate::user::now_millis());
+    Ok((field(&row, "userId") == user_id && !field(&row, "deviceName").is_empty() && live).then_some(hashed))
+}
+
+/// `register#PushDevice`: keep the FCM registration `token` of the native app this request comes from, for the current
+/// user, tied to the device key the request signed in with. A token stored before, for this user or another, becomes
+/// this registration (enabled again); an older token of the same device key is replaced. Refused, with an error, for a
+/// request not signed in by a device key of the user's, so a registration always ends with its device's key.
+fn register_device(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some(user_id) = current_user() else {
+        add_error("Sign in to turn on notifications");
+        return Ok(BTreeMap::new());
+    };
+    let provider = text(parameters, "provider").unwrap_or_default().to_ascii_lowercase();
+    if provider != "fcm" && provider != "pushfcm" {
+        add_error("provider must be fcm");
+        return Ok(BTreeMap::new());
+    }
+    let Some(token) = text(parameters, "token")
+        .filter(|token| token.chars().count() <= MAX_TOKEN && !token.chars().any(char::is_whitespace))
+    else {
+        add_error("token is required, with no spaces");
+        return Ok(BTreeMap::new());
+    };
+    let app_id: String = text(parameters, "appId")
+        .unwrap_or_default()
+        .chars()
+        .take(MAX_APP_ID)
+        .collect();
+    let platform: String = text(parameters, "platform")
+        .unwrap_or_else(|| "android".to_string())
+        .to_ascii_lowercase()
+        .chars()
+        .take(20)
+        .collect();
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let Some(login_key) = request_device_key(facade, &user_id)? else {
+        add_error("Only an app signed in with its device key can register for push");
+        return Ok(BTreeMap::new());
+    };
+    let hash = endpoint_hash(&token);
+    let existing = facade
+        .find(SUBSCRIPTION)?
+        .eq("endpointHash", Value::string(&hash))
+        .one()?;
+    let mut row = match &existing {
+        Some(row) => row.clone(),
+        None => {
+            let mut row = facade.make_value(SUBSCRIPTION)?;
+            row.set_sequenced_id_primary(facade)?;
+            row.set("createdDate", crate::user::now_value());
+            row
+        }
+    };
+    if let Some(previous) = existing
+        .as_ref()
+        .map(|row| field(row, "userId"))
+        .filter(|id| id != &user_id)
+    {
+        tracing::info!(
+            subscription_id = %field(&row, "subscriptionId"),
+            "FCM registration moved from user {previous} to the user now signed in"
+        );
+    }
+    let subscription_id = field(&row, "subscriptionId");
+    // one registration a device key: the app's token changed
+    facade
+        .find(SUBSCRIPTION)?
+        .eq("loginKey", Value::string(&login_key))
+        .condition(moqui_db::sql::Condition::not_equals(
+            "subscriptionId",
+            Value::string(&subscription_id),
+        ))
+        .delete_all()?;
+    row.set("userId", Value::string(&user_id));
+    row.set("pushProviderEnumId", Value::string(PROVIDER_FCM));
+    row.set("endpoint", Value::string(&token));
+    row.set("endpointHash", Value::string(&hash));
+    row.set("loginKey", Value::string(&login_key));
+    row.set("appId", Value::string(&app_id));
+    row.set("platform", Value::string(&platform));
+    for unused in ["p256dhKey", "authSecret", "userAgent", "visitId"] {
+        row.set(unused, Value::Null);
+    }
+    row.set("failureCount", Value::I64(0));
+    row.set("disabledDate", Value::Null);
+    if existing.is_some() {
+        row.update(facade)?;
+    } else {
+        row.create(facade)?;
+    }
+    Ok(BTreeMap::from([(
+        "subscriptionId".to_string(),
+        Value::string(subscription_id),
+    )]))
+}
+
+/// `unregister#PushDevice`: forget the current user's FCM registration with `token`, or with no token every one of the
+/// device key this request signed in with (the app turned notifications off, or is signing out). Another user's token
+/// is left as it is, with no error.
+fn unregister_device(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let Some(user_id) = current_user() else {
+        return Ok(BTreeMap::new());
+    };
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let find = facade
+        .find(SUBSCRIPTION)?
+        .eq("userId", Value::string(&user_id))
+        .eq("pushProviderEnumId", Value::string(PROVIDER_FCM));
+    let deleted = if let Some(token) = text(parameters, "token") {
+        find.eq("endpointHash", Value::string(endpoint_hash(&token)))
+            .delete_all()?
+    } else if let Some(login_key) = request_device_key(facade, &user_id)? {
+        find.eq("loginKey", Value::string(login_key)).delete_all()?
+    } else {
+        0
+    };
+    Ok(BTreeMap::from([("deletedCount".to_string(), Value::I64(deleted))]))
+}
+
+/// `get#PushDeviceStatus`: whether this server sends FCM (`fcmConfigured`: its service account is set) and whether the
+/// device key of this request has an enabled registration (`registered`). No error.
+fn get_device_status(
+    _parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let mut out = BTreeMap::from([
+        ("fcmConfigured".to_string(), Value::Bool(super::fcm::configured())),
+        ("registered".to_string(), Value::Bool(false)),
+    ]);
+    let Some(user_id) = current_user() else {
+        return Ok(out);
+    };
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    if let Some(login_key) = request_device_key(facade, &user_id)? {
+        let found = facade
+            .find(SUBSCRIPTION)?
+            .eq("loginKey", Value::string(login_key))
+            .condition(moqui_db::sql::Condition::is_null("disabledDate"))
+            .count()?;
+        out.insert("registered".to_string(), Value::Bool(found > 0));
+    }
+    Ok(out)
+}
+
+/// Delete the registrations of the device key `hashed_key` (the stored hash), as the key is revoked. In a transaction
+/// of its own and logged: the next push deletes them anyway, as their key has ended.
+pub(crate) fn forget_device_key(facade: &EntityFacade, hashed_key: &str) {
+    if hashed_key.is_empty() || !defined(facade) {
+        return;
+    }
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let deleted = facade.transactions_for(SUBSCRIPTION).and_then(|tx| {
+        tx.run(TransactionAttribute::ForceNew, None, || {
+            facade
+                .find(SUBSCRIPTION)?
+                .eq("loginKey", Value::string(hashed_key))
+                .delete_all()
+        })
+    });
+    if let Err(err) = deleted {
+        tracing::warn!(error = %err, "the push registrations of a revoked device key were not deleted");
+    }
+}
+
+/// Move the registrations of the device key `old_key` to its renewal `new_key` (both stored hashes), so the device keeps
+/// its push past the old key's end. Logged: the app registers again with its new key when it next starts.
+pub(crate) fn move_device_key(facade: &EntityFacade, old_key: &str, new_key: &str) {
+    if old_key.is_empty() || new_key.is_empty() || !defined(facade) {
+        return;
+    }
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let moved = facade.transactions_for(SUBSCRIPTION).and_then(|tx| {
+        tx.run(TransactionAttribute::ForceNew, None, || {
+            facade
+                .find(SUBSCRIPTION)?
+                .eq("loginKey", Value::string(old_key))
+                .update_all([("loginKey".to_string(), Value::string(new_key))])
+        })
+    });
+    if let Err(err) = moved {
+        tracing::warn!(error = %err, "the push registrations of a renewed device key were not moved");
+    }
 }
 
 /// Delete the subscriptions the visit stored, at logout. A failure is logged: the browser's own unsubscribe and the
@@ -293,10 +524,10 @@ pub(crate) struct PushNotice<'a> {
     pub tag: &'a str,
 }
 
-/// Run `send#WebPush` on a service worker for those of `user_ids` with an active subscription. Logged, never an error
-/// for the caller: the notification is stored and on the socket already.
+/// Run `send#WebPush` on a service worker for those of `user_ids` with an active subscription or FCM registration.
+/// Logged, never an error for the caller: the notification is stored and on the socket already.
 pub(crate) fn queue(facade: &EntityFacade, user_ids: &[String], notice: &PushNotice<'_>) {
-    if !push_crypto::BUILT || user_ids.is_empty() || !defined(facade) {
+    if user_ids.is_empty() || !defined(facade) {
         return;
     }
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
@@ -363,52 +594,89 @@ fn truncated(text: &str, max: usize) -> String {
     }
 }
 
-/// `send#WebPush`: push the notice to every active subscription of `userIdList`. Internal: run by [`queue`].
-fn send_web_push(
-    parameters: &BTreeMap<String, Value>,
-    facade: &EntityFacade,
-) -> Result<BTreeMap<String, Value>, LibError> {
-    let mut sent = 0_i64;
-    let mut failed = 0_i64;
-    let summary = |sent: i64, failed: i64| {
-        BTreeMap::from([
-            ("sentCount".to_string(), Value::I64(sent)),
-            ("failedCount".to_string(), Value::I64(failed)),
-        ])
-    };
-    let key = match vapid() {
-        Ok(key) => key,
-        Err(reason) => {
-            tracing::warn!("Web Push not sent: {reason}");
-            return Ok(summary(0, 0));
+/// What one send counted.
+#[derive(Default)]
+struct Tally {
+    sent: i64,
+    failed: i64,
+}
+
+impl Tally {
+    fn count(&mut self, delivered: bool) {
+        if delivered {
+            self.sent += 1;
+        } else {
+            self.failed += 1;
         }
-    };
-    let users = super::shell::user_ids(parameters.get("userIdList"));
-    if users.is_empty() {
-        return Ok(summary(0, 0));
     }
-    let subject = Some(moqui_lib::env::get_prop_or_env(SUBJECT_PROPERTY))
-        .filter(|text| !text.is_empty())
-        .unwrap_or_else(|| "mailto:admin@localhost".to_string());
-    let payload = serde_json::json!({
-        "title": truncated(&text(parameters, "title").unwrap_or_default(), MAX_TITLE),
-        "link": truncated(&text(parameters, "link").unwrap_or_default(), MAX_LINK),
-        "topic": text(parameters, "topic").unwrap_or_default(),
-        "tag": text(parameters, "tag").unwrap_or_default(),
-    })
-    .to_string();
+}
+
+/// The push of one `send#WebPush` call, from its parameters: the Web Push payload and its delivery, and the FCM notice.
+struct Push {
+    payload: String,
+    delivery: Delivery,
+    notice: super::fcm::Notice,
+}
+
+fn push_of(parameters: &BTreeMap<String, Value>) -> Push {
+    let title = truncated(&text(parameters, "title").unwrap_or_default(), MAX_TITLE);
+    let link = truncated(&text(parameters, "link").unwrap_or_default(), MAX_LINK);
+    let topic = truncated(&text(parameters, "topic").unwrap_or_default(), MAX_TITLE);
+    let tag = truncated(&text(parameters, "tag").unwrap_or_default(), MAX_TITLE);
+    let payload = serde_json::json!({"title": title, "link": link, "topic": topic, "tag": tag}).to_string();
     // A call's ring is worth nothing once the call stops ringing: it expires at the push service (§7.2).
     let ttl = parameters
         .get("ttlSeconds")
         .and_then(|v| to_plain_string(v).parse::<u32>().ok())
         .filter(|t| *t > 0)
         .map_or(TTL_SECONDS, |t| t.min(TTL_SECONDS));
-    let urgency = if text(parameters, "urgency").as_deref() == Some("high") {
-        "high"
-    } else {
-        "normal"
+    let high = text(parameters, "urgency").as_deref() == Some("high");
+    let ring = text(parameters, "callSessionId").map(|call_session_id| super::fcm::Ring {
+        call_session_id,
+        chat_room_id: text(parameters, "chatRoomId").unwrap_or_default(),
+        from: truncated(&text(parameters, "fromName").unwrap_or_default(), MAX_TITLE),
+        video: text(parameters, "video").is_some_and(|video| video == "true" || video == "Y"),
+        expires_at: text(parameters, "expiresAt")
+            .and_then(|at| at.parse::<i64>().ok())
+            .unwrap_or(0),
+    });
+    Push {
+        payload,
+        delivery: Delivery {
+            ttl,
+            urgency: if high { "high" } else { "normal" },
+        },
+        notice: super::fcm::Notice {
+            title,
+            link,
+            topic,
+            tag,
+            ring,
+            high,
+            ttl,
+        },
+    }
+}
+
+/// `send#WebPush`: push the notice to every active subscription and FCM registration of `userIdList`. Internal: run by
+/// [`queue`] and by a call's ring. Each provider and each device fails on its own: a server without its VAPID key still
+/// sends FCM, and the other way around.
+fn send_web_push(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    let mut tally = Tally::default();
+    let summary = |tally: &Tally| {
+        BTreeMap::from([
+            ("sentCount".to_string(), Value::I64(tally.sent)),
+            ("failedCount".to_string(), Value::I64(tally.failed)),
+        ])
     };
-    let delivery = Delivery { ttl, urgency };
+    let users = super::shell::user_ids(parameters.get("userIdList"));
+    if users.is_empty() {
+        return Ok(summary(&tally));
+    }
+    let push = push_of(parameters);
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let rows = facade
         .find(SUBSCRIPTION)?
@@ -418,13 +686,41 @@ fn send_web_push(
         ))
         .condition(moqui_db::sql::Condition::is_null("disabledDate"))
         .list()?;
+    let (native, browsers): (Vec<&EntityValue>, Vec<&EntityValue>) = rows
+        .iter()
+        .partition(|row| field(row, "pushProviderEnumId") == PROVIDER_FCM);
+    if !browsers.is_empty() {
+        send_browsers(facade, &browsers, &push, &mut tally);
+    }
+    if !native.is_empty() {
+        send_native(facade, &native, &push.notice, &mut tally);
+    }
+    Ok(summary(&tally))
+}
+
+/// Web Push to each browser, encrypted to it with the server's VAPID token.
+fn send_browsers(facade: &EntityFacade, rows: &[&EntityValue], push: &Push, tally: &mut Tally) {
+    let key = match vapid() {
+        Ok(key) => key,
+        Err(reason) => {
+            tracing::warn!("Web Push not sent: {reason}");
+            return;
+        }
+    };
+    let subject = Some(moqui_lib::env::get_prop_or_env(SUBJECT_PROPERTY))
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| "mailto:admin@localhost".to_string());
     let now_secs = u64::try_from(jiff::Timestamp::now().as_second()).unwrap_or(0);
-    for row in rows.iter() {
+    for row in rows {
         let id = field(row, "subscriptionId");
         let endpoint = field(row, "endpoint");
-        let status = push_crypto::encrypt(payload.as_bytes(), &field(row, "p256dhKey"), &field(row, "authSecret"))
-            .and_then(|body| Ok((body, key.authorization(&endpoint, &subject, now_secs)?)))
-            .and_then(|(body, authorization)| post(&endpoint, body, &authorization, &delivery));
+        let status = push_crypto::encrypt(
+            push.payload.as_bytes(),
+            &field(row, "p256dhKey"),
+            &field(row, "authSecret"),
+        )
+        .and_then(|body| Ok((body, key.authorization(&endpoint, &subject, now_secs)?)))
+        .and_then(|(body, authorization)| post(&endpoint, body, &authorization, &push.delivery));
         let result = match status {
             Ok(status) => outcome(Some(status)),
             Err(reason) => {
@@ -432,16 +728,79 @@ fn send_web_push(
                 Outcome::Failed
             }
         };
-        if result == Outcome::Delivered {
-            sent += 1;
-        } else {
-            failed += 1;
-        }
+        tally.count(result == Outcome::Delivered);
         if let Err(err) = record(facade, row, &result) {
             tracing::warn!(subscription_id = %id, error = %err, "Web Push result was not stored");
         }
     }
-    Ok(summary(sent, failed))
+}
+
+/// FCM to each native app whose device key is still good; a registration whose key has ended (revoked, expired, or
+/// deleted) is deleted instead. Without `fcm_service_account` nothing is sent, with one info line in the log.
+fn send_native(facade: &EntityFacade, rows: &[&EntityValue], notice: &super::fcm::Notice, tally: &mut Tally) {
+    let keys: Vec<Value> = rows.iter().map(|row| Value::string(field(row, "loginKey"))).collect();
+    let now = crate::user::now_millis();
+    let live: std::collections::HashSet<String> = match facade
+        .find(USER_LOGIN_KEY)
+        .and_then(|find| find.condition(moqui_db::sql::Condition::is_in("loginKey", keys)).list())
+    {
+        Ok(found) => found
+            .iter()
+            .filter(|key| {
+                key.get("thruDate")
+                    .and_then(crate::user::value_millis)
+                    .is_none_or(|thru| thru > now)
+            })
+            .map(|key| field(key, "loginKey"))
+            .collect(),
+        Err(err) => {
+            tracing::warn!(error = %err, "device keys of the FCM registrations not read; no FCM push sent");
+            return;
+        }
+    };
+    let (rows, ended): (Vec<&EntityValue>, Vec<&EntityValue>) =
+        rows.iter().partition(|row| live.contains(&field(row, "loginKey")));
+    for row in ended {
+        tracing::info!(subscription_id = %field(row, "subscriptionId"), "FCM registration's device key has ended; deleted");
+        if let Err(err) = row.delete(facade) {
+            tracing::warn!(subscription_id = %field(row, "subscriptionId"), error = %err, "FCM registration not deleted");
+        }
+    }
+    if rows.is_empty() {
+        return;
+    }
+    let config = match super::fcm::config() {
+        Ok(Some(config)) => config,
+        Ok(None) => {
+            super::fcm::note_unset();
+            return;
+        }
+        Err(reason) => {
+            tracing::warn!("FCM push not sent: {reason}");
+            return;
+        }
+    };
+    let sender = super::fcm::sender(&config);
+    let now_secs = jiff::Timestamp::now().as_second();
+    for (index, row) in rows.iter().enumerate() {
+        let id = field(row, "subscriptionId");
+        let message = super::fcm::message(&field(row, "endpoint"), notice);
+        let result = match sender.deliver(&id, &message, now_secs) {
+            super::fcm::Outcome::Delivered => Outcome::Delivered,
+            super::fcm::Outcome::Gone => Outcome::Gone,
+            super::fcm::Outcome::Failed => Outcome::Failed,
+            // The server's own trouble (no access token, credentials refused), already logged: it would be the same for
+            // the rest, so they are not tried, and no device is counted against.
+            super::fcm::Outcome::Unsent => {
+                tally.failed += i64::try_from(rows.len() - index).unwrap_or(i64::MAX);
+                break;
+            }
+        };
+        tally.count(result == Outcome::Delivered);
+        if let Err(err) = record(facade, row, &result) {
+            tracing::warn!(subscription_id = %id, error = %err, "FCM result was not stored");
+        }
+    }
 }
 
 fn record(facade: &EntityFacade, row: &EntityValue, result: &Outcome) -> Result<(), LibError> {
@@ -453,7 +812,7 @@ fn record(facade: &EntityFacade, row: &EntityValue, result: &Outcome) -> Result<
             row.set("failureCount", Value::I64(0));
         }
         Outcome::Gone => {
-            tracing::info!(subscription_id = %field(&row, "subscriptionId"), "Web Push subscription expired; disabled");
+            tracing::info!(subscription_id = %field(&row, "subscriptionId"), "push subscription expired (gone at its push service); disabled");
             row.set("lastFailureDate", now.clone());
             row.set("disabledDate", now);
         }
@@ -464,7 +823,7 @@ fn record(facade: &EntityFacade, row: &EntityValue, result: &Outcome) -> Result<
             if failures >= MAX_FAILURES {
                 tracing::info!(
                     subscription_id = %field(&row, "subscriptionId"),
-                    "Web Push subscription failed {failures} times; disabled"
+                    "push subscription failed {failures} times; disabled"
                 );
                 row.set("disabledDate", now);
             }

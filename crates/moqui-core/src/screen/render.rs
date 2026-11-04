@@ -232,6 +232,12 @@ impl ScreenRender {
         for (name, value) in &self.headers {
             request.set_header(name.clone(), value.clone());
         }
+        let request = Arc::new(request);
+        // A render given request headers is that request for the code it runs too (a service reading the request's
+        // login_key header, as a client's device key sends it), as on the server.
+        if !self.headers.is_empty() {
+            web::set_request(Arc::clone(&request), bytes::Bytes::new());
+        }
         let job = Job {
             request: &request,
             root: &self.root,

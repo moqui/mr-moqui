@@ -29,7 +29,8 @@ along with this software (see the LICENSE.md file). If not, see
       {kind: 'call', action: 'ring', callSessionId, revision, from {userId, name}, video, callKind, chatRoomId, expiresAt, call}
       {kind: 'call', action: 'answered' | 'declined' | 'joined' | 'left' | 'timedOut' | 'ended', callSessionId, revision, call}
     call is get#Call's view for that user. A ring also goes by Web Push (send#WebPush), expiring with the ring; an old push
-    opens the call's current state, never a finished ring.
+    opens the call's current state, never a finished ring. To a native app (FCM) the ring is a high-priority data message
+    {kind: 'ring', title, link, topic, tag, callSessionId, chatRoomId, from, video, expiresAt} with the ring time as its ttl.
 
     The media. A call's media is on one node, chosen at start among the live CallMediaNodes the host registers
     (register#MediaNode). The host's /notws binds a leg's socket with bind#Connection, which claims the next generation

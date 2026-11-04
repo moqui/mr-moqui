@@ -575,6 +575,9 @@ fn revoke_device_key(
         .update_all([("thruDate".to_string(), crate::user::now_value())])?;
     if updated == 0 {
         add_error("you have no such device");
+    } else {
+        // the device gets no more pushes (plans/Mobile-Desktop.md §5, native push)
+        super::web_push::forget_device_key(facade, &key);
     }
     Ok(BTreeMap::new())
 }

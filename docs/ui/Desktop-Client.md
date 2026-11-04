@@ -17,8 +17,9 @@ computer, answers from it offline, and sends what was queued once the server can
   (`window.moquiDesktop`, `moqui.drafts`, `moqui.connection`) is in
   [Qvt-Client, In the desktop app](Qvt-Client.md#in-the-desktop-app).
 - **Server:** nothing of its own but `/qapps/clientConfig` (with `server.clientApi`, 4 since MD5), the device keys
-  (`createLoginKey` with `deviceName`, `renewClientDevice`, `/qapps/clientDevices`), the SSO app hand-back, Compose's
-  `clientRef` ([Comms](../tools/Comms.md)) and the sync contracts of MD5 ([below](#the-servers-sync-contracts)).
+  (`createLoginKey` with `deviceName`, `renewClientDevice`, `/qapps/clientDevices`), the mobile app's FCM registration
+  (`/qapps/registerClientPush`, [Qvt-Client, Native apps](Qvt-Client.md#install-and-web-push)), the SSO app
+  hand-back, Compose's `clientRef` ([Comms](../tools/Comms.md)) and the sync contracts of MD5 ([below](#the-servers-sync-contracts)).
 
 ## Windows and schemes
 

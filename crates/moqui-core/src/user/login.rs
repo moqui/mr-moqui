@@ -711,9 +711,13 @@ pub fn revoke_login_key(key: &str) -> Result<bool, Error> {
     let facade = entity_facade()?;
     let updated = facade
         .find(USER_LOGIN_KEY)?
-        .eq("loginKey", Value::string(hashed))
+        .eq("loginKey", Value::string(&hashed))
         .eq("userId", Value::string(&user_id))
         .update_all([("thruDate".to_string(), now_value())])?;
+    if updated > 0 {
+        // a device signing out gets no more pushes (plans/Mobile-Desktop.md §5, native push)
+        crate::service::web_push::forget_device_key(&facade, &hashed);
+    }
     Ok(updated > 0)
 }
 
@@ -741,7 +745,7 @@ pub fn renew_device_key(key: &str) -> Result<Option<(String, i64)>, Error> {
     let facade = entity_facade()?;
     let Some(mut old) = facade
         .find(USER_LOGIN_KEY)?
-        .eq("loginKey", Value::string(hashed))
+        .eq("loginKey", Value::string(&hashed))
         .one()?
     else {
         return Ok(None);
@@ -757,6 +761,8 @@ pub fn renew_device_key(key: &str) -> Result<Option<(String, i64)>, Error> {
     let grace = now.saturating_add(RENEW_GRACE_MILLIS);
     old.set("thruDate", stamp_value(old_thru.map_or(grace, |thru| thru.min(grace))));
     old.update(&facade)?;
+    // the device's push registration goes with it to the new key (plans/Mobile-Desktop.md §5, native push)
+    crate::service::web_push::move_device_key(&facade, &hashed, &password::hash_login_key(&renewed)?);
     #[allow(clippy::cast_possible_truncation)] // As make_login_key_for's expiry.
     let thru = now.saturating_add((hours * HOUR_MILLIS).round() as i64);
     Ok(Some((renewed, thru)))

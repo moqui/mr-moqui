@@ -36,7 +36,8 @@ The Calls screen says when calls are unavailable (`get#Capabilities`): supported
 ## How a call goes
 
 1. `start#Call` (the Calls screen, the page's call store) makes the CallSession, a leg for the caller and an offered leg
-   per callee. It rings each callee's tabs on `chatUser:<userId>` and by Web Push, and appends a call event to the room.
+   per callee. It rings each callee's tabs on `chatUser:<userId>`, by Web Push, and by FCM to a native app as a
+   high-priority data message ([Qvt-Client](../ui/Qvt-Client.md#install-and-web-push)), and appends a call event to the room.
    The callees are enabled users whom no `call-target` provider of the caller's apps refuses: an app with
    organizations keeps them to the caller's own (IronStone BOSS: the users of the parties the caller may see), and a
    refused one is answered as one that does not exist (`noCallee`). Transfer and Add (`transfer#Call`,

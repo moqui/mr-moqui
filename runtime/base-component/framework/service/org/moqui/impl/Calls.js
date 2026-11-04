@@ -771,9 +771,12 @@ function ring(session, userIds, fromUserId, fromName) {
       from, video: session.video === 'Y', callKind: KIND_CODES[session.kindEnumId], chatRoomId: session.chatRoomId,
       expiresAt: ms(session.ringExpireDate), call: view(session, userId) })
   }
+  // a native app gets the call too (callSessionId, chatRoomId, fromName, video, expiresAt), to show it as an incoming call
   ec.service.async().name('org.moqui.impl.NotificationServices.send#WebPush').parameters({
     userIdList: userIds, title: ec.l10n.localize('Call from') + ' ' + from.name, link: callLink(session.callSessionId),
     topic: 'IncomingCall', tag: 'call-' + session.callSessionId, ttlSeconds: ringSeconds(), urgency: 'high',
+    callSessionId: session.callSessionId, chatRoomId: session.chatRoomId || null, fromName: from.name,
+    video: session.video === 'Y', expiresAt: ms(session.ringExpireDate),
   }).call()
   // and their desk and soft phones (V4, SipDeviceServices); a failure leaves the tabs ringing. A phone cannot take an end-to-end
   // encrypted call (W8): it is not rung.

@@ -413,6 +413,14 @@
         production instance should set to its operator's address. -->
     <default-property name="web_push_vapid_key" value="CHANGEME" is-secret="true"/>
     <default-property name="web_push_subject" value="mailto:admin@localhost"/>
+    <!-- Native push to the mobile apps (FCM's HTTP v1 API; plans/Mobile-Desktop.md §5): fcm_service_account is a Firebase
+        project's service account key, its JSON file's path or the JSON itself, kept like the other secrets (an environment
+        variable or runtime/.env; not generated). fcm_project_id is the Firebase project, by default the key's project_id.
+        Unset, nothing goes to FCM and the log says so once. fcm_base_url replaces https://fcm.googleapis.com, for a test
+        stand-in only. -->
+    <default-property name="fcm_service_account" value="" is-secret="true"/>
+    <default-property name="fcm_project_id" value=""/>
+    <default-property name="fcm_base_url" value=""/>
     <!-- Cluster TLS material is base64 DER on one line, shared by provisioning, distinct from session_cookie_key. -->
     <default-property name="cluster_tls_cert" value="CHANGEME" is-secret="true"/>
     <default-property name="cluster_tls_key" value="CHANGEME" is-secret="true"/>

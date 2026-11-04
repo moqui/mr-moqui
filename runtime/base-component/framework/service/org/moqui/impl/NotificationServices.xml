@@ -30,7 +30,11 @@ along with this software (see the LICENSE.md file). If not, see
     notification then also goes to the subscribed browsers of the recipients who want it pushed (pushNotifications on
     NotificationTopicUser, else NotificationTopic, else yes for the NinNotifications inbox), through send#WebPush on a
     service worker. A push carries the title, link and topic, never the message body. Push is a hint: the notification
-    list is the server's, and works with no push at all. -->
+    list is the server's, and works with no push at all.
+
+    Native push (plans/Mobile-Desktop.md §5): an app signed in with its device key registers its FCM token
+    (register#PushDevice, /qapps/registerClientPush); send#WebPush then also sends to it through FCM (fcm_service_account,
+    fcm_project_id), a call's ring as a high-priority data message. The registration ends with the device key. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
     <service verb="get" noun="UserNotifications">
         <description>The current user's notifications, newest first, with their topic, inbox, reason, record, actor and app,
@@ -506,10 +510,15 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="send" noun="WebPush" type="rust" location="moqui_core::service::web_push::send_web_push"
             authenticate="false" allow-remote="false">
-        <description>Internal: run on a service worker when a persisted notification is sent. Pushes title, link, topic
-            and tag (the notification message id) to each active subscription of userIdList, encrypted (RFC 8291) with a
-            VAPID token (RFC 8292). A push service answering 404 or 410 disables the subscription; 5 failures in a row
-            do too. Each subscription fails on its own, logged by its id.</description>
+        <description>Internal: run on a service worker when a persisted notification is sent, and for a call's ring.
+            Pushes title, link, topic and tag (the notification message id) to each active subscription and registration
+            of userIdList. A browser's (PushWeb) is encrypted (RFC 8291) with a VAPID token (RFC 8292); a push service
+            answering 404 or 410 disables it. A native app's (PushFcm) goes by FCM's HTTP v1 API as a data message
+            {kind: notification | ring, title, link, topic, tag, and for a ring callSessionId, chatRoomId, from, video,
+            expiresAt}, android.priority HIGH for urgency high, with ttl from ttlSeconds; FCM answering UNREGISTERED or
+            INVALID_ARGUMENT disables it, 429 and 5xx are tried again twice, and one whose device key has ended is
+            deleted. 5 failures in a row disable either. Each one fails on its own, logged by its id; FCM is skipped,
+            with one info line in the log, while fcm_service_account is not set.</description>
         <in-parameters>
             <parameter name="userIdList" type="List" required="true"/>
             <parameter name="title"/>
@@ -519,10 +528,50 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="ttlSeconds" type="Integer"><description>How long a push service keeps the push for a device
                 that is offline, at most (and by default) a day: a call's ring passes on its ring time</description></parameter>
             <parameter name="urgency"><description>normal (the default) or high (a ringing call)</description></parameter>
+            <parameter name="callSessionId"><description>A call's ring: the call, which makes the FCM message a ring
+                (kind ring) for the app to show as an incoming call. Not in a Web Push payload.</description></parameter>
+            <parameter name="chatRoomId"><description>A ring: the call's room</description></parameter>
+            <parameter name="fromName"><description>A ring: the caller's name</description></parameter>
+            <parameter name="video" type="Boolean"><description>A ring: whether it is a video call</description></parameter>
+            <parameter name="expiresAt" type="Long"><description>A ring: when it stops ringing, in epoch milliseconds</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="sentCount" type="Long"/>
             <parameter name="failedCount" type="Long"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== Native push (FCM; plans/Mobile-Desktop.md §5) ========== -->
+
+    <service verb="register" noun="PushDevice" type="rust" location="moqui_core::service::web_push::register_device">
+        <description>Keep the push registration of the native app this request comes from, for the current user: an FCM
+            registration token (provider fcm), stored as a WebPushSubscription with pushProviderEnumId PushFcm and the
+            device key the request signed in with (its login_key header). Refused with an error unless the request was
+            signed in by an unexpired device key of the user's (one with a deviceName), so the registration always ends
+            with its device: revoke#UserDeviceKey or logout with revokeLoginKey deletes it, renew#UserDeviceKey moves it to
+            the new key. A token stored before, for this user or another, becomes this registration and is enabled again;
+            an older token of the same device key is replaced.</description>
+        <in-parameters>
+            <parameter name="provider" required="true"><description>fcm (the only one so far)</description></parameter>
+            <parameter name="token" required="true"><description>The FCM registration token (no spaces, 4096 characters at
+                most)</description></parameter>
+            <parameter name="appId"><description>The app's id, such as the Android package name</description></parameter>
+            <parameter name="platform"><description>android (the default)</description></parameter>
+        </in-parameters>
+        <out-parameters><parameter name="subscriptionId"/></out-parameters>
+    </service>
+    <service verb="unregister" noun="PushDevice" type="rust" location="moqui_core::service::web_push::unregister_device">
+        <description>Forget the current user's FCM registration with token, or with no token every registration of the
+            device key this request signed in with. Another user's token is left as it is, with no error.</description>
+        <in-parameters><parameter name="token"/></in-parameters>
+        <out-parameters><parameter name="deletedCount" type="Long"/></out-parameters>
+    </service>
+    <service verb="get" noun="PushDeviceStatus" type="rust" location="moqui_core::service::web_push::get_device_status">
+        <description>Whether this server sends FCM (fcmConfigured: fcm_service_account is set), and whether the device
+            key this request signed in with has an enabled registration (registered). Adds no error.</description>
+        <out-parameters>
+            <parameter name="fcmConfigured" type="Boolean"/>
+            <parameter name="registered" type="Boolean"/>
         </out-parameters>
     </service>
 </services>

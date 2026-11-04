@@ -4755,6 +4755,7 @@ dependencies = [
  "rcgen",
  "regex",
  "rquickjs",
+ "rsa",
  "rust_xlsxwriter",
  "serde",
  "serde_json",

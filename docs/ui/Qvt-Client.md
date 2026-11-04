@@ -1040,6 +1040,28 @@ as a notification.
 The server keeps its key in `web_push_vapid_key` (generated, an `is-secret` default-property shared by the cluster) and
 names itself to the push services with `web_push_subject` (a `mailto:` or `https:` URL; set it in production).
 
+**Native apps (FCM).** The mobile app is not a browser and gets no Web Push. Signed in with its device key, it registers
+its Firebase Cloud Messaging token (`POST /qapps/registerClientPush` with `provider=fcm`, `token`, `appId`, `platform`;
+`register#PushDevice`), stored in the same `WebPushSubscription` entity with `pushProviderEnumId` `PushFcm` and the device
+key (`loginKey`). A request not signed in by a device key is refused, so the registration ends with its device: the
+key's revoke (`revoke#UserDeviceKey`, or logout with `revokeLoginKey`) deletes it, its renewal moves it to the new key,
+and one whose key ended otherwise is deleted at the next push. `POST /qapps/unregisterClientPush` forgets it.
+`/qapps/clientConfig` says what the server offers in `server.features.nativePush` (`providers`, `fcmConfigured`,
+`registered`).
+
+`send#WebPush` sends to these through FCM's HTTP v1 API (`service/fcm.rs`) as a data message, which the app's own code
+shows: `{kind, title, link, topic, tag}`, `kind` `notification` or `ring`; a call's ring adds `callSessionId`,
+`chatRoomId`, `from`, `video` and `expiresAt`, with `android.priority` `HIGH` and the ring time as its `ttl`, so the app
+can show the incoming call with the screen locked. It carries what Web Push carries, never a message's body. FCM
+answering `UNREGISTERED` or `INVALID_ARGUMENT` disables the registration; 429 and 5xx are tried twice more with a
+growing wait; 5 failures in a row disable it, as for a browser.
+
+The server signs in to FCM as a Firebase project's service account: `fcm_service_account` is its JSON key file's path
+or the JSON itself (an `is-secret` default-property, from the environment or `runtime/.env`, not generated), and
+`fcm_project_id` the project (by default the key's `project_id`). An RS256 JWT is exchanged at the key's `token_uri` for
+an access token, kept until five minutes before it expires. Unset, nothing goes to FCM and the log says so once.
+`fcm_base_url` replaces `https://fcm.googleapis.com`, for a test stand-in.
+
 ## In the desktop app
 
 The desktop app's page bridge (`crates/moqui-desktop/src/bridge.js`) defines `window.moquiDesktop`, and the client calls
