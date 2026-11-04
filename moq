@@ -832,7 +832,7 @@ client crate (plans/Mobile-Desktop.md, MD6). Commands:
                -no-window, where dev cannot install: it waits for a boot animation that
                never runs). Creates the AVD from the installed system image
                (system-images;android-36;google_apis_playstore;<arch>) when missing.
-               Stop it with: adb emu kill
+               It needs only the SDK. Stop it with: adb -s <its serial> emu kill
     init       cargo tauri android init: regenerates what gen/android does not keep in git
     dev        cargo tauri android dev, on the running emulator or a phone over adb (the default)
     build      cargo tauri android build: an APK and an AAB for each target, debug unless
@@ -1532,12 +1532,11 @@ ANDROID_AVD_DEFAULT=moqui-36
 ANDROID_AVD_API=36
 
 task_android() {
-    local command=dev release= window=
+    local command= release= window=
     local -a tauri_args
     tauri_args=()
     while [ $# -gt 0 ]; do
         case $1 in
-            emulator | init | dev | build) command=$1 ;;
             --release) release=1 ;;
             --window) window=1 ;;
             --)
@@ -1545,14 +1544,30 @@ task_android() {
                 tauri_args+=("$@")
                 break
                 ;;
-            *) tauri_args+=("$1") ;;
+            -*) tauri_args+=("$1") ;;
+            *)
+                if [ -z "$command" ]; then
+                    case $1 in
+                        emulator | init | dev | build) command=$1 ;;
+                        *) die "unknown android command '$1': emulator, init, dev or build (./moq help android)" ;;
+                    esac
+                else
+                    tauri_args+=("$1")
+                fi
+                ;;
         esac
         shift
     done
-    # The SDK, the NDK, the JDK and the NDK's compilers.
+    command=${command:-dev}
+    case $command in emulator | init) [ -z "$release" ] || warn "--release is ignored for $command" ;; esac
+    [ "$command" = emulator ] || [ -z "$window" ] || warn "--window is ignored for $command"
+    # The SDK, the JDK, and for a build the NDK and its compilers; the emulator needs only the SDK.
+    local ANDROID_ENV_NO_NDK=
+    [ "$command" != emulator ] || ANDROID_ENV_NO_NDK=1
     # shellcheck source=scripts/android-env.sh
     . "$ROOT/scripts/android-env.sh" || exit 1
-    [ -n "${ANDROID_HOME:-}" ] || die "no Android SDK: set ANDROID_HOME (see ./moq help android)"
+    [ -n "${ANDROID_HOME:-}" ] \
+        || die "no Android SDK: set ANDROID_HOME, or install one in ~/Android/Sdk (see ./moq help android)"
     if [ "$command" = emulator ]; then
         android_emulator "$window"
         return
@@ -1567,11 +1582,11 @@ task_android() {
     export_var CARGO_TARGET_DIR "$ROOT/target"
     if [ "$command" = dev ]; then
         local adb=$ANDROID_HOME/platform-tools/adb serial
-        serial=$("$adb" devices 2>/dev/null | sed -n 's/^\(emulator-[0-9]*\)[[:space:]]*device$/\1/p' | head -1)
+        serial=$(android_emulator_serial "$adb")
         # cargo-mobile2 would wait for the boot animation forever (android_emulator).
         if [ -n "$serial" ] && [ -z "$("$adb" -s "$serial" shell getprop init.svc.bootanim 2>/dev/null | tr -d '\r')" ]; then
             die "the emulator $serial has no boot animation (started with -no-window or -no-boot-anim), so" \
-                "cargo tauri android dev would wait for it forever: adb emu kill, then ./moq android emulator"
+                "cargo tauri android dev would wait for it forever: adb -s $serial emu kill, then ./moq android emulator"
         fi
     fi
     local -a args
@@ -1585,15 +1600,22 @@ task_android() {
         ${tauri_args[@]+"${tauri_args[@]}"}) || die "cargo tauri android $command failed"
 }
 
-# Starts the AVD (MOQUI_ANDROID_AVD, default moqui-36), headless unless $1, and waits for it to boot; creates it from
-# the installed system image when missing. An emulator already running is used as it is.
+# The serial of the first emulator adb lists (in any state), or nothing. $1 is adb.
+android_emulator_serial() {
+    "$1" devices 2>/dev/null | sed -n 's/^\(emulator-[0-9]*\)[[:space:]].*/\1/p' | head -1
+}
+
+# Starts the AVD (MOQUI_ANDROID_AVD, default moqui-36), in a hidden window unless $1, and waits for it to boot; creates
+# it from the installed system image when missing. An emulator already running is used as it is. Every adb call names
+# the emulator's serial, so a phone connected too does not get in the way.
 android_emulator() {
     local window=$1 avd=${MOQUI_ANDROID_AVD:-$ANDROID_AVD_DEFAULT}
     local emulator=$ANDROID_HOME/emulator/emulator adb=$ANDROID_HOME/platform-tools/adb
     local avdmanager=$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager
+    local log=$ROOT/target/android-emulator.log
     [ -x "$emulator" ] || die "no emulator in $ANDROID_HOME: sdkmanager emulator"
     [ -x "$adb" ] || die "no adb in $ANDROID_HOME: sdkmanager platform-tools"
-    if ! "$emulator" -list-avds 2>/dev/null | grep -qx "$avd"; then
+    if ! "$emulator" -list-avds 2>/dev/null | grep -qxF "$avd"; then
         local abi=x86_64
         [ "$(uname -m)" = x86_64 ] || abi=arm64-v8a
         local image="system-images;android-$ANDROID_AVD_API;google_apis_playstore;$abi"
@@ -1604,16 +1626,22 @@ android_emulator() {
         echo no | run_cmd "$avdmanager" create avd -n "$avd" -k "$image" -d pixel_7 >/dev/null \
             || die "could not create the AVD $avd"
     fi
-    if "$adb" devices | grep -q '^emulator-'; then
-        info "An emulator is already running"
+    local serial pid=
+    serial=$(android_emulator_serial "$adb")
+    if [ -n "$serial" ]; then
+        info "An emulator is already running ($serial)"
     else
+        # The first free console port, so the serial is known: emulator-<port>.
+        local port=5554
+        while "$adb" devices 2>/dev/null | grep -q "^emulator-$port[[:space:]]"; do port=$((port + 2)); done
+        serial=emulator-$port
         local -a emulator_args
         # cargo tauri android dev (cargo-mobile2) waits for an emulator's init.svc.bootanim to be "stopped", which it
         # never is without the boot animation, and -no-window (like -no-boot-anim) turns that off. So headless is a
         # hidden window where there is a display, and -no-window only where there is none.
-        emulator_args=(-avd "$avd" -no-audio)
+        emulator_args=(-avd "$avd" -port "$port" -no-audio)
         if [ -z "$window" ]; then
-            if [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] || [ "$(uname -s)" = Darwin ]; then
+            if android_has_display; then
                 emulator_args+=(-qt-hide-window)
             else
                 emulator_args+=(-no-window)
@@ -1626,17 +1654,30 @@ android_emulator() {
             return 0
         fi
         mkdir -p "$ROOT/target"
-        info "Starting $avd (its output in $(rel "$ROOT/target/android-emulator.log"))"
-        nohup "$emulator" "${emulator_args[@]}" >"$ROOT/target/android-emulator.log" 2>&1 &
+        info "Starting $avd as $serial (its output in $(rel "$log"))"
+        nohup "$emulator" "${emulator_args[@]}" >"$log" 2>&1 &
+        pid=$!
     fi
-    "$adb" wait-for-device || die "adb wait-for-device failed"
-    local waited=0
-    until [ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do
-        [ "$waited" -lt 300 ] || die "the emulator did not boot in 300 seconds (target/android-emulator.log)"
+    # Not adb wait-for-device, which waits forever when the emulator dies: its state and boot polled in one budget.
+    local start=$SECONDS
+    until [ "$("$adb" -s "$serial" get-state 2>/dev/null)" = device ] \
+        && [ "$("$adb" -s "$serial" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do
+        if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+            die "the emulator exited before it booted: see $(rel "$log")"
+        fi
+        [ $((SECONDS - start)) -lt 300 ] || die "the emulator did not boot in 300 seconds: see $(rel "$log")"
         sleep 2
-        waited=$((waited + 2))
     done
-    info "The emulator is up ($("$adb" devices | sed -n 's/^\(emulator-[0-9]*\).*/\1/p' | head -1)); stop it with: adb emu kill"
+    info "The emulator is up ($serial); stop it with: adb -s $serial emu kill"
+}
+
+# Whether the emulator can open a window: a GUI session on macOS, an X or Wayland display elsewhere.
+android_has_display() {
+    if [ "$(uname -s)" = Darwin ]; then
+        [ "$(launchctl managername 2>/dev/null)" = Aqua ]
+    else
+        [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]
+    fi
 }
 
 # The --config of a bundle with an update feed, as JSON: the updater plugin's public key and endpoints, and the

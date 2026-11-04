@@ -8,14 +8,14 @@
 #   an Android NDK and CMake (scripts/android-env.sh finds the NDK: ANDROID_NDK_HOME, an SDK's, or Homebrew's)
 #   (aws-lc-sys may need libclang for bindgen where it has no pregenerated bindings for the target)
 # A run on a device needs more than this build: ./moq android (crates/moqui-mobile/README.md).
-#   scripts/check-android.sh [extra clippy args...]
+#   scripts/check-android.sh [extra clippy args, for the moqui-client runs only]
 # ANDROID_TARGETS names the targets (default both); ANDROID_API the API level of the NDK compilers (default 26).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 root=$PWD
 targets=${ANDROID_TARGETS:-aarch64-linux-android x86_64-linux-android}
 for target in $targets; do
-    rustup target list --installed | grep -qx "$target" \
+    rustup target list --installed | grep -qxF "$target" \
         || { echo "the $target target is not installed: rustup target add $target" >&2; exit 1; }
 done
 # shellcheck source=scripts/android-env.sh
@@ -31,5 +31,5 @@ for target in $targets; do
     # are still compiled for the target here)
     cargo clippy -p moqui-client --no-deps --target "$target" --all-targets "$@" -- -D warnings
     echo "== cargo clippy in $mobile --target $target" >&2
-    (cd "$mobile" && CARGO_TARGET_DIR="$root/target" cargo clippy --no-deps --target "$target" "$@" -- -D warnings)
+    (cd "$mobile" && CARGO_TARGET_DIR="$root/target" cargo clippy --no-deps --target "$target" -- -D warnings)
 done

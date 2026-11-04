@@ -328,7 +328,7 @@ tools (no Android Studio), in `~/Android/Sdk` or `ANDROID_HOME`. The image has P
 
 ```sh
 rustup target add x86_64-linux-android aarch64-linux-android
-sdkmanager 'platform-tools' 'emulator' 'platforms;android-36' 'build-tools;37.0.0' 'ndk;30.0.16248370' \
+sdkmanager 'platform-tools' 'emulator' 'platforms;android-37.0' 'build-tools;36.0.0' 'ndk;30.0.16248370' \
     'system-images;android-36;google_apis_playstore;x86_64'
 ./moq android emulator                       # create (once) and start the moqui-36 AVD, on KVM; adb emu kill
 ./moq android dev                            # build, install and run on it, or on a phone over adb
@@ -337,14 +337,17 @@ scripts/check-android.sh                     # clippy for both Android targets, 
 ```
 
 `scripts/android-env.sh`, which `./moq android` and `scripts/check-android.sh` source, finds the SDK, the newest NDK
-in it and the JDK, and exports `ANDROID_HOME`, `NDK_HOME` and `JAVA_HOME` for the Tauri CLI and the NDK's compilers for
-the C in aws-lc and SQLite. The first Gradle build downloads Gradle, the Android Gradle plugin and the SDK platform
-and build tools it compiles against, and the rustls-platform-verifier Maven artifact from GitHub.
+in it and the JDK (on macOS `java_home`'s, else Android Studio's), and exports `ANDROID_HOME`, `NDK_HOME` and
+`JAVA_HOME` for the Tauri CLI and the NDK's compilers for the C in aws-lc and SQLite; the emulator needs only the SDK.
+The first Gradle build downloads Gradle and the Android Gradle plugin (and the SDK platform and build tools it compiles
+against, `compileSdk` 37, when they are missing), and the rustls-platform-verifier Maven artifact from GitHub, pinned
+to a commit of its archive.
 
 The emulator runs in a hidden window (`-qt-hide-window`), not `-no-window`: `cargo tauri android dev` (cargo-mobile2)
 waits for an emulator's boot animation to stop, and `-no-window` and `-no-boot-anim` turn it off, so it would wait
-forever. With no display at all `./moq android emulator` falls back to `-no-window`, and `./moq android dev` refuses
-such an emulator; build an APK and `adb install` it instead.
+forever. With no display (no GUI session on macOS) `./moq android emulator` falls back to `-no-window`, and
+`./moq android dev` refuses such an emulator; build an APK and `adb install` it instead. Every adb call names the
+emulator's serial, so a phone connected too is no trouble.
 
 ## The moq script
 

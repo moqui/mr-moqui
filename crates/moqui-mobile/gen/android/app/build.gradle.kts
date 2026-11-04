@@ -83,10 +83,18 @@ dependencies {
 }
 
 // rustls-platform-verifier's Android component (crates/moqui-client/README.md): its Maven archive on GitHub, at the
-// version of rustls-platform-verifier-android in crates/moqui-mobile/Cargo.lock, as its README sets it up.
+// version of rustls-platform-verifier-android in crates/moqui-mobile/Cargo.lock, as its README sets it up. The archive
+// is pinned to a commit of its maven-archive branch (which has 0.1.0 to 0.2.0), not the branch itself, and serves only
+// the org.rustls group; a newer rustls-platform-verifier-android needs the commit that added it here.
 repositories {
     maven {
-        url = uri("https://github.com/rustls/rustls-platform-verifier/raw/maven-archive/android-release-support/maven/")
+        url = uri(
+            "https://github.com/rustls/rustls-platform-verifier/raw/" +
+                "1aa691352a5e0c215210dfc9a3c2f2078639dc91/android-release-support/maven/"
+        )
+        content {
+            includeGroup("org.rustls")
+        }
     }
 }
 
