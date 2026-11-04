@@ -103,7 +103,8 @@ pub struct PassReport {
     pub jobs_run: usize,
     pub jobs_active: usize,
     pub jobs_paused: usize,
-    pub jobs_ready_not_run: usize,
+    /// Jobs not checked for readiness because no execution slot was left: their lock and history are not read.
+    pub jobs_not_checked: usize,
     /// Jobs that could not be checked or started; each is logged and the pass goes on.
     pub jobs_failed: usize,
 }
@@ -164,6 +165,13 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
             report.jobs_paused += 1;
             continue;
         }
+        // With no slot left nothing more can start, so the lock and history queries are not made: under a saturated
+        // queue they would cost a query per queued call on every pass (`plans/High-Level-Review.md` HL-020). Jobs come
+        // in priority order, so those left are the lower ones, checked on a later pass.
+        if slots <= 0 {
+            report.jobs_not_checked += 1;
+            continue;
+        }
         // As in Java's `ScheduledJobRunner`, a job that cannot be checked or started is logged and the pass goes on
         // with the next job.
         let exhausted = if queued {
@@ -190,10 +198,6 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
                 continue;
             }
         };
-        if slots <= 0 {
-            report.jobs_ready_not_run += 1;
-            continue;
-        }
         match dispatch(shared, factory, &facade, &plan, job, ready, &now_stamp) {
             Ok(true) => {
                 report.jobs_run += 1;

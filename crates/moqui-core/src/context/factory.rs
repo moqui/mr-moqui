@@ -177,7 +177,7 @@ pub struct ExecutionContextFactory {
     requests: crate::service::RequestPool,
     executor: Executor,
     pub(crate) sessions: std::sync::Mutex<crate::user::session::SessionTable>,
-    /// True after this factory's cluster heartbeat hook is registered.
+    /// True after this factory's cluster heartbeat thread is started.
     pub(crate) cluster_heartbeat: AtomicBool,
     /// True once [`Self::shutdown`] began: work that would reach the database later (the shell counts sender) stops.
     shutting_down: AtomicBool,

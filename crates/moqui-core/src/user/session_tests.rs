@@ -928,14 +928,63 @@ type FlushHook = Arc<dyn Fn() + Send + Sync>;
 
 static FLUSH_HOOK: std::sync::Mutex<Option<(String, FlushHook)>> = std::sync::Mutex::new(None);
 
-/// Called by [`flush_id`] after it copied what it writes and before its SQL.
-pub(super) fn flush_hook(id: &str) {
+/// Session ids whose flush fails at [`flush_hook`].
+static FAILING_FLUSH: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Called by [`flush_id`] after it copied what it writes and before its SQL. An id in [`FAILING_FLUSH`] fails.
+pub(super) fn flush_hook(id: &str) -> Result<(), Error> {
+    if lock(&FAILING_FLUSH).iter().any(|failing| failing == id) {
+        return Err(Error::new("stand-in flush failure"));
+    }
     let hook = lock(&FLUSH_HOOK)
         .as_ref()
         .filter(|(hook_id, _)| hook_id == id)
         .map(|(_, hook)| Arc::clone(hook));
     if let Some(hook) = hook {
         hook();
+    }
+    Ok(())
+}
+
+/// Sessions are flushed in id order; the failing ones come first, so a flush that stopped at the first failure would
+/// leave the last session unwritten.
+#[test]
+fn a_session_that_fails_to_flush_does_not_stop_the_others() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    let mut ids: Vec<String> = (0..4)
+        .map(|n| {
+            let guard = bind(&factory, None, None, false).unwrap();
+            save_parameter("n", &n.to_string());
+            guard.session_id()
+        })
+        .collect();
+    ids.sort();
+    let (failing, written) = ids.split_at(3);
+    *lock(&FAILING_FLUSH) = failing.to_vec();
+    let result = flush_dirty(&factory);
+    lock(&FAILING_FLUSH).clear();
+    assert!(result.is_err(), "the failures are reported");
+    for id in failing {
+        assert!(
+            read_row(&facade, id).unwrap().is_none(),
+            "{id} failed and was not written"
+        );
+        assert!(needs_flush(lock_sessions(&factory).sessions.get(id).unwrap()));
+    }
+    for id in written {
+        assert!(
+            read_row(&facade, id).unwrap().is_some(),
+            "{id} is written after the failures"
+        );
+    }
+    flush_dirty(&factory).unwrap();
+    for id in failing {
+        assert!(
+            read_row(&facade, id).unwrap().is_some(),
+            "{id} is written by the next flush"
+        );
     }
 }
 

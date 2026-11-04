@@ -401,6 +401,37 @@ fn a_job_with_a_bad_cron_is_skipped_and_the_next_job_runs() {
     assert!(runs(&world, "A0").is_empty());
 }
 
+/// With every execution slot taken, a pass reads no job's lock or history: the bad cron, which fails only once its
+/// readiness is checked, is not reached. With a slot free again the same pass checks and runs them.
+#[test]
+fn a_pass_with_no_free_slot_checks_no_job() {
+    let world = jobs_world(2, 8);
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    add_job(&world, "A0", "echo#Note", "not a cron", &[]);
+    add_job(&world, "J1", "echo#Note", "* * * * * *", &[]);
+    let pools = world.ctx.factory().service_pools();
+    let shared = pools.shared_handle();
+    let busy = usize::try_from(shared.job_slots()).unwrap();
+    moqui_lib::sync::lock(&shared.state).jobs_active += busy;
+    let report = pools.tick();
+    moqui_lib::sync::lock(&shared.state).jobs_active -= busy;
+    assert_eq!(
+        report,
+        super::super::jobs::PassReport {
+            jobs_not_checked: 2,
+            ..Default::default()
+        }
+    );
+    assert!(runs(&world, "J1").is_empty());
+    let report = pools.tick();
+    assert_eq!(
+        (report.jobs_failed, report.jobs_run, report.jobs_not_checked),
+        (1, 1, 0),
+        "{report:?}"
+    );
+}
+
 #[test]
 fn paused_and_future_jobs_do_not_run_and_a_held_lock_blocks_a_job() {
     let world = jobs_world(2, 8);
