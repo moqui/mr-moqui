@@ -241,7 +241,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rich] -->\n"
     "allFields": [
         {"name": "id", "title": () => ec.l10n.localize("ID")},
         {"name": "title", "title": () => ec.l10n.localize("Title")},
-        {"name": "qty", "title": () => ec.l10n.localize("Qty")},
+        {"name": "qty", "title": () => ec.l10n.localize("Qty"), "hide": () => (hideQty)},
         {"name": "status", "title": () => ec.l10n.localize("Status")},
         {"name": "link", "title": () => ec.l10n.localize("Open")},
         {"name": "act", "title": () => ec.l10n.localize("Do")}

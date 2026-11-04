@@ -1032,7 +1032,9 @@ try {
             (attr(field, "hide") ? `((${attr(field, "hide")}) ? null : ${columnChoice(field)})` : columnChoice(field))).join(",")}]`).join(",")}].map(($col) => $col.filter(($choice) => $choice)).filter(($col) => $col.length)`;
         const notShownExpr = (columns) => {
             const shown = new Set(columns.flat().map((field) => attr(field, "name")));
-            return `[${fields.filter((field) => !S.listFieldHiddenWidget(field) && !shown.has(attr(field, "name"))).map(columnChoice).join(",")}]`;
+            // a field its hide condition hides is not offered either, as shownExpr leaves its column out
+            return `[${fields.filter((field) => !S.listFieldHiddenWidget(field) && !shown.has(attr(field, "name"))).map((field) =>
+                (attr(field, "hide") ? `((${attr(field, "hide")}) ? null : ${columnChoice(field)})` : columnChoice(field))).join(",")}].filter(($choice) => $choice)`;
         };
         const selectColumnsBlock = attr(node, "select-columns") === "true" ? `try {
             const $columnsUrl = sri.buildUrl("formSelectColumns");

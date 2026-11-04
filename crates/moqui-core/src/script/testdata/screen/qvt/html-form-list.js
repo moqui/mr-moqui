@@ -250,7 +250,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rich] -->\n"
     "allFields": [
         {"name": "id", "title": () => ec.l10n.localize("ID"), "summary": () => {  let $t = ""; sri.pushContext(); try {  $t += $v.valueText({"name":"text-find","attrs":{},"parent":{"name":"header-field","attrs":{"show-order-by":"case-insensitive"},"parent":{"name":"field","attrs":{"name":"id"},"parent":{"name":"form-list","attrs":{"name":"Rich"}}}}}); } finally { sri.popContext(); } return $t.trim(); }},
         {"name": "title", "title": () => ec.l10n.localize("Title"), "summary": () => {  let $t = ""; sri.pushContext(); try {  $t += $v.valueText({"name":"drop-down","attrs":{},"children":[{"name":"option","attrs":{"key":"A"}}],"parent":{"name":"header-field","attrs":{"container-style":"head"},"parent":{"name":"field","attrs":{"name":"title","align":"center"},"parent":{"name":"form-list","attrs":{"name":"Rich"}}}}}); } finally { sri.popContext(); } return $t.trim(); }},
-        {"name": "qty", "title": () => ec.l10n.localize("Qty"), "summary": null},
+        {"name": "qty", "title": () => ec.l10n.localize("Qty"), "summary": null, "hide": () => (hideQty)},
         {"name": "status", "title": () => ec.l10n.localize("Status"), "summary": null},
         {"name": "link", "title": () => ec.l10n.localize("Open"), "summary": null},
         {"name": "act", "title": () => ec.l10n.localize("Do"), "summary": null}

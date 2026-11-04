@@ -244,7 +244,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
         {"name": "id", "title": () => ec.l10n.localize("ID")},
         {"name": "title", "title": () => ec.l10n.localize("The Title")},
         {"name": "qty", "title": () => ec.l10n.localize("Qty")},
-        {"name": "amt", "title": () => ec.l10n.localize("Amt")},
+        {"name": "amt", "title": () => ec.l10n.localize("Amt"), "hide": () => (hideAmt)},
         {"name": "status", "title": () => ec.l10n.localize("Status")},
         {"name": "link", "title": () => ec.l10n.localize("Open")},
         {"name": "b", "title": () => ec.l10n.localize("Do")}

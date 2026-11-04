@@ -425,7 +425,7 @@ the tasks, and `./moq help <task>` describes one. Task names match by partial pa
 ./moq load                     # all data types; ./moq load seed seed-initial install
 ./moq test mr-mantle           # run a component's JavaScript specs; extra args go to moqui test (--spec, --db snapshot)
 ./moq test-client framework    # a component's test/client specs against the running server (docs/dev/Client-Testing.md)
-./moq test-all                 # every suite: cargo (with the opt-in host tests), moq, moqui test, test-client --serve
+./moq test-all                 # every suite: cargo, moq, moqui test, test-client --serve; no slow test
 ./moq save-db before-upgrade   # and later: ./moq reload-save before-upgrade
 ./moq archive                  # mr-moqui-YYYYMMDD.zip (or --tgz): runtime/ without logs, with the binary in it
 ./moq git-status               # or any git command in every repo: ./moq git pull
@@ -454,10 +454,11 @@ cargo test -p moqui-host --test gate3
 runs the scripted TUI screens, which `cargo test` leaves out. A gate that only one package sees still has to compile
 there.
 
-`./moq test-all` runs every suite in turn and lists which passed: `cargo test`, the opt-in host tests (Gate 3, the
-client browser and TUI screen tests), `scripts/moq-test.sh` (the tests of `./moq`), `moqui test` for every component,
-the demo component's specs (it is off by default, so the suite turns it on), and the client specs. `./moq help
-test-all` lists them. It runs no slow test; `./moq test-all --slow` adds them.
+`./moq test-all` runs every suite in turn and lists which passed: `cargo test`, `scripts/moq-test.sh` (the tests of
+`./moq`), `moqui test` for every component, the demo component's specs (it is off by default, so the suite turns it on),
+and the client specs. `./moq help test-all` lists them. It runs no slow test; `./moq test-all --slow` adds them, and the
+opt-in host tests (Gate 3, the client browser and TUI screen tests), which run in under a minute but build their own
+feature set first, minutes on every run.
 
 ### Slow tests
 
@@ -470,9 +471,23 @@ when the test is named:
   it as ignored (`slow: run with --slow`) and run it only with `--slow`; `test-client --serve` passes `--slow` to the
   server's own specs, and starts no server for a component whose specs are all slow;
 - a Rust test: `#[ignore = "slow: ..."]`, run by `cargo test-slow`;
-- an opt-in host test binary that is slow as a whole (`gate3_browser`), run by name.
+- an opt-in host test binary (`gate3`, `gate3_browser`, `client_browser`, `tui_screens`), run by name.
 
 `./moq test-all --slow` runs all of them. An agent never runs a slow test without the user's permission (AGENTS.md).
+
+A slow test is banned from normal runs, and every slow test is a candidate for deletion: delete one rather than mark it
+when its scenario does not need checking on its own. `moqui test` and `moqui test-client` name, at the end of a run, any
+spec not marked slow that took over 30 seconds.
+
+### Rendering screens in tests
+
+- No test walks every screen of an app or of all apps, or every screen in every render mode. These have been deleted
+  before and keep coming back; do not add one. Rendering as such is the framework's (its goldens and `moqui lint
+  --screens`).
+- Across the whole suite a screen is rendered at most once in each render mode, and that one render carries every check
+  of the screen (its content, its access, a value that must not show).
+- A screen is rendered in more than one mode only where its modes differ: a screen with its own qvt or tui template
+  (`.qvue`, `.tui.json`, or a `render-mode` section). Say in the check which template it covers.
 What made this rule was a screenshot matrix of every Products page at three widths in both themes: 535 cases and 9
 minutes for checks that did not depend on the width or the theme. No spec takes screenshots for review; check at a
 width or in a theme only what changes there.

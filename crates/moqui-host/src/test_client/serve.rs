@@ -349,6 +349,7 @@ fn failed_specs(
                     }),
                     cleanup_failure: None,
                     duration: Duration::ZERO,
+                    slow: false,
                 },
             });
         }

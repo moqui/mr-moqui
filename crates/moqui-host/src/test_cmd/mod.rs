@@ -846,6 +846,7 @@ fn spec_not_run(spec: &SpecFile, outcome: Outcome) -> SpecResult {
         setup_failure: None,
         cleanup_failure: None,
         duration: std::time::Duration::ZERO,
+        slow: false,
     }
 }
 

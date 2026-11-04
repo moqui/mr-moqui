@@ -1457,7 +1457,8 @@
 
         const columnsDialogBody = (n, cols, cfg) => {
             const inColumns = new Set(cols.flat().map((f) => f.name));
-            const notIn = cfg.allFields.filter((f) => !inColumns.has(f.name));
+            // a field its hide condition hides is not offered either, as its column is not shown
+            const notIn = cfg.allFields.filter((f) => !inColumns.has(f.name) && !(f.hide && f.hide()));
             const columns = [{ id: "hidden", label: L("Do Not Display"), children: notIn.map((f) => ({ id: f.name, label: f.title() })) }];
             cols.forEach((col, index) => columns.push({ id: "column_" + index, label: L("Column") + " " + (index + 1), children: col.map((f) => ({ id: f.name, label: f.title() })) }));
             const current = sri.getScreenUrlInstance().cloneUrlInstance().removeParameter("pageIndex").removeParameter("moquiFormName").removeParameter("moquiSessionToken").removeParameter("lastStandalone").removeParameter("formListFindId");
@@ -2598,7 +2599,7 @@
                     }).join(",\n")}
                 ],
                 "allFields": [
-                    ${fields.filter((field) => !S.listFieldHiddenWidget(field)).map((field) => `{"name": ${lit(attr(field, "name"))}, "title": () => ${titleCode(S.headerSub(field))}, "summary": ${summaryCode(field)}}`).join(",\n")}
+                    ${fields.filter((field) => !S.listFieldHiddenWidget(field)).map((field) => `{"name": ${lit(attr(field, "name"))}, "title": () => ${titleCode(S.headerSub(field))}, "summary": ${summaryCode(field)}${attr(field, "hide") ? `, "hide": () => (${raw(attr(field, "hide"))})` : ""}}`).join(",\n")}
                 ],
                 "summaryFields": [
                     ${fields.map((field) => `{"name": ${lit(attr(field, "name"))}, "title": () => ${titleCode(S.headerSub(field))}, "summary": ${summaryCode(field)}}`).join(",\n")}
