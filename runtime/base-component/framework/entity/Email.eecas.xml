@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The mail change cursor (EmailClientServices.get#MailChanges, plans/Mobile-Desktop.md MD5): each write of a mail
+    client message (one with an account) that changes what a client shows, wherever it comes from (the IMAP and POP3 sync,
+    hosted delivery, an import, a send, a draft, an action in the Inbox), notes a change of its thread for the users of its
+    account who keep a cursor (note#MessageChange). A message with no account (a template's send) is skipped at once,
+    and so is an update that changes none of the fields below. A note that fails is logged; the write goes on. -->
+<eecas xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-eca-3.xsd">
+    <eeca id="EmailMessageUserChange" entity="moqui.basic.email.EmailMessage" on-create="true" on-update="true" on-delete="true"
+            get-original-value="true">
+        <actions><script><![CDATA[
+            const FIELDS = ['emailAccountId', 'emailFolderId', 'rootEmailMessageId', 'statusId', 'isRead', 'isFlagged', 'isAnswered',
+                'archivedDate', 'snoozedThruDate', 'messageDate', 'sendError', 'scheduledSendDate']
+            const norm = (value) => value == null || value === '' ? '' : (typeof value === 'object' && typeof value.getTime === 'function'
+                ? String(value.getTime()) : String(value))
+            const pick = (value) => {
+                if (value == null) return null
+                const picked = {}
+                for (const name of FIELDS) picked[name] = value[name] == null || value[name] === '' ? null : norm(value[name])
+                return picked
+            }
+            const operation = String(eecaOperation)
+            const prior = typeof originalValue === 'undefined' ? null : originalValue
+            const before = operation === 'create' ? null : pick(prior)
+            const after = operation === 'delete' ? null : pick(entityValue)
+            const id = (entityValue && entityValue.emailMessageId) || (prior && prior.emailMessageId) || null
+            const changed = !before || !after || FIELDS.some((name) => before[name] !== after[name])
+            if (id && changed && ((before && before.emailAccountId) || (after && after.emailAccountId))) {
+                ec.message.pushErrors()
+                try {
+                    ec.service.sync().name('org.moqui.impl.EmailClientServices.note#MessageChange').parameters({emailMessageId: id,
+                        operation: operation, before: before, after: after}).disableAuthz().call()
+                    if (ec.message.hasError()) ec.logger.error(`The mail change of message ${id} is not noted: ${ec.message.errorsString}`)
+                } catch (err) {
+                    ec.logger.error(`The mail change of message ${id} is not noted: ${err && err.message ? err.message : err}`)
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+        ]]></script></actions>
+    </eeca>
+    <eeca id="EmailMessageLabelUserChange" entity="moqui.basic.email.EmailMessageLabel" on-create="true" on-delete="true">
+        <actions><script><![CDATA[
+            const id = (entityValue && entityValue.emailMessageId) || null
+            if (id) {
+                ec.message.pushErrors()
+                try {
+                    ec.service.sync().name('org.moqui.impl.EmailClientServices.note#MessageChange').parameters({emailMessageId: id,
+                        operation: 'label'}).disableAuthz().call()
+                    if (ec.message.hasError()) ec.logger.error(`The label change of message ${id} is not noted: ${ec.message.errorsString}`)
+                } catch (err) {
+                    ec.logger.error(`The label change of message ${id} is not noted: ${err && err.message ? err.message : err}`)
+                } finally { ec.message.clearErrors(); ec.message.popErrors() }
+            }
+        ]]></script></actions>
+    </eeca>
+</eecas>

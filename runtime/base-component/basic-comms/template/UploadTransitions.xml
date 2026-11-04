@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The transitions of a file sent in chunks (org.moqui.impl.ClientSyncServices, plans/Mobile-Desktop.md MD5), which Compose
+    and Chat each include by name: uploadChunk takes one chunk (a multipart post of uploadId, offset, total, fileName,
+    contentType and the bytes as the file part chunk) and answers {uploadId, received, total, accepted, complete}; a chunk
+    at another offset than the bytes held is not taken and received says where to go on. uploadStatus answers {found,
+    received, total, complete} of an upload, for a client that starts again after a restart. Once complete, the screen's
+    upload takes the file by its uploadId. Only the user's own uploads are reached. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <transition name="uploadChunk">
+        <actions><script><![CDATA[
+            const number = (value) => value == null || value === '' ? null : Number(value)
+            const out = ec.service.sync().name('org.moqui.impl.ClientSyncServices.upload#Chunk').parameters({uploadId: uploadId || '',
+                offset: number(offset), total: number(total), fileName: fileName || null, contentType: contentType || null, chunk: chunk || null}).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {uploadId: out.uploadId, received: out.received, total: out.total,
+                accepted: out.accepted === true, complete: out.complete === true})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="uploadStatus" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.ClientSyncServices.get#UploadStatus').parameter('uploadId', uploadId || '').call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {found: out.found === true, received: out.received, total: out.total,
+                complete: out.complete === true, fileName: out.fileName})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+</screen>

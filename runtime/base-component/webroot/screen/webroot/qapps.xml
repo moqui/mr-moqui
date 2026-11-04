@@ -20,7 +20,13 @@ along with this software (see the LICENSE.md file). If not, see
         in by key and has no /qapps page to carry them: what this page writes (QvtConfig.js), under this screen's theme
         type, with no session token or page trace, for the runtime build of Vue, and server: {name, moquiVersion,
         clientApi}. clientApi is the version of what the desktop client reads here and of the endpoints it calls (2 added
-        renewClientDevice, 3 the clientRef of Compose's saveDraft, upload and send). A transition runs none of the pre-actions below. 401 without a user. -->
+        renewClientDevice, 3 the clientRef of Compose's saveDraft, upload and send, 4: chatChanges (afterSeq, limit, heads,
+        headsSince) → {changes, lastSeq, more, reset, heads, headsSince}: the user's feed (membership as state, room, settings,
+        read, retention); roomChanges (chatRoomId, afterSeq, limit): a room's message changes; changeSeq on chatUser: room/read
+        pushes, roomChangeSeq on chatRoom: event/update pushes; the Inbox's mailChanges (afterSeq, limit) → {changes, lastSeq,
+        more, reset} or {unsupported}; clientRef on more mutations (Chat's edit, redact, react, votePoll and markRead, the Inbox's
+        state and viewAction), conflicts (Compose's baseStamp, a state target's seen) and chunked uploads (uploadChunk and
+        uploadStatus, then upload by uploadId; plans/Mobile-Desktop.md MD5)). A transition runs none of the pre-actions below. 401 without a user. -->
     <transition name="clientConfig" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
             if (!ec.user.userId) {
@@ -31,7 +37,7 @@ along with this software (see the LICENSE.md file). If not, see
                 const rumSettings = ec.service.sync().name('org.moqui.monitor.MonitorServices.get#BrowserSettings').disableAuthz().call().settings || null
                 const config = qvtLib.build(ec, sri, { staticOnly: true, localeTag: localeTag, quasarLang: qvtLib.quasarLangOf(localeTag), rumSettings: rumSettings })
                 config.pageTraceId = ''
-                config.server = { name: config.shell.title || ec.web.getHostName(false), moquiVersion: ec.factory.moquiVersion, clientApi: 3 }
+                config.server = { name: config.shell.title || ec.web.getHostName(false), moquiVersion: ec.factory.moquiVersion, clientApi: 4 }
                 ec.web.sendJsonResponse(config)
             }
             ]]></script></actions>

@@ -654,10 +654,12 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="upload" noun="ChatFiles">
         <description>Store files for a message about to be sent in a room (org.moqui.impl.ChatServices.upload#Attachment, each in
             its own transaction): uploadList [{chatAttachmentId, fileName, contentType, fileSize}] and failedList [{fileName,
-            error}]. One file that fails is logged and the others are kept; when none is stored the first error stays.</description>
+            error}]. One file that fails is logged and the others are kept; when none is stored the first error stays.
+            uploadId in place of file is a file the client sent in chunks (ClientSyncServices.upload#Chunk).</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
             <parameter name="file" type="Object"/>
+            <parameter name="uploadId"/>
         </in-parameters>
         <out-parameters>
             <parameter name="uploadList" type="List"/>
@@ -666,12 +668,14 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             uploadList = []; failedList = []
             const files = (Array.isArray(file) ? file : [file]).filter((item) => item != null && typeof item === 'object')
+            if (uploadId) files.push({uploadId: String(uploadId), name: String(uploadId)})
             if (!files.length) { ec.message.addError(ec.l10n.localize('No file uploaded')); return }
             for (const item of files) {
                 const name = String(item.name || item.fileName || 'file')
                 ec.message.pushErrors()
                 try {
-                    const out = ec.service.sync().name('org.moqui.impl.ChatServices.upload#Attachment').parameters({chatRoomId: chatRoomId, file: item})
+                    const out = ec.service.sync().name('org.moqui.impl.ChatServices.upload#Attachment').parameters(item.uploadId
+                        ? {chatRoomId: chatRoomId, uploadId: item.uploadId} : {chatRoomId: chatRoomId, file: item})
                             .requireNewTransaction(true).call()
                     if (ec.message.hasError()) failedList.push({fileName: name, error: ec.message.errorsString})
                     else uploadList.push({chatAttachmentId: out.chatAttachmentId, fileName: out.fileName, contentType: out.contentType, fileSize: out.fileSize})

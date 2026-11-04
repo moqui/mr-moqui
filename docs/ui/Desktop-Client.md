@@ -14,9 +14,9 @@ computer, answers from it offline, and sends what was queued once the server can
 - **Pages:** the webroot's own scripts and BasicComms' `.qvue` screens; what a page sees of the host
   (`window.moquiDesktop`, `moqui.drafts`, `moqui.connection`) is in
   [Qvt-Client, In the desktop app](Qvt-Client.md#in-the-desktop-app).
-- **Server:** nothing of its own but `/qapps/clientConfig` (with `server.clientApi`, 3 since MD4), the device keys
-  (`createLoginKey` with `deviceName`, `renewClientDevice`, `/qapps/clientDevices`), the SSO app hand-back and Compose's
-  `clientRef` ([Comms](../tools/Comms.md)).
+- **Server:** nothing of its own but `/qapps/clientConfig` (with `server.clientApi`, 4 since MD5), the device keys
+  (`createLoginKey` with `deviceName`, `renewClientDevice`, `/qapps/clientDevices`), the SSO app hand-back, Compose's
+  `clientRef` ([Comms](../tools/Comms.md)) and the sync contracts of MD5 ([below](#the-servers-sync-contracts)).
 
 ## Windows and schemes
 
@@ -182,6 +182,58 @@ while the window is hidden.
 The pages reach these through `moquiDesktop.outbox` and `moquiDesktop.drafts`, for the calling window's account
 ([Qvt-Client](Qvt-Client.md#in-the-desktop-app)); the shell's `outbox.unsent()` lists what a shared sign-out would delete.
 
+## The server's sync contracts
+
+What `clientApi` 4 adds on the server for a client that keeps data offline (MD5 stage 2; the client's use of them is
+stage 3 of the plan). Each answers only the user's own data, and each is a JSON transition of the BasicComms screens.
+
+**The mail change cursor.** `Inbox/Mail/mailChanges?afterSeq=&limit=` (through `InboxServices.run#Operation`,
+`EmailClientServices.get#MailChanges`) answers `{changes, lastSeq, more, reset}`, or `{unsupported: true}` when an app's
+inbox source answers the Inbox without a cursor (the client then reads its folders each time).
+
+- Each change is one thread, the newest change of it: `{changeSeq, kind, threadId, emailAccountId, emailMessageId,
+  emailFolderId, changeDate, removedMessageIds, deleted, messages}`. `messages` are the thread's messages as they are when
+  read (`{emailMessageId, threadId, emailAccountId, emailFolderId, statusId, isRead, isFlagged, isAnswered, archived,
+  archivedDate, snoozedThruDate, messageDate, subject, fromName, fromAddress, snippet, hasAttachment, labelIds}`), so the
+  client replaces what it holds of the thread; `removedMessageIds` are the tombstones (deleted, out of the account, or in
+  another thread now), and `deleted` is true when nothing of the thread is left. `kind` (`new`, `state`, `move`,
+  `delete`) is a hint.
+- `more` says to read again from `lastSeq` at once. `reset` true, with no changes, says to read the folders again and
+  go on from `lastSeq`: no `afterSeq`, the user's first read (which starts the log), a cursor older than the log kept
+  (`mail_change_keep_days`, 30), past the last change, or after the user's accounts changed (a member added or removed).
+- Rules on `EmailMessage` and `EmailMessageLabel` (`framework/entity/Email.eecas.xml`) note every change, wherever it
+  comes from (sync arrivals, flag scans, moves and expunges, delivery, sends, drafts, the Inbox's actions), for each
+  user of the account who has a cursor (`EmailUserState`); a user with none keeps no log. The changes are numbered at
+  the user's next read under the lock of that row, so the numbers follow the order they committed, one row per thread.
+
+**A request once by its `clientRef`** (`^[A-Za-z0-9_.:-]{1,64}$`, the user's own per request kind; `ClientRequestRef`,
+kept `client_request_keep_days`, 30). The first request runs and its answer is kept in the same transaction; one sent
+again answers it with `duplicate: true` and does nothing. Chat's `edit`, `redact`, `react`, `votePoll` and `markRead`
+(`ClientSyncServices.call#ClientRequest`), and the Inbox's `state` and `viewAction` (`run#Operation`, so an app's inbox
+source is covered too). An app's own mutation uses `claim#ClientRequest` and `store#ClientRequest`.
+
+**Conflicts.**
+
+- Compose's `saveDraft` and `send` take `baseStamp`, the `draftStamp` of the copy the client edited (answered by
+  `composeData` and each save; the time of the draft's last content save, which attachments alone, the sync and flags do
+  not move). When the server's draft was saved since, nothing is saved or sent: `{conflict: true, compose}` with the
+  server's draft, and the client keeps its own as a copy (a new draft with a new `clientRef`).
+- Each target of the Inbox's `state` takes `seen`, the state the client saw for the fields its action changes
+  (`isRead`, `isFlagged`, `archived`, `snoozedThruDate`, `emailFolderId`, `labelIds`; for a thread: every message read,
+  any flagged, every one archived, the latest snooze, one message in the folder). When the server's differs, the target
+  is left and is in `failedList` with `reason: "conflict"` and `current`, the state now; the server's change wins.
+
+**Files in chunks.** Compose's and Chat's `uploadChunk` (multipart: `uploadId`, the client's own name of the upload;
+`offset`; `total`, at most 25 MB; `fileName`; `contentType`; the bytes as the part `chunk`) answer
+`{uploadId, received, total, accepted, complete}`. A chunk is taken only at the offset of the bytes held: one sent again,
+or past a gap, answers `accepted: false` with `received`, where to go on. `uploadStatus?uploadId=` answers
+`{found, received, total, complete}` after a restart (`found: false`: start again). The chunk that ends at `total` joins
+the file; then Compose's `upload` and Chat's `upload` take it by `uploadId` in place of the file. An upload is its user's
+only, and goes `client_upload_expire_hours` (24) after its last chunk.
+
+The jobs `clean_MailChanges_daily`, `clean_ClientRequests_daily` and `clean_ClientUploads_hourly` clean them up, each user
+or upload on its own.
+
 ## Bundled screens and app windows
 
 `shell/bundled-screens.txt` lists the screens bundled with the app: the shell's own Root and SignIn, and BasicComms'
@@ -248,8 +300,10 @@ shared device's hint of what is kept, and the sign-out's list of what is unsent.
   grows with the store.
 - A reply or forward built offline quotes with English labels and this computer's time zone, not the user's locale and
   zone as the server does.
-- MD5: a changes feed across rooms, a mail change cursor, tombstones beyond the store's ranges, resumable uploads,
-  idempotent internal messages and other mutations, and conflicts ([Mobile-Desktop §6](../../plans/Mobile-Desktop.md#6-offline-behavior-and-data-ownership)).
+- MD5: the server's contracts are built ([above](#the-servers-sync-contracts)); the client does not use them yet: the
+  changes feeds folded into the store, the new outbox kinds, `seen` and `baseStamp`, chunked sends, and idempotent
+  internal messages (IronStone's send) ([Mobile-Desktop §6](../../plans/Mobile-Desktop.md#6-offline-behavior-and-data-ownership)).
+  A server at `clientApi` 4 asks this app (3) to update until the client catches up.
 
 ## Tests
 
@@ -259,5 +313,7 @@ shared device's hint of what is kept, and the sign-out's list of what is unsent.
   mirror, modes, the outbox and flusher, windows.
 - `moqui test-client webroot --offline`: MoquiLib's drafts and connection, WebrootChat's host outbox and import.
 - `moqui test-client basic-comms --offline`: the bundled screens in the shell (`ShellComms`, `ShellCalls`).
-- `moqui test basic-comms`: Compose by `clientRef` (`BasicCommsComposeRef`).
+- `moqui test basic-comms`: Compose by `clientRef` (`BasicCommsComposeRef`); the mail change cursor, requests once by
+  `clientRef`, conflicts, chunked uploads and their clean-up (`BasicCommsSync`); `cargo test -p moqui-mail`: a sync's
+  arrivals, flag scan and expunges on the change cursor.
 - The checks on installed apps are in [Mobile-Desktop-Exit-Checks](../../plans/Mobile-Desktop-Exit-Checks.md).

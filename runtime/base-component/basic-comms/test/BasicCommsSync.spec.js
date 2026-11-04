@@ -1,0 +1,493 @@
+// What a client that keeps data offline relies on (plans/Mobile-Desktop.md MD5): the mail change cursor
+// (EmailClientServices.get#MailChanges, the Inbox's mailChanges), requests made once by their clientRef
+// (ClientSyncServices, the Inbox's state and Chat's edit and react), conflicts (save#Draft's baseStamp, a state target's
+// seen) and files sent in chunks (uploadChunk, uploadStatus, then upload by uploadId), with the jobs that clean them up.
+// Run: ./moq test basic-comms --spec BasicCommsSync
+const root = "component://basic-comms/screen/BasicComms.xml"
+const OWNER = "basic.comms.sync"
+const OTHER = "basic.comms.sync.other"
+const MESSAGE = "moqui.basic.email.EmailMessage"
+const MAIL = "org.moqui.impl.EmailClientServices."
+const SYNC = "org.moqui.impl.ClientSyncServices."
+// with IronStone installed its inbox source answers the Inbox, and has no change cursor of its own yet
+const bossInstalled = !!ec.resource.getLocationReference("component://mr-boss/screen/Comms.xml")?.getExists()
+let accountId = null
+let identity = null
+let inboxId = null
+let cursor = 0
+const ids = {}
+
+function sys(run) {
+    const wasDisabled = ec.artifactExecution.disableAuthz()
+    try {
+        return run()
+    } finally {
+        if (!wasDisabled) ec.artifactExecution.enableAuthz()
+    }
+}
+// as the screens call them, authorized by the app's screen; each service checks the user itself
+function attempt(name, parameters) {
+    let out = {}
+    let thrown = ""
+    try {
+        out = sys(() => call(name, parameters || {})) || {}
+    } catch (err) {
+        thrown = String(err.message || err)
+    }
+    const errors = thrown + (ec.message.hasError() ? ec.message.errorsString : "")
+    ec.message.clearErrors()
+    return Object.assign({errors}, out)
+}
+function request(path, parameters, method) {
+    const str = ec.screen
+        .makeTest()
+        .rootScreen(root)
+        .render(path, parameters || {}, method || null)
+    const output = String(str.output || "")
+    ec.message.clearErrors()
+    let json = null
+    try {
+        json = JSON.parse(output)
+    } catch (err) {
+        json = null
+    }
+    return {status: str.status, errors: str.errorMessages.join(" | "), json: json || {}}
+}
+const op = (operation, parameters) =>
+    attempt("org.moqui.comms.InboxServices.run#Operation", {operation, parameters: parameters || {}}).result || {}
+const changes = (afterSeq, limit) => attempt(MAIL + "get#MailChanges", {afterSeq, limit: limit || 200})
+const message = emailMessageId => sys(() => ec.entity.find(MESSAGE).condition("emailMessageId", emailMessageId).one())
+const setFields = (emailMessageId, fields) =>
+    sys(() => {
+        const row = ec.entity.find(MESSAGE).condition("emailMessageId", emailMessageId).one()
+        row.setFields(fields, true, null, null)
+        row.update()
+    })
+function makeUser(username) {
+    sys(() => {
+        if (ec.entity.find("moqui.security.UserAccount").condition("username", username).count() > 0) return
+        const user = ec.entity.makeValue("moqui.security.UserAccount")
+        user.setFields(
+            {userId: username.replace(/\./g, "_").toUpperCase(), username, userFullName: "Sync " + username, disabled: "N"},
+            true,
+            null,
+            null
+        )
+        user.create()
+    })
+}
+function makeMessage(subject, rootId) {
+    return sys(() => {
+        const row = ec.entity.makeValue(MESSAGE)
+        row.setSequencedIdPrimary()
+        row.setFields(
+            {
+                emailAccountId: accountId,
+                emailFolderId: inboxId,
+                subject,
+                statusId: "ES_RECEIVED",
+                isRead: "N",
+                fromAddress: "pat@example.org",
+                messageDate: ec.user.nowTimestamp,
+                rootEmailMessageId: rootId || null,
+                parentEmailMessageId: rootId || null
+            },
+            true,
+            null,
+            null
+        )
+        row.create()
+        return row.emailMessageId
+    })
+}
+const draftOf = (clientRef, subject, baseStamp) => ({
+    fromValue: identity,
+    clientRef,
+    toJson: JSON.stringify([{value: "pat@example.org", label: "pat@example.org"}]),
+    subject,
+    body: "<p>" + subject + "</p>",
+    baseStamp
+})
+const compose = (name, parameters) => attempt("org.moqui.comms.ComposeServices." + name, parameters)
+const threadOf = (page, threadId) => Array.from(page.changes || []).find(change => change.threadId === threadId) || null
+
+spec({
+    stepwise: true,
+    setupSpec() {
+        makeUser(OWNER)
+        makeUser(OTHER)
+        ec.user.internalLoginUser(OWNER)
+        accountId = sys(() =>
+            call(MAIL + "create#EmailAccount", {
+                accountKindEnumId: "EakHosted",
+                emailAddress: "sync.owner@example.com",
+                accountName: "Sync",
+                smtpHost: "127.0.0.1",
+                smtpPort: "1",
+                smtpStartTls: "N"
+            })
+        ).emailAccountId
+        inboxId = sys(() =>
+            ec.entity
+                .find("moqui.basic.email.EmailFolder")
+                .condition("emailAccountId", accountId)
+                .condition("folderKindEnumId", "EfkInbox")
+                .one()
+        ).emailFolderId
+        const row = sys(() => ec.entity.find("moqui.basic.email.EmailIdentity").condition("emailAccountId", accountId).list())[0]
+        identity = "identity:" + row.emailIdentityId
+    },
+    cleanupSpec() {
+        ec.user.setEffectiveTime(null)
+    }
+})
+
+feature("the first read starts the cursor; arrivals then page in the order they committed, one change per thread", {
+    when() {
+        ec.user.internalLoginUser(OWNER)
+        const first = changes(null)
+        // a user with no cursor gets no rows; this one has one now
+        ids.first = makeMessage("First")
+        ids.second = makeMessage("Second")
+        ids.third = makeMessage("Third")
+        ids.reply = makeMessage("Re: First", ids.first)
+        const page1 = changes(first.lastSeq, 2)
+        const page2 = changes(page1.lastSeq, 2)
+        const screen = request("Inbox/Mail/mailChanges", {afterSeq: String(first.lastSeq), limit: "5"}, null)
+        const none = request("Inbox/Mail/mailChanges", {afterSeq: String(page2.lastSeq)}, null)
+        cursor = page2.lastSeq
+        return {first, page1, page2, screen, none}
+    },
+    then({first, page1, page2, screen, none}) {
+        first.errors == ""
+        first.reset == true
+        first.changes.length == 0
+        page1.errors == ""
+        page1.reset == false
+        page1.more == true
+        page1.changes.map(change => change.threadId).join(",") == [ids.second, ids.third].join(",")
+        page1.changes[0].kind == "new"
+        page1.changes[0].messages.length == 1
+        page1.changes[0].messages[0].isRead == false
+        page2.more == false
+        page2.changes.length == 1
+        page2.changes[0].threadId == ids.first
+        page2.changes[0].messages.map(row => row.emailMessageId).join(",") == [ids.first, ids.reply].join(",")
+        page2.lastSeq > page1.lastSeq
+        screen.json.unsupported == (bossInstalled ? true : undefined)
+        screen.json.changes.length == (bossInstalled ? 0 : 3)
+        screen.json.reset == false
+        none.json.changes.length == 0
+        none.json.lastSeq == (bossInstalled ? null : page2.lastSeq)
+    }
+})
+
+feature("a state change by clientRef happens once: the retry answers duplicate and changes nothing", {
+    when() {
+        ec.user.internalLoginUser(OWNER)
+        const target = JSON.stringify([{store: "email", threadId: ids.second}])
+        const first = request("Inbox/Mail/state", {targetsJson: target, action: "read", clientRef: "sync-read-1"}, "post")
+        // made unread elsewhere since: a second effect would read it again
+        setFields(ids.second, {isRead: "N"})
+        const retry = request("Inbox/Mail/state", {targetsJson: target, action: "read", clientRef: "sync-read-1"}, "post")
+        const refs = sys(() =>
+            ec.entity.find("moqui.basic.client.ClientRequestRef").condition("clientRef", "sync-read-1").list()
+        ).length
+        const page = changes(cursor)
+        cursor = page.lastSeq
+        return {first, retry, refs, page, isRead: message(ids.second).isRead}
+    },
+    then({first, retry, refs, page, isRead}) {
+        first.errors == ""
+        first.json.updatedCount == 1
+        first.json.duplicate == false
+        retry.json.duplicate == true
+        retry.json.updatedCount == 1
+        isRead == "N"
+        refs == 1
+        page.changes.length == 1
+        threadOf(page, ids.second).kind == "state"
+        threadOf(page, ids.second).messages[0].isRead == false
+    }
+})
+
+feature("a queued action whose seen state changed on the server is not done, and says so with the state now", {
+    when() {
+        ec.user.internalLoginUser(OWNER)
+        // read on another device since the client saw it unread
+        setFields(ids.third, {isRead: "Y"})
+        // the framework's: an app's inbox source checks seen through check#SeenState too
+        const out = attempt("org.moqui.comms.InboxServices.set#ThreadState", {
+            action: "unread",
+            targetList: [
+                {store: "email", threadId: ids.third, seen: {isRead: false}},
+                {store: "email", threadId: ids.first, seen: {isRead: false}}
+            ]
+        })
+        return {out, third: message(ids.third).isRead}
+    },
+    then({out, third}) {
+        out.updatedCount == 1
+        out.failedList.length == 1
+        out.failedList[0].key == "email:" + ids.third
+        out.failedList[0].reason == "conflict"
+        out.failedList[0].current.isRead == true
+        third == "Y"
+    }
+})
+
+feature("deleteForever leaves a tombstone: the thread is deleted with its message removed", {
+    when() {
+        ec.user.internalLoginUser(OWNER)
+        const trashed = op("set#ThreadState", {action: "trash", targetList: [{store: "email", threadId: ids.third}]})
+        const moved = changes(cursor)
+        const deleted = op("set#ThreadState", {action: "deleteForever", targetList: [{store: "email", threadId: ids.third}]})
+        const page = changes(moved.lastSeq)
+        cursor = page.lastSeq
+        return {trashed, moved, deleted, page, gone: message(ids.third)}
+    },
+    then({trashed, moved, deleted, page, gone}) {
+        trashed.updatedCount == 1
+        threadOf(moved, ids.third).kind == "move"
+        threadOf(moved, ids.third).messages[0].emailFolderId != inboxId
+        deleted.updatedCount == 1
+        gone == null
+        threadOf(page, ids.third).kind == "delete"
+        threadOf(page, ids.third).deleted == true
+        threadOf(page, ids.third).removedMessageIds.includes(ids.third)
+    }
+})
+
+feature("a cursor older than the log kept, past the last change, or not read for too long answers reset", {
+    when() {
+        ec.user.internalLoginUser(OWNER)
+        makeMessage("Fourth")
+        const current = changes(cursor)
+        const past = changes(current.lastSeq + 5)
+        // the log purged before now, its reader active
+        sys(() => {
+            const state = ec.entity.find("moqui.basic.email.EmailUserState").condition("userId", "BASIC_COMMS_SYNC").one()
+            state.set("lastReadDate", Number(ec.user.nowTimestamp) + 86400000)
+            state.update()
+        })
+        const purged = sys(() =>
+            call(MAIL + "clean#UserMailChanges", {userId: "BASIC_COMMS_SYNC", before: Number(ec.user.nowTimestamp) + 1000})
+        )
+        const old = changes(cursor)
+        const atEnd = changes(current.lastSeq)
+        // not read for longer than the log is kept: the cursor and its log go
+        const dropped = sys(() =>
+            call(MAIL + "clean#UserMailChanges", {
+                userId: "BASIC_COMMS_SYNC",
+                before: Number(ec.user.nowTimestamp) + 2 * 86400000
+            })
+        )
+        const again = changes(current.lastSeq)
+        cursor = again.lastSeq
+        return {current, past, purged, old, atEnd, dropped, again}
+    },
+    then({current, past, purged, old, atEnd, dropped, again}) {
+        current.changes.length == 1
+        current.reset == false
+        past.reset == true
+        purged.removedCount > 0
+        old.reset == true
+        old.lastSeq == current.lastSeq
+        atEnd.reset == false
+        atEnd.changes.length == 0
+        dropped.removedCount == 0
+        again.reset == true
+        again.lastSeq == 0
+    }
+})
+
+feature("a draft saved elsewhere since the client's copy is kept: the save answers conflict with the server's draft", {
+    when() {
+        ec.user.internalLoginUser(OWNER)
+        const start = Number(ec.user.nowTimestamp)
+        ec.user.setEffectiveTime(start)
+        const first = compose("save#ComposeDraft", draftOf("sync-draft-1", "First draft"))
+        ec.user.setEffectiveTime(start + 1000)
+        const elsewhere = compose("save#ComposeDraft", draftOf("sync-draft-1", "Saved elsewhere", first.draftStamp))
+        ec.user.setEffectiveTime(start + 2000)
+        const stale = compose("save#ComposeDraft", draftOf("sync-draft-1", "The stale copy", first.draftStamp))
+        // a file added keeps the stamp, so the copy that added it still saves
+        ids.draft = first.emailMessageId
+        const upload = compose("upload#ComposeAttachment", {emailMessageId: ids.draft, contentFile: uploadedFile("a.txt", "A")})
+        ec.user.setEffectiveTime(start + 3000)
+        const after = compose("save#ComposeDraft", draftOf("sync-draft-1", "After the file", elsewhere.draftStamp))
+        const data = compose("get#ComposeData", {emailMessageId: ids.draft})
+        ec.user.setEffectiveTime(null)
+        return {first, elsewhere, stale, upload, after, data, subject: message(ids.draft).subject}
+    },
+    then({first, elsewhere, stale, upload, after, data, subject}) {
+        first.errors == ""
+        first.draftStamp != null
+        elsewhere.errors == ""
+        elsewhere.conflict == false
+        elsewhere.draftStamp != first.draftStamp
+        stale.errors == ""
+        stale.conflict == true
+        stale.emailMessageId == first.emailMessageId
+        stale.compose.subject == "Saved elsewhere"
+        upload.errors == ""
+        after.errors == ""
+        after.conflict == false
+        subject == "After the file"
+        data.compose.draftStamp == after.draftStamp
+    }
+})
+
+feature("a file sent in chunks goes on after a partial and a wrong offset, and the draft takes it by uploadId", {
+    when() {
+        ec.user.internalLoginUser(OWNER)
+        const chunk = (offset, text) =>
+            request(
+                "Inbox/Compose/uploadChunk",
+                {
+                    uploadId: "sync-up-1",
+                    offset: String(offset),
+                    total: "10",
+                    fileName: "hello.txt",
+                    contentType: "text/plain",
+                    chunk: uploadedFile("hello.txt", text)
+                },
+                "post"
+            ).json
+        const part = chunk(0, "Hello")
+        const status = request("Inbox/Compose/uploadStatus", {uploadId: "sync-up-1"}, null).json
+        const again = chunk(0, "Hello")
+        const gap = chunk(7, "rld")
+        const early = compose("upload#ComposeAttachment", {emailMessageId: ids.draft, uploadId: "sync-up-1"})
+        const last = chunk(5, "World")
+        const attached = compose("upload#ComposeAttachment", {emailMessageId: ids.draft, uploadId: "sync-up-1"})
+        const file = sys(() =>
+            ec.entity
+                .find("moqui.basic.email.EmailMessageAttachment")
+                .condition("emailMessageId", ids.draft)
+                .condition("fileName", "hello.txt")
+                .one()
+        )
+        const text = file ? sys(() => ec.resource.getLocationReference(file.attachmentLocation).getText()) : null
+        ec.user.internalLoginUser(OTHER)
+        const other = attempt(SYNC + "take#Upload", {uploadId: "sync-up-1"})
+        const otherStatus = attempt(SYNC + "get#UploadStatus", {uploadId: "sync-up-1"})
+        return {part, status, again, gap, early, last, attached, text, other, otherStatus}
+    },
+    then({part, status, again, gap, early, last, attached, text, other, otherStatus}) {
+        part.accepted == true
+        part.received == 5
+        part.complete == false
+        status.found == true
+        status.received == 5
+        again.accepted == false
+        again.received == 5
+        gap.accepted == false
+        gap.received == 5
+        early.errors.includes("not complete")
+        last.accepted == true
+        last.complete == true
+        last.received == 10
+        attached.errors == ""
+        attached.attachmentList.some(file => file.name == "hello.txt")
+        text == "HelloWorld"
+        other.errors.includes("not found")
+        otherStatus.found == false
+    }
+})
+
+feature("chat edits and reactions by clientRef happen once; a file in chunks goes to a room", {
+    when() {
+        ec.user.internalLoginUser(OWNER)
+        const room = request("Chat/createRoom", {roomTypeEnumId: "private", roomName: "Sync room"}, "post").json.chatRoomId
+        const sent = request("Chat/send", {chatRoomId: room, body: "<p>Hello</p>", clientRef: "sync-chat-1"}, "post").json
+        const react = () =>
+            request(
+                "Chat/react",
+                {chatRoomId: room, eventSeq: String(sent.eventSeq), key: "👍", clientRef: "sync-react-1"},
+                "post"
+            ).json
+        const reacted = react()
+        const reactedAgain = react()
+        const edit = () =>
+            request(
+                "Chat/edit",
+                {chatRoomId: room, eventSeq: String(sent.eventSeq), body: "<p>Hello again</p>", clientRef: "sync-edit-1"},
+                "post"
+            ).json
+        const edited = edit()
+        const editedAgain = edit()
+        const count = type =>
+            sys(() =>
+                ec.entity.find("moqui.chat.ChatEvent").condition("chatRoomId", room).condition("eventTypeEnumId", type).count()
+            )
+        request(
+            "Chat/uploadChunk",
+            {
+                uploadId: "sync-up-2",
+                offset: "0",
+                total: "4",
+                fileName: "note.txt",
+                contentType: "text/plain",
+                chunk: uploadedFile("note.txt", "Note")
+            },
+            "post"
+        )
+        const uploaded = request("Chat/upload", {chatRoomId: room, uploadId: "sync-up-2"}, "post").json
+        return {
+            reacted,
+            reactedAgain,
+            edited,
+            editedAgain,
+            reactions: count("CetReaction"),
+            redactions: count("CetRedaction"),
+            edits: count("CetEdit"),
+            uploaded
+        }
+    },
+    then({reacted, reactedAgain, edited, editedAgain, reactions, redactions, edits, uploaded}) {
+        reacted.added == true
+        reacted.duplicate == false
+        reactedAgain.duplicate == true
+        reactedAgain.added == true
+        reactions == 1
+        redactions == 0
+        edited.editEventSeq != null
+        editedAgain.duplicate == true
+        editedAgain.editEventSeq == edited.editEventSeq
+        edits == 1
+        uploaded.uploadList.length == 1
+        uploaded.uploadList[0].fileName == "note.txt"
+        uploaded.uploadList[0].fileSize == 4
+    }
+})
+
+feature("the jobs clean up: an upload left past its hours, and a clientRef past its days", {
+    when() {
+        ec.user.internalLoginUser(OWNER)
+        const old = Number(ec.user.nowTimestamp) - 3 * 86400000
+        sys(() => {
+            const upload = ec.entity.find("moqui.basic.client.ClientUpload").condition("uploadId", "sync-up-1").one()
+            upload.set("lastChunkDate", old)
+            upload.update()
+            const ref = ec.entity.find("moqui.basic.client.ClientRequestRef").condition("clientRef", "sync-read-1").one()
+            ref.set("createdDate", old)
+            ref.update()
+        })
+        const uploads = sys(() => call(SYNC + "clean#ClientUploads", {hours: 24}))
+        const refs = sys(() => call(SYNC + "clean#ClientRequests", {days: 2}))
+        const status = attempt(SYNC + "get#UploadStatus", {uploadId: "sync-up-1"})
+        const kept = attempt(SYNC + "get#UploadStatus", {uploadId: "sync-up-2"})
+        const left = sys(() =>
+            ec.entity.find("moqui.basic.client.ClientRequestRef").condition("clientRef", "sync-read-1").count()
+        )
+        return {uploads, refs, status, kept, left}
+    },
+    then({uploads, refs, status, kept, left}) {
+        uploads.removedCount == 1
+        refs.removedCount >= 1
+        status.found == false
+        kept.found == true
+        left == 0
+    }
+})

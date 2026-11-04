@@ -3141,10 +3141,12 @@ along with this software (see the LICENSE.md file). If not, see
             names another place than dbresource://chat). send#Message takes its
             chatAttachmentId; a file never sent goes after a day (clean#PendingAttachments). In an encrypted room (C7) the file
             is the browser's ciphertext and is kept as an opaque blob: named encrypted, application/octet-stream, whatever
-            was uploaded (its name and type travel in the encrypted message).</description>
+            was uploaded (its name and type travel in the encrypted message). uploadId in place of file is a file the user sent
+            in chunks (ClientSyncServices.upload#Chunk), complete.</description>
         <in-parameters>
             <parameter name="chatRoomId" required="true"/>
-            <parameter name="file" type="org.apache.commons.fileupload2.core.FileItem" required="true"/>
+            <parameter name="file" type="org.apache.commons.fileupload2.core.FileItem"/>
+            <parameter name="uploadId"/>
         </in-parameters>
         <out-parameters>
             <parameter name="chatAttachmentId"/>
@@ -3159,8 +3161,11 @@ along with this software (see the LICENSE.md file). If not, see
             if (ec.message.hasError()) return
             if (!access.canRead) { ec.message.addError(`Chat room ${chatRoomId} not found`); return }
             if (!access.canPost) { ec.message.addError(access.isArchived ? 'The room is archived' : 'Join the room to post in it'); return }
-            if (!file) { ec.message.addError(ec.l10n.localize('No file uploaded')); return }
-            let name = String(file.getName() || '').split(/[\\/]/).pop().replace(/[\u0000-\u001f]/g, '').trim()
+            if (!file && !uploadId) { ec.message.addError(ec.l10n.localize('No file uploaded')); return }
+            // a file sent in chunks, taken from where its upload joined it
+            const sent = uploadId ? ec.service.sync().name('org.moqui.impl.ClientSyncServices.take#Upload').parameter('uploadId', uploadId).call() : null
+            if (ec.message.hasError()) return
+            let name = String((sent ? sent.fileName : file.getName()) || '').split(/[\\/]/).pop().replace(/[\u0000-\u001f]/g, '').trim()
             if (!name || name === '.' || name === '..') name = 'file'
             if (name.length > 200) name = name.slice(-200)
             const sealed = !!access.room.encrypted
@@ -3171,9 +3176,10 @@ along with this software (see the LICENSE.md file). If not, see
             const chatRoot = (System.getProperty('chat_attachment_root') || 'dbresource://chat').replace(/\/+$/, '')
             location = `${chatRoot}/${chatRoomId}/${chatAttachmentId}/${name}`
             fileName = name
-            contentType = sealed ? 'application/octet-stream' : file.getContentType() || 'application/octet-stream'
-            fileSize = Number(file.getSize() || 0)
-            file.write(location)
+            contentType = sealed ? 'application/octet-stream' : (sent ? sent.contentType : file.getContentType()) || 'application/octet-stream'
+            fileSize = Number((sent ? sent.fileSize : file.getSize()) || 0)
+            if (sent) ec.resource.getLocationReference(location).copyFrom(sent.location)
+            else file.write(location)
             row.setFields({chatRoomId: chatRoomId, location: location, fileName: fileName, contentType: contentType, fileSize: fileSize,
                 uploadedByUserId: me, uploadedDate: ec.user.nowTimestamp}, true, null, null)
             row.create()

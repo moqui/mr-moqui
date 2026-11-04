@@ -190,7 +190,11 @@ along with this software (see the LICENSE.md file). If not, see
                 result.attachmentList = fileList(emailMessageId)
                 result.kind = 'draft'
                 // the client's own reference of the draft (save#ComposeDraft clientRef), so a client that edits it offline queues its send by it
-                result.clientRef = ec.entity.find('moqui.basic.email.EmailMessage').condition('emailMessageId', emailMessageId).selectField('clientRef').disableAuthz().one()?.clientRef ?? null
+                const stored = ec.entity.find('moqui.basic.email.EmailMessage').condition('emailMessageId', emailMessageId).selectField('clientRef')
+                        .selectField('messageDate').disableAuthz().one()
+                result.clientRef = stored?.clientRef ?? null
+                // the stamp of its last save, which a save from this copy gives back (baseStamp) so one made elsewhere since is not overwritten
+                result.draftStamp = stored?.messageDate == null ? null : (typeof stored.messageDate.getTime === 'function' ? stored.messageDate.getTime() : Number(stored.messageDate))
                 if (draft.rootEmailMessageId) { result.threadStore = 'email'; result.threadId = draft.rootEmailMessageId }
             } else if (replyToEmailMessageId || forwardEmailMessageId) {
                 const parentId = replyToEmailMessageId || forwardEmailMessageId
@@ -382,7 +386,10 @@ along with this software (see the LICENSE.md file). If not, see
             body, with the quoted part of a reply or forward after the body, and for a new draft the message it answers or
             forwards. Its attachments stay as upload#ComposeAttachment and remove#ComposeAttachment keep them. clientRef, the
             client's own reference of the draft, makes a retry save the same draft (save#Draft): a draft written offline
-            is saved once, and one sent since comes back unchanged with duplicate true.</description>
+            is saved once, and one sent since comes back unchanged with duplicate true. baseStamp, the draftStamp of the copy
+            the client edited (get#ComposeData, or the last save), keeps a draft saved elsewhere since: nothing is saved,
+            conflict is true and compose is the server's draft as get#ComposeData has it (the client keeps its own as a copy,
+            a new draft with a new clientRef). draftStamp is the saved draft's.</description>
         <in-parameters>
             <parameter name="emailMessageId"/>
             <parameter name="fromValue" required="true"/>
@@ -398,11 +405,15 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="strict" type="Boolean" default="false"><description>A recipient that is not an address is an error
                 (for a send); a draft keeps only those that are</description></parameter>
             <parameter name="clientRef"/>
+            <parameter name="baseStamp" type="Long"/>
         </in-parameters>
         <out-parameters>
             <parameter name="emailMessageId"/>
             <parameter name="rootEmailMessageId"/>
             <parameter name="duplicate" type="Boolean"/>
+            <parameter name="draftStamp" type="Long"/>
+            <parameter name="conflict" type="Boolean"/>
+            <parameter name="compose" type="Map"/>
         </out-parameters>
         <actions><script><![CDATA[
             const ids = ec.service.sync().name('org.moqui.comms.ComposeServices.get#Identities').call()
@@ -430,13 +441,17 @@ along with this software (see the LICENSE.md file). If not, see
             const fullBody = String(body || '') + (quoteHtml ? String(quoteHtml) : '')
             const parameters = {emailMessageId: emailMessageId || null, emailAccountId: identity.emailAccountId, emailIdentityId: identity.emailIdentityId,
                 toAddresses: toText, ccAddresses: ccText, bccAddresses: bccText, subject: subject ?? '', body: fullBody, bodyText: bodyText || null,
-                clientRef: clientRef || null}
+                clientRef: clientRef || null, baseStamp: baseStamp ?? null}
             if (!emailMessageId && parentEmailMessageId) { parameters.parentEmailMessageId = parentEmailMessageId; parameters.isForward = isForward }
             const out = ec.service.sync().name('org.moqui.impl.EmailClientServices.save#Draft').parameters(parameters).call()
             if (ec.message.hasError()) return
             emailMessageId = out.emailMessageId
             rootEmailMessageId = out.rootEmailMessageId
             duplicate = out.duplicate === true
+            draftStamp = out.draftStamp ?? null
+            conflict = out.conflict === true
+            compose = null
+            if (conflict) compose = ec.service.sync().name('org.moqui.comms.ComposeServices.get#ComposeData').parameter('emailMessageId', emailMessageId).call()?.compose || null
         ]]></script></actions>
     </service>
 
@@ -464,11 +479,13 @@ along with this software (see the LICENSE.md file). If not, see
             that queued the mail offline). With clientRef a file of the same name and size as one the draft has is not
             added again, so a retry after a lost answer attaches it once (two equal files are not attached this way); when
             the message of the clientRef is no longer a draft (sent since), its attachmentList comes back and nothing is
-            added.</description>
+            added. uploadId in place of contentFile is a file the client sent in chunks (ClientSyncServices.upload#Chunk),
+            complete, of the user's own.</description>
         <in-parameters>
             <parameter name="emailMessageId"/>
             <parameter name="clientRef"/>
             <parameter name="contentFile" type="Object"/>
+            <parameter name="uploadId"/>
         </in-parameters>
         <out-parameters>
             <parameter name="attachmentList" type="List"/>
@@ -476,6 +493,13 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script><![CDATA[
             const files = (Array.isArray(contentFile) ? contentFile : [contentFile]).filter((file) => file != null && typeof file === 'object')
+            if (uploadId) {
+                // a file sent in chunks: read from where the upload joined it
+                const sent = ec.service.sync().name('org.moqui.impl.ClientSyncServices.take#Upload').parameter('uploadId', uploadId).call()
+                if (ec.message.hasError()) return
+                files.push({getName: () => sent.fileName, getSize: () => Number(sent.fileSize || 0), contentType: sent.contentType,
+                    getInputStream: () => ec.resource.getLocationReference(sent.location).openStream()})
+            }
             if (files.length === 0) { ec.message.addError(ec.l10n.localize('Choose one or more files to attach')); return }
             const nameOf = (file) => String(typeof file.getName === 'function' ? file.getName() : (file.name || 'attachment')).split(/[\\/]/).pop()
             const sizeOf = (file) => Number(typeof file.getSize === 'function' ? file.getSize() : (file.size || 0))
@@ -661,7 +685,9 @@ along with this software (see the LICENSE.md file). If not, see
             and retries after a lost answer sends it once: when the user's message of that clientRef is already waiting to
             send (the undo hold or a scheduled send), sending, sent, or failed (a send that failed may have gone out; the user
             sends it again), its state comes back (EmailClientServices.get#SendState) with duplicate true and nothing is
-            done. After an undo (cancel#ComposeSend) it is a draft again and a send with the clientRef sends it.
+            done. After an undo (cancel#ComposeSend) it is a draft again and a send with the clientRef sends it. baseStamp
+            is as save#ComposeDraft has it: a draft saved elsewhere since the client's copy is not sent (conflict true, with
+            compose, the server's draft).
         </description>
         <in-parameters>
             <parameter name="fromValue" required="true"/>
@@ -686,6 +712,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="threadStore"/>
             <parameter name="threadId"/>
             <parameter name="clientRef"/>
+            <parameter name="baseStamp" type="Long"/>
         </in-parameters>
         <out-parameters>
             <parameter name="mode"/>
@@ -697,12 +724,16 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="communicationEventIdList" type="List"/>
             <parameter name="message"/>
             <parameter name="duplicate" type="Boolean"/>
+            <parameter name="conflict" type="Boolean"/>
+            <parameter name="compose" type="Map"/>
         </out-parameters>
         <actions><script><![CDATA[
             const L = (text) => ec.l10n.localize(text)
             communicationEventIdList = []
             sent = false
             duplicate = false
+            conflict = false
+            compose = null
             const partyId = ec.user.userAccount?.partyId || null
             if (recordEntity && recordId) { ec.message.addError(L('Filing mail on a record is not available here')); return }
             if (fromValue === 'internal') { ec.message.addError(L('Internal messages are not available here')); return }
@@ -710,9 +741,16 @@ along with this software (see the LICENSE.md file). If not, see
                 mode = 'email'
                 const saved = ec.service.sync().name('org.moqui.comms.ComposeServices.save#ComposeDraft').parameters({emailMessageId: emailMessageId, fromValue: fromValue,
                     toJson: toJson, ccJson: ccJson, bccJson: bccJson, subject: subject, body: body, bodyText: bodyText, quoteHtml: quoteHtml,
-                    parentEmailMessageId: parentEmailMessageId, isForward: isForward, strict: true, clientRef: clientRef || null}).call()
+                    parentEmailMessageId: parentEmailMessageId, isForward: isForward, strict: true, clientRef: clientRef || null, baseStamp: baseStamp ?? null}).call()
                 if (ec.message.hasError()) return
                 emailMessageId = saved.emailMessageId
+                if (saved.conflict === true) {
+                    // saved elsewhere since the client's copy: not sent; the client keeps its own as a copy
+                    conflict = true
+                    compose = saved.compose || null
+                    message = L('Changed elsewhere since: not sent')
+                    return
+                }
                 if (saved.duplicate === true) {
                     // a retry of a send that went through: its state as it is now, and nothing else is done
                     const state = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#SendState').parameter('emailMessageId', emailMessageId).call()

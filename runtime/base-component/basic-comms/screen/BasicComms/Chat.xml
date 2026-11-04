@@ -26,7 +26,9 @@ along with this software (see the LICENSE.md file). If not, see
     room for the current user: a room the user may not reach, and its files, are "not found". What a message or a room has to do
     with an app's records (its record cards, filing a message on a record, making a record from one) comes from the apps' providers
     (record-lookup, record-link, create-from; plans/Comms-Framework.md §3.3); with none, those parts are not offered. An app adds
-    message actions with ext-action slot="chat-message-actions" (the item: chatRoomId, eventSeq). -->
+    message actions with ext-action slot="chat-message-actions" (the item: chatRoomId, eventSeq). A client that queues them offline
+    gives edit, redact, react, votePoll and markRead a clientRef (ClientSyncServices.call#ClientRequest): one sent again
+    answers what the first did, with duplicate true, and does nothing more. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Chat" default-menu-index="3" menu-image="sym_o_chat" menu-image-type="icon"
         render-modes="vue,qvue,tui" server-static="vue,qvue">
@@ -198,17 +200,20 @@ along with this software (see the LICENSE.md file). If not, see
             let sealed = null
             try { sealed = encryptedJson ? JSON.parse(String(encryptedJson)) : null } catch (err) { sealed = {} }
             const mentionList = mentionUserIds ? String(mentionUserIds).split(',').map((id) => id.trim()).filter((id) => id) : null
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.edit#Message').parameters({chatRoomId: chatRoomId || '',
-                eventSeq: Number(eventSeq || 0), body: body || null, encrypted: sealed, mentionUserIdList: mentionList, roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}).call()
-            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {editEventSeq: out.editEventSeq, event: out.event})
+            const ran = ec.service.sync().name('org.moqui.impl.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.impl.ChatServices.edit#Message',
+                clientRef: clientRef || null, parameters: {chatRoomId: chatRoomId || '',
+                eventSeq: Number(eventSeq || 0), body: body || null, encrypted: sealed, mentionUserIdList: mentionList, roomUrl: (System.getProperty('comms_app_root') || '/qapps/BasicComms') + '/Chat?chatRoomId=' + encodeURIComponent(chatRoomId || '')}}).call()
+            const out = (ran && ran.result) || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {editEventSeq: out.editEventSeq, event: out.event, duplicate: ran.duplicate === true})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
     <transition name="redact">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.redact#Message').parameters({chatRoomId: chatRoomId || '',
-                eventSeq: Number(eventSeq || 0), reason: reason || null}).call()
-            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {redactionEventSeq: out.redactionEventSeq})
+            const ran = ec.service.sync().name('org.moqui.impl.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.impl.ChatServices.redact#Message',
+                clientRef: clientRef || null, parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), reason: reason || null}}).call()
+            const out = (ran && ran.result) || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {redactionEventSeq: out.redactionEventSeq, duplicate: ran.duplicate === true})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -217,10 +222,11 @@ along with this software (see the LICENSE.md file). If not, see
             // an encrypted room's reaction (C7): its key is ciphertext (encryptedJson), taken back by its reactionEventSeq
             let sealed = null
             try { sealed = encryptedJson ? JSON.parse(String(encryptedJson)) : null } catch (err) { sealed = {} }
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.react#Message').parameters({chatRoomId: chatRoomId || '',
-                eventSeq: Number(eventSeq || 0), key: key || null, encrypted: sealed,
-                reactionEventSeq: reactionEventSeq ? Number(reactionEventSeq) : null}).call()
-            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {added: out.added, reactionEventSeq: out.reactionEventSeq})
+            const ran = ec.service.sync().name('org.moqui.impl.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.impl.ChatServices.react#Message',
+                clientRef: clientRef || null, parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), key: key || null, encrypted: sealed,
+                reactionEventSeq: reactionEventSeq ? Number(reactionEventSeq) : null}}).call()
+            const out = (ran && ran.result) || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {added: out.added, reactionEventSeq: out.reactionEventSeq, duplicate: ran.duplicate === true})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -262,9 +268,10 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="votePoll">
         <actions><script><![CDATA[
             const ids = optionIds ? String(optionIds).split(',').map((id) => id.trim()).filter((id) => id).map(Number) : []
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.vote#Poll').parameters({chatRoomId: chatRoomId || '',
-                eventSeq: Number(eventSeq || 0), optionIdList: ids}).call()
-            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {poll: out.poll})
+            const ran = ec.service.sync().name('org.moqui.impl.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.impl.ChatServices.vote#Poll',
+                clientRef: clientRef || null, parameters: {chatRoomId: chatRoomId || '', eventSeq: Number(eventSeq || 0), optionIdList: ids}}).call()
+            const out = (ran && ran.result) || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {poll: out.poll, duplicate: ran.duplicate === true})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -285,9 +292,11 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <transition name="markRead">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.impl.ChatServices.mark#Read').parameters({chatRoomId: chatRoomId || '',
-                eventSeq: eventSeq ? Number(eventSeq) : null, markUnread: String(markUnread) === 'true'}).call()
-            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {lastReadEventSeq: out.lastReadEventSeq})
+            const ran = ec.service.sync().name('org.moqui.impl.ClientSyncServices.call#ClientRequest').parameters({serviceName: 'org.moqui.impl.ChatServices.mark#Read',
+                clientRef: clientRef || null, parameters: {chatRoomId: chatRoomId || '', eventSeq: eventSeq ? Number(eventSeq) : null,
+                markUnread: String(markUnread) === 'true'}}).call()
+            const out = (ran && ran.result) || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {lastReadEventSeq: out.lastReadEventSeq, duplicate: ran.duplicate === true})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -298,10 +307,14 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- files for the next message: each stored on its own -->
+    <!-- a file sent in chunks, for upload with its uploadId -->
+    <transition-include name="uploadChunk" location="component://basic-comms/template/UploadTransitions.xml"/>
+    <transition-include name="uploadStatus" location="component://basic-comms/template/UploadTransitions.xml"/>
+    <!-- files for the next message: each stored on its own, or one sent in chunks (uploadId) -->
     <transition name="upload">
         <actions><script><![CDATA[
-            const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.upload#ChatFiles').parameters({chatRoomId: chatRoomId || '', file: file || null}).call()
+            const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.upload#ChatFiles').parameters({chatRoomId: chatRoomId || '', file: file || null,
+                uploadId: uploadId || null}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {uploadList: out.uploadList, failedList: out.failedList,
                 messageInfos: (out.failedList || []).map((failed) => ({type: 'warning', message: failed.fileName + ': ' + failed.error}))})
         ]]></script></actions>
