@@ -92,8 +92,9 @@ pub struct EntityHooks {
     pub stack_names: fn() -> String,
     pub entity_filters: fn(&str, Option<Condition>) -> Option<Condition>,
     pub view_filters: fn(&EntityDefinition, Option<Condition>) -> Option<Condition>,
-    /// An entity was written, for the authorization cache.
-    pub note_write: fn(&str),
+    /// An entity changed (its full name), for the authorization cache: written here, or invalidated by a cluster peer;
+    /// `None` is every entity, a whole-cache clear. See `entity::cache::note_changed`.
+    pub note_write: fn(Option<&str>),
     // scripts
     pub push_frame: fn(),
     pub pop_frame: fn(),

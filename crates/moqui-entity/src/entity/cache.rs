@@ -1042,10 +1042,13 @@ fn note_localized(facade: &EntityFacade, full_name: &str) {
 /// The transaction flush is separate and runs at commit. The local clear stays the whole entity. Inside a
 /// transaction the clear runs again at commit or rollback, and the publish waits for commit.
 pub fn on_write(facade: &EntityFacade, entity_name: &str, operation: &str, values: &FieldMap) -> Result<(), Error> {
-    write_hooks(facade, entity_name, operation, values, || Arc::new(values.clone()))
+    let result = write_hooks(facade, entity_name, operation, values, || Arc::new(values.clone()));
+    note_changed(facade, Some(entity_name));
+    result
 }
 
-/// [`on_write`] for values the write's other hooks share, so a transaction frame keeps them without a copy.
+/// [`on_write`] for values the write's other hooks share, so a transaction frame keeps them without a copy. The
+/// entity value write that calls it sends the entity-changed notice ([`note_changed`]) itself, when it is over.
 pub(crate) fn on_write_shared(
     facade: &EntityFacade,
     entity_name: &str,
@@ -1073,25 +1076,47 @@ fn write_hooks(
             values: shared(),
         })
     })?;
-    note_screen_config(facade, &meta.full_name);
-    note_feed_definition(facade, &meta.full_name);
-    note_localized(facade, &meta.full_name);
-    super::derived::note_write(facade, &meta.full_name);
     (crate::hooks::get().cluster_note_write)(facade, entity_name, &meta.pk_fields, values).map_err(Error::from)
+}
+
+/// The entity-changed notice (plans/High-Level-Review.md HL-024): moves every cache kept from entity rows outside the
+/// list and count caches, from this one place, for a write here (when it is over), a cluster peer's invalidation
+/// ([`clear_one_cache`]) and a whole-cache clear (`None`, every entity: [`clear_all_list_caches`]). The screen
+/// configuration, feed definition and localized generations, the definitions built at runtime, and through the
+/// `note_write` hook the authorization generation (group membership, tarpit rules and entity filter sets).
+pub(crate) fn note_changed(facade: &EntityFacade, entity_name: Option<&str>) {
+    let Some(entity_name) = entity_name else {
+        for generation in [
+            &facade.inner.screen_config_generation,
+            &facade.inner.feed_definition_generation,
+            &facade.inner.localized_generation,
+        ] {
+            generation.fetch_add(1, AtomicOrdering::AcqRel);
+        }
+        super::derived::clear(facade);
+        (crate::hooks::get().note_write)(None);
+        return;
+    };
+    // A name the model does not know (a write that failed on it) is passed on as given.
+    let meta = read_meta(facade, entity_name).ok();
+    let full_name = meta.as_ref().map_or(entity_name, |meta| meta.full_name.as_str());
+    note_screen_config(facade, full_name);
+    note_feed_definition(facade, full_name);
+    note_localized(facade, full_name);
+    super::derived::note_write(facade, full_name);
+    (crate::hooks::get().note_write)(Some(full_name));
 }
 
 /// For another server's write, and do not publish: with its primary key, the cached finds that held the row or may
 /// match the key (as an update), else the entity's caches whole. Remote apply uses this.
 pub fn clear_one_cache(facade: &EntityFacade, entity_name: &str, primary_key: Option<&FieldMap>) -> Result<(), Error> {
     let meta = read_meta(facade, entity_name)?;
-    note_screen_config(facade, &meta.full_name);
-    note_feed_definition(facade, &meta.full_name);
-    note_localized(facade, &meta.full_name);
     let cleared = match primary_key.filter(|keys| meta.pk_fields.iter().all(|name| keys.contains_key(name.as_str()))) {
         Some(keys) => evict(facade, &meta, "update", keys).map(|_| ()),
         None => clear_named(facade, &meta.full_name),
     };
-    super::derived::note_write(facade, &meta.full_name);
+    // After the evict, as a local write's notice comes after its own.
+    note_changed(facade, Some(&meta.full_name));
     cleared
 }
 
@@ -1154,9 +1179,10 @@ pub(crate) fn forget_model(facade: &EntityFacade) {
     }
 }
 
-/// Clear every entity list and count cache, moving every store fence first.
+/// Clear every entity list and count cache, moving every store fence first, then send the entity-changed notice for
+/// every entity ([`note_changed`]): a LISTEN reconnect or a busy NOTIFY may have dropped any peer's invalidation.
 pub fn clear_all_list_caches(facade: &EntityFacade) -> Result<(), Error> {
-    facade.with_slot(OneCaches::default, |caches| {
+    let cleared = facade.with_slot(OneCaches::default, |caches| {
         caches.epoch.fetch_add(1, AtomicOrdering::SeqCst);
         for cache in caches.lists.values() {
             cache.clear()?;
@@ -1165,7 +1191,9 @@ pub fn clear_all_list_caches(facade: &EntityFacade) -> Result<(), Error> {
             cache.clear()?;
         }
         Ok(())
-    })
+    });
+    note_changed(facade, None);
+    cleared
 }
 
 /// Register the commit flush and the rollback drop for this frame.

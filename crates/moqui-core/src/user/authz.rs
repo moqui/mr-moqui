@@ -40,12 +40,18 @@ const AT_ENTITY: &str = "AT_ENTITY";
 /// The authorization-check list itself follows Java's current-user lifetime.
 static AUTHZ_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// Entity writes call this. Only the authorization tables, the entity filter tables among them, change the generation.
+/// The entity facade's entity-changed notice calls this: for a write here, a cluster peer's invalidation, and a
+/// whole-cache clear (`None`, every entity). Only the authorization tables, the entity filter tables among them, change
+/// the generation.
 ///
 /// The generation moves at once, and again when the write's transaction ends: a session that
 /// reloaded in between read the rows from before the commit, or the writer's own rows that a
 /// rollback then undid, and must not keep them.
-pub(crate) fn note_entity_write(entity_name: &str) {
+pub(crate) fn note_entity_write(entity_name: Option<&str>) {
+    let Some(entity_name) = entity_name else {
+        bump_generation();
+        return;
+    };
     if !matches!(
         entity_name,
         "moqui.security.ArtifactAuthz"
@@ -74,7 +80,21 @@ pub(crate) fn note_entity_write(entity_name: &str) {
 }
 
 fn bump_generation() {
-    AUTHZ_GENERATION.fetch_add(1, Ordering::Relaxed);
+    AUTHZ_GENERATION.fetch_add(1, Ordering::SeqCst);
+    #[cfg(test)]
+    MOVED_HERE.with(|moved| moved.set(moved.get() + 1));
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The moves this thread made. The generation is a process static that other tests move too, so a test of what
+    /// moves it counts here.
+    static MOVED_HERE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn moved_here() -> u64 {
+    MOVED_HERE.with(std::cell::Cell::get)
 }
 
 /// One row of `ArtifactAuthz` joined to a member of its artifact group.
@@ -649,7 +669,7 @@ pub(crate) fn authz_enabled_for(artifact_type: &str) -> bool {
 }
 
 pub(super) fn generation() -> u64 {
-    AUTHZ_GENERATION.load(Ordering::Relaxed)
+    AUTHZ_GENERATION.load(Ordering::SeqCst)
 }
 
 /// Refresh generation-bound caches, retaining Java's current-user authorization-check list.
