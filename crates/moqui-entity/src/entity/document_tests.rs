@@ -122,7 +122,10 @@ fn order_info() -> DocumentInfo {
         node(
             "OrderItem",
             vec![field("itemSeq"), field("productId"), expression],
-            vec![many("notes", node("ItemNote", vec![field("note")], Vec::new())), product],
+            vec![
+                many("notes", node("ItemNote", vec![field("note")], Vec::new())),
+                product,
+            ],
         ),
     );
     let payments = many("payments", node("Payment", vec![field("paymentId")], Vec::new()));
@@ -177,10 +180,14 @@ fn reference(info: &DocumentInfo, rows: &[BTreeMap<String, Value>]) -> Vec<Docum
                     let Value::Map(candidate) = candidate else {
                         return false;
                     };
-                    rel.node.fields.iter().filter(|field| !field.is_expression).all(|field| {
-                        candidate.get(&field.alias).unwrap_or(&Value::Null)
-                            == row.get(&field.alias).unwrap_or(&Value::Null)
-                    })
+                    rel.node
+                        .fields
+                        .iter()
+                        .filter(|field| !field.is_expression)
+                        .all(|field| {
+                            candidate.get(&field.alias).unwrap_or(&Value::Null)
+                                == row.get(&field.alias).unwrap_or(&Value::Null)
+                        })
                 }),
                 _ => None,
             };
@@ -342,4 +349,43 @@ fn a_large_child_list_and_sibling_lists_merge_as_before() {
     assert_eq!(docs, reference(&info, &rows));
     assert_eq!(list(&docs[0], "items").len(), 300);
     assert_eq!(list(&docs[0], "payments").len(), 3);
+}
+
+thread_local! {
+    /// Children compared with a row during assembly on this thread, for the measurement below.
+    pub(super) static COMPARED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// HL-001 measurement, opt-in: comparisons and time to assemble one parent with N distinct children, against the
+/// linear merge (whose comparisons are about N²/2). `cargo test -p moqui-entity --lib child_merge_cost -- --ignored
+/// --nocapture`.
+#[test]
+#[ignore = "measurement: prints child comparisons and assembly time for large child lists"]
+fn child_merge_cost() {
+    let info = order_info();
+    for children in [1_000, 4_000, 8_000] {
+        let rows: Vec<_> = (0..children)
+            .map(|item| {
+                row(&[
+                    ("orderId", text("O1")),
+                    ("itemSeq", text(&format!("{item:06}"))),
+                    ("productId", text("A")),
+                ])
+            })
+            .collect();
+        COMPARED.with(|compared| compared.set(0));
+        let started = std::time::Instant::now();
+        let docs = assembled(&info, &rows);
+        let indexed = started.elapsed();
+        let compared = COMPARED.with(std::cell::Cell::get);
+        let started = std::time::Instant::now();
+        let linear = reference(&info, &rows);
+        let linear_time = started.elapsed();
+        assert_eq!(docs, linear);
+        println!(
+            "{children} children: indexed {compared} comparisons in {indexed:?}; linear about {} comparisons in \
+             {linear_time:?}",
+            children * (children - 1) / 2
+        );
+    }
 }
