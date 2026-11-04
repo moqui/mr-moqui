@@ -1123,3 +1123,183 @@ fn gen_ai_spans_capture_usage_without_prompt_or_response_contents() {
     assert!(!contents.contains("private response text"));
     fake::clear(id);
 }
+
+/// An `LlmCall` row of `user` at `start` with only the fields given: a row with no tokens or cost has nulls there.
+fn bare_call(facade: &EntityFacade, id: &str, user: &str, source: &str, start: i64, fields: &[(&str, Value)]) {
+    let mut value = facade.make_value("moqui.llm.LlmCall").unwrap();
+    value.set("callId", Value::string(id));
+    value.set("userId", Value::string(user));
+    value.set("source", Value::string(source));
+    value.set("startDate", moqui_core::user::stamp_value(start));
+    for (name, field) in fields {
+        value.set(*name, field.clone());
+    }
+    value.create(facade).unwrap();
+}
+
+/// One check reads each scope's calls once with only their totals' fields: the totals are those of the whole rows, at
+/// the day's boundary in the server's time zone, with nulls as nothing, by source, and with the month's earlier days
+/// from `LlmUsageDaily` (plans/High-Level-Review.md HL-012).
+#[test]
+fn quota_totals_keep_the_day_boundary_nulls_sources_and_month() {
+    let facade = facade();
+    let conf = LlmConf::from_conf_text(CONF).unwrap();
+    let now = jiff::Timestamp::now().as_millisecond();
+    let today = usage::day_of(now).unwrap();
+    let (start, _) = usage::day_bounds(today).unwrap();
+    let tokens =
+        |input: i64, output: i64| vec![("inputTokens", Value::I64(input)), ("outputTokens", Value::I64(output))];
+    let mut first = tokens(100, 50);
+    first.push(("cost", Value::Decimal(dec("0.5"))));
+    first.push(("currencyUomId", Value::string("USD")));
+    first.push(("requestJson", Value::string("x".repeat(10_000))));
+    bare_call(&facade, "T1", "UT", "agent", start, &first);
+    bare_call(&facade, "T2", "UT", "agent", start - 1, &tokens(1000, 0));
+    bare_call(
+        &facade,
+        "T3",
+        "UT",
+        "agent",
+        now - 5,
+        &[("errorClass", Value::string("server"))],
+    );
+    bare_call(&facade, "T4", "UT", "gateway", now - 5, &tokens(10, 0));
+    let earlier = today.day() > 1;
+    if earlier {
+        let mut daily = facade.make_value("moqui.llm.LlmUsageDaily").unwrap();
+        for (name, value) in [
+            ("userId", Value::string("UT")),
+            ("usageDate", Value::Date(today.first_of_month())),
+            ("modelId", Value::string("m")),
+            ("source", Value::string("agent")),
+            ("callCount", Value::I64(1)),
+            ("inputTokens", Value::I64(7)),
+            ("cost", Value::Decimal(dec("0.25"))),
+        ] {
+            daily.set(name, value);
+        }
+        daily.create(&facade).unwrap();
+    }
+    // a day limit for all sources, within; a month limit for the agent, over
+    row(
+        &facade,
+        "moqui.llm.LlmQuota",
+        &[("quotaId", "QTD"), ("userId", "UT"), ("maxTokens", "100000")],
+    );
+    let day = usage::check_quota(&facade, &conf.limits, "UT", "agent", now).unwrap();
+    assert!(day.is_within(), "{day:?}");
+    assert_eq!((day.used.calls, day.used.errors, day.used.usage.total()), (3, 1, 160));
+    assert_eq!(day.used.cost, dec("0.5"));
+    assert_eq!(day.used.currency.as_deref(), Some("USD"));
+    row(
+        &facade,
+        "moqui.llm.LlmQuota",
+        &[
+            ("quotaId", "QTM"),
+            ("userId", "UT"),
+            ("period", "month"),
+            ("scope", "agent"),
+            ("maxTokens", "1"),
+        ],
+    );
+    let month = usage::check_quota(&facade, &conf.limits, "UT", "agent", now).unwrap();
+    assert_eq!(month.limit.from, "QTM");
+    let (calls, total, cost) = if earlier {
+        (3, 157, dec("0.75"))
+    } else {
+        (2, 150, dec("0.5"))
+    };
+    assert_eq!(
+        (month.used.calls, month.used.usage.total(), month.used.cost),
+        (calls, total, cost)
+    );
+}
+
+/// Concurrent admissions of one user whose quota has room for one call's reserve: one is admitted, and its
+/// reservation counts until it is dropped (plans/High-Level-Review.md HL-030).
+#[test]
+fn one_of_concurrent_admissions_takes_the_room_left() {
+    let facade = facade();
+    let conf = LlmConf::from_conf_text(CONF).unwrap();
+    row(
+        &facade,
+        "moqui.llm.LlmQuota",
+        &[("quotaId", "QR"), ("userId", "UR"), ("maxTokens", "1500")],
+    );
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let facade = facade.clone();
+            let limits = conf.limits.clone();
+            let barrier = std::sync::Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let admission = usage::Admission {
+                    user_id: Some("UR"),
+                    scope: "agent",
+                    client: None,
+                    reserve: usage::Reserve {
+                        tokens: 1000,
+                        cost: Decimal::ZERO,
+                    },
+                    ttl: std::time::Duration::from_secs(60),
+                };
+                barrier.wait();
+                usage::admit(&facade, &limits, &admission, jiff::Timestamp::now().as_millisecond()).unwrap()
+            })
+        })
+        .collect();
+    let results: Vec<_> = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
+    let admitted: Vec<&usage::Reservation> = results.iter().filter_map(|result| result.as_ref().ok()).collect();
+    assert_eq!(admitted.len(), 1, "{results:?}");
+    let refused = results.iter().find_map(|result| result.as_ref().err()).unwrap();
+    assert!(refused.reason.contains("has 500 left"), "{}", refused.reason);
+    let now = jiff::Timestamp::now().as_millisecond();
+    let held = usage::check_quota(&facade, &conf.limits, "UR", "agent", now).unwrap();
+    assert_eq!(held.used.reserved.tokens, 1000);
+    drop(results);
+    let freed = usage::check_quota(&facade, &conf.limits, "UR", "agent", now).unwrap();
+    assert_eq!(freed.used.reserved.tokens, 0);
+}
+
+/// A reservation past its `expiresDate` (a node that stopped mid-call) no longer counts, and the next admission
+/// deletes it.
+#[test]
+fn an_expired_reservation_stops_counting() {
+    let facade = facade();
+    let conf = LlmConf::from_conf_text(CONF).unwrap();
+    let now = jiff::Timestamp::now().as_millisecond();
+    let mut stale = facade.make_value("moqui.llm.LlmQuotaReservation").unwrap();
+    for (name, value) in [
+        ("reservationId", Value::string("STALE")),
+        ("userId", Value::string("UE")),
+        ("source", Value::string("agent")),
+        ("tokens", Value::I64(900)),
+        ("createdDate", moqui_core::user::stamp_value(now - 120_000)),
+        ("expiresDate", moqui_core::user::stamp_value(now - 1_000)),
+    ] {
+        stale.set(name, value);
+    }
+    stale.create(&facade).unwrap();
+    let status = usage::check_quota(&facade, &conf.limits, "UE", "agent", now).unwrap();
+    assert_eq!(status.used.reserved.tokens, 0);
+    // the conf's 1000 tokens a day: room for 600 with the stale one gone
+    let admission = usage::Admission {
+        user_id: Some("UE"),
+        scope: "agent",
+        client: None,
+        reserve: usage::Reserve {
+            tokens: 600,
+            cost: Decimal::ZERO,
+        },
+        ttl: std::time::Duration::from_secs(60),
+    };
+    let reservation = usage::admit(&facade, &conf.limits, &admission, now).unwrap().unwrap();
+    assert!(reservation.id().is_some());
+    let gone = facade
+        .find("moqui.llm.LlmQuotaReservation")
+        .unwrap()
+        .eq("reservationId", Value::string("STALE"))
+        .one()
+        .unwrap();
+    assert!(gone.is_none());
+}

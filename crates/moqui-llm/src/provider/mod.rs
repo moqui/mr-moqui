@@ -863,6 +863,10 @@ pub struct CallOptions<'a> {
     pub idle: Option<Duration>,
     /// Attempts for a retryable error, the first included.
     pub max_attempts: u32,
+    /// The quota scope (`agent`, `api`) each attempt is admitted in, with the recorder's facade and the user: an
+    /// attempt (a retry, the larger-output re-ask, a nudge) is checked with what it may use at most and reserves that
+    /// until its `LlmCall` row is written ([`usage::admit`]); one refused ends the call with a `quota` error.
+    pub quota: Option<&'static str>,
 }
 
 impl<'a> CallOptions<'a> {
@@ -881,6 +885,7 @@ impl<'a> CallOptions<'a> {
             recorder: None,
             idle: None,
             max_attempts: classify::MAX_ATTEMPTS,
+            quota: None,
         }
     }
 
@@ -1120,9 +1125,18 @@ fn exchange(
         .recorder
         .as_ref()
         .is_some_and(|recorder| recorder.llm.conf().content_log.enabled);
-    let mut events_log: Vec<Json> = Vec::new();
+    let mut events_log = EventsLog::default();
     let mut first_token: Option<i64> = None;
     let mut http_status = None;
+    // admitted against the quotas first; the reservation is held until this attempt's row is written
+    let reservation = match admit_attempt(target, request, options) {
+        Ok(reservation) => reservation,
+        Err(refusal) => {
+            let mut reply = Reply::empty();
+            reply.finish = Finish::Error(refusal);
+            return reply;
+        }
+    };
 
     let mut assembler = Assembler::new();
     let outcome: Result<(), ProviderError> = (|| {
@@ -1386,7 +1400,7 @@ fn exchange(
     }
     record.usage = reply.usage;
     if log_content && record.response_json.is_none() {
-        record.response_json = Some(Json::Array(events_log).to_string());
+        record.response_json = Some(events_log.into_json());
     }
     if let Some(recorder) = &options.recorder {
         match recorder.llm.record_call(recorder.facade, target, &record) {
@@ -1394,7 +1408,105 @@ fn exchange(
             Err(error) => tracing::error!("the call to model {} was not logged: {error}", target.model.id),
         }
     }
+    drop(reservation);
     reply
+}
+
+/// The start of the message of an attempt the quota refused ([`admit_attempt`]), a `quota` error that is this
+/// server's, not the provider's.
+pub const QUOTA_REFUSED: &str = "the LLM quota does not allow the call: ";
+
+/// Whether `finish` is an attempt the quota refused.
+pub fn quota_refused(finish: &Finish) -> bool {
+    finish
+        .error()
+        .is_some_and(|error| error.class == ErrorClass::Quota && error.message.starts_with(QUOTA_REFUSED))
+}
+
+/// The most of a streamed reply the content log keeps, as the gateway's: past it, the events are left out and the log
+/// ends with a note that it was cut.
+pub(crate) const MAX_LOGGED_EVENTS: usize = 1024 * 1024;
+
+/// The decoded events of an attempt, for the content log, up to [`MAX_LOGGED_EVENTS`] bytes.
+#[derive(Default)]
+struct EventsLog {
+    events: Vec<Json>,
+    bytes: usize,
+    cut: bool,
+}
+
+impl EventsLog {
+    fn push(&mut self, event: Json) {
+        if self.cut {
+            return;
+        }
+        let size = event.to_string().len();
+        if self.bytes + size > MAX_LOGGED_EVENTS {
+            self.cut = true;
+            return;
+        }
+        self.bytes += size;
+        self.events.push(event);
+    }
+
+    fn into_json(mut self) -> String {
+        if self.cut {
+            self.events
+                .push(serde_json::json!({"type": "log_cut", "maxBytes": MAX_LOGGED_EVENTS}));
+        }
+        Json::Array(self.events).to_string()
+    }
+}
+
+/// Admit one attempt in `options.quota`'s scope, for the user and with the recorder's facade: what it may use at most
+/// is its prompt (estimated from the request's characters) and its output limit. With no scope, user or recorder, no
+/// quota applies. A refusal is the attempt's `quota` error; a check that fails is logged and lets the attempt go, as
+/// the quota check before the run has passed.
+fn admit_attempt(
+    target: &Target,
+    request: &ModelRequest,
+    options: &CallOptions<'_>,
+) -> Result<Option<usage::Reservation>, ProviderError> {
+    let (Some(scope), Some(user_id), Some(recorder)) = (options.quota, options.user_id.as_deref(), &options.recorder)
+    else {
+        return Ok(None);
+    };
+    let chars = crate::tokens::RequestChars::sent(request, target).total();
+    let input = crate::tokens::Estimator::for_model(&target.model).tokens_of_chars(chars);
+    let output = u64::from(request.max_output(target).unwrap_or(4096));
+    let most = Usage {
+        input,
+        output,
+        ..Usage::default()
+    };
+    let ttl = options.deadline.map_or(DEFAULT_CALL_LIMIT, |deadline| {
+        deadline.saturating_duration_since(Instant::now())
+    }) + Duration::from_secs(60);
+    let admission = usage::Admission {
+        user_id: Some(user_id),
+        scope,
+        client: None,
+        reserve: usage::Reserve {
+            tokens: most.total(),
+            cost: usage::cost(&target.model.prices, &most).unwrap_or_default(),
+        },
+        ttl,
+    };
+    let now = jiff::Timestamp::now().as_millisecond();
+    match usage::admit(recorder.facade, &recorder.llm.conf().limits, &admission, now) {
+        Ok(Ok(reservation)) => Ok(Some(reservation)),
+        Ok(Err(refusal)) => Err(ProviderError::new(
+            ErrorClass::Quota,
+            format!("{QUOTA_REFUSED}{}", refusal.reason),
+        )),
+        Err(error) => {
+            tracing::error!(
+                "the quota of the call to model {} could not be checked; it goes on: {error}",
+                target.model.id
+            );
+            Ok(None)
+        }
+    }
 }
 
 /// A response [`open_json`] opened: its status, its headers and its body.
@@ -1476,7 +1588,7 @@ fn deliver(
     events: &mut Vec<ProviderEvent>,
     assembler: &mut Assembler,
     options: &mut CallOptions<'_>,
-    log: &mut Vec<Json>,
+    log: &mut EventsLog,
     log_content: bool,
     first_token: &mut Option<i64>,
     started: Instant,
@@ -1550,7 +1662,9 @@ pub(crate) fn check_address(target: &Target) -> Result<(), String> {
     Ok(())
 }
 
-/// The calls in flight per endpoint, against the endpoint's `max-concurrent` and the model's `max-concurrency`.
+/// The calls in flight per endpoint, against the endpoint's `max-concurrent` and the model's `max-concurrency`. Counted
+/// on this node only: a cluster of `n` nodes lets up to `n` times the limit through (as the requests per minute,
+/// `usage::take_request`).
 static SLOTS: Mutex<Option<HashMap<String, u32>>> = Mutex::new(None);
 static SLOT_FREED: Condvar = Condvar::new();
 

@@ -260,6 +260,7 @@ impl LlmFacade {
         options.deadline = Some(std::time::Instant::now() + ask.timeout.unwrap_or(COMPLETE_TIMEOUT));
         options.user_id.clone_from(&user_id);
         options.nudge = Some(provider::EMPTY_NUDGE.to_string());
+        options.quota = Some("api");
         options.recorder = Some(Recorder { llm: self, facade });
         let mut reply = provider::call(&target, &request, &mut options);
         let mut usage = reply.usage;
