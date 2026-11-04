@@ -259,6 +259,7 @@ impl Painter<'_, '_> {
             let rect = Rect::new(x, screen_top, w, u16::try_from(h).unwrap_or(u16::MAX));
             let clip = Rect::new(self.left, self.top, self.right - self.left, self.bottom - self.top);
             border.render_child_into(self.ctx, rect, Some(clip));
+            self.frame_title(rect, title);
         } else {
             // Scrolled past its top edge: only the sides and the bottom, so the title does not move down.
             for row in first_y..y + h {
@@ -303,6 +304,23 @@ impl Painter<'_, '_> {
             border = border.fg(color);
         }
         border.render_child_into(self.ctx, rect, None);
+        self.frame_title(rect, title);
+    }
+
+    /// A frame title is a heading, not decoration. Revue paints it with the border; give its text a readable role
+    /// separately so thin, quiet borders do not also make section and dialog titles faint.
+    fn frame_title(&mut self, rect: Rect, title: &str) {
+        if rect.width < 4 || rect.height < 2 {
+            return;
+        }
+        self.put(
+            rect.x.saturating_add(2),
+            rect.y,
+            title,
+            Look::role(Role::Text).bold(),
+            usize::from(rect.width.saturating_sub(4)),
+            None,
+        );
     }
 
     /// Blank the screen rows of `rect`, under an overlay; a click there no longer reaches what is under it.

@@ -144,7 +144,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <container style="col-12 col-md">
                         <label text="${pageTitle}" type="h5" style="q-my-none"/>
                         <label text="${viewVersion ? 'Version ' + viewShort + ' (not current)' : 'Version ' + currentShort} · ${versionCount} versions in ${storage}${publishedShort ? ' · published ' + publishedShort : ''}"
-                                type="div" style="text-caption text-grey-6"/>
+                                type="div" style="text-caption m-muted"/>
                     </container>
                     <container style="col-12 col-md-auto row items-center q-gutter-x-sm no-wrap">
                         <container-dialog id="EditPageDialog" button-text="Edit" width="960">

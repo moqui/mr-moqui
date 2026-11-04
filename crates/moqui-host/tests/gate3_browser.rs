@@ -4777,6 +4777,12 @@ fn a_pull_conflict_is_resolved_in_chromium() {
     );
     // Commit makes the merge commit
     summary(&mut browser, "Merge the upstream");
+    // Closing the conflict view starts a status refresh; wait until its staged entry enables Commit.
+    browser.wait_for(
+        "the resolved change ready to commit",
+        "!document.getElementById('DevCommit').disabled",
+        WAIT,
+    );
     browser.click("Commit", "document.getElementById('DevCommit')");
     browser.wait_for("the merge done", "!document.getElementById('DevOperationBanner')", WAIT);
     assert_eq!(git(&site, &["log", "-1", "--format=%P"]).split_whitespace().count(), 2);

@@ -109,3 +109,5 @@ Desktop.ini
 /crates/moqui-mobile/gen/schemas/
 # The client glue both apps share: its lock file, for its own cargo test
 /crates/moqui-client-tauri/Cargo.lock
+# Local screenshots used during UI review; keep evidence outside repository history.
+/plans/ui-refinement-evidence/

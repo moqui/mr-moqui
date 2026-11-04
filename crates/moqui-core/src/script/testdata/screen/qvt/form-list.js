@@ -226,7 +226,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rows] -->\n"
     },
     "headerFields": [
         {"name": "id", "title": () => ec.l10n.localize("ID"),
-                                    "orderBy": "true", "dialogField": () => {
+                                    "orderBy": "true", "dialogAction": false, "dialogField": () => {
         $v.fieldBox(null, "", false);
         sri.pushContext();
         try {

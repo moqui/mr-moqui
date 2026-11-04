@@ -160,7 +160,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- END   form-single[@name=UpdateSele
     },
     "headerFields": [
         {"name": "id", "title": () => ec.l10n.localize("ID"),
-                                    "orderBy": "case-insensitive", "dialogField": () => {
+                                    "orderBy": "case-insensitive", "dialogAction": false, "dialogField": () => {
         $v.fieldBox(null, "", false);
         sri.pushContext();
         try {

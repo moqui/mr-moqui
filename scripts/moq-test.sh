@@ -7,6 +7,11 @@
 # Parts that need git, zip, unzip, or curl are skipped when those are missing.
 set -o pipefail
 
+# Every command below belongs to the throwaway fixture. A caller's runtime can contain directory symlinks into a
+# live workspace, and its worker override changes the defaults these checks exercise. Explicit env overrides on
+# individual checks still work; unsetting these here affects only this self-test process and its children.
+unset MOQUI_RUNTIME MOQ_TEST_WORKERS
+
 SRC=$(cd "$(dirname "$0")/.." && pwd)
 # The physical path: moq resolves its root with cd -P, so its output names /private/var/... on macOS, where TMPDIR is
 # /var/folders/.../T/ (a symlink, and a trailing slash).
@@ -144,6 +149,10 @@ check "run bad port" 1 'not a number' -- dry "$M" run -p abc
 check "conf in runtime" 0 "MOQUI_CONF=$R/runtime/conf/MoquiProductionConf.xml" -- dry "$M" run -c conf/MoquiProductionConf.xml
 check "conf from cwd" 0 "MOQUI_CONF=$R/runtime/conf/MoquiDevConf.xml" -- \
     sh -c "cd '$R/runtime/conf' && MOQ_DRY_RUN=1 '$M' run --conf=MoquiDevConf.xml"
+mkdir -p "$FIX/override-runtime/conf"
+cp "$R/runtime/conf/MoquiDevConf.xml" "$FIX/override-runtime/conf/Override.xml"
+check "explicit runtime override resolves its conf" 0 "MOQUI_CONF=$FIX/override-runtime/conf/Override.xml" -- \
+    env MOQUI_RUNTIME="$FIX/override-runtime" MOQ_DRY_RUN=1 "$M" run -c conf/Override.xml
 check "conf missing" 1 'conf file nope.xml not found' -- dry "$M" run -c nope.xml
 check "run-production --debug" 0 'target/debug/moqui$' -- dry "$M" run-production --debug
 check "build default" 0 'cargo build --profile release --no-default-features --features maximal\\?,devtools -p moqui$' -- dry "$M" build

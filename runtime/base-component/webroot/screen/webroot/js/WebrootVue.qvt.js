@@ -1364,9 +1364,9 @@
                 '<q-card ref="dialogCard" flat bordered :style="{width:((width||760)+\'px\'),\'max-width\':($q.screen.lt.sm?\'100vw\':\'90vw\')}">' +
                     '<q-card-section ref="dialogHeader" class="row items-center no-wrap q-py-xs q-pr-xs non-selectable" :style="{cursor:(draggable?\'move\':\'default\')}">' +
                         '<div class="text-subtitle1 text-weight-medium ellipsis">{{title}}</div><q-space></q-space>' +
-                        '<q-btn icon="close" flat round dense v-close-popup></q-btn>' +
+                        '<q-btn icon="close" type="button" aria-label="Close dialog" flat round dense v-close-popup></q-btn>' +
                     '</q-card-section><q-separator></q-separator>' +
-                    '<q-card-section ref="dialogBody" class="scroll" style="max-height:80vh;"><slot></slot></q-card-section>' +
+                    '<q-card-section ref="dialogBody" class="scroll m-dialog-body" style="max-height:80vh;"><slot></slot></q-card-section>' +
                 '</q-card>' +
             '</q-dialog>',
         methods: {
@@ -2152,7 +2152,7 @@
             '<div v-if="paginate && paginate.count > 1" class="row no-wrap items-center">' +
                 '<span class="text-caption text-grey-7 q-mx-sm">{{paginate.pageRangeLow}}-{{paginate.pageRangeHigh}} / {{paginate.count}}</span>' +
                 '<q-pagination v-if="paginate.pageMaxIndex > 0" :model-value="paginate.pageIndex + 1" @update:model-value="setIndex($event - 1)" :max="paginate.pageMaxIndex + 1" :max-pages="7"' +
-                    ' direction-links boundary-links size="sm" flat active-design="unelevated" color="grey-8" active-color="primary"></q-pagination>' +
+                    ' direction-links boundary-links size="sm" flat active-design="unelevated" :color="$q.dark.isActive ? \'grey-4\' : \'grey-8\'" active-color="primary"></q-pagination>' +
             '</div>',
         methods: {
             setIndex(newIndex) {
@@ -2190,41 +2190,60 @@
         props: { id: String, action: String, columnsInitial: { type: Array, required: true }, formLocation: { type: String, required: true }, findParameters: Object },
         data() { return { columns: moqui.deepCopy(this.columnsInitial) }; },
         template:
-            '<m-form ref="mForm" :id="id" :action="action">' +
+            '<m-form ref="mForm" :id="id" :action="action"><p class="m-muted">Choose which fields appear and arrange them within each column.</p><div class="m-column-config-fields">' +
                 '<q-list v-for="(column, columnIdx) in columns" :key="column.id" bordered dense class="q-mb-sm rounded-borders">' +
                     '<q-item-label header>{{column.label}}</q-item-label>' +
-                    '<q-item v-for="(field, fieldIdx) in column.children" :key="field.id">' +
-                        '<q-item-section side v-if="columnIdx !== 0"><q-btn flat round dense size="sm" icon="close" @click="hideField(columnIdx, fieldIdx)"><q-tooltip>Hide</q-tooltip></q-btn></q-item-section>' +
+                    '<q-item v-for="(field, fieldIdx) in column.children" :key="field.id" :data-column-field="field.id">' +
+                        '<q-item-section side v-if="columnIdx !== 0"><q-btn flat round dense size="sm" icon="close" aria-label="Hide field" @click="hideField(columnIdx, fieldIdx)"><q-tooltip>Hide</q-tooltip></q-btn></q-item-section>' +
                         '<q-item-section><q-item-label>{{field.label}}</q-item-label></q-item-section>' +
                         '<q-item-section v-if="columnIdx === 0" side>' +
-                            '<q-btn-dropdown dense flat no-caps label="Display" class="m-btn-tonal"><q-list dense>' +
-                                '<q-item v-for="(toColumn, toColumnIdx) in columns.slice(1)" :key="toColumn.id" clickable v-close-popup>' +
-                                    '<q-item-section @click="moveToCol(columnIdx, fieldIdx, toColumnIdx+1)">{{toColumn.label}}</q-item-section></q-item>' +
-                                '<q-item clickable v-close-popup><q-item-section @click="moveToCol(columnIdx, fieldIdx, columns.length+1)">New Column</q-item-section></q-item>' +
+                            '<q-btn-dropdown dense flat no-caps label="Display" aria-label="Display field" class="m-btn-tonal"><q-list dense>' +
+                                '<q-item v-for="(toColumn, toColumnIdx) in columns.slice(1)" :key="toColumn.id" clickable v-close-popup @click="moveToCol(columnIdx, fieldIdx, toColumnIdx+1)">' +
+                                    '<q-item-section>{{toColumn.label}}</q-item-section></q-item>' +
+                                '<q-item clickable v-close-popup @click="moveToCol(columnIdx, fieldIdx, columns.length+1)"><q-item-section>New Column</q-item-section></q-item>' +
                             '</q-list></q-btn-dropdown>' +
                         '</q-item-section>' +
                         '<q-item-section v-else side><q-btn-group flat>' +
-                            '<q-btn :disabled="columnIdx <= 1" dense flat size="sm" icon="north" @click="moveToCol(columnIdx, fieldIdx, columnIdx-1)"></q-btn>' +
-                            '<q-btn :disabled="fieldIdx === 0" dense flat size="sm" icon="expand_less" @click="moveInCol(columnIdx, fieldIdx, fieldIdx-1)"></q-btn>' +
-                            '<q-btn :disabled="(fieldIdx + 1) === column.children.length" dense flat size="sm" icon="expand_more" @click="moveInCol(columnIdx, fieldIdx, fieldIdx+1)"></q-btn>' +
-                            '<q-btn dense flat size="sm" icon="south" @click="moveToCol(columnIdx, fieldIdx, columnIdx+1)"></q-btn>' +
+                            '<q-btn :disabled="columnIdx <= 1" dense flat size="sm" icon="west" aria-label="Move to previous column" @click="moveToCol(columnIdx, fieldIdx, columnIdx-1)"><q-tooltip>Move to previous column</q-tooltip></q-btn>' +
+                            '<q-btn :disabled="fieldIdx === 0" dense flat size="sm" icon="expand_less" aria-label="Move up within column" @click="moveInCol(columnIdx, fieldIdx, fieldIdx-1)"><q-tooltip>Move up within column</q-tooltip></q-btn>' +
+                            '<q-btn :disabled="(fieldIdx + 1) === column.children.length" dense flat size="sm" icon="expand_more" aria-label="Move down within column" @click="moveInCol(columnIdx, fieldIdx, fieldIdx+1)"><q-tooltip>Move down within column</q-tooltip></q-btn>' +
+                            '<q-btn dense flat size="sm" icon="east" aria-label="Move to next column" @click="moveToCol(columnIdx, fieldIdx, columnIdx+1)"><q-tooltip>Move to next column</q-tooltip></q-btn>' +
                         '</q-btn-group></q-item-section>' +
                     '</q-item>' +
                 '</q-list>' +
-                '<div class="q-my-md">' +
+                '</div><div class="m-dialog-actions q-mt-md">' +
                     '<q-btn dense unelevated no-caps color="primary" @click.prevent="saveColumns()" label="Save Changes"></q-btn>' +
                     '<q-btn dense flat no-caps @click.prevent="resetColumns()" label="Undo Changes"></q-btn>' +
                     '<q-btn dense flat no-caps @click.prevent="resetToDefault()" label="Reset to Default"></q-btn>' +
                 '</div>' +
             '</m-form>',
         methods: {
+            focusField(fieldId, action, fallbackAction) {
+                this.$nextTick(() => {
+                    const row = Array.from(this.$el.querySelectorAll("[data-column-field]"))
+                        .find((element) => element.getAttribute("data-column-field") === String(fieldId));
+                    if (!row) return;
+                    const buttons = Array.from(row.querySelectorAll("button:not([disabled])"));
+                    const target = buttons.find((button) => button.getAttribute("aria-label") === action) ||
+                        buttons.find((button) => button.getAttribute("aria-label") === fallbackAction) || buttons[0];
+                    if (target) target.focus();
+                });
+            },
             moveInCol(columnIdx, fieldIdx, newFieldIdx) {
                 const children = this.columns[columnIdx].children;
-                children.splice(newFieldIdx, 0, children.splice(fieldIdx, 1)[0]);
+                const field = children.splice(fieldIdx, 1)[0];
+                children.splice(newFieldIdx, 0, field);
+                const up = newFieldIdx < fieldIdx;
+                this.focusField(field.id, up ? "Move up within column" : "Move down within column",
+                    up ? "Move down within column" : "Move up within column");
             },
             moveToCol(columnIdx, fieldIdx, newColumnIdx) {
                 const newColumn = newColumnIdx >= this.columns.length ? this.addColumn() : this.columns[newColumnIdx];
-                newColumn.children.push(this.columns[columnIdx].children.splice(fieldIdx, 1)[0]);
+                const field = this.columns[columnIdx].children.splice(fieldIdx, 1)[0];
+                newColumn.children.push(field);
+                const previous = newColumnIdx < columnIdx;
+                this.focusField(field.id, columnIdx === 0 ? "Hide field" : previous ? "Move to previous column" : "Move to next column",
+                    previous ? "Move to next column" : "Move to previous column");
             },
             addColumn() {
                 const oldLength = this.columns.length;
@@ -2234,7 +2253,9 @@
             },
             hideField(columnIdx, fieldIdx) {
                 if (columnIdx === 0) return;
-                this.columns[0].children.push(this.columns[columnIdx].children.splice(fieldIdx, 1)[0]);
+                const field = this.columns[columnIdx].children.splice(fieldIdx, 1)[0];
+                this.columns[0].children.push(field);
+                this.focusField(field.id, "Display field");
             },
             resetColumns() { this.columns = moqui.deepCopy(this.columnsInitial); },
             saveColumns() {
@@ -3323,10 +3344,23 @@
     // Mermaid, loaded on first use: run(nodes, config) draws each node's text (a pre whose text is the diagram) in place, with
     // strict security unless the config says otherwise; one call at a time, as initialize is global.
     let mermaidQueue = Promise.resolve();
+    const mermaidSources = new WeakMap();
     moqui.mermaid = {
         load() { return moqui.loadScript("/libs/mermaid/mermaid.min.js", null, () => !!root.mermaid); },
-        run(nodes, config) {
+        run(nodes, config, redraw) {
+            if (redraw) nodes.forEach((node) => {
+                if (!mermaidSources.has(node)) mermaidSources.set(node, node.textContent);
+            });
             const next = mermaidQueue.then(() => moqui.mermaid.load()).then(() => {
+                // Reset inside the queue: a theme change must not replace a diagram another run is still drawing.
+                if (redraw) nodes = nodes.filter((node) => {
+                    if (!node.isConnected) return false;
+                    node.removeAttribute("data-processed");
+                    node.classList.remove("m-md-mermaid-drawn", "m-md-mermaid-failed");
+                    node.textContent = mermaidSources.get(node);
+                    return true;
+                });
+                if (!nodes.length) return;
                 root.mermaid.initialize(Object.assign({ startOnLoad: false, securityLevel: "strict" }, config));
                 return root.mermaid.run({ nodes });
             });
@@ -3374,6 +3408,8 @@
         // Once drawn, a click on it (or its corner button) opens it in m-diagram-zoom.
         props: { text: String, config: { type: Object, default: () => ({ startOnLoad: false, securityLevel: "strict" }) }, height: { type: String, default: "400px" }, width: { type: String, default: "100%" } },
         data() { return { zoom: { open: false, source: null, at: null } }; },
+        computed: { diagramTheme() { return (this.config && this.config.theme) || (this.$q && this.$q.dark && this.$q.dark.isActive ? "dark" : "default"); } },
+        watch: { diagramTheme() { this.zoom.open = false; this.draw(); } },
         template: '<div class="mermaid-container" :style="{height:height,width:width}" @click="onClick"><pre ref="source" style="display:none;"><slot></slot></pre><div ref="target" class="m-mermaid-target"></div>' +
             '<m-diagram-zoom v-model="zoom.open" :source="zoom.source" :at="zoom.at"></m-diagram-zoom></div>',
         mounted() {
@@ -3381,12 +3417,17 @@
             diagram.className = "mermaid";
             diagram.textContent = (this.text || this.$refs.source.textContent).trim();
             this.$refs.target.appendChild(diagram);
-            moqui.mermaid.run([diagram], this.config).then(() => {
-                diagram.classList.add("m-md-mermaid-drawn");
-                moqui.mermaid.zoomButton(diagram);
-            }, (err) => console.error("m-mermaid: " + err));
+            this.draw();
         },
         methods: {
+            draw() {
+                const diagram = this.$refs.target && this.$refs.target.firstElementChild;
+                if (!diagram) return;
+                return moqui.mermaid.run([diagram], Object.assign({}, this.config, { theme: this.diagramTheme }), true).then(() => {
+                    diagram.classList.add("m-md-mermaid-drawn");
+                    moqui.mermaid.zoomButton(diagram);
+                }, (err) => console.error("m-mermaid: " + err));
+            },
             onClick(event) {
                 const drawn = event.target && event.target.closest ? event.target.closest("pre.m-md-mermaid-drawn") : null;
                 const svg = drawn && this.$refs.target.contains(drawn) ? drawn.querySelector("svg") : null;
@@ -7258,9 +7299,13 @@
             '</div>',
         computed: {
             renderKey() { return [this.text || "", this.basePath || "", this.headingPrefix, this.stripTitle || "", this.wikiLinks ? "w" : "", this.resolveLink ? "r" : "", this.mermaid ? "m" : ""].join("\u0000"); },
+            diagramTheme() { return this.$q && this.$q.dark && this.$q.dark.isActive ? "dark" : "default"; },
             copyLabel() { return moqui.l10n ? moqui.l10n.localize("Copy Markdown") : "Copy Markdown"; }
         },
-        watch: { renderKey() { this.render(); } },
+        watch: {
+            renderKey() { this.render(); },
+            diagramTheme() { this.zoom.open = false; this.drawDiagrams(this.text); }
+        },
         mounted() { this.render(); },
         methods: {
             render() {
@@ -7279,11 +7324,11 @@
             drawDiagrams(text) {
                 const nodes = this.$el && this.$el.querySelectorAll ? Array.from(this.$el.querySelectorAll("pre.m-md-mermaid")) : [];
                 if (!nodes.length) return Promise.resolve();
-                const config = { theme: this.$q && this.$q.dark && this.$q.dark.isActive ? "dark" : "default" };
+                const config = { theme: this.diagramTheme };
                 return nodes.reduce((done, node) => done.then(() => {
-                    if (text !== this.text || !node.isConnected) return null;
-                    const source = node.textContent;
-                    return moqui.mermaid.run([node], config).then(() => { node.classList.add("m-md-mermaid-drawn"); moqui.mermaid.zoomButton(node); }, (err) => {
+                    if (text !== this.text || config.theme !== this.diagramTheme || !node.isConnected) return null;
+                    const source = mermaidSources.get(node) || node.textContent;
+                    return moqui.mermaid.run([node], config, true).then(() => { node.classList.add("m-md-mermaid-drawn"); moqui.mermaid.zoomButton(node); }, (err) => {
                         console.warn("m-markdown: a mermaid diagram did not draw", err);
                         node.removeAttribute("data-processed");
                         node.textContent = source;
@@ -8919,7 +8964,7 @@
         "        <q-btn v-if=\"!shellValues.trayNotifications\" flat round dense icon=\"notifications\" :aria-label=\"labels.notifyHistory\">\n" +
         "            <q-tooltip>{{labels.notifyHistory}}</q-tooltip>\n" +
         "            <q-menu><q-list dense separator style=\"min-width:320px;max-width:440px;\">\n" +
-        "                <q-item v-if=\"!notifyHistoryList.length\"><q-item-section class=\"text-grey-6\">{{labels.notifyHistory}}</q-item-section></q-item>\n" +
+        "                <q-item v-if=\"!notifyHistoryList.length\"><q-item-section class=\"m-muted\">{{labels.notifyHistory}}</q-item-section></q-item>\n" +
         "                <q-item v-for=\"(histItem, histIndex) in notifyHistoryList\" :key=\"histIndex\" :clickable=\"!!histItem.link\" @click=\"histItem.link && moqui.openLink(histItem.link)\">\n" +
         "                    <q-item-section avatar><q-icon :name=\"notifyIcon(histItem.type)\" :color=\"getQuasarColor(histItem.type) || 'info'\"></q-icon></q-item-section>\n" +
         "                    <q-item-section><q-item-label>{{histItem.message}}</q-item-label><q-item-label caption>{{histItem.time}}</q-item-label></q-item-section>\n" +
@@ -9082,6 +9127,14 @@
                 get path() { return vm.currentPath; }, get parameters() { return vm.currentParameters; }, containerId: null } };
         },
         methods: {
+            onPopState() {
+                // A native fragment link also fires popstate. Keep its DOM, unsaved fields and native scroll intact;
+                // setUrl intentionally reloads when called with the current screen URL.
+                const path = root.location.pathname.replace(/\/$/, "");
+                const search = moqui.objToSearch(moqui.searchToObj(root.location.search.slice(1)));
+                if (path + (search ? "?" + search : "") === this.currentLinkUrl) return;
+                this.setUrl(root.location.pathname + root.location.search, null, null, false);
+            },
             setUrl(url, bodyParameters, onComplete, pushState = true) {
                 // cancel the load that is going on
                 if (this.currentLoadRequest) {
@@ -9961,7 +10014,7 @@
         };
         return catalogReady.then(() => {
             moqui.webrootVue = app.mount("#apps-root");
-            root.addEventListener("popstate", () => { moqui.webrootVue.setUrl(root.location.pathname + root.location.search, null, null, false); });
+            root.addEventListener("popstate", () => { moqui.webrootVue.onPopState(); });
             return moqui.webrootVue;
         });
     };

@@ -63,7 +63,9 @@ function build(ec, sri, options) {
     } catch (e) { ec.logger.error('Appearance of theme ' + sri.getCurrentThemeId() + ' not built: ' + e) }
     const lockedKeys = (appearance.policy && appearance.policy.lockedKeys) || []
     // the theme's forced mode wins; a locked mode or density is the shell's default, not what the user chose before
-    const forcedMode = (appearance.policy && appearance.policy.mode) || ''
+    // A boolean mode is the permission to choose, not a forced color mode.
+    const policyMode = appearance.policy && appearance.policy.mode
+    const forcedMode = ['light', 'dark', 'auto'].includes(policyMode) ? policyMode : ''
     const darkPref = forcedMode ? (forcedMode === 'dark' ? 'true' : forcedMode === 'auto' ? 'auto' : 'false')
             : lockedKeys.includes('QUASAR_DARK') ? null : ec.user.getPreference('QUASAR_DARK')
     const density = (ec.user.userId && !lockedKeys.includes('SHELL_DENSITY') && ec.user.getPreference('SHELL_DENSITY')) === 'compact' ? 'compact' : 'comfortable'

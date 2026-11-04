@@ -60,7 +60,13 @@ module.exports = {
         dark() { return this.$q.dark.isActive; }
     },
     watch: {
-        dark(dark) { if (this.term) this.term.options.theme = dark ? THEMES.dark : THEMES.light; }
+        dark(dark) {
+            if (!this.term) return;
+            this.term.options.theme = dark ? THEMES.dark : THEMES.light;
+            // Ask xterm again after changing its background. Its OSC 11 reply follows onData to the existing TUI
+            // session, which changes its semantic palette without losing navigation, open dialogs or field values.
+            this.term.write("\x1b]11;?\x1b\\");
+        }
     },
     mounted() {
         // The page may still be moving into place (its transition, the breadcrumbs, the header wrapping), so the height is
@@ -103,6 +109,8 @@ module.exports = {
             const term = new window.Terminal({
                 fontFamily: 'ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", Menlo, Consolas, monospace',
                 fontSize: 14, cursorBlink: false, scrollback: 0, macOptionIsMeta: true,
+                // Muted text, frame titles and application theme overrides still need to be readable on this background.
+                minimumContrastRatio: 4.5,
                 theme: this.dark ? THEMES.dark : THEMES.light,
                 // only web links and paths of this site open, in a new tab
                 linkHandler: { activate: (event, uri) => { if (/^(https?:\/\/|\/(?!\/))/i.test(uri)) window.open(uri, "_blank", "noopener"); } }

@@ -379,14 +379,17 @@ impl AppearancePolicy {
             .then(|| format!("The theme does not allow the {key} preference"))
     }
 
-    /// The policy as the page and an appearance service read it: `appearance`, `mode`, a flag per group and
-    /// `lockedKeys`, every key it locks.
+    /// The policy as the page and an appearance service read it: `appearance`, a flag per group (`mode` may instead
+    /// name a forced mode), and `lockedKeys`, every key it locks.
     pub fn as_value(&self) -> Value {
         let mut map = IndexMap::new();
         map.insert("appearance".to_string(), Value::Bool(!self.locked));
-        map.insert("mode".to_string(), Value::string(&self.mode));
         for group in APPEARANCE_GROUPS {
             map.insert((*group).to_string(), Value::Bool(!self.locked && !self.locked_groups.contains(*group)));
+        }
+        // `mode` is also a permission group. Preserve a forced mode instead of replacing it with that group's flag.
+        if !self.mode.is_empty() {
+            map.insert("mode".to_string(), Value::string(&self.mode));
         }
         map.insert(
             "lockedKeys".to_string(),

@@ -81,7 +81,7 @@ along with this software (see the LICENSE.md file). If not, see
                             <drop-down><option key="N"/><option key="Y"/></drop-down></default-field></field>
                         <field name="inheritAuthz"><default-field>
                             <drop-down><option key="N"/><option key="Y"/></drop-down></default-field></field>
-                        <field name="filterMap"><default-field title="Filter Map" tooltip="Groovy expression that evaluates to a Map">
+                        <field name="filterMap"><default-field title="Filter Map" tooltip="JavaScript expression that evaluates to an object">
                             <text-line size="60"/></default-field></field>
                         <field name="submitButton"><default-field title="Add"><submit/></default-field></field>
                     </form-single>
@@ -101,7 +101,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <drop-down><option key="N"/><option key="Y"/></drop-down></default-field></field>
                     <field name="inheritAuthz"><default-field>
                         <drop-down><option key="N"/><option key="Y"/></drop-down></default-field></field>
-                    <field name="filterMap"><default-field title="Filter Map" tooltip="Groovy expression that evaluates to a Map">
+                    <field name="filterMap"><default-field title="Filter Map" tooltip="JavaScript expression that evaluates to an object">
                         <text-line size="30"/></default-field></field>
                     <field name="submitButton"><default-field title="Update"><submit/></default-field></field>
                     <field name="deleteLink"><default-field title="">

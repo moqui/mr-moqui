@@ -14,8 +14,8 @@
 
 //! Every tools screen, System and Tools, renders in `html` for an admin user on the seeded embedded Postgres: each
 //! screen file under the two apps with no parameters, then the detail screens with the records they show. A screen
-//! whose `render-modes` leave out `html` answers that html is not supported, as Java does. The screens that wait for
-//! a later phase or are not ported show their message: the Groovy shell. The screens and REST calls
+//! whose `render-modes` leave out `html` answers that html is not supported, as Java does. The removed Groovy shell
+//! route is absent. The screens and REST calls
 //! `SystemScreenRenderTests`, `ToolsScreenRenderTests`, and `ToolsRestApiTests`
 //! check for text are checked here too, on the same server, after that walk.
 
@@ -295,9 +295,9 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
         failures.join("\n")
     );
 
-    // Screens of a later phase or not ported show why.
-    let (_, shell) = get(address, &john, "/Tools/GroovyShell");
-    assert!(shell.contains("The Groovy Shell is not available"), "{shell}");
+    // The obsolete Groovy shell has no screen or placeholder route.
+    let (status, shell) = get(address, &john, "/Tools/GroovyShell");
+    assert_eq!(status, 404, "{shell}");
     let (status, logs) = get(address, &john, "/apps/monitor/Logs");
     assert_eq!(status, 200, "{logs}");
     assert!(!logs.contains("Error rendering"), "{logs}");

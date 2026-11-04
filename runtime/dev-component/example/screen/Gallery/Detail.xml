@@ -94,7 +94,7 @@ along with this software (see the LICENSE.md file). If not, see
             <container style="row items-center q-col-gutter-sm q-mx-sm q-mb-sm">
                 <container style="col-12 col-md-auto">
                     <label text="${enumeration.description}" type="h5" style="q-my-none"/>
-                    <label text="${enumId} · ${enumType?.description || enumeration.enumTypeId}" type="div" style="text-caption text-grey-6"/>
+                    <label text="${enumId} · ${enumType?.description || enumeration.enumTypeId}" type="div" style="text-caption m-muted"/>
                 </container>
                 <container style="col-12 col-md">
                     <status-bar id="DetailStatus" status-id="${syncStatusId}" status-type-id="EntitySync" transition="setStatus"

@@ -34,6 +34,12 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- request and clock values for the labels, so a server-static template reads them from the screen package -->
         <set field="requestDetails" from="ec.web.getRequestDetails()"/>
         <set field="nowText" from="ec.l10n.format(ec.user.nowTimestamp, null)"/>
+        <set field="startedText" from="ec.l10n.format(smap.Runtime.Start, null)"/>
+        <set field="memoryUsedText" from="smap.Process.MemoryUsed != null ? ec.l10n.format(smap.Process.MemoryUsed, '#,##0.00') + ' MiB' : ec.l10n.localize('Unavailable')"/>
+        <set field="memoryPeakText" from="smap.Process.MemoryPeak != null ? ec.l10n.format(smap.Process.MemoryPeak, '#,##0.00') + ' MiB' : ec.l10n.localize('Unavailable')"/>
+        <set field="threadCountText" from="smap.Process.Threads != null ? ec.l10n.format(smap.Process.Threads, '#,##0') : ec.l10n.localize('Unavailable')"/>
+        <!-- The status map's load average comes from Linux /proc and is zero-filled on other platforms. -->
+        <set field="loadAvailable" from="smap.System.OsName == 'linux'"/>
 
         <!-- Explore Documents opens the first DataDocument index this user may read (index:<indexName>); with none it opens
             Explore's default. list#Datasets leaves out the indexes whose documents the user's groups may not read. -->
@@ -46,132 +52,150 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script>
     </actions>
     <widgets>
-        <container-row><row-col md="6">
-            <container-box id="ServerAdmin"><box-header title="Server Admin"/><box-body>
-                <link url="../Cache" text="Cache Mgmt"/>
-                <link url="../Instance" text="Instance Mgmt"/>
-                <link url="../Print/Printer" text="Printers"/>
-                <link url="../Print/PrintJob" text="Print Jobs"/>
-                <link url="../HazelcastInfo" text="Hazelcast"/>
-                <link url="../ServiceJob/Jobs" text="Service Jobs"/>
-                <link url="../ServiceJob/JobRuns" text="Job Runs"/>
-            </box-body></container-box>
-            <container-box id="Security"><box-header title="Security"/><box-body>
-                <link url="../Security/UserAccount" text="Users"/>
-                <link url="../Security/UserGroup" text="User Groups"/>
-                <link url="../Security/ArtifactGroup" text="Artifact Groups"/>
-                <link url="../Security/ActiveUsers" text="Active Users"/>
-            </box-body></container-box>
-            <container-box id="Usage"><box-header title="Usage"/><box-body>
-                <link url="//apps/monitor/Artifacts" text="Artifact Performance"/>
-                <link url="//apps/monitor/Traces" text="Request Traces"/>
-                <link url="../AuditLog" text="Audit Log"/>
-                <link url="../Visit" text="Visits"/>
-                <link url="//apps/monitor/Logs" text="Logs"/>
-            </box-body></container-box>
-        </row-col><row-col md="6">
-            <container-box id="DataDocumentsFeeds"><box-header title="Data Documents and Feeds"/><box-body>
-                <link url="//apps/dashboards/Explore" text="Explore Documents" parameter-map="documentDatasetId ? {datasetId:documentDatasetId,from:'now-10y',thru:'now'} : {}"/>
-                <link url="../DataDocument/Export" text="Export"/>
-                <link url="../DataDocument/Index" text="Feed Index"/>
-                <link url="../DataDocument/Edit" text="Edit and Report Builder"/>
-            </box-body></container-box>
-            <container-box id="DataAdmin"><box-header title="Data Admin"/><box-body>
-                <link url="../Localization/Messages" text="L10n: Messages"/>
-                <link url="../Localization/EntityFields" text="L10n: Entity Fields"/>
-                <link url="../Resource" text="Resources"/>
-            </box-body></container-box>
-            <container-box id="IntegrationAdmin"><box-header title="Integration Admin"/><box-body>
-                <link url="../SystemMessage/Message" text="System Messages"/>
-                <link url="../SystemMessage/Remote" text="Message Remotes"/>
-                <link url="../SystemMessage/Type" text="Message Types"/>
-                <link url="../EntitySync" text="Entity Data Sync"/>
-            </box-body></container-box>
-            <container-box id="LlmAdmin"><box-header title="LLM and Agents"/><box-body>
-                <link url="../Llm/Dashboard" text="Dashboard"/>
-                <link url="../Llm/Models" text="Models"/>
-                <link url="../Llm/Usage" text="Usage"/>
-                <link url="../Llm/Calls" text="Calls"/>
-            </box-body></container-box>
-        </row-col></container-row>
-        <container-box id="SystemInformation"><box-header title="System Information"/><box-toolbar>
-            <container-dialog id="RequestHeaders" button-text="Request Details">
-                <label text="${requestDetails}" type="pre"/>
-            </container-dialog>
-            <link url="threadList" text="Thread List"/>
-        </box-toolbar><box-body>
-            <container-row><row-col sm="4">
-                <label text="Uptime: ${ec.l10n.format(smap.Runtime.UptimeHours, '#,##0.00')} hours" type="strong"/>
-            </row-col><row-col sm="4">
-                <label text="Locale: ${ec.user.locale}" type="strong"/>
-            </row-col><row-col sm="4">
-                <label text="Time: ${nowText} ${ec.user.timeZone}" type="strong"/>
-            </row-col></container-row>
-            <container-row><row-col md="4">
-                <!-- Java shows the JVM heap, non-heap, and the runtime disk; the port shows the process memory -->
-                <label text="Process Memory" type="strong"/>
-                <container-row><row-col xs="1"/><row-col xs="4"><label text="Used" type="strong"/></row-col>
-                    <row-col xs="7"><label text="${ec.l10n.format(smap.Process.MemoryUsed, '#,##0.00')} MiB"/></row-col></container-row>
-                <container-row><row-col xs="1"/><row-col xs="4"><label text="Peak" type="strong"/></row-col>
-                    <row-col xs="7"><label text="${ec.l10n.format(smap.Process.MemoryPeak, '#,##0.00')} MiB"/></row-col></container-row>
-                <container-row><row-col xs="1"/><row-col xs="4"><label text="Threads" type="strong"/></row-col>
-                    <row-col xs="7"><label text="${smap.Process.Threads}"/></row-col></container-row>
-            </row-col><row-col md="4">
-                <container-row><row-col xs="5"><label text="System" type="strong"/></row-col>
-                    <row-col xs="7"><label text="Load: ${ec.l10n.format(loadPercent, '00.0')}%" style="${loadPercent.compare(70) &lt; 0 ? 'text-success' : (loadPercent.compare(90) &lt; 0 ? 'text-warn' : 'text-danger' )}"/></row-col></container-row>
-                <container-row><row-col xs="1"/><row-col xs="4"><label text="Load" type="strong"/></row-col>
-                    <row-col xs="7"><label text="${ec.l10n.format(smap.System.Load, '#,##0.00')} (avg last minute)"/></row-col></container-row>
-                <container-row><row-col xs="1"/><row-col xs="4"><label text="CPU" type="strong"/></row-col>
-                    <row-col xs="7"><label text="${smap.System.CPU} (${smap.System.Processors} threads)"/></row-col></container-row>
-                <container-row><row-col xs="1"/><row-col xs="4"><label text="OS" type="strong"/></row-col>
-                    <row-col xs="7"><label text="${smap.System.OsName} ${smap.System.OsVersion}"/></row-col></container-row>
+        <container-box id="SystemInformation">
+            <box-header title="Instance overview"/>
+            <box-toolbar>
+                <link url="//apps/monitor" text="Open Monitor"/>
+                <container-dialog id="RequestHeaders" button-text="Request details">
+                    <label text="${requestDetails}" type="pre"/>
+                </container-dialog>
+                <link url="threadList" text="Threads"/>
+            </box-toolbar>
+            <box-body>
+                <container-row>
+                    <row-col md="3" sm="6">
+                        <label text="Runtime" type="strong"/>
+                        <label text="MR Moqui ${ec.factory.moquiVersion}" type="div"/>
+                        <label text="Started: ${startedText}" type="div"/>
+                        <label text="Uptime: ${ec.l10n.format(smap.Runtime.UptimeHours, '#,##0.00')} hours" type="div"/>
+                    </row-col>
+                    <row-col md="3" sm="6">
+                        <label text="Host" type="strong"/>
+                        <label text="${smap.Web.HostName}" type="div"/>
+                        <label text="${smap.System.OsName} ${smap.System.OsVersion}" type="div"/>
+                        <label text="${smap.System.CPU} · ${smap.System.Processors} processors" type="div"/>
+                        <label text="Load: ${loadAvailable ? ec.l10n.format(loadPercent, '0.0') + '%' : ec.l10n.localize('Unavailable')}"
+                                type="div" tooltip="One-minute load average as a percentage of available processors"/>
+                    </row-col>
+                    <row-col md="3" sm="6">
+                        <label text="Process" type="strong"/>
+                        <label text="Memory used: ${memoryUsedText}" type="div"/>
+                        <label text="Peak memory: ${memoryPeakText}" type="div"/>
+                        <label text="Threads: ${threadCountText}" type="div"/>
+                        <label text="Process metrics are not reported by this platform." type="div" style="m-muted"
+                                condition="smap.Process.MemoryUsed == null &amp;&amp; smap.Process.Threads == null"/>
+                    </row-col>
+                    <row-col md="3" sm="6">
+                        <label text="Workers and search" type="strong"/>
+                        <label text="Active workers: ${workerPool.activeCount} of ${workerPool.poolSize} (maximum ${workerPool.maximumPoolSize})"
+                                type="div" style="${workerPool.activeCount == workerPool.maximumPoolSize ? 'text-warning' : ''}"/>
+                        <label text="Queued: ${workerPool.queueSize} · Available queue capacity: ${workerPool.remainingCapacity}"
+                                type="div" style="${workerPool.remainingCapacity == 0 ? 'text-danger' : ''}"/>
+                        <label text="Search: ${searchBackendName}${searchAvailable ? '' : ' (unavailable)'}" type="div"/>
+                    </row-col>
+                </container-row>
+                <label text="Updated ${nowText} ${ec.user.timeZone} · Locale ${ec.user.locale}" type="div" style="m-muted q-mt-sm"/>
+            </box-body>
+        </container-box>
 
-                <label text="Runtime" type="strong"/>
-                <container-row><row-col xs="1"/><row-col xs="4"><label text="Start" type="strong"/></row-col>
-                    <row-col xs="7"><label text="${smap.Runtime.Start}"/></row-col></container-row>
-                <container-row><row-col xs="1"/><row-col xs="4"><label text="Uptime" type="strong"/></row-col>
-                    <row-col xs="7"><label text="${ec.l10n.format(smap.Runtime.UptimeHours, '#,##0.00')} hours"/></row-col></container-row>
+        <container-row>
+            <row-col md="4">
+                <container-box id="ServerAdmin"><box-header title="Server administration"/><box-body>
+                    <label text="Manage the running instance, its components and background work." type="p" style="m-muted"/>
+                    <link url="../Components" text="Components"/>
+                    <link url="../Conf" text="Configuration"/>
+                    <link url="../Cache" text="Caches"/>
+                    <link url="../Instance" text="Instances"/>
+                    <link url="../ServiceJob/Jobs" text="Service jobs"/>
+                    <link url="../ServiceJob/JobRuns" text="Job history"/>
+                    <link url="../Print/Printer" text="Printers"/>
+                    <link url="../Print/PrintJob" text="Print jobs"/>
+                </box-body></container-box>
+                <container-box id="Security"><box-header title="Users and access"/><box-body>
+                    <label text="Manage accounts, group membership and artifact access." type="p" style="m-muted"/>
+                    <link url="../Security/UserAccount" text="Users"/>
+                    <link url="../Security/UserGroup" text="User groups"/>
+                    <link url="../Security/ArtifactGroup" text="Artifact groups"/>
+                    <link url="../Security/ActiveUsers" text="Active users"/>
+                </box-body></container-box>
+                <container-box id="Usage"><box-header title="Diagnostics and history"/><box-body>
+                    <link url="//apps/monitor/Artifacts" text="Artifact performance"/>
+                    <link url="//apps/monitor/Traces" text="Request traces"/>
+                    <link url="//apps/monitor/Logs" text="Logs"/>
+                    <link url="../AuditLog" text="Audit log"/>
+                    <link url="../Visit" text="Visits"/>
+                </box-body></container-box>
+            </row-col>
+            <row-col md="4">
+                <container-box id="DataDocumentsFeeds"><box-header title="Documents and feeds"/><box-body>
+                    <label text="Define document data, maintain indexes and explore results." type="p" style="m-muted"/>
+                    <link url="//apps/dashboards/Explore" text="Explore documents" parameter-map="documentDatasetId ? {datasetId:documentDatasetId,from:'now-10y',thru:'now'} : {}"/>
+                    <link url="../DataDocument/Edit" text="Document definitions"/>
+                    <link url="../DataDocument/Export" text="Export documents"/>
+                    <link url="../DataDocument/Index" text="Feed indexes"/>
+                </box-body></container-box>
+                <container-box id="DataAdmin"><box-header title="Resources and localization"/><box-body>
+                    <link url="../Resource" text="Resources"/>
+                    <link url="../Localization/Messages" text="Localized messages"/>
+                    <link url="../Localization/EntityFields" text="Localized entity fields"/>
+                </box-body></container-box>
+                <container-box id="IntegrationAdmin"><box-header title="Integration messages"/><box-body>
+                    <label text="Inspect delivery and configure the systems exchanging data." type="p" style="m-muted"/>
+                    <link url="../SystemMessage/Message" text="System messages"/>
+                    <link url="../SystemMessage/Remote" text="Remote systems"/>
+                    <link url="../SystemMessage/Type" text="Message types"/>
+                    <link url="../EntitySync" text="Entity data sync"/>
+                </box-body></container-box>
+            </row-col>
+            <row-col md="4">
+                <container-box id="LlmAdmin"><box-header title="Models and agents"/><box-body>
+                    <label text="Configure models and tools, then inspect activity and approvals." type="p" style="m-muted"/>
+                    <link url="../Llm/Dashboard" text="Overview"/>
+                    <link url="../Llm/Models" text="Models"/>
+                    <link url="../Llm/Tools" text="Tools"/>
+                    <link url="../Llm/Runs" text="Runs"/>
+                    <link url="../Llm/Approvals" text="Approvals"/>
+                    <link url="../Llm/Usage" text="Usage"/>
+                    <link url="../Llm/Calls" text="Calls"/>
+                </box-body></container-box>
+                <container-box id="EdgeAdmin"><box-header title="Edge connections"/><box-body>
+                    <label text="Connect this instance to an edge node and inspect its clients." type="p" style="m-muted"/>
+                    <link url="../EdgeNode" text="Edge node"/>
+                    <link url="../EdgeClients" text="Edge clients"/>
+                </box-body></container-box>
+            </row-col>
+        </container-row>
 
-                <label text="Moqui Framework" type="strong"/>
-                <container-row><row-col xs="1"/><row-col xs="4"><label text="Version" type="strong"/></row-col>
-                    <row-col xs="7"><label text="${ec.factory.moquiVersion}"/></row-col></container-row>
-            </row-col><row-col md="4">
-                <label text="Web Server" type="strong"/>
-                <container-row><row-col xs="1"/><row-col xs="4"><label text="Requested" type="strong"/></row-col>
-                    <row-col xs="7"><label text="${smap.Web.HostName}"/></row-col></container-row>
-
-                <label text="Search" type="strong"/>
-                <container-row><row-col xs="1"/><row-col xs="4"><label text="Backend" type="strong"/></row-col>
-                    <row-col xs="7"><label text="${searchBackendName}${searchAvailable ? '' : ' (not available)'}"/></row-col></container-row>
-
-                <label text="Worker Pool" type="strong"/>
-                <container-row><row-col xs="1"/><row-col xs="4"><label text="Threads" type="strong"/></row-col>
-                    <row-col xs="7"><label text="Active: ${workerPool.activeCount} Cur: ${workerPool.poolSize} Max: ${workerPool.maximumPoolSize}"
-                            style="${workerPool.activeCount == workerPool.maximumPoolSize ? 'text-warning' : ''}"/></row-col></container-row>
-                <container-row><row-col xs="1"/><row-col xs="4"><label text="Queue" type="strong"/></row-col>
-                    <row-col xs="7"><label text="Cur: ${workerPool.queueSize} Rem: ${workerPool.remainingCapacity}"
-                            style="${workerPool.remainingCapacity == 0 ? 'text-danger' : (workerPool.queueSize &gt; workerPool.remainingCapacity ? 'text-warning' : '')}"/></row-col></container-row>
-            </row-col></container-row>
-        </box-body><box-body-nopad>
-            <form-list name="DatasourceList" list="smap.DataSources" skip-form="true">
-                <field name="group"><default-field title="Entity Group"><display/></default-field></field>
-                <field name="uniqueName"><default-field><display/></default-field></field>
+        <container-box id="DatabaseConnections"><box-header title="Database connections"/><box-body-nopad>
+            <form-list name="DatasourceList" list="smap.DataSources" skip-form="true" paginate="false">
+                <field name="group"><default-field title="Entity group"><display/></default-field></field>
+                <field name="uniqueName"><default-field title="Connection"><display/></default-field></field>
                 <field name="database"><default-field><display/></default-field></field>
-                <field name="detail"><default-field><display/></default-field></field>
+                <field name="detail"><default-field title="Pool state"><display/></default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="group"/><field-ref name="database"/></column>
+                    <column><field-ref name="detail"/></column>
+                </columns>
             </form-list>
-
-
+        </box-body-nopad></container-box>
+        <container-box id="LoadedComponents"><box-header title="Loaded components"/><box-toolbar>
+            <link url="../Components" text="Manage components"/>
+        </box-toolbar><box-body-nopad>
             <label text="Framework: ${runtimeVersionMap.framework.toString()}" condition="runtimeVersionMap?.framework" type="div"/>
             <label text="Runtime: ${runtimeVersionMap.runtime.toString()}" condition="runtimeVersionMap?.runtime" type="div"/>
-            <form-list name="ComponentInfoList" list="componentInfoList" skip-form="true">
-                <field name="name"><default-field title="Component Name"><display/></default-field></field>
+            <form-list name="ComponentInfoList" list="componentInfoList" skip-form="true" paginate="false">
+                <field name="name"><default-field title="Component"><display/></default-field></field>
                 <field name="version"><default-field><display/></default-field></field>
                 <field name="location"><default-field><display/></default-field></field>
-                <field name="versionMap"><default-field title="Version Detail"><display/></default-field></field>
-                <field name="dependsOnNames" from="(dependsOn || []).join(', ')"><default-field><display/></default-field></field>
+                <field name="versionMap"><default-field title="Version details"><display/></default-field></field>
+                <field name="dependsOnNames" from="(dependsOn || []).join(', ')"><default-field title="Dependencies"><display/></default-field></field>
                 <form-list-column><field-ref name="name"/><field-ref name="version"/></form-list-column>
                 <form-list-column><field-ref name="location"/><field-ref name="versionMap"/></form-list-column>
                 <form-list-column><field-ref name="dependsOnNames"/></form-list-column>
+                <columns type="mobile">
+                    <column><field-ref name="name"/><field-ref name="version"/></column>
+                    <column><field-ref name="dependsOnNames"/></column>
+                </columns>
             </form-list>
         </box-body-nopad></container-box>
     </widgets>

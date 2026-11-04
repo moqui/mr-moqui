@@ -50,11 +50,15 @@ along with this software (see the LICENSE.md file). If not, see
         <set field="processInfo" from="ec.factory.getStatusMap().Process"/>
     </actions>
     <widgets>
-        <container-row><row-col lg="6" md="6">
-            <label text="Memory Used: ${ec.l10n.format(processInfo.MemoryUsed, '#,##0.00')} MiB, Peak: ${ec.l10n.format(processInfo.MemoryPeak, '#,##0.00')} MiB"/>
-        </row-col><row-col lg="6" md="6">
-            <label text="Threads: ${processInfo.Threads}"/>
-        </row-col></container-row>
+        <section name="ProcessMetrics" condition="processInfo.MemoryUsed != null || processInfo.Threads != null"><widgets>
+            <container-row><row-col md="8">
+                <label text="Memory used: ${processInfo.MemoryUsed != null ? ec.l10n.format(processInfo.MemoryUsed, '#,##0.00') + ' MiB' : ec.l10n.localize('Unavailable')} · Peak: ${processInfo.MemoryPeak != null ? ec.l10n.format(processInfo.MemoryPeak, '#,##0.00') + ' MiB' : ec.l10n.localize('Unavailable')}"/>
+            </row-col><row-col md="4">
+                <label text="Threads: ${processInfo.Threads != null ? processInfo.Threads : ec.l10n.localize('Unavailable')}"/>
+            </row-col></container-row>
+        </widgets><fail-widgets>
+            <label text="Process memory and thread metrics are not reported by this platform." type="p" style="m-muted"/>
+        </fail-widgets></section>
         <container-row><row-col lg="6" md="6">
             <link text="Clear All" url="clearAllCaches"/>
             <link text="Clear All Artifact" url="clearArtifactCaches"/>

@@ -61,6 +61,18 @@
             <field name="order"><default-field title="Order"><drop-down><option key="newest" text="Newest first"/><option key="oldest" text="Oldest first"/></drop-down></default-field></field>
             <field name="pageSize"><default-field title="Page size"><drop-down><option key="50"/><option key="100"/><option key="250"/></drop-down></default-field></field>
             <field name="find"><default-field><submit text="Search"/></default-field></field>
+            <field-layout>
+                <field-group title="Find requests and spans">
+                    <field-row><field-ref name="serviceName"/><field-ref name="spanName"/><field-ref name="statusCode"/></field-row>
+                    <field-row><field-ref name="minDuration"/><field-ref name="maxDuration"/><field-ref name="userId"/></field-row>
+                    <field-ref name="queryString"/>
+                </field-group>
+                <field-group title="Time range and results">
+                    <field-row><field-ref name="from"/><field-ref name="thru"/><field-ref name="spanKind"/></field-row>
+                    <field-row><field-ref name="order"/><field-ref name="pageSize"/></field-row>
+                </field-group>
+                <field-row-big><field-ref name="find"/></field-row-big>
+            </field-layout>
         </form-single>
         <section-iterate name="QueryNotices" list="queryNotices" entry="notice"><widgets><label text="${notice}" type="p"/></widgets></section-iterate>
         <form-list name="TraceList" list="documentList" skip-form="true" show-page-size="true" select-columns="true">

@@ -704,12 +704,12 @@
         set(value,path,next){const parts=String(path).split('.');let target=value;for(let at=0;at<parts.length-1;at++){const key=parts[at];target=target[key] || (target[key]=/^\d+$/.test(parts[at+1])?[]:{});}if(next===undefined)delete target[parts[parts.length-1]];else target[parts[parts.length-1]]=next;},
         list:value=>String(value || '').split(',').map(value=>value.trim()).filter(Boolean),
         move(items,at,delta){const to=at+delta;if(to<0 || to>=items.length)return;[items[at],items[to]]=[items[to],items[at]];},
-        button(text,click,disabled){return root.Vue.h('button',{type:'button',disabled:!!disabled,onClick:click,class:'q-btn q-pa-xs'},T(text));},
-        control(label,value,change,type,choices,disabled){const h=root.Vue.h;let input;
+        button(text,click,disabled){return root.Vue.h('button',{type:'button',disabled:!!disabled,onClick:click,class:'q-btn q-btn--flat q-btn--rectangle q-px-sm q-py-xs text-primary'},T(text));},
+        control(label,value,change,type,choices,disabled,classes){const h=root.Vue.h;let input;
             if(choices)input=h('select',{value:value??'',disabled:!!disabled,onChange:event=>change(event.target.value)},choices.map(choice=>h('option',{value:typeof choice==='object'?choice.value:choice},typeof choice==='object'?choice.text || choice.value:choice)));
             else if(type==='textarea')input=h('textarea',{value:value??'',rows:3,disabled:!!disabled,onChange:event=>change(event.target.value)});
             else input=h('input',{type:type==='list'?'text':type || 'text',value:type==='list'?(value || []).join(','):value??'',checked:type==='checkbox'?!!value:undefined,disabled:!!disabled,onChange:event=>change(type==='checkbox'?event.target.checked:type==='number'?(event.target.value===''?undefined:Number(event.target.value)):type==='list'?E.list(event.target.value):event.target.value)});
-            return h('label',{class:'m-report-editor-control'},[h('span',T(label)),input]);
+            return h('label',{class:'m-report-editor-control'+(classes?' '+classes:'')},[h('span',T(label)),input]);
         },
         listControls(items,at,change,disabled){return [E.button('Move up',()=>{const copy=E.clone(items);E.move(copy,at,-1);change(copy);},disabled || at===0),E.button('Move down',()=>{const copy=E.clone(items);E.move(copy,at,1);change(copy);},disabled || at===items.length-1),E.button('Remove',()=>{const copy=E.clone(items);copy.splice(at,1);change(copy);},disabled)];},
         panelIds(node){if(!node)return[];if(typeof node==='string')return[node];if(node.panelId)return[node.panelId];return (node.items || node.children || []).flatMap(item=>E.panelIds(item.layout || item));},
@@ -911,29 +911,30 @@
             const read = (path) => path.split(".").reduce((value, key) => value && value[key], panel);
             const input = (label, path, type, choices) => {
                 if (this.optionSearch && !label.toLowerCase().includes(this.optionSearch.toLowerCase())) return;
-                options.push(h("label", { class: "q-pa-xs", style: { display: "block" } }, [h("span", { style: { display: "block" } }, label), choices ?
-                    h("select", { value: read(path) || "", disabled: this.readOnly, onChange: (event) => this.update(path, event.target.value) }, choices.map((choice) => h("option", { value: choice.value ?? choice }, choice.text || choice.value || choice))) :
-                    h("input", { type: type || "text", checked: type === "checkbox" ? !!read(path) : undefined, value: read(path) ?? "", disabled: this.readOnly, onChange: (event) => this.update(path, type === "checkbox" ? event.target.checked : type === "number" ? (event.target.value === "" ? undefined : Number(event.target.value)) : event.target.value) })]));
+                options.push(E.control(label, read(path), value => this.update(path, value), type, choices, this.readOnly,
+                    "col-12 col-sm-6 col-lg-4"));
             };
             const queryAt=Math.min(this.queryAt,Math.max(0,(panel.queries || []).length-1)),queryPrefix='queries.'+queryAt+'.';
-            options.push(h('div',{class:'row q-gutter-sm'},[E.control('Selected query',queryAt,value=>{this.queryAt=Number(value);},'select',(panel.queries || []).map((query,at)=>({value:at,text:'Query '+(at+1)+' · '+(query.datasetId || 'choose dataset')})),this.readOnly),E.button('Add query',()=>this.queries('add'),this.readOnly),E.button('Duplicate query',()=>this.queries('duplicate'),this.readOnly || !(panel.queries || []).length),E.button('Remove query',()=>this.queries('remove'),this.readOnly || !(panel.queries || []).length),E.button('Move query up',()=>this.queries('up'),this.readOnly || !queryAt),E.button('Move query down',()=>this.queries('down'),this.readOnly || queryAt>=(panel.queries || []).length-1)]));
             if(!this.queryOnly)input("Panel title", "title");
             if(!this.queryOnly)input("Visualization", "visualization", "select", ["timeSeries", "area", "bar", "stat", "gauge", "barGauge", "table", "pie", "donut", "heatmap", "stateTimeline", "logs", "traceWaterfall", "text", "funnel", "nodeGraph", "flameGraph", "geomap"].map((value) => ({ value, text: T(report.visualizationLabels[value] || value) })));
             if(!this.queryOnly && !this.optionSearch && !panel.panelRef){const suggested=report.suggestVisualizations(this.previewFrame?report.frameShape(this.previewFrame):report.queryShape(panel)).slice(0,4);
-                options.push(h('div',{class:'m-report-suggestions row items-center q-gutter-xs',role:'group','aria-label':'Suggested visualizations'},[h('span',this.previewFrame?'Suggested from the data:':'Suggested from the query:'),
+                options.push(h('div',{class:'m-report-suggestions col-12 row items-center q-gutter-xs',role:'group','aria-label':'Suggested visualizations'},[h('span',this.previewFrame?'Suggested from the data:':'Suggested from the query:'),
                     ...suggested.map(item=>h('button',{type:'button',class:'q-btn q-pa-xs',disabled:this.readOnly,'aria-pressed':(panel.visualization || 'table')===item.visualization?'true':'false','data-visualization':item.visualization,onClick:()=>this.update('visualization',item.visualization)},item.label+' ('+item.reason+')')),
                     E.button(this.previewing?'Checking the data…':'Check with the data',this.preview,this.previewing || !(panel.queries || []).length),this.previewError?h('span',{role:'alert',class:'text-negative'},this.previewError):null]));}
-            if(!this.queryOnly && panel.visualization==='text'){options.push(E.control('Markdown text',panel.text || '',value=>this.update('text',value),'textarea',null,this.readOnly));options.push(h('p',{class:'text-caption'},'Variables: ${name} or $name, and ${__from} and ${__thru} for the time range. Values show as text.'));}
-            if(!this.queryOnly && (panel.visualization || 'table')==='table')options.push(E.control('Table footer calculations (comma separated: sum, mean, min, max, count, last)',panel.footer && panel.footer.calculations || [],value=>this.update('footer',value.length?{calculations:value}:undefined),'list',null,this.readOnly));
+            if(!this.queryOnly && panel.visualization==='text'){options.push(E.control('Markdown text',panel.text || '',value=>this.update('text',value),'textarea',null,this.readOnly,'col-12'));options.push(h('p',{class:'col-12 text-caption'},'Variables: ${name} or $name, and ${__from} and ${__thru} for the time range. Values show as text.'));}
+            if(!this.queryOnly && (panel.visualization || 'table')==='table')options.push(E.control('Table footer calculations (comma separated: sum, mean, min, max, count, last)',panel.footer && panel.footer.calculations || [],value=>this.update('footer',value.length?{calculations:value}:undefined),'list',null,this.readOnly,'col-12'));
             if(!this.queryOnly && !this.panelOnly && !this.optionSearch){const names=(this.body.variables || []).map(variable=>variable.name).filter(Boolean);
                 options.push(E.control('Repeat for each value of',panel.repeat && panel.repeat.variable || '',value=>this.update('repeat',value?Object.assign({},panel.repeat,{variable:value}):undefined),'select',[{value:'',text:'No repeat'},...names],this.readOnly));
                 if(panel.repeat && panel.repeat.variable){input('Repeat direction','repeat.direction','select',[{value:'h',text:'Across'},{value:'v',text:'Down'}]);input('Most copies per row','repeat.maxPerRow','number');}}
             if(!this.queryOnly && panel.visualization==='heatmap'){input('Heatmap histogram field','heatmap.field');input('Heatmap bucket bound unit','heatmap.unit');}
+            options.push(h('h3',{class:'col-12 text-subtitle1 q-mb-none'},'Data queries'));
+            options.push(h('div',{class:'col-12 row items-end q-gutter-sm'},[E.control('Selected query',queryAt,value=>{this.queryAt=Number(value);},'select',(panel.queries || []).map((query,at)=>({value:at,text:'Query '+(at+1)+' · '+(query.datasetId || 'choose dataset')}))),E.button('Add query',()=>this.queries('add'),this.readOnly),E.button('Duplicate query',()=>this.queries('duplicate'),this.readOnly || !(panel.queries || []).length),E.button('Remove query',()=>this.queries('remove'),this.readOnly || !(panel.queries || []).length),E.button('Move query up',()=>this.queries('up'),this.readOnly || !queryAt),E.button('Move query down',()=>this.queries('down'),this.readOnly || queryAt>=(panel.queries || []).length-1)]));
             input("Dataset", queryPrefix+"datasetId", "select", this.datasets.map((dataset) => ({ value: dataset.id, text: dataset.title || dataset.id })));
             input("Query string", queryPrefix+"queryString");
             input("Query mode", queryPrefix+"mode", "select", ["aggregations", "documents", { value: "serviceMap", text: "service map (spans)" }, { value: "flame", text: "flame graph (spans)" }]);
             const aggregationRows=((panel.queries || [])[queryAt] || {}).aggregations || [];
             aggregationRows.forEach((aggregation,at)=>{
+                const firstOption=options.length;
                 const prefix=queryPrefix+'aggregations.'+at+'.';
                 input('Aggregation '+(at+1)+' ID',prefix+'id');
                 input('Aggregation '+(at+1)+' type',prefix+'type','select',['value_count','sum','min','max','avg','terms','date_histogram','cardinality','percentiles','histogram_merge']);
@@ -943,14 +944,16 @@
                 if (aggregation.type==='percentiles') options.push(E.control('Percentiles',aggregation.params && aggregation.params.percents || [50,95,99],value=>this.update(prefix+'params.percents',value.map(Number)),'list',null,this.readOnly));
                 if (aggregation.type==='histogram_merge') options.push(E.control('Stored histogram bounds',aggregation.params && aggregation.params.bounds || [],value=>this.update(prefix+'params.bounds',value.map(Number)),'list',null,this.readOnly));
                 if (aggregation.type==='date_histogram') input('Aggregation '+(at+1)+' interval',prefix+'params.interval');
-                options.push(h('button',{type:'button',disabled:this.readOnly,onClick:()=>this.aggregation(false,at)},'Remove aggregation '+(at+1)));
+                options.push(h('div',{class:'col-12'},[E.button('Remove aggregation '+(at+1),()=>this.aggregation(false,at),this.readOnly)]));
+                options.push(h('fieldset',{class:'col-12 m-report-editor-group'},[h('legend','Aggregation '+(at+1)),h('div',{class:'row q-col-gutter-sm'},options.splice(firstOption))]));
             });
-            options.push(h('button',{type:'button',disabled:this.readOnly,onClick:()=>this.aggregation(true)},'Add aggregation'));
+            options.push(h('div',{class:'col-12'},[E.button('Add aggregation',()=>this.aggregation(true),this.readOnly)]));
             input('Query time from',queryPrefix+'from');input('Query time through',queryPrefix+'thru');input('Document page size',queryPrefix+'pageSize','number');
             options.push(E.control('Transformations apply to',this.transformScope,value=>{this.transformScope=value;},'select',[{value:'panel',text:'Combined query frames'},{value:'query',text:'Selected query'}],this.readOnly));
             const transformPrefix=this.transformScope==='query'?queryPrefix+'transformations':'transformations';
-            options.push(h(components['m-report-transform-editor'],{value:read(transformPrefix) || [],disabled:this.readOnly,onChange:value=>this.update(transformPrefix,value)}));
+            options.push(h(components['m-report-transform-editor'],{class:'col-12',value:read(transformPrefix) || [],disabled:this.readOnly,onChange:value=>this.update(transformPrefix,value)}));
             if(!this.queryOnly){
+            options.push(h('h3',{class:'col-12 text-subtitle1 q-mb-none'},'Display and time overrides'));
             input("Field unit", "fieldConfig.defaults.unit");
             input("Decimal places", "fieldConfig.defaults.decimals", "number");
             input("Field minimum", "fieldConfig.defaults.min", "number");
@@ -963,25 +966,31 @@
             if (layout.type === "grid") {
                 const item = (layout.items || []).find((item) => item.panelId === this.selectedId) || {};
                 for (const [key, label] of [["x", "Grid column (0–23)"], ["y", "Grid row"], ["w", "Width in columns (1–24)"], ["h", "Height in rows"]]) {
-                    if (!this.optionSearch || label.toLowerCase().includes(this.optionSearch.toLowerCase())) options.push(h("label", { class: "q-pa-xs" }, [label,
-                        h("input", { type: "number", value: item[key] ?? "", disabled: this.readOnly, onChange: (event) => this.position(key, event.target.value) })]));
+                    if (!this.optionSearch || label.toLowerCase().includes(this.optionSearch.toLowerCase())) options.push(
+                        E.control(label, item[key], value => this.position(key, value), "number", null, this.readOnly, "col-12 col-sm-6 col-lg-4"));
                 }
             }
-            return h("section", { class: "m-report-editor q-pa-sm", style: { border: "1px solid var(--q-secondary)" } }, [h("h4", "Panel options"),
-                (this.panelOnly || this.queryOnly) ? null : h("div", { class: "row q-gutter-sm" }, [h("select", { value: this.selectedId || "", onChange: (event) => { this.selected = event.target.value; } }, Object.keys(this.panels).map((id) => h("option", { value: id }, this.panels[id].title || id))),
-                    h("button", { type: "button", disabled: this.readOnly, onClick: () => this.add(false) }, "Add panel"),
-                    h("button", { type: "button", disabled: this.readOnly || !this.selectedId, onClick: () => this.add(true) }, "Duplicate"),
-                    h("button", { type: "button", disabled: this.readOnly || !this.selectedId, onClick: this.remove }, "Remove"),
-                    h("label", ["Layout ", h("select", { value: layout.type || "autoGrid", disabled: this.readOnly, onChange: (event) => this.layout(event.target.value) }, ["autoGrid", "grid", "rows", "tabs"].map((value) => h("option", { value }, value)))]) ]),
-                (this.panelOnly || this.queryOnly) ? null : h("div", { class: "q-py-sm" }, [h("label", ["Library panel ", h("select", { value: this.libraryId, onChange: (event) => { this.libraryId = event.target.value; } }, [h("option", { value: "" }, "Choose"), ...this.libraries.map((item) => h("option", { value: item.id }, item.title))])]),
-                    h("button", { type: "button", disabled: this.readOnly || !this.libraryId, onClick: () => this.library(false) }, "Add library reference")]),
+            return h("section", { class: "m-report-editor q-pa-md", style: { border: "1px solid var(--m-border)", borderRadius: "4px" } }, [h("h2", {class:"text-h6 q-mt-none q-mb-sm"}, "Panel options"),
+                (this.panelOnly || this.queryOnly) ? null : h("div", { class: "row items-end q-gutter-sm" }, [
+                    E.control("Selected panel", this.selectedId || "", value => { this.selected = value; }, "select", Object.keys(this.panels).map(id => ({value:id,text:this.panels[id].title || id}))),
+                    E.button("Add panel", () => this.add(false), this.readOnly),
+                    E.button("Duplicate", () => this.add(true), this.readOnly || !this.selectedId),
+                    E.button("Remove", this.remove, this.readOnly || !this.selectedId),
+                    E.control("Layout", layout.type || "autoGrid", value => this.layout(value), "select", [
+                        {value:"autoGrid",text:"Automatic grid"},{value:"grid",text:"Custom grid"},{value:"rows",text:"Rows"},{value:"tabs",text:"Tabs"}
+                    ], this.readOnly)]),
+                (this.panelOnly || this.queryOnly) ? null : h("div", { class: "row items-end q-gutter-sm q-py-sm" }, [
+                    E.control("Library panel", this.libraryId, value => { this.libraryId = value; }, "select", [{value:"",text:"Choose a panel"}, ...this.libraries.map(item => ({value:item.id,text:item.title}))], this.readOnly),
+                    E.button("Add library reference", () => this.library(false), this.readOnly || !this.libraryId)]),
                 panel.panelRef ? h("p", ["Library panel: " + panel.panelRef + " ", h("a", { href: report.appPath("/apps/dashboards/Definition?definitionId=" + encodeURIComponent(panel.panelRef)) }, "Edit library panel"), " ",
-                    h("button", { type: "button", disabled: this.readOnly, onClick: () => this.library(true) }, "Unlink as copy")]) :
-                    h("div", [h("input", { type: "search", placeholder: "Search panel options", value: this.optionSearch, onInput: (event) => { this.optionSearch = event.target.value; } }), ...options]),
+                    E.button("Unlink as copy", () => this.library(true), this.readOnly)]) :
+                    h("div", [h("label", {class:"m-report-editor-control full-width q-my-sm"}, [h("span", "Search panel options"),
+                        h("input", { type: "search", placeholder: "Search panel options", value: this.optionSearch, onInput: (event) => { this.optionSearch = event.target.value; } })]),
+                        h("div", {class:"row q-col-gutter-sm"}, options)]),
                 !this.queryOnly && !panel.panelRef && !this.optionSearch ? h('details',[h('summary','Field overrides, mappings and thresholds'),h(components['m-report-field-editor'],{value:panel.fieldConfig || {},disabled:this.readOnly,onChange:value=>this.update('fieldConfig',value)})]):null,
                 !this.panelOnly && !this.queryOnly ? h('details',[h('summary','Dashboard variables'),h(components['m-report-variable-editor'],{value:this.body.variables || [],datasets:this.datasets,disabled:this.readOnly,onChange:value=>this.updateBody('variables',value)})]):null,
                 !this.panelOnly && !this.queryOnly ? h('details',[h('summary','Nested rows, tabs and panel placements'),h(components['m-report-layout-editor'],{value:this.body.layout || E.layout('autoGrid',Object.keys(this.panels)),panelIds:Object.keys(this.panels),variableNames:(this.body.variables || []).map(variable=>variable.name).filter(Boolean),disabled:this.readOnly,onChange:value=>this.updateBody('layout',value)})]):null,
-                h("p", "Options update the definition below. Save a version to keep the changes.")]);
+                h("p", {class:"text-caption q-mt-md q-mb-none"}, this.readOnly ? "This definition is read only. Save a copy above to make changes." : "Options update the definition below. Save a version to keep the changes.")]);
         }
     };
     components["m-log-tail"] = {

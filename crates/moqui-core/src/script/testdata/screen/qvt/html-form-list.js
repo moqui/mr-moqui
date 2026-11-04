@@ -221,7 +221,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rich] -->\n"
     },
     "headerFields": [
         {"name": "id", "title": () => ec.l10n.localize("ID"),
-                                    "orderBy": "case-insensitive", "dialogField": () => {
+                                    "orderBy": "case-insensitive", "dialogAction": false, "dialogField": () => {
         $v.fieldBox(null, "", false);
         sri.pushContext();
         try {
@@ -232,7 +232,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rich] -->\n"
         sri.write("</div>");
         }},
         {"name": "title", "title": () => ec.l10n.localize("Title"),
-                                    "orderBy": "", "dialogField": () => {
+                                    "orderBy": "", "dialogAction": false, "dialogField": () => {
         $v.fieldBox(null, "head", false);
         sri.pushContext();
         try {
@@ -243,7 +243,7 @@ if (sri.doBoundaryComments()) sri.write("<!-- BEGIN form-list[@name=Rich] -->\n"
         sri.write("</div>");
         }},
         {"name": "rowId", "title": () => ec.l10n.localize("Row ID"),
-                                    "orderBy": "", "dialogField": () => {
+                                    "orderBy": "", "dialogAction": false, "dialogField": () => {
         $v.hidden({"name":"hidden","attrs":{},"parent":{"name":"header-field","attrs":{},"parent":{"name":"field","attrs":{"name":"rowId"},"parent":{"name":"form-list","attrs":{"name":"Rich"}}}}});
         }}
     ],

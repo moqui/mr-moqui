@@ -51,7 +51,7 @@ A report query is authorized on its dataset (`org.moqui.report.dataset.<id>`, pl
 
 The proxy permissions are `SearchRemote` and `DashboardRemote`. Both are seeded on `ADMIN`.
 
-`AgentTypeData.xml` defines `AgentUse`, `AgentAdmin`, `AgentAudit`, `LlmGatewayUse`, `A2aServerUse`, `McpServerUse`, and `AgentSkillAuthor`. The `ADMIN` grant rows in that file are `AgentUse`, `AgentAdmin`, and `AgentSkillAuthor`. `A2aServerUse`, `McpServerUse`, and `LlmGatewayUse` are not among those rows. `AgentAudit` is not among them either. `SecurityTypeData.xml` grants `GROOVY_SHELL_WEB`, `SQL_RUNNER_WEB`, `SSH_SHELL`, `SERVICE_LOAD_RUNNER`, and `ADMIN_LOGIN_AS` to `ADMIN_ADV`, and `ADMIN_PASSWORD` to `ADMIN`.
+`AgentTypeData.xml` defines `AgentUse`, `AgentAdmin`, `AgentAudit`, `LlmGatewayUse`, `A2aServerUse`, `McpServerUse`, and `AgentSkillAuthor`. The `ADMIN` grant rows in that file are `AgentUse`, `AgentAdmin`, and `AgentSkillAuthor`. `A2aServerUse`, `McpServerUse`, and `LlmGatewayUse` are not among those rows. `AgentAudit` is not among them either. `SecurityTypeData.xml` grants `SQL_RUNNER_WEB`, `SSH_SHELL`, `SERVICE_LOAD_RUNNER`, and `ADMIN_LOGIN_AS` to `ADMIN_ADV`, and `ADMIN_PASSWORD` to `ADMIN`. The obsolete `GROOVY_SHELL_WEB` permission is no longer seeded or used by a screen; its name remains sealed for pre-existing database rows.
 
 ## Cross-cutting controls
 
@@ -199,7 +199,7 @@ Registration order is `listen` in `crates/moqui-host/src/http.rs`. Anything that
 
 `search_backend` defaults to `postgres`, so both proxies answer 404 on a default install after authentication. Each proxy's `max-body` is `100m`. Hop-by-hop headers are stripped, and so are `host`, `authorization`, `cookie`, and `content-length`. The client's `Authorization` and cookies are not forwarded. Upstream Basic is the servlet's user and password init-params (`elasticsearch_user` / `elasticsearch_password` for search; the dashboard init-params for Kibana). The proxy timeout is 120 seconds. HTTP request spans are recorded by the factory-scoped telemetry middleware.
 
-There is no axum route for `/groovysh`, `/rpc`, `/elastic`, `/kibana`, `/htmlr`, `/vapps`, or `/h2`. `/fop`, `/search`, and `/dashboard` are servlet patterns on the fallback. `/status` is a screen transition. The conf has no `/groovysh` endpoint, and the Groovy Shell screen says this port has no Groovy and no script console.
+There is no axum route for `/groovysh`, `/rpc`, `/elastic`, `/kibana`, `/htmlr`, `/vapps`, or `/h2`. `/fop`, `/search`, and `/dashboard` are servlet patterns on the fallback. `/status` is a screen transition. The conf has no `/groovysh` endpoint, and the obsolete Groovy Shell screen has been removed. The browser's Terminal UI runs the applications; the privileged SSH admin shell provides the JavaScript executor ([SSH and the TUI](#ssh-and-the-tui)).
 
 ## Screen tree
 
@@ -250,10 +250,9 @@ SQL Runner, Service Run, Data Import, Data Snapshot, and `qzSign` are designed p
 
 | Screen | Check |
 | --- | --- |
-| `Tools/GroovyShell.xml` | `GROOVY_SHELL_WEB`, then screen permission on the location. The widget text says the Groovy Shell is not available: this port has no Groovy and no script console. The screen has no eval endpoint. |
 | `Tools/Entity/SqlRunner.xml`, `SqlScriptRunner.xml` | `SQL_RUNNER_WEB` |
 | `Tools/Service/ServiceLoadRunner.xml` | `SERVICE_LOAD_RUNNER` |
-| `Tools/dashboard.xml` | shows the three flags above |
+| `Tools/dashboard.xml` | shows SQL and service load runner links only with their respective permissions |
 | `System/Llm.xml` | `AgentAdmin`, or the screen returns an error. The comment says every screen under it needs `AgentAdmin`. |
 | `System/Security/UserAccount/UserAccountDetail.xml` | `ADMIN_LOGIN_AS` for login-as, and a different username |
 
@@ -835,7 +834,7 @@ This file maps the surface. It does not prove the controls. The proof catalog is
 | H2 TCP server and the H2 console | No `/h2` route. No `H2Console` in `runtime/conf`. `entity_ds_db_conf=h2` is the embedded database name. Parity notes say the H2 console was removed and `H2ServerToolFactory` is not ported. Port 9092 is not a bind. | Embedded Postgres, Unix socket, no TCP. On Windows, TCP to `127.0.0.1` on an ephemeral port. |
 | Jackrabbit on 8081 | The repository element is commented XML in the dev conf. `JackrabbitRunToolFactory` is not ported. | No process listens on 8081 for it. (`8081` elsewhere is an example HTTP port.) |
 | SubEtha SMTP | No SubEtha code. The entity comment still names `SubEthaSmtpToolFactory`. Parity mapping says that factory is not ported. | Inbound SMTP, off until `smtp_listen_port` and a non-empty allow-list are set. Mail from anywhere but the gateway is refused. |
-| `/groovysh` | No conf endpoint. `http.rs` does not route it. `Tools/GroovyShell.xml` says there is no Groovy and no eval endpoint. | The path is 404. |
+| `/groovysh`, `Tools/GroovyShell` | No conf endpoint or host route for `/groovysh`; the obsolete `Tools/GroovyShell.xml` screen was removed. | These paths are 404. The browser Terminal UI and the SSH admin shell are described above. |
 | `/rpc/json` | No host route. No `rpc.xml` under webroot. No file named `rpc.xml` in the tree. | The path is 404. |
 | `/elastic`, `/kibana` | No routes and no servlet patterns with those paths. | `/search` (`SearchRemote`) and `/dashboard` (`DashboardRemote`). |
 | `/htmlr` | No route. The client-suite README says there is no `/htmlr` mapping. | The path is not served. |

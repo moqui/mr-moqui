@@ -74,8 +74,6 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="ADMIN_LOGIN_AS" fromDate="0"/>
     <moqui.security.UserPermission userPermissionId="SQL_RUNNER_WEB" description="Tools: SQL Runner"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="SQL_RUNNER_WEB" fromDate="0"/>
-    <moqui.security.UserPermission userPermissionId="GROOVY_SHELL_WEB" description="Tools: Groovy Shell"/>
-    <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="GROOVY_SHELL_WEB" fromDate="0"/>
     <!-- Deploying a component from a git URL runs its code and loads its data (System > Components,
         docs/tools/Component-Deploy.md); sealed, and in production also needs component_deploy_enabled=true. -->
     <moqui.security.UserPermission userPermissionId="COMPONENT_DEPLOY" description="System: deploy a component from git"/>

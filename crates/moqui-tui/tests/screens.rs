@@ -21,9 +21,47 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use moqui_tui::{
-    gallery_link, AppView, FakeLink, Key, KeyPress, MenuItem, ScreenLink, ScreenModel, Session, ShellInfo, Theme,
+    gallery_link, AppView, FakeLink, Key, KeyPress, MenuItem, Role, ScreenLink, ScreenModel, Session, ShellInfo, Theme,
     GALLERY_DETAIL_PATH, GALLERY_LIST_PATH,
 };
+use revue::layout::Rect;
+use revue::render::{Buffer, Modifier};
+use revue::style::Color;
+use revue::widget::{RenderContext, View};
+
+#[test]
+fn section_and_dialog_titles_use_text_colors_instead_of_border_colors() {
+    let model = ScreenModel::from_json(
+        r#"{ "v": 1, "screen": { "path": "/titles", "title": "Titles" }, "c": [
+          { "t": "box", "id": "section", "title": "Section heading", "c": [ { "t": "text", "text": "Content" } ] }
+        ] }"#,
+    )
+    .unwrap();
+    for dark in [false, true] {
+        let theme = Theme::built_in(dark);
+        let rgb = theme.color(Role::Text).unwrap();
+        let text_color = Some(Color::rgb(rgb.0, rgb.1, rgb.2));
+        let mut view = view_of(model.clone(), FakeLink::from_json(&[]).unwrap());
+        view.set_theme(theme);
+        for title in ["Section heading", "Keys"] {
+            if title == "Keys" {
+                press(&mut view, Key::F(1));
+            }
+            let mut buffer = Buffer::new(100, 40);
+            view.render(&mut RenderContext::new(&mut buffer, Rect::new(0, 0, 100, 40)));
+            let location = (0..40).find_map(|y| {
+                let line: String = (0..100).map(|x| buffer.get(x, y).unwrap().symbol).collect();
+                line.find(title).map(|at| (line[..at].chars().count() as u16, y))
+            });
+            let (x, y) = location.expect("the section or dialog title is visible");
+            for offset in 0..title.len() as u16 {
+                let cell = buffer.get(x + offset, y).unwrap();
+                assert_eq!(cell.fg, text_color, "{title}, dark={dark}");
+                assert!(cell.modifier.contains(Modifier::BOLD), "{title} is a heading");
+            }
+        }
+    }
+}
 
 fn press(view: &mut AppView, key: Key) -> bool {
     view.on_key(&KeyPress::plain(key))

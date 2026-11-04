@@ -1292,7 +1292,7 @@
             const flush = () => { if (out) { w(out); out = ""; } };
             const tool = (icon, text) => '<q-btn dense unelevated no-caps class="m-btn-tonal" icon="' + icon + '" label="' + e(text) + '"></q-btn>';
             if (cfg.headerDialog) {
-                out += '<m-container-dialog id="' + e(formId) + '_hdialog" title="' + e(L("Find Options")) + '"><template v-slot:button>' + tool("search", L("Find Options")) + "</template>";
+                out += '<m-container-dialog id="' + e(formId) + '_hdialog" width="960" title="' + e(L("Find Options")) + '"><template v-slot:button>' + tool("search", L("Find Options")) + "</template>";
                 flush();
                 findDialogBody(n, cols, cfg);
                 w("</m-container-dialog>");
@@ -1368,11 +1368,40 @@
                 const base = sri.getScreenUrlInstance().path;
                 const activeId = ctx("formListFindId") || "";
                 const defaultId = finds.length ? sri.getUserDefaultFormListFindId() || "" : "";
-                // The active find, and a form that sends it by email on a schedule unless it is scheduled already.
                 const active = finds.find((find) => find.formListFind.formListFindId === activeId);
+                w('<div class="m-saved-finds"><section class="m-saved-find-section">');
+                if (active) w('<p class="m-saved-find-active"><strong>' + t(L("Active Saved Find:")) + "</strong> " + t(active.description || activeId) +
+                    (activeId === defaultId ? ' <span class="text-info">(' + t(L("My Default")) + ")</span>" : "") + "</p>");
+                // Clear Current Find goes to the screen with formListFindId=_clear, which drops an applied find and does not put the user default back.
+                w('<p class="m-muted">' + t(L("Apply a saved find below. Updating replaces its filters with the current search.")) + '</p><q-list dense separator class="q-my-sm m-saved-find-list">');
+                w("<q-item><q-item-section><m-link" + A({ href: base + "?formListFindId=_clear" }) + ">" + t(L("Clear Current Find")) + "</m-link></q-item-section></q-item>");
+                if (finds.length) {
+                    finds.forEach((find) => {
+                        const id = find.formListFind.formListFindId;
+                        const label = (find.description || id) + (id === defaultId ? " (" + L("Default") + ")" : "");
+                        const fields = Object.assign({ formLocation: sri.getSavedFindFullLocation(at(n, "name")), formListFindId: id }, params);
+                        const button = (name, text, color) => '<q-btn dense flat no-caps class="m-saved-find-action"' + A({ type: "submit", name, value: name ? "Y" : null, color: color || "primary", label: text, "data-confirm": name === "DeleteFind" ? L("Delete saved find") + " “" + (find.description || id) + "”?" : null }) + "></q-btn>";
+                        w("<q-item" + A({ active: id === activeId ? true : null }) + "><q-item-section><m-link" + A({ href: base + "?formListFindId=" + encodeURIComponent(id) }) + ">" + t(label) + "</m-link></q-item-section>" +
+                            "<q-item-section side><m-form" + A({ class: "m-saved-find-actions", action: saveUrl, ":fields-initial": js_(fields) }) + ">" +
+                            (find.isByUserId === "true" && Object.keys(params).length ? button(null, L("Update to Current")) : "") +
+                            (id === defaultId ? button("ClearDefault", L("Clear Default")) : button("MakeDefault", L("Make Default"))) +
+                            (find.isByUserId === "true" ? button("DeleteFind", L("Delete"), "negative") : "") +
+                            "</m-form></q-item-section></q-item>");
+                    });
+                }
+                w('</q-list></section><section class="m-saved-find-section"><h6 class="m-saved-find-heading">' + t(L("Save current filters")) + '</h6>');
+                if (Object.keys(params).length) {
+                    w("<m-form" + A({
+                        class: "form-inline", id: formId + "_NewFind", action: saveUrl, "v-slot:default": "formProps",
+                        ":fields-initial": js_(Object.assign({ formLocation: sri.getSavedFindFullLocation(at(n, "name")), _findDescription: "" }, params))
+                    }) + '><div class="m-saved-find-new"><m-text-line' + A({
+                        "v-model": "formProps.fields._findDescription", name: "_findDescription", id: formId + "_NewFind_description", label: L("Description"), size: "30", required: true
+                    }) + '></m-text-line><q-btn dense unelevated no-caps color="primary" type="submit" label="' + e(L("Save New Find")) + '"></q-btn></div></m-form>');
+                } else w('<p class="m-muted">' + t(L("Choose filters in Find Options to save a new find or update an existing one.")) + '</p>');
+                w('</section>');
+                // Email scheduling is optional; keep it after applying and saving filters.
                 if (active) {
-                    w("<div><strong>" + t(L("Active Saved Find:")) + "</strong> " + t(active.description || activeId) +
-                        (activeId === defaultId ? ' <span class="text-info">(' + t(L("My Default")) + ")</span>" : "") + "</div>");
+                    w('<details class="m-saved-find-section m-saved-find-schedule"><summary>' + t(L("Email schedule")) + '</summary>');
                     const scheduled = sri.getFormListFindScreenScheduled(activeId);
                     if (scheduled) {
                         const mode = scheduled.renderMode === "xsl-fo" ? "PDF" : String(scheduled.renderMode || "csv").toUpperCase();
@@ -1381,46 +1410,21 @@
                         const modes = [{ value: "xlsx", label: "XLSX" }, { value: "csv", label: "CSV" }, { value: "xsl-fo", label: "PDF" }];
                         const crons = [{ value: "0 0 6 ? * MON-FRI", label: L("Monday-Friday") }, { value: "0 0 6 ? * *", label: L("Every Day") },
                             { value: "0 0 6 ? * MON", label: L("Monday Only") }, { value: "0 0 6 1 * ?", label: L("Monthly") }];
-                        w("<m-form" + A({
-                            class: "form-inline", id: formId + "_SCHED", action: saveUrl, "v-slot:default": "formProps",
+                        w('<p class="m-muted">' + t(L("Send the active saved find to your email.")) + '</p><m-form' + A({
+                            class: "m-saved-find-fields", id: formId + "_SCHED", action: saveUrl, "v-slot:default": "formProps",
                             ":fields-initial": js_({ formListFindId: activeId, screenPath: base, renderMode: "", cronSelected: "" })
                         }) + "><m-drop-down" + A({
-                            "v-model": "formProps.fields.renderMode", name: "renderMode", label: L("Mode"), id: formId + "_SCHED_renderMode", ":options": js_(modes)
+                            "v-model": "formProps.fields.renderMode", name: "renderMode", label: L("Format"), id: formId + "_SCHED_renderMode", ":options": js_(modes)
                         }) + "></m-drop-down><m-drop-down" + A({
-                            "v-model": "formProps.fields.cronSelected", name: "cronSelected", label: L("Schedule"), id: formId + "_SCHED_cronSelected", ":options": js_(crons)
-                        }) + '></m-drop-down><q-btn dense outline no-caps' + A({
+                            "v-model": "formProps.fields.cronSelected", name: "cronSelected", label: L("Frequency"), id: formId + "_SCHED_cronSelected", ":options": js_(crons)
+                        }) + '></m-drop-down><div class="m-saved-find-schedule-action"><q-btn dense outline no-caps color="primary"' + A({
                             type: "submit", name: "ScheduleFind", value: "Y", label: L("Schedule"),
                             "data-confirm": L("Setup a schedule to send this saved find to you by email?")
-                        }) + "></q-btn></m-form>");
+                        }) + "></q-btn></div></m-form>");
                     }
-                    if (Object.keys(params).length) w("<hr>");
+                    w('</details>');
                 }
-                // Clear Current Find goes to the screen with formListFindId=_clear, which drops an applied find and does not put the user default back.
-                w('<q-list dense separator class="q-my-sm">');
-                w("<q-item><q-item-section><m-link" + A({ href: base + "?formListFindId=_clear" }) + ">" + t(L("Clear Current Find")) + "</m-link></q-item-section></q-item>");
-                if (finds.length) {
-                    finds.forEach((find) => {
-                        const id = find.formListFind.formListFindId;
-                        const label = (find.description || id) + (id === defaultId ? " (" + L("Default") + ")" : "");
-                        const fields = Object.assign({ formLocation: sri.getSavedFindFullLocation(at(n, "name")), formListFindId: id }, params);
-                        const button = (name, text, color) => '<q-btn dense flat no-caps size="sm"' + A({ type: "submit", name, value: name ? "Y" : null, color: color || null, label: text }) + "></q-btn>";
-                        w("<q-item" + A({ active: id === activeId ? true : null }) + "><q-item-section><m-link" + A({ href: base + "?formListFindId=" + encodeURIComponent(id) }) + ">" + t(label) + "</m-link></q-item-section>" +
-                            "<q-item-section side><m-form" + A({ class: "form-inline", action: saveUrl, ":fields-initial": js_(fields) }) + ">" +
-                            (find.isByUserId === "true" && Object.keys(params).length ? button(null, L("Update to Current")) : "") +
-                            (id === defaultId ? button("ClearDefault", L("Clear Default")) : button("MakeDefault", L("Make Default"))) +
-                            (find.isByUserId === "true" ? button("DeleteFind", L("Delete"), "negative") : "") +
-                            "</m-form></q-item-section></q-item>");
-                    });
-                }
-                w("</q-list>");
-                if (Object.keys(params).length) {
-                    w("<m-form" + A({
-                        class: "form-inline", id: formId + "_NewFind", action: saveUrl, "v-slot:default": "formProps",
-                        ":fields-initial": js_(Object.assign({ formLocation: sri.getSavedFindFullLocation(at(n, "name")), _findDescription: "" }, params))
-                    }) + '><div class="big-row"><div class="q-my-auto big-row-item"><m-text-line' + A({
-                        "v-model": "formProps.fields._findDescription", name: "_findDescription", id: formId + "_NewFind_description", label: L("Description"), size: "30", required: true
-                    }) + '></m-text-line></div><div class="big-row-item"><q-btn dense unelevated no-caps color="primary" type="submit" label="' + e(L("Save New Find")) + '"></q-btn></div></div></m-form>');
-                } else w("<div style=\"margin:12px 0;\"><strong>" + t(L("No find parameters (or default), choose some in Find Options to save a new find or update existing")) + "</strong></div>");
+                w('</div>');
             }
         };
 
@@ -1438,20 +1442,24 @@
             st.owner = headerId;
             st.fieldForm = headerId;
             st.inForm = true;
-            w("<m-form-link" + A({
+            w('<div class="m-find-options"><m-form-link' + A({
                 name: headerId, id: headerId, action: sri.getCurrentScreenUrl().path, "v-slot:default": "formProps",
                 ":fields-initial": initial(headerValues(n, cfg.valueDescs.h))
-            }) + '><div class="q-mx-sm"><q-btn dense unelevated no-caps class="m-btn-tonal" name="clearParameters" @click.prevent="formProps.clearForm" label="' + e(L("Clear Parameters")) + '"></q-btn>');
-            w("<m-drop-down" + A({
-                name: "orderByField", id: headerId + "_orderByField", label: L("Order By"), multiple: true, "allow-empty": true, ":options": js_(orderOptions), "v-model": "formProps.fields.orderByField"
-            }) + "></m-drop-down></div>");
+            }) + '><div class="m-find-fields">');
             sri.pushSingleFormMapContext("");
             try {
-                headerFields.forEach((f) => { if (f.dialogField) f.dialogField(); });
+                headerFields.forEach((f) => { if (f.dialogField && !f.dialogAction) f.dialogField(); });
+                w('</div><div class="m-find-sort"><m-drop-down' + A({
+                    name: "orderByField", id: headerId + "_orderByField", label: L("Order By"), multiple: true,
+                    "allow-empty": true, ":options": js_(orderOptions), "v-model": "formProps.fields.orderByField"
+                }) + '></m-drop-down></div><div class="m-dialog-actions">');
+                w('<q-btn dense flat no-caps class="m-find-clear" type="button" name="clearParameters" @click.prevent="formProps.clearForm" label="' + e(L("Clear Parameters")) + '"></q-btn>');
+                headerFields.forEach((f) => { if (f.dialogField && f.dialogAction) f.dialogField(); });
+                w('</div>');
             } finally {
                 sri.popContext();
             }
-            w("</m-form-link>");
+            w("</m-form-link></div>");
             pop();
         };
 
@@ -2595,7 +2603,7 @@
                         const header = child(field, "header-field");
                         const orderBy = attr(header, "show-order-by");
                         return `{"name": ${lit(attr(field, "name"))}, "title": () => ${titleCode(header)},
-                            "orderBy": ${lit(orderBy === "false" ? "" : orderBy)}, "dialogField": ${dialogFieldCode(field) || "null"}}`;
+                            "orderBy": ${lit(orderBy === "false" ? "" : orderBy)}, "dialogAction": ${!!child(header, "submit")}, "dialogField": ${dialogFieldCode(field) || "null"}}`;
                     }).join(",\n")}
                 ],
                 "allFields": [

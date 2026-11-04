@@ -1619,7 +1619,7 @@
             w('<template v-if="' + e(navShown()) + '">');
             const tool = (icon, text) => '<q-btn dense unelevated no-caps class="m-btn-tonal" icon="' + icon + '"' + A({ ":label": loc(text) }) + "></q-btn>";
             if (flags.headerDialog) {
-                w("<m-container-dialog" + A({ id: name + "_hdialog", ":title": loc("Find Options") }) + "><template v-slot:button>" + tool("search", "Find Options") + "</template>");
+                w("<m-container-dialog" + A({ id: name + "_hdialog", width: "960", ":title": loc("Find Options") }) + "><template v-slot:button>" + tool("search", "Find Options") + "</template>");
                 findDialogForm(n, cols, headerFields);
                 w("</m-container-dialog>");
             }
@@ -1646,40 +1646,40 @@
             w("</template></template>");
         };
         const savedFindsBody = (name) => {
-            const button = (buttonName, text, extra) => '<q-btn dense flat no-caps size="sm" type="submit"' + A(Object.assign({ name: buttonName, value: buttonName ? "Y" : null, ":label": loc(text) }, extra || {})) + "></q-btn>";
-            // The active find, and a form that sends it by email on a schedule unless it is scheduled already.
-            const modes = "[{value:'xlsx',label:'XLSX'},{value:'csv',label:'CSV'},{value:'xsl-fo',label:'PDF'}]";
-            const crons = "[" + [["0 0 6 ? * MON-FRI", "Monday-Friday"], ["0 0 6 ? * *", "Every Day"], ["0 0 6 ? * MON", "Monday Only"], ["0 0 6 1 * ?", "Monthly"]]
-                .map(([value, label]) => "{value:" + sq(value) + ",label:" + loc(label) + "}").join(",") + "]";
-            w('<template v-if="nv.activeFind"><div><strong' + A({ "v-text": loc("Active Saved Find:") }) + '></strong> <span v-text="nv.activeFind.description || nv.activeFind.formListFindId"></span>' +
-                '<span v-if="nv.activeFind.formListFindId === nv.defaultFindId" class="text-info"' + A({ "v-text": "' (' + " + loc("My Default") + " + ')'" }) + "></span></div>");
-            w("<p" + A({ "v-if": "nv.activeScheduled", "v-text": "'(' + " + loc("Scheduled for") + " + ' ' + nv.activeScheduled.mode + ' ' + nv.activeScheduled.cronDescription + ')'" }) + "></p>");
-            w("<m-form" + A({ "v-else": true, class: "form-inline", id: name + "_SCHED", ":action": "nv.saveFindAction", ":fields-initial": "nv.scheduleFields()", "v-slot:default": "formProps" }) + "><m-drop-down" +
-                A({ "v-model": "formProps.fields.renderMode", name: "renderMode", ":label": loc("Mode"), id: name + "_SCHED_renderMode", ":options": modes }) + "></m-drop-down><m-drop-down" +
-                A({ "v-model": "formProps.fields.cronSelected", name: "cronSelected", ":label": loc("Schedule"), id: name + "_SCHED_cronSelected", ":options": crons }) +
-                '></m-drop-down><q-btn dense outline no-caps type="submit" name="ScheduleFind" value="Y"' +
-                A({ ":label": loc("Schedule"), ":data-confirm": loc("Setup a schedule to send this saved find to you by email?") }) + "></q-btn></m-form>");
-            w('<hr v-if="nv.hasParams"></template>');
-            w('<q-list dense separator class="q-my-sm">');
+            const button = (buttonName, text, extra) => '<q-btn dense flat no-caps class="m-saved-find-action" type="submit"' + A(Object.assign({ name: buttonName, value: buttonName ? "Y" : null, color: "primary", ":label": loc(text) }, extra || {})) + "></q-btn>";
+            w('<div class="m-saved-finds"><section class="m-saved-find-section"><template v-if="nv.activeFind"><p class="m-saved-find-active"><strong' + A({ "v-text": loc("Active Saved Find:") }) + '></strong> <span v-text="nv.activeFind.description || nv.activeFind.formListFindId"></span>' +
+                '<span v-if="nv.activeFind.formListFindId === nv.defaultFindId" class="text-info"' + A({ "v-text": "' (' + " + loc("My Default") + " + ')'" }) + "></span></p></template>");
+            w('<p class="m-muted"' + A({ "v-text": loc("Apply a saved find below. Updating replaces its filters with the current search.") }) + '></p><q-list dense separator class="q-my-sm m-saved-find-list">');
             w('<q-item><q-item-section><m-link :href="nv.findUrl(\'_clear\')"><span v-text="' + e(loc("Clear Current Find")) + '"></span></m-link></q-item-section></q-item>');
             w('<q-item v-for="mqFind in nv.finds" :key="mqFind.formListFindId" :active="mqFind.formListFindId === nv.activeFindId">');
             w('<q-item-section><m-link :href="nv.findUrl(mqFind.formListFindId)"><span v-text="(mqFind.description || mqFind.formListFindId) + (mqFind.formListFindId === nv.defaultFindId ? \' (\' + ' + e(loc("Default")) + ' + \')\' : \'\')"></span></m-link></q-item-section>');
-            w('<q-item-section side><m-form class="form-inline" :action="nv.saveFindAction" :fields-initial="nv.findFields(mqFind.formListFindId)">');
+            w('<q-item-section side><m-form class="m-saved-find-actions" :action="nv.saveFindAction" :fields-initial="nv.findFields(mqFind.formListFindId)">');
             w(button(null, "Update to Current", { "v-if": "mqFind.isByUserId === 'true' && nv.hasParams" }));
             w(button("ClearDefault", "Clear Default", { "v-if": "mqFind.formListFindId === nv.defaultFindId" }));
             w(button("MakeDefault", "Make Default", { "v-else": true }));
-            w(button("DeleteFind", "Delete", { "v-if": "mqFind.isByUserId === 'true'", color: "negative" }));
-            w("</m-form></q-item-section></q-item></q-list>");
-            w("<m-form" + A({ "v-if": "nv.hasParams", class: "form-inline", id: name + "_NewFind", ":action": "nv.saveFindAction", ":fields-initial": "nv.newFindFields()", "v-slot:default": "formProps" }) + '><div class="big-row"><div class="q-my-auto big-row-item"><m-text-line' +
+            w(button("DeleteFind", "Delete", { "v-if": "mqFind.isByUserId === 'true'", color: "negative", ":data-confirm": loc("Delete saved find") + " + ' “' + (mqFind.description || mqFind.formListFindId) + '”?'" }));
+            w('</m-form></q-item-section></q-item></q-list></section><section class="m-saved-find-section"><h6 class="m-saved-find-heading"' + A({ "v-text": loc("Save current filters") }) + '></h6>');
+            w("<m-form" + A({ "v-if": "nv.hasParams", class: "form-inline", id: name + "_NewFind", ":action": "nv.saveFindAction", ":fields-initial": "nv.newFindFields()", "v-slot:default": "formProps" }) + '><div class="m-saved-find-new"><m-text-line' +
                 A({ "v-model": "formProps.fields._findDescription", name: "_findDescription", id: name + "_NewFind_description", ":label": loc("Description"), size: "30", required: true }) +
-                '></m-text-line></div><div class="big-row-item"><q-btn dense unelevated no-caps color="primary" type="submit"' + A({ ":label": loc("Save New Find") }) + "></q-btn></div></div></m-form>");
-            w('<div v-else style="margin:12px 0;"><strong' + A({ "v-text": loc("No find parameters (or default), choose some in Find Options to save a new find or update existing") }) + "></strong></div>");
+                '></m-text-line><q-btn dense unelevated no-caps color="primary" type="submit"' + A({ ":label": loc("Save New Find") }) + "></q-btn></div></m-form>");
+            w('<p v-else class="m-muted"' + A({ "v-text": loc("Choose filters in Find Options to save a new find or update an existing one.") }) + "></p></section>");
+            // Email scheduling is optional; keep it after applying and saving filters.
+            const modes = "[{value:'xlsx',label:'XLSX'},{value:'csv',label:'CSV'},{value:'xsl-fo',label:'PDF'}]";
+            const crons = "[" + [["0 0 6 ? * MON-FRI", "Monday-Friday"], ["0 0 6 ? * *", "Every Day"], ["0 0 6 ? * MON", "Monday Only"], ["0 0 6 1 * ?", "Monthly"]]
+                .map(([value, label]) => "{value:" + sq(value) + ",label:" + loc(label) + "}").join(",") + "]";
+            w('<details v-if="nv.activeFind" class="m-saved-find-section m-saved-find-schedule"><summary' + A({ "v-text": loc("Email schedule") }) + '></summary>');
+            w("<p" + A({ "v-if": "nv.activeScheduled", "v-text": "'(' + " + loc("Scheduled for") + " + ' ' + nv.activeScheduled.mode + ' ' + nv.activeScheduled.cronDescription + ')'" }) + "></p>");
+            w('<template v-else><p class="m-muted"' + A({ "v-text": loc("Send the active saved find to your email.") }) + '></p><m-form' + A({ class: "m-saved-find-fields", id: name + "_SCHED", ":action": "nv.saveFindAction", ":fields-initial": "nv.scheduleFields()", "v-slot:default": "formProps" }) + "><m-drop-down" +
+                A({ "v-model": "formProps.fields.renderMode", name: "renderMode", ":label": loc("Format"), id: name + "_SCHED_renderMode", ":options": modes }) + "></m-drop-down><m-drop-down" +
+                A({ "v-model": "formProps.fields.cronSelected", name: "cronSelected", ":label": loc("Frequency"), id: name + "_SCHED_cronSelected", ":options": crons }) +
+                '></m-drop-down><div class="m-saved-find-schedule-action"><q-btn dense outline no-caps color="primary" type="submit" name="ScheduleFind" value="Y"' +
+                A({ ":label": loc("Schedule"), ":data-confirm": loc("Setup a schedule to send this saved find to you by email?") }) + "></q-btn></div></m-form></template></details></div>");
         };
         // The header fields as a find form in the dialog, with clear and order-by, which goes to the screen with the fields as parameters.
         const findDialogForm = (n, cols, headerFields) => {
             const name = at(n, "name");
             const orderOptions = [];
-            cols.flat().filter((f) => f.orderBy).forEach((f) => {
+            columnOf(n, headerFields).filter((f) => f.orderBy).forEach((f) => {
                 const ci = f.orderBy === "case-insensitive" ? "^" : "";
                 orderOptions.push("{value:" + sq(ci + f.name) + ",label:" + f.title + "+' '+" + loc("(Asc)") + "}", "{value:" + sq("-" + ci + f.name) + ",label:" + f.title + "+' '+" + loc("(Desc)") + "}");
             });
@@ -1688,16 +1688,18 @@
             st.fieldForm = name + "_header";
             st.inForm = true;
             st.inRow = false;
-            w("<m-form-link" + A({ name: name + "_header", id: name + "_header", ":action": "nv.findAction", ":fields-initial": layeredInitial([hiddenEntries(n), initialOf(headerFields, "header-field", [["orderByField", "nv.orderByField"]])]), "v-slot:default": "formProps" }) + ">");
-            w('<div class="q-mx-sm"><q-btn dense unelevated no-caps class="m-btn-tonal" name="clearParameters" @click.prevent="formProps.clearForm"' + A({ ":label": loc("Clear Parameters") }) + "></q-btn>");
-            w("<m-drop-down" + A({ name: "orderByField", id: name + "_header_orderByField", ":label": loc("Order By"), multiple: true, "allow-empty": true, ":options": "[" + orderOptions.join(",") + "]", "v-model": "formProps.fields.orderByField" }) + "></m-drop-down></div>");
-            cols.flat().forEach((f) => {
-                if (!f.find) return;
-                w('<div class="q-mx-sm q-my-sm"><div class="form-title"><span v-text="' + e(f.title) + '"></span></div>');
+            w('<div class="m-find-options"><m-form-link' + A({ name: name + "_header", id: name + "_header", ":action": "nv.findAction", ":fields-initial": layeredInitial([hiddenEntries(n), initialOf(headerFields, "header-field", [["orderByField", "nv.orderByField"]])]), "v-slot:default": "formProps" }) + '><div class="m-find-fields">');
+            const fields = columnOf(n, headerFields);
+            fields.forEach((f) => {
+                if (!f.find || f.submit) return;
+                w('<div class="q-ma-sm">');
                 f.find();
                 w("</div>");
             });
-            w("</m-form-link>");
+            w('</div><div class="m-find-sort"><m-drop-down' + A({ name: "orderByField", id: name + "_header_orderByField", ":label": loc("Order By"), multiple: true, "allow-empty": true, ":options": "[" + orderOptions.join(",") + "]", "v-model": "formProps.fields.orderByField" }) + '></m-drop-down></div><div class="m-dialog-actions">');
+            w('<q-btn dense flat no-caps class="m-find-clear" type="button" name="clearParameters" @click.prevent="formProps.clearForm"' + A({ ":label": loc("Clear Parameters") }) + "></q-btn>");
+            fields.forEach((f) => { if (f.find && f.submit) f.find(); });
+            w("</div></m-form-link></div>");
             pop();
         };
         // The fixed-width text export: a plain form posted to the screen with renderMode text, the current parameters, and the sizes.

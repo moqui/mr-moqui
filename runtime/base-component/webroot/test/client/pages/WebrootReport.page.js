@@ -110,10 +110,10 @@ test("panel option edits and unlinking a library reference update the draft unti
     assert.equal(JSON.parse(form.fields.definitionJson).panels.first.queries[0].mode,'aggregations');
     Array.from(target.querySelectorAll('button')).find(button=>button.textContent==='Add transformation').click();await Vue.nextTick();
     assert.equal(JSON.parse(form.fields.definitionJson).panels.first.transformations[0].count,100);
-    const layout = Array.from(target.querySelectorAll("label")).find((label) => label.textContent.startsWith("Layout ")).querySelector("select");
+    const layout = Array.from(target.querySelectorAll("label")).find((label) => label.querySelector("span")?.textContent === "Layout").querySelector("select");
     layout.value = "grid"; layout.dispatchEvent(new Event("change")); await Vue.nextTick();
     assert.equal(JSON.parse(form.fields.definitionJson).layout.type, "grid");
-    const pick = Array.from(target.querySelectorAll("label")).find((label) => label.textContent.startsWith("Library panel ")).querySelector("select");
+    const pick = Array.from(target.querySelectorAll("label")).find((label) => label.querySelector("span")?.textContent === "Library panel").querySelector("select");
     pick.value = library.id; pick.dispatchEvent(new Event("change")); await Vue.nextTick();
     Array.from(target.querySelectorAll("button")).find((button) => button.textContent === "Add library reference").click(); await Vue.nextTick();
     const body = JSON.parse(form.fields.definitionJson), id = Object.keys(body.panels).find((id) => body.panels[id].panelRef === library.id);
@@ -244,6 +244,25 @@ test('multi-query editing updates the selected query and keeps compound transfor
     editor.update('transformations',[{type:'join',fields:['service']},{type:'calculate',left:'total',right:'count',operator:'/',name:'average'}]);editor.queries('up');await Vue.nextTick();
     body=JSON.parse(form.fields.definitionJson);assert.equal(body.panels.one.queries[0].datasetId,'otel_metrics');assert.deepEqual(body.panels.one.transformations[0].fields,['service']);
     app.unmount();target.remove();
+});
+test('read-only definitions allow inspecting another query without changing the definition',async()=>{
+    const target=document.createElement('div');document.body.appendChild(target);
+    const initial=JSON.stringify({panels:{one:{title:'Shipped panel',queries:[{datasetId:'otel_logs',mode:'documents'},{datasetId:'otel_metrics',mode:'aggregations'}]}}});
+    const form={fields:Vue.reactive({definitionJson:initial})};
+    const app=Vue.createApp(moqui.qvtComponents['m-report-definition-editor'],{readOnly:true,datasets:[{id:'otel_logs'},{id:'otel_metrics'}]});app.provide('mForm',form);app.mount(target);
+    try {
+        reportControl(target,'Selected query','1');await Vue.nextTick();
+        const labels=Array.from(target.querySelectorAll('label'));
+        const dataset=labels.find(label=>label.querySelector('span')?.textContent==='Dataset').querySelector('select');
+        assert.equal(dataset.value,'otel_metrics');assert.equal(dataset.disabled,true);
+        const mode=labels.find(label=>label.querySelector('span')?.textContent==='Query mode').querySelector('select');
+        assert.equal(mode.disabled,true);
+        assert.equal(Array.from(target.querySelectorAll('button')).find(button=>button.textContent==='Add query').disabled,true);
+        assert.equal(Array.from(target.querySelectorAll('button')).find(button=>button.textContent==='Remove query').disabled,true);
+        reportControl(target,'Dataset','otel_logs');await Vue.nextTick();
+        assert.equal(form.fields.definitionJson,initial);
+        assert.equal(target.querySelector('input[type="search"]').disabled,false);
+    } finally {app.unmount();target.remove();}
 });
 test('structured join pivot and organize controls preserve canonical transform arguments',async()=>{
     const view=reportBoundComponent('m-report-transform-editor',[{type:'join',fields:['service']},{type:'pivot',row:'day',column:'region',cell:'amount'},{type:'organize',rename:{'service.name':'Service'}}]);

@@ -426,7 +426,7 @@ function themePage() {
     page.addStyle("/libs/quasar/quasar.prod.css")
     page.addStyle({ content: ":root { --q-primary:rgb(1,2,3); --q-positive:rgb(4,5,6); --q-negative:rgb(7,8,9); }" })
     page.addStyle("/css/WebrootVue.qvt.css")
-    page.addStyle({ content: ".q-menu, .q-toolbar { color:rgb(10,11,12); }" })
+    page.addStyle({ content: ".q-menu, .q-toolbar { color:rgb(10,11,12); } body:not(.body--dark) { --m-link:rgb(1,2,3); --m-positive-text:rgb(4,5,6); --m-negative-text:rgb(7,8,9); }" })
     return page.evaluate(() => {
         const style = (id) => getComputedStyle(document.getElementById(id))
         return {
@@ -501,5 +501,46 @@ feature("a light page under white cards, and the record header with its status-b
         assert.equal(narrow.barDirection, "row")
         assert.equal(narrow.stagesJustify, "normal")
         assert.equal(narrow.actionsJustify, "normal")
+    },
+})
+
+
+feature("semantic text stays readable on panels and tonal surfaces in both default themes", {
+    expect() {
+        const page = browser.newPage({ viewport: { width: 1920, height: 1080 } })
+        const roles = ["primary", "positive", "negative", "warning", "info", "secondary", "accent"]
+        page.setContent(`<!doctype html><html><body><div class="q-card" id="surface">${roles.map(role =>
+            `<span class="text-${role}" data-role="${role}">Status</span><span class="q-chip m-tonal text-${role}" data-role="${role} chip">Status</span><button class="q-btn m-btn-tonal text-${role}" data-role="${role} button">Action</button>`
+        ).join("")}<span class="m-muted" data-role="muted">Secondary text</span><span class="m-markdown-body"><a href="#doc" data-role="markdown link">Documentation</a></span></div></body></html>`)
+        page.addStyle("/libs/quasar/quasar.prod.css")
+        page.addStyle("/css/WebrootVue.qvt.css")
+        page.addStyle({ content: "body { --q-info:#1e7b8e; }" })
+        const results = page.evaluate(() => {
+            const canvas = document.createElement("canvas")
+            canvas.width = canvas.height = 1
+            const ctx = canvas.getContext("2d")
+            const luminance = rgb => rgb.slice(0, 3).map(c => c / 255).map(c => c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)).reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i], 0)
+            const pixel = () => Array.from(ctx.getImageData(0, 0, 1, 1).data)
+            const results = []
+            for (const dark of [false, true]) {
+                document.body.classList.toggle("body--dark", dark)
+                document.getElementById("surface").classList.toggle("q-dark", dark)
+                const surface = getComputedStyle(document.getElementById("surface")).backgroundColor
+                for (const el of document.querySelectorAll("[data-role]")) {
+                    const style = getComputedStyle(el)
+                    ctx.fillStyle = surface
+                    ctx.fillRect(0, 0, 1, 1)
+                    ctx.fillStyle = style.backgroundColor
+                    ctx.fillRect(0, 0, 1, 1)
+                    const background = luminance(pixel())
+                    ctx.fillStyle = style.color
+                    ctx.fillRect(0, 0, 1, 1)
+                    const foreground = luminance(pixel())
+                    results.push({ theme: dark ? "dark" : "light", role: el.dataset.role, ratio: (Math.max(foreground, background) + 0.05) / (Math.min(foreground, background) + 0.05) })
+                }
+            }
+            return results
+        })
+        for (const result of results) assert.ok(result.ratio >= 4.5, JSON.stringify(result))
     },
 })

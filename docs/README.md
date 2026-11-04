@@ -85,6 +85,7 @@ What other systems, devices and clients reach, and what Moqui calls.
 | Guide | What it covers |
 |---|---|
 | [Practices-App-Dev.md](dev/Practices-App-Dev.md) | Practices for building applications: entities, services, screens, `.qvue` files and specs |
+| [UI-Review.md](dev/UI-Review.md) | Activity-based UI review: isolated environments, visual and interaction criteria, evidence, refinement and verification |
 | [Practices-Rust.md](dev/Practices-Rust.md) | Practices for Rust: crates, organization, tests and idiom |
 | [Autodoc.md](dev/Autodoc.md) | Markdown docs of the artifacts with Mermaid diagrams: the Dev AIDE's Docs and Export docs, `moqui autodoc`, the templates |
 | [Native-Components.md](dev/Native-Components.md) | A component with Rust code: linked services, tools, resource schemes and template renderers |

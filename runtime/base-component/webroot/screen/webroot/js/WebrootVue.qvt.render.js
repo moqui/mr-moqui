@@ -3443,7 +3443,7 @@
               }, 8, ["model-value", "onUpdate:modelValue", "onShow", "onHide", "maximized"]))
             }
         } },
-        "m-dialog": { hash: "353c53eb", make: function (Vue) {
+        "m-dialog": { hash: "eb16c34a", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeStyle: _normalizeStyle, withCtx: _withCtx, renderSlot: _renderSlot, openBlock: _openBlock, createBlock: _createBlock } = Vue
 
             return function render(_ctx, _cache) {
@@ -3481,6 +3481,8 @@
                           _createVNode(_component_q_space),
                           _withDirectives(_createVNode(_component_q_btn, {
                             icon: "close",
+                            type: "button",
+                            "aria-label": "Close dialog",
                             flat: "",
                             round: "",
                             dense: ""
@@ -3493,7 +3495,7 @@
                       _createVNode(_component_q_separator),
                       _createVNode(_component_q_card_section, {
                         ref: "dialogBody",
-                        class: "scroll",
+                        class: "scroll m-dialog-body",
                         style: {"max-height":"80vh"}
                       }, {
                         default: _withCtx(() => [
@@ -3960,8 +3962,8 @@
               }, 8, ["onSubmit", "onReset"]))
             }
         } },
-        "m-form-column-config": { hash: "ab938ef1", make: function (Vue) {
-            const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createBlock: _createBlock, createCommentVNode: _createCommentVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withModifiers: _withModifiers, createElementVNode: _createElementVNode } = Vue
+        "m-form-column-config": { hash: "44142213", make: function (Vue) {
+            const { createElementVNode: _createElementVNode, renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createBlock: _createBlock, createCommentVNode: _createCommentVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withModifiers: _withModifiers } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_item_label = _resolveComponent("q-item-label")
@@ -3981,177 +3983,227 @@
                 action: _ctx.action
               }, {
                 default: _withCtx(() => [
-                  (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.columns, (column, columnIdx) => {
-                    return (_openBlock(), _createBlock(_component_q_list, {
-                      key: column.id,
-                      bordered: "",
-                      dense: "",
-                      class: "q-mb-sm rounded-borders"
-                    }, {
-                      default: _withCtx(() => [
-                        _createVNode(_component_q_item_label, { header: "" }, {
-                          default: _withCtx(() => [
-                            _createTextVNode(_toDisplayString(column.label), 1)
-                          ]),
-                          _: 2
-                        }, 1024),
-                        (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(column.children, (field, fieldIdx) => {
-                          return (_openBlock(), _createBlock(_component_q_item, {
-                            key: field.id
-                          }, {
+                  _createElementVNode("p", { class: "m-muted" }, "Choose which fields appear and arrange them within each column."),
+                  _createElementVNode("div", { class: "m-column-config-fields" }, [
+                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.columns, (column, columnIdx) => {
+                      return (_openBlock(), _createBlock(_component_q_list, {
+                        key: column.id,
+                        bordered: "",
+                        dense: "",
+                        class: "q-mb-sm rounded-borders"
+                      }, {
+                        default: _withCtx(() => [
+                          _createVNode(_component_q_item_label, { header: "" }, {
                             default: _withCtx(() => [
-                              (columnIdx !== 0)
-                                ? (_openBlock(), _createBlock(_component_q_item_section, {
-                                    key: 0,
-                                    side: ""
-                                  }, {
-                                    default: _withCtx(() => [
-                                      _createVNode(_component_q_btn, {
-                                        flat: "",
-                                        round: "",
-                                        dense: "",
-                                        size: "sm",
-                                        icon: "close",
-                                        onClick: $event => (_ctx.hideField(columnIdx, fieldIdx))
-                                      }, {
-                                        default: _withCtx(() => [
-                                          _createVNode(_component_q_tooltip, null, {
-                                            default: _withCtx(() => [
-                                              _createTextVNode("Hide")
-                                            ]),
-                                            _: 1
-                                          })
-                                        ]),
-                                        _: 1
-                                      }, 8, ["onClick"])
-                                    ]),
-                                    _: 2
-                                  }, 1024))
-                                : _createCommentVNode("", true),
-                              _createVNode(_component_q_item_section, null, {
-                                default: _withCtx(() => [
-                                  _createVNode(_component_q_item_label, null, {
-                                    default: _withCtx(() => [
-                                      _createTextVNode(_toDisplayString(field.label), 1)
-                                    ]),
-                                    _: 2
-                                  }, 1024)
-                                ]),
-                                _: 2
-                              }, 1024),
-                              (columnIdx === 0)
-                                ? (_openBlock(), _createBlock(_component_q_item_section, {
-                                    key: 1,
-                                    side: ""
-                                  }, {
-                                    default: _withCtx(() => [
-                                      _createVNode(_component_q_btn_dropdown, {
-                                        dense: "",
-                                        flat: "",
-                                        "no-caps": "",
-                                        label: "Display",
-                                        class: "m-btn-tonal"
-                                      }, {
-                                        default: _withCtx(() => [
-                                          _createVNode(_component_q_list, { dense: "" }, {
-                                            default: _withCtx(() => [
-                                              (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.columns.slice(1), (toColumn, toColumnIdx) => {
-                                                return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                  key: toColumn.id,
-                                                  clickable: ""
-                                                }, {
-                                                  default: _withCtx(() => [
-                                                    _createVNode(_component_q_item_section, {
-                                                      onClick: $event => (_ctx.moveToCol(columnIdx, fieldIdx, toColumnIdx+1))
-                                                    }, {
-                                                      default: _withCtx(() => [
-                                                        _createTextVNode(_toDisplayString(toColumn.label), 1)
-                                                      ]),
-                                                      _: 2
-                                                    }, 1032, ["onClick"])
-                                                  ]),
-                                                  _: 2
-                                                }, 1024)), [
-                                                  [_directive_close_popup]
-                                                ])
-                                              }), 128)),
-                                              _withDirectives((_openBlock(), _createBlock(_component_q_item, { clickable: "" }, {
-                                                default: _withCtx(() => [
-                                                  _createVNode(_component_q_item_section, {
-                                                    onClick: $event => (_ctx.moveToCol(columnIdx, fieldIdx, _ctx.columns.length+1))
-                                                  }, {
-                                                    default: _withCtx(() => [
-                                                      _createTextVNode("New Column")
-                                                    ]),
-                                                    _: 1
-                                                  }, 8, ["onClick"])
-                                                ]),
-                                                _: 2
-                                              }, 1024)), [
-                                                [_directive_close_popup]
-                                              ])
-                                            ]),
-                                            _: 2
-                                          }, 1024)
-                                        ]),
-                                        _: 2
-                                      }, 1024)
-                                    ]),
-                                    _: 2
-                                  }, 1024))
-                                : (_openBlock(), _createBlock(_component_q_item_section, {
-                                    key: 2,
-                                    side: ""
-                                  }, {
-                                    default: _withCtx(() => [
-                                      _createVNode(_component_q_btn_group, { flat: "" }, {
-                                        default: _withCtx(() => [
-                                          _createVNode(_component_q_btn, {
-                                            disabled: columnIdx <= 1,
-                                            dense: "",
-                                            flat: "",
-                                            size: "sm",
-                                            icon: "north",
-                                            onClick: $event => (_ctx.moveToCol(columnIdx, fieldIdx, columnIdx-1))
-                                          }, null, 8, ["disabled", "onClick"]),
-                                          _createVNode(_component_q_btn, {
-                                            disabled: fieldIdx === 0,
-                                            dense: "",
-                                            flat: "",
-                                            size: "sm",
-                                            icon: "expand_less",
-                                            onClick: $event => (_ctx.moveInCol(columnIdx, fieldIdx, fieldIdx-1))
-                                          }, null, 8, ["disabled", "onClick"]),
-                                          _createVNode(_component_q_btn, {
-                                            disabled: (fieldIdx + 1) === column.children.length,
-                                            dense: "",
-                                            flat: "",
-                                            size: "sm",
-                                            icon: "expand_more",
-                                            onClick: $event => (_ctx.moveInCol(columnIdx, fieldIdx, fieldIdx+1))
-                                          }, null, 8, ["disabled", "onClick"]),
-                                          _createVNode(_component_q_btn, {
-                                            dense: "",
-                                            flat: "",
-                                            size: "sm",
-                                            icon: "south",
-                                            onClick: $event => (_ctx.moveToCol(columnIdx, fieldIdx, columnIdx+1))
-                                          }, null, 8, ["onClick"])
-                                        ]),
-                                        _: 2
-                                      }, 1024)
-                                    ]),
-                                    _: 2
-                                  }, 1024))
+                              _createTextVNode(_toDisplayString(column.label), 1)
                             ]),
                             _: 2
-                          }, 1024))
-                        }), 128))
-                      ]),
-                      _: 2
-                    }, 1024))
-                  }), 128)),
-                  _createElementVNode("div", { class: "q-my-md" }, [
+                          }, 1024),
+                          (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(column.children, (field, fieldIdx) => {
+                            return (_openBlock(), _createBlock(_component_q_item, {
+                              key: field.id,
+                              "data-column-field": field.id
+                            }, {
+                              default: _withCtx(() => [
+                                (columnIdx !== 0)
+                                  ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                      key: 0,
+                                      side: ""
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_btn, {
+                                          flat: "",
+                                          round: "",
+                                          dense: "",
+                                          size: "sm",
+                                          icon: "close",
+                                          "aria-label": "Hide field",
+                                          onClick: $event => (_ctx.hideField(columnIdx, fieldIdx))
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_tooltip, null, {
+                                              default: _withCtx(() => [
+                                                _createTextVNode("Hide")
+                                              ]),
+                                              _: 1
+                                            })
+                                          ]),
+                                          _: 1
+                                        }, 8, ["onClick"])
+                                      ]),
+                                      _: 2
+                                    }, 1024))
+                                  : _createCommentVNode("", true),
+                                _createVNode(_component_q_item_section, null, {
+                                  default: _withCtx(() => [
+                                    _createVNode(_component_q_item_label, null, {
+                                      default: _withCtx(() => [
+                                        _createTextVNode(_toDisplayString(field.label), 1)
+                                      ]),
+                                      _: 2
+                                    }, 1024)
+                                  ]),
+                                  _: 2
+                                }, 1024),
+                                (columnIdx === 0)
+                                  ? (_openBlock(), _createBlock(_component_q_item_section, {
+                                      key: 1,
+                                      side: ""
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_btn_dropdown, {
+                                          dense: "",
+                                          flat: "",
+                                          "no-caps": "",
+                                          label: "Display",
+                                          "aria-label": "Display field",
+                                          class: "m-btn-tonal"
+                                        }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_list, { dense: "" }, {
+                                              default: _withCtx(() => [
+                                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.columns.slice(1), (toColumn, toColumnIdx) => {
+                                                  return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                    key: toColumn.id,
+                                                    clickable: "",
+                                                    onClick: $event => (_ctx.moveToCol(columnIdx, fieldIdx, toColumnIdx+1))
+                                                  }, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_item_section, null, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(toColumn.label), 1)
+                                                        ]),
+                                                        _: 2
+                                                      }, 1024)
+                                                    ]),
+                                                    _: 2
+                                                  }, 1032, ["onClick"])), [
+                                                    [_directive_close_popup]
+                                                  ])
+                                                }), 128)),
+                                                _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                  clickable: "",
+                                                  onClick: $event => (_ctx.moveToCol(columnIdx, fieldIdx, _ctx.columns.length+1))
+                                                }, {
+                                                  default: _withCtx(() => [
+                                                    _createVNode(_component_q_item_section, null, {
+                                                      default: _withCtx(() => [
+                                                        _createTextVNode("New Column")
+                                                      ]),
+                                                      _: 1
+                                                    })
+                                                  ]),
+                                                  _: 1
+                                                }, 8, ["onClick"])), [
+                                                  [_directive_close_popup]
+                                                ])
+                                              ]),
+                                              _: 2
+                                            }, 1024)
+                                          ]),
+                                          _: 2
+                                        }, 1024)
+                                      ]),
+                                      _: 2
+                                    }, 1024))
+                                  : (_openBlock(), _createBlock(_component_q_item_section, {
+                                      key: 2,
+                                      side: ""
+                                    }, {
+                                      default: _withCtx(() => [
+                                        _createVNode(_component_q_btn_group, { flat: "" }, {
+                                          default: _withCtx(() => [
+                                            _createVNode(_component_q_btn, {
+                                              disabled: columnIdx <= 1,
+                                              dense: "",
+                                              flat: "",
+                                              size: "sm",
+                                              icon: "west",
+                                              "aria-label": "Move to previous column",
+                                              onClick: $event => (_ctx.moveToCol(columnIdx, fieldIdx, columnIdx-1))
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_tooltip, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode("Move to previous column")
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["disabled", "onClick"]),
+                                            _createVNode(_component_q_btn, {
+                                              disabled: fieldIdx === 0,
+                                              dense: "",
+                                              flat: "",
+                                              size: "sm",
+                                              icon: "expand_less",
+                                              "aria-label": "Move up within column",
+                                              onClick: $event => (_ctx.moveInCol(columnIdx, fieldIdx, fieldIdx-1))
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_tooltip, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode("Move up within column")
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["disabled", "onClick"]),
+                                            _createVNode(_component_q_btn, {
+                                              disabled: (fieldIdx + 1) === column.children.length,
+                                              dense: "",
+                                              flat: "",
+                                              size: "sm",
+                                              icon: "expand_more",
+                                              "aria-label": "Move down within column",
+                                              onClick: $event => (_ctx.moveInCol(columnIdx, fieldIdx, fieldIdx+1))
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_tooltip, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode("Move down within column")
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["disabled", "onClick"]),
+                                            _createVNode(_component_q_btn, {
+                                              dense: "",
+                                              flat: "",
+                                              size: "sm",
+                                              icon: "east",
+                                              "aria-label": "Move to next column",
+                                              onClick: $event => (_ctx.moveToCol(columnIdx, fieldIdx, columnIdx+1))
+                                            }, {
+                                              default: _withCtx(() => [
+                                                _createVNode(_component_q_tooltip, null, {
+                                                  default: _withCtx(() => [
+                                                    _createTextVNode("Move to next column")
+                                                  ]),
+                                                  _: 1
+                                                })
+                                              ]),
+                                              _: 1
+                                            }, 8, ["onClick"])
+                                          ]),
+                                          _: 2
+                                        }, 1024)
+                                      ]),
+                                      _: 2
+                                    }, 1024))
+                              ]),
+                              _: 2
+                            }, 1032, ["data-column-field"]))
+                          }), 128))
+                        ]),
+                        _: 2
+                      }, 1024))
+                    }), 128))
+                  ]),
+                  _createElementVNode("div", { class: "m-dialog-actions q-mt-md" }, [
                     _createVNode(_component_q_btn, {
                       dense: "",
                       unelevated: "",
@@ -4463,7 +4515,7 @@
               ]))
             }
         } },
-        "m-form-paginate": { hash: "e892c70f", make: function (Vue) {
+        "m-form-paginate": { hash: "9359f107", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock } = Vue
 
             return function render(_ctx, _cache) {
@@ -4487,9 +4539,9 @@
                           size: "sm",
                           flat: "",
                           "active-design": "unelevated",
-                          color: "grey-8",
+                          color: _ctx.$q.dark.isActive ? 'grey-4' : 'grey-8',
                           "active-color": "primary"
-                        }, null, 8, ["model-value", "onUpdate:modelValue", "max"]))
+                        }, null, 8, ["model-value", "onUpdate:modelValue", "max", "color"]))
                       : _createCommentVNode("", true)
                   ]))
                 : _createCommentVNode("", true)
@@ -5913,7 +5965,7 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-qapps-root": { hash: "beed1d82", make: function (Vue) {
+        "m-qapps-root": { hash: "a9cd92db", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent, createElementVNode: _createElementVNode, vShow: _vShow, withModifiers: _withModifiers } = Vue
 
             return function render(_ctx, _cache) {
@@ -6437,7 +6489,7 @@
                                                   (!_ctx.notifyHistoryList.length)
                                                     ? (_openBlock(), _createBlock(_component_q_item, { key: 0 }, {
                                                         default: _withCtx(() => [
-                                                          _createVNode(_component_q_item_section, { class: "text-grey-6" }, {
+                                                          _createVNode(_component_q_item_section, { class: "m-muted" }, {
                                                             default: _withCtx(() => [
                                                               _createTextVNode(_toDisplayString(_ctx.labels.notifyHistory), 1)
                                                             ]),

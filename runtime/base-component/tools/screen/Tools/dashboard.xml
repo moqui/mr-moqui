@@ -25,33 +25,53 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- the permission checks run here, so a server-static template reads flags from the screen package -->
     <actions>
-        <set field="canGroovyShell" from="ec.user.hasPermission('GROOVY_SHELL_WEB')"/>
         <set field="canServiceLoadRunner" from="ec.user.hasPermission('SERVICE_LOAD_RUNNER')"/>
         <set field="canSqlRunner" from="ec.user.hasPermission('SQL_RUNNER_WEB')"/>
     </actions>
 
     <widgets>
-        <container-row><row-col lg="6" md="6">
-            <container-box>
-                <box-header title="General Tools"/>
-                <box-body>
-                    <link url="../AutoScreen" text="Auto Screens"/>
-                    <link url="../ArtifactStats" text="Artifact Stats"/>
-                    <link url="../GroovyShell" text="Groovy Shell" condition="canGroovyShell"/>
-                    <link url="../Service/ServiceLoadRunner" text="Service LoadRunner" condition="canServiceLoadRunner"/>
+        <container-row>
+            <row-col md="4">
+                <container-box><box-header title="Browse and edit data"/><box-body>
+                    <label text="Find entity definitions and records, or build a view of related data." type="p" style="m-muted"/>
+                    <link url="../Entity/DataEdit" text="Entities"/>
+                    <link url="../AutoScreen" text="Auto screens"/>
+                    <link url="../DataView" text="Data views"/>
+                </box-body></container-box>
+                <container-box><box-header title="Import and export"/><box-body>
+                    <label text="Load data files, export selected records, or compare data snapshots." type="p" style="m-muted"/>
+                    <link url="../Entity/DataImport" text="Import data"/>
+                    <link url="../Entity/DataExport" text="Export data"/>
+                    <link url="../Entity/DataSnapshot" text="Data snapshots"/>
+                </box-body></container-box>
+            </row-col>
+            <row-col md="4">
+                <container-box><box-header title="Services and queries"/><box-body>
+                    <label text="Inspect service inputs and results, run a service, or execute a database query." type="p" style="m-muted"/>
                     <link url="../Service" text="Services"/>
-                </box-body>
-            </container-box>
+                    <link url="../Entity/SqlRunner" text="SQL query" condition="canSqlRunner"/>
+                    <link url="../Entity/SqlScriptRunner" text="SQL script" condition="canSqlRunner"/>
+                    <link url="../Service/ServiceLoadRunner" text="Service load runner" condition="canServiceLoadRunner"/>
+                </box-body></container-box>
+                <container-box><box-header title="Inspect and diagnose"/><box-body>
+                    <link url="../StatusFlows" text="Status flows"/>
+                    <link url="../ArtifactStats" text="Artifact statistics"/>
+                    <link url="../Entity/TableStats" text="Table statistics"/>
+                    <link url="../Entity/QueryStats" text="Query statistics"/>
+                    <link url="../Entity/SpeedTest" text="Entity speed test"/>
+                </box-body></container-box>
+            </row-col>
+            <row-col md="4">
             <section name="RestApiSection"><actions>
                 <set field="restUrl" from="sri.buildUrl('/rest').url"/>
                 <set field="rootResources" from="ec.service.restApi.getFreshRootResources()"/>
 
                 <set field="masterEntityNameList" from="ec.entity.getAllEntityNamesWithMaster()"/>
             </actions><widgets>
-                <container-box><box-header title="REST API: Swagger UI"/><box-body>
+                <container-box><box-header title="API reference"/><box-body>
                     <section-iterate name="RootResourcesSection" list="rootResources" entry="resource"><widgets>
                         <section name="RootResourceChildren" condition="resource.childMethods &gt; 100"><widgets>
-                            <container-dialog id="RootResourceSwaggerDialog" button-text="${resource.displayName || resource.name} (${resource.childMethods})">
+                            <container-dialog id="RootResourceSwaggerDialog_${resource.name}" button-text="${resource.displayName || resource.name} (${resource.childMethods})">
                                 <section-iterate name="RootResourceSwaggerSection" list="Object.values(resource.resourceMap)" entry="childResource"><widgets>
                                     <container><link url="/toolstatic/lib/swagger-ui/index.html?url=${restUrl}/service.swagger/${resource.name}/${childResource.name}"
                                                      text="${childResource.displayName || childResource.description || childResource.name} (${childResource.childMethods})"
@@ -65,7 +85,7 @@ along with this software (see the LICENSE.md file). If not, see
                         </fail-widgets></section>
                     </widgets></section-iterate>
 
-                    <container-dialog id="EntitySwagger" button-text="Entity Master API">
+                    <container-dialog id="EntitySwagger" button-text="Entity master API">
                         <section-iterate name="EntitySwaggerSection" list="masterEntityNameList" entry="masterEntityName"><widgets>
                             <container><link url="/toolstatic/lib/swagger-ui/index.html?url=${restUrl}/master.swagger/${masterEntityName}" url-type="plain"
                                              text="${masterEntityName}" link-type="anchor" target-window="_blank"/></container>
@@ -73,35 +93,12 @@ along with this software (see the LICENSE.md file). If not, see
                     </container-dialog>
                     <!-- Generates enough that Swagger UI has a hard time loading it, takes a long time or fails:
                     <link url="/toolstatic/lib/swagger-ui/index.html?url=${restUrl}/master.swagger/all"
-                            url-type="plain" target-window="_blank" text="Entity Master API"/>
+                            url-type="plain" target-window="_blank" text="Entity master API"/>
                     -->
-                    <label text="The larger APIs take a few seconds to load. Runs in same session (already authenticated)." type="p"/>
+                    <label text="Open interactive API documentation in a new tab using your current sign-in. Larger APIs may take a few seconds to load." type="p"/>
                 </box-body></container-box>
             </widgets></section>
-        </row-col><row-col lg="6" md="6">
-            <container-box><box-header title="Entity Tools"/><box-body>
-                <container>
-                    <link url="../Entity/DataImport" text="Data Import"/>
-                    <link url="../Entity/DataExport" text="Data Export"/>
-                    <link url="../Entity/DataSnapshot" text="Data Snapshots"/>
-                    <link url="../Entity/SqlScriptRunner" text="SQL Script Runner" condition="canSqlRunner"/>
-                    <link url="../Entity/SqlRunner" text="SQL Runner" condition="canSqlRunner"/>
-                </container>
-                <container>
-                    <link url="../Entity/DataEdit" text="Entities"/>
-                    <link url="../DataView" text="Data Views"/>
-                    <link url="../Entity/SpeedTest" text="Speed Test"/>
-                    <link url="../Entity/TableStats" text="Table Stats"/>
-                    <link url="../Entity/QueryStats" text="Query Stats"/>
-                </container>
-            </box-body></container-box>
-            <container-box><box-header title="Generated Diagrams"/><box-body>
-                <container>
-                    <link url="../StatusFlows" text="Status Flows"/>
-                </container>
-            </box-body></container-box>
-        </row-col></container-row>
-
-        <!-- <link url="reloadEcfi" text="Reload Framework" link-type="anchor" confirmation="Are you sure? This is for development and emergency use only."/> -->
+            </row-col>
+        </container-row>
     </widgets>
 </screen>

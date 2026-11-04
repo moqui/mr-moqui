@@ -1545,7 +1545,7 @@ fn new_components_come_from_the_component_template() {
 
     let made = create("john.doe", &[("componentName", "demo-shop")]).unwrap();
     let shop = gate.runtime.join("component/demo-shop");
-    assert_eq!(text(&made, "location"), shop.display().to_string());
+    assert_eq!(text(&made, "location"), shop.canonicalize().unwrap().display().to_string());
     assert_eq!(text(&made, "restart"), "true");
     assert!(shop.join("screen/DemoShop/FindItem.xml").is_file());
     assert!(shop.join("service/demoshop/DemoShopServices.xml").is_file());

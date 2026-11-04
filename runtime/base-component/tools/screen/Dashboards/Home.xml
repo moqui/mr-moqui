@@ -39,24 +39,35 @@
         definitions.sort((a,b)=>a.folderName.localeCompare(b.folderName) || a.title.localeCompare(b.title))
     ]]></script></actions>
     <widgets>
-        <link url="new" text="New ${definitionType || 'dashboard'}" parameter-map="{definitionType:definitionType || 'dashboard'}"/>
-        <link url="explore" text="Explore data"/>
+        <container style="row items-center q-gutter-sm q-mb-md">
+            <link url="new" text="New ${definitionType || 'dashboard'}" btn-type="primary" parameter-map="{definitionType:definitionType || 'dashboard'}"/>
+            <link url="explore" text="Explore data"/>
+        </container>
         <form-single name="DashboardFolders" transition=".">
             <field name="definitionType"><default-field><hidden/></default-field></field>
             <field name="folder"><default-field title="Folder"><text-line/></default-field></field>
             <field name="tag"><default-field title="Tag"><text-line/></default-field></field>
             <field name="starredOnly"><default-field title="Starred only"><drop-down allow-empty="true"><option key="Y" text="Yes"/></drop-down></default-field></field>
             <field name="find"><default-field><submit text="Find"/></default-field></field>
+            <field-layout>
+                <field-ref name="definitionType"/>
+                <field-row><field-ref name="folder"/><field-ref name="tag"/><field-ref name="starredOnly"/></field-row>
+                <field-row-big><field-ref name="find"/></field-row-big>
+            </field-layout>
         </form-single>
-        <label text="Starred" type="h5"/>
-        <form-list name="StarredDefinitions" list="starredDefinitions" skip-form="true" paginate="false">
-            <field name="title"><conditional-field condition="type === 'dashboard'"><link url="dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><default-field><link url="edit" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
-        </form-list>
-        <label text="Recent" type="h5"/>
-        <form-list name="RecentDefinitions" list="recentDefinitions" skip-form="true" paginate="false">
-            <field name="title"><conditional-field condition="type === 'dashboard'"><link url="dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><default-field><link url="edit" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
-        </form-list>
-        <label text="All definitions" type="h5"/>
+        <section name="StarredLibrary" condition="starredDefinitions.length"><widgets>
+            <label text="Starred" type="h6"/>
+            <form-list name="StarredDefinitions" list="starredDefinitions" skip-form="true" paginate="false">
+                <field name="title"><conditional-field condition="type === 'dashboard'"><link url="dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><default-field><link url="edit" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+            </form-list>
+        </widgets></section>
+        <section name="RecentLibrary" condition="recentDefinitions.length"><widgets>
+            <label text="Recent" type="h6"/>
+            <form-list name="RecentDefinitions" list="recentDefinitions" skip-form="true" paginate="false">
+                <field name="title"><conditional-field condition="type === 'dashboard'"><link url="dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><default-field><link url="edit" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+            </form-list>
+        </widgets></section>
+        <label text="All definitions" type="h6"/>
         <form-list name="Definitions" list="definitions" skip-form="true">
             <field name="title"><conditional-field condition="type === 'dashboard'"><link url="dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><default-field><link url="edit" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
             <field name="folderName"><default-field title="Folder"><display/></default-field></field>

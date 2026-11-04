@@ -20,19 +20,21 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="run" begin-transaction="false" authz-action="all">
         <actions>
-            <script>
+            <script><![CDATA[
+                ec.web.sessionAttributes.remove('toolsServiceRunResults')
                 serviceResults = ec.service.sync().name(serviceName).parameters(context).call()
-                if (serviceResults) {
+                if (serviceResults && !ec.message.hasError()) {
                     let resultsText = "Service Run Results:\n"
                     for (const [key, value] of Object.entries(serviceResults)) resultsText += `==> ${key}: ${value?.toString()}\n`
                     ec.logger.info(resultsText)
 
-                    // save the results to display on the screen in the next request (after the transition redirect)
-                    ec.webImpl?.saveParametersToSession(serviceResults)
+                    // Keep the output separately from the request inputs across the redirect. The session stores text.
+                    ec.web.sessionAttributes.toolsServiceRunResults = JSON.stringify({serviceName, results: serviceResults})
                 }
-            </script>
+            ]]></script>
         </actions>
         <default-response url="." save-parameters="true"><parameter name="doingRun" value="Y"/></default-response>
+        <error-response url="." save-parameters="true"/>
     </transition>
     <transition name="runJson" begin-transaction="false" authz-action="all">
         <!-- Because the run transition doesn't actually return json and make things confusing when calling via rest -->
@@ -48,6 +50,18 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
 
     <actions>
+        <script><![CDATA[
+            // Match service-call aliases and retain implicit entity services as valid selections.
+            const selectedService = serviceName && (String(serviceName).includes('#')
+                ? serviceName : String(serviceName).replace(/^(create|update|store|delete)-/, '$1#'))
+            serviceExists = !!(selectedService && ec.service.getServiceDefinition(selectedService))
+            serviceResults = null
+            const kept = ec.web.sessionAttributes.toolsServiceRunResults
+            if (doingRun === 'Y' && kept) {
+                const completed = JSON.parse(kept)
+                if (completed.serviceName === serviceName) serviceResults = completed.results
+            }
+        ]]></script>
     </actions>
     <widgets>
         <form-single name="SelectServiceInput" transition=".">
@@ -56,16 +70,22 @@ along with this software (see the LICENSE.md file). If not, see
             <field name="submitButton"><default-field title="Select Service"><submit/></default-field></field>
             <field-layout><field-row-big><field-ref name="serviceName"/><field-ref name="submitButton"/></field-row-big></field-layout>
         </form-single>
-        <section name="ServiceResultsSection" condition="serviceName &amp;&amp; doingRun == 'Y'">
+        <section name="ServiceNotFoundSection" condition="serviceName &amp;&amp; !serviceExists"><widgets>
+            <container-box><box-header><label type="h5" text="Service not found"/></box-header><box-body>
+                <label type="p" text="No service named ${serviceName} is available. Check the name above or choose a service from the list." encode="true"/>
+                <link url="../ServiceReference" text="Browse Service List"/>
+            </box-body></container-box>
+        </widgets></section>
+        <section name="ServiceResultsSection" condition="serviceExists &amp;&amp; serviceResults != null">
             <widgets>
                 <label text="Results for Service: ${serviceName}" type="h3"/>
-                <form-single name="ServiceResults" dynamic="true">
+                <form-single name="ServiceResults" dynamic="true" map="serviceResults">
                     <auto-fields-service service-name="${serviceName}" field-type="display" include="out"/>
                     <field name="serviceName"><default-field><hidden/></default-field></field>
                 </form-single>
             </widgets>
         </section>
-        <section name="ServiceParametersSection" condition="serviceName"><widgets>
+        <section name="ServiceParametersSection" condition="serviceExists"><widgets>
             <label text="Run Service: ${serviceName}" type="h3"/>
             <form-single name="ServiceParameters" transition="run" dynamic="true">
                 <field name="serviceName"><default-field><hidden/></default-field></field>

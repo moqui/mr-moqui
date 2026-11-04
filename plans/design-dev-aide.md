@@ -208,7 +208,7 @@ kept by their XML text (`core/script/actions.rs`), so new text compiles anew.
 | Git hosting | Hosted `local`, `db` and `remote` repositories over gitoxide, merge requests, branch rules, gitECA rules; the `git` feature, which today's default package (Lite) leaves out | docs/interfaces/Git-Hosting.md, docs/Build-Test.md |
 | Co-editing | Yjs rooms on the notification socket (`yrs`), `m-coedit` | `core/collab/`, `docs/ui/Qvt-Client.md` |
 | XSDs | 12 schemas, 7,319 lines, with documentation; nothing reads them | `fw/xsd/` |
-| Script console | None: phase 11 dropped the Groovy shell and decided on no web eval endpoint "even in development" | `runtime/base-component/tools/screen/Tools/GroovyShell.xml`, archive/Implementation-Phases.md |
+| Terminal and script console | The browser Terminal UI runs the applications; the SSH admin shell provides `js` with `ec`, gated by `SSH_SHELL` and Tools-app authorization. The obsolete Groovy Shell screen is removed. | `docs/ui/TUI.md`, `crates/moqui-host/src/ssh/shell.rs` |
 
 **The corpus** the index and the reload work on (base-component and component, measured Oct 24, 2026): 1,251 XML
 files; about 1,270 entity and view-entity definitions in 41 entity files; about 2,300 services in 163 service files;

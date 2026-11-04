@@ -106,16 +106,16 @@ along with this software (see the LICENSE.md file). If not, see
         </div>
         <div class="col-12 col-md">
             <div class="text-h5 text-weight-medium">${WebUtilities.encodeHtml(displayName)}</div>
-            <div class="text-caption text-grey-6">${WebUtilities.encodeHtml(userAccount.username)} · ${WebUtilities.encodeHtml(userAccount.emailAddress || 'no email')} · ${WebUtilities.encodeHtml(userId)}</div>
+            <div class="text-caption m-muted">${WebUtilities.encodeHtml(userAccount.username)} · ${WebUtilities.encodeHtml(userAccount.emailAddress || 'no email')} · ${WebUtilities.encodeHtml(userId)}</div>
             <div class="q-mt-xs q-gutter-x-xs">${groupChipsHtml}
                 <q-chip dense square outline color="${userAccount.disabled == 'Y' ? 'negative' : 'positive'}">${userAccount.disabled == 'Y' ? 'Disabled' : 'Active'}</q-chip>
             </div>
         </div>
         <div class="col-12 col-md-5 col-lg-4"><div class="row q-col-gutter-sm">
-            <div class="col-3"><m-link href="${groupsUrl}" class="m-link-text"><div class="text-overline text-grey-6 ellipsis">Groups</div><div class="text-h5 text-weight-medium">${ec.l10n.format(groupList.length, '#,##0')}</div></m-link></div>
-            <div class="col-3"><m-link href="${visitsUrl}" class="m-link-text"><div class="text-overline text-grey-6 ellipsis">Visits</div><div class="text-h5 text-weight-medium">${ec.l10n.format(visitCount, '#,##0')}</div></m-link></div>
-            <div class="col-3"><m-link href="${hitsUrl}" class="m-link-text"><div class="text-overline text-grey-6 ellipsis">Hits</div><div class="text-h5 text-weight-medium">${ec.l10n.format(hitCount, '#,##0')}</div></m-link></div>
-            <div class="col-3"><m-link href="${notificationsUrl}" class="m-link-text"><div class="text-overline text-grey-6 ellipsis">Alerts</div><div class="text-h5 text-weight-medium">${ec.l10n.format(notificationCount, '#,##0')}</div></m-link></div>
+            <div class="col-3"><m-link href="${groupsUrl}" class="m-link-text"><div class="text-overline m-muted ellipsis">Groups</div><div class="text-h5 text-weight-medium">${ec.l10n.format(groupList.length, '#,##0')}</div></m-link></div>
+            <div class="col-3"><m-link href="${visitsUrl}" class="m-link-text"><div class="text-overline m-muted ellipsis">Visits</div><div class="text-h5 text-weight-medium">${ec.l10n.format(visitCount, '#,##0')}</div></m-link></div>
+            <div class="col-3"><m-link href="${hitsUrl}" class="m-link-text"><div class="text-overline m-muted ellipsis">Hits</div><div class="text-h5 text-weight-medium">${ec.l10n.format(hitCount, '#,##0')}</div></m-link></div>
+            <div class="col-3"><m-link href="${notificationsUrl}" class="m-link-text"><div class="text-overline m-muted ellipsis">Alerts</div><div class="text-h5 text-weight-medium">${ec.l10n.format(notificationCount, '#,##0')}</div></m-link></div>
         </div></div>
     </q-card-section>
 </q-card>
@@ -200,7 +200,7 @@ along with this software (see the LICENSE.md file). If not, see
                             <field name="sentDate"><default-field title="Sent"><display format="yyyy-MM-dd HH:mm"/></default-field></field>
                             <field name="viewedDate"><default-field title="Viewed"><display text="${viewedDate ? ec.l10n.format(viewedDate, 'yyyy-MM-dd HH:mm') : 'unread'}"/></default-field></field>
                         </form-list>
-                        <label type="div" style="q-pa-sm text-grey-6" text="No notifications yet." condition="!notificationList || !notificationList.length"/>
+                        <label type="div" style="q-pa-sm m-muted" text="No notifications yet." condition="!notificationList || !notificationList.length"/>
                     </box-body-nopad></container-box>
                 </row-col>
                 <row-col lg="4">

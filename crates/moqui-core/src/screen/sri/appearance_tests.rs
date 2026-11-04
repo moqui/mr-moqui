@@ -21,6 +21,24 @@ fn no_policy_allows_every_appearance_preference() {
     }
 }
 
+/// The mode group is a boolean permission unless the theme names a forced light, dark or automatic mode.
+#[test]
+fn appearance_mode_survives_serialization_and_service_normalization() {
+    for mode in ["true", "false", "\"light\"", "\"dark\"", "\"auto\""] {
+        let policy = AppearancePolicy::parse(Some(&format!(r#"{{"mode": {mode}}}"#)));
+        let expected: serde_json::Value = serde_json::from_str(mode).unwrap();
+        assert_eq!(moqui_lib::json::to_json(&policy.as_value())["mode"], expected);
+        let finished = finish_appearance(map(vec![("policy", policy.as_value())]));
+        let normalized = AppearancePolicy::from_value(finished.get("policy").unwrap());
+        assert_eq!(normalized.mode, policy.mode, "mode={mode}");
+        assert_eq!(normalized.all_locked_keys(), policy.all_locked_keys(), "mode={mode}");
+        assert_eq!(
+            moqui_lib::json::to_json(finished.get("policy").unwrap())["mode"],
+            expected
+        );
+    }
+}
+
 /// A policy that is not a JSON object is not trusted: everything is locked, including a component's own `THEME_*` key,
 /// and a key that is not an appearance preference stays writable.
 #[test]
@@ -54,6 +72,7 @@ fn a_policy_locks_its_groups_mode_and_named_keys() {
     assert_eq!(value.get("accent"), Some(&Value::Bool(false)));
     assert_eq!(value.get("scheme"), Some(&Value::Bool(true)));
     assert_eq!(value.get("appearance"), Some(&Value::Bool(true)));
+    assert_eq!(value.get("mode"), Some(&Value::string("dark")));
     let Some(Value::List(keys)) = value.get("lockedKeys") else { panic!("no lockedKeys") };
     let keys: Vec<String> = keys.iter().map(to_plain_string).collect();
     assert!(keys.contains(&"QUASAR_DARK".to_string()) && keys.contains(&"THEME_RADIUS".to_string()), "{keys:?}");

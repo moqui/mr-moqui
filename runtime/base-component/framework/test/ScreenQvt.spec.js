@@ -90,13 +90,18 @@ feature('sortable headers separate title and sort links with whitespace like Jav
 feature('Find Options includes header-only filters and sort choices in declaration order', { expect() { (function () {
     const rendered = [];
     const html = renderList({ headerFields: [
+        { name: 'find', title: () => 'Find', dialogAction: true, dialogField: () => rendered.push('find') },
         { name: 'orderType', title: () => 'Order Type', dialogField: () => rendered.push('orderType') },
         { name: 'orderName', title: () => 'Name', orderBy: 'case-insensitive', dialogField: () => rendered.push('orderName') }
     ] });
-    assert.deepEqual(rendered, ['orderType', 'orderName']);
+    assert.deepEqual(rendered, ['orderType', 'orderName', 'find']);
+    assert.match(html, /_hdialog" width="960"/);
     const find = dialog(html, 'PaymentList_hdialog');
     assert.match(find, /'value':'\^orderName'/);
     assert.match(find, /'value':'-\^orderName'/);
+    assert.ok(find.indexOf('m-find-fields') < find.indexOf('m-find-sort'));
+    assert.ok(find.indexOf('m-find-sort') < find.indexOf('m-dialog-actions'));
+    assert.match(find, /type="button" name="clearParameters"/);
 })(); } });
 
 feature('compiled Find Options keeps header-only filters outside table columns', { expect() { (function () {
@@ -176,9 +181,13 @@ feature('server-static forms also separate Saved Finds from Find Options', { exp
     const saved = dialog(html, 'PaymentList_sfdialog');
     assert.match(saved, /<template v-if="nv\.activeFind">/);
     assert.match(saved, /v-if="nv\.activeScheduled"/);
-    assert.match(saved, /<m-form v-else[^>]*id="PaymentList_SCHED"[^>]*:fields-initial="nv\.scheduleFields\(\)"/);
+    assert.match(saved, /<m-form[^>]*id="PaymentList_SCHED"[^>]*:fields-initial="nv\.scheduleFields\(\)"/);
     assert.match(saved, /name="ScheduleFind" value="Y"/);
     assert.match(saved, /:data-confirm="ec\.l10n\.localize\('Setup a schedule/);
+    assert.ok(saved.indexOf('nv.findUrl(mqFind.formListFindId)') < saved.indexOf('PaymentList_NewFind'));
+    assert.ok(saved.indexOf('PaymentList_NewFind') < saved.indexOf('PaymentList_SCHED'));
+    assert.match(saved, /<details v-if="nv\.activeFind"[^>]*m-saved-find-schedule/);
+    assert.match(saved, /name="DeleteFind"[^>]*:data-confirm="ec\.l10n\.localize\('Delete saved find'\)[^"]*mqFind\.description/);
 })(); } });
 
 feature('filter summary uses all fields, escapes labels and keeps hidden reset parameters only', { expect() { (function () {
@@ -216,6 +225,7 @@ feature('existing saved find actions stay in the Saved Finds dialog', { expect()
         assert.ok(saved.includes(label), label);
     }
     assert.match(saved, /href="\/qapps\/FindThing\?formListFindId=_clear"/);
+    assert.match(saved, /name="DeleteFind"[^>]*data-confirm="Delete saved find “My payments”\?"/);
 })(); } });
 
 feature('the active saved find can be scheduled, and a scheduled one shows its schedule', { expect() { (function () {
@@ -232,6 +242,9 @@ feature('the active saved find can be scheduled, and a scheduled one shows its s
     assert.match(form, /name="ScheduleFind" value="Y"/);
     assert.match(form, /data-confirm="Setup a schedule to send this saved find to you by email\?"/);
     assert.doesNotMatch(form, /onclick/);
+    assert.ok(open.indexOf('formListFindId=mine') < open.indexOf('PaymentList_NewFind'));
+    assert.ok(open.indexOf('PaymentList_NewFind') < open.indexOf('PaymentList_SCHED'));
+    assert.match(open, /<details class="m-saved-find-section m-saved-find-schedule"><summary>Email schedule<\/summary>/);
     const scheduled = dialog(renderList({ finds, active: 'mine', scheduled: { renderMode: 'xsl-fo', cronDescription: 'at 06:00' } }), 'PaymentList_sfdialog');
     assert.match(scheduled, /<p>\(Scheduled for PDF at 06:00\)<\/p>/);
     assert.doesNotMatch(scheduled, /_SCHED/);

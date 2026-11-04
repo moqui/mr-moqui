@@ -68,3 +68,57 @@ feature("labelled display values use Java read-only outlined inputs and inline v
         assert.equal(result.inlineIsInput, false)
     },
 })
+
+feature("column moves retain focus on the moved field through reorder, hide and display", {
+    expect() {
+        const page = browser.newPage()
+        page.setContent(`<!doctype html><html><head>
+            <link rel="stylesheet" href="/libs/quasar/quasar.prod.css">
+            </head><body><div id="app">
+            <m-form-column-config id="columns" action="/unused" form-location="test.List" :columns-initial="columns"></m-form-column-config>
+            </div>
+            <script src="/libs/vue/vue.global.prod.js"></script>
+            <script src="/libs/quasar/quasar.umd.prod.js"></script>
+            <script src="/js/MoquiLib.js"></script>
+            <script src="/js/WebrootVue.qvt.js"></script>
+            <script>
+            const app = Vue.createApp({ data() { return { columns: [
+                { id: 'hidden', label: 'Hidden', children: [] },
+                { id: 'column_0', label: 'Column 1', children: [{ id: 'alpha', label: 'Alpha' }, { id: 'beta', label: 'Beta' }] },
+                { id: 'column_1', label: 'Column 2', children: [{ id: 'gamma', label: 'Gamma' }] }
+            ] }; } });
+            app.use(Quasar);
+            app.component("m-form", moqui.qvt.components["m-form"]);
+            app.component("m-form-column-config", moqui.qvt.components["m-form-column-config"]);
+            app.mount("#app");
+            </script></body></html>`)
+        const focusState = () => page.evaluate(() => {
+            const active = document.activeElement
+            const row = active && active.closest(".q-item")
+            return { field: row && row.querySelector(".q-item__label").textContent,
+                action: active && active.getAttribute("aria-label"),
+                column: row && row.closest(".q-list").querySelector(".q-item__label--header").textContent }
+        })
+        page.getByText("Alpha", { exact: true }).evaluate(label => {
+            label.closest(".q-item").querySelector('[aria-label="Move to next column"]').focus()
+            return true
+        })
+        page.keyboard.press("Enter")
+        assert.deepEqual(focusState(), { field: "Alpha", action: "Move to next column", column: "Column 2" })
+        page.getByText("Alpha", { exact: true }).evaluate(label => {
+            label.closest(".q-item").querySelector('[aria-label="Move up within column"]').focus()
+            return true
+        })
+        page.keyboard.press("Enter")
+        assert.deepEqual(focusState(), { field: "Alpha", action: "Move down within column", column: "Column 2" })
+        page.getByText("Alpha", { exact: true }).evaluate(label => {
+            label.closest(".q-item").querySelector('[aria-label="Hide field"]').focus()
+            return true
+        })
+        page.keyboard.press("Enter")
+        assert.deepEqual(focusState(), { field: "Alpha", action: "Display field", column: "Hidden" })
+        page.keyboard.press("Enter")
+        page.locator(".q-menu .q-item").first().press("Enter")
+        assert.deepEqual(focusState(), { field: "Alpha", action: "Hide field", column: "Column 1" })
+    },
+})

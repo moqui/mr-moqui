@@ -860,7 +860,9 @@ fn start_seeded_under(
     }
     let template = template();
     let runtime = temp_dir(&format!("moqui-gate3-rt-{label}"));
-    let cluster_dir = temp_dir(&format!("moqui-gate3-pg-{label}"));
+    // A simulation adds sim-<pid>/data below the cluster. Keep its canonical socket path below macOS's
+    // 103-byte limit even when the test's descriptive label is long; the runtime still carries that label.
+    let cluster_dir = temp_dir("moqui-g3-pg");
     let runtime_guard = DirGuard(runtime.clone());
     let cluster_guard = DirGuard(cluster_dir.clone());
     std::fs::create_dir_all(&runtime).unwrap();

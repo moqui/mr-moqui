@@ -12,10 +12,16 @@
     --m-font-mono:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
     --m-fs-small-scale:1; --m-fs-large-scale:1; --m-line-height:1.5; }
 body:not(.body--dark) { --m-page-bg:#f4f6f8; --m-panel-bg:#fff; --m-header-bg:#fff; --m-header-fg:#1d1d1d; --m-drawer-bg:#fff;
-    --m-text:#000; --m-text-muted:#616161; --m-link:var(--q-primary); --m-negative-text:var(--q-negative);
+    --m-text:#000; --m-text-muted:#616161; --m-link:color-mix(in srgb, var(--q-primary) 85%, black); --m-negative-text:var(--q-negative);
+    --m-positive-text:color-mix(in srgb, var(--q-positive) 60%, black); --m-warning-text:color-mix(in srgb, var(--q-warning) 45%, black);
+    --m-info-text:color-mix(in srgb, var(--q-info) 80%, black); --m-secondary-text:color-mix(in srgb, var(--q-secondary) 60%, black);
+    --m-accent-text:color-mix(in srgb, var(--q-accent) 85%, black);
     --m-border:rgba(0,0,0,.12); --m-divider:rgba(0,0,0,.08); }
 body.body--dark { --m-page-bg:var(--q-dark-page); --m-panel-bg:var(--q-dark); --m-header-bg:var(--q-dark); --m-header-fg:#fff; --m-drawer-bg:var(--q-dark);
     --m-text:#fff; --m-text-muted:#9e9e9e; --m-link:var(--m-accent-dark-link, #64b5f6); --m-negative-text:#ff8a80;
+    --m-positive-text:color-mix(in srgb, var(--q-positive) 65%, white); --m-warning-text:var(--q-warning);
+    --m-info-text:color-mix(in srgb, var(--q-info) 60%, white); --m-secondary-text:color-mix(in srgb, var(--q-secondary) 65%, white);
+    --m-accent-text:color-mix(in srgb, var(--q-accent) 55%, white);
     --m-border:rgba(255,255,255,.28); --m-divider:rgba(255,255,255,.12); }
 body { font-family:var(--m-font-body); line-height:var(--m-line-height); color:var(--m-text); background:var(--m-page-bg); }
 h1, h2, h3, h4, h5, h6, .text-h1, .text-h2, .text-h3, .text-h4, .text-h5, .text-h6 { font-family:var(--m-font-heading); }
@@ -41,10 +47,15 @@ a { color:var(--m-link); text-decoration:none; }
 /* a screen link written as text: a link in a form-list cell, or link-type anchor */
 .m-link-text { color:var(--m-link); text-decoration:none; }
 .m-link-text:hover { text-decoration:underline; }
-/* the brand primary and negative are too dark to read as text on the dark surfaces (3.66:1 and 2.63:1 on #1d1d1d);
-   the lighter Material steps (--m-link, --m-negative-text) clear 4.5:1 in dark mode. Quasar's text-* utilities are !important, so the overrides match. */
-.body--dark .text-negative { color:var(--m-negative-text) !important; }
-.body--dark .text-primary { color:var(--m-link) !important; }
+/* Brand fills and readable foregrounds have different jobs. Keep status hues, but give their text enough contrast
+   on panels and tonal chips in either theme. Schemes can override the foreground tokens independently. */
+.text-negative, .text-danger { color:var(--m-negative-text) !important; }
+.text-primary { color:var(--m-link) !important; }
+.text-positive, .text-success { color:var(--m-positive-text) !important; }
+.text-warning { color:var(--m-warning-text) !important; }
+.text-info { color:var(--m-info-text) !important; }
+.text-secondary { color:var(--m-secondary-text) !important; }
+.text-accent { color:var(--m-accent-text) !important; }
 .body--dark .text-grey-7 { color:var(--m-text-muted) !important; } /* the .m-muted dark step */
 .body--dark .q-btn.m-btn-tonal { color:var(--m-link); } /* the tonal primary button; its text-* variants keep their own !important colors */
 
@@ -75,8 +86,6 @@ body:not(.body--dark) .q-page { background:var(--m-page-bg); }
 .m-board-card:hover, .q-btn.m-app-tile:hover { box-shadow:0 2px 8px rgba(0,0,0,.14); transform:translateY(-1px); }
 .body--dark .m-board-card:hover, .body--dark .q-btn.m-app-tile:hover { box-shadow:0 2px 10px rgba(0,0,0,.55); }
 
-.text-success { color:var(--q-positive); }
-.text-danger { color:var(--q-negative); }
 strong, .text-strong { font-weight:bold; }
 
 form, fieldset { border:none; display:contents; }
@@ -179,7 +188,7 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
 .m-link.q-btn--flat .q-btn__content { line-height:1.5; }
 /* hidden-form-link: a flat button whose text sits at the left, as a text link's (Quasar centers a button's content) */
 .m-link-left .q-btn__content { justify-content:flex-start; text-align:left; }
-.q-btn.m-btn-tonal { color:var(--q-primary); background:color-mix(in srgb, var(--q-primary) 12%, transparent); }
+.q-btn.m-btn-tonal { color:var(--m-link); background:color-mix(in srgb, var(--q-primary) 12%, transparent); }
 .q-btn.m-btn-tonal.text-negative { background:color-mix(in srgb, var(--q-negative) 12%, transparent); }
 .q-btn.m-btn-tonal.text-positive { background:color-mix(in srgb, var(--q-positive) 12%, transparent); }
 .q-btn.m-btn-tonal.text-warning { background:color-mix(in srgb, var(--q-warning) 14%, transparent); }
@@ -197,7 +206,7 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
 .m-muted { color:var(--m-text-muted); }
 /* the tonal tint of .m-btn-tonal on a q-chip or q-badge, a status chip: the tint follows the text color, so the variants are the
    text-<color> classes (class="m-tonal text-positive"; not color=, whose bg-* class would cover the tint); primary without one */
-.q-chip.m-tonal, .q-badge.m-tonal { color:var(--q-primary); background:color-mix(in srgb, currentColor 12%, transparent); }
+.q-chip.m-tonal, .q-badge.m-tonal { color:var(--m-link); background:color-mix(in srgb, currentColor 12%, transparent); }
 .q-chip.m-tonal.text-warning, .q-badge.m-tonal.text-warning { background:color-mix(in srgb, currentColor 14%, transparent); }
 .body--dark .q-chip.m-tonal, .body--dark .q-badge.m-tonal { background:color-mix(in srgb, currentColor 18%, transparent); }
 
@@ -219,6 +228,45 @@ form.q-form { width:100%; }
 .form-date-find { display:inline-flex; }
 .form-list-nav-row { padding:4px 8px; }
 .m-text-find-options, .m-date-period-options { min-width:220px; }
+
+/* Search fields and configuration lists scroll independently of their actions. A wide desktop dialog groups
+   related controls without stretching short inputs across the entire screen; phones keep one reading column. */
+.m-find-options { display:flex; flex-direction:column; gap:16px; }
+.q-dialog__inner--maximized .m-dialog-body { max-height:calc(100dvh - 48px) !important; }
+.m-find-fields { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px 16px; max-height:calc(80dvh - 190px); overflow-y:auto; padding:2px; }
+.m-find-fields > .q-ma-sm { margin:0; min-width:0; }
+.m-find-sort { padding-top:12px; border-top:1px solid var(--m-divider); }
+.m-dialog-actions { display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:8px; padding-top:12px; border-top:1px solid var(--m-border); }
+.m-dialog-actions > .q-ma-sm { margin:0; }
+.m-dialog-actions .m-find-clear { margin-right:auto; }
+.m-column-config-fields { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; max-height:calc(80dvh - 130px); overflow-y:auto; }
+.m-column-config-fields .q-item__section--side { padding-left:4px; padding-right:4px; }
+.m-saved-find-list .q-item { flex-wrap:wrap; gap:8px; padding:12px 0; }
+.m-saved-find-list .q-item__section:not(.q-item__section--side) { min-width:160px; }
+.m-saved-find-list .q-item__section--side { flex-direction:row; flex-wrap:wrap; padding-left:0; }
+.m-saved-find-actions { display:flex; flex-wrap:wrap; gap:4px; }
+.m-saved-find-action { font-size:calc(14px * var(--m-fs-small-scale)); }
+.m-saved-find-active { margin:0 0 8px; }
+.m-saved-find-section + .m-saved-find-section { margin-top:20px; padding-top:16px; border-top:1px solid var(--m-border); }
+.m-saved-find-heading { font-size:14px; font-weight:500; margin:0 0 8px; }
+.m-saved-find-new { display:grid; grid-template-columns:minmax(0, 1fr) auto; align-items:start; gap:12px; }
+.m-saved-find-fields { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:12px; }
+.m-saved-find-new .q-field, .m-saved-find-fields .q-field { margin:0; min-width:0; }
+.m-saved-find-schedule-action { grid-column:1 / -1; }
+.m-saved-find-schedule > summary { display:list-item; list-style:disclosure-closed inside; cursor:pointer; font-weight:500; padding:4px 0; }
+.m-saved-find-schedule > summary:focus-visible { outline:2px solid var(--m-link); outline-offset:2px; }
+.m-saved-find-schedule[open] > summary { list-style-type:disclosure-open; margin-bottom:8px; }
+@media (max-width:479.98px) {
+    .m-saved-find-new, .m-saved-find-fields { grid-template-columns:minmax(0, 1fr); }
+    .m-saved-find-new > .q-btn { justify-self:start; }
+}
+.form-list-filter-summary { display:flex; justify-content:flex-start; align-items:center; flex-wrap:wrap; gap:8px 16px; border-top:1px solid var(--m-divider); }
+.form-list-filter-summary:empty { display:none; }
+@media (max-width:699.98px) {
+    .m-find-fields, .m-column-config-fields { grid-template-columns:minmax(0, 1fr); }
+    .m-find-fields { max-height:calc(100dvh - 245px); }
+    .m-column-config-fields { max-height:calc(100dvh - 205px); }
+}
 
 /* ====== app list (apps/AppList.xml and the app list template of a suite) ====== */
 
@@ -728,7 +776,7 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 .m-markdown-body h4, .m-markdown-body h5, .m-markdown-body h6 { font-size:1rem; font-weight:500; margin:0.8em 0 0.3em; }
 .m-markdown-body p, .m-markdown-body ul, .m-markdown-body ol, .m-markdown-body blockquote, .m-markdown-body pre { margin:0 0 0.75em; }
 .m-markdown-body ul, .m-markdown-body ol { padding-left:1.5em; }
-.m-markdown-body a { color:var(--q-primary); }
+.m-markdown-body a { color:var(--m-link); }
 .m-markdown-body img { max-width:100%; height:auto; }
 .m-markdown-body hr { border:none; border-top:1px solid rgba(127,127,127,0.35); margin:1em 0; }
 .m-markdown-body blockquote { border-left:3px solid rgba(127,127,127,0.4); padding:0.1em 0 0.1em 0.9em; opacity:0.9; }
@@ -909,6 +957,7 @@ body.m-radius-round :is(.q-btn:not(.q-btn--round), .q-field--outlined .q-field__
 .m-report-export-only { display: none; }
 
 .m-report-editor-control { display: inline-flex; vertical-align: top; flex-direction: column; gap: .25rem; padding: .35rem; max-width: 100%; }
+.m-report-editor button:focus-visible { outline:2px solid var(--m-link); outline-offset:2px; }
 .m-report-editor-control input:not([type=checkbox]), .m-report-editor-control select, .m-report-editor-control textarea { color: inherit; background: transparent; border: 1px solid var(--q-secondary); border-radius: 3px; padding: .35rem; max-width: 100%; }
 .m-report-editor-group { margin: .6rem 0; padding: .5rem; border: 1px solid var(--q-secondary); border-radius: 4px; min-width: 0; }
 .m-report-editor-layout-item { border-left: 2px solid var(--q-primary); padding: .5rem; margin: .4rem 0; }

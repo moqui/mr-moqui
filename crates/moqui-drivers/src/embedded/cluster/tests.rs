@@ -408,18 +408,19 @@ static RELATIVE_CLUSTER_SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::A
 /// absolute install/data/socket paths, so a relative dir boots and serves its socket.
 #[test]
 fn relative_cluster_dir_starts_and_serves_its_socket() {
+    // Keep the fixture basename short: macOS allows only 103 bytes in a Unix socket path.
     let name = format!(
-        "moqui-pg-rel-{}-{}",
+        "pg-{}-{}",
         std::process::id(),
         RELATIVE_CLUSTER_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     let rel = PathBuf::from(&name);
     let abs = std::env::current_dir().unwrap().join(&rel);
     let _guard = DirGuard(abs.clone());
-    // Unix socket paths need fewer than 108 bytes. Skip the live boot when this
-    // checkout sits too deep for that; the absolute-resolution assert below still
-    // documents the invariant.
-    if abs.join("data").join(".s.PGSQL.5432").as_os_str().len() >= 108 {
+    // Reserve the terminating NUL in sockaddr_un.sun_path (104 bytes on macOS, 108 on Linux).
+    // A deeper checkout can still exceed that limit even with the short fixture basename.
+    let max_socket_path = if cfg!(target_os = "macos") { 103 } else { 107 };
+    if abs.join("data").join(".s.PGSQL.5432").as_os_str().len() > max_socket_path {
         println!(
             "skipping live relative boot: socket path too long under {}",
             abs.display()

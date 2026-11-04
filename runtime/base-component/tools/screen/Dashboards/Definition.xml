@@ -3,6 +3,7 @@
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Definition" default-menu-include="false">
     <parameter name="definitionId"/><parameter name="definitionType"/><parameter name="leftVersion"/><parameter name="rightVersion"/>
     <transition name="reference"><default-response url="//apps/dashboards/Definition"/></transition>
+    <transition name="dashboard"><default-response url="//apps/dashboards/Dashboard"/></transition>
     <transition name="save" method="post" authz-action="update">
         <actions><script><![CDATA[
             const body=JSON.parse(definitionJson || '{}')
@@ -54,7 +55,25 @@
         versionList = definitionId ? ec.service.sync().name('org.moqui.report.ReportServices.versions#Definition').parameters({definitionId}).call().versions : []
     ]]></script></actions>
     <widgets>
+        <section name="OpenDashboard" condition="definitionId &amp;&amp; definitionType === 'dashboard'"><widgets>
+            <link url="dashboard" text="Open dashboard" parameter-map="{definitionId:definitionId}"/>
+        </widgets></section>
         <section name="ReadOnly" condition="definition.readOnly"><widgets><label text="This definition is shipped by ${definition.component}. Save a copy to edit it." type="p"/></widgets></section>
+        <section name="CopyExistingDefinition" condition="definitionId"><widgets>
+            <container-box><box-header title="Make a copy"/><box-body>
+                <form-single name="CopyDefinition" transition="copy">
+                    <field name="definitionId"><default-field><hidden/></default-field></field>
+                    <field name="copyId"><default-field title="New ID"><text-line/></default-field></field>
+                    <field name="copyTitle"><default-field title="Copy title"><text-line/></default-field></field>
+                    <field name="copy"><default-field><submit text="Save as copy"/></default-field></field>
+                    <field-layout>
+                        <field-ref name="definitionId"/>
+                        <field-row><field-ref name="copyId"/><field-ref name="copyTitle"/></field-row>
+                        <field-row-big><field-ref name="copy"/></field-row-big>
+                    </field-layout>
+                </form-single>
+            </box-body></container-box>
+        </widgets></section>
         <form-single name="EditDefinition" transition="save">
             <field name="definitionId"><default-field title="ID"><text-line/></default-field></field>
             <field name="definitionVersion"><default-field><hidden/></default-field></field>
@@ -79,17 +98,19 @@
                 <text-area rows="22" cols="100"/>
             </default-field></field>
             <field name="note"><default-field title="Version note"><text-line size="70"/></default-field></field>
-            <field name="save"><conditional-field condition="definition.readOnly"><display text="Shipped definitions are read only; use Save as copy below."/></conditional-field>
+            <field name="save"><conditional-field condition="definition.readOnly"><display text="Shipped definitions are read only; use Save as copy above."/></conditional-field>
                 <default-field><submit text="Save version"/></default-field></field>
+            <field-layout>
+                <field-ref name="definitionVersion"/>
+                <field-row><field-ref name="definitionTitle"/><field-ref name="definitionId"/><field-ref name="definitionType"/></field-row>
+                <field-row><field-ref name="definitionFolder"/><field-ref name="definitionTags"/><field-ref name="definitionUserGroupId"/></field-row>
+                <field-ref name="definitionJson"/>
+                <field-ref name="note"/>
+                <field-row-big><field-ref name="save"/></field-row-big>
+            </field-layout>
         </form-single>
         <section name="ExistingDefinition" condition="definitionId"><widgets>
             <link url="export" text="Export with references" parameter-map="{definitionId:definitionId}"/>
-            <form-single name="CopyDefinition" transition="copy">
-                <field name="definitionId"><default-field><hidden/></default-field></field>
-                <field name="copyId"><default-field title="New ID"><text-line/></default-field></field>
-                <field name="copyTitle"><default-field title="Copy title"><text-line/></default-field></field>
-                <field name="copy"><default-field><submit text="Save as copy"/></default-field></field>
-            </form-single>
             <section name="DeleteDefinitionSection" condition="!definition.readOnly &amp;&amp; definition.ownerId === ec.user.userId"><widgets>
                 <form-single name="DeleteDefinition" transition="delete">
                     <field name="definitionId"><default-field><hidden/></default-field></field>

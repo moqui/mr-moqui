@@ -1632,6 +1632,7 @@ mod signal_tests {
                     "--exact",
                     "http::signal_tests::process_signals_notify_graceful_shutdown",
                     "--nocapture",
+                    "--test-threads=1",
                 ])
                 .env(CHILD, "1")
                 .stdout(Stdio::piped())
@@ -1641,7 +1642,8 @@ mod signal_tests {
             let (ready, receiver) = std::sync::mpsc::channel();
             let reader = std::thread::spawn(move || {
                 for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
-                    if line == "signal handlers ready" {
+                    // The serial test harness writes its test-name prefix without a newline.
+                    if line.ends_with("signal handlers ready") {
                         let _ = ready.send(());
                     }
                 }
@@ -1669,7 +1671,7 @@ mod signal_tests {
             reader.join().unwrap();
             assert!(
                 registered && status.is_some_and(|status| status.success()),
-                "{signal}: {status:?}"
+                "{signal}: handlers ready={registered}, status={status:?}"
             );
         }
     }
