@@ -508,6 +508,17 @@ impl Peer {
         }
     }
 
+    /// The earliest time this peer has work of its own besides str0m's: [`Peer::tick`] choosing the layers again, or
+    /// a keyframe request held back by [`KEYFRAME_INTERVAL`].
+    pub fn next_own_deadline(&self) -> Instant {
+        let keyframes = self
+            .tracks_out
+            .iter()
+            .filter(|o| o.need_keyframe)
+            .filter_map(|o| o.last_keyframe_request.map(|at| at + KEYFRAME_INTERVAL));
+        keyframes.fold(self.last_layers + LAYER_INTERVAL, Instant::min)
+    }
+
     /// Re-chooses the layers now and then, as layers are first seen.
     pub fn tick(&mut self, config: &SfuConfig, now: Instant) {
         if now.saturating_duration_since(self.last_layers) >= LAYER_INTERVAL {
