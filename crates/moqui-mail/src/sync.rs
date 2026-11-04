@@ -28,7 +28,10 @@
 //!    `remoteUidNext` on, within the account's sync window (`SEARCH SINCE` on the first sync), at most
 //!    `email-client` `sync-batch` a session. With CONDSTORE the flags that changed come from `CHANGEDSINCE`, and with QRESYNC
 //!    the expunged UIDs from `VANISHED`; without them the flags of every message are read every `email-client` `flag-scan`
-//!    minutes and an expunge is found by comparing the UIDs.
+//!    minutes and an expunge is found by comparing the UIDs. Only the local rows of the UIDs involved are read (all of
+//!    them on a first sync, a flag scan, or an expunge found by count). The bodies are fetched by count and by bytes,
+//!    from the sizes the header fetch read, a large message alone; a message whose store keeps failing is read again
+//!    in at most [`STORE_TRIES`] sessions, then skipped and logged.
 //! 4. A message is stored once: one already kept under its folder and UID is not fetched again; one whose
 //!    Message-ID is a row that left another folder in this session is that row, moved (its links and labels kept);
 //!    one whose Message-ID is a local copy waiting for its UID (a sent copy, a move made without UIDPLUS) is that
@@ -72,8 +75,16 @@ const SERVICES: &str = "org.moqui.impl.EmailClientServices";
 
 /// How long a sync holds its account; it is renewed as the session goes ([`Lease::keep`]).
 const LEASE_MILLIS: i64 = 15 * 60 * 1000;
-/// UIDs in one FETCH.
+/// UIDs in one FETCH of message bodies.
 const FETCH_CHUNK: usize = 25;
+/// Bytes of message bodies in one FETCH, by the sizes the header fetch read (`RFC822.SIZE`): the IMAP client holds a
+/// whole response, so a batch is bounded by size as well as by count, and a larger message is fetched alone
+/// (plans/High-Level-Review.md HL-038).
+const FETCH_BYTES: u64 = 8 * 1024 * 1024;
+/// The size counted for a message whose size the server did not give.
+const UNKNOWN_SIZE: u64 = 1024 * 1024;
+/// Sessions that read a message whose store fails again, before it is skipped (logged).
+const STORE_TRIES: u32 = 5;
 const HEADER_CHUNK: usize = 100;
 
 // ---- the account ----
@@ -1970,12 +1981,39 @@ pub(super) fn update_folder(facade: &EntityFacade, folder_id: &str, fields: &[(&
 
 // ---- one folder ----
 
+#[cfg(test)]
+thread_local! {
+    /// The message rows a sync read on this thread, for the tests of what a sync reads (HL-038).
+    pub(super) static ROWS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn count_read(_rows: usize) {
+    #[cfg(test)]
+    ROWS_READ.with(|count| count.set(count.get() + _rows));
+}
+
 /// The rows kept under a folder's UIDs.
 fn local_rows(facade: &EntityFacade, folder_id: &str) -> Result<HashMap<u32, LocalRow>, LibError> {
-    let rows = facade
+    let mut out = HashMap::new();
+    local_rows_into(facade, folder_id, None, &mut out)?;
+    Ok(out)
+}
+
+/// The rows kept under a folder's UIDs that `condition` (on `remoteUid`) selects, into `out`.
+fn local_rows_into(
+    facade: &EntityFacade,
+    folder_id: &str,
+    condition: Option<Condition>,
+    out: &mut HashMap<u32, LocalRow>,
+) -> Result<(), LibError> {
+    let mut find = facade
         .find(MESSAGE)?
         .eq("remoteFolderId", Value::string(folder_id))
-        .condition(Condition::is_not_null("remoteUid"))
+        .condition(Condition::is_not_null("remoteUid"));
+    if let Some(condition) = condition {
+        find = find.condition(condition);
+    }
+    let rows = find
         .select_field("emailMessageId")
         .select_field("remoteUid")
         .select_field("messageId")
@@ -1983,7 +2021,7 @@ fn local_rows(facade: &EntityFacade, folder_id: &str) -> Result<HashMap<u32, Loc
         .select_field("isFlagged")
         .select_field("isAnswered")
         .list()?;
-    let mut out = HashMap::new();
+    count_read(rows.values().len());
     for row in rows.values() {
         let Some(uid) = as_u32(row.get("remoteUid")) else {
             continue;
@@ -1999,7 +2037,59 @@ fn local_rows(facade: &EntityFacade, folder_id: &str) -> Result<HashMap<u32, Loc
             },
         );
     }
-    Ok(out)
+    Ok(())
+}
+
+/// The rows kept under these UIDs of a folder, into `out`, a bounded `IN` list at a time.
+fn local_rows_of(
+    facade: &EntityFacade,
+    folder_id: &str,
+    uids: &[u32],
+    out: &mut HashMap<u32, LocalRow>,
+) -> Result<(), LibError> {
+    for chunk in uids.chunks(500) {
+        let values = chunk.iter().map(|uid| Value::I64(i64::from(*uid))).collect();
+        local_rows_into(facade, folder_id, Some(Condition::is_in("remoteUid", values)), out)?;
+    }
+    Ok(())
+}
+
+/// The rows kept under UIDs in these ranges of a folder (a `VANISHED` answer), into `out`.
+fn local_rows_in(
+    facade: &EntityFacade,
+    folder_id: &str,
+    ranges: &[(u32, u32)],
+    out: &mut HashMap<u32, LocalRow>,
+) -> Result<(), LibError> {
+    for chunk in ranges.chunks(100) {
+        let condition = Condition::or(
+            chunk
+                .iter()
+                .map(|(low, high)| {
+                    Condition::and(vec![
+                        Condition::greater_equal("remoteUid", Value::I64(i64::from(*low))),
+                        Condition::less_equal("remoteUid", Value::I64(i64::from(*high))),
+                    ])
+                })
+                .collect(),
+        );
+        local_rows_into(facade, folder_id, Some(condition), out)?;
+    }
+    Ok(())
+}
+
+/// The lowest UID kept in a folder, where the server's state of the kept messages is read from.
+fn lowest_uid(facade: &EntityFacade, folder_id: &str) -> Result<Option<u32>, LibError> {
+    let rows = facade
+        .find(MESSAGE)?
+        .eq("remoteFolderId", Value::string(folder_id))
+        .condition(Condition::is_not_null("remoteUid"))
+        .select_field("remoteUid")
+        .order_by("remoteUid", false)
+        .limit(1)
+        .list()?;
+    count_read(rows.values().len());
+    Ok(rows.values().first().and_then(|row| as_u32(row.get("remoteUid"))))
 }
 
 fn search(conn: &mut ImapConn, query: &str) -> Result<Vec<u32>, imap::Error> {
@@ -2034,6 +2124,7 @@ fn decide(session: &mut Session<'_>, folder: &FolderInfo, message_id: &str) -> R
         .select_field("remoteUid")
         .select_field("emailFolderId")
         .list()?;
+    count_read(rows.values().len());
     let mut others = Vec::new();
     for row in rows.values() {
         let id = field_text(row, "emailMessageId");
@@ -2142,9 +2233,19 @@ fn sync_folder(
     let keywords = selected.keywords();
     let validity = mailbox.uid_validity.unwrap_or(0);
     let mut first = folder.uid_next.is_none() || folder.uid_validity.is_none();
-    // on a first sync too: a first sync that stopped part way kept what it stored, which is not stored again
-    let mut locals = local_rows(session.facade, &folder.id)?;
+    // The rows kept, by UID: on a first sync all of them (one that stopped part way kept what it stored, which is not
+    // stored again); after it only those the session needs, the new UIDs, the flags that changed and the UIDs that
+    // vanished, unless a flag scan or an expunge found by count needs them all (plans/High-Level-Review.md HL-038).
+    let mut locals = if first {
+        local_rows(session.facade, &folder.id)?
+    } else {
+        HashMap::new()
+    };
+    let mut all_loaded = first;
     if folder.uid_validity.is_some_and(|known| known != validity) {
+        if !all_loaded {
+            locals = local_rows(session.facade, &folder.id)?;
+        }
         tracing::warn!(
             account = %session.account.id,
             "UIDVALIDITY of email folder {} of account {} changed from {:?} to {validity}: reading it again",
@@ -2167,6 +2268,7 @@ fn sync_folder(
         }
         locals.clear();
         first = true;
+        all_loaded = true;
     }
     let start = if first { 1 } else { folder.uid_next.unwrap_or(1).max(1) };
     // every UID from the start on (for the expunge count), then those in the sync window
@@ -2187,11 +2289,26 @@ fn sync_folder(
             .collect(),
         _ => all_new.clone(),
     };
+    // rows already kept under the new UIDs (a session cut short after storing some)
+    if !all_loaded {
+        if let Some(low) = wanted.first() {
+            local_rows_into(
+                session.facade,
+                &folder.id,
+                Some(Condition::greater_equal("remoteUid", Value::I64(i64::from(*low)))),
+                &mut locals,
+            )?;
+        }
+    }
     wanted.retain(|uid| !locals.contains_key(uid));
     // the flags and the expunges of the messages kept
     let mut scanned = false;
-    if !first && !locals.is_empty() {
-        let min_uid = locals.keys().copied().min().unwrap_or(1);
+    let lowest = if first {
+        None
+    } else {
+        lowest_uid(session.facade, &folder.id)?
+    };
+    if let Some(min_uid) = lowest {
         let mut flags: Vec<(u32, FlagSet)> = Vec::new();
         let mut gone: Vec<u32> = Vec::new();
         let mut count_check = true;
@@ -2209,17 +2326,29 @@ fn sync_folder(
                 }
             }
             drop(fetches);
+            let mut vanished: Vec<(u32, u32)> = Vec::new();
             for response in conn.session.take_all_unsolicited() {
                 if let imap::types::UnsolicitedResponse::Vanished { uids, .. } = response {
-                    for range in uids {
-                        if range.end().saturating_sub(*range.start()) <= 1_000_000 {
-                            gone.extend(range.filter(|uid| locals.contains_key(uid)));
-                        }
-                    }
+                    vanished.extend(uids.iter().map(|range| (*range.start(), *range.end())));
                 }
             }
+            // only the rows of these UIDs
+            let changed: Vec<u32> = flags
+                .iter()
+                .map(|(uid, _)| *uid)
+                .filter(|uid| !locals.contains_key(uid))
+                .collect();
+            local_rows_of(session.facade, &folder.id, &changed, &mut locals)?;
+            let mut left = HashMap::new();
+            local_rows_in(session.facade, &folder.id, &vanished, &mut left)?;
+            gone.extend(left.keys().copied());
+            locals.extend(left);
             count_check = !conn.qresync;
         } else if scan_due {
+            if !all_loaded {
+                locals.extend(local_rows(session.facade, &folder.id)?);
+                all_loaded = true;
+            }
             let fetches = conn.session.uid_fetch(format!("{min_uid}:*"), "(UID FLAGS)")?;
             let mut present = HashSet::new();
             for fetch in fetches.iter() {
@@ -2238,6 +2367,10 @@ fn sync_folder(
                 .unwrap_or(0)
                 .saturating_add(u32::try_from(all_new.len()).unwrap_or(u32::MAX));
             if mailbox.exists < expected {
+                if !all_loaded {
+                    locals.extend(local_rows(session.facade, &folder.id)?);
+                    all_loaded = true;
+                }
                 let present: HashSet<u32> = search(conn, &format!("UID {min_uid}:*"))?.into_iter().collect();
                 gone.extend(locals.keys().copied().filter(|uid| !present.contains(uid)));
             }
@@ -2257,7 +2390,12 @@ fn sync_folder(
     report.capped |= capped;
     let pending = wanted.len();
     wanted.truncate(session.batch);
-    progress.new_mail(wanted.len(), pending, locals.len());
+    let kept = if all_loaded {
+        locals.len()
+    } else {
+        usize::try_from(folder.total.unwrap_or(0)).unwrap_or(0)
+    };
+    progress.new_mail(wanted.len(), pending, kept);
     let mut failed_from: Option<u32> = None;
     for chunk in wanted.chunks(HEADER_CHUNK) {
         session.lease.keep(session.facade)?;
@@ -2304,20 +2442,20 @@ fn sync_folder(
                 Decision::Store => to_fetch.push((uid, flags, internal, size)),
             }
         }
-        for batch in to_fetch.chunks(FETCH_CHUNK) {
+        let sizes: Vec<Option<i64>> = to_fetch.iter().map(|item| item.3).collect();
+        for range in fetch_batches(&sizes, FETCH_CHUNK, FETCH_BYTES) {
+            let batch = &to_fetch[range];
             let uids: Vec<u32> = batch.iter().map(|item| item.0).collect();
             let bodies = conn.session.uid_fetch(uid_set(&uids), "(UID BODY.PEEK[])")?;
-            let mut raw_by_uid: HashMap<u32, Vec<u8>> = HashMap::new();
-            for fetch in bodies.iter() {
-                if let (Some(uid), Some(body)) = (fetch.uid, fetch.body()) {
-                    raw_by_uid.insert(uid, body.to_vec());
-                }
-            }
-            drop(bodies);
             // a fetch can outlast the lease: nothing is stored once another session has the account
             session.lease.keep(session.facade)?;
+            // the bodies as the response holds them, not copied
+            let raw_by_uid: HashMap<u32, &[u8]> = bodies
+                .iter()
+                .filter_map(|fetch| Some((fetch.uid?, fetch.body()?)))
+                .collect();
             for (uid, flags, internal, size) in batch {
-                let Some(raw) = raw_by_uid.remove(uid) else {
+                let Some(raw) = raw_by_uid.get(uid).copied() else {
                     tracing::warn!(
                         account = %session.account.id,
                         "Email UID {uid} of folder {} of account {} has no body on the server; skipped",
@@ -2327,8 +2465,9 @@ fn sync_folder(
                     report.skipped_messages += 1;
                     continue;
                 };
-                match store_new(session, folder, *uid, &raw, flags, *internal, *size, keywords) {
+                match store_new(session, folder, *uid, raw, flags, *internal, *size, keywords) {
                     Ok(id) => {
+                        store_failed(&folder.id, *uid, false);
                         report.new_count += 1;
                         progress.fetched_one();
                         if folder.kind == "EfkInbox" {
@@ -2337,7 +2476,7 @@ fn sync_folder(
                                 run_stored_ecas(
                                     session.facade,
                                     &StoredMessage {
-                                        raw: &raw,
+                                        raw,
                                         server_id: session
                                             .account
                                             .server
@@ -2367,16 +2506,28 @@ fn sync_folder(
                         report.skipped_messages += 1;
                     }
                     Err(StoreFailure::Write(text)) => {
-                        tracing::error!(
-                            account = %session.account.id,
-                            folder = %folder.path,
-                            uid = uid,
-                            "Could not store email UID {uid} of folder {} of account {}, read again next time: {text}",
-                            folder.path,
-                            session.account.id
-                        );
                         report.skipped_messages += 1;
-                        failed_from = Some(failed_from.map_or(*uid, |known| known.min(*uid)));
+                        if store_failed(&folder.id, *uid, true) {
+                            tracing::error!(
+                                account = %session.account.id,
+                                folder = %folder.path,
+                                uid = uid,
+                                "Could not store email UID {uid} of folder {} of account {} in {STORE_TRIES} sessions; \
+                                 skipped: {text}",
+                                folder.path,
+                                session.account.id
+                            );
+                        } else {
+                            tracing::error!(
+                                account = %session.account.id,
+                                folder = %folder.path,
+                                uid = uid,
+                                "Could not store email UID {uid} of folder {} of account {}, read again next time: {text}",
+                                folder.path,
+                                session.account.id
+                            );
+                            failed_from = Some(failed_from.map_or(*uid, |known| known.min(*uid)));
+                        }
                     }
                 }
             }
@@ -2418,6 +2569,54 @@ fn sync_folder(
     }
     force_new(session.facade, || update_folder(session.facade, &folder.id, &fields))?;
     Ok(())
+}
+
+/// The body fetches of messages of these sizes, in order, as index ranges: at most `count` messages and `budget` bytes
+/// each, a message larger than `budget` alone.
+fn fetch_batches(sizes: &[Option<i64>], count: usize, budget: u64) -> Vec<std::ops::Range<usize>> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut bytes = 0_u64;
+    for (index, size) in sizes.iter().enumerate() {
+        let size = size.and_then(|size| u64::try_from(size).ok()).unwrap_or(UNKNOWN_SIZE);
+        if index > start && (index - start >= count || bytes.saturating_add(size) > budget) {
+            out.push(start..index);
+            start = index;
+            bytes = 0;
+        }
+        bytes = bytes.saturating_add(size);
+    }
+    if start < sizes.len() {
+        out.push(start..sizes.len());
+    }
+    out
+}
+
+/// The messages whose store failed, by folder and UID, with the sessions it failed in. Kept in memory: a restart
+/// tries each again, at most [`STORE_TRIES`] sessions more, and an entry goes when its message is stored or skipped.
+fn store_failures() -> &'static std::sync::Mutex<HashMap<(String, u32), u32>> {
+    static FAILURES: std::sync::OnceLock<std::sync::Mutex<HashMap<(String, u32), u32>>> = std::sync::OnceLock::new();
+    FAILURES.get_or_init(Default::default)
+}
+
+/// Note a message's store failing (`failed`) or done. True when it has failed in [`STORE_TRIES`] sessions: it is
+/// skipped from now on, so one message the store cannot take is not downloaded again in every session.
+fn store_failed(folder_id: &str, uid: u32, failed: bool) -> bool {
+    let mut failures = moqui_lib::sync::lock(store_failures());
+    if !failed {
+        if !failures.is_empty() {
+            failures.remove(&(folder_id.to_string(), uid));
+        }
+        return false;
+    }
+    let key = (folder_id.to_string(), uid);
+    let tries = failures.entry(key.clone()).or_insert(0);
+    *tries += 1;
+    if *tries >= STORE_TRIES {
+        failures.remove(&key);
+        return true;
+    }
+    false
 }
 
 /// The Message-ID in a `HEADER.FIELDS (MESSAGE-ID)` fetch.
@@ -3073,8 +3272,32 @@ pub(super) fn sync_due_accounts(
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_mutf7, encode_mutf7, expand_set, header_message_id, imap_date, label_keyword, remote_kind, uid_set,
+        decode_mutf7, encode_mutf7, expand_set, fetch_batches, header_message_id, imap_date, label_keyword,
+        remote_kind, uid_set, UNKNOWN_SIZE,
     };
+
+    /// Body fetches by count and by bytes; a message over the budget alone, one with no size counted as
+    /// [`UNKNOWN_SIZE`] (HL-038).
+    #[test]
+    fn body_fetches_are_batched_by_count_and_bytes() {
+        let sizes = |list: &[i64]| list.iter().map(|size| Some(*size)).collect::<Vec<_>>();
+        assert_eq!(fetch_batches(&sizes(&[10; 7]), 3, 1000), vec![0..3, 3..6, 6..7]);
+        assert_eq!(
+            fetch_batches(&sizes(&[400, 400, 400, 5000, 100, 900, 100]), 25, 1000),
+            vec![0..2, 2..3, 3..4, 4..6, 6..7]
+        );
+        assert_eq!(fetch_batches(&sizes(&[5000]), 25, 1000), vec![0..1]);
+        let unknown = i64::try_from(UNKNOWN_SIZE).unwrap();
+        assert_eq!(
+            fetch_batches(&[None, Some(1), None], 25, UNKNOWN_SIZE + 1),
+            vec![0..2, 2..3]
+        );
+        assert_eq!(
+            fetch_batches(&[Some(unknown), Some(-5)], 25, UNKNOWN_SIZE),
+            vec![0..1, 1..2]
+        );
+        assert!(fetch_batches(&[], 25, 1000).is_empty());
+    }
 
     #[test]
     fn uid_sets_compress_and_expand() {
