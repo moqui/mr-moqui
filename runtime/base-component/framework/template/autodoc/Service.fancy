@@ -1,0 +1,47 @@
+<#-- A service's doc (plans/Autodoc.md). The names: the doc's header, service, usedBy, uses and diagrams; md is
+     AutodocLib.js. A site component's template/autodoc/Service.fancy takes the place of this one. -->
+<#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>
+<#assign parameters = (list) => md.table(["Parameter", "Type", "Required", "Default", "Description"], list.map((parameter) =>
+    [md.code(parameter.name) + (parameter.implied ? " *(implied)*" : ""), md.code(parameter.type), md.yes(parameter.required), md.code(parameter.default), parameter.description]))>
+# ${md.plain(title)}
+
+${md.nav(up, rootHref)}
+
+- **Service:** ${md.code(name)}
+- **Defined in:** ${md.defined(component, location, line)}
+- **Type:** ${md.plain(service.type || service.kind)}<#if service.location> · **Location:** ${md.code(service.location)}</#if><#if service.method> · **Method:** ${md.code(service.method)}</#if>
+- **Authenticate:** ${md.plain(service.authenticate)} · **Transaction:** ${md.plain(service.transaction)}<#if service.readOnly> · read-only</#if>
+<#if service.implements.length>
+- **Implements:** ${service.implements.map((item) => md.codeLink(item.name, item.href)).join(", ")}
+</#if>
+
+${description}
+
+## In parameters
+
+${service.inParameters.length ? parameters(service.inParameters) : "None.\n"}
+## Out parameters
+
+${service.outParameters.length ? parameters(service.outParameters) : "None.\n"}
+<#if service.secaRules.length>
+## SECA rules
+
+${md.table(["Rule", "When", "Condition", "Actions"], service.secaRules.map((rule) =>
+    [md.link(rule.id, rule.href), md.plain(rule.when), md.code(rule.condition), md.plain(rule.actions)]))}
+</#if>
+## Used by and uses
+
+${md.mermaid(diagrams.usage)}
+
+### Used by
+
+${md.usage(usedBy)}
+
+### Uses
+
+${md.usage(uses)}
+<#if service.source>
+## Definition
+
+${md.fence("xml", service.source)}
+</#if>

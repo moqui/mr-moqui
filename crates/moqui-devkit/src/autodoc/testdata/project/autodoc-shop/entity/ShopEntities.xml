@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<entities>
+    <entity entity-name="ShopOrder" package="shop.order" cache="never">
+        <description>An order placed in the shop.
+
+            One per checkout; its items are ShopOrderItem records.</description>
+        <field name="orderId" type="id" is-pk="true"><description>The order's id, | a pipe and *stars*.</description></field>
+        <field name="statusId" type="id"/>
+        <field name="placedDate" type="date-time" not-null="true"/>
+        <field name="grandTotal" type="currency-amount" default="0"/>
+        <relationship type="one" title="Order" related="moqui.basic.StatusItem" short-alias="status">
+            <description>Where the order is in its flow.</description>
+            <key-map field-name="statusId"/>
+        </relationship>
+        <relationship type="many" related="shop.order.ShopOrderItem" short-alias="items">
+            <key-map field-name="orderId"/>
+        </relationship>
+        <index name="SHOP_ORDER_PLACED"><index-field name="placedDate"/></index>
+    </entity>
+    <entity entity-name="ShopOrderItem" package="shop.order">
+        <description>A line of an order.</description>
+        <field name="orderId" type="id" is-pk="true"/>
+        <field name="orderItemSeqId" type="id" is-pk="true"/>
+        <field name="quantity" type="number-decimal"/>
+        <relationship type="one" related="shop.order.ShopOrder"/>
+    </entity>
+    <view-entity entity-name="ShopOrderAndItem" package="shop.order">
+        <description>Orders with their items.</description>
+        <member-entity entity-alias="ORD" entity-name="shop.order.ShopOrder"/>
+        <member-entity entity-alias="ITM" entity-name="shop.order.ShopOrderItem" join-from-alias="ORD">
+            <key-map field-name="orderId"/>
+        </member-entity>
+        <alias-all entity-alias="ORD"/>
+        <alias entity-alias="ITM" name="quantity"/>
+    </view-entity>
+</entities>

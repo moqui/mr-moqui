@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+-->
+<!-- The shop's order services: create and read. -->
+<services>
+    <service verb="define" noun="OrderInfo" type="interface">
+        <description>The parameters an order service takes.</description>
+        <in-parameters>
+            <parameter name="statusId"><description>The order's first status.</description></parameter>
+        </in-parameters>
+    </service>
+    <service verb="create" noun="Order">
+        <description>Create an order with its items.
+
+            Refuses an order with no items.</description>
+        <implements service="shop.OrderServices.define#OrderInfo"/>
+        <in-parameters>
+            <parameter name="items" type="List" required="true">
+                <parameter name="item" type="Map"><parameter name="quantity" type="BigDecimal"/></parameter>
+            </parameter>
+        </in-parameters>
+        <out-parameters><parameter name="orderId"/></out-parameters>
+        <actions>
+            <entity-make-value entity-name="shop.order.ShopOrder" value-field="order"/>
+            <entity-sequenced-id-primary value-field="order"/>
+            <entity-create value-field="order"/>
+            <set field="orderId" from="order.orderId"/>
+        </actions>
+    </service>
+    <service verb="get" noun="Order">
+        <in-parameters><parameter name="orderId" required="true"/></in-parameters>
+        <out-parameters><parameter name="order" type="Map"/></out-parameters>
+        <actions><entity-find-one entity-name="shop.order.ShopOrder" value-field="order"/></actions>
+    </service>
+</services>

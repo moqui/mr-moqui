@@ -2690,3 +2690,132 @@ fn an_allowed_projects_index_is_read_off_dev_by_its_id_and_over_rest() {
     assert_eq!(err, refused[0]);
     let _ = std::fs::remove_dir_all(&project);
 }
+
+/// Autodoc in the Dev AIDE (plans/Autodoc.md): the doc of a site entity from the server's index for the view tier, an
+/// export into the site component (the extend tier) that writes the tree and its manifest, an export again that writes
+/// nothing, one that removes the stale doc its manifest lists and not the file written by hand, and the refusals: the
+/// view tier, and an upstream component while the lock is on.
+#[test]
+fn autodoc_shows_a_doc_and_exports_a_tree_into_the_site() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let users = r#"
+    <moqui.security.UserAccount userId="DEV_EXT" username="ext.user" userFullName="Ext User" emailAddress="ext@example.com"/>
+    <moqui.security.UserGroupMember userGroupId="DEV_AIDE_EXTENDERS" userId="DEV_EXT" fromDate="0"/>
+    <moqui.security.UserGroup userGroupId="DEV_VIEWERS" description="Dev AIDE readers (test)"/>
+    <moqui.security.UserGroupPermission userGroupId="DEV_VIEWERS" userPermissionId="DEV_AIDE_VIEW" fromDate="0"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="DEV_AIDE_APP_VIEWERS" artifactGroupId="DEV_AIDE_APP" userGroupId="DEV_VIEWERS"
+        authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="AIDE_READ_API_DA_VIEWERS" artifactGroupId="AIDE_READ_API" userGroupId="DEV_VIEWERS"
+        authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_VIEW"/>
+    <moqui.security.UserAccount userId="DEV_VIEW" username="view.user" userFullName="View User" emailAddress="view@example.com"/>
+    <moqui.security.UserGroupMember userGroupId="DEV_VIEWERS" userId="DEV_VIEW" fromDate="0"/>
+</entity-facade-xml>"#;
+    let security = include_str!("../../../../runtime/dev-component/dev-aide/data/DevAideSecurityData.xml")
+        .replace("</entity-facade-xml>", users);
+    let dev_aide = std::fs::canonicalize(concat!(env!("CARGO_MANIFEST_DIR"), "/../../runtime/dev-component/dev-aide")).unwrap();
+    let entities = r#"<entities>
+    <entity entity-name="Widget" package="mysite">
+        <description>A widget the site sells, | with a pipe.</description>
+        <field name="widgetId" type="id" is-pk="true"/>
+        <field name="statusId" type="id"><description>Where it is.</description></field>
+        <relationship type="one" related="moqui.basic.StatusItem"/>
+    </entity>
+</entities>
+"#;
+    let files = [
+        ("component/my-site/component.xml", SITE_COMPONENT),
+        ("component/my-site/entity/MySiteEntities.xml", entities),
+        ("component/my-site/service/mysite/Things.xml", SITE_SERVICES),
+        ("component/upstream-app/component.xml", UPSTREAM_COMPONENT),
+        ("component/upstream-app/service/upapp/Up.xml", UPSTREAM_SERVICES),
+    ];
+    let gate = start_with_files_and_links(
+        "dev-aide-autodoc",
+        Some(&security),
+        &[
+            ("instance_purpose", "dev"),
+            ("dev_aide_site_component", "my-site"),
+            ("dev_aide_shared", "false"),
+        ],
+        &files,
+        &[(dev_aide.to_str().unwrap(), "dev-component/dev-aide")],
+    );
+    let factory = Arc::clone(gate.server.factory());
+    let site = gate.runtime.join("component/my-site");
+    const DOCS: &str = "org.moqui.devaide.DocServices.";
+
+    // the view tier reads a doc, made from the server's index
+    let doc = call(&factory, "view.user", &format!("{DOCS}get#ArtifactDoc"), &[("artifactId", "Widget")]).unwrap();
+    assert_eq!(text(&doc, "docPath"), "entity/mysite/Widget.md");
+    let markdown = text(&doc, "markdown");
+    assert!(markdown.contains("\n\nA widget the site sells, | with a pipe.\n\n"), "a description is Markdown as written: {markdown}");
+    assert!(markdown.contains("| `statusId` | `id` |  |  |  | Where it is. |"), "{markdown}");
+    assert!(markdown.contains("```mermaid\nerDiagram"), "{markdown}");
+
+    // ... and may not export
+    let export = |user: &str, extra: &[(&str, &str)]| {
+        let mut parameters = vec![("rootId", "my-site"), ("path", "autodoc"), ("components", "my-site")];
+        parameters.extend_from_slice(extra);
+        call(&factory, user, &format!("{DOCS}export#ArtifactDocs"), &parameters)
+    };
+    let refused = export("view.user", &[]).unwrap_err();
+    assert!(refused.contains("extend tier"), "{refused}");
+    assert!(!site.join("autodoc").exists(), "nothing written");
+
+    // the extend tier writes the tree and its manifest into the site component, and audits it once
+    let first = export("ext.user", &[]).unwrap();
+    let written: i64 = text(&first, "written").parse().unwrap();
+    assert!(written >= 5, "{first:?}");
+    assert!(matches!(first.get("failures"), Some(Value::List(list)) if list.is_empty()), "{first:?}");
+    assert_eq!(text(&first, "docCount").parse::<i64>().unwrap(), written);
+    for path in ["README.md", "entity/README.md", "entity/mysite/README.md", "entity/mysite/Widget.md", "service/mysite/Things/get-Thing.md", ".autodoc.json"] {
+        assert!(site.join("autodoc").join(path).is_file(), "{path}");
+    }
+    let widget = std::fs::read_to_string(site.join("autodoc/entity/mysite/Widget.md")).unwrap();
+    assert!(widget.starts_with("# Widget\n"), "{widget}");
+    let audits = {
+        let context = factory.new_context();
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        factory
+            .entity()
+            .unwrap()
+            .find("moqui.dev.DevAideAudit")
+            .unwrap()
+            .eq("actionEnumId", Value::string("DAA_EXPORT"))
+            .count()
+            .unwrap()
+    };
+    assert_eq!(audits, 1);
+
+    // the same export again writes nothing
+    let again = export("ext.user", &[]).unwrap();
+    assert_eq!(text(&again, "written"), "0", "{again:?}");
+    assert_eq!(text(&again, "unchanged"), written.to_string());
+
+    // a stale doc the manifest lists is removed; a file written by hand is not
+    let manifest_path = site.join("autodoc/.autodoc.json");
+    let mut manifest: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+    manifest["files"]["entity/mysite/Gone.md"] = serde_json::json!({"title": "Gone", "kind": "entity"});
+    std::fs::write(&manifest_path, manifest.to_string()).unwrap();
+    std::fs::write(site.join("autodoc/entity/mysite/Gone.md"), "old").unwrap();
+    std::fs::write(site.join("autodoc/entity/NOTES.md"), "mine").unwrap();
+    let cleaned = export("ext.user", &[("removeStale", "true")]).unwrap();
+    assert_eq!(text(&cleaned, "removed"), "1", "{cleaned:?}");
+    assert!(!site.join("autodoc/entity/mysite/Gone.md").exists());
+    assert_eq!(std::fs::read_to_string(site.join("autodoc/entity/NOTES.md")).unwrap(), "mine");
+    assert!(!std::fs::read_to_string(&manifest_path).unwrap().contains("Gone.md"));
+
+    // an upstream component takes no docs while the lock is on
+    let upstream = call(
+        &factory,
+        "ext.user",
+        &format!("{DOCS}export#ArtifactDocs"),
+        &[("rootId", "upstream-app"), ("path", "autodoc")],
+    )
+    .unwrap_err();
+    assert!(upstream.contains("is upstream"), "{upstream}");
+    assert!(!gate.runtime.join("component/upstream-app/autodoc").exists());
+}

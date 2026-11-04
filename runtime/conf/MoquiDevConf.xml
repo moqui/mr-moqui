@@ -30,6 +30,11 @@
     <default-property name="entity_ds_password" value="moqui"/>
     <default-property name="entity_ds_sslmode" value="disable"/>
     -->
+    <!-- with either, the content database (docs/Run-Deploy.md "Content database") apart, in the database moqui_content
+        on the same server, which must exist (for the postgres above: createdb -h 127.0.0.1 -U moqui moqui_content);
+        the value is the entity_ds_db_conf one. Without it the content shares the external transactional database:
+    <default-property name="content_ds_db_conf" value="postgres"/>
+    -->
 
     <cache-list warm-on-start="false">
         <!-- Development Mode - expires artifact cache entries; don't use these for production, load testing, etc -->

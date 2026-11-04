@@ -547,10 +547,15 @@ fn store_result_with(
     artifact: Option<&tools::spill::Artifact>,
 ) -> Result<(), Error> {
     let node = sink.node().to_string();
+    // the artifact is a resource of the run's factory
+    let factory = match artifact {
+        Some(_) => Some(sink.factory().ok_or_else(|| Error::new("the server is stopping"))?),
+        None => None,
+    };
     let stored = in_tx(facade, || {
         held(facade, &run.run_id, &node, hold)?;
-        if let Some(artifact) = artifact {
-            artifact.write(facade)?;
+        if let (Some(artifact), Some(factory)) = (artifact, &factory) {
+            artifact.write(factory.resource(), facade)?;
         }
         facade
             .find(TOOL_CALL)?
@@ -585,8 +590,8 @@ fn store_result_with(
         Ok(())
     });
     if let Err(error) = stored {
-        if let Some(artifact) = artifact {
-            artifact.remove(facade);
+        if let (Some(artifact), Some(factory)) = (artifact, &factory) {
+            artifact.remove(factory.resource());
         }
         return Err(error);
     }

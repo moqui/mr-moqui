@@ -57,6 +57,10 @@ with `fileData` empty: the same bytes in two files are stored once, a response s
 version keeps its blob rather than a copy. `fileSize` gives its size without reading it. `migrate#DbResourceBlobs`
 (`org.moqui.impl.ResourceServices`) moves the files written before content blobs. Java reads such a file as empty.
 
+These rows, the content blobs and the objects of `db` git repositories are the `content` entity group, in a database
+of their own ([Run-Deploy](../Run-Deploy.md#content-database)). Only the resource implementations use them, so read and
+write files through `ec.resource` (`ResourceFacade` in Rust), never by finding these entities.
+
 ## `git://` locations
 
 `git://<repositoryId>/<path>` is the file at `path` on the branch of a git repository. `git://<repositoryId>/` is the

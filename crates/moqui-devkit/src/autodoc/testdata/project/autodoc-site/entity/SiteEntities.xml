@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entities>
+    <extend-entity entity-name="ShopOrder" package="shop.order">
+        <field name="siteNote" type="text-medium"><description>A note the site keeps.</description></field>
+    </extend-entity>
+</entities>

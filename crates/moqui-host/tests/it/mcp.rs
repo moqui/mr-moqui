@@ -985,7 +985,8 @@ fn another_project(ann: &Caller, address: SocketAddr) {
     let first = refs();
     assert_eq!(first["project"]["layout"], "java", "{first}");
     assert!(
-        used(&first).contains(&"service-call entity:fp.picklist.PicklistBatch".to_string()),
+        // the entity-auto call resolves to the service derived from the entity
+        used(&first).contains(&"service-call service:update#fp.picklist.PicklistBatch".to_string()),
         "{first}"
     );
     assert_eq!(
@@ -996,10 +997,12 @@ fn another_project(ann: &Caller, address: SocketAddr) {
     let found = answer(json!({"action": "find", "text": "EnumerationType", "kinds": "entity", "project": project}));
     assert!(found["artifacts"].as_array().unwrap().is_empty(), "{found}");
     let entity = answer(json!({"action": "describe", "id": "entity:fp.picklist.PicklistBatch", "project": project}));
+    // the fields; the services derived from the entity (entity-auto calls of it) are parts too
     let fields: Vec<&str> = entity["parts"]
         .as_array()
         .unwrap()
         .iter()
+        .filter(|part| part["kind"] == "field")
         .filter_map(|part| part["name"].as_str())
         .collect();
     assert_eq!(fields, ["batchId", "statusId"], "{entity}");
@@ -1015,7 +1018,7 @@ fn another_project(ann: &Caller, address: SocketAddr) {
     std::thread::sleep(std::time::Duration::from_millis(600));
     let second = refs();
     assert!(
-        used(&second).contains(&"service-call entity:fp.picklist.PicklistItem".to_string()),
+        used(&second).contains(&"service-call service:create#fp.picklist.PicklistItem".to_string()),
         "{second}"
     );
     assert!(
@@ -1076,7 +1079,7 @@ fn another_project(ann: &Caller, address: SocketAddr) {
         std::env::remove_var("MOQUI_LOGIN_KEY");
         let answer = remote.file_refs(&screen, "out").unwrap();
         assert!(
-            used(&answer).contains(&"service-call entity:fp.picklist.PicklistItem".to_string()),
+            used(&answer).contains(&"service-call service:create#fp.picklist.PicklistItem".to_string()),
             "{answer}"
         );
         let found = remote.find("PicklistBatch", &["entity".to_string()], 5);

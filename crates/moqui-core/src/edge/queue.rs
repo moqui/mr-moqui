@@ -50,7 +50,7 @@ use moqui_lib::sync::lock;
 
 use super::conf::MAX_RETRY;
 use super::EdgeSettings;
-use crate::context::{ErrorKind, ExecutionContext, ExecutionContextFactory};
+use crate::context::{ErrorKind, ExecutionContext, ExecutionContextFactory, ResourceFacade};
 use crate::entity::{Condition, EntityFacade, EntityValue};
 use crate::transaction::TransactionAttribute;
 use crate::user::{now_millis, stamp_value, value_millis};
@@ -343,7 +343,7 @@ pub fn enqueue(
             return Ok(false);
         }
         if let (Some(location), Some(content)) = (&content_location, &content) {
-            facade.write_db_resource(location, content)?;
+            factory.resource().write_bytes(location, content)?;
         }
         Ok(true)
     })?;
@@ -535,7 +535,11 @@ pub fn claim(facade: &EntityFacade, item: &QueueItem, owner: &str, now: i64) -> 
 
 /// The content of a claimed item, to send before its delivery: `None` when it has none. Only this node's own copy
 /// (under [`CONTENT_OUT`]) is read.
-pub fn read_content(facade: &EntityFacade, item: &QueueItem) -> Result<Option<Vec<u8>>, Error> {
+pub fn read_content(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    item: &QueueItem,
+) -> Result<Option<Vec<u8>>, Error> {
     let location = item.content_location.trim();
     if location.is_empty() {
         return Ok(None);
@@ -547,7 +551,7 @@ pub fn read_content(facade: &EntityFacade, item: &QueueItem) -> Result<Option<Ve
         )));
     }
     let bytes = transaction(facade, TransactionAttribute::UseOrBegin, || {
-        facade.read_db_resource_bytes(location)
+        factory.resource().location_bytes(location).map_err(Error::from)
     })?;
     bytes.map(Some).ok_or_else(|| {
         Error::new(format!(
@@ -584,7 +588,13 @@ pub fn received_location(node: &str, queue_item_id: &str) -> Result<String, Erro
 
 /// Keep the content the other end sent for item `queue_item_id` before its delivery, as an upload of its own; the
 /// location the delivery names.
-pub fn store_received(facade: &EntityFacade, node: &str, queue_item_id: &str, content: &[u8]) -> Result<String, Error> {
+pub fn store_received(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    node: &str,
+    queue_item_id: &str,
+    content: &[u8],
+) -> Result<String, Error> {
     if content.len() > MAX_CONTENT_BYTES {
         return Err(Error::new(format!(
             "an edge queue item's content is at most {MAX_CONTENT_BYTES} bytes, and this one is {}",
@@ -597,7 +607,7 @@ pub fn store_received(facade: &EntityFacade, node: &str, queue_item_id: &str, co
         crate::entity::uuid_v4()?
     );
     transaction(facade, TransactionAttribute::ForceNew, || {
-        facade.write_db_resource(&location, content)
+        factory.resource().write_bytes(&location, content).map_err(Error::from)
     })?;
     Ok(location)
 }
@@ -613,9 +623,9 @@ fn is_received(node: &str, queue_item_id: &str, location: &str) -> bool {
 }
 
 /// Remove the content at `location`, logged with `what` when it fails: true when it is gone.
-fn remove_content(facade: &EntityFacade, location: &str, what: &str) -> bool {
+fn remove_content(resources: &ResourceFacade, facade: &EntityFacade, location: &str, what: &str) -> bool {
     match transaction(facade, TransactionAttribute::ForceNew, || {
-        facade.delete_db_resource(location)
+        resources.delete(location).map_err(Error::from)
     }) {
         Ok(_) => true,
         Err(err) => {
@@ -903,6 +913,7 @@ pub fn apply(factory: &ExecutionContextFactory, paired_node_id: &str, item: &Que
     }
     let applied = apply_item(factory, &facade, paired_node_id, item);
     remove_content(
+        factory.resource(),
         &facade,
         &item.content_location,
         &format!("edge queue item {}", item.queue_item_id),
@@ -1165,7 +1176,11 @@ fn pending_page(facade: &EntityFacade, after: i64, condition: Option<Condition>)
 
 /// Remove the items `condition` matches that have content, with their content, a page at a time; a content that is
 /// not removed is logged and its item goes anyway. The count of items removed.
-fn remove_with_content(facade: &EntityFacade, condition: impl Fn() -> Condition) -> Result<i64, Error> {
+fn remove_with_content(
+    resources: &ResourceFacade,
+    facade: &EntityFacade,
+    condition: impl Fn() -> Condition,
+) -> Result<i64, Error> {
     let mut removed = 0;
     loop {
         let page = transaction(facade, TransactionAttribute::UseOrBegin, || {
@@ -1187,7 +1202,12 @@ fn remove_with_content(facade: &EntityFacade, condition: impl Fn() -> Condition)
         let mut ids = Vec::with_capacity(page.len());
         for row in &page {
             let id = text(row, "queueItemId");
-            remove_content(facade, &text(row, "contentLocation"), &format!("edge queue item {id}"));
+            remove_content(
+                resources,
+                facade,
+                &text(row, "contentLocation"),
+                &format!("edge queue item {id}"),
+            );
             ids.push(Value::string(id));
         }
         removed += transaction(facade, TransactionAttribute::ForceNew, || {
@@ -1202,16 +1222,19 @@ fn remove_with_content(facade: &EntityFacade, condition: impl Fn() -> Condition)
 
 /// Remove the content kept for deliveries that were never answered (the link dropped between the content and its
 /// delivery, and the item was not sent again): what is under [`CONTENT_IN`] and was last written before `cutoff`.
-fn remove_stale_received(facade: &EntityFacade, cutoff: i64) -> Result<i64, Error> {
+fn remove_stale_received(resources: &ResourceFacade, facade: &EntityFacade, cutoff: i64) -> Result<i64, Error> {
     let root = CONTENT_IN.trim_end_matches('/');
     let nodes = transaction(facade, TransactionAttribute::UseOrBegin, || {
-        facade.read_db_resource(root)
+        if resources.stat(root)?.is_none_or(|stat| stat.is_file) {
+            return Ok(Vec::new());
+        }
+        resources.list(root).map_err(Error::from)
     })?;
     let mut removed = 0;
-    for node in nodes.children.iter().filter(|child| !child.is_file) {
+    for node in nodes.iter().filter(|child| !child.is_file) {
         let directory = format!("{CONTENT_IN}{}", node.name);
         let files = match transaction(facade, TransactionAttribute::UseOrBegin, || {
-            facade.read_db_resource(&directory)
+            resources.list(&directory).map_err(Error::from)
         }) {
             Ok(files) => files,
             Err(err) => {
@@ -1219,20 +1242,20 @@ fn remove_stale_received(facade: &EntityFacade, cutoff: i64) -> Result<i64, Erro
                 continue;
             }
         };
-        for file in files.children.iter().filter(|child| child.is_file) {
+        for file in files.iter().filter(|child| child.is_file) {
             let location = format!("{directory}/{}", file.name);
             let stat = transaction(facade, TransactionAttribute::UseOrBegin, || {
-                facade.stat_db_resource(&location)
+                resources.stat(&location).map_err(Error::from)
             });
             let stale = match stat {
-                Ok(Some(stat)) => stat.last_updated.is_none_or(|at| at < cutoff),
+                Ok(Some(stat)) => stat.last_modified.is_none_or(|at| at < cutoff),
                 Ok(None) => false,
                 Err(err) => {
                     tracing::error!("Edge queue retention: {location} was not read: {err}");
                     false
                 }
             };
-            if stale && remove_content(facade, &location, "an undelivered edge queue item") {
+            if stale && remove_content(resources, facade, &location, "an undelivered edge queue item") {
                 removed += 1;
             }
         }
@@ -1245,7 +1268,13 @@ fn remove_stale_received(facade: &EntityFacade, cutoff: i64) -> Result<i64, Erro
 /// receipt outlives every redelivery of its item), and received content older than it. A pending item older than the
 /// period fails, and so do the oldest pending ones while the pending payloads and content pass the size cap, each with
 /// an error logged naming it.
-pub fn clean(facade: &EntityFacade, settings: &EdgeSettings, now: i64) -> Result<Cleaned, Error> {
+pub fn clean(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    settings: &EdgeSettings,
+    now: i64,
+) -> Result<Cleaned, Error> {
+    let resources = factory.resource();
     let cutoff_millis = now - i64::from(settings.retention_days) * 86_400_000;
     let cutoff = stamp_value(cutoff_millis);
     let old = || {
@@ -1260,12 +1289,12 @@ pub fn clean(facade: &EntityFacade, settings: &EdgeSettings, now: i64) -> Result
             ]),
         ])
     };
-    let mut removed = remove_with_content(facade, old)?;
+    let mut removed = remove_with_content(resources, facade, old)?;
     removed += remove_all(facade, QUEUE_ITEM, &["queueItemId"], old)?;
     let receipts_removed = remove_all(facade, RECEIPT, &["pairedNodeId", "queueItemId"], || {
         Condition::less("appliedDate", cutoff.clone())
     })?;
-    match remove_stale_received(facade, cutoff_millis) {
+    match remove_stale_received(resources, facade, cutoff_millis) {
         Ok(0) => {}
         Ok(count) => tracing::info!("Edge queue retention: {count} undelivered contents removed"),
         Err(err) => tracing::error!("Edge queue retention: the received content was not cleaned: {err}"),

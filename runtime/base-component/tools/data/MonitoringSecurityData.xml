@@ -40,6 +40,8 @@
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_RECOVER" fromDate="0"/>
     <moqui.security.UserPermission userPermissionId="MONITOR_RECOVER_ADMIN" description="Manage recovery policies and adapters and the recovery emergency stop"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_RECOVER_ADMIN" fromDate="0"/>
+    <moqui.security.UserPermission userPermissionId="MONITOR_SETTINGS" description="Change logging and telemetry settings for a while (Monitor › Settings)"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="MONITOR_SETTINGS" fromDate="0"/>
     <moqui.security.UserPermission userPermissionId="REPORT_SAVE_LOCATION" description="Write scheduled report files to configured server resource locations"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="REPORT_SAVE_LOCATION" fromDate="0"/>
     <moqui.security.ArtifactGroup artifactGroupId="REPORT_ALERT_EVALUATION" description="Evaluate alert rules for all owners"/>

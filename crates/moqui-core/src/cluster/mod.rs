@@ -50,7 +50,8 @@ use crate::driver::DbRow;
 use crate::entity::exec::with_reserve_tx;
 use crate::entity::EntityFacade;
 use crate::notify::{
-    self, TopicMessage, COLLAB_UPDATE, ENTITY_CACHE_INVALIDATE, NOTIFICATION_MESSAGE, RTC_SIGNAL, SESSION_END,
+    self, TopicMessage, COLLAB_UPDATE, ENTITY_CACHE_INVALIDATE, NOTIFICATION_MESSAGE, RTC_SIGNAL, RUNTIME_SETTINGS,
+    SESSION_END,
 };
 use crate::user::{now_millis, now_value, value_millis};
 
@@ -269,7 +270,7 @@ pub fn apply_remote(facade: &EntityFacade, topic: &str, message: &TopicMessage) 
                     .collect()
             });
         crate::entity::cache::clear_one_cache(facade, name, primary_key.as_ref()).map_err(Error::from)?;
-    } else if ![NOTIFICATION_MESSAGE, COLLAB_UPDATE, SESSION_END, RTC_SIGNAL].contains(&topic) {
+    } else if ![NOTIFICATION_MESSAGE, COLLAB_UPDATE, SESSION_END, RTC_SIGNAL, RUNTIME_SETTINGS].contains(&topic) {
         return Err(Error::new(format!("unknown topic {topic}")));
     }
     notify::publish(topic, message)
@@ -300,6 +301,20 @@ pub fn publish(facade: &EntityFacade, topic: &'static str, message: &TopicMessag
 }
 
 /// Whether `facade`'s factory posts to cluster peers, whose sockets may have the users of a notification.
+/// The members of this factory's cluster whose heartbeat is within the window, this one among them.
+///
+/// # Errors
+///
+/// When the member rows cannot be read.
+pub fn live_member_count(factory: &ExecutionContextFactory, facade: &EntityFacade) -> Result<usize, Error> {
+    let now = db_now(facade);
+    let window = window_millis(factory);
+    Ok(load_members(facade)?
+        .iter()
+        .filter(|member| is_live(member.heartbeat, now, window))
+        .count())
+}
+
 /// Whether `instance_id` is a live member of this factory's cluster (its heartbeat within the window): an edge node
 /// that names a member's id is refused (plans/Edge-Node.md §5.4).
 ///

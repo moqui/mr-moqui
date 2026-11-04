@@ -568,6 +568,49 @@ impl EntityFacade {
     }
 }
 
+/// Warn of each foreign key relationship (`type="one"`) to an entity on another database, and each view-entity with a
+/// member on another database than its own group's: no foreign key is made across databases (the relationship is
+/// meant to be `one-nofk`, read with a query of its own), and a view's join runs on one connection, so it fails.
+fn warn_cross_database(facade: &EntityFacade) {
+    let model = facade.inner.model.model();
+    for entity in model.entities() {
+        let group = entity.group.as_deref();
+        if entity.is_view {
+            let elsewhere: Vec<&str> = entity
+                .member_entities
+                .iter()
+                .filter_map(|member| model.entity(&member.entity_name).ok())
+                .filter(|member| !facade.same_database(group, member.group.as_deref()))
+                .map(|member| member.full_name.as_str())
+                .collect();
+            if !elsewhere.is_empty() {
+                tracing::warn!(
+                    "View-entity {} has members on another database ({}): a join cannot span databases",
+                    entity.full_name,
+                    elsewhere.join(", ")
+                );
+            }
+            continue;
+        }
+        for relationship in &entity.relationships {
+            if relationship.is_auto_reverse || relationship.relationship_type != "one" {
+                continue;
+            }
+            let Ok(related) = model.entity(&relationship.related) else {
+                continue;
+            };
+            if !related.is_view && !facade.same_database(group, related.group.as_deref()) {
+                tracing::warn!(
+                    "Relationship {} of entity {} is to {}, on another database: no foreign key is made there; make it one-nofk and read it with a query of its own",
+                    relationship.name,
+                    entity.full_name,
+                    related.full_name
+                );
+            }
+        }
+    }
+}
+
 /// The entity's full name, and the member entity names when it is a view.
 fn view_members(facade: &EntityFacade, entity_name: &str) -> Result<(String, Option<Vec<String>>), Error> {
     facade.with_entity(entity_name, |entity, _, _| {
@@ -590,6 +633,7 @@ impl EntityDbMeta<'_> {
 
     /// Create every non-view entity.
     pub fn check_all(&self) -> Result<(), Error> {
+        warn_cross_database(self.facade);
         let owned: Vec<String> = self
             .facade
             .inner
@@ -1182,6 +1226,10 @@ fn ensure_fks(
                 counts.errors += 1;
                 continue;
             };
+            // No foreign key across databases: the startup check warns of the relationship ([`warn_cross_database`]).
+            if !facade.same_database(entity.group.as_deref(), related.group.as_deref()) {
+                continue;
+            }
             // A key Java made under another name (MySQL's `name_fk`, P3-11) is the same key: its columns are there.
             if fk_columns_exist(fk_columns, entity, relationship, related) {
                 continue;
@@ -1467,3 +1515,7 @@ fn has_name(dialect: &Dialect, names: &[String], want: &str) -> bool {
     names.iter().any(|name| name == want)
         || (!dialect.name.starts_with("postgres") && names.iter().any(|name| name.eq_ignore_ascii_case(want)))
 }
+
+#[cfg(test)]
+#[path = "meta_tests.rs"]
+mod tests;

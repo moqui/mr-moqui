@@ -1,0 +1,66 @@
+[
+  {
+    "doc": "eca/entity/ShopEntities.eecas.md#1",
+    "text": "flowchart LR\n    eeca_ShopOrderPlaced(\"eeca ShopOrderPlaced\")\n    ShopOrder[\"ShopOrder\"]\n    get_Order>\"get#35;Order\"]\n    ShopOrder --> eeca_ShopOrderPlaced\n    eeca_ShopOrderPlaced --> get_Order"
+  },
+  {
+    "doc": "eca/service/shop/OrderServices.secas.md#1",
+    "text": "flowchart LR\n    seca_ShopOrderCreated(\"seca ShopOrderCreated\")\n    create_Order[\"create#35;Order\"]\n    get_Order>\"get#35;Order\"]\n    create_Order -->|\"post-service\"| seca_ShopOrderCreated\n    seca_ShopOrderCreated --> get_Order"
+  },
+  {
+    "doc": "entity/shop/order/README.md#1",
+    "text": "erDiagram\n    ShopOrder {\n        id orderId PK\n        id statusId FK\n    }\n    ShopOrderAndItem {\n    }\n    ShopOrderItem {\n        id orderId PK, FK\n        id orderItemSeqId PK\n    }\n    StatusItem {\n    }\n    ShopOrder }o--|| StatusItem : \"Order\"\n    ShopOrderItem }o--|| ShopOrder : \"\""
+  },
+  {
+    "doc": "entity/shop/order/ShopOrder.md#1",
+    "text": "erDiagram\n    ShopOrder {\n        id orderId PK\n        id statusId FK\n    }\n    StatusItem {\n    }\n    ShopOrderItem {\n    }\n    ShopOrder }o--|| StatusItem : \"Order\"\n    ShopOrder ||--o{ ShopOrderItem : \"\""
+  },
+  {
+    "doc": "entity/shop/order/ShopOrder.md#2",
+    "text": "flowchart LR\n    center[[\"ShopOrder\"]]\n    subgraph used_by_1[\"Screens (1)\"]\n        direction TB\n        used_by_1_1[\"Orders\"]\n    end\n    used_by_1 --> center\n    subgraph used_by_2[\"Services (2)\"]\n        direction TB\n        used_by_2_1[\"create#35;Order\"]\n        used_by_2_2[\"get#35;Order\"]\n    end\n    used_by_2 --> center\n    subgraph used_by_3[\"Entities (2)\"]\n        direction TB\n        used_by_3_1[\"ShopOrderAndItem\"]\n        used_by_3_2[\"ShopOrderItem\"]\n    end\n    used_by_3 --> center\n    subgraph used_by_4[\"ECA rules (1)\"]\n        direction TB\n        used_by_4_1[\"ShopEntities.eecas\"]\n    end\n    used_by_4 --> center\n    subgraph used_by_5[\"REST APIs (1)\"]\n        direction TB\n        used_by_5_1[\"shop\"]\n    end\n    used_by_5 --> center\n    subgraph uses_1[\"Entities (2)\"]\n        direction TB\n        uses_1_1[\"ShopOrderItem\"]\n        uses_1_2[\"StatusItem\"]\n    end\n    center --> uses_1"
+  },
+  {
+    "doc": "entity/shop/order/ShopOrderAndItem.md#1",
+    "text": "flowchart LR\n    center[[\"ShopOrderAndItem\"]]\n    subgraph uses_1[\"Entities (2)\"]\n        direction TB\n        uses_1_1[\"ShopOrder\"]\n        uses_1_2[\"ShopOrderItem\"]\n    end\n    center --> uses_1"
+  },
+  {
+    "doc": "entity/shop/order/ShopOrderItem.md#1",
+    "text": "erDiagram\n    ShopOrderItem {\n        id orderId PK, FK\n        id orderItemSeqId PK\n    }\n    ShopOrder {\n    }\n    ShopOrderItem }o--|| ShopOrder : \"\""
+  },
+  {
+    "doc": "entity/shop/order/ShopOrderItem.md#2",
+    "text": "flowchart LR\n    center[[\"ShopOrderItem\"]]\n    subgraph used_by_1[\"Entities (2)\"]\n        direction TB\n        used_by_1_1[\"ShopOrder\"]\n        used_by_1_2[\"ShopOrderAndItem\"]\n    end\n    used_by_1 --> center\n    subgraph uses_1[\"Entities (1)\"]\n        direction TB\n        uses_1_1[\"ShopOrder\"]\n    end\n    center --> uses_1"
+  },
+  {
+    "doc": "rest/shop.md#1",
+    "text": "flowchart LR\n    shop[[\"shop\"]]\n    orders___GET_POST[\"orders · GET POST\"]\n    n_orderId____GET[\"{orderId} · GET\"]\n    shop --> orders___GET_POST\n    orders___GET_POST --> n_orderId____GET"
+  },
+  {
+    "doc": "screen/Shop.md#1",
+    "text": "flowchart LR\n    center[[\"Shop\"]]\n    subgraph uses_1[\"Screens (1)\"]\n        direction TB\n        uses_1_1[\"Orders\"]\n    end\n    center --> uses_1"
+  },
+  {
+    "doc": "screen/Shop/Orders.autodoc-shop.md#1",
+    "text": "flowchart LR\n    center[[\"Orders\"]]\n    subgraph used_by_1[\"Screens (1)\"]\n        direction TB\n        used_by_1_1[\"Shop\"]\n    end\n    used_by_1 --> center\n    subgraph uses_1[\"Services (1)\"]\n        direction TB\n        uses_1_1[\"create#35;Order\"]\n    end\n    center --> uses_1\n    subgraph uses_2[\"Entities (1)\"]\n        direction TB\n        uses_2_1[\"ShopOrder\"]\n    end\n    center --> uses_2"
+  },
+  {
+    "doc": "screen/Shop/Orders.autodoc-site.md#1",
+    "text": "flowchart LR\n    center[[\"Orders\"]]"
+  },
+  {
+    "doc": "service/shop/OrderServices/create-Order.md#1",
+    "text": "flowchart LR\n    center[[\"create#35;Order\"]]\n    subgraph used_by_1[\"Screens (1)\"]\n        direction TB\n        used_by_1_1[\"Orders\"]\n    end\n    used_by_1 --> center\n    subgraph used_by_2[\"ECA rules (1)\"]\n        direction TB\n        used_by_2_1[\"OrderServices.secas\"]\n    end\n    used_by_2 --> center\n    subgraph used_by_3[\"REST APIs (1)\"]\n        direction TB\n        used_by_3_1[\"shop\"]\n    end\n    used_by_3 --> center\n    subgraph uses_1[\"Services (1)\"]\n        direction TB\n        uses_1_1[\"define#35;OrderInfo\"]\n    end\n    center --> uses_1\n    subgraph uses_2[\"Entities (1)\"]\n        direction TB\n        uses_2_1[\"ShopOrder\"]\n    end\n    center --> uses_2"
+  },
+  {
+    "doc": "service/shop/OrderServices/define-OrderInfo.md#1",
+    "text": "flowchart LR\n    center[[\"define#35;OrderInfo\"]]\n    subgraph used_by_1[\"Services (1)\"]\n        direction TB\n        used_by_1_1[\"create#35;Order\"]\n    end\n    used_by_1 --> center"
+  },
+  {
+    "doc": "service/shop/OrderServices/get-Order.md#1",
+    "text": "flowchart LR\n    center[[\"get#35;Order\"]]\n    subgraph used_by_1[\"ECA rules (2)\"]\n        direction TB\n        used_by_1_1[\"OrderServices.secas\"]\n        used_by_1_2[\"ShopEntities.eecas\"]\n    end\n    used_by_1 --> center\n    subgraph used_by_2[\"REST APIs (1)\"]\n        direction TB\n        used_by_2_1[\"shop\"]\n    end\n    used_by_2 --> center\n    subgraph uses_1[\"Entities (1)\"]\n        direction TB\n        uses_1_1[\"ShopOrder\"]\n    end\n    center --> uses_1"
+  },
+  {
+    "doc": "service/shop/README.md#1",
+    "text": "classDiagram\n    class OrderServices[\"OrderServices\"] {\n        +define_OrderInfo()\n        +create_Order()\n        +get_Order()\n    }\n    class define_OrderInfo[\"define#35;OrderInfo\"] {\n        <<interface>>\n    }\n    define_OrderInfo <|.. OrderServices"
+  }
+]

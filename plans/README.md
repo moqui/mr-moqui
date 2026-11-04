@@ -24,7 +24,11 @@ Design, status and review documents for MR Moqui. User guides for built features
 
 **After performance: monitoring**
 - [Monitoring.md](Monitoring.md): the monitoring, diagnosis and recovery requirements, the architecture, the M1–M7 plan (built: telemetry pipeline and indexes, OTLP in and out, the Monitor and Dashboards apps) and the Later stages. Guide: [Monitoring](../docs/tools/Monitoring.md).
-- [Monitor-Settings.md](Monitor-Settings.md): plan for Monitor › Settings, in-memory overrides of log levels and telemetry settings that expire on their own, with the on-disk conf values always shown and a revert to them.
+- [Monitor-Settings.md](Monitor-Settings.md): Monitor › Settings (built; the live dev-server check is open), in-memory overrides of log levels and telemetry settings that expire on their own, with the on-disk conf values always shown and a revert to them.
+
+**Dev tools**
+- [design-dev-aide.md](design-dev-aide.md): Dev AIDE, the assisted IDE at `/qapps/dev`: workspace, editor, git, live reload, the artifact index and browser, the entity modeler, service writer and screen builder, and the dev agent.
+- [Autodoc.md](Autodoc.md): generated Markdown docs for entities, services, screens, ECA rules and REST APIs, by template, with Mermaid diagrams; shown in the Dev AIDE, exported to a repository, and `moqui autodoc`.
 
 **Maps**
 - [Maps.md](Maps.md): shared OpenLayers Maps app and address dialogs in Tools, OpenFreeMap, ResourceFacade-backed PMTiles, global/personal configuration, postal-code coordinate lookup and Rust server work for BOSS, HOME and other consumers.

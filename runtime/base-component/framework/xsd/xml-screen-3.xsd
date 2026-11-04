@@ -1322,8 +1322,9 @@ along with this software (see the LICENSE.md file). If not, see
         Markdown text shown as HTML, such as a description or a wiki page: in qvt an m-markdown, which renders it with Marked
         (GitHub flavored) and cleans it with DOMPurify in the browser, gives each heading an id from its text, resolves a
         relative link from base-path, opens a link to another site in a new tab and follows an application link in the shell,
-        with tables and code blocks that read in dark mode; bound over the screen's data in a server-static screen. In html
-        and the text modes the text as it is. The attributes may hold ${} expressions.
+        with tables and code blocks that read in dark mode, and draws a mermaid fenced block as its diagram (Mermaid with
+        strict security; a diagram that does not parse stays as its text); bound over the screen's data in a server-static
+        screen. In html and the text modes the text as it is, mermaid blocks included. The attributes may hold ${} expressions.
     </xs:documentation></xs:annotation><xs:complexType>
         <xs:attribute name="id" type="xs:string"/>
         <xs:attribute name="text" type="xs:string" use="required"><xs:annotation><xs:documentation>The markdown, such as
@@ -1336,6 +1337,8 @@ along with this software (see the LICENSE.md file). If not, see
             is left out (the screen shows the title already).</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="wiki-links" type="boolean" default="false"><xs:annotation><xs:documentation>[[path]] and
             [[path|text]] are links to wiki:path.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="copy" type="boolean" default="false"><xs:annotation><xs:documentation>An icon button in the
+            top right corner that copies the markdown text (qvt).</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="condition" type="xs:string"/>
         <xs:attribute name="style" type="xs:string"/>
     </xs:complexType></xs:element>

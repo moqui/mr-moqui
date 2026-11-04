@@ -22,6 +22,10 @@ The assisted IDE of mr-moqui (`plans/design-dev-aide.md`), at `/qapps/dev` on a 
   sentences, chips that edit an attribute, the palette, the generated JavaScript), its SECA rules, and Try in sim with the
   rows it would write, Save as spec and Run spec (in the sim). **ECA Rules** lists the active rules of each kind with their
   files; a rules file opens in the ECA view.
+- **Docs** (Artifacts › Docs) is the Markdown doc of any artifact, package or tree, made from its template as the server
+  has it now, with Mermaid diagrams and a button that copies it; the entity modeler and service writer have a Doc tab,
+  the screen builder a Doc panel. **Export docs** writes a tree of them into a repository (`autodoc/` by default), as
+  `moqui autodoc` does ([docs/dev/Autodoc.md](../../../docs/dev/Autodoc.md)).
 - **Settings** has the site components, "Allow editing upstream components", the roots' labels, read-only flags and
   publish branches, more directories, and network git on a shared dev server.
 
@@ -40,9 +44,9 @@ Who may use it (`data/DevAideSecurityData.xml`):
 Its Rust crate is linked into the Dev and Debug packages (the `devtools` feature). In another package the screens load
 and the services say they are not built in.
 
-- **Tests:** `./moq test dev-aide` (the screens), `cargo test -p dev-aide` (confinement, the git parsers),
+- **Tests:** `./moq test dev-aide` (the screens, the docs), `cargo test -p dev-aide` (confinement, the git parsers),
   `moqui test-client runtime/dev-component/dev-aide --offline` (the client), `cargo test -p moqui-host --test it devaide` (saves, the lock and tiers, git and Publish on scratch
-  repositories, an entity save's relink), and `cargo test -p moqui-host --test gate3_browser the_workspace` and
+  repositories, an entity save's relink, a docs export), and `cargo test -p moqui-host --test gate3_browser the_workspace` and
   `the_entity_modeler`, `the_screen_builder` and `the_service_writer` (Chromium). `test/vectors/` are the visual views' operations, which the page tests make and the
   crate's tests apply (`MOQUI_REGENERATE_VECTORS=1 cargo test -p dev-aide` writes their outlines and texts again).
 - **Screenshots:** `MOQUI_DEV_SHOTS=<dir>` writes them in light, dark and 390 px.

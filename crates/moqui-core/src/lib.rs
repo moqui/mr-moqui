@@ -27,6 +27,7 @@ pub mod entity;
 pub mod entity_hooks;
 pub mod extension;
 pub mod l10n;
+pub mod live_settings;
 pub mod llm_hooks;
 pub mod native;
 pub mod notify;

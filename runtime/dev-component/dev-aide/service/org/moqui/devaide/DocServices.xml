@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Autodoc in the Dev AIDE (plans/Autodoc.md): one doc of an artifact as the server has it now, for the Docs screen and
+    the editors' Doc tabs (the view tier), and a tree of docs exported into a root (the extend tier, with the checks of
+    every save). -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="get" noun="ArtifactDoc" type="rust" location="dev_aide::docs::get_artifact_doc" allow-remote="false" read-only="true">
+        <description>The Markdown doc at a tree path (entity/mantle/order/OrderHeader.md, entity/mantle/order/README.md,
+            README.md) or of an artifact (entity:mantle.order.OrderHeader; a field's or transition's id opens its entity's
+            or screen's doc), made from its template now, with the way up and the links to its source and the Artifact
+            Browser.</description>
+        <in-parameters>
+            <parameter name="docPath"/>
+            <parameter name="artifactId"/>
+            <parameter name="includeSource" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="docPath"/>
+            <parameter name="title"/>
+            <parameter name="kind"/>
+            <parameter name="page"/>
+            <parameter name="artifactId"/>
+            <parameter name="markdown"/>
+            <parameter name="basePath"/>
+            <parameter name="crumbs" type="List"/>
+            <parameter name="workspaceUrl"/>
+            <parameter name="browserUrl"/>
+        </out-parameters>
+    </service>
+    <service verb="export" noun="ArtifactDocs" type="rust" location="dev_aide::docs::export_artifact_docs" allow-remote="false">
+        <description>Write the docs of the kinds, components and packages given (all when empty) under a directory of a root
+            (autodoc by default): only the files whose text changed, and .autodoc.json listing them; with removeStale, the
+            files it lists whose artifacts are gone. Refused where a save would be (the view tier, a read-only root, an
+            upstream component while the lock is on); a file that fails is reported and the others are written.</description>
+        <in-parameters>
+            <parameter name="rootId" required="true"/>
+            <parameter name="path" default-value="autodoc"/>
+            <parameter name="kinds" type="Object"/>
+            <parameter name="components" type="Object"/>
+            <parameter name="packages" type="Object"/>
+            <parameter name="includeSource" type="Boolean" default="false"/>
+            <parameter name="removeStale" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="docCount" type="Integer"/>
+            <parameter name="written" type="Integer"/>
+            <parameter name="unchanged" type="Integer"/>
+            <parameter name="removed" type="Integer"/>
+            <parameter name="failures" type="List"/>
+            <parameter name="path"/>
+            <parameter name="url"/>
+        </out-parameters>
+    </service>
+</services>

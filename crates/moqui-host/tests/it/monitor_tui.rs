@@ -204,6 +204,7 @@ fn every_monitoring_screen_has_a_working_native_view_and_interactions() {
         ("Monitor/Incidents", "/apps/monitor/Incidents"),
         ("Monitor/IncidentDetail", "/apps/monitor/IncidentDetail?incidentId=TUI_INCIDENT"),
         ("Monitor/Recovery", "/apps/monitor/Recovery"),
+        ("Monitor/Settings", "/apps/monitor/Settings"),
         ("Monitor/Artifacts", "/apps/monitor/Artifacts?from=now-1h&thru=now"),
         (
             "Monitor/Traces",

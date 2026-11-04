@@ -171,16 +171,36 @@ pub fn caps(conf_text: &str) -> (u32, u32) {
     )
 }
 
-/// Errors when `(request cap + service cap) * 2` does not fit the default group's pool, with room for one agent
-/// worker more in a binary that links the agent runtime (crate::llm_hooks): the agent pool takes as many of its `max-concurrent-runs` as the
-/// rest of the pool leaves ([`spare_connections`]), at least one.
+/// Errors when `(request cap + service cap) * 2` does not fit the default group's pool, or the pool of a group linked
+/// to it (a database of its own that each transaction spans, such as `content`), with room for one agent worker more
+/// in a binary that links the agent runtime (crate::llm_hooks): the agent pool takes as many of its
+/// `max-concurrent-runs` as the rest of the pool leaves ([`spare_connections`]), at least one.
 pub fn check_serve_caps(factory: &ExecutionContextFactory) -> Result<(), Error> {
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
     let (request_cap, service_cap) = caps(factory.conf_text());
-    let manager = default_manager(&facade)?;
     let agent_workers = u32::from(crate::llm_hooks::linked());
-    manager.check_caps_with(request_cap, service_cap, agent_workers)?;
+    for (group, manager) in linked_managers(&facade)? {
+        manager
+            .check_caps_with(request_cap, service_cap, agent_workers)
+            .map_err(|err| Error::new(format!("datasource {group}: {err}")))?;
+    }
     Ok(())
+}
+
+/// The default group's manager and the managers linked to it, each with the name of a group it serves.
+fn linked_managers(
+    facade: &crate::entity::EntityFacade,
+) -> Result<Vec<(String, crate::transaction::TransactionManager)>, Error> {
+    let default = default_manager(facade)?;
+    let mut out = vec![(facade.default_group().to_string(), default.clone())];
+    for manager in default.linked() {
+        let group = facade
+            .groups()
+            .find(|(_, _, transactions)| transactions.shares_stack(&manager))
+            .map_or_else(String::new, |(name, _, _)| name.to_string());
+        out.push((group, manager));
+    }
+    Ok(out)
 }
 
 fn default_manager(facade: &crate::entity::EntityFacade) -> Result<crate::transaction::TransactionManager, Error> {
@@ -193,13 +213,16 @@ fn default_manager(facade: &crate::entity::EntityFacade) -> Result<crate::transa
 }
 
 /// The connections of the default group's pool that the request and service workers leave (`max - reserve` less
-/// `(request cap + service cap) * 2`); `None` with no entity facade.
+/// `(request cap + service cap) * 2`), the fewest of it and the pools linked to it; `None` with no entity facade.
 pub fn spare_connections(factory: &ExecutionContextFactory) -> Option<u32> {
     let facade = factory.entity()?;
     let (request_cap, service_cap) = caps(factory.conf_text());
-    default_manager(&facade)
-        .ok()
-        .map(|manager| manager.spare_connections(request_cap, service_cap))
+    linked_managers(&facade).ok().and_then(|managers| {
+        managers
+            .iter()
+            .map(|(_, manager)| manager.spare_connections(request_cap, service_cap))
+            .min()
+    })
 }
 
 fn pack<T, F>(factory: Arc<ExecutionContextFactory>, job: F, tx: Sender<Result<T, Error>>) -> Work

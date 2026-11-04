@@ -386,6 +386,7 @@ fn accept_topic(posts: &Mutex<Vec<String>>, topic: &str, body: &[u8]) -> Result<
         moqui_core::notify::COLLAB_UPDATE,
         moqui_core::notify::SESSION_END,
         moqui_core::notify::RTC_SIGNAL,
+        moqui_core::notify::RUNTIME_SETTINGS,
     ]
     .contains(&topic)
     {
@@ -415,6 +416,7 @@ fn cluster_topic<'a>(method: &str, path: &'a str) -> Option<&'a str> {
         moqui_core::notify::COLLAB_UPDATE,
         moqui_core::notify::SESSION_END,
         moqui_core::notify::RTC_SIGNAL,
+        moqui_core::notify::RUNTIME_SETTINGS,
     ]
     .contains(&topic)
     {

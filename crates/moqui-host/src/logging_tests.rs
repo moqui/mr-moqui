@@ -344,3 +344,40 @@ fn strip_ansi(text: &str) -> String {
     out.push_str(rest);
     out
 }
+
+#[test]
+fn a_target_rule_lets_its_debug_lines_through_until_it_is_reverted() {
+    use moqui_core::live_settings::{self, catalog, Change};
+    install();
+    let lines = tap(4096);
+    let target = "moqui_settings_test";
+    let mine = |lines: &std::sync::mpsc::Receiver<String>, part: &str| {
+        lines.try_iter().filter(|line| line.contains(part)).count()
+    };
+    tracing::debug!(target: "moqui_settings_test", "settings-before");
+    assert_eq!(mine(&lines, "settings-before"), 0, "DEBUG is off at the default level");
+
+    let context = moqui_core::context::ExecutionContextFactory::test_context();
+    let factory = context.factory();
+    let key = catalog::target_key(target);
+    let change = Change {
+        key: &key,
+        value: "debug",
+        minutes: 15,
+        reason: "a logging test",
+        user: "admin",
+    };
+    live_settings::set(factory, &change).unwrap();
+    tracing::debug!(target: "moqui_settings_test", "settings-during");
+    tracing::trace!(target: "moqui_settings_test", "settings-trace");
+    tracing::debug!(target: "moqui_settings_other", "settings-elsewhere");
+    tracing::info!(target: "rsipstack::transport", "settings-sip");
+    assert_eq!(mine(&lines, "settings-during"), 1, "the rule's target takes DEBUG");
+    assert_eq!(mine(&lines, "settings-trace"), 0);
+    assert_eq!(mine(&lines, "settings-elsewhere"), 0, "other targets stay at the global level");
+    assert_eq!(mine(&lines, "settings-sip"), 0, "rsipstack is held at WARN");
+
+    live_settings::revert(factory, &key, "admin").unwrap();
+    tracing::debug!(target: "moqui_settings_test", "settings-after");
+    assert_eq!(mine(&lines, "settings-after"), 0, "the revert stops them");
+}

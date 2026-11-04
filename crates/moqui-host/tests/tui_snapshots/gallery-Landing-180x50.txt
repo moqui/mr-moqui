@@ -7,7 +7,7 @@
      360                 │ ┃ work-item entity; the status chips are tonal anchor-button links until the m-tonal chip exists.                                                      │
      Task                │ └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
      Board               │ ┌─ All enumerations ───┐ ┌─ Screen Theme Resour─┐
-     Calendar            │ │ 461                  │ │ 30                   │
+     Calendar            │ │ 466                  │ │ 33                   │
      Split               │ └──────────────────────┘ └──────────────────────┘
      Settings            │                          ┌─ DB Form Field Type ─┐
      Wizard              │                          │ 20                   │
@@ -27,12 +27,12 @@
                          │ │ ─────────────────────────────────────────────────────────────────────────────────    │ └────────────────────────────────────────────────────────────┘
                          │ │   Review Contrived                      Example Type                   Today         │ ┌─ Enumerations by type ─────────────────────────────────────┐
                          │ │   Translate Inspired                    Example Type                   Tomorrow      │ │                           Enumerations                     │
-                         │ │   Approve Made Up                       Example Type                   Yesterday     │ │ Screen Theme Resource T…            30  ██████████████████ │
-                         │ │   Retire Real World                     Example Type                   Fri           │ │ DB Form Field Type                  20  ████████████       │
-                         │ │   Check QZ Print Enabled (true/false)   User Preference Key (optional) Mon           │ │ UOM Type                            16  ██████████         │
+                         │ │   Approve Made Up                       Example Type                   Yesterday     │ │ Screen Theme Resource T…            33  ██████████████████ │
+                         │ │   Retire Real World                     Example Type                   Fri           │ │ DB Form Field Type                  20  ███████████        │
+                         │ │   Check QZ Print Enabled (true/false)   User Preference Key (optional) Mon           │ │ UOM Type                            16  █████████          │
                          │ │   Describe QZ Active Label Printer Name User Preference Key (optional) Today         │ │ Entity Comparison Opera…            14  ████████           │
-                         │ │   Rows 1–6 of 6 · Page 1/1                                                           │ │ Geo Type                            13  ████████           │
-                         │ └──────────────────────────────────────────────────────────────────────────────────────┘ │ OpenID Connect JWS Algo…            13  ████████           │
+                         │ │   Rows 1–6 of 6 · Page 1/1                                                           │ │ Geo Type                            13  ███████            │
+                         │ └──────────────────────────────────────────────────────────────────────────────────────┘ │ OpenID Connect JWS Algo…            13  ███████            │
                          │ ┌─ Changed last ───────────────────────────────────────────────────────────────────────┐ │ Call End Reason                     12  ███████            │
                          │ │ All enumerations                                                                     │ │ Email Type                          12  ███████            │
                          │ │   Description                    Enum Type ID                   Last Updated Stamp   │ │ One series, one brand color; the table behind it is the    │

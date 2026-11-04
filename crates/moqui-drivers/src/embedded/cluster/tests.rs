@@ -703,6 +703,81 @@ fn save_db_round_trips_the_search_schema() {
     assert_eq!(rows[0].get("body"), Some(&Value::string("kept")));
 }
 
+/// Another database of the cluster (the content group's): created on first use, listed, and dumped and restored on its
+/// own; the dumps beside the main one are found by database name.
+#[test]
+fn a_second_database_is_created_listed_dumped_and_restored() {
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let (cluster, _driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    assert!(cluster.other_databases().unwrap().is_empty());
+    let content = cluster.database_driver("moqui_content").unwrap();
+    let mut conn = content.connect_postgres().unwrap();
+    conn.execute("CREATE TABLE kept (body text)", &[]).unwrap();
+    conn.execute("INSERT INTO kept (body) VALUES (?)", &[Value::string("content")])
+        .unwrap();
+    drop(conn);
+    // a second call finds it there
+    cluster.database_driver("moqui_content").unwrap();
+    assert_eq!(cluster.other_databases().unwrap(), vec!["moqui_content".to_string()]);
+    assert!(cluster.database_driver("bad name").is_err());
+    let target = cluster.tool_connect_database("moqui_content", "moqui_content");
+    assert_eq!(target.database, "moqui_content");
+
+    let dump = dir.join("moqui_content.dump");
+    cluster.save_database("moqui_content", &dump).unwrap();
+    let mut conn = content.connect_postgres().unwrap();
+    conn.execute("DROP TABLE kept", &[]).unwrap();
+    drop(conn);
+    cluster.load_database("moqui_content", &dump).unwrap();
+    let mut conn = content.connect_postgres().unwrap();
+    let rows = conn.query("SELECT body FROM kept", &[]).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].get("body"), Some(&Value::string("content")));
+
+    let saves = dir.join("save");
+    std::fs::create_dir_all(&saves).unwrap();
+    for name in [
+        "moqui.dump",
+        "moqui_content.dump",
+        "moqui.dump.part",
+        "opensearch-data.tar.gz",
+        "bad-name.dump",
+        "moqui-20261103T101010Z-manual.dump",
+        "moqui_content-20261103T101010Z-manual.dump",
+        "moqui_content-20261102T020000Z-d.dump",
+    ] {
+        std::fs::write(saves.join(name), b"").unwrap();
+    }
+    assert_eq!(
+        sibling_dumps(&saves.join("moqui.dump")),
+        vec![("moqui_content".to_string(), saves.join("moqui_content.dump"))]
+    );
+    assert_eq!(
+        sibling_dumps(&saves.join("moqui-20261103T101010Z-manual.dump")),
+        vec![(
+            "moqui_content".to_string(),
+            saves.join("moqui_content-20261103T101010Z-manual.dump")
+        )]
+    );
+    // the dump being written names the file it becomes
+    assert_eq!(
+        database_dump_path(&saves.join("moqui.dump.part"), "moqui_content"),
+        saves.join("moqui_content.dump")
+    );
+    assert_eq!(
+        database_dump_path(
+            &saves.join("moqui-20261103T101010Z-manual.dump.partial"),
+            "moqui_content"
+        ),
+        saves.join("moqui_content-20261103T101010Z-manual.dump")
+    );
+    assert_eq!(
+        database_dump_path(&saves.join("backup.dump"), "moqui_content"),
+        saves.join("moqui_content-backup.dump")
+    );
+}
+
 fn start_error(dir: &Path) -> moqui_lib::error::Error {
     match EmbeddedCluster::start(dir, 20) {
         Err(err) => err,

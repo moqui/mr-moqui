@@ -123,3 +123,18 @@ test("a view offered by a file's extension, as a .qvue's Design", () => {
     assert.deepEqual(pure.viewsFor(specs, "screen/A/Board.qvue", null).map((view) => view.name), ["text", "qvue"]);
     assert.deepEqual(pure.viewsFor(specs, "screen/A/Board.xml", "screen").map((view) => view.name), ["text", "screen"]);
 });
+
+test("a doc's link to another doc is its path after the Docs screen's", () => {
+    assert.equal(pure.docPathOfLink("/qapps/dev/Artifacts/Doc/entity/mantle/order/OrderItem.md"), "entity/mantle/order/OrderItem.md");
+    assert.equal(pure.docPathOfLink("/qapps/dev/Artifacts/Doc/service/a/B/place-Order.md#md-uses"), "service/a/B/place-Order.md");
+    assert.equal(pure.docPathOfLink("/qapps/dev/Artifacts/Doc/screen/My%20Dir/A.md?x=1"), "screen/My Dir/A.md");
+    assert.equal(pure.docPathOfLink("/qapps/dev/Artifacts/Doc/entity/a/"), null, "a directory is not a doc");
+    assert.equal(pure.docPathOfLink("/qapps/dev/Workspace?path=a.md"), null);
+    assert.equal(pure.docPathOfLink(""), null);
+});
+
+test("the artifact doc component is registered with the workspace", () => {
+    const comp = moqui.devAide.components["m-dev-artifact-doc"];
+    assert.ok(comp && comp.template.indexOf("copyable") > 0, "its markdown has the copy button");
+    assert.deepEqual(Object.keys(comp.props).sort(), ["artifactId", "base", "docPath", "stamp"]);
+});

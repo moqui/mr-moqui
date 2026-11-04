@@ -387,7 +387,8 @@ Either way, concurrent calls for one new key do not fail on it
 Without `entity_ds_db_conf` (or with Moqui Java's `h2`), the server runs its own Postgres. Every package but Enterprise
 embeds it.
 
-- **Data**: `runtime/db/embedded`.
+- **Data**: `runtime/db/embedded`, with two databases: `moqui` for the entities and `moqui_content` for the stored
+  files ([Content database](#content-database)).
 - **Binaries**: unpacked from the moqui binary on the first start, into `runtime/install/postgres` or under
   `MOQUI_INSTALL`.
 - **Connections**: on Unix there is no TCP port. The server connects through a socket in the data directory, so
@@ -411,6 +412,8 @@ stored ([MySQL-Issues](../plans/MySQL-Issues.md)).
 | `entity_ds_sslrootcert` | `/etc/moqui/db-ca.pem` | A PEM file of the authorities to trust instead of the public ones |
 | `entity_ds_crypt_pass` | generated | The key of encrypted fields; it must move with the database |
 
+The content datasource has its own `content_ds_*` properties ([Content database](#content-database)).
+
 Each connection to an external database sets the datasource's transaction isolation level for its session: the
 `inline-jdbc` `isolation-level`, else the database's `default-isolation-level`, `ReadCommitted` for Postgres and MySQL
 in `MoquiDefaultConf.xml`, as Moqui Java does. `None` leaves the server's default (InnoDB's is `REPEATABLE READ`). The
@@ -418,6 +421,45 @@ code assumes READ COMMITTED: at REPEATABLE READ or SERIALIZABLE, Postgres fails 
 conflicting row the transaction's snapshot does not see, and MySQL takes gap locks that two creates of one missing row
 can deadlock on. On Postgres a level other than `ReadCommitted` is logged as a warning at startup; the embedded database
 does not set it and runs at READ COMMITTED.
+
+### Content database
+
+The stored bytes of files are in a database of their own, apart from the busy business rows. This is the `content`
+entity group:
+
+- `DbResource`, `DbResourceFile` and `DbResourceFileHistory`, behind `dbresource://`;
+- the content blobs (`ContentBlob*`), which hold every file over 64 KiB;
+- the objects, refs and LFS objects of `db` git repositories (`GitObject`, `GitRef`, `GitLfsObject`).
+
+Mail attachments, chat files, call recordings, voicemail, drives, wiki pages and other content files are all
+`dbresource://` files, so they are all in it. The rows that point at a file keep only its location.
+
+Only the resource implementations (`dbresource://`, the blob store, git) read and write these entities. Code everywhere
+else uses `ec.resource`. No foreign key or view-entity crosses between the content database and the main one.
+
+| `content_ds_db_conf` | Where the content database is |
+|---|---|
+| empty, embedded transactional database (default) | the `content_ds_database` database (`moqui_content`) in the embedded cluster |
+| empty, external transactional database | the transactional database itself, with no second database |
+| `postgres`, `mysql` or `mysql8` | `content_ds_database` on that server |
+
+For a server of its own, set `content_ds_host`, `content_ds_port`, `content_ds_user`, `content_ds_password`,
+`content_ds_sslmode` and `content_ds_sslrootcert`. Each one left empty takes its `entity_ds_` value. So setting only
+`content_ds_db_conf=postgres` puts the content in a `moqui_content` database on the transactional server, which must
+exist. `content_ds_schema` names a schema, as `entity_ds_schema` does. A MySQL content database has the open MySQL
+issues above.
+
+One transaction spans both databases, as Moqui Java's transaction spans every datasource, but without two-phase commit:
+
+- **Commit order**: the content database commits first, then the transactional one. A failure between the two commits
+  leaves a file that no row names (a blob of it goes in the blob cleanup), never a row naming a file that is not
+  there.
+- **Rollback**: a rollback, or an error in either database, rolls back both.
+- **The edge case**: a file deleted in a transaction whose transactional commit then fails stays deleted.
+
+Each transaction can hold a connection to each database, so the content pool is the size of the transactional one (90).
+The embedded cluster makes room for both. A cluster of servers shares the content database as it shares the
+transactional one, so it needs both external.
 
 ### Search
 
@@ -433,10 +475,10 @@ cluster when the entity database is not Postgres. OpenSearch is optional:
 
 ### Snapshots
 
-`./moq save-db [name]` writes the embedded database to `runtime/save/<name>/moqui.dump`. It also writes the OpenSearch
-data when there is any. `./moq reload-save [name]` empties the database and restores that save. `./moq load-save -n
-<name> [types]` runs `clean-all`, loads, and saves. Stop the server before a restore. These work on the embedded
-database only; an external database has its own tools.
+`./moq save-db [name]` writes the embedded database to `runtime/save/<name>/moqui.dump`, and the content database beside
+it to `moqui_content.dump`. It also writes the OpenSearch data when there is any. `./moq reload-save [name]` empties the
+database and restores that save. `./moq load-save -n <name> [types]` runs `clean-all`, loads, and saves. Stop the server
+before a restore. These work on the embedded database only; an external database has its own tools.
 
 ### Backups
 
@@ -445,12 +487,14 @@ data; set it running on System › Service Jobs, or with `embedded_db_backup_sch
 (`false` pauses it). It runs daily at 02:00 and keeps 7 daily, 5 weekly and 12 monthly archives, and every yearly one,
 in `runtime/db/backup`, or the directory in `embedded_db_backup_dir`.
 
-- **Modes**: `backupMode=dump`, the default, writes one `pg_dump` file. `incremental` takes `pg_basebackup` fulls and
-  block incrementals.
+- **Modes**: `backupMode=dump`, the default, writes a `pg_dump` file of each database: `moqui-<stamp>-d.dump` and
+  `moqui_content-<stamp>-d.dump`, with the same stamp. `incremental` takes `pg_basebackup` fulls and block
+  incrementals of the whole cluster, both databases in one copy.
 - **Mirror**: archives can be copied to an SFTP server. Set `sendUrl`, the user and a password or key on the
   `EmbeddedDbBackup` system message remote.
-- **Restore**: restore a dump with `moqui load-save` while the server is stopped. A physical backup is put together
-  with `pg_combinebackup`.
+- **Restore**: restore a dump with `moqui load-save` while the server is stopped. It also restores the content dump
+  of the same name beside it (`moqui_content-<stamp>-d.dump` for `moqui-<stamp>-d.dump`). A physical backup is put
+  together with `pg_combinebackup`.
 - **Not included**: `.env` and the field-encryption key are not in the archive. Keep them with the backup.
 
 The details are in [plans/archive/PostgresBackup.md](../plans/archive/PostgresBackup.md). The job does not back up an
@@ -927,7 +971,8 @@ Sessions are rows in the shared database, so any member can serve any request.
 ### Requirements
 
 - **One external database.** Postgres, or MySQL with the default transport. The Enterprise package has no embedded
-  Postgres, so a member cannot start on a database of its own by mistake.
+  Postgres, so a member cannot start on a database of its own by mistake. The content database shares it unless
+  `content_ds_db_conf` names another ([Content database](#content-database)).
 - **The same secrets on every member**: `session_cookie_key`, `cluster_tls_cert`, `cluster_tls_key` and
   `entity_ds_crypt_pass`. Startup fails when a live member has a different session key or certificate, with
   "session_cookie_key does not match a live cluster member" or "cluster_tls_cert does not match a live cluster member".

@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use moqui_core::driver::DbDriver;
+use moqui_core::driver::{DbConnection as _, DbDriver};
 use moqui_core::transaction::PoolConfig;
 use moqui_lib::object::Value;
 
@@ -603,6 +603,143 @@ fn a_pipelined_data_file_commits_whole_or_fails_with_the_write_that_failed() {
         assert_eq!(count(prefix), 0, "{prefix}: the file rolled back");
     }
     assert_eq!(count("G"), 600);
+}
+
+/// The content group on a database of its own in the embedded cluster: its tables are made there and not in `moqui`,
+/// with the foreign keys among them and none to the transactional tables, and one transaction spans both databases.
+#[test]
+fn the_content_group_has_its_own_database_in_one_transaction() {
+    use moqui_core::entity::{EntityFacade, EntityGroup};
+    use moqui_core::transaction::{TransactionAttribute, TransactionManager};
+
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let content_driver = cluster.database_driver("moqui_content").unwrap();
+    let pool = || PoolConfig {
+        min: 0,
+        max: 4,
+        reserve: 1,
+        acquire_timeout: Duration::from_secs(30),
+        ..Default::default()
+    };
+    let main = TransactionManager::new(Arc::new(driver.clone()), pool()).unwrap();
+    let content = TransactionManager::new(Arc::new(content_driver.clone()), pool()).unwrap();
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let facade = EntityFacade::open(
+        &framework,
+        "transactional",
+        vec![
+            EntityGroup::new("transactional", "postgres", main.clone()),
+            EntityGroup::new("content", "postgres", content.clone()),
+        ],
+    )
+    .unwrap();
+    assert!(main.linked().iter().any(|linked| linked.shares_stack(&content)));
+    facade
+        .check_tables(&[
+            "moqui.test.TestEntity",
+            "moqui.resource.GitRepository",
+            "moqui.resource.DbResource",
+            "moqui.resource.DbResourceFile",
+            "moqui.resource.ContentBlob",
+            "moqui.resource.GitObject",
+        ])
+        .unwrap();
+    let tables = |driver: &super::super::postgres::PostgresDriver| -> Vec<String> {
+        let mut conn = driver.connect_postgres().unwrap();
+        let rows = conn
+            .query(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' ORDER BY table_name",
+                &[],
+            )
+            .unwrap();
+        rows.iter()
+            .filter_map(|row| {
+                row.get("table_name")
+                    .and_then(Value::as_str)
+                    .map(str::to_ascii_lowercase)
+            })
+            .collect()
+    };
+    let in_content = tables(&content_driver);
+    let in_main = tables(&driver);
+    for table in ["db_resource", "db_resource_file", "content_blob", "git_object"] {
+        assert!(
+            in_content.contains(&table.to_string()),
+            "{table} in moqui_content: {in_content:?}"
+        );
+        assert!(
+            !in_main.contains(&table.to_string()),
+            "{table} not in moqui: {in_main:?}"
+        );
+    }
+    assert!(in_main.contains(&"git_repository".to_string()) && in_main.contains(&"test_entity".to_string()));
+    let mut conn = content_driver.connect_postgres().unwrap();
+    let keys = conn
+        .query(
+            "SELECT cl.relname AS from_table, ref.relname AS to_table FROM pg_constraint c \
+             JOIN pg_class cl ON cl.oid = c.conrelid JOIN pg_class ref ON ref.oid = c.confrelid WHERE c.contype = 'f'",
+            &[],
+        )
+        .unwrap();
+    let keys: Vec<(String, String)> = keys
+        .iter()
+        .map(|row| {
+            let text = |name: &str| {
+                row.get(name)
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+            };
+            (text("from_table"), text("to_table"))
+        })
+        .collect();
+    assert!(
+        keys.contains(&("db_resource_file".to_string(), "db_resource".to_string())),
+        "{keys:?}"
+    );
+    drop(conn);
+
+    let write = |id: &str| -> Result<(), moqui_lib::error::Error> {
+        let mut row = facade.make_value("moqui.test.TestEntity")?;
+        row.set("testId", Value::string(id));
+        row.create(&facade)?;
+        let mut resource = facade.make_value("moqui.resource.DbResource")?;
+        resource.set("resourceId", Value::string(id));
+        resource.set("filename", Value::string(id));
+        resource.set("isFile", Value::string("N"));
+        resource.create(&facade)?;
+        Ok(())
+    };
+    let found = |entity: &str, field: &str, id: &str| {
+        facade
+            .find(entity)
+            .unwrap()
+            .eq(field, Value::string(id))
+            .one()
+            .unwrap()
+            .is_some()
+    };
+    let rolled_back = main.run(TransactionAttribute::UseOrBegin, None, || {
+        write("ROLLED")?;
+        Err::<(), _>(moqui_lib::error::Error::new("the business write fails"))
+    });
+    assert!(rolled_back.is_err());
+    assert!(!found("moqui.test.TestEntity", "testId", "ROLLED"));
+    assert!(
+        !found("moqui.resource.DbResource", "resourceId", "ROLLED"),
+        "the content row rolled back with it"
+    );
+    main.run(TransactionAttribute::UseOrBegin, None, || write("KEPT"))
+        .unwrap();
+    assert!(found("moqui.test.TestEntity", "testId", "KEPT"));
+    assert!(found("moqui.resource.DbResource", "resourceId", "KEPT"));
+    let mut conn = content_driver.connect_postgres().unwrap();
+    let rows = conn
+        .query("SELECT resource_id FROM db_resource WHERE resource_id = 'KEPT'", &[])
+        .unwrap();
+    assert_eq!(rows.len(), 1, "the row is in moqui_content");
 }
 
 fn stream_ids(facade: &moqui_core::entity::EntityFacade) -> Vec<String> {

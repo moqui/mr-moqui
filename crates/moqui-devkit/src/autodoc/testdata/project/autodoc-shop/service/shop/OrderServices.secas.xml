@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<secas>
+    <seca id="ShopOrderCreated" service="shop.OrderServices.create#Order" when="post-service">
+        <description>Read the new order.</description>
+        <condition><expression>orderId</expression></condition>
+        <actions><service-call name="shop.OrderServices.get#Order" in-map="{orderId: orderId}"/></actions>
+    </seca>
+</secas>

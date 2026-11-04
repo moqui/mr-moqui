@@ -21,6 +21,7 @@
 //! `makeFormListMultiMap`, `getFormListHeaderValues`, `getFormFieldValues`, form-list aggregation
 //! (`group-by`, `sub-list`, `show-total`), and saved finds.
 
+pub(crate) mod appearance;
 mod fields;
 mod forms;
 mod layout;

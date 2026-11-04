@@ -13,9 +13,10 @@
  */
 
 //! The Rust body of `org.moqui.impl.ElFinderServices.run#Command`, a port of `ElFinderConnector.groovy`: the elFinder
-//! 2.0 client-server commands over one volume rooted at `resourceRoot`. A `dbresource://` root reads and writes the
-//! `DbResource` rows. A `file`, `runtime`, `component` or `classpath` root is the directory the resource facade
-//! resolves it to. Any other scheme, `content://` included, is an error that names the location.
+//! 2.0 client-server commands over one volume rooted at `resourceRoot`. A `dbresource://` root, or a provider's such as
+//! `git://`, reads and writes through the resource facade. A `file`, `runtime`, `component` or `classpath` root is the
+//! directory the resource facade resolves it to. Any other scheme, `content://` included, is an error that names the
+//! location.
 //!
 //! A target is the path under the root in URL-safe Base64 with no padding, after a 3 character volume ID, as Java
 //! hashes it, so the client's hashes stay valid. A hash that does not decode, or a path with a `..` segment, a backslash
@@ -62,7 +63,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
 
 fn run_command(
     parameters: &BTreeMap<String, Value>,
-    facade: &EntityFacade,
+    _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
     let text = |key: &str| match parameters.get(key) {
         Some(value) if !is_empty(value) => to_plain_string(value),
@@ -75,7 +76,6 @@ fn run_command(
         .filter(|id| !id.is_empty())
         .unwrap_or_else(|| "db_".to_string());
     let connector = Connector {
-        facade,
         resource_root,
         volume_id,
     };
@@ -96,9 +96,9 @@ fn run_command(
 /// Where an entry's bytes live.
 #[derive(Clone, Debug)]
 enum Store {
-    Db,
     File(PathBuf),
-    /// A scheme served by a resource provider (`git://`): every operation goes through the resource facade.
+    /// A `dbresource://` location or a scheme served by a resource provider (`git://`): every operation goes through
+    /// the resource facade.
     Facade,
 }
 
@@ -117,13 +117,12 @@ struct Entry {
     store: Store,
 }
 
-struct Connector<'a> {
-    facade: &'a EntityFacade,
+struct Connector {
     resource_root: String,
     volume_id: String,
 }
 
-impl Connector<'_> {
+impl Connector {
     /// In production, only `dbresource://` (and `content://`) roots accept write commands. Component and file roots
     /// stay browsable.
     fn writes_restricted(&self) -> bool {
@@ -193,13 +192,7 @@ impl Connector<'_> {
     }
 
     fn entry(&self, location: &str) -> Result<Entry, LibError> {
-        if location.starts_with("dbresource:") {
-            return Ok(Entry {
-                location: location.to_string(),
-                store: Store::Db,
-            });
-        }
-        if with_resources(|resources| Ok(resources.has_provider(location)))? {
+        if location.starts_with("dbresource:") || with_resources(|resources| Ok(resources.has_provider(location)))? {
             return Ok(Entry {
                 location: location.to_string(),
                 store: Store::Facade,
@@ -227,7 +220,6 @@ impl Connector<'_> {
     fn child(&self, parent: &Entry, name: &str) -> Entry {
         let location = join_location(&parent.location, name);
         let store = match &parent.store {
-            Store::Db => Store::Db,
             Store::File(path) => Store::File(path.join(name)),
             Store::Facade => Store::Facade,
         };
@@ -236,10 +228,6 @@ impl Connector<'_> {
 
     fn is_directory(&self, entry: &Entry) -> Result<bool, LibError> {
         match &entry.store {
-            Store::Db => Ok(self
-                .facade
-                .stat_db_resource(&entry.location)?
-                .is_some_and(|stat| !stat.is_file)),
             Store::File(path) => Ok(path.is_dir()),
             Store::Facade => {
                 with_resources(|resources| Ok(resources.stat(&entry.location)?.is_some_and(|stat| !stat.is_file)))
@@ -250,13 +238,6 @@ impl Connector<'_> {
     /// The children ordered by name, as the `DbResource` find orders them.
     fn children(&self, entry: &Entry) -> Result<Vec<Entry>, LibError> {
         let mut names = match &entry.store {
-            Store::Db => {
-                let info = self.facade.read_db_resource(&entry.location)?;
-                if !info.exists || info.is_file {
-                    return Ok(Vec::new());
-                }
-                info.children.into_iter().map(|child| child.name).collect::<Vec<_>>()
-            }
             Store::File(path) => {
                 if !path.is_dir() {
                     return Ok(Vec::new());
@@ -299,13 +280,6 @@ impl Connector<'_> {
         let root = self.is_root(&entry.location);
         let relative = self.relative_to_root(&entry.location);
         let (is_dir, last_modified, size) = match &entry.store {
-            Store::Db => {
-                let stat = self.facade.stat_db_resource(&entry.location)?;
-                match stat {
-                    Some(stat) => (!stat.is_file, stat.last_updated.unwrap_or(0), stat.size),
-                    None => (false, 0, 0),
-                }
-            }
             Store::File(path) => {
                 let meta = std::fs::metadata(path).ok();
                 let millis = meta
@@ -463,7 +437,7 @@ impl Connector<'_> {
     /// removed, and what it points to, which may be outside the volume, is left alone.
     fn is_own_directory(&self, entry: &Entry) -> Result<bool, LibError> {
         match &entry.store {
-            Store::Db | Store::Facade => self.is_directory(entry),
+            Store::Facade => self.is_directory(entry),
             Store::File(path) => Ok(std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir())),
         }
     }
@@ -492,19 +466,13 @@ impl Connector<'_> {
     /// One file or empty directory, as `ResourceReference.delete`. The root of a `dbresource` volume is not deleted.
     fn delete_entry(&self, entry: &Entry) -> Result<bool, LibError> {
         match &entry.store {
-            Store::Db => {
-                if db_path_is_empty(&entry.location) {
-                    return Ok(false);
-                }
-                self.facade.delete_db_resource(&entry.location)
-            }
             Store::File(path) => Ok(if std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir()) {
                 std::fs::remove_dir(path).is_ok()
             } else {
                 std::fs::remove_file(path).is_ok()
             }),
             Store::Facade => {
-                if self.is_root(&entry.location) {
+                if self.is_root(&entry.location) || db_path_is_empty(&entry.location) {
                     return Ok(false);
                 }
                 with_resources(|resources| resources.delete(&entry.location))
@@ -515,7 +483,6 @@ impl Connector<'_> {
     fn make_directory(&self, dir: &Entry, name: &str) -> Result<Entry, LibError> {
         let entry = self.child(dir, name);
         match &entry.store {
-            Store::Db => self.facade.make_db_directory(&entry.location)?,
             Store::File(path) => {
                 if !path.is_dir() {
                     std::fs::create_dir(path).map_err(|err| io_error(&entry.location, &err))?;
@@ -529,7 +496,6 @@ impl Connector<'_> {
     fn make_file(&self, dir: &Entry, name: &str) -> Result<Entry, LibError> {
         let entry = self.child(dir, name);
         match &entry.store {
-            Store::Db => self.facade.write_db_resource(&entry.location, &[])?,
             Store::File(path) => {
                 std::fs::OpenOptions::new()
                     .create(true)
@@ -544,7 +510,6 @@ impl Connector<'_> {
 
     fn put_bytes(&self, entry: &Entry, bytes: &[u8]) -> Result<(), LibError> {
         match &entry.store {
-            Store::Db => self.facade.write_db_resource(&entry.location, bytes),
             Store::File(path) => std::fs::write(path, bytes).map_err(|err| io_error(&entry.location, &err)),
             Store::Facade => with_resources(|resources| resources.write_bytes(&entry.location, bytes)),
         }
@@ -561,22 +526,11 @@ impl Connector<'_> {
                 std::io::copy(&mut file.reader()?, &mut out).map_err(|err| io_error(&entry.location, &err))?;
                 Ok(())
             }
-            Store::Db => self
-                .facade
-                .write_db_resource_from(&entry.location, &mut file.reader()?, Some(file.size())),
         }
     }
 
     fn read_text(&self, entry: &Entry) -> Result<String, LibError> {
         let bytes = match &entry.store {
-            Store::Db => {
-                let info = self.facade.read_db_resource(&entry.location)?;
-                if info.exists && info.is_file {
-                    info.bytes
-                } else {
-                    Vec::new()
-                }
-            }
             Store::File(path) => {
                 if path.is_file() {
                     std::fs::read(path).map_err(|err| io_error(&entry.location, &err))?
@@ -594,7 +548,6 @@ impl Connector<'_> {
 
     fn move_to(&self, entry: &Entry, new_location: &str) -> Result<(), LibError> {
         match &entry.store {
-            Store::Db => self.facade.move_db_resource(&entry.location, new_location),
             Store::File(path) => {
                 let Store::File(new_path) = self.entry(new_location)?.store else {
                     return Err(LibError::new(format!(

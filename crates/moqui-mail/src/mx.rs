@@ -176,6 +176,7 @@ fn domain_of(address: &str) -> String {
 /// Returns why when a row or the message could not be written; the item is then not delivered.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record(
+    factory: &ExecutionContextFactory,
     facade: &EntityFacade,
     node: &str,
     item: &str,
@@ -209,7 +210,7 @@ pub(super) fn record(
         String::new()
     } else {
         let location = format!("{CONTENT_ROOT}{node}/{item}.eml");
-        facade.write_db_resource(&location, raw)?;
+        factory.resource().write_bytes(&location, raw)?;
         location
     };
     let now = now_millis();
@@ -247,7 +248,10 @@ pub(super) fn record(
         row.set("bouncedCount", Value::I64(i64::try_from(refused.len()).unwrap_or(0)));
         row.set("refusedText", Value::string(clip(&refused.join(" | "), MAX_REPORT)));
         row.set("attemptCount", Value::I64(1));
-        row.set("lastReplyText", Value::string("queued back to the local node or stored here"));
+        row.set(
+            "lastReplyText",
+            Value::string("queued back to the local node or stored here"),
+        );
         row.set("reportPending", Value::string("Y"));
         row.set("finishedDate", stamp_value(now));
         row.create(facade)?;
@@ -383,7 +387,7 @@ fn round(factory: &Arc<ExecutionContextFactory>) -> Option<i64> {
     let _entered = context.enter();
     let _authz = context.disable_authz();
     let now = now_millis();
-    if let Err(err) = fail_unpaired(&facade) {
+    if let Err(err) = fail_unpaired(factory, &facade) {
         tracing::error!("MX delivery could not check its rows' nodes: {err}");
     }
     match report_rows(&facade) {
@@ -489,7 +493,7 @@ fn report_rows(facade: &EntityFacade) -> Result<Vec<String>, LibError> {
 
 /// Stop delivering for local nodes that are no longer paired (revoked, or gone): their rows fail, logged, with no
 /// report (there is no node to tell), and their messages are removed.
-fn fail_unpaired(facade: &EntityFacade) -> Result<(), LibError> {
+fn fail_unpaired(factory: &ExecutionContextFactory, facade: &EntityFacade) -> Result<(), LibError> {
     let active: HashSet<String> = facade
         .find("moqui.edge.EdgeClient")?
         .eq("statusId", Value::string("EdgeClientActive"))
@@ -538,7 +542,9 @@ fn fail_unpaired(facade: &EntityFacade) -> Result<(), LibError> {
         }
         let location = field_text(row, "contentLocation");
         if !location.is_empty() {
-            let _ = facade.delete_db_resource(&location);
+            if let Err(err) = factory.resource().delete(&location) {
+                tracing::warn!("MX delivery {id}: its message {location} was not removed: {err}");
+            }
         }
     }
     Ok(())
@@ -590,7 +596,7 @@ fn try_row(factory: &ExecutionContextFactory, facade: &EntityFacade, row: &Entit
     let domain = field_text(row, "domain");
     let recipients: Vec<String> = serde_json::from_str(&field_text(row, "recipientsJson")).unwrap_or_default();
     let location = field_text(row, "contentLocation");
-    let Some(raw) = facade.read_db_resource_bytes(&location)? else {
+    let Some(raw) = factory.resource().location_bytes(&location)? else {
         return finish(
             factory,
             facade,
@@ -827,7 +833,7 @@ fn report(factory: &ExecutionContextFactory, facade: &EntityFacade, id: &str) ->
                 &status_item(&item, "final", status, &reply),
             )?;
             for location in rows.iter().map(|row| field_text(row, "contentLocation")) {
-                if !location.is_empty() && facade.delete_db_resource(&location).is_err() {
+                if !location.is_empty() && factory.resource().delete(&location).is_err() {
                     tracing::warn!("MX delivery of item {item}: its message {location} was not removed");
                 }
             }

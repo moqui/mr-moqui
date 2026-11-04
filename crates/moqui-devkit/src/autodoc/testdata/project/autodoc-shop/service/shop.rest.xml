@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<resource name="shop" displayName="Shop REST API" version="1.0" description="Orders of the shop.">
+    <resource name="orders" description="The shop's orders">
+        <method type="get"><entity name="shop.order.ShopOrder" operation="list"/></method>
+        <method type="post"><service name="shop.OrderServices.create#Order"/></method>
+        <id name="orderId">
+            <method type="get"><service name="shop.OrderServices.get#Order"/></method>
+        </id>
+    </resource>
+</resource>

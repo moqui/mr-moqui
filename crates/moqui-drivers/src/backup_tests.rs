@@ -194,6 +194,56 @@ fn dump_round_trip_rotates_the_same_week_and_incremental_when_the_tools_exist() 
     assert!(combined.join("PG_VERSION").is_file());
 }
 
+/// The content group's database in the entity cluster is a target of its own: dump mode archives each database under its
+/// prefix, and the content archive restores that database.
+#[cfg(unix)]
+#[test]
+fn another_database_of_the_cluster_is_archived_under_its_own_prefix() {
+    use super::super::embedded::EmbeddedCluster;
+
+    let base = temp_dir();
+    let _guard = DirGuard(base.clone());
+    let (cluster, _driver) = EmbeddedCluster::start(base.join("embedded"), 20).unwrap();
+    let content = cluster.database_driver("moqui_content").unwrap();
+    let mut conn = content.connect_postgres().unwrap();
+    conn.execute("CREATE TABLE content_kept (n int)", &[]).unwrap();
+    conn.execute("INSERT INTO content_kept (n) VALUES (?)", &[Value::I32(9)])
+        .unwrap();
+    drop(conn);
+    let targets = [
+        cluster.tool_connect("moqui"),
+        cluster.tool_connect_database("moqui_content", "moqui_content"),
+    ];
+    let backup = base.join("backup");
+    std::fs::create_dir_all(&backup).unwrap();
+    let outcome = run(&targets, &base, &request(BackupMode::Dump, backup.clone(), 1)).unwrap();
+    assert!(outcome.errors.is_empty(), "{:?}", outcome.errors);
+    assert!(
+        outcome
+            .archive_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("moqui-"),
+        "the moqui archive is the outcome's: {}",
+        outcome.archive_path.display()
+    );
+    // the archives of one run share their stamp, so a restore of the moqui archive finds the content archive
+    let siblings = super::super::embedded::sibling_dumps(&outcome.archive_path);
+    assert_eq!(siblings.len(), 1, "{siblings:?}");
+    assert_eq!(siblings[0].0, "moqui_content");
+    let content_archive = siblings[0].1.clone();
+    assert!(outcome.keep.iter().any(|kept| kept.name.starts_with("moqui_content-")));
+
+    let mut conn = content.connect_postgres().unwrap();
+    conn.execute("DROP TABLE content_kept", &[]).unwrap();
+    drop(conn);
+    cluster.load_database("moqui_content", &content_archive).unwrap();
+    let mut conn = content.connect_postgres().unwrap();
+    let rows = conn.query_once("SELECT n FROM content_kept", &[]).unwrap();
+    assert_eq!(rows[0].get("n"), Some(&Value::I32(9)));
+}
+
 #[cfg(unix)]
 fn week_key(stamp: Timestamp) -> (i16, i8) {
     let week = stamp.to_zoned(TimeZone::system()).date().iso_week_date();

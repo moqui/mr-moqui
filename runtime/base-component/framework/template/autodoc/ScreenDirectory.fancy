@@ -1,0 +1,15 @@
+<#-- A screen directory's page (plans/Autodoc.md): its screens and their subscreens. The names: the doc's header,
+     screens and diagrams; md is AutodocLib.js. -->
+<#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>
+# Screens in ${md.code(packageName)}
+
+${md.nav(up, rootHref)}
+
+## Screens
+
+${md.table(["Screen", "Menu title", "Component"], screens.map((screen) => [md.link(screen.title, screen.href), md.plain(screen.summary), md.plain(screen.component)]))}
+<#if diagrams.tree>
+## Subscreens
+
+${md.mermaid(diagrams.tree)}
+</#if>

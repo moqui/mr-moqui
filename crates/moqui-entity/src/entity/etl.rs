@@ -28,9 +28,10 @@ use crate::transaction::{TransactionAttribute, TransactionManager};
 /// `init` when none is in place, committed in `complete`, or rolled back when the run had an error.
 ///
 /// Java's transaction spans every datasource. Here each entity group with its own transaction
-/// manager has its own frame, so the run begins one on each, and an error rolls back all of them.
-/// Groups that share a manager share that frame. Commit is one manager after another, with no
-/// two-phase commit, as everywhere in this port.
+/// manager has its own frame; the facade links those managers, so the first begin makes a frame on
+/// each and the others see a transaction in place. The run still begins on each manager not in a
+/// transaction, for managers that are not linked. An error rolls back all of them. Commit is one
+/// manager after another, with no two-phase commit, as everywhere in this port.
 pub struct EtlLoader {
     facade: EntityFacade,
     began: Vec<TransactionManager>,

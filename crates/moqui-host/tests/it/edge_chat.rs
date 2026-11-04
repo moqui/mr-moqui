@@ -554,8 +554,9 @@ fn texts_cross_the_edge_node_and_wait_while_the_link_is_down() {
     let kept = rows(&edge, "moqui.edge.EdgeMedia", &[]).len();
     assert!(kept >= 1, "{kept}");
     expire();
+    let factory = edge.server.factory();
     let removed = in_context(&edge, |facade| {
-        moqui_core::service::chat_bridge::sweep_edge_media(facade, jiff::Timestamp::now().as_millisecond())
+        moqui_core::service::chat_bridge::sweep_edge_media(factory, facade, jiff::Timestamp::now().as_millisecond())
     });
     assert_eq!(removed, kept);
     assert!(rows(&edge, "moqui.edge.EdgeMedia", &[]).is_empty());

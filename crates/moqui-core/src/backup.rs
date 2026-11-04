@@ -168,11 +168,15 @@ pub struct MirrorPlan {
 }
 
 /// `moqui-YYYYMMDDTHHMMSSZ-d.dump` or the same stem without `.dump` for a physical backup directory.
-/// The prefix is `moqui` or `search`.
+/// The prefix is `moqui`, `search`, or `moqui_` and a name for another database of the entity cluster (the content
+/// group's `moqui_content`).
 #[must_use]
 pub fn parse_archive_name(name: &str) -> Option<ParsedName> {
     let (prefix, rest) = name.split_once('-')?;
-    if prefix != "moqui" && prefix != "search" {
+    let other_database = prefix
+        .strip_prefix("moqui_")
+        .is_some_and(|name| !name.is_empty() && name.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_'));
+    if prefix != "moqui" && prefix != "search" && !other_database {
         return None;
     }
     let (stamp_text, rest) = rest.split_once('-')?;

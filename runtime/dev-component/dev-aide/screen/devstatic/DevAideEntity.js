@@ -771,6 +771,7 @@
         <q-tab name="rules" :label="'EECA rules ' + view.eecas.length"></q-tab>
         <q-tab name="table" :label="isView ? 'Data' : 'Table'" @click="isView && runView()"></q-tab>
         <q-tab v-if="seed || (view.seedFile && view.seedFile.exists)" name="seed" label="Seed data"></q-tab>
+        <q-tab name="doc" label="Doc" id="DevEntityDocTab"></q-tab>
       </q-tabs>
       <q-separator class="q-mb-sm"></q-separator>
 
@@ -886,6 +887,9 @@
         <q-btn dense flat no-caps icon="add" label="Add index" :disable="!canEdit || !target || isView" @click="startIndex" class="q-mt-xs"></q-btn>
         <div class="text-subtitle2 q-mt-md" v-if="(entity.masters || []).length">Master definitions</div>
         <div v-for="master in entity.masters" :key="master.name" class="text-caption">{{master.name}}: {{master.details.map(d => d.relationship).join(', ')}}</div>
+      </div>
+      <div v-if="section === 'doc'" id="DevEntityDoc">
+        <m-dev-artifact-doc :base="ctx.base" :artifact-id="'entity:' + (entity.packageName ? entity.packageName + '.' : '') + entity.entityName" :stamp="view"></m-dev-artifact-doc>
       </div>
       <div v-if="section === 'rules'" id="DevEntityRules">
         <q-list dense separator><q-item v-for="rule in view.eecas" :key="rule.id" clickable @click="ctx.openArtifact(rule)">

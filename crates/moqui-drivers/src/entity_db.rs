@@ -65,6 +65,49 @@ impl EntityDb {
     pub fn tool_target(&self) -> Option<super::embedded::ToolTarget> {
         self.cluster.as_ref().map(|cluster| cluster.tool_connect("moqui"))
     }
+
+    /// The `pg_dump` coordinates of the other databases of the embedded cluster (the content group's), each with
+    /// the database's name as its archive prefix, with `moqui_` in front when it does not start so (backup archive
+    /// names). Empty when this process does not run the postmaster.
+    #[cfg(feature = "embedded-postgres")]
+    #[must_use]
+    pub fn other_tool_targets(&self) -> Vec<super::embedded::ToolTarget> {
+        let Some(cluster) = self.cluster.as_ref() else {
+            return Vec::new();
+        };
+        match cluster.other_databases() {
+            Ok(databases) => databases
+                .iter()
+                .map(|database| {
+                    let prefix = if database.starts_with("moqui_") {
+                        database.clone()
+                    } else {
+                        format!("moqui_{database}")
+                    };
+                    cluster.tool_connect_database(&prefix, database)
+                })
+                .collect(),
+            Err(err) => {
+                tracing::error!(error = %err, "Could not list the databases of the embedded cluster");
+                Vec::new()
+            }
+        }
+    }
+
+    /// A driver for the database `database` of the embedded cluster, created when it is missing: the database of
+    /// another entity group (`content`). `None` when the entity database is not the embedded cluster.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database cannot be created.
+    pub fn embedded_database_driver(&self, database: &str) -> Result<Option<Arc<dyn DbDriver>>, Error> {
+        #[cfg(feature = "embedded-postgres")]
+        if let Some(cluster) = self.cluster.as_ref() {
+            return Ok(Some(Arc::new(cluster.database_driver(database)?)));
+        }
+        let _ = database;
+        Ok(None)
+    }
 }
 
 impl Drop for EntityDb {
@@ -95,7 +138,8 @@ pub fn transactional_conf(factory: &ExecutionContextFactory) -> Result<Datasourc
 }
 
 /// The driver for a datasource of a server this process does not start (Postgres or MySQL), for an entity group
-/// beside `transactional`. `None` for the embedded cluster, which the caller shares from the main datasource.
+/// beside `transactional`. `None` for the embedded cluster, whose database the caller opens on the cluster
+/// ([`EntityDb::embedded_database_driver`]).
 ///
 /// # Errors
 ///

@@ -1,0 +1,41 @@
+<#-- An ECA rules file's doc (plans/Autodoc.md): a section per rule. The names: the doc's header, rules and
+     diagrams; md is AutodocLib.js. -->
+<#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>
+# ${md.plain(title)}
+
+${md.nav(up, rootHref)}
+
+- **Rules file:** ${md.defined(component, name, "")}
+- **Rules:** ${rules.length}
+
+${description}
+<#if diagrams.flow>
+## What the rules run on and call
+
+${md.mermaid(diagrams.flow)}
+</#if>
+<#list rules as rule>
+## ${md.plain(rule.title)}
+
+- **Kind:** ${md.plain(rule.kind)} · line ${rule.line}<#if rule.target> · **On:** ${md.codeLink(rule.target, rule.targetHref)}</#if>
+<#list rule.attributes as attribute>
+- ${md.code(attribute.name)}: ${md.code(attribute.value)}
+</#list>
+<#if rule.calls.length>
+- **Calls:** ${rule.calls.map((call) => md.link(call.title, call.href)).join(", ")}
+</#if>
+
+${rule.description}
+<#if rule.condition>
+
+Condition:
+
+${md.fence(rule.conditionLanguage, rule.condition)}
+</#if>
+<#if rule.actions>
+
+Actions:
+
+${md.fence("xml", rule.actions)}
+</#if>
+</#list>

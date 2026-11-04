@@ -223,6 +223,7 @@
                 if (artifact.kind === "screen" && artifact.rootId) links.push({ label: "Preview", href: "/qapps/dev/Screens/Design?rootId=" + encodeURIComponent(artifact.rootId) +
                     "&path=" + encodeURIComponent(artifact.relativePath || "") });
                 links.push({ label: "List view", href: "/qapps/dev/Artifacts/Refs?artifactId=" + id });
+                links.push({ label: "Doc", href: "/qapps/dev/Artifacts/Doc?artifactId=" + id });
                 return links;
             },
             copyName(artifact) { if (root.navigator && root.navigator.clipboard) root.navigator.clipboard.writeText(artifact.name); }

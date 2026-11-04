@@ -63,12 +63,14 @@ struct Physical {
 
 /// Register the runner when this process runs at least one embedded postmaster. An empty target list
 /// leaves the service to report `skipped`.
-/// `search` is the search store's cluster when it runs one of its own (the host's `SearchStore::tool_target`).
+/// The targets are the entity cluster's `moqui` database, its other databases (the content group's), and `search`, the
+/// search store's cluster when it runs one of its own (the host's `SearchStore::tool_target`).
 pub fn install(facade: &EntityFacade, db: &EntityDb, search: Option<ToolTarget>, runtime: &Path) {
     let mut targets = Vec::new();
     if let Some(target) = db.tool_target() {
         targets.push(target);
     }
+    targets.extend(db.other_tool_targets());
     targets.extend(search);
     if targets.is_empty() {
         tracing::info!("embedded database backup is off, this process runs no embedded cluster");
@@ -92,8 +94,18 @@ fn run(targets: &[ToolTarget], runtime: &Path, request: &BackupRequest) -> Resul
     let mut renames = Vec::new();
     let mut archive_path = PathBuf::new();
     let mut backup_kind = String::new();
+    let mut copied: Vec<&Path> = Vec::new();
+    let prefixes: Vec<&str> = targets.iter().map(|target| target.prefix.as_str()).collect();
+    let stamp = fresh_stamp(&backup_dir, &prefixes, request.mode == BackupMode::Dump);
     for target in targets {
-        match backup_one(&backup_dir, target, request) {
+        // a physical backup copies the whole cluster: another database of one already copied is in that copy
+        if request.mode == BackupMode::Incremental {
+            if copied.contains(&target.data_dir.as_path()) {
+                continue;
+            }
+            copied.push(&target.data_dir);
+        }
+        match backup_one(&backup_dir, target, stamp, request) {
             Ok(one) => {
                 bytes_written = bytes_written.saturating_add(one.bytes);
                 promoted.extend(one.promoted);
@@ -127,9 +139,13 @@ fn run(targets: &[ToolTarget], runtime: &Path, request: &BackupRequest) -> Resul
     })
 }
 
-fn backup_one(dir: &Path, target: &ToolTarget, request: &BackupRequest) -> Result<PrefixBackup, Error> {
+fn backup_one(
+    dir: &Path,
+    target: &ToolTarget,
+    stamp: Timestamp,
+    request: &BackupRequest,
+) -> Result<PrefixBackup, Error> {
     let dump = request.mode == BackupMode::Dump;
-    let stamp = fresh_stamp(dir, &target.prefix, dump);
     let name = archive_name(&target.prefix, stamp, Tier::Daily, dump);
     let kind = if dump {
         dump_one(dir, target, &name, request.timeout)?;
@@ -351,11 +367,16 @@ fn generation_len(archives: &[Physical], full_name: &str) -> u32 {
     u32::try_from(reached.len()).unwrap_or(u32::MAX)
 }
 
-fn fresh_stamp(dir: &Path, prefix: &str, dump: bool) -> Timestamp {
+/// A stamp no archive of `prefixes` has yet: one for every target of a run, so the archives of one cluster's databases
+/// share it and a restore finds them together ([`super::embedded::sibling_dumps`]).
+fn fresh_stamp(dir: &Path, prefixes: &[&str], dump: bool) -> Timestamp {
     let mut stamp = Timestamp::now();
     for _ in 0..60 {
-        let name = archive_name(prefix, stamp, Tier::Daily, dump);
-        if !dir.join(&name).exists() && !dir.join(format!("{name}.partial")).exists() {
+        let taken = prefixes.iter().any(|prefix| {
+            let name = archive_name(prefix, stamp, Tier::Daily, dump);
+            dir.join(&name).exists() || dir.join(format!("{name}.partial")).exists()
+        });
+        if !taken {
             return stamp;
         }
         stamp = stamp.checked_add(SignedDuration::from_secs(1)).unwrap_or(stamp);

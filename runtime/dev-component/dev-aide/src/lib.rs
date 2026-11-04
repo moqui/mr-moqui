@@ -25,6 +25,7 @@ mod artifacts;
 pub mod audit;
 mod changeset;
 pub mod confine;
+mod docs;
 mod entities;
 pub mod git;
 mod notify;
@@ -53,6 +54,7 @@ fn register(registry: &mut NativeRegistry) -> Result<(), Error> {
     workspace::register(registry)?;
     artifacts::register(registry)?;
     changeset::register(registry)?;
+    docs::register(registry)?;
     entities::register(registry)?;
     screens::register(registry)?;
     services::register(registry)?;

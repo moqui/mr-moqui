@@ -1,0 +1,23 @@
+<#-- A tree's index (plans/Autodoc.md): its packages, the docs at its top, or its files. The names: the doc's header,
+     treeKind, packages, top, files and count; md is AutodocLib.js. -->
+<#assign md = ec.resource.script("component://framework/template/autodoc/AutodocLib.js")>
+# ${md.plain(title)}
+
+${md.nav(up, rootHref)}
+
+${count} documented.
+<#if packages.length>
+## ${treeKind === "entity" ? "Packages" : "Directories"}
+
+${md.table([treeKind === "entity" ? "Package" : "Directory", "Docs"], packages.map((item) => [md.codeLink(item.key, item.href), String(item.count)]))}
+</#if>
+<#if top.length>
+## At the top
+
+${md.table(["Name", "Summary", "Component"], top.map((item) => [md.link(item.title, item.href), md.plain(item.summary), md.plain(item.component)]))}
+</#if>
+<#if files.length>
+## Files
+
+${md.table(["File", "Directory", "Component"], files.map((item) => [md.link(item.title, item.href), md.code(item.directory), md.plain(item.component)]))}
+</#if>

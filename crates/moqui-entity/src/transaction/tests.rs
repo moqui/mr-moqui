@@ -154,6 +154,11 @@ impl DbConnection for FakeConn {
         Ok(())
     }
 
+    fn finish_deferred(&mut self) -> Result<(), Error> {
+        self.mark("finish");
+        Ok(())
+    }
+
     fn next_row(&mut self) -> Result<Option<DbRow>, Error> {
         Ok(None)
     }
@@ -1228,4 +1233,204 @@ fn deadline_slots_leave_with_their_frames() {
     .join()
     .expect("join");
     assert!(!super::manager::deadline_registered(token));
+}
+
+/// Two linked managers, `content` first in commit order and `default` last, on drivers that share one event log, so
+/// the order of statements across the two shows. Connection ids are distinct across both.
+fn linked_pair() -> (TransactionManager, TransactionManager, Arc<FakeDriver>) {
+    let driver = FakeDriver::new();
+    let other = Arc::new(FakeDriver {
+        shared: Arc::clone(&driver.shared),
+    });
+    let content = TransactionManager::new(Arc::clone(&driver) as Arc<dyn DbDriver>, small()).expect("pool");
+    let default = TransactionManager::new(other as Arc<dyn DbDriver>, small()).expect("pool");
+    TransactionManager::link(&[content.clone(), default.clone()]);
+    (content, default, driver)
+}
+
+#[test]
+fn linked_managers_begin_together_and_commit_in_link_order() {
+    let (content, default, driver) = linked_pair();
+    let _clean = (Clean(&default), Clean(&content));
+    assert!(default.begin(None).expect("begin"));
+    assert!(content.in_transaction() && default.in_transaction());
+    assert_eq!(driver.connects(), 0);
+    let content_id = content.with_connection(conn_id).expect("content write");
+    let default_id = default.with_connection(conn_id).expect("default write");
+    default.commit().expect("commit");
+    let events = driver.events();
+    assert!(position(&events, &format!("commit:{content_id}")) < position(&events, &format!("commit:{default_id}")));
+    assert!(!content.in_transaction() && !default.in_transaction());
+    assert_eq!(content.stats().checked_out + default.stats().checked_out, 0);
+}
+
+#[test]
+fn a_linked_manager_the_transaction_does_not_touch_checks_out_nothing() {
+    let (content, default, driver) = linked_pair();
+    let _clean = (Clean(&default), Clean(&content));
+    assert!(default.begin(None).expect("begin"));
+    default
+        .with_connection(|conn| conn.execute("business", &[]))
+        .expect("write");
+    default.commit().expect("commit");
+    assert_eq!(driver.connects(), 1);
+    assert_eq!(content.stats().checkouts, 0);
+    assert_eq!(driver.event_count("commit:"), 1);
+}
+
+#[test]
+fn a_rollback_on_either_linked_manager_rolls_back_both() {
+    let (content, default, driver) = linked_pair();
+    let _clean = (Clean(&default), Clean(&content));
+    assert!(content.begin(None).expect("begin on the content manager"));
+    let content_id = content.with_connection(conn_id).expect("content write");
+    let default_id = default.with_connection(conn_id).expect("default write");
+    content.rollback().expect("rollback");
+    let events = driver.events();
+    assert!(events.contains(&format!("rollback:{content_id}")));
+    assert!(events.contains(&format!("rollback:{default_id}")));
+    assert_eq!(driver.event_count("commit:"), 0);
+    assert!(!content.in_transaction() && !default.in_transaction());
+}
+
+#[test]
+fn a_failed_statement_on_a_linked_manager_rolls_back_all_of_them() {
+    let (content, default, driver) = linked_pair();
+    let _clean = (Clean(&default), Clean(&content));
+    assert!(default.begin(None).expect("begin"));
+    let default_id = default.with_connection(conn_id).expect("default write");
+    driver
+        .shared
+        .fail_at
+        .store(driver.shared.statements.load(Ordering::SeqCst) + 1, Ordering::SeqCst);
+    content
+        .with_connection(|conn| conn.execute("content write", &[]))
+        .expect_err("the content statement fails");
+    assert!(
+        default.is_rollback_only(),
+        "the default manager sees the linked frame's mark"
+    );
+    default
+        .with_connection(|conn| conn.execute("after", &[]))
+        .expect_err("a statement after the mark fails, as on one database");
+    let err = default.commit().expect_err("commit rolls back");
+    assert!(err.to_string().contains("rollback-only"), "{err}");
+    assert!(driver.events().contains(&format!("rollback:{default_id}")));
+    assert_eq!(driver.event_count("commit:"), 0);
+    assert!(!content.in_transaction() && !default.in_transaction());
+}
+
+#[test]
+fn a_failed_commit_on_a_linked_manager_rolls_back_the_ones_after_it() {
+    let (content, default, driver) = linked_pair();
+    let _clean = (Clean(&default), Clean(&content));
+    assert!(default.begin(None).expect("begin"));
+    let content_id = content.with_connection(conn_id).expect("content write");
+    let default_id = default.with_connection(conn_id).expect("default write");
+    content
+        .on_cache_flush(|_| Err(Error::new("flush failed")))
+        .expect("hook");
+    let rolled_back = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&rolled_back);
+    default
+        .on_rollback(move || flag.store(true, Ordering::SeqCst))
+        .expect("hook");
+    default.commit().expect_err("the content commit fails");
+    let events = driver.events();
+    assert!(events.contains(&format!("rollback:{content_id}")));
+    assert!(events.contains(&format!("rollback:{default_id}")));
+    assert_eq!(driver.event_count("commit:"), 0);
+    assert!(rolled_back.load(Ordering::SeqCst));
+    assert!(!content.in_transaction() && !default.in_transaction());
+}
+
+#[test]
+fn linked_managers_join_force_new_and_resume_together() {
+    let (content, default, driver) = linked_pair();
+    let _clean = (Clean(&default), Clean(&content));
+    default
+        .run(TransactionAttribute::UseOrBegin, None, || {
+            let outer_content = content.with_connection(conn_id)?;
+            let outer_default = default.with_connection(conn_id)?;
+            // a begin on the other manager joins
+            assert!(!content.begin(None)?);
+            content.commit()?;
+            assert!(content.in_transaction() && default.in_transaction());
+            content.run(TransactionAttribute::ForceNew, None, || {
+                assert_eq!(content.stats().parked, 1);
+                assert_eq!(default.stats().parked, 1);
+                assert_ne!(default.with_connection(conn_id)?, outer_default);
+                assert_ne!(content.with_connection(conn_id)?, outer_content);
+                Ok(())
+            })?;
+            assert_eq!(content.stats().parked + default.stats().parked, 0);
+            assert_eq!(content.with_connection(conn_id)?, outer_content);
+            assert_eq!(default.with_connection(conn_id)?, outer_default);
+            Ok(())
+        })
+        .expect("nested");
+    assert_eq!(driver.event_count("commit:"), 4);
+    assert!(!content.in_transaction() && !default.in_transaction());
+}
+
+#[test]
+fn after_hooks_run_once_every_linked_frame_has_ended() {
+    let (content, default, _driver) = linked_pair();
+    let _clean = (Clean(&default), Clean(&content));
+    assert!(default.begin(None).expect("begin"));
+    content
+        .with_connection(|conn| conn.execute("content write", &[]))
+        .expect("write");
+    default
+        .with_connection(|conn| conn.execute("default write", &[]))
+        .expect("write");
+    let seen = Arc::new(Mutex::new(None));
+    let (record, other) = (Arc::clone(&seen), default.clone());
+    content
+        .on_commit(move || *record.lock().expect("seen") = Some(other.in_transaction()))
+        .expect("hook");
+    default.commit().expect("commit");
+    assert_eq!(*seen.lock().expect("seen"), Some(false));
+}
+
+#[test]
+fn rollback_all_in_thread_ends_the_linked_frames() {
+    let (content, default, driver) = linked_pair();
+    assert!(default.begin(None).expect("outer"));
+    content
+        .with_connection(|conn| conn.execute("content write", &[]))
+        .expect("write");
+    assert!(content.force_new(None).expect("force new"));
+    default.rollback_all_in_thread().expect("cleanup");
+    assert!(!content.in_transaction() && !default.in_transaction());
+    assert_eq!(driver.event_count("commit:"), 0);
+    assert_eq!(content.stats().parked + content.stats().checked_out, 0);
+    content.rollback_all_in_thread().expect("nothing left");
+}
+
+#[test]
+fn link_with_one_member_unlinks() {
+    let (content, default, _driver) = linked_pair();
+    assert_eq!(content.linked().len(), 1);
+    assert!(content.linked()[0].shares_stack(&default));
+    TransactionManager::link(&[content.clone(), content.clone()]);
+    assert!(content.linked().is_empty());
+    let _clean = (Clean(&default), Clean(&content));
+    assert!(content.begin(None).expect("begin"));
+    assert!(!default.in_transaction());
+    content.commit().expect("commit");
+}
+
+#[test]
+fn finish_deferred_waits_on_each_linked_connection() {
+    let (content, default, driver) = linked_pair();
+    let _clean = (Clean(&default), Clean(&content));
+    assert!(default.begin(None).expect("begin"));
+    let content_id = content.with_connection(conn_id).expect("content write");
+    let default_id = default.with_connection(conn_id).expect("default write");
+    default.finish_deferred().expect("finish");
+    let events = driver.events();
+    assert!(events.contains(&format!("finish:{content_id}")), "{events:?}");
+    assert!(events.contains(&format!("finish:{default_id}")), "{events:?}");
+    default.commit().expect("commit");
 }

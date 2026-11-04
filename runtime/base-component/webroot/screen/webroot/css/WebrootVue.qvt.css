@@ -25,6 +25,16 @@ code, kbd, pre, samp, .text-mono { font-family:var(--m-font-mono); }
 body:not(.body--dark) :is(.q-card, .q-menu, .q-table__card, .q-stepper, .q-tab-panels, .q-date, .q-time, .q-editor) { background:var(--m-panel-bg); }
 .q-layout .q-drawer { background:var(--m-drawer-bg); }
 #top { background:var(--m-header-bg); color:var(--m-header-fg); }
+/* The shape tokens (crates/moqui-core/src/screen/sri/appearance.rs, SHAPE_TOKENS): a scheme sets them as it sets its colors, to change the
+   header, the page, buttons, cards and the current screen of the menu without reaching into the shell's markup. Unset, each is the look
+   above and Quasar's; the user's corners (m-radius-*) win over btn-radius and card-radius. */
+#top { background-image:var(--m-header-bg-image, none); box-shadow:var(--m-header-shadow, none); }
+#top.q-header--bordered { border-bottom:var(--m-header-border, 1px solid var(--m-border)); }
+body { background-image:var(--m-page-bg-image, none); }
+.q-btn--rectangle { border-radius:var(--m-btn-radius, 3px); border:var(--m-btn-border, 0); }
+.q-btn.bg-primary { background:var(--m-btn-primary-bg, var(--q-primary)) !important; }
+.q-card { border-radius:var(--m-card-radius, 4px); }
+.q-card--bordered { border:var(--m-card-border, 1px solid var(--m-border)); }
 
 a { color:var(--m-link); text-decoration:none; }
 .q-menu a, .q-toolbar a { color:inherit; }
@@ -43,7 +53,7 @@ a { color:var(--m-link); text-decoration:none; }
    already separates them by the tint step of the panel over the body). Put the light-mode content on a light gray ground and
    give the white panels a soft shadow, the standard app-frame elevation. */
 body:not(.body--dark) .q-page { background:var(--m-page-bg); }
-.m-container-box, .m-number-card, .m-card, .q-table__card { box-shadow:0 1px 2px rgba(0,0,0,.05), 0 1px 3px rgba(0,0,0,.08) !important; } /* the panels are q-card--flat no-shadow, which is !important */
+.m-container-box, .m-number-card, .m-card, .q-table__card { box-shadow:var(--m-card-shadow, 0 1px 2px rgba(0,0,0,.05), 0 1px 3px rgba(0,0,0,.08)) !important; } /* the panels are q-card--flat no-shadow, which is !important */
 
 /* ====== breathing room: the sections keep a little more air between them ======
    The boxes and the dashboard are the page's sections; a touch more vertical room between them (the boxes' margin is
@@ -84,11 +94,9 @@ pre { text-wrap: normal; white-space: pre-line; word-wrap: normal; word-break: n
 
 /* ====== shell ====== */
 
-/* The header is a neutral surface (the shell sets bg-white or bg-dark); a dev or test deployment tints it. */
-body.dev #top { background:#e3f2fd!important; }
-body.dev.body--dark #top { background:#0c1b29!important; }
-body.test #top { background:#e8f5e9!important; }
-body.test.body--dark #top { background:#1b3a1b!important; }
+/* A dev or test deployment marks the window with a small square in the corner (the color is the webapp_dev_marker_color conf
+   property, set on the body by the shell; an empty value turns it off). It never overrides the theme's colors. */
+body:is(.dev,.test)::after { content:""; position:fixed; right:10px; bottom:10px; width:12px; height:12px; background:var(--m-dev-marker); pointer-events:none; z-index:9000; }
 /* The page is a shade darker than its surfaces, as in dark mode (page --q-dark-page, surfaces --q-dark): a light grey page with
    the header, drawer, cards, boxes and dialogs white; an outlined field on the page itself stays white too (the body's background
    is --m-page-bg, in the tokens above). */
@@ -112,7 +120,8 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
 .m-drawer > .q-item.m-drawer-app.m-drawer-in-app { color:var(--q-primary); }
 .m-drawer > .q-item.m-drawer-nested::before { content:""; position:absolute; top:0; bottom:0; left:var(--m-guide, 12px);
     border-left:1px solid rgba(0,0,0,.12); }
-.m-drawer > .q-item.m-drawer-current { color:var(--q-primary); font-weight:500; background:color-mix(in srgb, var(--q-primary) 14%, transparent);
+.m-drawer > .q-item.m-drawer-current { color:var(--m-drawer-current-fg, var(--q-primary)); font-weight:500;
+    background:var(--m-drawer-current-bg, color-mix(in srgb, var(--q-primary) 14%, transparent));
     box-shadow:inset 3px 0 0 var(--q-primary); }
 .m-drawer .m-drawer-letter { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px; border-radius:6px;
     font-size:12px; font-weight:600; text-transform:uppercase; background:color-mix(in srgb, currentColor 12%, transparent); }
@@ -122,7 +131,7 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
 .body--dark .m-drawer > .q-item.m-drawer-app ~ .q-item.m-drawer-app, .body--dark .m-drawer-foot { border-color:rgba(255,255,255,.1); }
 .body--dark .m-drawer > .q-item.m-drawer-nested::before { border-color:rgba(255,255,255,.14); }
 .body--dark .m-drawer > .q-item.m-drawer-in-app { background:color-mix(in srgb, var(--q-primary) 12%, transparent); }
-.body--dark .m-drawer > .q-item.m-drawer-current { background:color-mix(in srgb, var(--q-primary) 26%, transparent); }
+.body--dark .m-drawer > .q-item.m-drawer-current { background:var(--m-drawer-current-bg, color-mix(in srgb, var(--q-primary) 26%, transparent)); }
 
 /* the app title as the menu of the app's top-level screens: the same size as the toolbar title, not a toolbar button */
 .q-btn.m-app-screens { min-height:0; padding:0 8px 0 0; }
@@ -707,6 +716,11 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 /* m-markdown: markdown text as the page's text, tables and code blocks tinted from the text color so they read in light and dark */
 .m-markdown { min-width:0; overflow-wrap:break-word; line-height:max(1.55, var(--m-line-height)); }
 .m-markdown-plain { white-space:pre-wrap; }
+/* copyable: the copy button in the top right corner, over the text's first line */
+.m-markdown-copyable { position:relative; }
+.m-markdown-copy { position:absolute; top:0; right:0; z-index:1; opacity:0.7; }
+.m-markdown-copy:hover, .m-markdown-copy:focus { opacity:1; }
+.m-markdown-copyable > .m-markdown-body { padding-right:32px; }
 .m-markdown-body > :first-child { margin-top:0; }
 .m-markdown-body h1 { font-family:var(--m-font-heading); font-size:calc(1.6rem * var(--m-fs-large-scale)); line-height:1.25; font-weight:500; margin:0.9em 0 0.4em; }
 .m-markdown-body h2 { font-family:var(--m-font-heading); font-size:calc(1.3rem * var(--m-fs-large-scale)); line-height:1.3; font-weight:500; margin:0.9em 0 0.4em; }
@@ -721,6 +735,9 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 .m-markdown-body code { font-size:0.9em; padding:0.1em 0.35em; border-radius:4px; background:rgba(127,127,127,0.15); }
 .m-markdown-body pre { padding:10px 12px; border-radius:6px; overflow-x:auto; background:rgba(127,127,127,0.12); border:1px solid rgba(127,127,127,0.2); }
 .m-markdown-body pre code { padding:0; background:transparent; font-size:0.88em; }
+/* a mermaid fence: its source while it loads or when it does not parse, the diagram once drawn, centered and scrolled when wide */
+.m-markdown-body pre.m-md-mermaid { white-space:pre-wrap; font-family:var(--m-font-mono); font-size:0.85em; }
+.m-markdown-body pre.m-md-mermaid-drawn { white-space:normal; background:transparent; border:none; padding:0; text-align:center; }
 /* the container (and its border) as wide as its table, at most the text's width, where a wider table scrolls */
 .m-markdown-body .m-md-table { margin:0 0 0.75em; overflow-x:auto; border-radius:4px; background:transparent; width:-moz-fit-content; width:fit-content; max-width:100%; }
 .m-markdown-body .m-md-table table { width:auto; border-collapse:collapse; }

@@ -179,7 +179,7 @@ pub(super) fn attachments(caller: &Caller, params: &Params) -> Answer {
             row.set_sequenced_id_primary(facade)?;
             let artifact_id = text_of(&row, "artifactId").unwrap_or_default();
             let location = format!("{}/{}/{artifact_id}/{name}", root(), caller.user_id);
-            facade.write_db_resource(&location, &bytes)?;
+            caller.factory.resource().write_bytes(&location, &bytes)?;
             row.set("artifactKind", Value::string("file"));
             row.set("artifactName", Value::string(&name));
             if let Some(id) = &conversation_id {
@@ -317,7 +317,7 @@ pub(super) fn download(caller: &Caller, params: &Params) -> Result<(), DrawerErr
         return Err(DrawerError::not_found("attachment", &id));
     }
     let location = data.get("location").and_then(Json::as_str).unwrap_or_default();
-    let bytes = quietly(|| caller.facade.read_db_resource_bytes(location))?
+    let bytes = quietly(|| caller.factory.resource().location_bytes(location).map_err(Error::from))?
         .ok_or_else(|| DrawerError::not_found("attachment", &id))?;
     let name = data.get("fileName").and_then(Json::as_str).unwrap_or("file");
     let ascii: String = name
@@ -356,7 +356,12 @@ pub(super) fn download(caller: &Caller, params: &Params) -> Result<(), DrawerErr
 /// # Errors
 ///
 /// Returns why it is not text, or a failed read.
-pub fn read_text(facade: &EntityFacade, conversation_id: &str, name: &str) -> Result<Option<String>, Error> {
+pub fn read_text(
+    resources: &moqui_core::context::ResourceFacade,
+    facade: &EntityFacade,
+    conversation_id: &str,
+    name: &str,
+) -> Result<Option<String>, Error> {
     let Some(id) = name.trim().strip_prefix('F').or_else(|| name.trim().strip_prefix('f')) else {
         return Ok(None);
     };
@@ -373,7 +378,7 @@ pub fn read_text(facade: &EntityFacade, conversation_id: &str, name: &str) -> Re
         )));
     }
     let location = data.get("location").and_then(Json::as_str).unwrap_or_default();
-    Ok(facade.read_db_resource_bytes(location)?.map(|bytes| {
+    Ok(resources.location_bytes(location)?.map(|bytes| {
         let text = String::from_utf8_lossy(&bytes);
         text.chars().take(READ_CHARS).collect()
     }))

@@ -208,7 +208,7 @@ pub(crate) async fn receive_content(
         let facade = factory
             .entity()
             .ok_or_else(|| moqui_lib::error::Error::new("the entity facade is not installed"))?;
-        queue::store_received(&facade, &keeping, &item, &content)
+        queue::store_received(factory, &facade, &keeping, &item, &content)
     })
     .await
     .map_err(|err| {
@@ -371,7 +371,7 @@ where
             let facade = factory
                 .entity()
                 .ok_or_else(|| moqui_lib::error::Error::new("the entity facade is not installed"))?;
-            queue::read_content(&facade, &reading)
+            queue::read_content(factory, &facade, &reading)
         })
         .await;
         let outcome = match content {
@@ -525,7 +525,7 @@ pub(crate) fn maintain(factory: &Arc<ExecutionContextFactory>, mut shutdown: tok
                     .ok_or_else(|| moqui_lib::error::Error::new("the entity facade is not installed"))?;
                 if clean {
                     let settings = moqui_core::edge::settings(factory);
-                    match queue::clean(&facade, &settings, moqui_core::user::now_millis()) {
+                    match queue::clean(factory, &facade, &settings, moqui_core::user::now_millis()) {
                         Ok(cleaned) if cleaned != queue::Cleaned::default() => {
                             tracing::info!("Edge queue retention: {cleaned:?}");
                         }
@@ -534,8 +534,11 @@ pub(crate) fn maintain(factory: &Arc<ExecutionContextFactory>, mut shutdown: tok
                     }
                     // the chat files an edge node serves for its local nodes (MMS, E6) that ran out
                     if settings.takes_links() {
-                        let removed =
-                            moqui_core::service::chat_bridge::sweep_edge_media(&facade, moqui_core::user::now_millis());
+                        let removed = moqui_core::service::chat_bridge::sweep_edge_media(
+                            factory,
+                            &facade,
+                            moqui_core::user::now_millis(),
+                        );
                         if removed > 0 {
                             tracing::info!("Edge chat files that ran out removed: {removed}");
                         }

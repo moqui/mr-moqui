@@ -455,7 +455,12 @@ fn scheduled_reports_recheck_owner_and_export_the_panel_frame() {
         assert_eq!(message.to, ["recipient@example.test"]);
         assert!(message.body.contains("cid:report-image@moqui"), "{}", message.body);
         assert!(!message.body.contains("<script"));
-        assert!(message.attachment_names.contains(&"report.csv".to_string()));
+        // each table of the export is a file named for it: the one table panel, "Panel"
+        assert!(
+            message.attachment_names.contains(&"Panel.csv".to_string()),
+            "{:?}",
+            message.attachment_names
+        );
         assert!(!message.message_id.is_empty());
     }
 

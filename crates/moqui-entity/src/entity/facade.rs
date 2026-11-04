@@ -259,6 +259,7 @@ impl EntityFacade {
                 },
             );
         }
+        link_groups(default_group, &runtimes);
         let db_system = {
             let mut names = runtimes.values().map(|group| group.dialect.name.as_str());
             let first = names.next();
@@ -648,6 +649,16 @@ impl EntityFacade {
             .ok_or_else(|| Error::new(format!("no transaction manager for entity group {group_name}")))
     }
 
+    /// True when two entity groups are on one database: the same group, or groups that resolve to one transaction
+    /// manager (a group with no datasource of its own uses the default group's). No foreign key is made, and no view
+    /// can join, across databases.
+    pub(crate) fn same_database(&self, group: Option<&str>, other: Option<&str>) -> bool {
+        match (self.group_runtime(group), self.group_runtime(other)) {
+            (Ok(first), Ok(second)) => first.transactions.shares_stack(&second.transactions),
+            _ => true,
+        }
+    }
+
     pub fn with_group<T>(
         &self,
         name: &str,
@@ -751,6 +762,29 @@ fn datasource_uuid(conf: &MNode) -> HashMap<String, bool> {
 /// The files of the conf's `<entity-facade><load-entity location>` that no `entity` directory of the model holds, as
 /// Java's `getConfEntityFileLocations`. A `component://` location is the framework or a component whose directory has
 /// that name; a location that cannot be found is logged and left out.
+/// One transaction spans the groups with transaction managers of their own, as Java's spans every datasource
+/// ([`TransactionManager::link`]). The default group's manager commits last. A `#clone` group is a read-only copy of
+/// another and is left out.
+fn link_groups(default_group: &str, runtimes: &HashMap<String, GroupRuntime>) {
+    let Some(default) = runtimes.get(default_group) else {
+        return;
+    };
+    let mut names: Vec<&String> = runtimes
+        .keys()
+        .filter(|name| name.as_str() != default_group && !name.contains("#clone"))
+        .collect();
+    names.sort();
+    let mut members: Vec<TransactionManager> = Vec::new();
+    for name in names {
+        let transactions = &runtimes[name].transactions;
+        if !transactions.shares_stack(&default.transactions) {
+            members.push(transactions.clone());
+        }
+    }
+    members.push(default.transactions.clone());
+    TransactionManager::link(&members);
+}
+
 fn load_entity_files(
     conf: &MNode,
     framework_dir: &Path,

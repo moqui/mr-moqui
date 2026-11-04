@@ -181,6 +181,11 @@ pub fn open_two_groups() -> EntityFacade {
 
 /// The `transactional` group and `second`, each on its own database and transaction manager.
 pub fn open_groups(second: &str) -> EntityFacade {
+    open_groups_with_components(second, &[])
+}
+
+/// [`open_groups`] with the entities of the component `entity` directories `dirs` after the framework's.
+pub fn open_groups_with_components(second: &str, dirs: &[PathBuf]) -> EntityFacade {
     let manager = || {
         let driver: Arc<dyn DbDriver> = Arc::new(MemDriver {
             store: Arc::new(Mutex::new(BTreeMap::new())),
@@ -198,8 +203,9 @@ pub fn open_groups(second: &str) -> EntityFacade {
         )
         .expect("memory pool")
     };
-    let facade = EntityFacade::open(
+    let facade = EntityFacade::open_components(
         &framework_dir(),
+        dirs,
         "transactional",
         vec![
             EntityGroup::new("transactional", "postgres", manager()),

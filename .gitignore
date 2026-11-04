@@ -16,6 +16,8 @@
 /runtime/install
 /runtime/MoquiConf.xml
 /runtime/ecomponent/
+# ./moq autodoc run at the root
+/autodoc
 # The framework's own dev components are tracked here, as base-component's are; a user's sit beside them in
 # repositories of their own.
 /runtime/dev-component/*
