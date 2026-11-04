@@ -906,30 +906,51 @@ fn register_tx_rules(
         )?;
     }
     let service = service.to_string();
-    let mut parameters = parameters.clone();
-    let mut results = results.cloned();
+    let parameters = parameters.clone();
+    let results = results.cloned();
     let hook = move || {
         if sim {
             tracing::info!("Skipping {when} rules of {service} in a sim session");
             return;
         }
-        let pools_factory = Arc::clone(&factory);
-        pools_factory.service_pools().spawn("service tx ECA rules", move || {
-            let facade = factory
-                .entity()
-                .ok_or_else(|| Error::new("no entity facade is installed"))?;
-            let tx = facade.default_transactions()?;
-            tx.run(TransactionAttribute::UseOrBegin, None, || {
-                super::seca::run_seca_rules(&service, when, &mut parameters, results.as_mut()).map_err(Into::into)
-            })
-            .map_err(Into::into)
-        });
+        // A full or stopping queue stores the run as a queued job instead of dropping it (HL-025).
+        factory.service_pools().spawn_rules(
+            &factory,
+            super::pool::TxRules {
+                service,
+                when: when.to_string(),
+                parameters,
+                results,
+            },
+        );
     };
     if when == "tx-commit" {
         tx.on_commit(hook)
     } else {
         tx.on_rollback(hook)
     }
+}
+
+/// Run the `when` rules of `service` in a transaction of their own, on the current context: the worker side of
+/// [`register_tx_rules`], from the service queue or from a queued job.
+pub(crate) fn run_tx_rules(
+    factory: &crate::context::ExecutionContextFactory,
+    rules: &mut super::pool::TxRules,
+) -> Result<(), Error> {
+    let facade = factory
+        .entity()
+        .ok_or_else(|| Error::new("no entity facade is installed"))?;
+    let tx = facade.default_transactions()?;
+    let super::pool::TxRules {
+        service,
+        when,
+        parameters,
+        results,
+    } = rules;
+    tx.run(TransactionAttribute::UseOrBegin, None, || {
+        super::seca::run_seca_rules(service, when, parameters, results.as_mut()).map_err(Into::into)
+    })
+    .map_err(Into::into)
 }
 
 /// Java's `ServiceCallSpecial.registerOnCommit` and `registerOnRollback`: run `name` asynchronously once the

@@ -20,17 +20,23 @@
 //! to the service pool. It never runs the service body. A worker does, and records the outcome.
 //! A job with `errorHistoryOnly` Y removes that row when the run succeeds. Java keeps every run.
 //!
+//! A pass claims locks only for job workers that are idle, and a lock records the instance that
+//! holds it. A lock whose instance is gone (not a live cluster member, or this instance with no run
+//! of this process holding it) is taken over before `expireLockTime`, and a worker checks that its
+//! run still holds the lock before it runs the service (`plans/High-Level-Review.md` HL-026).
+//!
 //! A cron expression is read in the machine's time zone ([`job_time_zone`]), the zone the operating
 //! system reports. That is not the server zone `default_time_zone` names (UTC in MoquiDefaultConf).
 //! The pass still skips a job only when the previous occurrence is strictly before the last run, so
 //! a last run at that occurrence still runs, as Java's `!lastSchedule.isBefore(lastRunDt)`.
 //!
-//! A fire-and-forget call that finds the pool queue full is stored as a `ServiceJob` named with
-//! [`QUEUE_PREFIX`] and no cron expression. The pass submits it when a slot is free and deletes it
-//! when it has run. Parameters of such a call are stored as text, as for any job.
+//! A fire-and-forget call, or the tx rules of a committed call, that finds the pool queue full or
+//! stopping is stored as a `ServiceJob` named with [`QUEUE_PREFIX`] and no cron expression, the call
+//! as JSON in `queuedCall` ([`QueuedCall`]), so lists and maps keep their shape (HL-025). The pass
+//! submits it when a slot is free and deletes it when it has run.
 
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashSet};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use moqui_db::sql::{insert, update, CompareOp, Condition};
@@ -46,8 +52,9 @@ use crate::transaction::{TransactionAttribute, TransactionManager};
 
 /// Marks a `ServiceJob` that is a queued fire-and-forget call, not a scheduled job.
 pub(crate) const QUEUE_PREFIX: &str = "ASYNC_QUEUE_";
-/// The `ServiceJobParameter` names a queued call keeps its caller in: the user it runs as and the agent run it works
-/// for (the origin of its writes, which the agent triggers' loop guard reads). They are not passed to the service.
+/// The `ServiceJobParameter` names a queued call stored before `queuedCall` kept its caller in: the user it runs as and
+/// the agent run it works for (the origin of its writes, which the agent triggers' loop guard reads). They are not
+/// passed to the service.
 const QUEUED_USERNAME: &str = "_moquiUsername";
 const QUEUED_AGENT_ID: &str = "_originAgentId";
 const QUEUED_RUN_ID: &str = "_originRunId";
@@ -87,7 +94,73 @@ pub(crate) struct JobRun {
     error_history_only: bool,
     /// The job has a schedule, so a run that fails is retried by a later one: its operation's rollback is `retry`.
     retries: bool,
+    /// A queued run of tx rules: the rules of `service_name` run, with `parameters` and these results.
+    rules: Option<QueuedRules>,
+    /// The lock this run claimed, which the worker checks it still holds before it runs. None for an explicit run.
+    claim: Option<LocalClaim>,
     factory: Arc<ExecutionContextFactory>,
+}
+
+/// The job runs this process claimed and has not finished, so a lock held under this instance's id but by none of
+/// them (left by an earlier process of this instance) can be taken over.
+#[derive(Default)]
+struct LocalRuns(Mutex<HashSet<String>>);
+
+/// One claimed run in [`LocalRuns`], until it drops.
+pub(crate) struct LocalClaim {
+    runs: Arc<LocalRuns>,
+    run_id: String,
+}
+
+impl LocalClaim {
+    fn new(factory: &ExecutionContextFactory, run_id: &str) -> Self {
+        let runs = factory.extension(|_| LocalRuns::default());
+        lock(&runs.0).insert(run_id.to_string());
+        Self {
+            runs,
+            run_id: run_id.to_string(),
+        }
+    }
+}
+
+impl Drop for LocalClaim {
+    fn drop(&mut self) {
+        lock(&self.runs.0).remove(&self.run_id);
+    }
+}
+
+/// This instance's id, which a lock it claims records: the cluster member id, else the instance id telemetry names.
+fn own_instance(factory: &ExecutionContextFactory) -> String {
+    crate::cluster::instance_id(factory).unwrap_or_else(|| crate::drain::instance_id(factory))
+}
+
+/// The instance holding `lock_row` for `run_id` when that instance is gone: another member whose heartbeat is outside
+/// the liveness window (or that has no member row), or this instance when no run of this process holds it (it was left
+/// by an earlier process). None while the holder may still be running it, and for a lock that names no instance.
+fn gone_owner(
+    factory: &ExecutionContextFactory,
+    facade: &EntityFacade,
+    lock_row: &EntityValue,
+    run_id: &str,
+) -> Option<String> {
+    let owner = field_text(lock_row, "instanceId");
+    if owner.is_empty() {
+        return None;
+    }
+    if owner == own_instance(factory) {
+        let local = factory
+            .extension_if_present::<LocalRuns>()
+            .is_some_and(|runs| lock(&runs.0).contains(run_id));
+        return (!local).then_some(owner);
+    }
+    match crate::cluster::is_live_member(factory, facade, &owner) {
+        Ok(true) => None,
+        Ok(false) => Some(owner),
+        Err(err) => {
+            tracing::warn!(instance = %owner, error = %err, "could not read whether a job lock's holder is live");
+            None
+        }
+    }
 }
 
 impl JobRun {
@@ -189,7 +262,7 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
             }
         }
         report.jobs_active += 1;
-        let ready = match readiness(&facade, job, &job_name, &cron_text, now) {
+        let ready = match readiness(factory, &facade, job, &job_name, &cron_text, now) {
             Ok(Some(ready)) => ready,
             Ok(None) => continue,
             Err(err) => {
@@ -217,10 +290,13 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
 struct Ready {
     expect: Expect,
     last_run_time: Value,
+    /// The run whose lock is taken over because its instance is gone.
+    reclaimed: Option<String>,
 }
 
 /// `None` when the job is not due, is running, or failed too recently.
 fn readiness(
+    factory: &ExecutionContextFactory,
     facade: &EntityFacade,
     job: &EntityValue,
     job_name: &str,
@@ -231,6 +307,7 @@ fn readiness(
     let mut expect = Expect::Absent;
     let mut last_run_time = Value::Null;
     let mut last_run_ms = None;
+    let mut reclaimed = None;
     if let Some(lock) = &lock {
         let run_id = field_text(lock, "jobRunId");
         last_run_time = lock.get("lastRunTime").cloned().unwrap_or(Value::Null);
@@ -240,17 +317,21 @@ fn readiness(
         } else {
             Expect::Run(run_id)
         };
-        if let (Expect::Run(run_id), Some(last)) = (&expect, last_run_ms) {
+        if let Expect::Run(run_id) = &expect {
+            // `expireLockTime` stays the upper bound; a lock whose instance is gone is taken over sooner (HL-026). A
+            // run id with no time has nothing to say the lock is old, so only a gone instance frees it.
             let expire = number(job, "expireLockTime").unwrap_or(DEFAULT_EXPIRE_MINUTES);
-            if last < now.as_millisecond().saturating_sub(expire.saturating_mul(60_000)) {
+            let expired = last_run_ms
+                .is_some_and(|last| last < now.as_millisecond().saturating_sub(expire.saturating_mul(60_000)));
+            if expired {
                 tracing::warn!(job = job_name, run = %run_id, "lock expired, ignoring it");
+            } else if let Some(owner) = gone_owner(factory, facade, lock, run_id) {
+                tracing::warn!(job = job_name, run = %run_id, instance = %owner, "lock holder is gone, taking the lock over");
+                reclaimed = Some(run_id.clone());
             } else {
                 tracing::info!(job = job_name, run = %run_id, "lock held, not running");
                 return Ok(None);
             }
-        } else if matches!(expect, Expect::Run(_)) {
-            // A run id with no time: there is nothing to say the lock is old, so it holds.
-            return Ok(None);
         }
     }
     if !cron_text.is_empty() {
@@ -286,7 +367,11 @@ fn readiness(
             }
         }
     }
-    Ok(Some(Ready { expect, last_run_time }))
+    Ok(Some(Ready {
+        expect,
+        last_run_time,
+        reclaimed,
+    }))
 }
 
 fn dispatch(
@@ -301,10 +386,26 @@ fn dispatch(
     let job_name = field_text(job, "jobName");
     let history_on_error = error_history_only(job);
     let run_id = create_run(facade, &job_name, None, &BTreeMap::new())?;
-    if !plan.claim(&job_name, &run_id, now_stamp, &ready.expect)? {
+    // Counted as this process's before the claim, so a pass never takes it for one an earlier process left.
+    let claim = LocalClaim::new(factory, &run_id);
+    if !plan.claim(&job_name, &run_id, now_stamp, &ready.expect, &own_instance(factory))? {
         // Another instance took it. Its run row would only confuse the history.
         delete_run(facade, &run_id);
         return Ok(false);
+    }
+    if let Some(old) = &ready.reclaimed {
+        record(
+            facade,
+            old,
+            &[
+                ("endTime", now_stamp.clone()),
+                ("hasError", Value::string("Y")),
+                (
+                    "errors",
+                    Value::string("Its server instance stopped before it ended; the job's lock was taken over"),
+                ),
+            ],
+        );
     }
     // Before the worker is queued, so the count includes this row. A submit that fails keeps the row as a failed
     // start, which counts too. A claim that lost the race returned above and does not count.
@@ -314,12 +415,20 @@ fn dispatch(
         }
     }
     let queued = job_name.starts_with(QUEUE_PREFIX);
-    let submitted = job_parameters(facade, &job_name).and_then(|mut parameters| {
-        let (user_name, origin) = if queued {
-            take_caller(&mut parameters)
-        } else {
-            (None, None)
-        };
+    let stored_call = field_text(job, "queuedCall");
+    let submitted = if queued && !stored_call.is_empty() {
+        QueuedCall::parse(&stored_call).map(|call| (call.parameters, call.user_name, call.origin, call.rules))
+    } else {
+        job_parameters(facade, &job_name).map(|mut parameters| {
+            let (user_name, origin) = if queued {
+                take_caller(&mut parameters)
+            } else {
+                (None, None)
+            };
+            (parameters, user_name, origin, None)
+        })
+    };
+    let submitted = submitted.and_then(|(parameters, user_name, origin, rules)| {
         let run = JobRun {
             job_name: job_name.clone(),
             service_name: field_text(job, "serviceName"),
@@ -338,6 +447,8 @@ fn dispatch(
             description: Some(field_text(job, "description")).filter(|text| !text.is_empty()),
             error_history_only: history_on_error,
             retries: !queued && !field_text(job, "cronExpression").is_empty(),
+            rules,
+            claim: Some(claim),
             factory: Arc::clone(factory),
         };
         if shared.submit_job(run) {
@@ -369,15 +480,87 @@ fn dispatch(
     Ok(true)
 }
 
-/// Store a call the pool queue had no room for, with its caller (`user_name`, `origin`) as a queued call carries them.
+/// A call stored as a queued job (`ServiceJob.queuedCall`) because the service queue was full or stopping: a
+/// fire-and-forget call, or the tx rules of a call that committed. The parameters and results keep their lists and
+/// maps, as JSON (HL-025).
+pub(crate) struct QueuedCall {
+    pub(crate) service: String,
+    pub(crate) parameters: BTreeMap<String, Value>,
+    /// The user it runs as and the agent run it works for (the agent triggers' loop guard).
+    pub(crate) user_name: Option<String>,
+    pub(crate) origin: Option<crate::context::AgentOrigin>,
+    pub(crate) rules: Option<QueuedRules>,
+}
+
+/// The phase and results of queued tx rules.
+#[derive(Clone, Debug)]
+pub(crate) struct QueuedRules {
+    pub(crate) when: String,
+    pub(crate) results: Option<BTreeMap<String, Value>>,
+}
+
+fn json_map(map: &BTreeMap<String, Value>) -> serde_json::Value {
+    moqui_lib::json::to_json(&Value::Map(
+        map.iter()
+            .filter(|(_, value)| !value.is_null())
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    ))
+}
+
+fn map_json(json: Option<&serde_json::Value>) -> Option<BTreeMap<String, Value>> {
+    match moqui_lib::json::from_json(json?) {
+        Value::Map(entries) => Some(entries.into_iter().collect()),
+        _ => None,
+    }
+}
+
+impl QueuedCall {
+    fn to_json(&self) -> String {
+        let mut root = serde_json::Map::new();
+        root.insert("parameters".into(), json_map(&self.parameters));
+        if let Some(user_name) = self.user_name.as_deref().filter(|name| !name.is_empty()) {
+            root.insert("userName".into(), user_name.into());
+        }
+        if let Some(origin) = &self.origin {
+            root.insert("agentId".into(), origin.agent_id.clone().into());
+            if let Some(run_id) = &origin.run_id {
+                root.insert("agentRunId".into(), run_id.clone().into());
+            }
+        }
+        if let Some(rules) = &self.rules {
+            root.insert("when".into(), rules.when.clone().into());
+            if let Some(results) = &rules.results {
+                root.insert("results".into(), json_map(results));
+            }
+        }
+        serde_json::Value::Object(root).to_string()
+    }
+
+    /// The call stored in `text`. The service is the job's `serviceName`, so it is left empty here.
+    fn parse(text: &str) -> Result<Self, Error> {
+        let json: serde_json::Value =
+            serde_json::from_str(text).map_err(|err| Error::new(format!("queued call is not JSON: {err}")))?;
+        let field = |name: &str| json.get(name).and_then(serde_json::Value::as_str).map(str::to_string);
+        Ok(Self {
+            service: String::new(),
+            parameters: map_json(json.get("parameters")).unwrap_or_default(),
+            user_name: field("userName"),
+            origin: field("agentId").map(|agent_id| crate::context::AgentOrigin {
+                agent_id,
+                run_id: field("agentRunId"),
+            }),
+            rules: field("when").map(|when| QueuedRules {
+                when,
+                results: map_json(json.get("results")),
+            }),
+        })
+    }
+}
+
+/// Store a call the pool queue had no room for, or did not run before it stopped, as a queued job with its caller.
 /// The pass will submit it.
-pub(crate) fn persist_queued(
-    factory: &Arc<ExecutionContextFactory>,
-    service: &str,
-    parameters: &BTreeMap<String, Value>,
-    user_name: Option<&str>,
-    origin: Option<&crate::context::AgentOrigin>,
-) -> Result<(), Error> {
+pub(crate) fn persist_queued(factory: &Arc<ExecutionContextFactory>, call: &QueuedCall) -> Result<(), Error> {
     let facade = factory
         .entity()
         .ok_or_else(|| Error::new("service worker queue is full and there is no database to queue in"))?;
@@ -386,38 +569,22 @@ pub(crate) fn persist_queued(
     numbered.set_sequenced_id_primary(&facade)?;
     let id = field_text(&numbered, "jobRunId");
     let name = format!("{QUEUE_PREFIX}{id}");
+    let description = match &call.rules {
+        Some(rules) => format!("Queued {} rules of {}", rules.when, call.service),
+        None => format!("Queued call of {}", call.service),
+    };
     let _authz = ExecutionContext::with_current(|ctx| ctx.disable_authz());
     let tx = facade.transactions_for(SERVICE_JOB)?;
     tx.run(TransactionAttribute::UseOrBegin, None, || {
         let mut job = facade.make_value(SERVICE_JOB)?;
         job.set("jobName", Value::string(&name));
-        job.set("description", Value::string(format!("Queued call of {service}")));
-        job.set("serviceName", Value::string(service));
+        job.set("description", Value::string(&description));
+        job.set("serviceName", Value::string(&call.service));
         job.set("paused", Value::string("N"));
         // Queued calls go after the jobs people scheduled.
         job.set("priority", Value::I32(9));
+        job.set("queuedCall", Value::string(call.to_json()));
         job.create(&facade)?;
-        let caller = [
-            (QUEUED_USERNAME, user_name),
-            (QUEUED_AGENT_ID, origin.map(|origin| origin.agent_id.as_str())),
-            (QUEUED_RUN_ID, origin.and_then(|origin| origin.run_id.as_deref())),
-        ];
-        let service_parameters = parameters
-            .iter()
-            .filter(|(key, value)| !value.is_null() && !is_caller_parameter(key))
-            .map(|(key, value)| (key.as_str(), to_plain_string(value)));
-        let caller_parameters = caller.into_iter().filter_map(|(key, value)| {
-            value
-                .filter(|value| !value.is_empty())
-                .map(|value| (key, value.to_string()))
-        });
-        for (key, value) in service_parameters.chain(caller_parameters) {
-            let mut row = facade.make_value(JOB_PARAMETER)?;
-            row.set("jobName", Value::string(&name));
-            row.set("parameterName", Value::string(key));
-            row.set("parameterValue", Value::string(value));
-            row.create(&facade)?;
-        }
         Ok(())
     })?;
     Ok(())
@@ -474,6 +641,8 @@ pub fn run_job_now(job_name: &str, extra: &BTreeMap<String, Value>) -> Result<St
         description: Some(field_text(&job, "description")).filter(|text| !text.is_empty()),
         error_history_only: history_on_error,
         retries: !field_text(&job, "cronExpression").is_empty(),
+        rules: None,
+        claim: None,
         factory: Arc::clone(&factory),
     };
     // The inline executor runs it at the next drain point.
@@ -540,6 +709,13 @@ pub(crate) fn run_job(job: JobRun) {
     let Some(facade) = factory.entity() else {
         return;
     };
+    // The run waited for a worker since its lock was claimed; an instance that took the lock over meanwhile runs the
+    // job (HL-026). The lock is not this run's to release, nor a queued call's row to delete.
+    if job.claim.is_some() && !holds_lock(&facade, &job) {
+        tracing::warn!(job = %job.job_name, run = %job.job_run_id, "the job's lock was taken over before the run started; not running it");
+        delete_run(&facade, &job.job_run_id);
+        return;
+    }
     // The thread's name is this port's (`moqui-job-0`, not Java's `MoquiJob-1`), an accepted difference (P7b-16).
     let thread = std::thread::current().name().unwrap_or("").to_string();
     let (host_address, host_name) = crate::context::identity::server_address();
@@ -555,6 +731,7 @@ pub(crate) fn run_job(job: JobRun) {
             ),
             ("hostAddress", Value::string(host_address)),
             ("hostName", Value::string(host_name)),
+            ("instanceId", Value::string(own_instance(&factory))),
             ("runThread", Value::string(thread)),
             ("startTime", now_stamp()),
         ],
@@ -575,7 +752,19 @@ pub(crate) fn run_job(job: JobRun) {
         operation_retry: job.retries,
         ..CallOptions::default()
     };
-    let results = match super::call::sync_with(&job.service_name, &parameters, &options) {
+    let called = match &job.rules {
+        Some(rules) => {
+            let mut rules = super::pool::TxRules {
+                service: job.service_name.clone(),
+                when: rules.when.clone(),
+                parameters: job.parameters.clone(),
+                results: rules.results.clone(),
+            };
+            super::call::run_tx_rules(&factory, &mut rules).map(|()| BTreeMap::new())
+        }
+        None => super::call::sync_with(&job.service_name, &parameters, &options),
+    };
+    let results = match called {
         Ok(results) => results,
         Err(err) => {
             tracing::error!(job = %job.job_name, error = %err, "error in service job call");
@@ -808,6 +997,20 @@ pub(crate) fn abandon(job: JobRun) {
     );
 }
 
+/// Whether `job`'s run still holds its lock. A lock that cannot be read counts as held: it was this run's when claimed.
+fn holds_lock(facade: &EntityFacade, job: &JobRun) -> bool {
+    match facade
+        .find(JOB_LOCK)
+        .and_then(|find| find.eq("jobName", Value::string(&job.job_name)).one())
+    {
+        Ok(row) => row.is_some_and(|row| field_text(&row, "jobRunId") == job.job_run_id),
+        Err(err) => {
+            tracing::warn!(job = %job.job_name, run = %job.job_run_id, error = %err, "could not recheck the job lock");
+            true
+        }
+    }
+}
+
 /// Clear this run's hold on the job lock and set `lastRunTime`. A failure is logged.
 fn release_lock(facade: &EntityFacade, job: &JobRun, last_run: &Value) {
     if let Err(err) = LockPlan::new(facade).and_then(|plan| plan.release(&job.job_name, &job.job_run_id, last_run)) {
@@ -912,10 +1115,6 @@ fn job_parameters(facade: &EntityFacade, job_name: &str) -> Result<BTreeMap<Stri
             )
         })
         .collect())
-}
-
-fn is_caller_parameter(name: &str) -> bool {
-    [QUEUED_USERNAME, QUEUED_AGENT_ID, QUEUED_RUN_ID].contains(&name)
 }
 
 /// Take a queued call's caller out of its job parameters: the user it runs as and the agent run it works for.
@@ -1052,12 +1251,12 @@ impl LockPlan {
                 let by_job = Condition::bound("jobName", CompareOp::Equals);
                 let free = Condition::and(vec![by_job.clone(), Condition::is_null("jobRunId")]);
                 let held = Condition::and(vec![by_job.clone(), Condition::bound("jobRunId", CompareOp::Equals)]);
-                let set = ["jobRunId", "lastRunTime"];
+                let set = ["jobRunId", "lastRunTime", "instanceId"];
                 let seed = Condition::and(vec![by_job.clone(), Condition::is_null("runCount")]);
                 let step = Condition::and(vec![by_job.clone(), Condition::bound("runCount", CompareOp::Equals)]);
                 Ok(Self {
                     tx: tx.clone(),
-                    insert_sql: insert(entity, dialect, &["jobName", "jobRunId", "lastRunTime"])?,
+                    insert_sql: insert(entity, dialect, &["jobName", "jobRunId", "lastRunTime", "instanceId"])?,
                     claim_free_sql: update(entity, dialect, &set, Some(&free))?.sql,
                     claim_run_sql: update(entity, dialect, &set, Some(&held))?.sql,
                     release_sql: update(entity, dialect, &set, Some(&held))?.sql,
@@ -1070,21 +1269,22 @@ impl LockPlan {
             .map_err(Error::from)
     }
 
-    /// True when this call took the lock. Every path is a conditional write, so only one caller wins.
-    fn claim(&self, job: &str, run_id: &str, now: &Value, expect: &Expect) -> Result<bool, Error> {
+    /// True when this call took the lock for `instance`. Every path is a conditional write, so only one caller wins.
+    fn claim(&self, job: &str, run_id: &str, now: &Value, expect: &Expect, instance: &str) -> Result<bool, Error> {
         let job_value = Value::string(job);
+        let owner = Value::string(instance);
         reserve(&self.tx, |conn| match expect {
             Expect::Absent => {
-                let params = [job_value, Value::string(run_id), now.clone()];
+                let params = [job_value, Value::string(run_id), now.clone(), owner];
                 // A lost insert race is a held lock.
                 Ok(conn.execute(&self.insert_sql, &params).is_ok())
             }
             Expect::Free => {
-                let params = [Value::string(run_id), now.clone(), job_value];
+                let params = [Value::string(run_id), now.clone(), owner, job_value];
                 Ok(conn.execute(&self.claim_free_sql, &params)? > 0)
             }
             Expect::Run(old) => {
-                let params = [Value::string(run_id), now.clone(), job_value, Value::string(old)];
+                let params = [Value::string(run_id), now.clone(), owner, job_value, Value::string(old)];
                 Ok(conn.execute(&self.claim_run_sql, &params)? > 0)
             }
         })
@@ -1092,7 +1292,13 @@ impl LockPlan {
 
     /// Clear `run_id`'s hold and set the run time. Does nothing if another run holds the lock now.
     fn release(&self, job: &str, run_id: &str, last_run: &Value) -> Result<(), Error> {
-        let params = [Value::Null, last_run.clone(), Value::string(job), Value::string(run_id)];
+        let params = [
+            Value::Null,
+            last_run.clone(),
+            Value::Null,
+            Value::string(job),
+            Value::string(run_id),
+        ];
         reserve(&self.tx, |conn| {
             conn.execute(&self.release_sql, &params)?;
             Ok(())
@@ -1168,11 +1374,12 @@ impl Shared {
         lock(&self.factory).upgrade()
     }
 
-    /// Room for more jobs, as Java's `ScheduledJobRunner`: `job-queue-max` plus `job-pool-max`, less the jobs running
-    /// or waiting for a job worker.
+    /// Room for more jobs: the job workers that are idle, less the runs already waiting for one. A pass claims a job's
+    /// lock only for a run a worker can take now, so this node does not hold the locks of jobs it cannot start while an
+    /// idle member could run them (HL-026). Java counted `job-queue-max` plus `job-pool-max`, a queue too.
     pub(crate) fn job_slots(&self) -> i64 {
         let state = lock(&self.state);
-        let total = i64::try_from(self.job_queue_max + self.job_pool_max).unwrap_or(i64::MAX);
+        let total = i64::try_from(self.job_workers).unwrap_or(i64::MAX);
         let busy = i64::try_from(state.jobs_active + state.jobs.len()).unwrap_or(i64::MAX);
         total - busy
     }
@@ -1231,8 +1438,38 @@ mod tests {
             description: None,
             error_history_only: false,
             retries: false,
+            rules: None,
+            claim: None,
             factory: Arc::clone(ctx.factory()),
         }
+    }
+
+    /// A run that waited for a worker while another instance took its lock over does not call its service (an unknown
+    /// one here, whose call would end the run row with an error): its row goes and the other run keeps the lock.
+    #[test]
+    fn a_parked_run_whose_lock_was_taken_over_does_not_call_its_service() {
+        let ctx = ExecutionContextFactory::test_context();
+        let facade = crate::testing::open();
+        ctx.factory().set_entity(facade.clone());
+        let _entered = ctx.enter();
+        let _authz = ctx.disable_authz();
+        let mut run = claimed(&ctx, &facade, "ParkedJob", "R-PARKED");
+        run.claim = Some(super::LocalClaim::new(ctx.factory(), "R-PARKED"));
+        let mut lock = one(&facade, JOB_LOCK, "jobName", "ParkedJob");
+        lock.set("jobRunId", Value::string("ELSEWHERE"));
+        lock.update(&facade).unwrap();
+        super::run_job(run);
+        assert_eq!(
+            text(&one(&facade, JOB_LOCK, "jobName", "ParkedJob"), "jobRunId"),
+            "ELSEWHERE"
+        );
+        let left = facade
+            .find(JOB_RUN)
+            .unwrap()
+            .eq("jobRunId", Value::string("R-PARKED"))
+            .one()
+            .unwrap();
+        assert!(left.is_none(), "the run did not start");
     }
 
     fn one(facade: &EntityFacade, entity: &str, field: &str, id: &str) -> EntityValue {
