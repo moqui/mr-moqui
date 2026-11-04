@@ -575,7 +575,7 @@ fn an_app_signs_in_in_the_browser_and_takes_its_code_for_a_device_key() {
     assert_eq!(status, 200, "{config}");
     assert!(config.contains("sso.joe"), "{config}");
     let parsed: serde_json::Value = serde_json::from_str(&config).unwrap();
-    assert_eq!(parsed["server"]["clientApi"], 3, "{config}");
+    assert_eq!(parsed["server"]["clientApi"], 4, "{config}");
     // the app renews its key before it runs out, by the header alone; the new key signs in
     let (status, _, renewed) = exchange(
         server,
