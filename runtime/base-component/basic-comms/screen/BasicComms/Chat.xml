@@ -80,6 +80,17 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- the user's changes in all their rooms after a cursor, for a client that keeps chat offline (ChatServices.get#UserChanges) -->
+    <transition name="chatChanges" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const number = (value) => value == null || value === '' ? null : Number(value)
+            const out = ec.service.sync().name('org.moqui.impl.ChatServices.get#UserChanges').parameters({afterSeq: number(afterSeq),
+                limit: number(limit) || 200, heads: String(heads) !== 'false'}).call()
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {changes: out.changeList || [], lastSeq: out.lastSeq, more: !!out.more,
+                reset: !!out.reset, heads: out.headList ?? null})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- the files of the room's messages, newest first: all, or the pictures (contentTypePrefix image/) -->
     <transition name="files" method="get" read-only="true">
         <actions><script><![CDATA[

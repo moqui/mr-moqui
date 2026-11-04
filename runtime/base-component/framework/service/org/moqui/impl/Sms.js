@@ -145,8 +145,9 @@ function ensurePairRoom(p) {
       member.setFields({ chatRoomId: room.chatRoomId, chatActorId: actorOf[userId], userId, roleEnumId: 'CmrMember', joinedDate: now,
         lastReadEventSeq: Number(room.lastEventSeq || 0), notificationLevelEnumId: 'CnlAll', isPinned: 'N', isMuted: 'N' }, true, null, null)
       member.create()
-      ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({ topic: 'chatUser:' + userId, userIdList: [userId],
-        message: { kind: 'room', action: 'joined', chatRoomId: room.chatRoomId } }).disableAuthz().call()
+      ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameters({ userIdList: [userId], changeKind: 'membership',
+        chatRoomId: room.chatRoomId, change: { action: 'joined' }, pushMessage: { kind: 'room', action: 'joined', chatRoomId: room.chatRoomId } })
+        .disableAuthz().call()
     }
   }
   return { chatRoomId: room.chatRoomId, chatBridgeId, chatRoomBridgeId: mapping.chatRoomBridgeId, externalRoomId, created }
@@ -175,8 +176,8 @@ function syncNumberRooms(p) {
       member.delete()
       removedCount++
       removedUsers.add(member.userId)
-      ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({ topic: 'chatUser:' + member.userId, userIdList: [member.userId],
-        message: { kind: 'room', action: 'left', chatRoomId } }).disableAuthz().call()
+      ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameters({ userIdList: [member.userId], changeKind: 'membership',
+        chatRoomId, change: { action: 'left' }, pushMessage: { kind: 'room', action: 'left', chatRoomId } }).disableAuthz().call()
     }
   }
   if (removedUsers.size) {
@@ -234,6 +235,8 @@ function openPairRoom(p) {
   if (mine && mine.leftDate) {
     mine.set('leftDate', null)
     mine.update()
+    ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameters({ userIdList: [me], changeKind: 'membership',
+      chatRoomId: out.chatRoomId, change: { action: 'joined' } }).disableAuthz().call()
   }
   return { chatRoomId: out.chatRoomId, ourNumber: fromNumber, theirNumber: dest.number }
 }

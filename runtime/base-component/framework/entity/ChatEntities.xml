@@ -323,6 +323,56 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="fetchedDate" type="date-time"/>
     </entity>
 
+    <entity entity-name="ChatUserState" package="moqui.chat" use="transactional" cache="never">
+        <description>A user's place in their chat changes feed (ChatUserChange): lastChangeSeq is the number of the user's
+            last change; the next change takes the next number, with this row locked as append#Event locks
+            ChatRoom.lastEventSeq, so a change is committed before a later number is given. purgedChangeSeq is the last
+            number clean#UserChanges took out of the feed: a client whose cursor is older reads everything again (reset).
+            Made on the user's first change.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="lastChangeSeq" type="number-integer"/>
+        <field name="purgedChangeSeq" type="number-integer"/>
+        <field name="purgedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+    </entity>
+
+    <entity entity-name="ChatUserChange" package="moqui.chat" use="transactional" cache="never">
+        <description>A change of what a user's chat client keeps, numbered per user (changeSeq: 1, 2, ... in commit
+            order; ChatUserState), so a client offline for a while reads what changed in all its rooms from one cursor
+            (the chatChanges transition, get#UserChanges). New messages are not changes: a room's newest event is its
+            lastEventSeq, which get#UserChanges answers per room (heads). What is: the user's membership of a room
+            (joined, left or taken out, role), a room's details or members (room), the user's own settings and read
+            marker in a room, a message changed after it was sent (an edit, a reaction, a redaction, a pin, its link
+            previews or poll: message, eventSeq the message's), and a room's retention (retention, eventSeq the last
+            event deleted: everything up to it is gone). A change replaces the user's earlier change of the same kind,
+            room and (for message) eventSeq, with a new changeSeq, so the feed holds one row per thing that changed, not
+            one per write. changeJson is the kind's detail (record#UserChange). clean#UserChanges removes changes older
+            than chat_changes_keep_days.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="changeSeq" type="number-integer" is-pk="true"/>
+        <field name="changeKindEnumId" type="id"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="eventSeq" type="number-integer"/>
+        <field name="changeJson" type="text-long"/>
+        <field name="changeDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one-nofk" related="moqui.chat.ChatRoom" short-alias="room"/>
+        <relationship type="one" title="ChatUserChangeKind" related="moqui.basic.Enumeration" short-alias="kind">
+            <key-map field-name="changeKindEnumId"/></relationship>
+        <index name="CHAT_CHANGE_KEY"><index-field name="userId"/><index-field name="chatRoomId"/><index-field name="changeKindEnumId"/>
+            <index-field name="eventSeq"/></index>
+        <index name="CHAT_CHANGE_DATE"><index-field name="changeDate"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Chat User Change Kind" enumTypeId="ChatUserChangeKind"/>
+            <moqui.basic.Enumeration description="Membership" enumId="CucMembership" enumCode="membership" enumTypeId="ChatUserChangeKind" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Room" enumId="CucRoom" enumCode="room" enumTypeId="ChatUserChangeKind" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Settings" enumId="CucSettings" enumCode="settings" enumTypeId="ChatUserChangeKind" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Read" enumId="CucRead" enumCode="read" enumTypeId="ChatUserChangeKind" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="Message" enumId="CucMessage" enumCode="message" enumTypeId="ChatUserChangeKind" sequenceNum="5"/>
+            <moqui.basic.Enumeration description="Retention" enumId="CucRetention" enumCode="retention" enumTypeId="ChatUserChangeKind" sequenceNum="6"/>
+        </seed-data>
+    </entity>
+
     <entity entity-name="UserStatus" package="moqui.security" use="transactional" cache="never">
         <description>A user's presence and status (design-drawers-commons §1.8), set from the account menu: online, away, do
             not disturb or invisible, a status text with an emoji, and a time it clears at. The client's heartbeat keeps

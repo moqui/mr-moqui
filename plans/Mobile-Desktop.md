@@ -331,7 +331,7 @@ As built (MD4), the desktop client implements the first part:
 
 Still missing, for MD5:
 
-- a changes feed across rooms: new rooms, membership, and edits, redactions and deletions as tombstones beyond the ranges the store holds;
+- a changes feed across rooms: new rooms, membership, and edits, redactions and deletions as tombstones beyond the ranges the store holds. The server side is built (MD5 stage 1): `ChatUserChange` with a counter per user (`ChatUserState`), written by the chat services for membership, room, settings, read, message (edit, reaction, redaction, pin, link previews and polls) and retention (a range tombstone), coalesced per thing changed; the Chat screen's `chatChanges` (`afterSeq`, `limit`) answers `{changes, lastSeq, more, reset, heads}`, `heads` giving each room's newest event since new messages are not changes; `chatUser:` pushes carry `changeSeq` ([Qvt-Client](../docs/ui/Qvt-Client.md#chat-store-and-presence), "The changes feed"). Folding it into the store is stage 3;
 - a change cursor for mail folders;
 - resumable attachment uploads;
 - the same idempotency for internal messages (not queued until then) and for mutations other than a chat send and a mail send;
