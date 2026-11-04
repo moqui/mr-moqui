@@ -32,3 +32,10 @@
 -keep class org.moqui.mobile.ActivityEnd { *; }
 # Asked for by name (Push.kt) in a build with Firebase.
 -keep class org.moqui.mobile.FcmPush { *; }
+
+# WorkManager (FlushWorker.kt): Room makes WorkManager's database by reflection on its no-argument constructor, which
+# room-runtime 2.6's own rule (-keep class * extends RoomDatabase) does not keep under R8's full mode: without this, a
+# release build ends at its start (NoSuchMethodException: WorkDatabase_Impl.<init>). WorkManager makes the worker by
+# its (Context, WorkerParameters) constructor.
+-keep class * extends androidx.room.RoomDatabase { <init>(); }
+-keep class org.moqui.mobile.FlushWorker { public <init>(android.content.Context, androidx.work.WorkerParameters); }

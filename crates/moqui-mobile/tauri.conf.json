@@ -1,7 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "MR-Moqui",
-  "version": "0.1.0",
   "identifier": "org.moqui.mobile",
   "build": {
     "frontendDist": "../../target/mobile-shell"

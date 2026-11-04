@@ -22,7 +22,23 @@ val tauriProperties = Properties().apply {
     }
 }
 
+// The release signing key (the Play upload key), from the environment `./moq android build --release` passes on:
+// MOQUI_ANDROID_KEYSTORE (a .jks or .p12), MOQUI_ANDROID_KEYSTORE_PASSWORD, MOQUI_ANDROID_KEY_ALIAS and
+// MOQUI_ANDROID_KEY_PASSWORD (the store's password when not set). Without a keystore the release build is unsigned.
+val releaseKeystore = System.getenv("MOQUI_ANDROID_KEYSTORE")?.takeIf { it.isNotBlank() }
+
 android {
+    if (releaseKeystore != null) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = System.getenv("MOQUI_ANDROID_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("MOQUI_ANDROID_KEY_ALIAS")
+                keyPassword = System.getenv("MOQUI_ANDROID_KEY_PASSWORD")?.takeIf { it.isNotEmpty() }
+                    ?: System.getenv("MOQUI_ANDROID_KEYSTORE_PASSWORD")
+            }
+        }
+    }
     compileSdk = 37
     namespace = "org.moqui.mobile"
     defaultConfig {
@@ -51,6 +67,9 @@ android {
             }
         }
         getByName("release") {
+            if (releaseKeystore != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             optimization {
                enable = true
             }
@@ -96,6 +115,8 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("com.google.android.material:material:1.12.0")
     implementation("androidx.lifecycle:lifecycle-process:2.10.0")
+    // the outbox sent in the background (FlushWorker.kt)
+    implementation("androidx.work:work-runtime:2.10.1")
     // the ring's CallStyle notification and the full-screen intent check (CallService.kt)
     implementation("androidx.core:core:1.13.1")
     if (fcm) {

@@ -86,6 +86,14 @@ own `/qapps`), never both:
 - **Paused** (another app, the screen off): the mirror stops; the store, the sockets and the outbox's sender stay while
   Android keeps the process.
 - **Resumed:** the outbox is woken, and the mirror reads ahead again for the shell's account.
+- **In the background**, where Android freezes or ends the process, the outbox is sent by a WorkManager job
+  (`FlushWorker.kt`): each time the app goes to the background (`ProcessLifecycleOwner`), a job waits for a network and
+  calls Rust (`Native.flush`, `native::flush_background`), which sends what is due for at most a minute
+  (`moqui_client::sync::flush::flush_bounded`; one operation taken goes to its end) and leaves the rest as it was. When
+  something waits for a later time (a retry's backoff), the job runs again after it, at least a minute later and at most
+  12 times. In a process started for it, the client is made from the store as for a push; a 401 holds the operation
+  until a sign-in or a renewed key, as in the app. Operations are claimed in the store, so the job and the app's own
+  sender never send one twice. The feeds and the mirror do not run in the background.
 - **The activity ends** (backing out of the app): the client stops (`Client::shutdown`) and the app ends the process
   (`exit`), so a process Android would keep cached never has a stopped client; the next start, as after Android kills
   the process, runs the setup again, opens the stores and sends what the outbox kept. Only an activity that finished
@@ -175,7 +183,8 @@ setting; Bluetooth and speaker routing; two-way audio; and encrypted calls on a 
 
 ## Known gaps (MT1)
 
-- No background flush: the outbox is sent while the process lives (WorkManager is next).
+What fills each gap of MT1 and MT2 is MT3's record ([Mobile-Desktop](../../plans/Mobile-Desktop.md#android-track-md6)).
+
 - A notification's link and tag are not used; the counts and presence (`setCounts`, `setPresence`) do nothing.
 - Downloads and attachments a server page opens are not saved by the host, and an event stream is answered 503.
 - A form posted by navigation is refused with 405 (above), not sent without its body; the bridge's `fetch` covers the
@@ -193,6 +202,8 @@ setting; Bluetooth and speaker routing; two-way audio; and encrypted calls on a 
 - `cd crates/moqui-client-tauri && CARGO_TARGET_DIR=../../target cargo test`: the schemes' answer, with no network.
 - `scripts/check-android.sh`: clippy for both Android targets.
 - `scripts/android-smoke.sh`: on the emulator when asked (not in `./moq test-all`): install, start, the shell's ready
-  line in logcat, a screenshot, the frame check, then back out and start again. With `MOQUI_SMOKE_APP=/qapps/...` and an
+  line in logcat, a screenshot, the frame check, then back out and start again. With a release APK
+  (`MOQUI_MOBILE_APK`), which has no DevTools socket, it skips the frame check and checks instead that R8 kept the
+  classes Rust calls by name (`dexdump`) and that the log has no JNI lookup failure. With `MOQUI_SMOKE_APP=/qapps/...` and an
   account signed in, the frame check opens that server page and puts the frames there, and checks that the page cannot
   call a shell command or go to the shell's origin itself.

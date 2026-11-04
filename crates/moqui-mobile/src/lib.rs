@@ -24,7 +24,8 @@
 //! - [`commands`]: the way back to the shell, a notification, a link outside the app.
 //! - The `<client-conf>` of the build (`client-conf.xml`, read at build time), the stores under the app's data
 //!   directory, the SSO hand-back (`org.moqui.mobile:/sso`, an intent filter), and the lifecycle: the mirror stops when
-//!   the app is paused and starts again when it resumes; the outbox's sender runs while the process does.
+//!   the app is paused and starts again when it resumes; the outbox's sender runs while the process does, and in the background a WorkManager job (`FlushWorker.kt`) sends
+//!   it for a bounded time ([`native::flush_background`]).
 //! - [`calls`] and [`native`]: the incoming call on a locked phone (MT2), shown by the native code
 //!   (`gen/android/.../CallManager.kt`) with the media in the webview: an Answer's deep link opens the call in the
 //!   shell, a Decline and the push token's registration go to the server from Rust with no webview.
@@ -153,6 +154,8 @@ fn start(app: &AppHandle, files: Box<dyn tauri::Assets<tauri::DynRuntime>>) -> R
     let host = Arc::new(MobileHost::new(app.clone(), network, dir.clone()));
     *moqui_lib::sync::lock(&host.client) = Some(Arc::clone(&core));
     let client_host: Arc<dyn ClientHost> = host.clone();
+    // a background send (WorkManager) tells the pages too
+    native::set_app_host(Arc::clone(&client_host));
     let shell_host: Arc<dyn ShellHost> = host.clone();
     let shell = scheme::EmbeddedShell {
         layout: Assets::embedded(SHELL_LIBS),

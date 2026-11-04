@@ -40,6 +40,8 @@ class MainActivity : TauriActivity() {
     super.onCreate(savedInstanceState)
     CallManager.know(this)
     CallManager.appScreenShown(this)
+    // the outbox sent in the background, once the app is there (WorkManager)
+    FlushWorker.watch(this)
     // the native code's library and context, then push (FCM, when the build has Firebase)
     Native.work {
       Native.ensure(applicationContext)

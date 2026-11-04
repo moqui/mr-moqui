@@ -118,6 +118,7 @@ fn run(server: &Server, store: &Mutex<Store>, now: i64) -> Flushed {
         now: &clock,
         claimed: &|| {},
         server: ServerSync::default(),
+        until: None,
     })
 }
 
@@ -145,6 +146,51 @@ fn a_chat_send_is_acked_by_its_answer_and_then_by_its_echo() {
     assert!(!run(&server, &store, NOW + 1).changed);
     assert!(echoed(&store.lock().unwrap(), "c1"));
     assert_eq!(state(&store, "c1"), None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_bounded_pass_takes_nothing_past_its_bound_and_leaves_it_as_it_was() {
+    let (store, dir) = store("bounded");
+    chat(&store, "c1", "R1", NOW);
+    chat(&store, "c2", "R2", NOW + 1);
+    let server = Server::default();
+    server.answer(
+        &format!("{CHAT}/send"),
+        ok(json!({ "eventSeq": 5, "event": { "eventSeq": 5 } })),
+    );
+    // the clock moves on with each look: the bound passes after the claim, before the second operation
+    let tick = std::sync::atomic::AtomicI64::new(NOW);
+    let clock = || tick.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let flushed = flush(&Job {
+        transport: &server,
+        store: &store,
+        comms_root: DEFAULT_COMMS_ROOT.to_string(),
+        now: &clock,
+        claimed: &|| {},
+        server: ServerSync::default(),
+        until: Some(NOW + 3),
+    });
+    assert_eq!(server.take().len(), 1, "one sent before the bound");
+    assert_eq!(flushed.sent.len(), 1);
+    assert_eq!(state(&store, "c1"), Some(OutboxState::Acked));
+    let left = store.lock().unwrap().outbox_get("c2").unwrap();
+    assert_eq!(left.state, OutboxState::Queued, "put back, not sending");
+    assert_eq!(left.attempts, 0, "its claim is not counted as a try");
+    // a pass already past its bound takes nothing
+    let late = || NOW + 10;
+    let flushed = flush(&Job {
+        transport: &server,
+        store: &store,
+        comms_root: DEFAULT_COMMS_ROOT.to_string(),
+        now: &late,
+        claimed: &|| {},
+        server: ServerSync::default(),
+        until: Some(NOW + 3),
+    });
+    assert!(!flushed.changed);
+    assert!(server.take().is_empty());
+    assert_eq!(state(&store, "c2"), Some(OutboxState::Queued));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -370,6 +416,7 @@ fn a_store_that_is_gone_ends_the_pass() {
         now: &clock,
         claimed: &|| {},
         server: ServerSync::default(),
+        until: None,
     });
     assert!(!flushed.changed && flushed.next_ms.is_none());
     assert!(server.take().is_empty());
@@ -414,6 +461,7 @@ fn run_with(transport: &dyn Transport, store: &Mutex<Store>, now: i64, claimed: 
         now: &clock,
         claimed,
         server: ServerSync::default(),
+        until: None,
     })
 }
 
@@ -594,6 +642,7 @@ fn run_md5(server: &Server, store: &Mutex<Store>, now: i64) -> Flushed {
         now: &clock,
         claimed: &|| {},
         server: md5(false),
+        until: None,
     })
 }
 
@@ -1042,6 +1091,7 @@ fn an_internal_message_is_queued_where_the_server_takes_its_send_once() {
         now: &clock,
         claimed: &|| {},
         server: md5(true),
+        until: None,
     });
     let asked = server.take();
     assert_eq!(asked.len(), 1);

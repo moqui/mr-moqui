@@ -21,6 +21,7 @@ object Native {
     @JvmStatic external fun pushToken(dataDir: String, token: String)
     @JvmStatic external fun decline(dataDir: String, callSessionId: String): String?
     @JvmStatic external fun hasAccount(dataDir: String): Boolean
+    @JvmStatic external fun flush(dataDir: String, budgetMs: Long): Long
 
     /** The library loaded and given the context; whether it may make requests (its TLS verifier started). */
     @Synchronized

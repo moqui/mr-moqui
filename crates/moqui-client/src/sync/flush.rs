@@ -152,6 +152,16 @@ pub(crate) struct Job<'a> {
     pub(crate) claimed: &'a dyn Fn(),
     /// What the server supports of the client's sync (MD5 at `clientApi` 4).
     pub(crate) server: ServerSync,
+    /// No operation is taken at or after this time (a background run's bound, [`flush_bounded`]); none for the
+    /// thread's passes.
+    pub(crate) until: Option<i64>,
+}
+
+impl Job<'_> {
+    /// Whether the pass is past its bound.
+    fn over(&self) -> bool {
+        self.until.is_some_and(|until| (self.now)() >= until)
+    }
 }
 
 /// What a pass did: whether an operation changed, the pages' `sent` events, whether one is held, and the time the next
@@ -184,6 +194,9 @@ enum Outcome {
 pub(crate) fn flush(job: &Job<'_>) -> Flushed {
     let mut flushed = Flushed::default();
     for _ in 0..ROUNDS {
+        if job.over() {
+            break;
+        }
         let claimed = with(job.store, |store| store.outbox_claim((job.now)(), CLAIM)).unwrap_or_default();
         if claimed.is_empty() {
             break;
@@ -194,16 +207,9 @@ pub(crate) fn flush(job: &Job<'_>) -> Flushed {
         let mut stopped: HashSet<(String, String)> = HashSet::new();
         for op in claimed {
             let order = (order_group(&op.kind).to_string(), op.target.clone());
-            if !op.target.is_empty() && stopped.contains(&order) {
-                let back = OutboxUpdate {
-                    state: OutboxState::Queued,
-                    attempts: op.attempts.saturating_sub(1),
-                    next_ms: op.next_ms,
-                    error: op.error.clone(),
-                };
-                if let Some(Err(err)) = with(job.store, |store| store.outbox_update(&op.id, &back)) {
-                    tracing::error!("The outbox operation {} was not put back: {err}", op.id);
-                }
+            // behind one of its target that did not go, or past the pass's bound: put back as it was, unsent
+            if (!op.target.is_empty() && stopped.contains(&order)) || job.over() {
+                put_back(job, &op);
                 continue;
             }
             // discarded or taken off since the claim, or the account's data deleted: not sent
@@ -238,6 +244,19 @@ pub(crate) fn flush(job: &Job<'_>) -> Flushed {
     })
     .flatten();
     flushed
+}
+
+/// A claimed operation put back as it was, not sent.
+fn put_back(job: &Job<'_>, op: &OutboxOp) {
+    let back = OutboxUpdate {
+        state: OutboxState::Queued,
+        attempts: op.attempts.saturating_sub(1),
+        next_ms: op.next_ms,
+        error: op.error.clone(),
+    };
+    if let Some(Err(err)) = with(job.store, |store| store.outbox_update(&op.id, &back)) {
+        tracing::error!("The outbox operation {} was not put back: {err}", op.id);
+    }
 }
 
 /// Move an operation on after its send.
@@ -984,11 +1003,12 @@ pub fn start(client: &Arc<Client>, host: &Arc<dyn ClientHost>) {
             if client.is_stopped() {
                 return;
             }
-            let next = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| flush_all(&client, host.as_ref())))
-                .unwrap_or_else(|_| {
-                    tracing::error!("The outbox pass panicked");
-                    Some(now_ms() + 60_000)
-                });
+            let next =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| flush_all(&client, host.as_ref(), None)))
+                    .unwrap_or_else(|_| {
+                        tracing::error!("The outbox pass panicked");
+                        Some(now_ms() + 60_000)
+                    });
             let wait = next.map_or(IDLE, |next| {
                 Duration::from_millis(u64::try_from(next - now_ms()).unwrap_or(0).max(200)).min(IDLE)
             });
@@ -1009,11 +1029,29 @@ pub fn release_held(client: &Client, id: &str) {
     client.flusher.wake();
 }
 
-/// One pass over every account signed in here; gives when the next operation is due.
-fn flush_all(client: &Client, host: &dyn ClientHost) -> Option<i64> {
+/// One pass over every account signed in here that takes no operation after `budget`, for a run in the background
+/// (Android's WorkManager, with the app's process asleep or started for it): what is not sent by then stays in the
+/// store, as it was, for the next run or the app. An operation taken before the bound goes to its end (its request's
+/// own timeout), so a run can last a request longer. Gives when the next operation waiting is due, or none.
+pub fn flush_bounded(client: &Client, host: &dyn ClientHost, budget: Duration) -> Option<i64> {
+    let until = now_ms().saturating_add(i64::try_from(budget.as_millis()).unwrap_or(i64::MAX));
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| flush_all(client, host, Some(until)))).unwrap_or_else(
+        |_| {
+            tracing::error!("The outbox's bounded pass panicked");
+            None
+        },
+    )
+}
+
+/// One pass over every account signed in here, taking nothing at or after `until`; gives when the next operation is
+/// due.
+fn flush_all(client: &Client, host: &dyn ClientHost, until: Option<i64>) -> Option<i64> {
     let accounts = moqui_lib::sync::lock(&client.accounts).list().to_vec();
     let mut next: Option<i64> = None;
     for account in accounts {
+        if until.is_some_and(|until| now_ms() >= until) {
+            break;
+        }
         let Some(key) = client.keys.get(&account.id) else {
             continue;
         };
@@ -1034,6 +1072,7 @@ fn flush_all(client: &Client, host: &dyn ClientHost) -> Option<i64> {
             now: &now_ms,
             claimed: &|| host.notify_pages(&account.id, &json!({ "kind": "changed" })),
             server: client.server_sync_of(&account.id),
+            until,
         };
         let flushed = flush(&job);
         if flushed.changed {

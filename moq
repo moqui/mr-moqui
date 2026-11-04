@@ -838,7 +838,17 @@ client crate (plans/Mobile-Desktop.md, MD6). Commands:
     build      cargo tauri android build: an APK and an AAB for each target, debug unless
                --release (e.g. ./moq android build --target x86_64 --apk)
 
-dev and build stage the client's shell, which the app embeds, in target/mobile-shell first.
+dev and build stage the client's shell, which the app embeds, in target/mobile-shell first. The
+app's version name is the crate's version (crates/moqui-mobile/Cargo.toml), and its version code
+major*1000000 + minor*1000 + patch.
+
+A release build is signed with the upload key from these variables, else it is unsigned (with a
+warning: an unsigned APK does not install, and Play takes only a signed AAB):
+
+    MOQUI_ANDROID_KEYSTORE           the keystore (.jks or .p12), an absolute path
+    MOQUI_ANDROID_KEYSTORE_PASSWORD  its password
+    MOQUI_ANDROID_KEY_ALIAS          the key's alias
+    MOQUI_ANDROID_KEY_PASSWORD       the key's password, when it is not the store's
 
 Other arguments go to the Tauri CLI. The Android SDK is ANDROID_HOME, else ~/Android/Sdk or
 ~/Library/Android/sdk; the NDK the newest under its ndk/ (or ANDROID_NDK_HOME); the JDK JAVA_HOME,
@@ -1603,6 +1613,16 @@ task_android() {
         dev) [ -z "$release" ] || args=(--release) ;;
         build) [ -n "$release" ] || args=(--debug) ;;
     esac
+    if [ "$command" != init ]; then
+        # The version name, and the version code made from it (major*1000000 + minor*1000 + patch), are the crate's.
+        local version
+        version=$(android_app_version "$app/Cargo.toml") || exit 1
+        args+=(--config "{\"version\":\"$version\"}")
+        info "The app's version: $version"
+    fi
+    if [ "$command" = build ] && [ -n "$release" ]; then
+        android_signing_info || exit 1
+    fi
     (cd "$app" && run_cmd cargo tauri android "$command" ${args[@]+"${args[@]}"} \
         ${tauri_args[@]+"${tauri_args[@]}"}) || die "cargo tauri android $command failed"
 }
@@ -1622,6 +1642,42 @@ android_wry_patched() {
                 "(crates/moqui-mobile/patches/README.md)" ;;
         esac
     done <<<"$tree"
+}
+
+# The version of the crate whose Cargo.toml is $1 ([package] version), which the Android app's version name and code
+# come from.
+android_app_version() {
+    local version
+    version=$(sed -n '/^\[package\]/,/^\[/s/^version *= *"\([^"]*\)".*/\1/p' "$1" | head -1)
+    case $version in
+        [0-9]*.[0-9]*.[0-9]*) printf '%s\n' "$version" ;;
+        *) die "no version in the [package] of $(rel "$1")" ;;
+    esac
+}
+
+# Say how a release build of the Android app is signed, and check the set of variables, which Gradle reads
+# (gen/android/app/build.gradle.kts): MOQUI_ANDROID_KEYSTORE (the upload key's .jks or .p12),
+# MOQUI_ANDROID_KEYSTORE_PASSWORD, MOQUI_ANDROID_KEY_ALIAS and MOQUI_ANDROID_KEY_PASSWORD (the store's password when
+# not set). Without MOQUI_ANDROID_KEYSTORE the APK and AAB are unsigned.
+android_signing_info() {
+    local keystore=${MOQUI_ANDROID_KEYSTORE:-}
+    if [ -z "$keystore" ]; then
+        warn "The release build is not signed: MOQUI_ANDROID_KEYSTORE is not set. An unsigned APK does not install" \
+            "and Play takes only a signed AAB; set MOQUI_ANDROID_KEYSTORE, MOQUI_ANDROID_KEYSTORE_PASSWORD," \
+            "MOQUI_ANDROID_KEY_ALIAS and MOQUI_ANDROID_KEY_PASSWORD (./moq help android)"
+        return 0
+    fi
+    [ -f "$keystore" ] || die "MOQUI_ANDROID_KEYSTORE is not a file: $keystore"
+    case $keystore in
+        /*) ;;
+        *) die "MOQUI_ANDROID_KEYSTORE must be an absolute path (Gradle reads it from the app's project): $keystore" ;;
+    esac
+    [ -n "${MOQUI_ANDROID_KEYSTORE_PASSWORD:-}" ] && [ -n "${MOQUI_ANDROID_KEY_ALIAS:-}" ] \
+        || die "signing with MOQUI_ANDROID_KEYSTORE needs MOQUI_ANDROID_KEYSTORE_PASSWORD and MOQUI_ANDROID_KEY_ALIAS" \
+            "(and MOQUI_ANDROID_KEY_PASSWORD when the key's password is not the store's)"
+    export MOQUI_ANDROID_KEYSTORE MOQUI_ANDROID_KEYSTORE_PASSWORD MOQUI_ANDROID_KEY_ALIAS
+    [ -z "${MOQUI_ANDROID_KEY_PASSWORD:-}" ] || export MOQUI_ANDROID_KEY_PASSWORD
+    info "Signing the release build with the key $MOQUI_ANDROID_KEY_ALIAS of $(rel "$keystore")"
 }
 
 # The serial of the first emulator adb lists (in any state), or nothing. $1 is adb.

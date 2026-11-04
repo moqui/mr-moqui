@@ -357,6 +357,51 @@ forever. With no display (no GUI session on macOS) `./moq android emulator` fall
 `./moq android dev` refuses such an emulator; build an APK and `adb install` it instead. Every adb call names the
 emulator's serial, so a phone connected too is no trouble.
 
+#### Release builds and Google Play
+
+`./moq android build --release` makes an AAB and APKs for each target (`--target aarch64` for phones, `--apk` or
+`--aab` for one), minified by R8 (`gen/android/app/proguard-rules.pro` and wry's rules keep what Rust calls through
+JNI). The version name is the crate's version (`crates/moqui-mobile/Cargo.toml`, passed as the Tauri config's
+`version`) and the version code major·1000000 + minor·1000 + patch, so each release raises the crate's version. As
+for the desktop, signing is on when its variables are set, else the build is unsigned, with a warning (an unsigned APK
+does not install, and Play takes only a signed AAB):
+
+- `MOQUI_ANDROID_KEYSTORE`: the upload key's keystore (`.jks` or `.p12`), an absolute path, kept out of git.
+- `MOQUI_ANDROID_KEYSTORE_PASSWORD` and `MOQUI_ANDROID_KEY_ALIAS`; `MOQUI_ANDROID_KEY_PASSWORD` when the key's
+  password is not the store's. `./moq` checks that the set is complete.
+
+```sh
+keytool -genkeypair -keystore ~/keys/moqui-upload.jks -alias upload -keyalg RSA -keysize 4096 -validity 10000
+MOQUI_ANDROID_KEYSTORE=~/keys/moqui-upload.jks MOQUI_ANDROID_KEYSTORE_PASSWORD=... MOQUI_ANDROID_KEY_ALIAS=upload \
+    ./moq android build --release --target aarch64 --aab
+MOQUI_MOBILE_APK=crates/moqui-mobile/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
+    scripts/android-smoke.sh   # a release APK for x86_64 on the emulator: R8 kept the JNI classes, the shell loads
+                               # (adb uninstall org.moqui.mobile first if a debug build, signed by another key, is on it)
+```
+
+Firebase (native push) is in a build only with `gen/android/app/google-services.json` ([moqui-mobile
+README](../crates/moqui-mobile/README.md)); a release for users wants it.
+
+In the Play Console, once:
+
+- **Play App Signing:** Google holds the app's signing key; the keystore above is the upload key, which Google can
+  reset if it is lost. Register its certificate when the app is created, and keep the keystore and its passwords out
+  of the repository.
+- **The target SDK:** `targetSdk` in `gen/android/app/build.gradle.kts` (37); Play requires a recent one for new
+  apps and updates each August.
+- **Declarations:** the full-screen intent (`USE_FULL_SCREEN_INTENT`, for an incoming call: a calling app), and the
+  foreground service of type `phoneCall` (`FOREGROUND_SERVICE_PHONE_CALL`, an ongoing call the user answered), each
+  with a short video or description of the incoming call.
+- **Data safety:** the app keeps on the device, not shared with anyone but the user's own server: chat messages and
+  mail (each account's store, for offline use), contacts' names in them, files attached, and a device key (a
+  credential, sealed by the Android Keystore); it records audio (and video) in calls only, sent to the user's server;
+  it shows notifications; with Firebase, the FCM token goes to the user's server and Google. Data in transit is
+  encrypted (TLS); the user can delete it by signing out on a shared device or removing the account. No backup is made
+  (`allowBackup` off).
+- **Remote code:** the app shows the user's server's screens in its WebView; whether that is fine under Play's device
+  and network abuse policy is a decision for the release ([Mobile-Desktop §9](../plans/Mobile-Desktop.md), Android,
+  open).
+
 ## The moq script
 
 The `./moq` script runs the built binaries in place and replaces the Java Moqui Gradle tasks: run, load, save and reload

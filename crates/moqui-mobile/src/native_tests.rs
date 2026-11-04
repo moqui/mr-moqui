@@ -56,6 +56,8 @@ fn one_client_per_process_until_it_stops_and_the_current_account_is_asked_first(
     assert!(has_account(&dir));
     // a bad id is never sent
     assert_eq!(decline_call(&dir, "1/../x"), "not a call id");
+    // a background send with nothing queued: nothing waits for a time
+    assert_eq!(flush_background(&dir, 1000), -1);
     core.shutdown();
     let again = core_in(&dir).unwrap();
     assert!(!Arc::ptr_eq(&core, &again), "a stopped client is made again");

@@ -13,7 +13,8 @@
  */
 
 //! What the app's native code asks of Rust without the WebView (plans/Mobile-Desktop.md MD6, MT2): the FCM token to
-//! register, a ring declined, whether an account is signed in. A push can start the process with no activity, so no
+//! register, a ring declined, whether an account is signed in, and a bounded send of the outbox in the background
+//! (`FlushWorker.kt`, WorkManager). A push can start the process with no activity, so no
 //! Tauri app: the client ([`core_in`]) is then made here from the client's directory, and the app's setup takes the
 //! same one when the activity starts, so there is one client, with one set of stores, per process.
 //!
@@ -25,9 +26,10 @@
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use moqui_client::account::Account;
-use moqui_client::app::Client;
+use moqui_client::app::{Client, ClientHost};
 use moqui_client::conf::ClientConf;
 use moqui_client::proxy::Request;
 use moqui_client_tauri::SHELL_ORIGIN;
@@ -40,6 +42,12 @@ static CORE: Mutex<Option<Arc<Client>>> = Mutex::new(None);
 
 /// One change of `push.json` at a time.
 static PUSH: Mutex<()> = Mutex::new(());
+
+/// The app's host, once its setup ran: a background send tells its pages what changed.
+static APP_HOST: Mutex<Option<Arc<dyn ClientHost>>> = Mutex::new(None);
+
+/// The longest a background send takes operations ([`flush_background`]); WorkManager stops a run at ten minutes.
+const FLUSH_BUDGET_MAX: Duration = Duration::from_secs(5 * 60);
 
 /// The client of `dir` (the app's data directory's `client`): the one this process has, unless it was stopped, else
 /// a new one.
@@ -202,6 +210,61 @@ pub(crate) fn unregister_push(core: &Client, dir: &Path, account: &Account, key:
     }
 }
 
+/// The app's host, for the pages of a background send ([`flush_background`]).
+pub(crate) fn set_app_host(host: Arc<dyn ClientHost>) {
+    *moqui_lib::sync::lock(&APP_HOST) = Some(host);
+}
+
+/// The host of a background send with no app (WorkManager started the process): no page to tell, and a 401 holds
+/// the operation, as for the app, until a sign-in or a renewed key releases it.
+struct NoPages;
+
+impl ClientHost for NoPages {
+    fn page_account(&self, _page: &str) -> Option<String> {
+        None
+    }
+
+    fn is_shell(&self, _page: &str) -> bool {
+        false
+    }
+
+    fn notify_pages(&self, _account: &str, _event: &serde_json::Value) {}
+
+    fn socket_event(&self, _page: &str, _id: u64, _event: &serde_json::Value) {}
+
+    fn check_key(&self, account: &Account) {
+        log::info!(
+            "Outbox: the server of {} refused its key; the app checks it when it starts",
+            account.id
+        );
+    }
+}
+
+/// Send what the outbox has due, taking nothing after `budget_ms` (at most [`FLUSH_BUDGET_MAX`]): the background run
+/// of `FlushWorker.kt`, with the app asleep or its process started for it. Gives the milliseconds until the next
+/// operation waiting is due, or -1 when none waits for a time (nothing left, or only held or refused ones).
+pub(crate) fn flush_background(dir: &Path, budget_ms: i64) -> i64 {
+    if !network_ready() {
+        return -1;
+    }
+    let core = match core_in(dir) {
+        Ok(core) => core,
+        Err(err) => {
+            log::warn!("Outbox: no client for the background send: {err}");
+            return -1;
+        }
+    };
+    let host = moqui_lib::sync::lock(&APP_HOST)
+        .clone()
+        .unwrap_or_else(|| Arc::new(NoPages));
+    let budget = Duration::from_millis(u64::try_from(budget_ms).unwrap_or(0)).min(FLUSH_BUDGET_MAX);
+    let next = moqui_client::sync::flush::flush_bounded(&core, host.as_ref(), budget);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX));
+    next.map_or(-1, |due| due.saturating_sub(now).max(0))
+}
+
 /// Whether an account here has a key: the native code asks for the notification permission only then.
 pub(crate) fn has_account(dir: &Path) -> bool {
     match core_in(dir) {
@@ -219,7 +282,7 @@ mod entries {
 
     use jni::errors::LogErrorAndDefault;
     use jni::objects::{JClass, JObject, JString};
-    use jni::sys::jboolean;
+    use jni::sys::{jboolean, jlong};
     use jni::EnvUnowned;
 
     /// `Native.init(context)`: the app's context for Rust's JNI calls and the TLS verifier; whether requests may be made.
@@ -278,6 +341,23 @@ mod entries {
     ) -> jboolean {
         env.with_env(|env| -> Result<bool, jni::errors::Error> {
             Ok(super::has_account(&client_dir(&data_dir.try_to_string(env)?)))
+        })
+        .resolve::<LogErrorAndDefault>()
+    }
+
+    /// `Native.flush(dataDir, budgetMs)`: the background send; the milliseconds until the next operation is due, or -1.
+    #[no_mangle]
+    pub extern "system" fn Java_org_moqui_mobile_Native_flush<'caller>(
+        mut env: EnvUnowned<'caller>,
+        _class: JClass<'caller>,
+        data_dir: JString<'caller>,
+        budget_ms: jlong,
+    ) -> jlong {
+        env.with_env(|env| -> Result<i64, jni::errors::Error> {
+            Ok(super::flush_background(
+                &client_dir(&data_dir.try_to_string(env)?),
+                budget_ms,
+            ))
         })
         .resolve::<LogErrorAndDefault>()
     }
