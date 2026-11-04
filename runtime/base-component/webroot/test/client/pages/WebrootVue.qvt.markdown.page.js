@@ -121,6 +121,33 @@ test("moqui.mermaid draws a diagram from a pre's text, with strict security", as
     } finally { node.remove(); }
 });
 
+test("a drawn diagram's size is its viewBox, a click is a fraction of it, and it gets one zoom button", () => {
+    assert.ok(moqui.qvt.components["m-diagram-zoom"]);
+    assert.deepEqual(Object.keys(moqui.qvt.components["m-diagram-zoom"].props), ["modelValue", "source", "at", "title"]);
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "-8 -8 1200.5 340");
+    assert.deepEqual(moqui.mermaid.size(svg), { width: 1200.5, height: 340 });
+    const pre = document.createElement("pre");
+    pre.style.cssText = "position:fixed;left:0;top:0;margin:0;padding:0";
+    svg.setAttribute("width", "400");
+    svg.setAttribute("height", "100");
+    svg.style.display = "block";
+    pre.appendChild(svg);
+    document.body.appendChild(pre);
+    try {
+        const at = moqui.mermaid.pointIn(svg, { clientX: 100, clientY: 75 });
+        assert.deepEqual(at, { fx: 0.25, fy: 0.75 });
+        assert.equal(moqui.mermaid.pointIn(svg, { clientX: 500, clientY: 10 }), null);
+        svg.removeAttribute("viewBox");
+        assert.deepEqual(moqui.mermaid.size(svg), { width: 400, height: 100 });
+        const button = moqui.mermaid.zoomButton(pre);
+        assert.ok(button && button.classList.contains("m-md-mermaid-zoom"));
+        assert.equal(button.getAttribute("aria-label"), "Zoom diagram");
+        assert.equal(moqui.mermaid.zoomButton(pre), null, "only one");
+        assert.equal(pre.querySelectorAll(".m-md-mermaid-zoom").length, 1);
+    } finally { pre.remove(); }
+});
+
 // The goldens of the Autodoc diagrams (crates/moqui-devkit/src/autodoc/testdata/mermaid), parsed by this Mermaid: what
 // the generator writes is a diagram the docs can draw.
 const AUTODOC_DIAGRAMS = ["usage.mmd", "usage-empty.mmd", "er.mmd", "class.mmd", "flow.mmd"];

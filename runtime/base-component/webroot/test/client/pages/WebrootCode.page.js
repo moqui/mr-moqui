@@ -139,3 +139,26 @@ test("a pan-and-zoom view zooms at a point, fits a box and centers on a point", 
     assert.equal(pz.fit({ x: 10, y: 10, width: 10, height: 10 }, { width: 500, height: 500 }, 0, 0.1, 4).k, 1);
     assert.deepEqual(pz.center({ x: 0, y: 0, k: 2 }, { x: 50, y: 25 }, { width: 400, height: 200 }), { x: 100, y: 50, k: 2 });
 });
+
+test("the wheel pans, Ctrl zooms; with wheel zoom a plain wheel zooms at the pointer and Shift pans", () => {
+    const pz = moqui.codeEditor.panZoom;
+    const view = { x: 10, y: 20, k: 1 }, at = { x: 100, y: 50 };
+    assert.deepEqual(pz.wheel(view, { deltaX: 5, deltaY: 30 }, at, false, 0.2, 4), { x: 5, y: -10, k: 1 });
+    const pinched = pz.wheel(view, { deltaX: 0, deltaY: -300, ctrlKey: true }, at, false, 0.2, 4);
+    assert.equal(pinched.k, Math.E);
+    // the point under the pointer stays there
+    assert.ok(Math.abs((at.x - pinched.x) / pinched.k - (at.x - view.x)) < 1e-9);
+    const zoomed = pz.wheel(view, { deltaX: 0, deltaY: 300 }, at, true, 0.2, 4);
+    assert.equal(zoomed.k, Math.exp(-1));
+    assert.ok(Math.abs((at.y - zoomed.y) / zoomed.k - (at.y - view.y)) < 1e-9);
+    assert.equal(pz.wheel(view, { deltaX: 0, deltaY: -3000 }, at, true, 0.2, 4).k, 4, "clamped");
+    // Shift: a one-axis wheel pans sideways, a trackpad's two axes pan as they are
+    assert.deepEqual(pz.wheel(view, { deltaX: 0, deltaY: 40, shiftKey: true }, at, true, 0.2, 4), { x: -30, y: 20, k: 1 });
+    assert.deepEqual(pz.wheel(view, { deltaX: 8, deltaY: 4, shiftKey: true }, at, true, 0.2, 4), { x: 2, y: 16, k: 1 });
+});
+
+test("the pan-and-zoom layer takes wheel-zoom and controls", () => {
+    const comp = moqui.codeEditor.components["m-pan-zoom"];
+    ["minZoom", "maxZoom", "height", "wheelZoom", "controls"].forEach((name) => assert.ok(Object.keys(comp.props).includes(name), name));
+    ["zoomBy", "zoomTo", "fit", "centerOn", "controlBar"].forEach((name) => assert.equal(typeof comp.methods[name], "function", name));
+});

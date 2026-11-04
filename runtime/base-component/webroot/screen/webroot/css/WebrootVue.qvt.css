@@ -738,6 +738,19 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 /* a mermaid fence: its source while it loads or when it does not parse, the diagram once drawn, centered and scrolled when wide */
 .m-markdown-body pre.m-md-mermaid { white-space:pre-wrap; font-family:var(--m-font-mono); font-size:0.85em; }
 .m-markdown-body pre.m-md-mermaid-drawn { white-space:normal; background:transparent; border:none; padding:0; text-align:center; }
+/* a drawn diagram (m-markdown, m-mermaid) opens in m-diagram-zoom: a click on it, or the button in its corner shown on hover */
+pre.m-md-mermaid-drawn { position:relative; cursor:zoom-in; }
+.m-md-mermaid-zoom { position:absolute; top:4px; right:4px; display:flex; align-items:center; justify-content:center; width:30px; height:30px;
+    padding:0; border-radius:50%; border:1px solid var(--m-border); background:var(--m-panel-bg); color:var(--m-text); cursor:pointer;
+    opacity:0; transition:opacity .15s; font-size:20px; }
+.m-md-mermaid-zoom .q-icon { font-size:20px; }
+pre.m-md-mermaid-drawn:hover .m-md-mermaid-zoom, .m-md-mermaid-zoom:focus-visible { opacity:0.9; }
+@media (hover:none) { .m-md-mermaid-zoom { opacity:0.9; } }
+.m-diagram-zoom { width:96vw; max-width:96vw !important; height:92vh; max-height:92vh !important; }
+.q-dialog__inner--maximized .m-diagram-zoom { width:100vw; max-width:100vw !important; height:100%; max-height:100% !important; }
+.m-diagram-zoom-frame { min-height:0; }
+.m-diagram-zoom-diagram { position:absolute; left:0; top:0; }
+.m-diagram-zoom-diagram > svg { display:block; }
 /* the container (and its border) as wide as its table, at most the text's width, where a wider table scrolls */
 .m-markdown-body .m-md-table { margin:0 0 0.75em; overflow-x:auto; border-radius:4px; background:transparent; width:-moz-fit-content; width:fit-content; max-width:100%; }
 .m-markdown-body .m-md-table table { width:auto; border-collapse:collapse; }

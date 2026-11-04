@@ -262,9 +262,12 @@
             ".m-file-tree .m-file-status{font-family:ui-monospace,Menlo,monospace;font-size:11px;font-weight:600;margin-left:auto;padding-left:8px}" +
             ".m-file-status-M{color:#e2a400}.m-file-status-A,.m-file-status-\\?{color:#2e9e4f}.m-file-status-D{color:#d32f2f}" +
             ".m-file-status-U{color:#d32f2f}.m-file-status-R{color:#1e88e5}.m-file-tree .m-file-ignored{opacity:.5}" +
-            ".m-pan-zoom{position:relative;overflow:hidden;touch-action:none;cursor:grab;outline:none}.m-pan-zoom:active{cursor:grabbing}" +
+            ".m-pan-zoom{position:relative;overflow:hidden;overflow:clip;touch-action:none;cursor:grab;outline:none}.m-pan-zoom:active{cursor:grabbing}" +
             ".m-pan-zoom-layer{position:absolute;left:0;top:0;transform-origin:0 0}" +
-            ".m-pan-zoom-layer>svg{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}";
+            ".m-pan-zoom-layer>svg{position:absolute;left:0;top:0;overflow:visible;pointer-events:none}" +
+            ".m-pan-zoom-controls{position:absolute;right:8px;bottom:8px;cursor:default;border-radius:6px;padding:2px;" +
+            "background:var(--m-panel-bg,#fff);border:1px solid var(--m-border,rgba(127,127,127,.3));box-shadow:0 1px 4px rgba(0,0,0,.15)}" +
+            ".m-pan-zoom-controls .m-pan-zoom-actual{min-width:3.4em}";
         root.document.head.appendChild(style);
     }
 
@@ -595,16 +598,28 @@
             return { x: (size.width - width * k) / 2 - box.x * k, y: (size.height - height * k) / 2 - box.y * k, k };
         },
         // the view that puts the layer point `at` in the middle of a frame of `size`, keeping the scale
-        center(view, at, size) { return { x: size.width / 2 - at.x * view.k, y: size.height / 2 - at.y * view.k, k: view.k }; }
+        center(view, at, size) { return { x: size.width / 2 - at.x * view.k, y: size.height / 2 - at.y * view.k, k: view.k }; },
+        // the view after a wheel event ({ deltaX, deltaY, ctrlKey, metaKey, shiftKey }) at `at`: Ctrl or Cmd (a pinch on a
+        // trackpad) zooms; with `wheelZoom` a plain wheel zooms too and Shift pans (sideways for a wheel with one axis);
+        // without it the wheel pans
+        wheel(view, event, at, wheelZoom, min, max) {
+            const zoom = event.ctrlKey || event.metaKey || (wheelZoom && !event.shiftKey);
+            if (zoom) return panZoom.zoomAt(view, at, Math.exp(-event.deltaY / 300), min, max);
+            const dx = wheelZoom && !event.deltaX ? event.deltaY : event.deltaX, dy = wheelZoom && !event.deltaX ? 0 : event.deltaY;
+            return { x: view.x - dx, y: view.y - dy, k: view.k };
+        }
     };
 
     // A pan-and-zoom layer (plans/design-dev-aide.md D9): one CSS transform on the layer; drag the background, the wheel
-    // or a trackpad to pan, Ctrl+wheel or a pinch to zoom at the pointer, arrow keys and + and - for both, 0 to fit. The
-    // default slot is the layer's content, absolutely placed; the `under` slot is drawn beneath it (one SVG of
-    // connectors). A drag that starts on a button, a link, an input or [data-no-pan] is left to it.
+    // or a trackpad to pan, Ctrl+wheel or a pinch to zoom at the pointer, arrow keys and + and - for both, 0 to fit. With
+    // `wheel-zoom` a plain wheel zooms at the pointer and Shift+wheel pans; `controls` adds zoom out, the zoom (click: 100%),
+    // zoom in and Fit buttons in the bottom right corner. The default slot is the layer's content, absolutely placed; the
+    // `under` slot is drawn beneath it (one SVG of connectors). A drag that starts on a button, a link, an input or
+    // [data-no-pan] is left to it.
     const panZoomLayer = {
         name: "mPanZoom",
-        props: { minZoom: { type: Number, default: 0.2 }, maxZoom: { type: Number, default: 2 }, height: { type: String, default: "100%" } },
+        props: { minZoom: { type: Number, default: 0.2 }, maxZoom: { type: Number, default: 2 }, height: { type: String, default: "100%" },
+            wheelZoom: Boolean, controls: Boolean },
         emits: ["view"],
         data() { return { view: { x: 0, y: 0, k: 1 }, pointers: {}, drag: null }; },
         mounted() { addStyles(); },
@@ -615,7 +630,10 @@
             size() { const el = this.$el; return { width: el ? el.clientWidth : 0, height: el ? el.clientHeight : 0 }; },
             setView(view) { this.view = view; this.$emit("view", view); },
             local(event) { const rect = this.$el.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; },
-            zoomBy(factor, at) { this.setView(panZoom.zoomAt(this.view, at || { x: this.size().width / 2, y: this.size().height / 2 }, factor, this.minZoom, this.maxZoom)); },
+            middle() { const size = this.size(); return { x: size.width / 2, y: size.height / 2 }; },
+            zoomBy(factor, at) { this.setView(panZoom.zoomAt(this.view, at || this.middle(), factor, this.minZoom, this.maxZoom)); },
+            // to the scale `k`, keeping the layer point under `at` (the frame's middle by default) where it is
+            zoomTo(k, at) { this.zoomBy(k / this.view.k, at); },
             panBy(dx, dy) { this.setView({ x: this.view.x + dx, y: this.view.y + dy, k: this.view.k }); },
             // the layer's content whole in the frame; `box` defaults to the content's own extent
             fit(box) {
@@ -636,8 +654,8 @@
             },
             onWheel(event) {
                 event.preventDefault();
-                if (event.ctrlKey || event.metaKey) this.zoomBy(Math.exp(-event.deltaY / 300), this.local(event));
-                else this.panBy(-event.deltaX, -event.deltaY);
+                if (event.target.closest && event.target.closest(".m-pan-zoom-controls")) return;
+                this.setView(panZoom.wheel(this.view, event, this.local(event), this.wheelZoom, this.minZoom, this.maxZoom));
             },
             onDown(event) {
                 if (event.target.closest && event.target.closest("button, a, input, textarea, select, [data-no-pan]")) return;
@@ -674,6 +692,23 @@
                     ArrowDown: () => this.panBy(0, -step), "+": () => this.zoomBy(1.2), "=": () => this.zoomBy(1.2), "-": () => this.zoomBy(1 / 1.2),
                     "0": () => this.fit() };
                 if (keys[event.key]) { event.preventDefault(); keys[event.key](); }
+            },
+            // zoom out, the zoom in percent (click: 100%), zoom in and Fit, outside the layer
+            controlBar() {
+                const button = root.Vue.resolveComponent("q-btn");
+                const tooltip = root.Vue.resolveComponent("q-tooltip");
+                const tip = (text) => ({ default: () => [h(tooltip, null, { default: () => text })] });
+                const k = this.view.k;
+                return h("div", { class: "m-pan-zoom-controls row items-center no-wrap", "data-no-pan": "" }, [
+                    h(button, { dense: true, flat: true, round: true, size: "sm", icon: "remove", "aria-label": "Zoom out", disable: k <= this.minZoom,
+                        class: "m-pan-zoom-out", onClick: () => this.zoomBy(1 / 1.25) }, tip("Zoom out")),
+                    h(button, { dense: true, flat: true, noCaps: true, size: "sm", label: Math.round(k * 100) + "%", "aria-label": "Actual size",
+                        class: "m-pan-zoom-actual", onClick: () => this.zoomTo(1) }, tip("Actual size")),
+                    h(button, { dense: true, flat: true, round: true, size: "sm", icon: "add", "aria-label": "Zoom in", disable: k >= this.maxZoom,
+                        class: "m-pan-zoom-in", onClick: () => this.zoomBy(1.25) }, tip("Zoom in")),
+                    h(button, { dense: true, flat: true, round: true, size: "sm", icon: "fit_screen", "aria-label": "Fit",
+                        class: "m-pan-zoom-fit", onClick: () => this.fit() }, tip("Fit"))
+                ]);
             }
         },
         render() {
@@ -681,7 +716,8 @@
                 class: "m-pan-zoom", tabindex: 0, style: { height: this.height }, onWheel: this.onWheel, onPointerdown: this.onDown,
                 onPointermove: this.onMove, onPointerup: this.onUp, onPointercancel: this.onUp, onKeydown: this.onKey
             }, [h("div", { ref: "layer", class: "m-pan-zoom-layer", style: { transform: this.transform } },
-                [this.$slots.under ? this.$slots.under() : null].concat(this.$slots.default ? this.$slots.default() : []))]);
+                [this.$slots.under ? this.$slots.under() : null].concat(this.$slots.default ? this.$slots.default() : [])),
+                this.controls ? this.controlBar() : null]);
         }
     };
 
