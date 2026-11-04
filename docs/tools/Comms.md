@@ -32,6 +32,10 @@ menus, queues and transfers are `org.moqui.impl.IvrServices`, `CallQueueServices
   makes a new one. `composeData` answers a draft's `clientRef`, so a client that reopens a draft offline queues its
   send by the ref the server keeps. An internal message is not queued: its send is not taken once by a `clientRef` yet,
   so a client keeps it as a draft until it has a connection ([Desktop-Client](../ui/Desktop-Client.md#the-outbox-and-drafts)).
+  Since `clientApi` 4: `saveDraft` and `send` take `baseStamp` and answer `conflict` with the server's draft when it was
+  saved elsewhere since, a file may come in chunks (`uploadChunk`, `uploadStatus`, then `upload` by `uploadId`), the
+  Inbox has the change cursor `mailChanges`, its `state` takes a `clientRef` and each target's `seen`, and Chat's edit,
+  delete, reaction, vote and mark-read take a `clientRef` ([Desktop-Client](../ui/Desktop-Client.md#the-servers-sync-contracts)).
 - **Attach from Files and Save to Files.** Compose's Attach from Files opens the drive picker: the user's drives (My
   files first), the recent files, a folder or a search by name. A picked file is copied onto the message; a file over
   25 MB, or a folder, goes in as a view link instead. An attachment in the Inbox has Save to Files, which copies it into
@@ -229,7 +233,7 @@ records drive's folders by their records.
 
 | Hook | BasicComms asks it for |
 | --- | --- |
-| `inbox-source` | Every Inbox, Compose, MessageDetail and Home operation (`run#Operation`): its answer is the whole page, so an app's own messages and mailboxes are one list with the mail. Without one, the framework answers over the user's mail |
+| `inbox-source` | Every Inbox, Compose, MessageDetail and Home operation (`run#Operation`): its answer is the whole page, so an app's own messages and mailboxes are one list with the mail. Without one, the framework answers over the user's mail. A provider that does not answer `get#MailChanges` makes `mailChanges` answer `unsupported`; `set#ThreadState` and `apply#ViewAction` with a `clientRef` run once whoever answers them |
 | `record-lookup` | A record room's title and link, a message's record cards, the records to file a message on |
 | `record-link` | Filing a chat message on a record |
 | `create-from` | Making a record (a task) from a chat message |
@@ -257,7 +261,7 @@ IronStone BOSS is the worked example: `runtime/component/mr-boss/screen/Comms.xm
 
 `./moq test basic-comms`: every screen in qvt and tui (the System Voice screens too), a bridged room and System, Chat
 Bridges (`BasicCommsBridges`), the mail settings and Inbox of a
-user with no party, Compose retried by `clientRef` (`BasicCommsComposeRef`), the drive picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the
+user with no party, Compose retried by `clientRef` (`BasicCommsComposeRef`), the change cursor, requests once by `clientRef`, conflicts and chunked uploads (`BasicCommsSync`), the drive picker (`BasicCommsFiles`), chat, the call screens and recordings (`BasicCommsCalls`), the
 provider hooks and the app's parts through both mounts, Text a number (`BasicCommsTexts`). `cargo test -p moqui-channels`:
 texts and MMS against a fake Telnyx ([SMS, Tests](../interfaces/SMS.md#tests)). `./moq test framework --spec Voice`: caller ID, international
 and premium, the limits, failed sign-ins blocked per source, emergency readiness and routing, calls coming in and the

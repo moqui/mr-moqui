@@ -33,6 +33,7 @@ pub mod markdown;
 pub mod node;
 pub mod object;
 pub mod resource;
+pub mod safe_html;
 pub mod signer;
 pub mod string;
 pub mod source_guard;

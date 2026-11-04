@@ -90,6 +90,9 @@ pub struct ScreenRender {
     history: bool,
     /// Whether the render's hits count against the tarpits; a screen test's do not.
     tarpit: bool,
+    /// Whether the code the render runs sees its request (with its headers) as the thread's current request, as a
+    /// served request is: a screen test's does, so a service reads the `login_key` header a client sends.
+    as_request: bool,
     options: RenderOptions,
 }
 
@@ -107,6 +110,7 @@ pub fn make_render(factory: &Arc<ExecutionContextFactory>) -> ScreenRender {
         headers: Vec::new(),
         history: false,
         tarpit: true,
+        as_request: false,
         options: RenderOptions::default(),
     }
 }
@@ -117,6 +121,14 @@ impl ScreenRender {
     #[must_use]
     pub fn history(mut self, history: bool) -> Self {
         self.history = history;
+        self
+    }
+
+    /// Whether the code the render runs sees the render's request, with its headers, as the thread's current request
+    /// (`web::current_request`), as a served request is; off by default. A screen test turns it on.
+    #[must_use]
+    pub fn as_request(mut self, as_request: bool) -> Self {
+        self.as_request = as_request;
         self
     }
 
@@ -231,6 +243,11 @@ impl ScreenRender {
         let mut request = WebRequest::new(self.method.clone(), self.path.clone());
         for (name, value) in &self.headers {
             request.set_header(name.clone(), value.clone());
+        }
+        let request = Arc::new(request);
+        // a screen test's render is the thread's request for the code it runs, as a served request is
+        if self.as_request {
+            web::set_request(Arc::clone(&request), bytes::Bytes::new());
         }
         let job = Job {
             request: &request,

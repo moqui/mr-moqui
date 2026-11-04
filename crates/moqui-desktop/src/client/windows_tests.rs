@@ -60,20 +60,6 @@ fn each_window_stays_on_its_origin() {
 }
 
 #[test]
-fn the_shells_url_takes_a_query_with_the_hosts_token() {
-    assert_eq!(shell_url(None, None).as_str(), "http://moqui-shell.localhost/");
-    assert_eq!(
-        shell_url(Some("signIn=1"), None).as_str(),
-        "http://moqui-shell.localhost/?signIn=1"
-    );
-    assert_eq!(
-        shell_url(Some("signIn=1"), Some("t1")).as_str(),
-        "http://moqui-shell.localhost/?signIn=1&load=t1"
-    );
-    assert_eq!(shell_url(None, Some("t1")).as_str(), "http://moqui-shell.localhost/");
-}
-
-#[test]
 fn an_app_window_has_the_outbox_but_none_of_the_shells_commands() {
     for permission in ["allow-outbox-add", "allow-draft-put", "allow-file-save"] {
         assert!(APP_PERMISSIONS.contains(&permission), "{permission}");

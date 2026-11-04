@@ -2282,6 +2282,17 @@ const messageTemplate = `
                         @click.stop="room.retryDelivery(item)"></q-btn>
             </div>
         </template>
+        <!-- the desktop client: its changes of the message waiting in the app's outbox, or refused (Retry, Discard) -->
+        <div v-for="change in room.changesOf(item)" :key="change.clientRef" class="row items-center no-wrap q-mt-xs text-caption m-chat-change"
+                :class="change.status === 'failed' ? 'text-negative' : 'm-muted'" :data-change="change.kind" :data-pending="change.status" @click.stop>
+            <q-spinner v-if="change.status === 'sending'" size="12px" class="q-mr-xs"></q-spinner>
+            <q-icon v-else :name="change.status === 'failed' ? 'sym_o_error' : 'sym_o_schedule'" size="14px" class="q-mr-xs"></q-icon>
+            <span class="ellipsis">{{room.changeText(change)}}</span>
+            <template v-if="change.status === 'failed'">
+                <q-btn flat dense no-caps size="sm" color="primary" :label="room.t('Retry')" class="q-ml-sm" @click="room.retryChange(change)"></q-btn>
+                <q-btn flat dense no-caps size="sm" :label="room.t('Discard')" @click="room.discardChange(change)"></q-btn>
+            </template>
+        </div>
         <div v-if="item.readers && item.readers.length" class="row justify-end items-center no-wrap q-mt-xs">
             <m-avatar v-for="reader in item.readers.slice(0, 6)" :key="reader.userId" :name="reader.name" :user-id="reader.userId" size="16px" class="q-ml-xs" tooltip></m-avatar>
             <span v-if="item.readers.length > 6" class="text-caption m-muted q-ml-xs">+{{item.readers.length - 6}}</span>
@@ -3593,6 +3604,24 @@ const chatRoom = {
                 else this.newBelow += added.filter((event) => event.type === 'message' && event.senderUserId !== this.me.userId).length;
             }, () => {});
         },
+        // The desktop client's changes feeds changed this room's held messages (or were reset) while the page showed them:
+        // the messages shown are read again from the store (up to 200), but those with a change of this page still waiting,
+        // which keep what the page shows of it.
+        onRoomsChanged(payload) {
+            if (!payload || this.state !== 'ready' || !this.events.length) return;
+            if (!payload.reset && !(payload.rooms || []).includes(this.roomId)) return;
+            const seqs = this.events.map((event) => Number(event.eventSeq)).filter((seq) => seq > 0);
+            if (!seqs.length) return;
+            const first = Math.min(...seqs);
+            const last = Math.max(...seqs);
+            if (last - first >= 200) return;
+            this.get('timeline', { chatRoomId: this.roomId, afterSeq: first - 1, limit: 200 }).then((page) => {
+                const waiting = new Set((moqui.chat.state.changes || []).filter((change) => change.chatRoomId === this.roomId && change.status !== 'failed')
+                    .map((change) => change.eventSeq));
+                const fresh = new Map((page.eventList || []).filter((event) => !waiting.has(Number(event.eventSeq))).map((event) => [Number(event.eventSeq), event]));
+                this.events = this.events.map((event) => fresh.get(Number(event.eventSeq)) || event);
+            }, () => {});
+        },
         startReply(item) {
             this.replyTo = { eventSeq: item.eventSeq, senderName: item.senderName, snippet: this.snippetOf(item.event) };
             this.$nextTick(() => this.focusComposer());
@@ -3671,7 +3700,7 @@ const chatRoom = {
             }, () => {});
         },
         isEditing(item) { return !!this.editing && this.editing.seq === item.eventSeq; },
-        startEdit(item) { if (needsConnection()) return; this.tapKey = null; this.editing = { seq: item.eventSeq, body: item.event.body || '' }; },
+        startEdit(item) { if (!this.queues('chat-edit') && needsConnection()) return; this.tapKey = null; this.editing = { seq: item.eventSeq, body: item.event.body || '' }; },
         cancelEdit() { this.editing = null; this.$nextTick(() => this.focusComposer()); },
         editLast() {
             const me = this.me.userId;
@@ -3679,7 +3708,7 @@ const chatRoom = {
                 const event = this.events[i];
                 if (event.type !== 'message' || event.senderUserId !== me || event.redacted || event.poll) continue;
                 if (Date.now() - Number(event.sentDate || 0) >= EDIT_WINDOW || !this.canPost) return false;
-                if (needsConnection()) return true;
+                if (!this.queues('chat-edit') && needsConnection()) return true;
                 this.editing = { seq: Number(event.eventSeq), body: event.body || '' };
                 this.$nextTick(() => this.scrollToSeq(Number(event.eventSeq), false));
                 return true;
@@ -3687,9 +3716,9 @@ const chatRoom = {
             return false;
         },
         saveEdit(item, body) {
-            const sent = this.sealed ? moqui.chat.sealMessage(this.roomId, this.memberIds(), body, []).then((sealed) => this.post('edit', { chatRoomId: this.roomId,
+            const sent = this.sealed ? moqui.chat.sealMessage(this.roomId, this.memberIds(), body, []).then((sealed) => this.change('chat-edit', 'edit', { chatRoomId: this.roomId,
                 eventSeq: item.eventSeq, encryptedJson: sealed.encryptedJson, mentionUserIds: sealed.mentionUserIds }))
-                : this.post('edit', { chatRoomId: this.roomId, eventSeq: item.eventSeq, body });
+                : this.change('chat-edit', 'edit', { chatRoomId: this.roomId, eventSeq: item.eventSeq, body });
             return sent.then((json) => (json.event && this.sealed ? moqui.chat.openEvent(this.roomId, json.event).then(() => json) : json)).then((json) => {
                 if (json.event) {
                     applyEvent(this.events, json.event, this.me.userId);
@@ -3701,12 +3730,19 @@ const chatRoom = {
             });
         },
         react(item, key) {
-            if (!this.canPost || needsConnection()) return;
+            if (!this.canPost || (!this.queues('chat-react') && needsConnection())) return;
             this.tapKey = null;
             const me = this.me.userId;
             const reactions = item.event.reactions = item.event.reactions || [];
             let entry = reactions.find((reaction) => reaction.key === key);
             const mine = !!entry && entry.mine;
+            // a reaction of this key still waiting in the app's outbox is taken back by dropping it: the server never had it
+            const waiting = moqui.chat && moqui.chat.changesOf ? moqui.chat.changesOf(this.roomId, item.eventSeq)
+                .filter((change) => change.kind === 'chat-react' && change.key === key) : [];
+            if (waiting.some((change) => change.status === 'sending')) {
+                moqui.notifyMessages([{ type: 'info', message: t('The reaction is being sent: change it once it shows') }]);
+                return;
+            }
             // shown at once; the push of the reaction (or of its removal) leaves it as it is
             if (mine) {
                 entry.userIds = entry.userIds.filter((id) => id !== me);
@@ -3718,15 +3754,97 @@ const chatRoom = {
                 if (!entry.userIds.includes(me)) { entry.userIds.push(me); entry.count++; }
                 entry.mine = true;
             }
+            if (waiting.length) {
+                waiting.forEach((change) => moqui.chat.discard(change.clientRef));
+                return;
+            }
+            const note = { key, add: !mine };
             if (this.sealed) {
                 // an encrypted reaction (C7): the key is encrypted; mine is taken back by its own eventSeq
                 const taken = mine ? moqui.chat.myReaction(this.roomId, item.eventSeq, key, me) : null;
-                if (mine && taken != null) this.post('react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, reactionEventSeq: taken }).catch(() => {});
-                else if (!mine) moqui.chat.sealReaction(this.roomId, this.memberIds(), key).then((encryptedJson) => this.post('react', { chatRoomId: this.roomId,
-                    eventSeq: item.eventSeq, encryptedJson })).catch(() => {});
+                if (mine && taken != null) this.change('chat-react', 'react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, reactionEventSeq: taken }, note).catch(() => {});
+                else if (!mine) moqui.chat.sealReaction(this.roomId, this.memberIds(), key).then((encryptedJson) => this.change('chat-react', 'react', { chatRoomId: this.roomId,
+                    eventSeq: item.eventSeq, encryptedJson }, note)).catch(() => {});
                 return;
             }
-            this.post('react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, key }).catch(() => {});
+            this.change('chat-react', 'react', { chatRoomId: this.roomId, eventSeq: item.eventSeq, key }, note).catch(() => {});
+        },
+        // the options my vote has: the latest still waiting in the app's outbox, else the poll's as the server answered it
+        myOptions(item) {
+            const waiting = moqui.chat && moqui.chat.changesOf ? moqui.chat.changesOf(this.roomId, item.eventSeq)
+                .filter((change) => change.kind === 'poll-vote' && change.status !== 'failed' && Array.isArray(change.optionIds)) : [];
+            if (waiting.length) return waiting[waiting.length - 1].optionIds.slice();
+            return item.poll.options.filter((other) => other.mine).map((other) => other.id);
+        },
+        // ---- a message's changes through the desktop client's outbox ----
+        // the app's outbox takes this change of a message (a server at clientApi 4): it waits there, offline too; never on the web
+        queues(kind) { return !!(moqui.chat && moqui.chat.state.hostKinds && moqui.chat.state.hostKinds.includes(kind) && moqui.hostOutbox && moqui.hostOutbox()); },
+        // A message's change (chat-edit, chat-redact, chat-react, poll-vote): through the app's outbox where it takes it,
+        // resolving {queued: true} (it shows under the message until it is answered), else the transition name asked now.
+        change(kind, name, params, note) {
+            const queued = moqui.chat && moqui.chat.queueChange ? moqui.chat.queueChange(kind, params, note) : null;
+            if (!queued) return this.post(name, params);
+            return queued.catch((err) => {
+                moqui.notifyMessages(null, (err && err.message) || t('This change cannot wait for the connection'));
+                throw err;
+            });
+        },
+        // the changes of a message waiting in the app's outbox (none on the web)
+        changesOf(item) {
+            void (moqui.chat && moqui.chat.state.changes);
+            return moqui.chat && moqui.chat.changesOf && item && item.eventSeq > 0 ? moqui.chat.changesOf(this.roomId, item.eventSeq) : [];
+        },
+        changeText(change) {
+            const what = { 'chat-edit': t('Edit'), 'chat-redact': t('Deletion'), 'chat-react': t('Reaction'), 'poll-vote': t('Vote') }[change.kind] || t('Change');
+            if (change.status === 'sending') return fill(t('{what}: sending…'), { what });
+            if (change.status === 'failed') return change.error ? fill(t('{what} not made: {error}'), { what, error: change.error }) : fill(t('{what} not made'), { what });
+            if (change.status === 'held') return fill(t('{what}: waiting, sign in again to send it'), { what });
+            return fill(this.offline || this.noConnection ? t('{what}: waiting for the connection') : t('{what}: waiting to send'), { what });
+        },
+        retryChange(change) { if (moqui.chat) moqui.chat.retry(change.clientRef); },
+        // a change not made, dropped: a reaction shown at once is read again as the server has it
+        discardChange(change) {
+            if (!moqui.chat) return;
+            moqui.chat.discard(change.clientRef).then(() => { if (change.kind === 'chat-react' || change.kind === 'poll-vote') this.rereadMessage(change.eventSeq); }, () => {});
+        },
+        // one message read again (the store's copy offline), in place
+        rereadMessage(seq) {
+            moqui.request(this.url('timeline'), { params: { chatRoomId: this.roomId, eventSeq: seq, limit: 1 } })
+                .then((result) => this.openPage(result.json || {}))
+                .then((page) => {
+                    const event = (page.eventList || []).find((one) => Number(one.eventSeq) === Number(seq));
+                    if (!event) return;
+                    [this.events, this.threadView.events].forEach((list) => {
+                        const at = list.findIndex((one) => Number(one.eventSeq) === Number(seq));
+                        if (at >= 0) list.splice(at, 1, event);
+                    });
+                }, (err) => console.info('Chat: the message was not read again', err && err.status));
+        },
+        // a message's change from the app's outbox answered: shown as the answer has it (the push may follow)
+        onChangeAnswered(payload) {
+            if (!payload || payload.chatRoomId !== this.roomId || this.state !== 'ready') return;
+            const json = payload.json || {};
+            const me = this.me.userId;
+            if (payload.kind === 'chat-edit' && json.event) {
+                Promise.resolve(this.sealed ? moqui.chat.openEvent(this.roomId, json.event) : null).then(() => {
+                    applyEvent(this.events, json.event, me);
+                    if (this.threadView.rootSeq != null) applyEvent(this.threadView.events, json.event, me, this.threadView.rootSeq);
+                }, () => {});
+            } else if (payload.kind === 'chat-redact') {
+                this.applyRedaction(payload.eventSeq);
+            } else if (payload.kind === 'poll-vote' && json.poll) {
+                this.applyFields(payload.eventSeq, { poll: json.poll });
+            } else if (payload.kind === 'chat-react') {
+                // the server made it the other way than shown (a toggle it had already): the message read again as it has it
+                const add = payload.note && payload.note.add;
+                if (json.added != null && add != null && !!json.added !== !!add) this.rereadMessage(payload.eventSeq);
+            }
+        },
+        applyRedaction(seq) {
+            const target = this.events.concat(this.threadView.events).find((one) => Number(one.eventSeq) === Number(seq));
+            const event = { type: 'redaction', eventSeq: -1, relatesToEventSeq: Number(seq), content: { target: 'message' }, sentDate: Date.now(), threadRootEventSeq: null };
+            if (!target || target.threadRootEventSeq == null) applyEvent(this.events, event, this.me.userId);
+            if (this.threadView.rootSeq != null) applyEvent(this.threadView.events, event, this.me.userId, this.threadView.rootSeq);
         },
         pin(item, pinned) {
             if (needsConnection()) return;
@@ -3738,12 +3856,11 @@ const chatRoom = {
             }, () => {});
         },
         redact(item) {
-            if (needsConnection()) return;
+            if (!this.queues('chat-redact') && needsConnection()) return;
             this.confirm(t('Delete the message?'), t('It is removed for everyone; the room shows that a message was removed.'), t('Delete'), true).then(() => {
-                this.post('redact', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then(() => {
-                    const event = { type: 'redaction', eventSeq: -1, relatesToEventSeq: item.eventSeq, content: { target: 'message' }, sentDate: Date.now(), threadRootEventSeq: null };
-                    if (item.event.threadRootEventSeq == null) applyEvent(this.events, event, this.me.userId);
-                    if (this.threadView.rootSeq != null) applyEvent(this.threadView.events, event, this.me.userId, this.threadView.rootSeq);
+                // through the app's outbox it shows as waiting under the message until it is answered
+                this.change('chat-redact', 'redact', { chatRoomId: this.roomId, eventSeq: item.eventSeq }).then((json) => {
+                    if (!(json && json.queued)) this.applyRedaction(item.eventSeq);
                 }, () => {});
             });
         },
@@ -3944,9 +4061,14 @@ const chatRoom = {
         pollOpen(poll) { return !!poll && !poll.closed && !(poll.closesDate && poll.closesDate <= this.tick); },
         canVote(item) { return this.canPost && this.pollOpen(item.poll); },
         canClosePoll(item) { return this.pollOpen(item.poll) && this.isMember && (item.poll.createdByUserId === this.me.userId || this.canModerate); },
+        // my choice as it will be once a vote waiting in the app's outbox is counted
         optionIcon(item, option) {
-            if (item.poll.multiple) return option.mine ? 'sym_o_check_box' : 'sym_o_check_box_outline_blank';
-            return option.mine ? 'sym_o_radio_button_checked' : 'sym_o_radio_button_unchecked';
+            const mine = this.myOptions(item).map(Number).includes(Number(option.id));
+            if (item.poll.multiple) return mine ? 'sym_o_check_box' : 'sym_o_check_box_outline_blank';
+            return mine ? 'sym_o_radio_button_checked' : 'sym_o_radio_button_unchecked';
+        },
+        waitingVote(item) {
+            return !!(moqui.chat && moqui.chat.changesOf) && moqui.chat.changesOf(this.roomId, item.eventSeq).some((change) => change.kind === 'poll-vote' && change.status !== 'failed');
         },
         optionShare(item, option) { return Number(option.voteCount || 0) / Math.max(1, Number(item.poll.voterCount || item.poll.totalVotes || 0)); },
         votersText(option) { return (option.voterIds || []).map((id) => (id === this.me.userId ? t('You') : this.nameOf(id))).join(', '); },
@@ -3962,9 +4084,19 @@ const chatRoom = {
         vote(item, option) {
             if (!this.canVote(item)) return;
             this.tapKey = null;
-            const mine = item.poll.options.filter((other) => other.mine).map((other) => other.id);
-            const chosen = item.poll.multiple ? (option.mine ? mine.filter((id) => id !== option.id) : mine.concat([option.id])) : (option.mine ? [] : [option.id]);
-            this.post('votePoll', { chatRoomId: this.roomId, eventSeq: item.eventSeq, optionIds: chosen.join(',') }).then((json) => {
+            // from my vote as it will be once what waits is counted
+            const mine = this.myOptions(item).map(Number);
+            const has = mine.includes(Number(option.id));
+            const chosen = item.poll.multiple ? (has ? mine.filter((id) => id !== Number(option.id)) : mine.concat([Number(option.id)])) : (has ? [] : [Number(option.id)]);
+            const params = { chatRoomId: this.roomId, eventSeq: item.eventSeq, optionIds: chosen.join(',') };
+            const queued = this.queues('poll-vote');
+            if (!chosen.length && queued) {
+                // a vote taken back (no option): the app's outbox keeps only a vote for options, so it is asked now, and
+                // never ahead of a vote still waiting
+                if (this.waitingVote(item)) { moqui.notifyMessages([{ type: 'info', message: t('Your vote is waiting to be counted: take it back once it is') }]); return; }
+                if (needsConnection()) return;
+            }
+            (chosen.length ? this.change('poll-vote', 'votePoll', params) : this.post('votePoll', params)).then((json) => {
                 if (json.poll) this.applyFields(item.eventSeq, { poll: json.poll });
             }, () => {});
         },
@@ -4099,6 +4231,8 @@ const chatRoom = {
             this.unsubscribe.push(moqui.chat.on('room', (payload) => this.onRoomSignal(payload)));
             this.unsubscribe.push(moqui.chat.on('update', (payload) => this.onUpdate(payload)));
             this.unsubscribe.push(moqui.chat.on('sent', (payload) => this.onSent(payload)));
+            this.unsubscribe.push(moqui.chat.on('changed', (payload) => this.onChangeAnswered(payload)));
+            this.unsubscribe.push(moqui.chat.on('rooms', (payload) => this.onRoomsChanged(payload)));
             this.unsubscribe.push(moqui.chat.on('connection', (payload) => this.onConnection(payload)));
         }
         this.onVisibleBound = () => this.onVisible();
@@ -8031,6 +8165,7 @@ module.exports = {
                   const _component_q_btn = _resolveComponent("q-btn")
                   const _component_q_card = _resolveComponent("q-card")
                   const _component_m_record_card = _resolveComponent("m-record-card")
+                  const _component_q_spinner = _resolveComponent("q-spinner")
                   const _component_q_menu = _resolveComponent("q-menu")
                   const _component_q_separator = _resolveComponent("q-separator")
                   const _component_m_ext_actions = _resolveComponent("m-ext-actions")
@@ -8532,6 +8667,51 @@ module.exports = {
                                   ], 10, ["data-delivery"]))
                                 : _createCommentVNode("", true)
                             ], 64)),
+                      (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.room.changesOf(_ctx.item), (change) => {
+                        return (_openBlock(), _createElementBlock("div", {
+                          key: change.clientRef,
+                          class: _normalizeClass(["row items-center no-wrap q-mt-xs text-caption m-chat-change", change.status === 'failed' ? 'text-negative' : 'm-muted']),
+                          "data-change": change.kind,
+                          "data-pending": change.status,
+                          onClick: _withModifiers(() => {}, ["stop"])
+                        }, [
+                          (change.status === 'sending')
+                            ? (_openBlock(), _createBlock(_component_q_spinner, {
+                                key: 0,
+                                size: "12px",
+                                class: "q-mr-xs"
+                              }))
+                            : (_openBlock(), _createBlock(_component_q_icon, {
+                                key: 1,
+                                name: change.status === 'failed' ? 'sym_o_error' : 'sym_o_schedule',
+                                size: "14px",
+                                class: "q-mr-xs"
+                              }, null, 8, ["name"])),
+                          _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(_ctx.room.changeText(change)), 1),
+                          (change.status === 'failed')
+                            ? (_openBlock(), _createElementBlock(_Fragment, { key: 2 }, [
+                                _createVNode(_component_q_btn, {
+                                  flat: "",
+                                  dense: "",
+                                  "no-caps": "",
+                                  size: "sm",
+                                  color: "primary",
+                                  label: _ctx.room.t('Retry'),
+                                  class: "q-ml-sm",
+                                  onClick: $event => (_ctx.room.retryChange(change))
+                                }, null, 8, ["label", "onClick"]),
+                                _createVNode(_component_q_btn, {
+                                  flat: "",
+                                  dense: "",
+                                  "no-caps": "",
+                                  size: "sm",
+                                  label: _ctx.room.t('Discard'),
+                                  onClick: $event => (_ctx.room.discardChange(change))
+                                }, null, 8, ["label", "onClick"])
+                              ], 64))
+                            : _createCommentVNode("", true)
+                        ], 10, ["data-change", "data-pending", "onClick"]))
+                      }), 128)),
                       (_ctx.item.readers && _ctx.item.readers.length)
                         ? (_openBlock(), _createElementBlock("div", {
                             key: 5,
@@ -9064,6 +9244,10 @@ const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(tex
 const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
 // the thread changes the desktop client's outbox keeps while the server is out of reach (src/client/outbox.rs MAIL_ACTIONS)
 const QUEUED_ACTIONS = ['read', 'unread', 'flag', 'unflag', 'archive', 'unarchive', 'move', 'trash'];
+// the outbox's states of an operation the server did not take: changed there since (MD5), or refused
+const OUTBOX_PROBLEMS = ['conflict', 'failed'];
+// the drafts the app keeps for Compose, an email's by its clientRef (a conflict's copy among them)
+const COPY_PREFIX = 'ironstone.compose.email.';
 const pad = (n) => String(n).padStart(2, '0');
 // the rail: views, the mail accounts with their folders and labels, the Internal account with its mailboxes, saved searches
 const railTemplate = '' +
@@ -9181,6 +9365,8 @@ module.exports = {
                 retitle: (key, title) => { const dock = self.docks.find((item) => item.key === key); if (dock) dock.title = title; },
                 draftSaved: (key, emailMessageId) => {
                     const dock = self.docks.find((item) => item.key === key);
+                    // a kept copy saved on the server is a draft there now, no longer a copy here
+                    if (dock && emailMessageId && dock.query.copyRef) self.keptCopies = self.keptCopies.filter((copy) => copy.ref !== dock.query.copyRef);
                     if (dock && emailMessageId && dock.query.emailMessageId !== emailMessageId) { dock.query = { emailMessageId }; self.saveDocks(); }
                 },
                 sent: (key, info) => self.onComposeSent(key, info)
@@ -9204,7 +9390,9 @@ module.exports = {
             swipe: null, swipeSuppress: null,
             newMailbox: { open: false, key: 0 }, mailboxDialog: { open: false, tab: 'members', key: 0, addPartyId: null }, pendingCreateFrom: false, markReadTimer: null,
             // the desktop client's outbox (moqui.hostOutbox()): its mail sends and thread changes waiting; empty on the web
-            outbox: []
+            outbox: [],
+            // the copies the app kept of a draft changed elsewhere ({key, ref, subject}), whose operation is gone (discarded)
+            keptCopies: [], copiesOf: null, actedAt: {}
         };
     },
     computed: {
@@ -9214,8 +9402,10 @@ module.exports = {
         // images from other sites in a message: not where the page may not load them (the desktop client's shell, whose
         // policy keeps its images to its own origin; moqui.remoteImages false), so no Show images there
         remoteImages() { return moqui.remoteImages !== false; },
-        outboxSends() { return this.outbox.filter((op) => op.kind === 'mail-send'); },
-        outboxChanges() { return this.outbox.filter((op) => op.kind === 'mail-state').length; },
+        outboxSends() { return this.outbox.filter((op) => op.kind === 'mail-send' || op.kind === 'internal-send'); },
+        // the thread changes waiting, and those the server did not make (a conflict, a refusal), each shown
+        outboxChanges() { return this.outbox.filter((op) => op.kind === 'mail-state' && !OUTBOX_PROBLEMS.includes(op.state)).length; },
+        outboxProblems() { return this.outbox.filter((op) => op.kind === 'mail-state' && OUTBOX_PROBLEMS.includes(op.state)); },
         isPhone() { return this.$q.screen.lt.sm; },
         isTouch() { return !!(this.$q.platform && this.$q.platform.has && this.$q.platform.has.touch) && this.$q.screen.lt.md; },
         params() { return this.$root.currentParameters || {}; },
@@ -9455,7 +9645,28 @@ module.exports = {
             }, (err) => { this.failed(err); throw err; });
         },
         // a thread change the desktop client may keep while the server is out of reach goes through its outbox (stateOrQueue)
-        post(name, params) { return name === 'state' && this.queueable(params) ? this.stateOrQueue(params) : this.request(name, params, 'POST'); },
+        post(name, params) {
+            if (name === 'state') this.noteActed(params);
+            return name === 'state' && this.queueable(params) ? this.stateOrQueue(params) : this.request(name, params, 'POST');
+        },
+        // the desktop client: when this page last changed each thread (by its row's key), so a Retry of an older change
+        // that conflicted asks first instead of undoing a later one
+        noteActed(params) {
+            if (!moqui.hostOutbox()) return;
+            let targets = [];
+            try { targets = JSON.parse((params && params.targetsJson) || '[]'); } catch (err) { targets = []; }
+            const now = Date.now();
+            (Array.isArray(targets) ? targets : []).forEach((target) => { const key = this.targetKey(target); if (key) this.actedAt[key] = now; });
+        },
+        targetKey(target) { return target ? (target.rowKey || ((target.store || 'email') + ':' + (target.threadId || target.emailMessageId || target.communicationEventId || ''))) : null; },
+        // a change of one of its threads made here after it: waiting in the outbox, or asked of the server
+        laterChange(op) {
+            const keys = ((op.payload && op.payload.targets) || []).map((target) => this.targetKey(target)).filter((key) => key);
+            const created = Number(op.createdMs || 0);
+            const waiting = this.outbox.some((other) => other.id !== op.id && other.kind === 'mail-state' && Number(other.createdMs || 0) > created
+                && ((other.payload && other.payload.targets) || []).some((target) => keys.includes(this.targetKey(target))));
+            return waiting || keys.some((key) => Number(this.actedAt[key] || 0) > created);
+        },
         // an error of a request: the desktop client's server out of reach says it needs a connection, else as the page shows errors
         failed(err) { if (moqui.unreachable && moqui.unreachable(err)) this.needsConnection(true); else moqui.handleAjaxError(err); },
         // the desktop client offline (never the web): an action that needs the server says so and is not taken
@@ -9496,9 +9707,48 @@ module.exports = {
             const host = moqui.hostOutbox();
             if (!host) return Promise.resolve();
             return host.list().then((ops) => {
-                this.outbox = (Array.isArray(ops) ? ops : []).filter((op) => op && (op.kind === 'mail-send' || op.kind === 'mail-state'));
+                const before = new Set(this.outbox.filter((op) => op.kind === 'mail-state' && OUTBOX_PROBLEMS.includes(op.state)).map((op) => op.id));
+                this.outbox = (Array.isArray(ops) ? ops : []).filter((op) => op && ['mail-send', 'internal-send', 'mail-state'].includes(op.kind));
+                // a thread change the server did not make: its rows are the server's again in the app's store, so the list
+                // and the open thread are read again
+                if (this.outboxProblems.some((op) => !before.has(op.id))) { this.loadList(true); if (this.openKey) this.reloadThread(); }
+                // the kept copies, on the first read and when the sends that conflicted change (one kept a copy, or went)
+                const conflicts = this.outbox.filter((op) => op.kind === 'mail-send' && op.state === 'conflict').map((op) => op.id).sort().join(',');
+                if (this.copiesOf === conflicts) return null;
+                this.copiesOf = conflicts;
+                return this.readCopies();
             }, (err) => console.info('Inbox: the outbox was not read from the app', err));
         },
+        // the copies the app keeps of drafts changed elsewhere, but those of an operation still listed (shown with it)
+        readCopies() {
+            const drafts = moqui.drafts && moqui.drafts.host ? moqui.drafts.host() : null;
+            if (!drafts || typeof drafts.list !== 'function') return Promise.resolve();
+            return Promise.resolve(drafts.list(COPY_PREFIX)).then((list) => {
+                const listed = new Set(this.outbox.map((op) => op.id));
+                this.keptCopies = (Array.isArray(list) ? list : []).map((draft) => {
+                    let value = null;
+                    try { value = JSON.parse(draft.value || 'null'); } catch (err) { value = null; }
+                    // a copy the server has as a draft of its own (emailMessageId) is in Drafts, no longer a copy here
+                    if (!value || !value.conflictOf || !value.clientRef || (value.draft && value.draft.emailMessageId)
+                        || draft.key !== COPY_PREFIX + value.clientRef || listed.has(value.conflictOf.clientRef)) return null;
+                    return { key: draft.key, ref: value.clientRef, subject: (value.draft && value.draft.subject) || '' };
+                }).filter((copy) => copy);
+            }, (err) => console.info('Inbox: the kept copies were not read from the app', err));
+        },
+        openCopy(ref) { if (ref) this.compose({ copyRef: ref }); },
+        deleteCopy(copy) {
+            this.$q.dialog({ title: t('Delete this copy?'), message: t('Your version of the draft is removed from this device; the draft changed elsewhere stays.'),
+                cancel: true, ok: { label: t('Delete'), color: 'negative', unelevated: true, noCaps: true } })
+                .onOk(() => moqui.drafts.remove(copy.key).then(() => this.readCopies()));
+        },
+        outboxActionText(op) {
+            const payload = op.payload || {};
+            const action = { read: t('Mark read'), unread: t('Mark unread'), flag: t('Flag'), unflag: t('Unflag'), archive: t('Archive'), unarchive: t('Move to the inbox'),
+                move: t('Move'), trash: t('Move to the trash') }[payload.action] || t('Change');
+            const count = Array.isArray(payload.targets) ? payload.targets.length : 0;
+            return count > 1 ? fill(t('{action}: {count} threads'), { action, count }) : action;
+        },
+        outboxClass(op) { return op.state === 'failed' ? 'text-negative' : (op.state === 'conflict' ? 'text-warning' : ''); },
         outboxSubject(op) { const fields = (op.payload && op.payload.fields) || {}; return fields.subject || t('(no subject)'); },
         outboxTo(op) {
             const fields = (op.payload && op.payload.fields) || {};
@@ -9511,17 +9761,41 @@ module.exports = {
             return names.length ? t('To') + ' ' + names.join(', ') : '';
         },
         outboxStateText(op) {
+            const change = op.kind === 'mail-state';
             if (op.state === 'sending') return t('Sending…');
-            if (op.state === 'failed') return op.error ? t('Not sent:') + ' ' + op.error : t('Not sent');
+            if (op.state === 'conflict' && change) {
+                const conflicts = (op.current && Array.isArray(op.current.conflicts)) ? op.current.conflicts : [];
+                const said = conflicts.map((entry) => entry && entry.message).filter((text) => text)[0];
+                return t('Changed on the server: the thread shows its state there') + (said ? ' (' + said + ')' : '');
+            }
+            if (op.state === 'conflict') return t('Changed elsewhere: your version is kept as a copy');
+            if (op.state === 'failed') return op.error ? (change ? t('Not made:') : t('Not sent:')) + ' ' + op.error : (change ? t('Not made') : t('Not sent'));
             if (op.state === 'held') return t('Waiting: sign in again to send it');
             return this.noConnection ? t('Waiting for the connection') : t('Waiting to send');
         },
-        outboxIcon(op) { return op.state === 'failed' ? 'sym_o_error' : (op.state === 'sending' ? 'sym_o_send' : 'sym_o_schedule'); },
-        outboxRetry(op) { const host = moqui.hostOutbox(); if (host) host.retry(op.id).then(() => this.readOutbox(), (err) => moqui.notifyMessages(null, (err && err.message) || String(err))); },
+        outboxIcon(op) {
+            if (op.state === 'conflict') return 'sym_o_sync_problem';
+            return op.state === 'failed' ? 'sym_o_error' : (op.state === 'sending' ? 'sym_o_send' : 'sym_o_schedule');
+        },
+        outboxRetry(op) {
+            const host = moqui.hostOutbox();
+            if (!host) return;
+            const go = () => host.retry(op.id).then(() => this.readOutbox(), (err) => moqui.notifyMessages(null, (err && err.message) || String(err)));
+            // a thread change that conflicted, with a later change of the same thread made here since: retried, it would
+            // land after that one and undo it, so the user chooses
+            if (op.kind !== 'mail-state' || op.state !== 'conflict' || !this.laterChange(op)) { go(); return; }
+            this.$q.dialog({ title: t('Retry this change?'), message: t('You changed this thread again since. Retried now, this older change is made after that one and undoes it.'),
+                cancel: { label: t('Keep the later change'), flat: true, noCaps: true }, ok: { label: t('Retry anyway'), color: 'primary', unelevated: true, noCaps: true } })
+                .onOk(() => go());
+        },
         outboxDiscard(op) {
             const host = moqui.hostOutbox();
             if (!host) return;
-            this.$q.dialog({ title: t('Discard this message?'), message: t('It was not sent; it is removed from this device, with its files.'), cancel: true,
+            const change = op.kind === 'mail-state';
+            const message = change ? t('The change is not made; the thread stays as the server has it.')
+                : (op.state === 'conflict' ? t('It is not sent; the draft changed elsewhere stays, and your version stays here as a copy.')
+                    : t('It was not sent; it is removed from this device, with its files.'));
+            this.$q.dialog({ title: change ? t('Discard this change?') : t('Discard this message?'), message, cancel: true,
                 ok: { label: t('Discard'), color: 'negative', unelevated: true, noCaps: true } })
                 .onOk(() => host.discard(op.id).then(() => this.readOutbox(), (err) => moqui.notifyMessages(null, (err && err.message) || String(err))));
         },
@@ -10690,7 +10964,10 @@ module.exports = {
         // the desktop client's outbox: what waits, as it changes
         const host = moqui.hostOutbox();
         if (host && typeof host.on === 'function') {
-            this.outboxOff = host.on((event) => { this.readOutbox(); if (event && event.kind === 'sent' && event.op === 'mail-send') this.loadList(true); });
+            this.outboxOff = host.on((event) => {
+                // the chat feeds' news is not the outbox's
+                if (event && event.kind === 'rooms') return;
+                this.readOutbox(); if (event && event.kind === 'sent' && event.op === 'mail-send') this.loadList(true); });
             this.readOutbox();
         }
     },
@@ -11973,7 +12250,7 @@ module.exports = {
                                       _: 1
                                     }))
                                   : _createCommentVNode("", true),
-                                (_ctx.outboxSends.length || _ctx.outboxChanges)
+                                (_ctx.outboxSends.length || _ctx.outboxChanges || _ctx.outboxProblems.length || _ctx.keptCopies.length)
                                   ? (_openBlock(), _createBlock(_component_q_card, {
                                       key: 5,
                                       flat: "",
@@ -12051,7 +12328,7 @@ module.exports = {
                                                       }, 1024),
                                                       _createVNode(_component_q_item_label, {
                                                         caption: "",
-                                                        class: _normalizeClass(op.state === 'failed' ? 'text-negative' : '')
+                                                        class: _normalizeClass(_ctx.outboxClass(op))
                                                       }, {
                                                         default: _withCtx(() => [
                                                           _createVNode(_component_q_icon, {
@@ -12069,9 +12346,22 @@ module.exports = {
                                                   _createVNode(_component_q_item_section, { side: "" }, {
                                                     default: _withCtx(() => [
                                                       _createElementVNode("div", { class: "row no-wrap" }, [
-                                                        (op.state !== 'sending' && op.state !== 'acked')
+                                                        (op.state === 'conflict' && op.current && op.current.copyRef)
                                                           ? (_openBlock(), _createBlock(_component_q_btn, {
                                                               key: 0,
+                                                              flat: "",
+                                                              dense: "",
+                                                              "no-caps": "",
+                                                              size: "sm",
+                                                              color: "primary",
+                                                              label: _ctx.t('Open the copy'),
+                                                              class: "m-inbox-open-copy",
+                                                              onClick: $event => (_ctx.openCopy(op.current.copyRef))
+                                                            }, null, 8, ["label", "onClick"]))
+                                                          : _createCommentVNode("", true),
+                                                        (op.state !== 'sending' && op.state !== 'acked')
+                                                          ? (_openBlock(), _createBlock(_component_q_btn, {
+                                                              key: 1,
                                                               flat: "",
                                                               dense: "",
                                                               "no-caps": "",
@@ -12083,7 +12373,7 @@ module.exports = {
                                                           : _createCommentVNode("", true),
                                                         (op.state !== 'sending' && op.state !== 'acked')
                                                           ? (_openBlock(), _createBlock(_component_q_btn, {
-                                                              key: 1,
+                                                              key: 2,
                                                               flat: "",
                                                               dense: "",
                                                               "no-caps": "",
@@ -12099,6 +12389,125 @@ module.exports = {
                                                 ]),
                                                 _: 2
                                               }, 1032, ["data-outbox"]))
+                                            }), 128)),
+                                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.outboxProblems, (op) => {
+                                              return (_openBlock(), _createBlock(_component_q_item, {
+                                                key: op.id,
+                                                class: "m-inbox-outbox-change",
+                                                "data-outbox": op.state
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_section, null, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_item_label, { class: "ellipsis" }, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(_ctx.outboxActionText(op)), 1)
+                                                        ]),
+                                                        _: 2
+                                                      }, 1024),
+                                                      _createVNode(_component_q_item_label, {
+                                                        caption: "",
+                                                        class: _normalizeClass(_ctx.outboxClass(op))
+                                                      }, {
+                                                        default: _withCtx(() => [
+                                                          _createVNode(_component_q_icon, {
+                                                            name: _ctx.outboxIcon(op),
+                                                            size: "14px",
+                                                            class: "q-mr-xs"
+                                                          }, null, 8, ["name"]),
+                                                          _createTextVNode(_toDisplayString(_ctx.outboxStateText(op)), 1)
+                                                        ]),
+                                                        _: 2
+                                                      }, 1032, ["class"])
+                                                    ]),
+                                                    _: 2
+                                                  }, 1024),
+                                                  _createVNode(_component_q_item_section, { side: "" }, {
+                                                    default: _withCtx(() => [
+                                                      _createElementVNode("div", { class: "row no-wrap" }, [
+                                                        _createVNode(_component_q_btn, {
+                                                          flat: "",
+                                                          dense: "",
+                                                          "no-caps": "",
+                                                          size: "sm",
+                                                          color: "primary",
+                                                          label: _ctx.t('Retry'),
+                                                          onClick: $event => (_ctx.outboxRetry(op))
+                                                        }, null, 8, ["label", "onClick"]),
+                                                        _createVNode(_component_q_btn, {
+                                                          flat: "",
+                                                          dense: "",
+                                                          "no-caps": "",
+                                                          size: "sm",
+                                                          label: _ctx.t('Discard'),
+                                                          onClick: $event => (_ctx.outboxDiscard(op))
+                                                        }, null, 8, ["label", "onClick"])
+                                                      ])
+                                                    ]),
+                                                    _: 2
+                                                  }, 1024)
+                                                ]),
+                                                _: 2
+                                              }, 1032, ["data-outbox"]))
+                                            }), 128)),
+                                            (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(_ctx.keptCopies, (copy) => {
+                                              return (_openBlock(), _createBlock(_component_q_item, {
+                                                key: copy.key,
+                                                class: "m-inbox-outbox-copy"
+                                              }, {
+                                                default: _withCtx(() => [
+                                                  _createVNode(_component_q_item_section, null, {
+                                                    default: _withCtx(() => [
+                                                      _createVNode(_component_q_item_label, { class: "ellipsis" }, {
+                                                        default: _withCtx(() => [
+                                                          _createTextVNode(_toDisplayString(copy.subject || _ctx.t('(no subject)')), 1)
+                                                        ]),
+                                                        _: 2
+                                                      }, 1024),
+                                                      _createVNode(_component_q_item_label, {
+                                                        caption: "",
+                                                        class: "text-warning"
+                                                      }, {
+                                                        default: _withCtx(() => [
+                                                          _createVNode(_component_q_icon, {
+                                                            name: "sym_o_file_copy",
+                                                            size: "14px",
+                                                            class: "q-mr-xs"
+                                                          }),
+                                                          _createTextVNode(_toDisplayString(_ctx.t('Your version, kept as a copy')), 1)
+                                                        ]),
+                                                        _: 1
+                                                      })
+                                                    ]),
+                                                    _: 2
+                                                  }, 1024),
+                                                  _createVNode(_component_q_item_section, { side: "" }, {
+                                                    default: _withCtx(() => [
+                                                      _createElementVNode("div", { class: "row no-wrap" }, [
+                                                        _createVNode(_component_q_btn, {
+                                                          flat: "",
+                                                          dense: "",
+                                                          "no-caps": "",
+                                                          size: "sm",
+                                                          color: "primary",
+                                                          label: _ctx.t('Open'),
+                                                          onClick: $event => (_ctx.openCopy(copy.ref))
+                                                        }, null, 8, ["label", "onClick"]),
+                                                        _createVNode(_component_q_btn, {
+                                                          flat: "",
+                                                          dense: "",
+                                                          "no-caps": "",
+                                                          size: "sm",
+                                                          label: _ctx.t('Delete'),
+                                                          onClick: $event => (_ctx.deleteCopy(copy))
+                                                        }, null, 8, ["label", "onClick"])
+                                                      ])
+                                                    ]),
+                                                    _: 2
+                                                  }, 1024)
+                                                ]),
+                                                _: 2
+                                              }, 1024))
                                             }), 128))
                                           ]),
                                           _: 1
@@ -15933,6 +16342,9 @@ module.exports = {
             // the desktop client offline (MD4): the files kept by the app until the message is sent from its outbox, the
             // message's clientRef, and whether the email's draft is kept here, not yet on the server
             queued: [], clientRef: null, offlineDraft: false, localEmailKey: null, offlineNote: null,
+            // MD5: the server's draftStamp of the draft as this composer last saw it (a queued send's baseStamp), whether the
+            // app's outbox takes an internal message's send (its kinds().internalSend), and the conflict this copy was kept from
+            draftStamp: null, internalSend: false, copyOf: null,
             picker: { open: false, drives: [], driveId: null, path: '', crumbs: [], rows: [], loading: false, text: '', searching: false, chosen: {}, saving: false }
         };
     },
@@ -16037,7 +16449,13 @@ module.exports = {
             this.offlineDraft = false;
             this.localEmailKey = null;
             this.offlineNote = null;
-            this.clientRef = moqui.hostOutbox() ? 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10) : null;
+            this.draftStamp = null;
+            this.copyOf = null;
+            const host = moqui.hostOutbox();
+            this.clientRef = host ? 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10) : null;
+            if (host && typeof host.kinds === 'function') {
+                Promise.resolve(host.kinds()).then((kinds) => { this.internalSend = !!(kinds && kinds.internalSend); }, () => { this.internalSend = false; });
+            }
             const q = this.query;
             const params = {};
             ['emailMessageId', 'replyToEmailMessageId', 'forwardEmailMessageId', 'replyAll', 'replyToCommEventId', 'replyToSender', 'contactListId', 'to', 'cc',
@@ -16109,6 +16527,7 @@ module.exports = {
             this.draft = draft;
             // the server's draft has its clientRef: a send queued offline is taken once by it
             if (this.clientRef && compose.clientRef) this.clientRef = compose.clientRef;
+            this.draftStamp = compose.draftStamp != null ? compose.draftStamp : null;
             if (draft.emailMessageId) { this.savedAt = Date.now(); if (this.mComposeHost && this.dockKey) this.mComposeHost.draftSaved(this.dockKey, draft.emailMessageId); }
         },
         signatureBlock(html) { return '<p></p><p>-- </p>' + html; },
@@ -16243,6 +16662,7 @@ module.exports = {
                     if (this.mComposeHost && this.dockKey) this.mComposeHost.draftSaved(this.dockKey, json.emailMessageId);
                 }
                 this.savedAt = Date.now();
+                if (json.draftStamp != null) this.draftStamp = json.draftStamp;
                 this.$nextTick(() => { this.dirty = false; });
                 // kept offline, on the server now: kept here only while files wait for the send
                 if (this.offlineDraft && json.emailMessageId) { this.offlineDraft = false; if (this.queued.length) this.saveLocal(); else this.clearLocal(); }
@@ -16265,6 +16685,8 @@ module.exports = {
             let key = this.draftStorageKey;
             if (email) {
                 Object.assign(value, { email: true, clientRef: this.clientRef, queued: this.queued });
+                // a conflict's copy until the server has it as a draft of its own
+                if (this.copyOf && !this.draft.emailMessageId) value.conflictOf = this.copyOf;
                 this.offlineDraft = true;
                 key = this.emailLocalKey;
                 // kept by its clientRef until the server saved it, then by its id
@@ -16282,6 +16704,7 @@ module.exports = {
             let saved = null;
             try { if (this.query.restoreKey) saved = JSON.parse(sessionStorage.getItem(this.query.restoreKey) || 'null'); } catch (err) { saved = null; }
             if (saved || this.query.restoreKey) { this.applyLocal(saved); return; }
+            if (this.query.copyRef && this.clientRef) { this.restoreCopy(String(this.query.copyRef)); return; }
             if (this.mode === 'internal' ? this.draft.emailMessageId : !this.clientRef) return;
             const parse = (key) => { try { return JSON.parse(moqui.drafts.get(key) || 'null'); } catch (err) { return null; } };
             const read = () => {
@@ -16295,6 +16718,29 @@ module.exports = {
             const local = read();
             if (local) this.applyLocal(local);
             else moqui.drafts.ready().then(() => { const later = read(); if (later && !this.dirty) this.applyLocal(later); });
+        },
+        // The desktop client: the user's own version of a mail whose draft changed elsewhere, which the app kept as a copy
+        // (its outbox's conflict, current.copyRef): a new email draft under its own clientRef, opened by copyRef. It is saved
+        // on the server as a new draft once it can be; the server's draft stays as it is.
+        restoreCopy(ref) {
+            const gone = () => { this.offlineNote = t('This copy is no longer kept on this computer.'); };
+            // a clientRef, never a message's id: only a copy the app kept is opened, and nothing else is touched
+            if (!/^[A-Za-z0-9_.:-]{1,64}$/.test(ref)) { gone(); return; }
+            const key = 'ironstone.compose.email.' + ref;
+            moqui.drafts.fetch(key).then((text) => {
+                let saved = null;
+                try { saved = JSON.parse(text || 'null'); } catch (err) { saved = null; }
+                // a conflict's copy: an email of its own clientRef, not on the server (a draft of the server's kept offline is not one)
+                if (!saved || !saved.draft || !saved.email || !saved.conflictOf || saved.draft.emailMessageId || saved.clientRef !== ref) { gone(); return; }
+                // the email it was: its identity and the message it answers
+                const kept = saved.draft;
+                if (kept.fromValue) this.draft.fromValue = kept.fromValue;
+                if (kept.parentEmailMessageId) { this.draft.parentEmailMessageId = kept.parentEmailMessageId; this.draft.isForward = String(kept.isForward) === 'true'; }
+                this.copyOf = saved.conflictOf || { clientRef: null };
+                this.localEmailKey = key;
+                // after the identity's signature swap, so the copy's body is taken as it was written
+                this.$nextTick(() => this.applyLocal(saved));
+            }, () => { this.offlineNote = t('This copy is no longer kept on this computer.'); });
         },
         applyLocal(saved) {
             if (!saved || !saved.draft) return;
@@ -16345,6 +16791,8 @@ module.exports = {
             delete fields.holdSeconds;
             delete fields.clientRef;
             if (this.draft.emailMessageId) fields.emailMessageId = this.draft.emailMessageId;
+            // the server's draft as this composer saw it: one saved elsewhere since is a conflict, not overwritten (MD5)
+            if (this.mode === 'email' && this.draft.emailMessageId && this.draftStamp != null) fields.baseStamp = String(this.draftStamp);
             const files = this.queued.map((file) => ({ file: file.file, name: file.name, contentType: file.contentType }));
             return moqui.hostOutbox().add('mail-send', { clientRef: this.clientRef, fields, files }, files.map((file) => file.file)).then(() => {
                 this.sending = false;
@@ -16576,8 +17024,9 @@ module.exports = {
                 this.afterSend(info);
             }, (err) => {
                 // the desktop client with no server: sent from the app's outbox when it is back
-                if (this.unreachable(err) && this.clientRef && this.mode === 'email') { this.queueSend(params); return; }
-                // an internal message is not taken once by a clientRef yet (MD5): kept here as a draft, to send online
+                // (an internal message too where the server takes its send once by its clientRef: the app's kinds().internalSend)
+                if (this.unreachable(err) && this.clientRef && (this.mode === 'email' || this.internalSend)) { this.queueSend(params); return; }
+                // a server that does not take an internal message's send once: kept here as a draft, to send online
                 if (this.unreachable(err) && this.mode === 'internal') {
                     this.sending = false;
                     this.saveLocal();
@@ -16780,7 +17229,8 @@ module.exports = {
                                           })
                                         ]),
                                         default: _withCtx(() => [
-                                          _createTextVNode(" " + _toDisplayString(_ctx.mode === 'internal' ? _ctx.t('Offline: an internal message needs a connection to send; it is kept here as a draft until then.')
+                                          _createTextVNode(" " + _toDisplayString(_ctx.mode === 'internal' ? (_ctx.internalSend ? _ctx.t('Offline: this message waits in the outbox and goes when the server can be reached; files need a connection.')
+                                        : _ctx.t('Offline: an internal message needs a connection to send; it is kept here as a draft until then.'))
                                         : _ctx.t('Offline: this email waits in the outbox, with its files, and goes when the server can be reached.')) + " ", 1),
                                           (_ctx.offlineNote)
                                             ? (_openBlock(), _createElementBlock("div", { key: 0 }, _toDisplayString(_ctx.offlineNote), 1))
@@ -16789,6 +17239,30 @@ module.exports = {
                                         _: 1
                                       }))
                                     : _createCommentVNode("", true),
+                                  (_ctx.copyOf)
+                                    ? (_openBlock(), _createBlock(_component_q_banner, {
+                                        key: 1,
+                                        dense: "",
+                                        rounded: "",
+                                        class: "q-mx-md q-mt-sm m-tonal text-caption m-compose-copy"
+                                      }, {
+                                        avatar: _withCtx(() => [
+                                          _createVNode(_component_q_icon, {
+                                            name: "sym_o_file_copy",
+                                            color: "warning"
+                                          })
+                                        ]),
+                                        default: _withCtx(() => [
+                                          _createTextVNode(" " + _toDisplayString(_ctx.t('Your version, kept as a copy: the draft was changed elsewhere, and that one stays as it is. This is a new draft.')), 1)
+                                        ]),
+                                        _: 1
+                                      }))
+                                    : (_ctx.offlineNote && !_ctx.noConnection)
+                                      ? (_openBlock(), _createElementBlock("div", {
+                                          key: 2,
+                                          class: "q-mx-md q-mt-sm text-caption text-warning"
+                                        }, _toDisplayString(_ctx.offlineNote), 1))
+                                      : _createCommentVNode("", true),
                                   _createElementVNode("div", { class: "q-px-md q-pt-sm" }, [
                                     _createElementVNode("div", { class: "row items-center no-wrap" }, [
                                       _createElementVNode("span", {

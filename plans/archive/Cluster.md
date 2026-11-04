@@ -36,16 +36,33 @@ The member row is the instance id, the cluster base URL, the heartbeat timestamp
 
 ## Transport
 
-The sender is a small trait. The default implementation is an HTTPS POST to `{base}/cluster/{topic}` with the shared client certificate. The HTTP client keeps that connection pooled. The send runs on one host thread, after commit, and only after the enlisted client has been returned. The message is the cache key and carries an origin id. An invalidation is safe to apply twice. A failed send is retried briefly. The optional senders are a `russh` session with a channel for each topic (`plans/archive/Ssh.md`) and Postgres `NOTIFY` (below). The default remains this POST.
+The sender is a small trait. The default implementation is gRPC on HTTP/2 to the peer's cluster port, with the shared client certificate (2026-11-03; it was an HTTPS POST to `{base}/cluster/{topic}`, which stays beside it, below). The client keeps that connection. The send runs on one host thread, after commit, and only after the enlisted client has been returned. The message is the cache key and carries an origin id. An invalidation is safe to apply twice. A failed send is retried briefly. The optional senders are a `russh` session with a channel for each topic (`plans/archive/Ssh.md`) and Postgres `NOTIFY` (below).
 
 A notification carries a message id so a retry does not deliver it twice.
 
-As built (`moqui-core/src/cluster`, `moqui-host/src/cluster_edge.rs`):
+As built (`moqui-core/src/cluster`, `moqui-host/src/cluster_edge/`):
 
 - The publishing thread only queues the message (up to 10,000; past that a message is dropped and counted). One
   sender thread takes what is waiting, sends one invalidation for each entity (a peer clears the entity's whole
-  cache for one), and posts each message to every live peer, trying three times with 100 ms and 500 ms waits. A peer
-  whose post failed every try is skipped for five seconds.
+  cache for one), and posts the batch to each live peer, the peers at once (`Sender::post_batch`). A peer applies a
+  batch in order and stops at the first message it cannot apply for now (5xx); that one and those after it are sent
+  again, in order, each message tried three times with 100 ms and 500 ms waits. A peer that took nothing on the last
+  try is skipped for five seconds. A message to one member (`cluster::send_to`, call signaling) goes from its own
+  queue, all of a member's waiting messages as one batch, one try.
+- **One port, two protocols.** On the cluster port TLS picks by ALPN (`cluster_edge/listen.rs`, on the host's
+  runtime):
+  - `h2`: gRPC, `moqui.cluster.v1.Cluster.Post` (`crates/moqui-host/proto/cluster.proto`), which carries a batch and
+    answers a status for each message, the HTTP status the POST would give. The sender (`cluster_edge/grpc.rs`) keeps
+    one HTTP/2 connection to each peer, with PINGs every 15 s.
+  - `http/1.1`, or no ALPN: `POST /cluster/{topic}`, one message each; applied is `200` with an empty body (a `204`
+    would carry no Content-Length, which a member built before gRPC reads by).
+  - `cluster_protocol` (empty or `grpc`, the default; `rest`) sets what a member speaks as listener and sender. A
+    sender offers `h2, http/1.1`, and posts over HTTP/1.1 to a peer that did not choose h2 (an older member, or one
+    set to `rest`), trying gRPC again after five minutes. So members of different builds or settings still reach each
+    other, and the base URL and the member row are the same for both.
+  - Limits: 64 connections; the TLS handshake in 10 s; then, from a peer holding the cluster certificate, an HTTP/1.1
+    request head within 60 s of the last exchange, and an HTTP/2 connection with no request for 60 s closed with a
+    GOAWAY.
 - The live peers are kept, and read again on the heartbeat tick. A member that joins is posted to from the next tick
   of each other member.
 - Heartbeats and the liveness check use the database's clock (`SELECT CURRENT_TIMESTAMP`), so members whose clocks

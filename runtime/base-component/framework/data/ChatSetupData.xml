@@ -51,4 +51,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- Retention: the events older than a room's retentionDays. Each room is on its own. -->
     <moqui.service.job.ServiceJob jobName="clean_ChatRetention_daily" description="Delete chat events past their room's retention"
             serviceName="org.moqui.impl.ChatServices.clean#ChatRetention" cronExpression="0 45 3 * * ?" paused="N"/>
+    <!-- The changes feeds of users and rooms: changes older than chat_changes_keep_days (30). Each is on its own. -->
+    <moqui.service.job.ServiceJob jobName="clean_ChatChanges_daily" description="Remove old chat changes from the users' and rooms' feeds"
+            serviceName="org.moqui.impl.ChatServices.clean#ChatChanges" cronExpression="0 50 3 * * ?" paused="N"/>
 </entity-facade-xml>

@@ -9,7 +9,9 @@
  *   - outbox: the messages sent and not yet answered, kept in localStorage per user (moqui.chat.outbox.<userId>) so a
  *     send made offline, or one that failed for a while, goes when the page is back (chat.send, chat.flush); in the
  *     desktop client the host keeps and sends it (moqui.hostOutbox(), crates/moqui-desktop/src/client/outbox.rs), also
- *     with no window open, and the page shows its items and hears of each change,
+ *     with no window open, and the page shows its items and hears of each change; with a server that takes them once by
+ *     a clientRef (clientApi 4), a message's edit, deletion, reaction and poll vote wait there too (chat.queueChange,
+ *     chat.state.changes),
  * and hands the chat pushes to the screens that listen (moqui.chat.on). The server side is org.moqui.impl.ChatServices; the
  * topics and their messages are described there and in docs/ui/Qvt-Client.md, "Chat store and presence".
  *
@@ -37,7 +39,9 @@
     const BACKOFF = [2000, 5000, 15000, 60000];
     const FLUSH_EVERY = 2000;
     // the host outbox's states as the page's items show them
-    const HOST_STATUS = { queued: "waiting", retry: "waiting", sending: "sending", held: "held", failed: "failed" };
+    const HOST_STATUS = { queued: "waiting", retry: "waiting", sending: "sending", held: "held", failed: "failed", conflict: "failed" };
+    // a message's changes the host's outbox keeps with a server at clientApi 4 (moqui_client::sync::outbox MESSAGE_KINDS)
+    const CHANGE_KINDS = ["chat-edit", "chat-redact", "chat-react", "poll-vote"];
 
     const chat = {
         labels: { statusOnline: "Online", statusAway: "Away", statusDnd: "Do not disturb", statusInvisible: "Invisible", statusOffline: "Offline",
@@ -357,7 +361,7 @@
         // ---- the store of the page ----
 
         state: reactive({ me: null, presence: {}, unread: {}, typing: {}, reads: {}, openRooms: {}, statusDialog: false, outbox: [], sending: {},
-            online: true, connected: null }),
+            online: true, connected: null, changes: [], hostKinds: [] }),
         listeners: {},
         vm: null,
         started: false,
@@ -408,7 +412,7 @@
             const host = chat.host();
             if (host) chat.startHost(host);
             else chat.readOutbox();
-            if (host && moqui.onConnection) moqui.onConnection((offline) => { chat.state.online = !offline && browserOnline(); chat.touchOutbox(); });
+            if (host && moqui.onConnection) moqui.onConnection((offline) => { chat.state.online = !offline && browserOnline(); chat.touchOutbox(); if (!offline) chat.readKinds(host); });
             if (root.addEventListener) {
                 root.addEventListener("online", () => { chat.state.online = reachable(); chat.flush(true); });
                 root.addEventListener("offline", () => { chat.state.online = false; chat.touchOutbox(); });
@@ -436,17 +440,88 @@
                     chat.emit("sent", { clientRef: event.clientRef, chatRoomId: event.chatRoomId, threadRootEventSeq: event.threadRootEventSeq ?? null,
                         json: event.json || {} });
                 }
+                // a message's change answered: its room and message (the host's event names them), what this page noted of it
+                // (a reaction's key), and the answer
+                if (event && event.kind === "sent" && CHANGE_KINDS.includes(event.op)) {
+                    chat.emit("changed", { kind: event.op, clientRef: event.clientRef, chatRoomId: event.chatRoomId || null,
+                        eventSeq: event.eventSeq != null ? Number(event.eventSeq) : null, note: chat.changeNotes[event.clientRef] || null, json: event.json || {} });
+                    delete chat.changeNotes[event.clientRef];
+                }
+                // the changes feeds changed the held messages of rooms (or were reset): a room shown reads them again
+                if (event && event.kind === "rooms") {
+                    chat.emit("rooms", { rooms: Array.isArray(event.rooms) ? event.rooms.map(String) : [], reset: !!event.reset });
+                    return;
+                }
                 chat.refreshHost();
             });
+            chat.readKinds(host);
             return chat.importOutbox(host).then(() => chat.refreshHost());
+        },
+        // the kinds the host's outbox takes for the account's server (outbox.kinds(): {clientApi, kinds, internalSend}); with
+        // none known, a message's changes are asked of the server as on the web
+        readKinds(host) {
+            if (!host || typeof host.kinds !== "function") return Promise.resolve();
+            return Promise.resolve(host.kinds()).then((answer) => {
+                chat.state.hostKinds = answer && Array.isArray(answer.kinds) ? answer.kinds.map(String) : [];
+            }, (err) => console.info("chat: the app's outbox kinds were not read", err));
         },
         refreshHost() {
             const host = chat.host();
             if (!host) return Promise.resolve();
             return host.list().then((ops) => {
-                chat.state.outbox = (Array.isArray(ops) ? ops : []).filter((op) => op.kind === "chat-send").map((op) => chat.itemOfOp(op));
+                const list = Array.isArray(ops) ? ops : [];
+                chat.state.outbox = list.filter((op) => op.kind === "chat-send").map((op) => chat.itemOfOp(op));
+                const changes = list.filter((op) => CHANGE_KINDS.includes(op.kind)).map((op) => chat.changeOfOp(op));
+                // one this page is adding, which a list read before the host had it does not have yet
+                const listed = new Set(changes.map((change) => change.clientRef));
+                chat.state.changes = changes.concat(Object.values(chat.addingChanges).filter((change) => !listed.has(change.clientRef)));
                 chat.emit("outbox", {});
             }, (err) => console.info("chat outbox not read from the app", err));
+        },
+        // A message's change waiting in the host's outbox (chat-edit, chat-redact, chat-react, poll-vote) as the screens show
+        // it under its message: {clientRef, kind, chatRoomId, eventSeq, status, error, rejected, createdDate}.
+        // Also a vote's optionIds (numbers), and a reaction's key: the payload's, or for an encrypted one (its key only as
+        // ciphertext in the outbox) what this page noted when it queued it.
+        changeOfOp(op) {
+            const payload = op.payload || {};
+            const note = chat.changeNotes[op.id] || null;
+            const options = payload.optionIds == null ? null : String(payload.optionIds).split(",").map((id) => id.trim()).filter((id) => id).map(Number);
+            return { clientRef: op.id, kind: op.kind, chatRoomId: payload.chatRoomId || null, eventSeq: Number(payload.eventSeq) || null,
+                status: HOST_STATUS[op.state] || "waiting", error: op.error || null, rejected: !!op.rejected, createdDate: op.createdMs || 0,
+                key: payload.key || (note && note.key) || null, optionIds: options, note };
+        },
+        // what this page noted of the changes it queued, by clientRef (in this page only)
+        changeNotes: {},
+        // the changes this page is adding to the host's outbox, until it has them
+        addingChanges: {},
+        // the changes of a room's message still waiting, oldest first
+        changesOf(roomId, eventSeq) {
+            return chat.state.changes.filter((change) => change.chatRoomId === roomId && change.eventSeq === Number(eventSeq))
+                .sort((left, right) => left.createdDate - right.createdDate);
+        },
+        // A message's change through the host's outbox (the desktop client, with a server that takes it once by its clientRef):
+        // kind is chat-edit, chat-redact, chat-react or poll-vote, payload its fields with chatRoomId and eventSeq. Resolves to
+        // {queued: true, clientRef} once the host keeps it (shown under its message until it is answered); null when the host
+        // does not take the kind (the web, a server below clientApi 4), where the screen asks the server itself.
+        queueChange(kind, payload, note) {
+            const host = chat.host();
+            if (!host || !CHANGE_KINDS.includes(kind) || !chat.state.hostKinds.includes(kind)) return null;
+            const clientRef = chat.newClientRef();
+            if (note) chat.changeNotes[clientRef] = note;
+            const change = chat.changeOfOp({ id: clientRef, kind, state: "queued", payload, createdMs: Date.now() });
+            // shown at once; the host's list follows
+            chat.state.changes = chat.state.changes.concat([change]);
+            chat.addingChanges[clientRef] = change;
+            return host.add(kind, Object.assign({ clientRef }, payload)).then(() => {
+                delete chat.addingChanges[clientRef];
+                chat.refreshHost();
+                return { queued: true, clientRef };
+            }, (err) => {
+                delete chat.addingChanges[clientRef];
+                chat.state.changes = chat.state.changes.filter((item) => item.clientRef !== clientRef);
+                delete chat.changeNotes[clientRef];
+                throw err;
+            });
         },
         // The outbox this browser kept (localStorage, under the scope) moved into the host once: each item with its clientRef,
         // createdDate and ciphertext (the host takes an item it has once), taken off the stored list once the host has it,
@@ -500,8 +575,10 @@
             chat.emit(done.kind, done);
         },
         // listeners of the screens: kind is event, update, typing, read, room or presence; outbox (the outbox changed), sent
-        // ({clientRef, chatRoomId, threadRootEventSeq, json}: a message of the outbox was answered) and connection ({state,
-        // reconnected}); returns the function that removes it
+        // ({clientRef, chatRoomId, threadRootEventSeq, json}: a message of the outbox was answered), changed ({kind, clientRef,
+        // chatRoomId, eventSeq, note, json}: a message's change in the host's outbox was answered), rooms ({rooms, reset}: the
+        // host's changes feeds changed those rooms' held messages, or were reset) and connection ({state, reconnected});
+        // returns the function that removes it
         on(kind, fn) {
             (chat.listeners[kind] = chat.listeners[kind] || []).push(fn);
             return () => { const list = chat.listeners[kind] || []; const index = list.indexOf(fn); if (index >= 0) list.splice(index, 1); };
@@ -853,7 +930,11 @@
         },
         discard(clientRef) {
             const host = chat.host();
-            if (host) { chat.dropOutbox(clientRef); return host.discard(clientRef).then(() => chat.refreshHost()); }
+            if (host) {
+                chat.dropOutbox(clientRef);
+                chat.state.changes = chat.state.changes.filter((change) => change.clientRef !== clientRef);
+                return host.discard(clientRef).then(() => chat.refreshHost());
+            }
             chat.dropOutbox(clientRef);
             return Promise.resolve();
         },

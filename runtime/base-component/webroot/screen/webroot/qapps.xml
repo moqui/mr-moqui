@@ -20,7 +20,16 @@ along with this software (see the LICENSE.md file). If not, see
         in by key and has no /qapps page to carry them: what this page writes (QvtConfig.js), under this screen's theme
         type, with no session token or page trace, for the runtime build of Vue, and server: {name, moquiVersion,
         clientApi}. clientApi is the version of what the desktop client reads here and of the endpoints it calls (2 added
-        renewClientDevice, 3 the clientRef of Compose's saveDraft, upload and send). A transition runs none of the pre-actions below. 401 without a user. -->
+        renewClientDevice, 3 the clientRef of Compose's saveDraft, upload and send, 4: chatChanges (afterSeq, limit, heads,
+        headsSince) → {changes, lastSeq, more, reset, heads, headsSince}: the user's feed (membership as state, room, settings,
+        read, retention); roomChanges (chatRoomId, afterSeq, limit): a room's message changes; changeSeq on chatUser: room/read
+        pushes, roomChangeSeq on chatRoom: event/update pushes; the Inbox's mailChanges (afterSeq, limit) → {changes, lastSeq,
+        more, reset} or {unsupported}; clientRef on more mutations (Chat's edit, redact, react, votePoll and markRead, the Inbox's
+        state and viewAction), conflicts (Compose's baseStamp, a state target's seen) and chunked uploads (uploadChunk and
+        uploadStatus, then upload by uploadId; plans/Mobile-Desktop.md MD5)). server.features says what a client may use
+        beside it: nativePush {providers: ['fcm'], fcmConfigured, registered} (registerClientPush below), and what each
+        inbox-source provider's operation features answers, merged in: internalSendRef, mailChangesUncovered. A
+        transition runs none of the pre-actions below. 401 without a user. -->
     <transition name="clientConfig" read-only="true" begin-transaction="false">
         <actions><script><![CDATA[
             if (!ec.user.userId) {
@@ -31,7 +40,25 @@ along with this software (see the LICENSE.md file). If not, see
                 const rumSettings = ec.service.sync().name('org.moqui.monitor.MonitorServices.get#BrowserSettings').disableAuthz().call().settings || null
                 const config = qvtLib.build(ec, sri, { staticOnly: true, localeTag: localeTag, quasarLang: qvtLib.quasarLangOf(localeTag), rumSettings: rumSettings })
                 config.pageTraceId = ''
-                config.server = { name: config.shell.title || ec.web.getHostName(false), moquiVersion: ec.factory.moquiVersion, clientApi: 3 }
+                config.server = { name: config.shell.title || ec.web.getHostName(false), moquiVersion: ec.factory.moquiVersion, clientApi: 4 }
+                const push = ec.service.sync().name('org.moqui.impl.NotificationServices.get#PushDeviceStatus').disableAuthz().call() || {}
+                config.server.features = { nativePush: { providers: ['fcm'], fcmConfigured: push.fcmConfigured === true, registered: push.registered === true } }
+                // what an app's inbox source supports beyond the framework's (its operation features), for a client that works
+                // offline: internalSendRef (an internal send is made once by its clientRef, so it may be queued) and
+                // mailChangesUncovered (the stores the mail change cursor does not cover). Read-only and the user's own, so with
+                // no authorization, as the shell's other services here; each provider runs as its app. One that fails is logged.
+                const features = config.server.features = Object.assign({}, config.server.features || {})
+                try {
+                    const providers = ec.service.sync().name('org.moqui.impl.ShellServices.call#Providers').parameters({hook: 'inbox-source',
+                        parameters: {operation: 'features'}}).disableAuthz().call()
+                    for (const answer of Array.from(providers?.results || [])) {
+                        if (answer && answer.handled && answer.result) Object.assign(features, answer.result)
+                    }
+                    for (const part of Array.from(providers?.failedParts || [])) ec.logger.warn(`Client config features of ${part.sourceId}: ${part.error}`)
+                } catch (err) {
+                    ec.logger.warn(`Client config features not read: ${err && err.message ? err.message : err}`)
+                }
+                if (ec.message.hasError()) { ec.logger.warn(`Client config features: ${ec.message.errorsString}`); ec.message.clearErrors() }
                 ec.web.sendJsonResponse(config)
             }
             ]]></script></actions>
@@ -70,6 +97,39 @@ along with this software (see the LICENSE.md file). If not, see
                 const renewed = ec.service.sync().name('org.moqui.impl.UserServices.renew#UserDeviceKey').disableAuthz().call()
                 if (ec.message.hasError()) ec.web.sendJsonError(400, ec.message.errorsString)
                 else ec.web.sendJsonResponse({loginKey: renewed.loginKey, thruDate: renewed.thruDate})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- The native app's push registration (plans/Mobile-Desktop.md §5): its FCM token for the device of this request's
+        key (register#PushDevice), which the key's revoke deletes and its renewal moves; and that registration forgotten
+        (unregister#PushDevice: the one with token, or with none every one of the key). A request not signed in by a
+        device key of the user's is 400. -->
+    <transition name="registerClientPush" method="post">
+        <parameter name="provider"/><parameter name="token"/>
+        <parameter name="appId"/><parameter name="platform"/>
+        <actions><script><![CDATA[
+            if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+            else {
+                const p = ec.web.parameters
+                const out = ec.service.sync().name('org.moqui.impl.NotificationServices.register#PushDevice').parameters({
+                    provider: p.provider || null, token: p.token || null, appId: p.appId || null, platform: p.platform || null,
+                }).disableAuthz().call() || {}
+                if (ec.message.hasError()) ec.web.sendJsonError(400, ec.message.errorsString)
+                else ec.web.sendJsonResponse({registered: true, subscriptionId: out.subscriptionId})
+            }
+            ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="unregisterClientPush" method="post">
+        <parameter name="token"/>
+        <actions><script><![CDATA[
+            if (!ec.user.userId) ec.web.sendJsonError(401, 'Authentication required')
+            else {
+                const out = ec.service.sync().name('org.moqui.impl.NotificationServices.unregister#PushDevice')
+                    .parameters({token: ec.web.parameters.token || null}).disableAuthz().call() || {}
+                if (ec.message.hasError()) ec.web.sendJsonError(400, ec.message.errorsString)
+                else ec.web.sendJsonResponse({deletedCount: out.deletedCount ?? 0})
             }
             ]]></script></actions>
         <default-response type="none"/>

@@ -47,3 +47,26 @@ fn an_id_that_could_leave_the_directory_is_refused() {
     assert_eq!(store.get("../escape"), None);
     assert!(store.delete("a/b").is_ok());
 }
+
+#[test]
+fn chat_store_keys_are_kept_per_device_and_go_with_the_account() {
+    let dir = std::env::temp_dir().join(format!("moqui-client-chat-keys-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let keys = Keys::new(Box::new(FileKeyStore::new(&dir)), "file");
+    keys.set("a", "device-key").unwrap();
+    keys.set_chat_store_key("a", "DEV1", "k1").unwrap();
+    keys.set_chat_store_key("a", "DEV2", "k2").unwrap();
+    keys.set_chat_store_key("a", "DEV1", "k1b").unwrap();
+    assert_eq!(keys.chat_store_key("a", "DEV1").as_deref(), Some("k1b"));
+    assert_eq!(keys.chat_store_key("b", "DEV1"), None);
+    keys.remove_chat_store_key("a", "DEV2").unwrap();
+    assert_eq!(keys.chat_store_key("a", "DEV2"), None);
+    // read again from the file, not the memory
+    let again = Keys::new(Box::new(FileKeyStore::new(&dir)), "file");
+    assert_eq!(again.chat_store_key("a", "DEV1").as_deref(), Some("k1b"));
+    again.forget_chat_store_keys("a").unwrap();
+    assert_eq!(again.chat_store_key("a", "DEV1"), None);
+    // the device key is another entry
+    assert_eq!(again.get("a").as_deref(), Some("device-key"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -27,6 +27,13 @@
 //! - [`conf`]: the client's settings from the `<client-conf>` element of the Moqui XML conf (the device mode, the
 //!   mirror and prefetch limits, the store's size cap).
 //! - [`sso`]: sign-in through the server's identity providers in the system browser, handed back to the app (RFC 8252).
+//! - [`app`]: the client's state while the app runs as a client ([`app::Client`]), and what it asks of its host
+//!   ([`app::ClientHost`]): the pages are the host's.
+//! - [`bridge`]: the pages' sockets held by the host, and a client's `/notws` frames written into the store.
+//! - [`stores`]: each account's store, opened when first used; [`offline`]: the comms transitions' answers kept and
+//!   answered when the server cannot be reached; [`sync`]: the pushes, the outbox and its sender, and the mirror.
+//! - [`modes`]: what each device mode keeps; [`renewal`]: the keys renewed before they run out; [`assets`]: the
+//!   shell's own files.
 //!
 //! Blocking I/O on threads, as `moqui tui --server` (`crates/moqui-host/src/tui_remote.rs`), whose patterns this
 //! follows: no async API. reqwest's blocking client runs a runtime of its own, so a caller must be on a plain thread,
@@ -36,15 +43,27 @@
 //! that verifier needs its JVM init (`rustls_platform_verifier::android`) before the first request.
 
 pub mod account;
+pub mod app;
+pub mod assets;
+pub mod bridge;
 pub mod cache;
 pub mod conf;
 mod files;
 mod http;
 pub mod keys;
 pub mod login;
+pub mod modes;
+pub mod offline;
 pub mod proxy;
+pub mod renewal;
 pub mod socket;
 pub mod sso;
 pub mod store;
+pub mod stores;
+pub mod sync;
+
+/// The shell's origin on Chromium (`http://<scheme>.localhost` of the `moqui-shell` app scheme), the `Origin` the
+/// host's own requests (the outbox, the mirror) go to the server with.
+pub const SHELL_ORIGIN: &str = "http://moqui-shell.localhost";
 
 pub use moqui_lib::error::Error;

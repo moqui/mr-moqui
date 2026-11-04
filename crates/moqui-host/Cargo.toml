@@ -17,8 +17,9 @@ default = ["maximal", "devtools"]
 # Dev package: Lite with git hosting, the SSH server and the dev tools. Commented out: the release build (Maximal
 # with the dev tools) is the default now; likely to be removed.
 # dev = ["lite", "git", "ssh", "devtools"]
-# Lite package (`./moq build --lite`): the web server on embedded Postgres, PDF, outbound mail, and the terminal client.
-lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm", "test-client", "telemetry", "web-push"]
+# Lite package (`./moq build --lite`): the web server on embedded Postgres, PDF, outbound mail, the terminal client, and
+# gRPC (the cluster's transport, and the OTLP receiver when it is turned on).
+lite = ["axum", "embedded-postgres", "pdf", "smtp", "tui", "llm", "test-client", "telemetry", "web-push", "grpc"]
 # Enterprise package (`./moq build --enterprise`): everything, with the databases external.
 enterprise = ["axum", "postgres", "mysql", "pdf", "mail", "git", "image", "xlsx", "ssh", "sso", "print", "inbound-smtp", "tui", "llm", "test-client", "telemetry", "grpc", "web-push", "rtc", "sip", "channels", "xmpp", "edge"]
 # Maximal package (`./moq build`, the default, and the debug build), with devtools: everything, Postgres embedded.
@@ -28,7 +29,19 @@ maximal = ["enterprise", "embedded-postgres"]
 embedded-postgres = ["postgres", "moqui-drivers/embedded-postgres"]
 postgres = ["moqui-drivers/postgres"]
 mysql = ["moqui-drivers/mysql"]
-axum = ["dep:axum", "dep:tower", "dep:tower-http", "dep:hyper", "dep:hyper-util", "dep:futures-util", "dep:tokio-tungstenite"]
+# The web listeners: HTTP/1.1, and HTTP/2 by ALPN on the HTTPS listener (WebSockets over extended CONNECT, RFC 8441).
+axum = [
+    "dep:axum",
+    "dep:tower",
+    "dep:tower-http",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:futures-util",
+    "dep:tokio-tungstenite",
+    "hyper/http2",
+    "hyper-util/http2",
+    "axum/http2",
+]
 pdf = ["dep:tokio-tungstenite", "dep:futures-util"]
 # SSH and SFTP: the SFTP client of moqui_core::sftp, the built-in SSH server (SFTP, admin shell, git over SSH), and
 # the SSH cluster channel.
@@ -76,24 +89,25 @@ channels = ["dep:moqui-channels"]
 # Enterprise and Debug; not Lite.
 xmpp = ["axum", "dep:moqui-xmpp"]
 telemetry = ["moqui-core/telemetry", "dep:flate2"]
-# The OTLP/gRPC receiver (tonic), opened only when <telemetry><receiver grpc-enabled="true"> is set.
-grpc = ["telemetry", "axum", "moqui-core/grpc", "dep:tonic", "dep:opentelemetry-proto"]
+# gRPC (tonic) on HTTP/2: the cluster's transport (src/cluster_grpc/, plans/archive/Cluster.md), with the generated
+# clients and servers of our own .proto files, and the OTLP/gRPC receiver, opened only when
+# <telemetry><receiver grpc-enabled="true"> is set. In every package.
+grpc = [
+    "telemetry",
+    "axum",
+    "moqui-core/grpc",
+    "dep:tonic",
+    "dep:opentelemetry-proto",
+    "dep:tonic-prost",
+    "dep:prost",
+    "tonic/codegen",
+    "hyper/client",
+    "hyper-util/service",
+]
 # The edge link (plans/Edge-Node.md §5.1, src/edge_link/): the local node's dialer when edge_node_url is set, and on an
 # edge node (node_role=edge) the ALPN moqui-edge/1 hand-off on the HTTPS listener; gRPC both ways on HTTP/2. In Maximal
 # and Enterprise, whose graph already has all of it (§5.6); not Lite.
-edge = [
-    "grpc",
-    "dep:tonic-prost",
-    "dep:prost",
-    "dep:webpki-roots",
-    "tonic/codegen",
-    "hyper/http2",
-    "hyper/client",
-    "hyper-util/http2",
-    "hyper-util/service",
-    "axum/http2",
-    "dep:sha1",
-]
+edge = ["grpc", "dep:webpki-roots", "dep:sha1"]
 # What only development needs (plans/design-dev-aide.md 3.3): the framework's file watcher, and in the binary crates the
 # dev-component crates. In the Maximal (default) and Debug packages; not in Lite or Enterprise.
 devtools = ["moqui-devkit/watch", "dep:lsp-server", "dep:lsp-types"]

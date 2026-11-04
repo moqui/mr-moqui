@@ -30,6 +30,9 @@ use moqui_lib::error::Error;
 /// The most events a page has, as `get#Timeline`.
 const PAGE_MAX: u32 = 200;
 
+/// The prefix of a room's changes feed cursor (`room:<chatRoomId>`, [`Store::sync_cursor`]).
+pub const ROOM_CURSOR: &str = "room:";
+
 /// A room as the room list gives it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChatRoom {
@@ -156,7 +159,7 @@ impl Store {
         )
     }
 
-    /// Forget a room, its events and its ranges.
+    /// Forget a room, its events, its ranges and the cursor of its changes feed.
     ///
     /// # Errors
     ///
@@ -169,7 +172,134 @@ impl Store {
                     .execute(&format!("DELETE FROM {table} WHERE chat_room_id = ?1"), [chat_room_id])
                     .map_err(failed("chat room not removed"))?;
             }
+            store
+                .conn
+                .execute(
+                    "DELETE FROM sync_cursor WHERE name = ?1",
+                    [format!("{ROOM_CURSOR}{chat_room_id}")],
+                )
+                .map_err(failed("chat room not removed"))?;
             Ok(())
+        })
+    }
+
+    /// Whether the store holds any event of a room.
+    pub fn has_chat_events(&self, chat_room_id: &str) -> bool {
+        !self
+            .rows(
+                "chat events",
+                "SELECT 1 FROM chat_event WHERE chat_room_id = ?1 LIMIT 1",
+                [chat_room_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .is_empty()
+    }
+
+    /// The ids of the rooms kept.
+    pub fn chat_room_ids(&self) -> Vec<String> {
+        self.rows("chat rooms", "SELECT chat_room_id FROM chat_room", [], |row| row.get(0))
+    }
+
+    /// Forget a room's events and ranges, keeping its row (a room's changes feed reset: its events are read again).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the rows cannot be removed.
+    pub fn forget_chat_events(&self, chat_room_id: &str) -> Result<(), Error> {
+        self.atomic(|store| {
+            for table in ["chat_event", "chat_range"] {
+                store
+                    .conn
+                    .execute(&format!("DELETE FROM {table} WHERE chat_room_id = ?1"), [chat_room_id])
+                    .map_err(failed("chat events not removed"))?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Forget all of chat: rooms, events, ranges and the rooms' feed cursors (the user's feed reset).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the rows cannot be removed.
+    pub fn forget_chat(&self) -> Result<(), Error> {
+        self.atomic(|store| {
+            for table in ["chat_event", "chat_range", "chat_room"] {
+                store
+                    .conn
+                    .execute(&format!("DELETE FROM {table}"), [])
+                    .map_err(failed("chat not removed"))?;
+            }
+            store.remove_sync_cursors(ROOM_CURSOR)?;
+            Ok(())
+        })
+    }
+
+    /// Forget an event the server no longer has (a change re-read found none).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the row cannot be removed.
+    pub fn remove_chat_event(&self, chat_room_id: &str, event_seq: i64) -> Result<(), Error> {
+        self.conn
+            .execute(
+                "DELETE FROM chat_event WHERE chat_room_id = ?1 AND event_seq = ?2",
+                params![chat_room_id, event_seq],
+            )
+            .map_err(failed("chat event not removed"))?;
+        Ok(())
+    }
+
+    /// The room's retention deleted its events up to `through` on the server: they go here too, with the threads
+    /// whose root went, and a range that reaches past them starts the timeline now (low 0), as nothing older is left.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the rows cannot be written.
+    pub fn trim_chat_retention(&self, chat_room_id: &str, through: i64) -> Result<(), Error> {
+        self.atomic(|store| {
+            let run = |sql: &str| {
+                store
+                    .conn
+                    .execute(sql, params![chat_room_id, through])
+                    .map_err(failed("chat retention not kept"))
+            };
+            run("DELETE FROM chat_event WHERE chat_room_id = ?1 AND event_seq <= ?2")?;
+            run("DELETE FROM chat_range WHERE chat_room_id = ?1 AND thread_seq > 0 AND thread_seq <= ?2")?;
+            run("DELETE FROM chat_range WHERE chat_room_id = ?1 AND high <= ?2")?;
+            run("UPDATE chat_range SET low = 0 WHERE chat_room_id = ?1 AND low <= ?2 + 1")?;
+            Ok(())
+        })
+    }
+
+    /// The main timeline's newest stretch held is the head again when it reaches `latest`, the room's newest event as
+    /// the server says now (its changes feed's head): nothing was missed, so it needs no page read again. False when
+    /// no stretch reaches it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the ranges cannot be written.
+    pub fn restore_chat_head(&self, chat_room_id: &str, latest: i64) -> Result<bool, Error> {
+        let Some(range) = self.range_where(chat_room_id, 0, "high >= ?3 ORDER BY high DESC", latest) else {
+            return Ok(false);
+        };
+        self.atomic(|store| {
+            let failed_range = failed("chat range not kept");
+            store
+                .conn
+                .execute(
+                    "UPDATE chat_range SET head = 0 WHERE chat_room_id = ?1 AND thread_seq = 0",
+                    [chat_room_id],
+                )
+                .map_err(&failed_range)?;
+            store
+                .conn
+                .execute(
+                    "UPDATE chat_range SET head = 1 WHERE chat_room_id = ?1 AND thread_seq = 0 AND low = ?2",
+                    params![chat_room_id, range.low],
+                )
+                .map_err(&failed_range)?;
+            Ok(true)
         })
     }
 

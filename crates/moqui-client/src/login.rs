@@ -182,9 +182,57 @@ pub fn client_config(base: &str, key: &str) -> Result<Option<serde_json::Value>,
 }
 
 /// The newest `server.clientApi` of `/qapps/clientConfig` this client knows: 1 the first, 2 added `renewClientDevice`,
-/// 3 the compose `clientRef` (Compose's `saveDraft`, `upload` and `send` retried safely from a queue).
+/// 3 the compose `clientRef` (Compose's `saveDraft`, `upload` and `send` retried safely from a queue), 4 MD5's sync
+/// contracts (the chat and mail changes feeds, `clientRef` on more mutations, conflicts and chunked uploads).
 /// A server that sends a newer one may expect what this client does not do, so the shell asks for an update.
-pub const CLIENT_API: u64 = 3;
+pub const CLIENT_API: u64 = 4;
+
+/// The `clientApi` from which the client syncs on the server's changes feeds, sends its new outbox kinds, `seen`,
+/// `baseStamp` and chunked uploads (MD5); below it, MD4's behavior.
+pub const SYNC_API: u64 = 4;
+
+/// What an account's server supports of the client's sync, from its client config: its `clientApi` and the
+/// `server.features` its app adds (an inbox source's `features` operation, merged by `/qapps/clientConfig`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ServerSync {
+    /// The server's `clientApi`; 0 when its client config is not known.
+    pub client_api: u64,
+    /// `server.features.internalSendRef`: an internal message's send is made once by its `clientRef`, so it may be queued.
+    pub internal_send_ref: bool,
+    /// `server.features.mailChangesUncovered`: the Inbox stores (`internal`) the mail change cursor does not cover.
+    pub mail_uncovered: Vec<String>,
+}
+
+impl ServerSync {
+    /// What a client config's JSON says.
+    #[must_use]
+    pub fn of(config: &serde_json::Value) -> Self {
+        let features = &config["server"]["features"];
+        Self {
+            client_api: server_client_api(config),
+            internal_send_ref: features["internalSendRef"].as_bool() == Some(true),
+            mail_uncovered: features["mailChangesUncovered"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect(),
+        }
+    }
+
+    /// Whether the server has MD5's sync contracts.
+    #[must_use]
+    pub fn syncs(&self) -> bool {
+        self.client_api >= SYNC_API
+    }
+
+    /// Whether an internal message may be queued (`internal-send`).
+    #[must_use]
+    pub fn internal_send(&self) -> bool {
+        self.syncs() && self.internal_send_ref
+    }
+}
 
 /// The server's `clientApi` in its client config, 1 when it sends none.
 #[must_use]

@@ -96,6 +96,8 @@ test-support = ["moqui-entity/test-support"]
 moqui-entity = { workspace = true, features = ["test-support"] }
 # Model types only. Revue stays behind moqui-tui's ui feature, which this does not turn on.
 moqui-tui = { workspace = true, default-features = false, features = ["model"] }
+# Verifies the FCM sender's JWT signature (service/fcm_tests.rs); already linked through moqui-lib.
+rsa = { workspace = true }
 
 [lints]
 workspace = true

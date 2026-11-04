@@ -27,7 +27,7 @@
 //! client, not an authorization server.
 //!
 //! The redirect URIs an app may give are the property `webapp_app_redirect_uris` (spaces or commas between them),
-//! by default the desktop app's `org.moqui.desktop:/sso`.
+//! by default the desktop app's `org.moqui.desktop:/sso` and the mobile app's `org.moqui.mobile:/sso`.
 
 use std::collections::BTreeMap;
 
@@ -48,7 +48,7 @@ pub(super) const PENDING_APP: &str = "moquiAppAuthPending";
 /// Where the provider's callback goes for an app sign-in.
 pub(super) const APP_CODE_PATH: &str = "/sso/appCode";
 /// The redirect URIs an app may give when the property names none.
-const DEFAULT_REDIRECTS: &str = "org.moqui.desktop:/sso";
+const DEFAULT_REDIRECTS: &str = "org.moqui.desktop:/sso org.moqui.mobile:/sso";
 /// How long a code is good.
 const CODE_MILLIS: i64 = 60_000;
 /// How long an app sign-in may take in the browser.

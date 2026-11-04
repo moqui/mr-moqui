@@ -51,6 +51,11 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="createdDate" type="date-time"/>
         <field name="archivedDate" type="date-time"><description>An archived room is read only</description></field>
         <field name="lastEventSeq" type="number-integer"/>
+        <field name="lastChangeSeq" type="number-integer"><description>The number of the room's last change of a message
+            after it was sent (ChatRoomChange); the next takes the next number, with this row locked</description></field>
+        <field name="lastChangeDate" type="date-time"/>
+        <field name="purgedChangeSeq" type="number-integer"><description>The last ChatRoomChange number clean#ChatChanges
+            took out: a client whose room cursor is older reads the room again (reset)</description></field>
         <field name="lastEventDate" type="date-time"/>
         <field name="lastMessageSeq" type="number-integer"><description>The last message of the room's main timeline,
             for the room list</description></field>
@@ -321,6 +326,74 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="siteName" type="text-medium"/>
         <field name="failed" type="text-indicator"/>
         <field name="fetchedDate" type="date-time"/>
+    </entity>
+
+    <entity entity-name="ChatRoomChange" package="moqui.chat" use="transactional" cache="never">
+        <description>A message of a room changed after it was sent: an edit, a reaction or its removal, a redaction, a pin,
+            or a change with no event of its own (its link previews, its poll; push#Update). Numbered per room (changeSeq,
+            from ChatRoom.lastChangeSeq, written with the room row locked, as append#Event holds it), one log for every
+            reader of the room, so a change costs one row however many members the room has (the per-user feed,
+            ChatUserChange, has only what is the user's). A change replaces the room's earlier change of the same message
+            (eventSeq), with a new changeSeq. changeJson is {cause, causeEventSeq, redacted, threadRootEventSeq}
+            (record#RoomChange). get#RoomChanges (the Chat screen's roomChanges) reads it after a cursor; get#UserChanges
+            answers each room's lastChangeSeq in its heads. Retention removes the changes of the events it deletes, and
+            clean#ChatChanges those older than chat_changes_keep_days.</description>
+        <field name="chatRoomId" type="id" is-pk="true"/>
+        <field name="changeSeq" type="number-integer" is-pk="true"/>
+        <field name="eventSeq" type="number-integer"><description>The message that changed</description></field>
+        <field name="changeJson" type="text-long"/>
+        <field name="changeDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.chat.ChatRoom" short-alias="room"/>
+        <index name="CHAT_ROOM_CHANGE_EVENT"><index-field name="chatRoomId"/><index-field name="eventSeq"/></index>
+        <index name="CHAT_ROOM_CHANGE_DATE"><index-field name="changeDate"/></index>
+    </entity>
+
+    <entity entity-name="ChatUserState" package="moqui.chat" use="transactional" cache="never">
+        <description>A user's place in their chat changes feed (ChatUserChange): lastChangeSeq is the number of the user's
+            last change; the next change takes the next number, with this row locked as append#Event locks
+            ChatRoom.lastEventSeq, so a change is committed before a later number is given. purgedChangeSeq is the last
+            number clean#ChatChanges took out of the feed: a client whose cursor is older reads everything again (reset).
+            Made on the user's first change.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="lastChangeSeq" type="number-integer"/>
+        <field name="purgedChangeSeq" type="number-integer"/>
+        <field name="purgedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+    </entity>
+
+    <entity entity-name="ChatUserChange" package="moqui.chat" use="transactional" cache="never">
+        <description>A change of what a user's chat client keeps, numbered per user (changeSeq: 1, 2, ... in commit
+            order; ChatUserState), so a client offline for a while reads what changed in all its rooms from one cursor
+            (the chatChanges transition, get#UserChanges). Only what is the user's: their membership of a room (as
+            state: member or not, role), a room's details or members (room), their own settings and read marker in a
+            room, and a room's retention (retention, eventSeq the last event deleted: everything up to it is gone). New
+            messages are not changes, and a message changed after it was sent is the room's (ChatRoomChange): the heads
+            get#UserChanges answers give each room's lastEventSeq and lastChangeSeq. A change replaces the user's earlier
+            change of the same kind and room, with a new changeSeq, so the feed holds one row per thing that changed, not
+            one per write. changeJson is the kind's detail (record#UserChange). Agents' chat users get no changes.
+            clean#ChatChanges removes changes older than chat_changes_keep_days.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="changeSeq" type="number-integer" is-pk="true"/>
+        <field name="changeKindEnumId" type="id"/>
+        <field name="chatRoomId" type="id"/>
+        <field name="eventSeq" type="number-integer"/>
+        <field name="changeJson" type="text-long"/>
+        <field name="changeDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one-nofk" related="moqui.chat.ChatRoom" short-alias="room"/>
+        <relationship type="one" title="ChatUserChangeKind" related="moqui.basic.Enumeration" short-alias="kind">
+            <key-map field-name="changeKindEnumId"/></relationship>
+        <index name="CHAT_CHANGE_KEY"><index-field name="userId"/><index-field name="chatRoomId"/><index-field name="changeKindEnumId"/>
+            <index-field name="eventSeq"/></index>
+        <index name="CHAT_CHANGE_DATE"><index-field name="changeDate"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType description="Chat User Change Kind" enumTypeId="ChatUserChangeKind"/>
+            <moqui.basic.Enumeration description="Membership" enumId="CucMembership" enumCode="membership" enumTypeId="ChatUserChangeKind" sequenceNum="1"/>
+            <moqui.basic.Enumeration description="Room" enumId="CucRoom" enumCode="room" enumTypeId="ChatUserChangeKind" sequenceNum="2"/>
+            <moqui.basic.Enumeration description="Settings" enumId="CucSettings" enumCode="settings" enumTypeId="ChatUserChangeKind" sequenceNum="3"/>
+            <moqui.basic.Enumeration description="Read" enumId="CucRead" enumCode="read" enumTypeId="ChatUserChangeKind" sequenceNum="4"/>
+            <moqui.basic.Enumeration description="Retention" enumId="CucRetention" enumCode="retention" enumTypeId="ChatUserChangeKind" sequenceNum="6"/>
+        </seed-data>
     </entity>
 
     <entity entity-name="UserStatus" package="moqui.security" use="transactional" cache="never">

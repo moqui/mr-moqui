@@ -13,7 +13,7 @@
  */
 
 //! A TLS certificate verifier that trusts a pinned fingerprint instead of a certificate authority, for either end of a
-//! connection: the cluster listener and its peers (one shared certificate, `cluster_edge.rs`), and the edge link
+//! connection: the cluster listener and its peers (one shared certificate, `cluster_edge`), and the edge link
 //! (plans/Edge-Node.md §5.1: a key per local node, pinned both ways). The handshake's signature is still checked against
 //! the presented certificate, so a pin proves possession of the key.
 

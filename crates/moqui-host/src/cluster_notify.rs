@@ -128,6 +128,27 @@ impl Sender for DispatchSender {
         }
         self.https.post(base_url, topic, payload)
     }
+
+    /// An `https://` peer's batch goes to the HTTPS sender whole, which carries it in one gRPC call; the others post one
+    /// message after another.
+    fn post_batch(&self, base_url: &str, messages: &[(&str, &[u8])]) -> moqui_core::cluster::BatchOutcome {
+        if base_url.starts_with(NOTIFY_BASE_URL) || base_url.starts_with("ssh://") {
+            let mut outcomes = Vec::with_capacity(messages.len());
+            for (topic, payload) in messages {
+                match self.post(base_url, topic, payload) {
+                    Ok(outcome) => outcomes.push(outcome),
+                    Err(err) => {
+                        return moqui_core::cluster::BatchOutcome {
+                            outcomes,
+                            failed: Some(err),
+                        }
+                    }
+                }
+            }
+            return moqui_core::cluster::BatchOutcome { outcomes, failed: None };
+        }
+        self.https.post_batch(base_url, messages)
+    }
 }
 
 struct NotifySender {

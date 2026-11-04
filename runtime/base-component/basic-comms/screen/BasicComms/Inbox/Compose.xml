@@ -20,7 +20,10 @@ along with this software (see the LICENSE.md file). If not, see
     from mScreen wherever it is. The JSON transitions below call org.moqui.comms.InboxServices.run#Operation (ComposeServices, or an app's inbox-source): the sender is always the
     user, from an account the user may send from, and a file is one these services stored. saveDraft, upload and send take
     clientRef, the client's own reference of the draft, so a client that queued the mail offline retries them safely: the
-    same draft is saved, a file is attached once, and a send that went through answers duplicate true (ComposeServices). -->
+    same draft is saved, a file is attached once, and a send that went through answers duplicate true (ComposeServices).
+    saveDraft and send take baseStamp, the draftStamp of the copy the client edited (composeData and each save answer it):
+    a draft saved elsewhere since is kept, and they answer conflict true with compose, the server's draft. A file may come
+    in chunks (uploadChunk, uploadStatus) and then upload takes it by uploadId. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Compose" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
 
@@ -62,9 +65,10 @@ along with this software (see the LICENSE.md file). If not, see
             const out = ec.service.sync().name('org.moqui.comms.InboxServices.run#Operation').parameters({operation: 'save#ComposeDraft', parameters: {emailMessageId: emailMessageId || null,
                 fromValue: fromValue || '', toJson: toJson || '[]', ccJson: ccJson || '[]', bccJson: bccJson || '[]', subject: subject ?? '', body: body ?? '',
                 bodyText: bodyText || null, quoteHtml: quoteHtml || null, parentEmailMessageId: parentEmailMessageId || null,
-                isForward: String(isForward) === 'true', clientRef: clientRef || null}}).call()?.result || {}
+                isForward: String(isForward) === 'true', clientRef: clientRef || null,
+                baseStamp: baseStamp != null && baseStamp !== '' ? Number(baseStamp) : null, saveRef: saveRef || null}}).call()?.result || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {emailMessageId: out.emailMessageId, rootEmailMessageId: out.rootEmailMessageId,
-                duplicate: out.duplicate === true})
+                duplicate: out.duplicate === true, draftStamp: out.draftStamp ?? null, conflict: out.conflict === true, compose: out.compose || null})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
@@ -72,11 +76,14 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             // the same for every app: a draft's files, or the user's own uploads for an app's message (send#Compose takes them)
             const out = ec.service.sync().name('org.moqui.comms.ComposeServices.upload#ComposeAttachment').parameters({emailMessageId: emailMessageId || null,
-                clientRef: clientRef || null, contentFile: contentFile || null}).call() || {}
+                clientRef: clientRef || null, contentFile: contentFile || null, uploadId: uploadId || null}).call() || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {attachmentList: out.attachmentList, uploadList: out.uploadList})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- a file sent in chunks, for upload with its uploadId -->
+    <transition-include name="uploadChunk" location="component://basic-comms/template/UploadTransitions.xml"/>
+    <transition-include name="uploadStatus" location="component://basic-comms/template/UploadTransitions.xml"/>
     <!-- the drive picker of Attach from Files -->
     <transition-include name="pickerData" location="component://basic-comms/template/FilePickerTransitions.xml"/>
     <transition-include name="pickerFolder" location="component://basic-comms/template/FilePickerTransitions.xml"/>
@@ -113,10 +120,10 @@ along with this software (see the LICENSE.md file). If not, see
                 recordEntity: recordEntity || null, recordId: recordId || null,
                 scheduledSendDate: scheduledSendDate ? new Date(Number(scheduledSendDate)) : null, holdSeconds: holdSeconds != null && holdSeconds !== '' ? Number(holdSeconds) : null,
                 archiveThread: String(archiveThread) === 'true', threadStore: threadStore || null, threadId: threadId || null,
-                clientRef: clientRef || null}}).call()?.result || {}
+                clientRef: clientRef || null, baseStamp: baseStamp != null && baseStamp !== '' ? Number(baseStamp) : null, saveRef: saveRef || null}}).call()?.result || {}
             ec.web.sendJsonResponse(ec.message.hasError() ? {} : {mode: out.mode, emailMessageId: out.emailMessageId, statusId: out.statusId, sent: out.sent,
                 sendError: out.sendError, scheduledSendDate: out.scheduledSendDate, communicationEventIdList: out.communicationEventIdList, message: out.message,
-                duplicate: out.duplicate === true})
+                duplicate: out.duplicate === true, conflict: out.conflict === true, compose: out.compose || null})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>

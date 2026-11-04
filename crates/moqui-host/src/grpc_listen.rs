@@ -111,17 +111,37 @@ fn routes(
     bind: SocketAddr,
     tls: bool,
 ) -> (tonic::service::Routes, Vec<&'static str>) {
+    service_routes(
+        factory,
+        crate::pass_authority::direct_enabled() && pass_allowed(bind, tls, true),
+    )
+}
+
+/// The OTLP receiver's routes when it is on, and the PASS authority's when `pass`.
+fn service_routes(factory: &Arc<ExecutionContextFactory>, pass: bool) -> (tonic::service::Routes, Vec<&'static str>) {
     let mut routes = tonic::service::Routes::default();
     let mut names = Vec::new();
     if crate::monitor::grpc::enabled(factory) {
         routes = crate::monitor::grpc::add_routes(routes, factory);
         names.push("OTLP/gRPC receiver");
     }
-    if crate::pass_authority::direct_enabled() && pass_allowed(bind, tls, true) {
+    if pass {
         routes = crate::pass_authority::add_direct(routes, factory);
         names.push("PASS authority");
     }
     (routes, names)
+}
+
+/// The same services for the HTTPS listener, which carries a gRPC call over HTTP/2 to them (`crate::http::serve`):
+/// that is always TLS, so the PASS authority's are there whenever `pass_authority_grpc_enabled=true`. `None` when no
+/// service is on. The gRPC listener's own port stays, opened by the same settings.
+pub(crate) fn web_routes(factory: &Arc<ExecutionContextFactory>) -> Option<tonic::service::Routes> {
+    let (routes, names) = service_routes(factory, crate::pass_authority::direct_enabled());
+    if names.is_empty() {
+        return None;
+    }
+    tracing::info!("gRPC on the HTTPS listener over HTTP/2: {}", names.join(" and "));
+    Some(routes)
 }
 
 /// Bind `bind` and serve until `stop`. A bind failure is logged and the HTTP listeners go on without gRPC.
@@ -148,7 +168,7 @@ pub(crate) async fn serve(
         if tls.is_some() { " (TLS)" } else { "" }
     );
     let acceptor = tls.map(|config| {
-        // gRPC is HTTP/2 only; the HTTPS listener's config offers http/1.1.
+        // gRPC is HTTP/2 only; the HTTPS listener's config offers http/1.1 too.
         let mut config = (*config).clone();
         config.alpn_protocols = vec![b"h2".to_vec()];
         tokio_rustls::TlsAcceptor::from(Arc::new(config))

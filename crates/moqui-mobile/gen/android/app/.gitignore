@@ -1,0 +1,8 @@
+/src/main/**/generated
+/src/main/jniLibs/**/*.so
+/src/main/assets/tauri.conf.json
+/tauri.build.gradle.kts
+/proguard-tauri.pro
+/tauri.properties
+# The Firebase project of a build with native push (app/build.gradle.kts), kept out of git
+/google-services.json

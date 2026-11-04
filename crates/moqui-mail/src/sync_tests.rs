@@ -451,6 +451,119 @@ fn first_sync_maps_folders_and_stores_messages_files_and_threads() {
     );
 }
 
+/// The change of each thread in a page of `get#MailChanges`, by thread id: (kind, removedMessageIds, message count).
+fn thread_changes(page: &BTreeMap<String, Value>) -> HashMap<String, (String, Vec<String>, usize)> {
+    let Some(Value::List(changes)) = page.get("changes") else {
+        panic!("no changes: {page:?}")
+    };
+    let text_of =
+        |change: &IndexMap<String, Value>, name: &str| change.get(name).map(to_plain_string).unwrap_or_default();
+    changes
+        .iter()
+        .filter_map(|change| match change {
+            Value::Map(change) => {
+                let removed = match change.get("removedMessageIds") {
+                    Some(Value::List(ids)) => ids.iter().map(to_plain_string).collect(),
+                    _ => Vec::new(),
+                };
+                let count = match change.get("messages") {
+                    Some(Value::List(messages)) => messages.len(),
+                    _ => 0,
+                };
+                Some((text_of(change, "threadId"), (text_of(change, "kind"), removed, count)))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The mail change cursor (`get#MailChanges`, the rules of `Email.eecas.xml`): once its user has read it, a sync notes
+/// its arrivals, the flags a scan reads and its expunges, one change per thread, which the cursor pages after its read.
+#[test]
+fn a_sync_notes_arrivals_flags_and_expunges_on_the_change_cursor() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    // the rules a server loads from framework/entity, which the other tests leave off
+    let rules = std::fs::read_to_string(moqui_core::context::framework_dir().join("entity/Email.eecas.xml")).unwrap();
+    moqui_core::entity::load_feed::add_eca_rules(&facade, &rules).unwrap();
+    facade.set_disable_entity_eca(false);
+    alice(&facade);
+    let imap = FakeImap::start(&["UIDPLUS"]);
+    let one_uid = imap.add(
+        "INBOX",
+        &mail("<c1@example.com>", "x@example.com", "alice@example.com", "One", "", "1"),
+        &[],
+    );
+    let two_uid = imap.add(
+        "INBOX",
+        &mail("<c2@example.com>", "x@example.com", "alice@example.com", "Two", "", "2"),
+        &[],
+    );
+    let account = imap_account(imap.port, "app-password");
+    sync(&account);
+    let inbox = folder_id(&facade, &account, "EfkInbox");
+    let one = field(
+        &by_message_id(&facade, &account, "<c1@example.com>").unwrap(),
+        "emailMessageId",
+    );
+    let two = field(
+        &by_message_id(&facade, &account, "<c2@example.com>").unwrap(),
+        "emailMessageId",
+    );
+
+    // the first read starts the log: nothing of before it
+    let first = ok("get#MailChanges", &[]);
+    assert_eq!(out_text(&first, "reset"), "true", "{first:?}");
+    let start = out_number(&first, "lastSeq");
+
+    imap.add(
+        "INBOX",
+        &mail(
+            "<c3@example.com>",
+            "x@example.com",
+            "alice@example.com",
+            "Three",
+            "",
+            "3",
+        ),
+        &[],
+    );
+    imap.set_flags("INBOX", one_uid, &["\\Seen"]);
+    imap.expunge("INBOX", two_uid);
+    update(
+        &facade,
+        FOLDER,
+        ("emailFolderId", &inbox),
+        &[("lastFlagScanDate", stamp(now() - 3_600_000))],
+    );
+    sync(&account);
+    let three = field(
+        &by_message_id(&facade, &account, "<c3@example.com>").unwrap(),
+        "emailMessageId",
+    );
+
+    let page = ok("get#MailChanges", &[("afterSeq", Value::I64(start))]);
+    assert_eq!(out_text(&page, "reset"), "false", "{page:?}");
+    let changes = thread_changes(&page);
+    assert_eq!(changes.len(), 3, "{changes:?}");
+    assert_eq!(changes[&one].0, "state", "{changes:?}");
+    assert_eq!(changes[&two].0, "delete", "{changes:?}");
+    assert_eq!(changes[&two].1, vec![two.clone()], "{changes:?}");
+    assert_eq!(changes[&two].2, 0, "{changes:?}");
+    assert_eq!(changes[&three].0, "new", "{changes:?}");
+    assert_eq!(changes[&three].2, 1, "{changes:?}");
+
+    // a sync with nothing new notes nothing
+    sync(&account);
+    let after = ok(
+        "get#MailChanges",
+        &[("afterSeq", Value::I64(out_number(&page, "lastSeq")))],
+    );
+    assert!(thread_changes(&after).is_empty(), "{after:?}");
+}
+
 /// Without CONDSTORE: new UIDs, the flag scan when due, and an expunge found by comparing UIDs, with and without a scan.
 #[test]
 fn incremental_sync_flag_scan_and_expunge_without_condstore() {

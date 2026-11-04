@@ -139,9 +139,12 @@ fn registry_keys_are_the_function_paths() {
         "moqui_core::service::user_keys::revoke_app_password",
         "moqui_core::service::user_keys::revoke_device_key",
         "moqui_core::service::web_push::delete_subscription",
+        "moqui_core::service::web_push::get_device_status",
         "moqui_core::service::web_push::get_status",
+        "moqui_core::service::web_push::register_device",
         "moqui_core::service::web_push::send_web_push",
         "moqui_core::service::web_push::store_subscription",
+        "moqui_core::service::web_push::unregister_device",
     ];
     expected.sort_unstable();
     // A feature this build leaves out registers nothing; its locations resolve through missing_feature.

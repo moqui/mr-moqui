@@ -564,7 +564,7 @@ fn clean_text(param: &ParamDef, text: String, failures: &mut Vec<String>) -> Str
         return text;
     }
     if param.allow_html == AllowHtml::Safe {
-        return safe_html().clean(&text).to_string();
+        return moqui_lib::safe_html::clean(&text);
     }
     failures.push(localized(
         "HTML not allowed including less-than (<), greater-than (>), etc symbols",
@@ -573,24 +573,10 @@ fn clean_text(param: &ParamDef, text: String, failures: &mut Vec<String>) -> Str
 }
 
 /// HTML cleaned as an `allow-html="safe"` parameter is, for a script that cleans text it takes with `any` (the wiki's
-/// HTML pages, where Java called Jsoup with its relaxed list).
+/// HTML pages, where Java called Jsoup with its relaxed list). The cleaner is `moqui_lib::safe_html`, which the
+/// client's offline answers use too.
 pub fn clean_safe_html(text: &str) -> String {
-    safe_html().clean(text).to_string()
-}
-
-/// The cleaner. ammonia's defaults are a maintained, conservative allow-list, so there is no
-/// list of our own to keep up to date, with three additions on a `span`: `data-mention-id` (a person,
-/// `<span data-mention-id="john.doe">@John Doe</span>`), and `data-record-entity` with `data-record-id`
-/// (a record, `<span data-record-entity="moqui.test.Order" data-record-id="100050">#SO100050</span>`).
-/// A record span is not a mention. The values are only ever text: ammonia escapes them. Tables (`table`,
-/// `thead`, `tbody`, `tr`, `th`, `td`, with `colspan` and `rowspan`) are in ammonia's defaults.
-fn safe_html() -> &'static ammonia::Builder<'static> {
-    static CLEANER: std::sync::OnceLock<ammonia::Builder<'static>> = std::sync::OnceLock::new();
-    CLEANER.get_or_init(|| {
-        let mut builder = ammonia::Builder::default();
-        builder.add_tag_attributes("span", &["data-mention-id", "data-record-entity", "data-record-id"]);
-        builder
-    })
+    moqui_lib::safe_html::clean(text)
 }
 
 /// The messages of a check that `value` fails, Java's text for each; none when it passes.

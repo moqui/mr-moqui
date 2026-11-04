@@ -48,6 +48,7 @@ fn main() {
         "socket_close",
         "outbox_add",
         "outbox_list",
+        "outbox_kinds",
         "outbox_retry",
         "outbox_discard",
         "outbox_unsent",

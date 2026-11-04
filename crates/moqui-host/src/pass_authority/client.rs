@@ -29,11 +29,10 @@ use bytes::Bytes;
 use moqui_core::pass_authority::{Call, Download, DownloadMeta, PassError, PassSender, Reply, UploadFile};
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
-use tokio::net::TcpStream;
 
 use super::proto::pass_authority_client::PassAuthorityClient;
 use super::proto::{download_part, upload_part, UploadPart};
-use crate::edge_link::H2Channel;
+use crate::grpc_client::{DialError, H2Channel, H2Send};
 
 /// A call, an upload, and each part of a download wait at most this long, as the REST adapter's calls.
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -42,7 +41,6 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// An upload's chunk.
 const CHUNK: usize = 64 * 1024;
 
-type H2Send = hyper::client::conn::http2::SendRequest<tonic::body::Body>;
 type AuthorityClient = PassAuthorityClient<H2Channel>;
 
 /// Where a call goes.
@@ -175,55 +173,37 @@ impl Sender {
 
 /// An HTTP/2 connection to a direct endpoint, its driver on the runtime.
 async fn dial(host: &str, port: u16, tls: bool) -> Result<H2Send, Error> {
-    let place = format!("{host}:{port}");
-    let connect = async {
-        let tcp = TcpStream::connect((host, port))
-            .await
-            .map_err(|err| Error::new(format!("could not connect to the PASS authority at {place}: {err}")))?;
-        let _ = tcp.set_nodelay(true);
-        let io: Box<dyn Io> = if tls {
-            let mut roots = rustls::RootCertStore::empty();
-            roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-            let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-            let mut config = rustls::ClientConfig::builder_with_provider(provider)
-                .with_safe_default_protocol_versions()
-                .map_err(|err| Error::new(format!("PASS authority TLS: {err}")))?
-                .with_root_certificates(roots)
-                .with_no_client_auth();
-            config.alpn_protocols = vec![b"h2".to_vec()];
-            let name = rustls::pki_types::ServerName::try_from(host.to_string())
-                .map_err(|_| Error::new(format!("{host} is not a host name")))?;
-            let stream = tokio_rustls::TlsConnector::from(Arc::new(config))
-                .connect(name, tcp)
-                .await
-                .map_err(|err| Error::new(format!("TLS with the PASS authority at {place} failed: {err}")))?;
-            Box::new(stream)
-        } else {
-            Box::new(tcp)
-        };
-        Ok::<_, Error>(io)
+    let tls = if tls {
+        let mut roots = rustls::RootCertStore::empty();
+        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+        let mut config = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .map_err(|err| Error::new(format!("PASS authority TLS: {err}")))?
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+        config.alpn_protocols = vec![b"h2".to_vec()];
+        let name = rustls::pki_types::ServerName::try_from(host.to_string())
+            .map_err(|_| Error::new(format!("{host} is not a host name")))?;
+        Some((Arc::new(config), name))
+    } else {
+        None
     };
-    let io = tokio::time::timeout(CONNECT_TIMEOUT, connect)
-        .await
-        .map_err(|_| Error::new(format!("the PASS authority at {place} did not answer in time")))??;
-    let (send, connection) = hyper::client::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
-        .timer(hyper_util::rt::TokioTimer::new())
-        .keep_alive_interval(Duration::from_secs(30))
-        .keep_alive_timeout(Duration::from_secs(20))
-        .handshake(hyper_util::rt::TokioIo::new(io))
-        .await
-        .map_err(|err| Error::new(format!("HTTP/2 with the PASS authority at {place} failed: {err}")))?;
-    let place = place.clone();
-    tokio::spawn(async move {
-        if let Err(err) = connection.await {
-            tracing::debug!("the connection to the PASS authority at {place} ended: {err}");
-        }
-    });
-    Ok(send)
+    crate::grpc_client::dial(crate::grpc_client::Dial {
+        what: "the PASS authority",
+        host,
+        port,
+        tls,
+        timeout: CONNECT_TIMEOUT,
+        keep_alive: Duration::from_secs(30),
+        keep_alive_timeout: Duration::from_secs(20),
+    })
+    .await
+    .map_err(|err| match err {
+        DialError::NotH2 => Error::new(format!("the PASS authority at {host}:{port} does not take gRPC: {err}")),
+        DialError::Failed(message) => Error::new(message),
+    })
 }
-
-trait Io: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
-impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> Io for T {}
 
 impl PassSender for Sender {
     fn call(&self, endpoint: &str, mut call: Call) -> Result<Reply, Error> {

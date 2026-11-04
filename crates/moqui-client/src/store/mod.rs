@@ -28,6 +28,8 @@
 //! write: the read times that order eviction are kept in memory and written in one unit now and then (every
 //! [`READS_HELD`] reads, before a trim, and when the store is dropped); a crash loses only some of that order.
 //!
+//! Beside them (MD5) the cursors of the server's changes feeds and the progress of files sent in chunks.
+//!
 //! The cached reads (answers, rooms with their events, mail threads with their messages) are kept under a size cap:
 //! past it the least recently read go first. The outbox, the drafts, the files and the mail folders are never evicted.
 //!
@@ -41,6 +43,7 @@ mod chat;
 mod draft;
 mod mail;
 mod outbox;
+mod sync;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -52,10 +55,11 @@ use rusqlite::{params, Connection};
 
 pub use answer::{answer_key, Answer};
 pub use attach::FILE_GRACE;
-pub use chat::{ChatEvent, ChatRoom, EventPage, EventSlice};
+pub use chat::{ChatEvent, ChatRoom, EventPage, EventSlice, ROOM_CURSOR};
 pub use draft::Draft;
 pub use mail::{MailFolder, MailMessage, MailThread};
-pub use outbox::{new_client_ref, OutboxOp, OutboxState, OutboxUpdate};
+pub use outbox::{new_client_ref, order_group, OutboxOp, OutboxState, OutboxUpdate};
+pub use sync::{SyncCursor, Upload};
 
 /// The schema, a step per release that changes it; `PRAGMA user_version` is the number of steps applied. Add a step,
 /// never change one that has shipped.
@@ -143,6 +147,27 @@ const MIGRATIONS: &[&str] = &[
         files TEXT NOT NULL,
         updated_ms INTEGER NOT NULL
     );",
+    // 2: MD5's sync on the server's changes feeds (docs/ui/Desktop-Client.md "The server's sync contracts").
+    // sync_cursor: where a feed was read to, by name (`chat`, `chat-heads`, `room:<id>`, `mail`), its seq and a value
+    // (`unsupported` for a mail feed the server has none of). upload: a mail send's file sent in chunks, how far it got
+    // (resumed from the server's uploadStatus after a restart). outbox status and current: the HTTP status of a refusal
+    // (0 for none) and, for a conflict, the server's state the op met (JSON).
+    "CREATE TABLE sync_cursor (
+        name TEXT PRIMARY KEY,
+        seq INTEGER,
+        value TEXT,
+        updated_ms INTEGER NOT NULL
+    );
+    CREATE TABLE upload (
+        op_id TEXT NOT NULL,
+        file TEXT NOT NULL,
+        upload_id TEXT NOT NULL,
+        offset INTEGER NOT NULL,
+        total INTEGER NOT NULL,
+        PRIMARY KEY (op_id, file)
+    ) WITHOUT ROWID;
+    ALTER TABLE outbox ADD COLUMN status INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE outbox ADD COLUMN current TEXT;",
 ];
 
 /// What the size cap counts for a row beside its text: keys, indexes and page slack, roughly.
@@ -224,6 +249,7 @@ impl Store {
             .map_err(failed("read clock not read"))?;
         store.clock.set(last_read.unwrap_or(0));
         store.recover_outbox();
+        store.drop_orphan_uploads();
         store.gc_files(attach::FILE_GRACE);
         Ok(store)
     }

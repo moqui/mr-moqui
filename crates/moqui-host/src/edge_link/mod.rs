@@ -49,12 +49,11 @@
 //! so a test runs an edge end and a local end in one process. [`hook`] is what `org.moqui.impl.EdgeServices` calls
 //! through `moqui_core::edge`.
 
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
 use std::time::Duration;
 
 use moqui_core::edge::EdgeInfo;
+
+pub(crate) use crate::grpc_client::H2Channel;
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 
 pub(crate) mod accept;
@@ -337,25 +336,6 @@ pub(crate) fn jitter() -> f64 {
             .map_or(0, |since| since.as_nanos()),
     );
     (hasher.finish() % 10_000) as f64 / 10_000.0
-}
-
-/// An HTTP/2 connection's sender as a tower service, which the generated gRPC clients take: the up connection on the
-/// local node and the down connection on the edge node, each a connection the other end dialed or answered.
-#[derive(Clone, Debug)]
-pub(crate) struct H2Channel(pub(crate) hyper::client::conn::http2::SendRequest<tonic::body::Body>);
-
-impl tower::Service<http::Request<tonic::body::Body>> for H2Channel {
-    type Response = http::Response<hyper::body::Incoming>;
-    type Error = hyper::Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
-
-    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.0.poll_ready(cx)
-    }
-
-    fn call(&mut self, request: http::Request<tonic::body::Body>) -> Self::Future {
-        Box::pin(self.0.send_request(request))
-    }
 }
 
 /// The `:authority` of the link's gRPC calls, the PASS authority's on a down connection too.

@@ -82,9 +82,26 @@ fn a_server_with_no_client_api_is_the_first() {
 }
 
 #[test]
-fn this_client_knows_the_compose_client_ref() {
-    // 3: Compose's saveDraft, upload and send take a clientRef, so a queued mail is retried safely
-    assert_eq!(CLIENT_API, 3);
-    assert!(server_client_api(&json!({"server": {"clientApi": 3}})) <= CLIENT_API);
-    assert!(server_client_api(&json!({"server": {"clientApi": 4}})) > CLIENT_API);
+fn this_client_knows_the_sync_contracts() {
+    // 4: the changes feeds, clientRef on more mutations, conflicts and chunked uploads (MD5)
+    assert_eq!(CLIENT_API, 4);
+    assert!(server_client_api(&json!({"server": {"clientApi": 4}})) <= CLIENT_API);
+    assert!(server_client_api(&json!({"server": {"clientApi": 5}})) > CLIENT_API);
+}
+
+#[test]
+fn the_server_sync_is_read_from_the_client_config() {
+    let md4 = ServerSync::of(&json!({"server": {"clientApi": 3, "features": {"internalSendRef": true}}}));
+    assert!(!md4.syncs() && !md4.internal_send());
+    let basic = ServerSync::of(&json!({"server": {"clientApi": 4, "features": {}}}));
+    assert!(basic.syncs() && !basic.internal_send() && basic.mail_uncovered.is_empty());
+    // at the top level is not where the server puts them
+    assert!(
+        !ServerSync::of(&json!({"server": {"clientApi": 4}, "features": {"internalSendRef": true}})).internal_send()
+    );
+    let boss = ServerSync::of(&json!({"server": {"clientApi": 4,
+        "features": {"internalSendRef": true, "mailChangesUncovered": ["internal"], "nativePush": {}}}}));
+    assert!(boss.internal_send());
+    assert_eq!(boss.mail_uncovered, vec!["internal".to_string()]);
+    assert_eq!(ServerSync::default().client_api, 0);
 }

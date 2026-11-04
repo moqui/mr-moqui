@@ -103,3 +103,9 @@ Desktop.ini
 # The desktop app: its lock file, copied from the repository's by ./moq desktop, and what tauri-build generates
 /crates/moqui-desktop/Cargo.lock
 /crates/moqui-desktop/gen/
+# The mobile app: its lock file, as the desktop app's, and tauri-build's schemas. gen/android is kept, less what its
+# own .gitignore files leave out (build outputs and what the Tauri CLI writes on each build).
+/crates/moqui-mobile/Cargo.lock
+/crates/moqui-mobile/gen/schemas/
+# The client glue both apps share: its lock file, for its own cargo test
+/crates/moqui-client-tauri/Cargo.lock

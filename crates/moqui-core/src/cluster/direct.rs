@@ -15,7 +15,8 @@
 //! A message to one member, not a broadcast (plans/Comms-Framework.md §6.3, "Cluster"): a call's signaling goes to the
 //! node holding its media, and its replies come back to the node holding the socket. [`send_to`] posts once over the
 //! same transport as [`super::publish`], from its own bounded queue and thread, so a burst of ICE candidates neither
-//! waits behind cache invalidations nor is retried after it has gone stale. A full queue is refused at once, so the
+//! waits behind cache invalidations nor is retried after it has gone stale. What waits for one member goes as one
+//! batch ([`super::Sender::post_batch`]), in order. A full queue is refused at once, so the
 //! caller can answer `overloaded`.
 //!
 //! The body names its target (`"target": instanceId`). The notify transport reaches every notify member with one
@@ -27,7 +28,7 @@ use std::time::{Duration, Instant};
 
 use moqui_lib::sync::{lock, wait_timeout};
 
-use super::{is_live, linked_state, load_members, trim_base, window_millis, ClusterState, PostOutcome};
+use super::{is_live, linked_state, load_members, trim_base, window_millis, BatchOutcome, ClusterState, PostOutcome};
 use crate::context::{Error, ExecutionContextFactory};
 use crate::entity::EntityFacade;
 use crate::notify::{self, TopicMessage};
@@ -155,17 +156,43 @@ fn direct_loop(state: &ClusterState) {
             }
             continue;
         };
-        for (base, topic, payload) in batch {
-            // One try: a signaling frame that waited for a retry is stale, and the client renegotiates.
-            let sent = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sender.post(&base, topic, &payload)));
-            match sent {
-                Ok(Ok(PostOutcome::Accepted)) => {}
-                Ok(Ok(PostOutcome::Rejected(status))) => {
-                    tracing::warn!(base_url = %base, topic, status, "cluster direct message rejected")
+        for (base, messages) in by_member(batch) {
+            let posted: Vec<(&str, &[u8])> = messages
+                .iter()
+                .map(|(topic, payload)| (*topic, payload.as_slice()))
+                .collect();
+            // One try, all of a member's messages in one batch and in order (an offer before its candidates): a
+            // signaling frame that waited for a retry is stale, and the client renegotiates.
+            let sent = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sender.post_batch(&base, &posted)));
+            let Ok(BatchOutcome { outcomes, failed }) = sent else {
+                tracing::error!("cluster direct post to {base} panicked");
+                continue;
+            };
+            for ((topic, _), outcome) in posted.iter().zip(&outcomes) {
+                if let PostOutcome::Rejected(status) = outcome {
+                    tracing::warn!(base_url = %base, topic, status, "cluster direct message rejected");
                 }
-                Ok(Err(err)) => tracing::warn!("cluster direct post to {base} failed for topic {topic}: {err}"),
-                Err(_) => tracing::error!("cluster direct post to {base} panicked"),
+            }
+            if let Some(err) = failed {
+                let topic = posted.get(outcomes.len()).map_or("", |(topic, _)| *topic);
+                let left = posted.len().saturating_sub(outcomes.len());
+                tracing::warn!("cluster direct post to {base} failed for topic {topic} ({left} messages lost): {err}");
             }
         }
     }
+}
+
+/// A topic and its payload.
+type Message = (&'static str, Vec<u8>);
+
+/// The messages for each member, in the order the first for each was queued, each member's in the order queued.
+fn by_member(batch: Vec<(String, &'static str, Vec<u8>)>) -> Vec<(String, Vec<Message>)> {
+    let mut members: Vec<(String, Vec<Message>)> = Vec::new();
+    for (base, topic, payload) in batch {
+        match members.iter_mut().find(|(known, _)| *known == base) {
+            Some((_, messages)) => messages.push((topic, payload)),
+            None => members.push((base, vec![(topic, payload)])),
+        }
+    }
+    members
 }

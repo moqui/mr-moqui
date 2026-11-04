@@ -599,3 +599,29 @@ fn reason_record_actor_and_app_are_stored_and_sent() {
     drop(got);
     drop(sub);
 }
+
+/// Every topic the cluster carries exists on the bus, so a member can subscribe to it and a peer's message applies
+/// (component-deploy was missing once, and its subscription failed with "unknown topic").
+#[test]
+fn every_cluster_topic_can_be_subscribed_and_published() {
+    install();
+    for topic in super::TOPICS {
+        let seen = Arc::new(Mutex::new(0_usize));
+        let counter = Arc::clone(&seen);
+        let sub = subscribe(
+            topic,
+            Arc::new(move |_message: &TopicMessage| {
+                *lock(&counter) += 1;
+            }),
+        )
+        .unwrap_or_else(|err| panic!("{topic}: {err}"));
+        let message = TopicMessage {
+            origin_id: "elsewhere".to_string(),
+            message_id: unique("topic"),
+            body: serde_json::json!({}),
+        };
+        publish(topic, &message).unwrap_or_else(|err| panic!("{topic}: {err}"));
+        assert!(*lock(&seen) >= 1, "{topic} reached no listener");
+        drop(sub);
+    }
+}

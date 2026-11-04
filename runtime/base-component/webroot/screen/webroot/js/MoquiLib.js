@@ -435,6 +435,17 @@
                 const storage = moqui.drafts.local();
                 try { return storage ? storage.getItem(moqui.scopedKey(key)) : null; } catch (err) { return null; }
             },
+            // A draft read again from the host, for one it kept itself since the page read them (a conflict's copy of a mail
+            // send): resolves to its text, or null; on the web as get.
+            fetch(key) {
+                const host = moqui.drafts.host();
+                if (!host || typeof host.get !== "function") return Promise.resolve(moqui.drafts.get(key));
+                return Promise.resolve(host.get(key)).then((draft) => {
+                    if (!draft || draft.value == null) return null;
+                    if (moqui.drafts.cache) moqui.drafts.cache.set(key, { value: String(draft.value), files: draft.files || [], updatedMs: draft.updatedMs || Date.now() });
+                    return String(draft.value);
+                }, (err) => { console.info("draft " + key + " not read from the app", err); return moqui.drafts.get(key); });
+            },
             // the store's files kept with a draft (the host only)
             files(key) {
                 const cache = moqui.drafts.host() ? moqui.drafts.cache : null;

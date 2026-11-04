@@ -145,9 +145,12 @@ function ensurePairRoom(p) {
       member.setFields({ chatRoomId: room.chatRoomId, chatActorId: actorOf[userId], userId, roleEnumId: 'CmrMember', joinedDate: now,
         lastReadEventSeq: Number(room.lastEventSeq || 0), notificationLevelEnumId: 'CnlAll', isPinned: 'N', isMuted: 'N' }, true, null, null)
       member.create()
-      ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({ topic: 'chatUser:' + userId, userIdList: [userId],
-        message: { kind: 'room', action: 'joined', chatRoomId: room.chatRoomId } }).disableAuthz().call()
     }
+    // the users' changes feeds in one call: the new members are in, the others' room has new members
+    const changes = missing.map((userId) => ({ userIdList: [userId], changeKind: 'membership', chatRoomId: room.chatRoomId,
+      change: { member: true, roleEnumId: 'CmrMember', action: 'joined' }, pushMessage: { kind: 'room', action: 'joined', chatRoomId: room.chatRoomId } }))
+    if (present.size) changes.push({ userIdList: Array.from(present), changeKind: 'room', chatRoomId: room.chatRoomId, change: { reason: 'members' } })
+    ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameter('changeList', changes).disableAuthz().call()
   }
   return { chatRoomId: room.chatRoomId, chatBridgeId, chatRoomBridgeId: mapping.chatRoomBridgeId, externalRoomId, created }
 }
@@ -167,18 +170,25 @@ function syncNumberRooms(p) {
   const roomIds = Array.from(new Set(mappings.filter((m) => m.externalRoomId.startsWith(phoneNumber + '/')).map((m) => m.chatRoomId)))
   let removedCount = 0
   const removedUsers = new Set()
+  // the users' changes feeds, in one call for every room: those taken out are out, the others' room lost members
+  const changes = []
   for (const chatRoomId of roomIds) {
     const room = one(ROOM, { chatRoomId })
     if (!room || room.roomTypeEnumId !== 'CrtExternal') continue
+    const staying = []
     for (const member of rows(MEMBER, { chatRoomId })) {
-      if (!member.userId || users.has(member.userId)) continue
+      if (!member.userId) continue
+      if (users.has(member.userId)) { staying.push(member.userId); continue }
       member.delete()
       removedCount++
       removedUsers.add(member.userId)
-      ec.service.sync().name('org.moqui.impl.ChatServices.push#Signal').parameters({ topic: 'chatUser:' + member.userId, userIdList: [member.userId],
-        message: { kind: 'room', action: 'left', chatRoomId } }).disableAuthz().call()
+      changes.push({ userIdList: [member.userId], changeKind: 'membership', chatRoomId, change: { member: false, roleEnumId: null, action: 'left' },
+        pushMessage: { kind: 'room', action: 'left', chatRoomId } })
     }
+    if (staying.length && changes.some((change) => change.chatRoomId === chatRoomId))
+      changes.push({ userIdList: staying, changeKind: 'room', chatRoomId, change: { reason: 'members' } })
   }
+  if (changes.length) ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameter('changeList', changes).disableAuthz().call()
   if (removedUsers.size) {
     ec.service.sync().name('org.moqui.impl.ChatServices.publish#ChatCounts').parameter('userIdList', Array.from(removedUsers)).disableAuthz().call()
   }
@@ -234,6 +244,8 @@ function openPairRoom(p) {
   if (mine && mine.leftDate) {
     mine.set('leftDate', null)
     mine.update()
+    ec.service.sync().name('org.moqui.impl.ChatServices.record#UserChange').parameters({ userIdList: [me], changeKind: 'membership',
+      chatRoomId: out.chatRoomId, change: { member: true, roleEnumId: mine.roleEnumId ?? null, action: 'joined' } }).disableAuthz().call()
   }
   return { chatRoomId: out.chatRoomId, ourNumber: fromNumber, theirNumber: dest.number }
 }

@@ -1,6 +1,6 @@
 # Mobile-Desktop exit checks
 
-The checks on installed apps that close MD1, MD2, MD3 and MD4 of [Mobile-Desktop](Mobile-Desktop.md) (§8, "Exit evidence"). They
+The checks on installed apps that close MD1 to MD6 of [Mobile-Desktop](Mobile-Desktop.md) (§8, "Exit evidence"). They
 are run by hand on real machines, not in the test suites: several take a sleep, a second machine or minutes of
 waiting. Each says what to set up, what to do, and what to record. Record the results in §8 of the plan (a line per
 check: date, OS and version, app version, pass or what failed), and file what fails as a fix.
@@ -14,6 +14,14 @@ Where a check names the app's config directory, it is `~/Library/Application Sup
 `~/.config/org.moqui.desktop` on Linux; the runtime is under the app data directory
 (`~/Library/Application Support/org.moqui.desktop/runtime`, `~/.local/share/org.moqui.desktop/runtime`).
 
+The Android app (MD6) is built with `./moq android build --release` (signed when its variables are set,
+[Build-Test](../docs/Build-Test.md#android-app)): the APKs are under
+`crates/moqui-mobile/gen/android/app/build/outputs/apk/<abi or universal>/release/` and the AAB under
+`.../outputs/bundle/universalRelease/`. Install the APK with `adb install`, or the AAB through a Play internal testing
+track. The app's files are under `/data/data/org.moqui.mobile/`: the account's store is `client/data/<account>.db`,
+readable with `adb shell run-as org.moqui.mobile` in a debug build only; the app's log is `adb logcat -s moqui-mobile
+moqui-calls`.
+
 ## Setup
 
 - A clean machine or user account for each OS: macOS (the version of MD0's matrix) and Linux (Ubuntu 26.04, GNOME).
@@ -23,6 +31,10 @@ Where a check names the app's config directory, it is `~/Library/Application Sup
 - A remote server with BOSS for the client checks, with a user who has a second factor, and one identity provider for
   SSO.
 - A second device (a phone or another computer) with a browser.
+- For MD6: an Android phone (Android 14 or later, its Android System WebView 141 or later, with Play services), over
+  adb (USB or wireless debugging), with a Bluetooth headset; and a Firebase project whose `google-services.json` is in
+  the build and whose service account is the server's `fcm_service_account` (with `fcm_project_id`). Some checks also
+  run on the `moqui-36` emulator, as marked.
 
 ## MD1 and MD2: the node on this computer
 
@@ -169,3 +181,121 @@ shared one with "Shared device" (the build's `<client-conf device-mode>` is `cho
     and a draft.
     - Record: the store file stays near the cap, the least recently read rooms and threads go first, and the queued
       send and the draft are kept and sent.
+
+## MD5: reliable synchronization
+
+In the client, against the remote server with BOSS at `clientApi` 4 (its `/qapps/clientConfig` says so), with a
+personal account. A lost answer is made with a relay between the app and the server that lets a request through and
+drops its answer: for example [Toxiproxy](https://github.com/Shopify/toxiproxy) with a `timeout` toxic on the
+downstream, the account's server URL pointing at the relay. Where a check reads the account's store, open a copy of
+`client/data/<account>.db` with `sqlite3` (its `outbox`, `sync_cursor` and `upload` tables).
+
+1. **Lost answers.** With the relay dropping answers, send a chat message, edit and react to one of your messages, vote
+   in a poll, archive a thread, and send a mail with an attachment; then let the answers through.
+   - Record: each shows as waiting (the message's row, the change under its message, the Inbox's Outbox), is tried
+     again, and is made once: one message, one edit, one reaction, one vote, the thread archived, one mail in Sent with
+     its file once, in the server's data and in a browser of another user. The server's log shows the retries answered
+     `duplicate`.
+   - With IronStone's internal messages: offline, send one; it waits in the Outbox (not "needs a connection"); online,
+     through a lost answer, it is sent once.
+2. **Restart mid-queue.** Offline, queue a chat message, an edit, a thread's read and a mail; go online and quit the app
+   while one is sending (the relay holding its answer); open it again.
+   - Record: the outbox still lists what was not answered (the one that was sending waits again), and each is made
+     once.
+3. **Duplicate events.** Keep the shell and an app window on the same room (two sockets), and have another user send,
+   edit, react to and delete messages there.
+   - Record: each shows once in both windows, and once in the store's room read offline afterwards.
+4. **Revocation.** Offline, queue a chat message, an edit and a mail; revoke this device from BOSS on another device; go
+   online.
+   - Record: the queued items say "sign in again to send it" (held), nothing is sent with the old key, the shell asks
+     to sign in, and after the sign-in each is sent once. With a shared account: the sign-out's list named them, and
+     they are deleted with its data.
+5. **One bad item.** Queue a chat message to a room this user is then removed from (by another user), a message to
+   another room, and a reaction there.
+   - Record: the first says "Not sent" with the server's reason, with Retry and Discard; the other room's message and
+     the reaction are made without waiting for it; Discard drops it and nothing more is sent.
+6. **A draft conflict.** Save a Compose draft online; go offline, change it here and send it; meanwhile change the same
+   draft in a browser and save it there. Go online.
+   - Record: nothing is sent; the Inbox's Outbox says "Changed elsewhere: your version is kept as a copy"; Open the copy
+     shows a new draft with this computer's text, and the browser's draft is as it was saved there. Retry instead
+     sends this computer's version once (one message in Sent) and the copy goes; Discard keeps the copy, listed in the
+     Outbox to open or delete.
+7. **A thread state conflict.** Offline, archive a thread; meanwhile a new message arrives in it (or another device
+   marks it unread). Go online.
+   - Record: the thread is not archived; the Outbox says "Changed on the server" and the list shows the thread as the
+     server has it; Retry archives it anyway, Discard leaves it.
+8. **Resumable upload across a restart.** Offline, send a mail with a 20 MB attachment; go online and quit the app while
+   it uploads (the store's `upload` row shows an offset part way); open the app again.
+   - Record: the upload goes on from where the server says it is (`uploadStatus`; the server's log shows the first
+     chunk after the restart at that offset, not 0), and the mail is sent once with its file once and whole.
+9. **The feeds after a long offline.** On a test server set `chat_changes_keep_days` and `mail_change_keep_days` to 1.
+   Read a few rooms and folders, quit the app, and for two days have other users send, edit, delete and react, add
+   and remove this user from rooms, and move, read and delete mail. Open the app.
+   - Record: the feeds answered `reset` and the store read again what they cover (the log says so); each room and folder
+     shows the server's state (edits, deletions, a room left gone, a room joined listed), no message twice and none
+     that was deleted; offline again afterwards, the same.
+   - With the usual keep (30 days) and a day offline: the feeds catch up without a reset (the `sync_cursor` rows move
+     on), and the rooms with nothing new are not read again.
+
+## MD6: the Android app
+
+On the phone, against the remote server with BOSS at `clientApi` 4, from a release build with Firebase. Where a check
+says "as on desktop", run that check of MD4 or MD5 on the phone and record it the same way.
+
+1. **Install.** Install the release APK (`adb install`) on a phone that never had the app, and once from the AAB
+   through a Play internal testing track.
+   - Record: the app's version (Settings, Apps: the crate's version, its code), that it opens to the shell, and the
+     APK's and the installed size.
+2. **The offline shell** (also the emulator). With the network off (airplane mode), open the app for the first time.
+   - Record: the shell opens with the sign-in and says there is no connection; nothing crashes.
+3. **Sign-in by password and by SSO.** Sign in with a password (a user with a second factor), then add an account by
+   SSO through the identity provider (the system browser, back to the app through `org.moqui.mobile:/sso`).
+   - Record: both end signed in; BOSS's Account settings shows this phone once for each, named "MR Moqui on <model>";
+     notifications and the microphone are asked once, after the first sign-in.
+4. **Offline reads, drafts and the outbox, as on desktop.** Run MD4's checks 2 (offline restart), 3 (queued sends), 4
+   (a reopened draft), 5 (discarded) and 8 (an encrypted room offline), and MD5's 1 (lost answers), 5 (one bad item)
+   and 6 (a draft conflict), with the phone's airplane mode for offline and swiping the app away for a restart.
+   - Record: each as on desktop; where one differs, what the phone did.
+5. **Process death mid-queue.** Offline, queue a chat message, a reaction and a mail with an attachment over 1 MB.
+   Go online and, while they send, end the process (`adb shell am kill org.moqui.mobile` with the app in the
+   background, or let Android end it under memory pressure).
+   - Record: what was not answered is sent once when the app opens again (MD5 check 2). Then queue one offline,
+     background the app and turn the network on without opening it: within a few minutes the background send
+     (WorkManager; the log's "Outbox: a background send ran") sends it once, with the app still closed.
+6. **Account switch.** With two accounts on two servers, switch between them in the shell, with a server app open.
+   - Record: each shows its own apps, chat and mail; the server page closes on a switch; a chat draft in one does not
+     show in the other.
+7. **A ring on a locked phone** (needs Firebase). Lock the phone with a PIN and leave it a minute (the app in the
+   background), then call this user from a browser.
+   - Answer: record the full-screen ring over the lock screen (or the heads-up notification, where the user turned
+     full-screen intents off), the time from the call to the ring, that Answer shows the app over the lock screen in the
+     call with audio both ways, and that hanging up returns to the lock screen.
+   - Decline: call again with the app swiped away; Decline on the ring. Record: the caller sees it declined, with the
+     app not opened.
+   - Ring ended: call again and cancel from the browser before answering, and once answer on another device of the
+     same user. Record: the ring stops each time within a few seconds (`ringEnded`).
+   - Once in Doze (the screen off, `adb shell dumpsys deviceidle force-idle`): record that the ring still comes.
+8. **Bluetooth and speaker routing.** In a call answered on the phone, with a Bluetooth headset paired: answer from
+   the headset's button, move the audio between the earpiece, the speaker and the headset, and turn the headset off
+   mid-call.
+   - Record: where the audio went each time, and that the headset's hang-up ends the call in the app too (a known gap:
+     record what happens).
+9. **An encrypted call on WebView 141+.** Answer an end-to-end encrypted call from a browser on a computer
+   (Settings, Apps, Android System WebView: its version).
+   - Record: audio (and video) both ways, the call's lock, and no "frames do not decrypt". On a WebView below 141
+     (the emulator's 133), the ring screen says encrypted calls need a newer WebView and the call is refused.
+10. **A network change mid-call.** In a call, move from Wi-Fi to mobile data (turn Wi-Fi off) and back.
+    - Record: whether the call carries on, how long the audio dropped, or that it ended with a message.
+11. **Revocation.** Offline, queue a chat message; revoke this phone from BOSS on another device; go online.
+    - Record: as MD5 check 4: nothing is sent with the old key, the shell asks to sign in, and the push token is gone
+      (a call to the user no longer rings this phone).
+12. **An app upgrade keeping the data.** With an account signed in, data read and an item queued offline, install a
+    newer build over it (`adb install -r` of a build with a higher version, or the next Play track release).
+    - Record: still signed in (the Keystore-sealed key read), the store's data there, the queued item sent once, and
+      rings still come (the push token kept).
+13. **Startup and memory.** On the phone, with an account signed in and idle five minutes: the cold start to the shell
+    (`adb shell am start -W -n org.moqui.mobile/.MainActivity`, its `TotalTime`, after `am force-stop`) and a warm one;
+    the app's memory (`adb shell dumpsys meminfo org.moqui.mobile`, TOTAL PSS) at idle and after ten minutes of chat,
+    mail and a call. Also an hour in the background with a ring: the battery use (Settings, Battery).
+    - Record: the times and sizes, with the phone's model and Android and WebView versions.
+

@@ -48,7 +48,7 @@ along with this software (see the LICENSE.md file). If not, see
         authentication"; crates/moqui-core/src/service/sso_app.rs): the desktop or mobile client opens the system browser
         at /sso/appLogin; after the provider signs the browser in, /sso/appCode asks the user to let the app in, and on
         that a single-use code goes to the app by its redirect URI, which it takes to /sso/appToken for a device key.
-        The redirect URIs an app may give are the property webapp_app_redirect_uris (default org.moqui.desktop:/sso). -->
+        The redirect URIs an app may give are the property webapp_app_redirect_uris (default org.moqui.desktop:/sso and org.moqui.mobile:/sso). -->
     <service verb="get" noun="AppProviders" type="rust" location="moqui_core::service::sso_app::get_app_providers"
             authenticate="anonymous-all">
         <description>The identity providers an app can offer: the AuthFlows the login page shows.</description>

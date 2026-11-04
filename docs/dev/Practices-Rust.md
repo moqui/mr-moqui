@@ -48,7 +48,7 @@ moqui-client → moqui-lib
 | `moqui-drivers` | The database drivers: Postgres on the host's own blocking client, MySQL, and the embedded Postgres cluster with its archive and backups, with how the host opens the entity facade over them. No Tokio. The host links it as `moqui_host::db` and forwards its features. |
 | `moqui-host` | The process edge: the HTTP server (Tokio, axum), process spawn, the integration tests. |
 | `moqui-browser` | The browser host: a wasm32 worker on SQLite and fetch. |
-| `moqui-client` | The client of a remote server for the desktop app (and later the mobile app): accounts, device keys, sign-in, the request proxy, the host-held sockets and the offline answers. No framework, no Tauri, no async API; builds for Android. |
+| `moqui-client` | The client of a remote server for the desktop and mobile apps: accounts, device keys, sign-in, the request proxy, the host-held sockets and the offline answers. No framework, no Tauri, no async API; builds for Android. Their shared Tauri glue is `crates/moqui-client-tauri`, outside the workspace as the apps are. |
 | `moqui` | The binary: the CLI and the build packages and their features ([Packaging](../Build-Test.md#packages)). |
 
 Component crates (`example`, `dev-aide`) are workspace members that the binary links under its `devtools` feature. An

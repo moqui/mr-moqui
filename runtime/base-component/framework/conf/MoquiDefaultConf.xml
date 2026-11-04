@@ -34,6 +34,10 @@
     <!-- The port the built-in HTTPS listener binds, with certificates from runtime/cert: empty is 8443, "off" none.
         webapp_https_port above is the port clients see in generated URLs, which differs behind a reverse proxy. -->
     <default-property name="webapp_https_listen_port" value=""/>
+    <!-- HTTP/2 on the HTTPS listener, chosen by ALPN with HTTP/1.1 beside it: true, or false for HTTP/1.1 only. Over
+        HTTP/2 WebSockets use extended CONNECT, and the OTLP receiver's and PASS authority's gRPC, when they are on, are
+        served on this port too. The plain HTTP listener is HTTP/1.1. -->
+    <default-property name="webapp_http2" value="true"/>
     <default-property name="webapp_allow_origins" value=""/>
     <default-property name="webapp_handle_cors" value="true"/>
     <default-property name="webapp_status_ips" value="127.0.0.1"/>
@@ -166,6 +170,19 @@
     <default-property name="mail_delivery_days" value="5"/>
     <default-property name="mail_mx_override" value=""/>
     <default-property name="mail_dns_offline" value=""/>
+
+    <!-- A client that keeps data offline (plans/Mobile-Desktop.md MD5, docs/ui/Desktop-Client.md): mail_change_keep_days, how
+        long a user's mail change log is kept (an older cursor, or one not read for that long, reads its folders again);
+        client_request_keep_days, how long a request made by its clientRef is answered as a duplicate when sent again;
+        client_upload_expire_hours, how long a file sent in chunks waits for its next chunk or to be taken;
+        client_upload_min_chunk_bytes, the smallest chunk but the last; client_upload_max_count and client_upload_max_mb, the
+        uploads a user may have open at once. -->
+    <default-property name="mail_change_keep_days" value="30"/>
+    <default-property name="client_request_keep_days" value="30"/>
+    <default-property name="client_upload_expire_hours" value="24"/>
+    <default-property name="client_upload_min_chunk_bytes" value="262144"/>
+    <default-property name="client_upload_max_count" value="20"/>
+    <default-property name="client_upload_max_mb" value="100"/>
 
     <!-- Chat devices and keys (C7 core; docs/interfaces/Chat-Keys.md): chat_server_name is the server name in the Matrix
         user IDs of the browsers' crypto devices (@user:name); set it before the first device, as a change makes every device
@@ -396,14 +413,26 @@
         production instance should set to its operator's address. -->
     <default-property name="web_push_vapid_key" value="CHANGEME" is-secret="true"/>
     <default-property name="web_push_subject" value="mailto:admin@localhost"/>
+    <!-- Native push to the mobile apps (FCM's HTTP v1 API; plans/Mobile-Desktop.md §5): fcm_service_account is a Firebase
+        project's service account key, its JSON file's path or the JSON itself, kept like the other secrets (an environment
+        variable or runtime/.env; not generated). fcm_project_id is the Firebase project, by default the key's project_id.
+        Unset, nothing goes to FCM and the log says so once. fcm_base_url replaces https://fcm.googleapis.com, for a test
+        stand-in only. -->
+    <default-property name="fcm_service_account" value="" is-secret="true"/>
+    <default-property name="fcm_project_id" value=""/>
+    <default-property name="fcm_base_url" value=""/>
     <!-- Cluster TLS material is base64 DER on one line, shared by provisioning, distinct from session_cookie_key. -->
     <default-property name="cluster_tls_cert" value="CHANGEME" is-secret="true"/>
     <default-property name="cluster_tls_key" value="CHANGEME" is-secret="true"/>
     <default-property name="cluster_https_port" value=""/>
     <default-property name="cluster_base_url" value=""/>
-    <!-- How peers reach this member: empty is the HTTPS POST to cluster_base_url, "ssh" its SSH server (ssh_port),
-        "notify" Postgres NOTIFY on the shared entity database, for members that cannot open a connection to each other. -->
+    <!-- How peers reach this member: empty is its cluster port at cluster_base_url (TLS with the cluster certificate),
+        "ssh" its SSH server (ssh_port), "notify" Postgres NOTIFY on the shared entity database, for members that cannot
+        open a connection to each other. -->
     <default-property name="cluster_transport" value=""/>
+    <!-- What this member speaks on its cluster port, as listener and as sender: empty or "grpc" for gRPC on HTTP/2 where
+        TLS chooses h2, with the HTTP/1.1 POST /cluster/{topic} for a peer that does not; "rest" for HTTP/1.1 only. -->
+    <default-property name="cluster_protocol" value=""/>
     <!-- The address the cluster listener binds; empty for every interface, as a member on another host must reach it. -->
     <default-property name="cluster_bind_address" value=""/>
     <default-property name="instance_id" value=""/>
@@ -737,7 +766,8 @@
             -->
             <web-protection enabled="${webapp_web_protection}" client-ipv6-prefix="64" max-tracked-clients="100000">
                 <connections max="${webapp_max_connections}" max-per-client="64"
-                        header-timeout="${webapp_header_timeout}" shutdown-timeout="${webapp_shutdown_timeout}"/>
+                        header-timeout="${webapp_header_timeout}" shutdown-timeout="${webapp_shutdown_timeout}"
+                        http2-max-streams="${webapp_http2_max_streams}"/>
                 <requests methods="GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS" max-uri-length="8192"
                         max-header-bytes="65536" max-headers="100" max-body="${webapp_max_body}"
                         max-upload="${webapp_max_upload}" body-timeout="${webapp_body_timeout}"

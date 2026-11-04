@@ -85,7 +85,8 @@ nothing falls back to its `webapp_*` property and then to the built-in default, 
         trusted-proxies="${webapp_trusted_proxies}">
     <web-protection enabled="${webapp_web_protection}" client-ipv6-prefix="64" max-tracked-clients="100000">
         <connections max="${webapp_max_connections}" max-per-client="64"
-                header-timeout="${webapp_header_timeout}" shutdown-timeout="${webapp_shutdown_timeout}"/>
+                header-timeout="${webapp_header_timeout}" shutdown-timeout="${webapp_shutdown_timeout}"
+                http2-max-streams="${webapp_http2_max_streams}"/>
         <requests methods="GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS" max-uri-length="8192"
                 max-header-bytes="65536" max-headers="100" max-body="${webapp_max_body}"
                 max-upload="${webapp_max_upload}" body-timeout="${webapp_body_timeout}"
@@ -145,8 +146,10 @@ nothing falls back to its `webapp_*` property and then to the built-in default, 
    - a denied path → 404, giving no hint that a rule matched;
    - each matching `rate-limit` takes a token; none left → 429 with `Retry-After`.
 
-   A refusal of a client that came straight to the listener carries `Connection: close`; through a trusted proxy it
-   does not, since that connection carries other clients. This covers every route, `/git`, `/elastic`, `/kibana` and
+   A refusal of a client that came straight to the listener carries `Connection: close`, or on HTTP/2 ends the
+   connection with a GOAWAY; through a trusted proxy it does not, since that connection carries other clients. On
+   HTTPS over HTTP/2 the request head is bounded by `max-header-bytes` (as `max_header_list_size`), a connection has at
+   most `http2-max-streams` open streams (100), and one with no request for `header-timeout` gets a GOAWAY. This covers every route, `/git`, `/elastic`, `/kibana` and
    `/notws` included; `/health` and `/metrics` keep their `status_allowed` check.
 3. In the request job (`dispatch_screen`): a full queue → 503 with `Retry-After`; a job whose waiter is gone (the
    504 fired, the client went away) returns at once when a worker takes it; a job that waited past `queue-timeout`

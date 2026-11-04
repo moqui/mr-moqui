@@ -44,6 +44,17 @@ pub const RUNTIME_SETTINGS: &str = "runtime-settings";
 /// writes its files from the shared repository and loads it; its data is in the shared database already.
 pub const COMPONENT_DEPLOY: &str = "component-deploy";
 
+/// Every topic of the bus, which are also the topics the cluster carries: the transports' receivers take only these.
+pub const TOPICS: &[&str] = &[
+    ENTITY_CACHE_INVALIDATE,
+    NOTIFICATION_MESSAGE,
+    COLLAB_UPDATE,
+    SESSION_END,
+    RTC_SIGNAL,
+    RUNTIME_SETTINGS,
+    COMPONENT_DEPLOY,
+];
+
 const RECENT_IDS: usize = 1024;
 
 /// A published message. `body` is the topic payload. `origin_id` is this process.
@@ -99,12 +110,9 @@ impl Bus {
     }
 
     fn ensure(&mut self) {
-        self.topics.entry(ENTITY_CACHE_INVALIDATE.to_string()).or_default();
-        self.topics.entry(NOTIFICATION_MESSAGE.to_string()).or_default();
-        self.topics.entry(COLLAB_UPDATE.to_string()).or_default();
-        self.topics.entry(SESSION_END.to_string()).or_default();
-        self.topics.entry(RTC_SIGNAL.to_string()).or_default();
-        self.topics.entry(RUNTIME_SETTINGS.to_string()).or_default();
+        for topic in TOPICS {
+            self.topics.entry((*topic).to_string()).or_default();
+        }
     }
 
     /// True the first time `id` is seen. A later publish of the same id is dropped until it ages out.
@@ -140,12 +148,11 @@ pub fn install() {
     lock().ensure();
 }
 
-/// Subscribe to `name`. Only [`ENTITY_CACHE_INVALIDATE`], [`NOTIFICATION_MESSAGE`], [`COLLAB_UPDATE`],
-/// [`SESSION_END`], [`RTC_SIGNAL`] and [`RUNTIME_SETTINGS`] exist.
+/// Subscribe to `name`, one of [`TOPICS`].
 ///
 /// # Errors
 ///
-/// Returns an error when `name` is not one of those topics.
+/// Returns an error when `name` is not one of [`TOPICS`].
 pub fn subscribe(name: &str, listener: Listener) -> Result<Subscription, Error> {
     let mut bus = lock();
     bus.ensure();

@@ -666,16 +666,25 @@ along with this software (see the LICENSE.md file). If not, see
         <alias entity-alias="NMU" name="digestDate"/>
     </view-entity>
     <entity entity-name="WebPushSubscription" package="moqui.security.user" cache="never">
-        <description>A browser's Web Push subscription (the Push API's PushSubscription) for a signed-in user. A browser
-            has one endpoint; storing it for another user moves it, so pushes never cross an account switch. Logout
-            deletes it. An endpoint the push service answers 404 or 410 for, or one that fails repeatedly, gets a
-            disabledDate and is not sent to again.</description>
+        <description>A device a user gets pushes on, by provider (pushProviderEnumId). PushWeb: a browser's Web Push
+            subscription (the Push API's PushSubscription). A browser has one endpoint; storing it for another user moves
+            it, so pushes never cross an account switch. Logout deletes it. PushFcm: a native app's Firebase Cloud
+            Messaging registration (register#PushDevice, plans/Mobile-Desktop.md §5), its token in endpoint, tied to the
+            device key it was registered with (loginKey): revoking the key deletes it, renewing the key moves it to the new
+            key, and one whose key has ended is deleted at the next push. Either one the push service answers as gone
+            (Web Push 404 or 410, FCM UNREGISTERED or INVALID_ARGUMENT), or one that fails repeatedly, gets a disabledDate
+            and is not sent to again.</description>
         <field name="subscriptionId" type="id" is-pk="true"/>
         <field name="userId" type="id"/>
-        <field name="endpoint" type="text-long"><description>The push service URL, a capability: whoever has it may push
-            to the browser, so it is only read by the framework.</description></field>
+        <field name="pushProviderEnumId" type="id"><description>PushWeb (Web Push, also when empty) or PushFcm</description></field>
+        <field name="endpoint" type="text-long"><description>The push service URL (PushWeb) or the FCM registration token
+            (PushFcm), a capability: whoever has it may push to the device, so it is only read by the framework.</description></field>
         <field name="endpointHash" type="text-medium"><description>SHA-256 of the endpoint, hex: the unique key, as the
             endpoint is too long to index.</description></field>
+        <field name="loginKey" type="text-medium"><description>PushFcm: the device key (UserLoginKey.loginKey, the stored
+            hash) the app registered with</description></field>
+        <field name="appId" type="text-medium"><description>PushFcm: the app's id (the Android package name)</description></field>
+        <field name="platform" type="text-short"><description>PushFcm: android (ios later)</description></field>
         <field name="p256dhKey" type="text-medium"><description>The browser's P-256 public key (base64url)</description></field>
         <field name="authSecret" type="text-medium" encrypt="true"><description>The browser's 16-byte auth secret (base64url)</description></field>
         <field name="userAgent" type="text-medium"/>
@@ -686,8 +695,18 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="failureCount" type="number-integer"/>
         <field name="disabledDate" type="date-time"/>
         <relationship type="one" related="moqui.security.UserAccount" short-alias="user"/>
+        <relationship type="one" title="PushProvider" related="moqui.basic.Enumeration" short-alias="provider">
+            <key-map field-name="pushProviderEnumId"/></relationship>
+        <!-- no foreign key: an ended device key is deleted when its user gets a new key, and its registration with it -->
+        <relationship type="one-nofk" related="moqui.security.UserLoginKey" short-alias="deviceKey"/>
         <index name="WEBPUSH_ENDPOINT" unique="true"><index-field name="endpointHash"/></index>
         <index name="WEBPUSH_USER" unique="false"><index-field name="userId"/></index>
+        <index name="WEBPUSH_LOGIN_KEY" unique="false"><index-field name="loginKey"/></index>
+        <seed-data>
+            <moqui.basic.EnumerationType enumTypeId="PushProvider" description="Push Provider"/>
+            <moqui.basic.Enumeration enumTypeId="PushProvider" enumId="PushWeb" enumCode="web" sequenceNum="1" description="Web Push"/>
+            <moqui.basic.Enumeration enumTypeId="PushProvider" enumId="PushFcm" enumCode="fcm" sequenceNum="2" description="Firebase Cloud Messaging"/>
+        </seed-data>
     </entity>
     <!-- ========== SSO (the moqui-sso component, in the framework; plans/archive/Sso.md) ========== -->
     <!-- OIDC and OAuth 2 flows run; a SAML flow reports that SAML is not available. -->

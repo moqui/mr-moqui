@@ -7,7 +7,7 @@ that test a running server from outside are in [Client-Testing](dev/Client-Testi
 - [Build](#build)
 - [Packages](#packages): [features](#features), [profiles](#profiles), the [embedded Postgres
   archive](#embedded-postgres-archive), the [instance archive](#instance-archive), [build cost](#build-cost), the [compile cache](#compile-cache), the
-  [desktop app](#desktop-app)
+  [desktop app](#desktop-app), the [Android app](#android-app)
 - [The moq script](#the-moq-script)
 - [Rust tests and lints](#rust-tests-and-lints)
 - [Component specs](#component-specs): [running](#running), [a spec file](#a-spec-file),
@@ -76,7 +76,7 @@ build, with no features of its own.
 
 | Feature | Crate | What it gates | Lite | Enterprise | Maximal |
 |---|---|---|---|---|---|
-| `axum` | host | The HTTP server, its listeners and routes | yes | yes | yes |
+| `axum` | host | The HTTP server, its listeners and routes; HTTP/2 by ALPN on the HTTPS listener; the cluster port | yes | yes | yes |
 | `postgres` | host (`moqui-drivers`) | The Postgres driver | yes | yes | yes |
 | `embedded-postgres` | host (`moqui-drivers`) | The embedded Postgres clusters (entity, search, sim), `save-db`, `load-save`, backups, and `moqui test` when it opens a database (`--db fresh`, `snapshot`, or `existing`). `--db none` does not need it | yes | | yes |
 | `mysql` | host (`moqui-drivers`) | The MySQL driver | | yes | yes |
@@ -92,7 +92,7 @@ build, with no features of its own.
 | `sip` | host (`moqui-sip`; includes `rtc`) | Phone calls over SIP trunks: the SIP engine on rsipstack, its trunk registration and the RTP of phone legs, joined to the call media ([SIP](interfaces/SIP.md)); it starts only when `sip_port` or `sip_tls_port` is set, and the voice services run in every build (without it `get#VoiceCapabilities` says not supported). In Debug too | | yes | yes |
 | `channels` | host (`moqui-channels`) | Business messaging channels: the `sms` chat bridge adapter, SMS and MMS on the Telnyx Messaging API v2 ([SMS](interfaces/SMS.md)). The `/channels/` webhook and media routes are in every build with `axum` and answer only when `channels_webhooks_enabled` is true; without this feature no adapter answers them and an SMS bridge stays not connected. | | yes | yes |
 | `xmpp` | host (`moqui-xmpp`; includes `axum`) | XMPP for local users: client streams with STARTTLS, direct TLS and WebSocket, SASL2 with SCRAM-SHA-256-PLUS and FAST, rooms as MUC, history, PEP and uploads over Moqui chat ([XMPP](interfaces/XMPP.md)); it starts only when `xmpp_domain` is set. In Debug too | | yes | yes |
-| `grpc` | host (includes `telemetry`, `axum`) | The host's gRPC listener (tonic): the OTLP/gRPC receiver, opened only when `<telemetry><receiver grpc-enabled="true">` is set, and with `edge` the direct PASS authority ([Edge-Node](../plans/Edge-Node.md) §5.5) | | yes | yes |
+| `grpc` | host (includes `telemetry`, `axum`) | gRPC on tonic: the cluster's protocol on the cluster port (`cluster_protocol`, [Cluster](../plans/archive/Cluster.md)); the host's gRPC listener: the OTLP/gRPC receiver, opened only when `<telemetry><receiver grpc-enabled="true">` is set, and with `edge` the direct PASS authority ([Edge-Node](../plans/Edge-Node.md) §5.5) | yes | yes | yes |
 | `edge` | host (includes `grpc`) | The edge link ([Edge-Node](../plans/Edge-Node.md)): a local node's dialer when `edge_node_url` is set, and on an edge node (`node_role=edge`) the link's hand-off on the HTTPS listener, web access, delegated calls, the queue and replication; the PASS authority over gRPC (direct when `pass_authority_grpc_enabled=true`, and on the link) and scripts' `ec.service.passAuthority` | | yes | yes |
 | `devtools` | host, moqui-devkit (`watch`) | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the dev-component crates of `runtime/dev-component`; in Maximal (the default) and Debug | | | yes |
 | `smtp` | host (`moqui-mail`) | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes |
@@ -113,7 +113,8 @@ The definitions still load, so components, screens and service files are the sam
   `service <name>: <feature> is not built into this host` in the message facade (`rust_services::missing_feature`).
 - The host integrations report through the framework's existing messages: SFTP and SSO calls say no client is
   installed, network printing says it is not installed, and `cluster_transport=ssh` cannot start without the SSH
-  server. A cluster peer that advertises `ssh://` gets an error naming the missing feature.
+  server. A cluster peer that advertises `ssh://` gets an error naming the missing feature. Without `grpc` the
+  cluster port speaks only HTTP/1.1, which every member still takes, and `cluster_protocol=grpc` fails at startup.
 - An `xlsx` render fails with `xlsx is not built into this host`; an elFinder thumbnail is left out; a `git://`
   location has no provider, and `/git/...` is not routed.
 - gitECA rules are still read and checked; nothing runs them, since there are no git events.
@@ -315,6 +316,91 @@ these workarounds for tauri-bundler 3.0.0-alpha.4:
   `kernel.apparmor_restrict_unprivileged_userns` is 1. The `.deb` keeps Chromium's sandbox through a setuid
   `chrome-sandbox`. With updates on, the remade AppImage is signed again (`cargo tauri signer sign`), since the
   bundle step's signature is of the image it made.
+
+### Android app
+
+`./moq android` builds and runs the Android app in `crates/moqui-mobile`: the client of a server in a Tauri 3 (alpha)
+app on Android's WebView (the wry runtime, not CEF), outside the workspace like the desktop app. What it is, and the
+Gradle project it keeps in `gen/android`, are in its [README](../crates/moqui-mobile/README.md).
+
+Prerequisites: the Tauri CLI of the desktop app, a JDK 17 or later, the Rust targets, and the Android SDK command-line
+tools (no Android Studio), in `~/Android/Sdk` or `ANDROID_HOME`. The image has Play services, for FCM later.
+
+```sh
+rustup target add x86_64-linux-android aarch64-linux-android
+sdkmanager 'platform-tools' 'emulator' 'platforms;android-37.0' 'build-tools;36.0.0' 'ndk;30.0.16248370' \
+    'system-images;android-36;google_apis_playstore;x86_64'
+./moq android emulator                       # create (once) and start the moqui-36 AVD, on KVM; adb emu kill
+./moq android dev                            # build, install and run on it, or on a phone over adb
+./moq android build --target x86_64 --apk    # debug APK; --release for a release one; aarch64 for phones
+scripts/check-android.sh                     # clippy for both Android targets: moqui-client, moqui-client-tauri, the app
+scripts/android-smoke.sh                     # when asked, not in test-all: ready line, frame check, relaunch
+adb reverse tcp:8080 tcp:8080                # ./moq run on this machine as the app's http://localhost:8080
+```
+
+`./moq android` (but `init`) first stages the client's shell into `target/mobile-shell`, the same step and layout as
+the desktop bundle's (`stage_client_shell`), which the app embeds as its Tauri assets. The app's host logic is tested on
+the desktop: `cd crates/moqui-mobile && CARGO_TARGET_DIR=../../target cargo test` (a placeholder page stands in for an
+unstaged shell), and the Tauri glue it shares with the desktop app in `crates/moqui-client-tauri` the same way. How the
+app works on Android is [Mobile-Client](ui/Mobile-Client.md).
+
+`scripts/android-env.sh`, which `./moq android` and `scripts/check-android.sh` source, finds the SDK, the newest NDK
+in it and the JDK (on macOS `java_home`'s, else Android Studio's), and exports `ANDROID_HOME`, `NDK_HOME` and
+`JAVA_HOME` for the Tauri CLI and the NDK's compilers for the C in aws-lc and SQLite; the emulator needs only the SDK.
+The first Gradle build downloads Gradle and the Android Gradle plugin (and the SDK platform and build tools it compiles
+against, `compileSdk` 37, when they are missing), and the rustls-platform-verifier Maven artifact from GitHub, pinned
+to a commit of its archive.
+
+The emulator runs in a hidden window (`-qt-hide-window`), not `-no-window`: `cargo tauri android dev` (cargo-mobile2)
+waits for an emulator's boot animation to stop, and `-no-window` and `-no-boot-anim` turn it off, so it would wait
+forever. With no display (no GUI session on macOS) `./moq android emulator` falls back to `-no-window`, and
+`./moq android dev` refuses such an emulator; build an APK and `adb install` it instead. Every adb call names the
+emulator's serial, so a phone connected too is no trouble.
+
+#### Release builds and Google Play
+
+`./moq android build --release` makes an AAB and APKs for each target (`--target aarch64` for phones, `--apk` or
+`--aab` for one), minified by R8 (`gen/android/app/proguard-rules.pro` and wry's rules keep what Rust calls through
+JNI). The version name is the crate's version (`crates/moqui-mobile/Cargo.toml`, passed as the Tauri config's
+`version`) and the version code major·1000000 + minor·1000 + patch, so each release raises the crate's version. As
+for the desktop, signing is on when its variables are set, else the build is unsigned, with a warning (an unsigned APK
+does not install, and Play takes only a signed AAB):
+
+- `MOQUI_ANDROID_KEYSTORE`: the upload key's keystore (`.jks` or `.p12`), an absolute path, kept out of git.
+- `MOQUI_ANDROID_KEYSTORE_PASSWORD` and `MOQUI_ANDROID_KEY_ALIAS`; `MOQUI_ANDROID_KEY_PASSWORD` when the key's
+  password is not the store's. `./moq` checks that the set is complete.
+
+```sh
+keytool -genkeypair -keystore ~/keys/moqui-upload.jks -alias upload -keyalg RSA -keysize 4096 -validity 10000
+MOQUI_ANDROID_KEYSTORE=~/keys/moqui-upload.jks MOQUI_ANDROID_KEYSTORE_PASSWORD=... MOQUI_ANDROID_KEY_ALIAS=upload \
+    ./moq android build --release --target aarch64 --aab
+MOQUI_MOBILE_APK=crates/moqui-mobile/gen/android/app/build/outputs/apk/universal/release/app-universal-release.apk \
+    scripts/android-smoke.sh   # a release APK for x86_64 on the emulator: R8 kept the JNI classes, the shell loads
+                               # (adb uninstall org.moqui.mobile first if a debug build, signed by another key, is on it)
+```
+
+Firebase (native push) is in a build only with `gen/android/app/google-services.json` ([moqui-mobile
+README](../crates/moqui-mobile/README.md)); a release for users wants it.
+
+In the Play Console, once:
+
+- **Play App Signing:** Google holds the app's signing key; the keystore above is the upload key, which Google can
+  reset if it is lost. Register its certificate when the app is created, and keep the keystore and its passwords out
+  of the repository.
+- **The target SDK:** `targetSdk` in `gen/android/app/build.gradle.kts` (37); Play requires a recent one for new
+  apps and updates each August.
+- **Declarations:** the full-screen intent (`USE_FULL_SCREEN_INTENT`, for an incoming call: a calling app), and the
+  foreground service of type `phoneCall` (`FOREGROUND_SERVICE_PHONE_CALL`, an ongoing call the user answered), each
+  with a short video or description of the incoming call.
+- **Data safety:** the app keeps on the device, not shared with anyone but the user's own server: chat messages and
+  mail (each account's store, for offline use), contacts' names in them, files attached, and a device key (a
+  credential, sealed by the Android Keystore); it records audio (and video) in calls only, sent to the user's server;
+  it shows notifications; with Firebase, the FCM token goes to the user's server and Google. Data in transit is
+  encrypted (TLS); the user can delete it by signing out on a shared device or removing the account. No backup is made
+  (`allowBackup` off).
+- **Remote code:** the app shows the user's server's screens in its WebView; whether that is fine under Play's device
+  and network abuse policy is a decision for the release ([Mobile-Desktop §9](../plans/Mobile-Desktop.md), Android,
+  open).
 
 ## The moq script
 

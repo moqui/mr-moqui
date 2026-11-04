@@ -39,7 +39,9 @@ use crate::guard::{setting, Event, Guard, GuardConf};
 use crate::notws;
 
 mod serve;
-pub(crate) use serve::{http1_builder, run_connection, Serving};
+#[cfg(feature = "edge")]
+pub(crate) use serve::h2_request_form;
+pub(crate) use serve::{http1_builder, run_connection, Activity, Http, Serving};
 pub(crate) use serve::{DownServe, Forward, Peer, WebApp};
 // the edge link's down connection and its tunnels use these, and the tests
 #[cfg_attr(not(feature = "edge"), allow(unused_imports))]
@@ -86,6 +88,9 @@ pub(crate) struct ListenLimits {
     pub max_header_bytes: usize,
     /// `max-headers`, default 100: a request head with more header fields is answered 431.
     pub max_headers: usize,
+    /// `http2-max-streams` (`webapp_http2_max_streams`), default 100: the requests one HTTP/2 connection may have
+    /// open at once.
+    pub http2_max_streams: u32,
 }
 
 /// The smallest read buffer hyper takes.
@@ -115,6 +120,13 @@ impl ListenLimits {
             max_uri: count("requests", "max-uri-length", "", 8192),
             max_header_bytes: count("requests", "max-header-bytes", "", 64 * 1024).max(MIN_HEADER_BYTES),
             max_headers: count("requests", "max-headers", "", 100),
+            http2_max_streams: u32::try_from(count(
+                "connections",
+                "http2-max-streams",
+                "webapp_http2_max_streams",
+                100,
+            ))
+            .unwrap_or(u32::MAX),
         }
     }
 
@@ -131,6 +143,7 @@ impl ListenLimits {
             max_uri: 8192,
             max_header_bytes: 64 * 1024,
             max_headers: 100,
+            http2_max_streams: 100,
         }
     }
 }
@@ -331,6 +344,14 @@ pub(crate) async fn listen(
         edge: started.front,
         ..web
     };
+    // gRPC on the HTTPS listener over HTTP/2: the OTLP receiver's and the PASS authority's services, those that are on
+    #[cfg(feature = "grpc")]
+    let web = WebApp {
+        grpc: (https_address.is_some() && crate::tls::http2_enabled())
+            .then(|| crate::grpc_listen::web_routes(&grpc_factory))
+            .flatten(),
+        ..web
+    };
     let edge = started.acceptor;
     let in_process =
         crate::in_process::InProcess::new(web.clone(), tokio::runtime::Handle::current(), shutdown_rx.clone());
@@ -505,7 +526,7 @@ async fn serve(
                 exporter: None,
             };
             match tls {
-                None => run_connection(stream, false, serving).await,
+                None => run_connection(stream, false, Http::One, serving).await,
                 Some(tls) => {
                     let handshake = tls.accept(stream);
                     let secured = match limits.header {
@@ -527,7 +548,8 @@ async fn serve(
                                 exporter: moqui_xmpp::conn::exporter(stream.get_ref().1).map(Arc::new),
                                 ..serving
                             };
-                            run_connection(stream, true, serving).await
+                            let http = Http::of(stream.get_ref().1);
+                            run_connection(stream, true, http, serving).await
                         }
                         Some(Err(err)) => tracing::debug!("TLS handshake with {remote} failed: {err}"),
                         None => tracing::debug!("TLS handshake with {remote} timed out"),

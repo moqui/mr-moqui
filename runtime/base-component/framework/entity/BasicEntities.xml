@@ -18,6 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- moqui.basic -->
     <!-- moqui.basic.email -->
     <!-- moqui.basic.print -->
+    <!-- moqui.basic.client -->
     <!-- ========================================================= -->
 
     <!-- ========== DataSource ========== -->
@@ -594,6 +595,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="clientRef" type="text-medium"><description>The composing user's (fromUserId) own reference of a draft,
             ^[A-Za-z0-9_.:-]{1,64}$, so a client that queued it offline saves and sends it once however often it retries
             (EmailClientServices.save#Draft)</description></field>
+        <field name="lastSaveRef" type="text-medium"><description>The client's reference of the last save of a draft
+            (save#Draft saveRef), so that save sent again after a lost answer is not taken for a save from elsewhere</description></field>
 
         <relationship type="one" title="EmailMessage" related="moqui.basic.StatusItem" short-alias="status"/>
         <relationship type="one" title="EmailType" related="moqui.basic.Enumeration" short-alias="type">
@@ -1053,6 +1056,47 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.basic.email.EmailAccount" short-alias="account"/>
         <index name="EMAIL_RCHG_ACCT"><index-field name="emailAccountId"/><index-field name="createdDate"/></index>
     </entity>
+    <entity entity-name="EmailUserState" package="moqui.basic.email" use="transactional" cache="never">
+        <description>A user's mail change cursor (EmailClientServices.get#MailChanges), made by the user's first read of
+            it: only a user who has one gets EmailUserChange rows, so a user with no syncing client keeps no log. The row is
+            locked while the changes written since are numbered, so the numbers follow the order the changes committed.</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="lastChangeSeq" type="number-integer"><description>The last changeSeq given out</description></field>
+        <field name="purgedThruSeq" type="number-integer"><description>A cursor at or before this is too old: the log
+            before it was purged, or the user's accounts changed (a member added or removed), so its reader starts again
+            (reset)</description></field>
+        <field name="lastReadDate" type="date-time"><description>The user's last read of the cursor, within an hour: a
+            state not read for longer than mail_change_keep_days goes dormant, its log removed</description></field>
+        <field name="dormantDate" type="date-time"><description>When the state went dormant (clean#UserMailChanges): no
+            change is noted for it until its next read, which answers reset. The row stays, so its numbers never start
+            again</description></field>
+        <field name="catchUpFromDate" type="date-time"><description>Until catchUpThruDate, after the state was made, reset
+            or woken, each read also notes the threads of the user's messages changed since this (less a margin), for a
+            writer whose transaction began before (assign#MailChanges)</description></field>
+        <field name="catchUpThruDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+    </entity>
+    <entity entity-name="EmailUserChange" package="moqui.basic.email" use="transactional" cache="never">
+        <description>A change of a mail thread a user reaches, for the user's change cursor (plans/Mobile-Desktop.md MD5):
+            written for each user with an EmailUserState by the EmailMessage and EmailMessageLabel rules (Email.eecas.xml),
+            so the sync's arrivals, flag scans, moves and expunges, local actions, sends and drafts all land here. A row is
+            pending (changeSeq empty) until the user's next read numbers it (assign#MailChanges), which keeps one row per
+            user and thread: the newest, with what the ones it replaces had (removedMessageIds).</description>
+        <field name="emailUserChangeId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="changeSeq" type="number-integer"><description>The user's change number; empty while pending</description></field>
+        <field name="emailMessageId" type="id"><description>The message that changed last</description></field>
+        <field name="rootEmailMessageId" type="id"><description>The thread: its root's emailMessageId (a root's own id)</description></field>
+        <field name="emailAccountId" type="id"/>
+        <field name="emailFolderId" type="id"><description>The folder of the message after the change</description></field>
+        <field name="changeKind" type="text-short"><description>new (a message arrived, was sent or saved as a new draft),
+            state (flags, labels, snooze, archive, a draft saved again), move (another folder), or delete (gone)</description></field>
+        <field name="changeJson" type="text-long"><description>{removedMessageIds}: the messages no longer in the thread
+            for this user (deleted, out of the account, or in another thread now)</description></field>
+        <field name="changeDate" type="date-time"/>
+        <index name="EMAIL_UCHG_SEQ"><index-field name="userId"/><index-field name="changeSeq"/></index>
+        <index name="EMAIL_UCHG_THREAD"><index-field name="userId"/><index-field name="rootEmailMessageId"/></index>
+    </entity>
     <entity entity-name="EmailLabel" package="moqui.basic.email" use="transactional" cache="never">
         <field name="emailLabelId" type="id" is-pk="true"/>
         <field name="emailAccountId" type="id"/>
@@ -1303,5 +1347,46 @@ along with this software (see the LICENSE.md file). If not, see
             <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="PtjProcessingStopped" toStatusId="PtjCanceled" transitionName="Cancel"/>
         </seed-data>
         <master><detail relationship="printer"/><detail relationship="status"/></master>
+    </entity>
+
+    <!-- ========================================================= -->
+    <!-- moqui.basic.client: what a client that queues requests offline relies on (plans/Mobile-Desktop.md MD5) -->
+    <!-- ========================================================= -->
+
+    <entity entity-name="ClientRequestRef" package="moqui.basic.client" use="transactional" cache="never">
+        <description>A request a client made with its own reference (clientRef), with what it answered, so the same
+            request sent again after a lost answer is answered the same way and does nothing (ClientSyncServices
+            claim#ClientRequest and store#ClientRequest). The row is written in the transaction of the request, so a request
+            that fails leaves none and may be tried again. Rows go after client_request_keep_days (clean#ClientRequests).</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="serviceName" type="text-medium" is-pk="true"><description>The service or operation the reference is
+            of: one reference is the user's own per service</description></field>
+        <field name="clientRef" type="text-medium" is-pk="true"><description>^[A-Za-z0-9_.:-]{1,64}$</description></field>
+        <field name="resultJson" type="text-very-long"><description>The answer, as JSON; empty while the request runs</description></field>
+        <field name="createdDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <index name="CLIENT_REQ_DATE"><index-field name="createdDate"/></index>
+    </entity>
+    <entity entity-name="ClientUpload" package="moqui.basic.client" use="transactional" cache="never">
+        <description>A file a client sends in chunks (ClientSyncServices.upload#Chunk), named by the client's own uploadId,
+            so an upload cut off goes on from the bytes the server holds (get#UploadStatus). Each chunk is kept under
+            storeLocation (dbresource://upload/(userId)/(token)/) by its offset; the last one joins them into the file, which the attachment
+            services take by uploadId (ComposeServices.upload#ComposeAttachment, ChatServices.upload#Attachment). Only its
+            user reaches it. One not finished, or not taken, within client_upload_expire_hours goes, with its files
+            (clean#ClientUploads).</description>
+        <field name="userId" type="id" is-pk="true"/>
+        <field name="uploadId" type="text-medium" is-pk="true"><description>^[A-Za-z0-9_.:-]{1,64}$</description></field>
+        <field name="fileName" type="text-medium"/>
+        <field name="contentType" type="text-medium"/>
+        <field name="totalSize" type="number-integer"/>
+        <field name="receivedSize" type="number-integer"/>
+        <field name="chunkCount" type="number-integer"/>
+        <field name="storeLocation" type="text-medium"><description>The directory of its chunks and, once every byte is
+            held, of the joined file (file)</description></field>
+        <field name="createdDate" type="date-time"/>
+        <field name="lastChunkDate" type="date-time"/>
+        <field name="completedDate" type="date-time"/>
+        <relationship type="one-nofk" related="moqui.security.UserAccount" short-alias="user"/>
+        <index name="CLIENT_UPLOAD_DATE"><index-field name="lastChunkDate"/></index>
     </entity>
 </entities>

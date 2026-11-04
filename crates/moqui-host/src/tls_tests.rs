@@ -36,17 +36,23 @@ fn write_pair(dir: &Path, name: &str) {
     .unwrap();
 }
 
-/// A rustls client that trusts only the certificate in `cert`.
+/// A rustls client that trusts only the certificate in `cert`, and offers no ALPN.
 pub(crate) fn client_trusting(cert: &Path) -> tokio_rustls::TlsConnector {
+    client_offering(cert, &[])
+}
+
+/// A rustls client that trusts only the certificate in `cert` and offers the ALPN protocols `alpn`.
+pub(crate) fn client_offering(cert: &Path, alpn: &[&[u8]]) -> tokio_rustls::TlsConnector {
     let mut roots = rustls::RootCertStore::empty();
     for cert in CertificateDer::pem_file_iter(cert).unwrap() {
         roots.add(cert.unwrap()).unwrap();
     }
-    let client = rustls::ClientConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider()))
+    let mut client = rustls::ClientConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider()))
         .with_safe_default_protocol_versions()
         .unwrap()
         .with_root_certificates(roots)
         .with_no_client_auth();
+    client.alpn_protocols = alpn.iter().map(|protocol| protocol.to_vec()).collect();
     tokio_rustls::TlsConnector::from(Arc::new(client))
 }
 

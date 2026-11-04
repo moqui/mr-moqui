@@ -28,7 +28,7 @@ use futures_util::{SinkExt, StreamExt};
 use moqui_lib::error::Error;
 use tokio_tungstenite::tungstenite;
 
-use crate::http::{http1_builder, run_connection, serve_request, Peer, Serving, WebApp};
+use crate::http::{http1_builder, run_connection, serve_request, Http, Peer, Serving, WebApp};
 
 /// The address a request in process comes from.
 const LOOPBACK: SocketAddr = SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0);
@@ -187,7 +187,7 @@ impl InProcess {
             closing: live.closing,
             exporter: None,
         };
-        live.handle.spawn(run_connection(server, false, serving));
+        live.handle.spawn(run_connection(server, false, Http::One, serving));
         let (outbox, mut queued) = tokio::sync::mpsc::unbounded_channel::<tungstenite::Message>();
         let (close, mut closed) = tokio::sync::oneshot::channel::<()>();
         live.handle.spawn(async move {

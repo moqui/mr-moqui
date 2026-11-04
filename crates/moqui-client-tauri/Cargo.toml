@@ -1,0 +1,24 @@
+# The Tauri glue of the client of a remote server that the desktop app and the mobile app share (plans/Mobile-Desktop.md
+# §4 configuration 3, MD6): the shell's commands, the outbox and drafts commands, the remote sockets' commands and the app
+# schemes' request to answer logic, on Tauri's type-erased runtime, so it names no webview runtime (CEF or wry).
+# Not a workspace member, as the apps that link it: Tauri stays out of the server builds and `cargo test --workspace`,
+# and moqui-client stays Tauri-free.
+
+[package]
+name = "moqui-client-tauri"
+version = "0.1.0"
+description = "The Tauri glue of the MR Moqui client that the desktop and mobile apps share"
+edition = "2021"
+license = "CC0-1.0"
+publish = false
+
+[dependencies]
+moqui-client = { path = "../moqui-client" }
+moqui-lib = { path = "../moqui-lib" }
+# As the apps': the desktop's on CEF, the mobile's on wry.
+tauri = { version = "=3.0.0-alpha.5", features = ["unstable"] }
+serde_json = "1"
+tracing = "0.1"
+
+# Its own workspace: not a member of the repository's.
+[workspace]

@@ -30,6 +30,9 @@ use crate::http::{client, form_body, reason};
 /// The desktop app's redirect URI, as the server allows it by default (`webapp_app_redirect_uris`).
 pub const DESKTOP_REDIRECT: &str = "org.moqui.desktop:/sso";
 
+/// The mobile app's redirect URI (its Android intent filter), allowed by the server by default too.
+pub const MOBILE_REDIRECT: &str = "org.moqui.mobile:/sso";
+
 /// How long a sign-in waits for the browser to come back.
 const PENDING_FOR: Duration = Duration::from_secs(15 * 60);
 

@@ -59,9 +59,9 @@ the node's router in this process (`moqui_host::in_process`), on worker threads 
 - **Requests:** a page's headers go on but for what only the host may say (cookies, host, forwarded-for, the edge
   link's, the encodings). A request from another site is refused, but for a window's document `GET` (the splash page
   going to the node). A redirect to the node's loopback address stays on the scheme.
-- **Sockets:** `/notws`, `/callws` and `/termws` of the node's pages are held by the host (`client/sockets.rs`, as a
-  client's) and opened in process with the window's cookies; the terminal's binary frames cross the page bridge in
-  base64.
+- **Sockets:** `/notws`, `/callws` and `/termws` of the node's pages are held by the host (`client/sockets.rs`, in a
+  `moqui_client::bridge::Sockets` as a client's) and opened in process with the window's cookies; the terminal's binary
+  frames cross the page bridge in base64.
 - **Event streams** cannot pass a scheme that answers whole bodies: 503, so the Assist drawer polls its `events.json`.
 - **Ports:** the tray's "Open ports for other devices" (`node-ports` in the config directory) restarts the node with its
   ports, as `moqui tui --serve` does, for a browser or another device; the window stays on the scheme.
@@ -95,23 +95,29 @@ origin (and on a client's, [Client of a server](#client-of-a-server)), and the w
 
 ## Client of a server
 
-`src/client/` and `shell/`, on [moqui-client](../moqui-client/README.md): the `client` mode (`MOQUI_DESKTOP_NODE=client`,
-or the tray's "Use as a client of a server", which writes `client` in `node-mode`) starts no node. The window shows the
-bundled shell, which opens with no network; each account is a server and a user, with a device key the host keeps. The
-full description is [docs/ui/Desktop-Client.md](../../docs/ui/Desktop-Client.md).
+`src/client/` and `shell/`, on [moqui-client](../moqui-client/README.md) and the Tauri glue it shares with the mobile app
+([moqui-client-tauri](../moqui-client-tauri/README.md): the shell's commands, the outbox and drafts commands, the
+schemes' answer). moqui-client's core (`app::Client`) runs everything
+that needs no Tauri behind the `ClientHost` trait this app implements (`client/mod.rs`): the `client` mode
+(`MOQUI_DESKTOP_NODE=client`, or the tray's "Use as a client of a server", which writes `client` in `node-mode`) starts
+no node. The window shows the bundled shell, which opens with no network; each account is a server and a user, with a
+device key the host keeps. The full description is [docs/ui/Desktop-Client.md](../../docs/ui/Desktop-Client.md).
 
 - **Schemes:** `moqui-shell` serves the shell's files under a CSP without `unsafe-eval` and forwards the server's data,
-  never its pages or scripts (`scheme.rs`, `assets.rs`); `moqui-app` forwards everything, for the app windows, which
-  show the server's own `/qapps`. Each request carries the key in the `login_key` header.
+  never its pages or scripts (`moqui_client_tauri::scheme`, `moqui_client::assets`); `moqui-app` forwards everything, for the app
+  windows, which show the server's own `/qapps`. Each request carries the key in the `login_key` header.
 - **Accounts and keys:** sign-in by password or SSO (`shell/screens/SignIn.qvue`), `client/accounts.json`, the OS key
-  store or a file only the user can read, renewal (`renewal.rs`), the account menu's Apps and devices.
-- **Device mode:** `personal`, `shared` or `choose` from `<client-conf>` (below), kept with the account (`modes.rs`): a
-  shared account's data and entry are deleted on sign-out or revocation, a personal one's kept until it is removed.
-- **Store and offline:** one SQLite store per account (`stores.rs`); the comms transitions' answers and rows kept and
-  answered offline, marked `X-Moqui-Offline` (`offline.rs`); the chat pushes folded in (`push.rs`); the mirror reads
-  ahead when the shell's socket opens (`mirror.rs`).
+  store or a file only the user can read (`keystore.rs`), renewal (`moqui_client::renewal`), the account menu's Apps and
+  devices.
+- **Device mode:** `personal`, `shared` or `choose` from `<client-conf>` (below), kept with the account
+  (`moqui_client::modes`): a shared account's data and entry are deleted on sign-out or revocation, a personal one's
+  kept until it is removed.
+- **Store and offline:** one SQLite store per account (`moqui_client::stores`); the comms transitions' answers and rows
+  kept and answered offline, marked `X-Moqui-Offline` (`moqui_client::offline`); the chat pushes folded in
+  (`moqui_client::sync::push`); the mirror reads ahead when the shell's socket opens (`moqui_client::sync::mirror`).
 - **Outbox and drafts:** chat sends and reads, mail sends and state changes queued in the store and sent by the host on
-  a thread of its own (`outbox.rs`, `flush.rs`), with WebrootChat's retry rules.
+  a thread of its own (`moqui_client::sync::outbox` and `flush`, the commands in `moqui_client_tauri::outbox`), with
+  WebrootChat's retry rules.
 - **Bundled screens:** `shell/bundled-screens.txt` (the shell's own, and BasicComms' chat panel, Chat, Inbox, Compose,
   Calls/Call and Calls/Dialer), precompiled into `shell/js/bundled-screens.js` with the libraries of `libs.txt`; any
   other screen opens in an app window (`windows.rs`). After a change to one:
@@ -234,7 +240,8 @@ cd crates/moqui-desktop && CARGO_TARGET_DIR=../../target cargo test
 
 The host side of the stdin-close stop, the Postgres takeover, the node in process (`in_process`) and the shared PDF
 page sequence (`pdf`) are tested in their crates: `cargo test -p moqui-host -p moqui-drivers`; the client's proxy,
-sockets, accounts, renewal, store and conf in `cargo test -p moqui-client`, the device key renewal on the server in
+sockets, accounts, renewal, store, conf, offline answers, pushes, outbox, sender and mirror in
+`cargo test -p moqui-client`, the device key renewal on the server in
 `cargo test -p moqui-core --lib a_device_`, and the bundled screens in
 `cargo test -p moqui-core --lib bundled_screens_are_precompiled`; the bundled Comms screens in the shell, in the page,
 with `moqui test-client basic-comms --offline` (`ShellComms`, `ShellCalls`).

@@ -19,7 +19,10 @@ along with this software (see the LICENSE.md file). If not, see
     browser's Back works. Data and actions are the JSON transitions of Mail.xml. In the desktop client (its shell bundles
     this screen): the Outbox card lists the mail waiting to send (Retry, Discard) and the thread changes waiting
     (moqui.hostOutbox()); with the server out of reach, read, unread, flag, archive, move and trash wait there and the rest
-    says it needs a connection; none of it on the web. Brand color names and Quasar classes only (style-guide §4.8, §5);
+    says it needs a connection. What the server did not take is listed there too, each with Retry and Discard: a thread
+    change it met changed (the rows show the server's state, read again) or refused, and a send whose draft changed
+    elsewhere, the user's version kept as a copy that Open the copy opens in Compose (copyRef); a copy whose send was
+    discarded stays listed (Open, Delete). None of it on the web. Brand color names and Quasar classes only (style-guide §4.8, §5);
     the m-* inputs for what is typed. -->
 <template><div class="m-inbox-root"><div class="m-inbox column no-wrap" :style="{height: height + 'px'}">
     <!-- the search line and the view's tools -->
@@ -203,7 +206,7 @@ along with this software (see the LICENSE.md file). If not, see
                             <template v-slot:avatar><q-icon name="sym_o_cloud_off" color="warning"></q-icon></template>
                             {{t('Offline: the mail kept on this device. Mail you send and read, flag, archive and move wait and go when the server can be reached; the rest needs a connection.')}}
                         </q-banner>
-                        <q-card v-if="outboxSends.length || outboxChanges" flat bordered class="q-ma-sm m-inbox-outbox">
+                        <q-card v-if="outboxSends.length || outboxChanges || outboxProblems.length || keptCopies.length" flat bordered class="q-ma-sm m-inbox-outbox">
                             <q-item dense>
                                 <q-item-section avatar style="min-width:30px"><q-icon name="sym_o_outbox" color="primary"></q-icon></q-item-section>
                                 <q-item-section>
@@ -216,13 +219,42 @@ along with this software (see the LICENSE.md file). If not, see
                                     <q-item-section>
                                         <q-item-label class="ellipsis">{{outboxSubject(op)}}</q-item-label>
                                         <q-item-label caption class="ellipsis">{{outboxTo(op)}}</q-item-label>
-                                        <q-item-label caption :class="op.state === 'failed' ? 'text-negative' : ''">
+                                        <q-item-label caption :class="outboxClass(op)">
                                             <q-icon :name="outboxIcon(op)" size="14px" class="q-mr-xs"></q-icon>{{outboxStateText(op)}}</q-item-label>
                                     </q-item-section>
                                     <q-item-section side>
                                         <div class="row no-wrap">
+                                            <q-btn v-if="op.state === 'conflict' && op.current && op.current.copyRef" flat dense no-caps size="sm" color="primary" :label="t('Open the copy')"
+                                                    class="m-inbox-open-copy" @click="openCopy(op.current.copyRef)"></q-btn>
                                             <q-btn v-if="op.state !== 'sending' && op.state !== 'acked'" flat dense no-caps size="sm" color="primary" :label="t('Retry')" @click="outboxRetry(op)"></q-btn>
                                             <q-btn v-if="op.state !== 'sending' && op.state !== 'acked'" flat dense no-caps size="sm" :label="t('Discard')" @click="outboxDiscard(op)"></q-btn>
+                                        </div>
+                                    </q-item-section>
+                                </q-item>
+                                <!-- a thread change the server did not make: changed there since (the rows show its state), or refused -->
+                                <q-item v-for="op in outboxProblems" :key="op.id" class="m-inbox-outbox-change" :data-outbox="op.state">
+                                    <q-item-section>
+                                        <q-item-label class="ellipsis">{{outboxActionText(op)}}</q-item-label>
+                                        <q-item-label caption :class="outboxClass(op)">
+                                            <q-icon :name="outboxIcon(op)" size="14px" class="q-mr-xs"></q-icon>{{outboxStateText(op)}}</q-item-label>
+                                    </q-item-section>
+                                    <q-item-section side>
+                                        <div class="row no-wrap">
+                                            <q-btn flat dense no-caps size="sm" color="primary" :label="t('Retry')" @click="outboxRetry(op)"></q-btn>
+                                            <q-btn flat dense no-caps size="sm" :label="t('Discard')" @click="outboxDiscard(op)"></q-btn>
+                                        </div>
+                                    </q-item-section>
+                                </q-item>
+                                <!-- the user's versions of drafts changed elsewhere, kept on this device as copies -->
+                                <q-item v-for="copy in keptCopies" :key="copy.key" class="m-inbox-outbox-copy">
+                                    <q-item-section>
+                                        <q-item-label class="ellipsis">{{copy.subject || t('(no subject)')}}</q-item-label>
+                                        <q-item-label caption class="text-warning"><q-icon name="sym_o_file_copy" size="14px" class="q-mr-xs"></q-icon>{{t('Your version, kept as a copy')}}</q-item-label>
+                                    </q-item-section>
+                                    <q-item-section side>
+                                        <div class="row no-wrap">
+                                            <q-btn flat dense no-caps size="sm" color="primary" :label="t('Open')" @click="openCopy(copy.ref)"></q-btn>
+                                            <q-btn flat dense no-caps size="sm" :label="t('Delete')" @click="deleteCopy(copy)"></q-btn>
                                         </div>
                                     </q-item-section>
                                 </q-item>
@@ -784,6 +816,10 @@ const t = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(tex
 const fill = (text, values) => String(text).replace(/\{(\w+)\}/g, (match, key) => (values[key] == null ? '' : String(values[key])));
 // the thread changes the desktop client's outbox keeps while the server is out of reach (src/client/outbox.rs MAIL_ACTIONS)
 const QUEUED_ACTIONS = ['read', 'unread', 'flag', 'unflag', 'archive', 'unarchive', 'move', 'trash'];
+// the outbox's states of an operation the server did not take: changed there since (MD5), or refused
+const OUTBOX_PROBLEMS = ['conflict', 'failed'];
+// the drafts the app keeps for Compose, an email's by its clientRef (a conflict's copy among them)
+const COPY_PREFIX = 'ironstone.compose.email.';
 const pad = (n) => String(n).padStart(2, '0');
 // the rail: views, the mail accounts with their folders and labels, the Internal account with its mailboxes, saved searches
 const railTemplate = '' +
@@ -901,6 +937,8 @@ module.exports = {
                 retitle: (key, title) => { const dock = self.docks.find((item) => item.key === key); if (dock) dock.title = title; },
                 draftSaved: (key, emailMessageId) => {
                     const dock = self.docks.find((item) => item.key === key);
+                    // a kept copy saved on the server is a draft there now, no longer a copy here
+                    if (dock && emailMessageId && dock.query.copyRef) self.keptCopies = self.keptCopies.filter((copy) => copy.ref !== dock.query.copyRef);
                     if (dock && emailMessageId && dock.query.emailMessageId !== emailMessageId) { dock.query = { emailMessageId }; self.saveDocks(); }
                 },
                 sent: (key, info) => self.onComposeSent(key, info)
@@ -924,7 +962,9 @@ module.exports = {
             swipe: null, swipeSuppress: null,
             newMailbox: { open: false, key: 0 }, mailboxDialog: { open: false, tab: 'members', key: 0, addPartyId: null }, pendingCreateFrom: false, markReadTimer: null,
             // the desktop client's outbox (moqui.hostOutbox()): its mail sends and thread changes waiting; empty on the web
-            outbox: []
+            outbox: [],
+            // the copies the app kept of a draft changed elsewhere ({key, ref, subject}), whose operation is gone (discarded)
+            keptCopies: [], copiesOf: null, actedAt: {}
         };
     },
     computed: {
@@ -934,8 +974,10 @@ module.exports = {
         // images from other sites in a message: not where the page may not load them (the desktop client's shell, whose
         // policy keeps its images to its own origin; moqui.remoteImages false), so no Show images there
         remoteImages() { return moqui.remoteImages !== false; },
-        outboxSends() { return this.outbox.filter((op) => op.kind === 'mail-send'); },
-        outboxChanges() { return this.outbox.filter((op) => op.kind === 'mail-state').length; },
+        outboxSends() { return this.outbox.filter((op) => op.kind === 'mail-send' || op.kind === 'internal-send'); },
+        // the thread changes waiting, and those the server did not make (a conflict, a refusal), each shown
+        outboxChanges() { return this.outbox.filter((op) => op.kind === 'mail-state' && !OUTBOX_PROBLEMS.includes(op.state)).length; },
+        outboxProblems() { return this.outbox.filter((op) => op.kind === 'mail-state' && OUTBOX_PROBLEMS.includes(op.state)); },
         isPhone() { return this.$q.screen.lt.sm; },
         isTouch() { return !!(this.$q.platform && this.$q.platform.has && this.$q.platform.has.touch) && this.$q.screen.lt.md; },
         params() { return this.$root.currentParameters || {}; },
@@ -1175,7 +1217,28 @@ module.exports = {
             }, (err) => { this.failed(err); throw err; });
         },
         // a thread change the desktop client may keep while the server is out of reach goes through its outbox (stateOrQueue)
-        post(name, params) { return name === 'state' && this.queueable(params) ? this.stateOrQueue(params) : this.request(name, params, 'POST'); },
+        post(name, params) {
+            if (name === 'state') this.noteActed(params);
+            return name === 'state' && this.queueable(params) ? this.stateOrQueue(params) : this.request(name, params, 'POST');
+        },
+        // the desktop client: when this page last changed each thread (by its row's key), so a Retry of an older change
+        // that conflicted asks first instead of undoing a later one
+        noteActed(params) {
+            if (!moqui.hostOutbox()) return;
+            let targets = [];
+            try { targets = JSON.parse((params && params.targetsJson) || '[]'); } catch (err) { targets = []; }
+            const now = Date.now();
+            (Array.isArray(targets) ? targets : []).forEach((target) => { const key = this.targetKey(target); if (key) this.actedAt[key] = now; });
+        },
+        targetKey(target) { return target ? (target.rowKey || ((target.store || 'email') + ':' + (target.threadId || target.emailMessageId || target.communicationEventId || ''))) : null; },
+        // a change of one of its threads made here after it: waiting in the outbox, or asked of the server
+        laterChange(op) {
+            const keys = ((op.payload && op.payload.targets) || []).map((target) => this.targetKey(target)).filter((key) => key);
+            const created = Number(op.createdMs || 0);
+            const waiting = this.outbox.some((other) => other.id !== op.id && other.kind === 'mail-state' && Number(other.createdMs || 0) > created
+                && ((other.payload && other.payload.targets) || []).some((target) => keys.includes(this.targetKey(target))));
+            return waiting || keys.some((key) => Number(this.actedAt[key] || 0) > created);
+        },
         // an error of a request: the desktop client's server out of reach says it needs a connection, else as the page shows errors
         failed(err) { if (moqui.unreachable && moqui.unreachable(err)) this.needsConnection(true); else moqui.handleAjaxError(err); },
         // the desktop client offline (never the web): an action that needs the server says so and is not taken
@@ -1216,9 +1279,48 @@ module.exports = {
             const host = moqui.hostOutbox();
             if (!host) return Promise.resolve();
             return host.list().then((ops) => {
-                this.outbox = (Array.isArray(ops) ? ops : []).filter((op) => op && (op.kind === 'mail-send' || op.kind === 'mail-state'));
+                const before = new Set(this.outbox.filter((op) => op.kind === 'mail-state' && OUTBOX_PROBLEMS.includes(op.state)).map((op) => op.id));
+                this.outbox = (Array.isArray(ops) ? ops : []).filter((op) => op && ['mail-send', 'internal-send', 'mail-state'].includes(op.kind));
+                // a thread change the server did not make: its rows are the server's again in the app's store, so the list
+                // and the open thread are read again
+                if (this.outboxProblems.some((op) => !before.has(op.id))) { this.loadList(true); if (this.openKey) this.reloadThread(); }
+                // the kept copies, on the first read and when the sends that conflicted change (one kept a copy, or went)
+                const conflicts = this.outbox.filter((op) => op.kind === 'mail-send' && op.state === 'conflict').map((op) => op.id).sort().join(',');
+                if (this.copiesOf === conflicts) return null;
+                this.copiesOf = conflicts;
+                return this.readCopies();
             }, (err) => console.info('Inbox: the outbox was not read from the app', err));
         },
+        // the copies the app keeps of drafts changed elsewhere, but those of an operation still listed (shown with it)
+        readCopies() {
+            const drafts = moqui.drafts && moqui.drafts.host ? moqui.drafts.host() : null;
+            if (!drafts || typeof drafts.list !== 'function') return Promise.resolve();
+            return Promise.resolve(drafts.list(COPY_PREFIX)).then((list) => {
+                const listed = new Set(this.outbox.map((op) => op.id));
+                this.keptCopies = (Array.isArray(list) ? list : []).map((draft) => {
+                    let value = null;
+                    try { value = JSON.parse(draft.value || 'null'); } catch (err) { value = null; }
+                    // a copy the server has as a draft of its own (emailMessageId) is in Drafts, no longer a copy here
+                    if (!value || !value.conflictOf || !value.clientRef || (value.draft && value.draft.emailMessageId)
+                        || draft.key !== COPY_PREFIX + value.clientRef || listed.has(value.conflictOf.clientRef)) return null;
+                    return { key: draft.key, ref: value.clientRef, subject: (value.draft && value.draft.subject) || '' };
+                }).filter((copy) => copy);
+            }, (err) => console.info('Inbox: the kept copies were not read from the app', err));
+        },
+        openCopy(ref) { if (ref) this.compose({ copyRef: ref }); },
+        deleteCopy(copy) {
+            this.$q.dialog({ title: t('Delete this copy?'), message: t('Your version of the draft is removed from this device; the draft changed elsewhere stays.'),
+                cancel: true, ok: { label: t('Delete'), color: 'negative', unelevated: true, noCaps: true } })
+                .onOk(() => moqui.drafts.remove(copy.key).then(() => this.readCopies()));
+        },
+        outboxActionText(op) {
+            const payload = op.payload || {};
+            const action = { read: t('Mark read'), unread: t('Mark unread'), flag: t('Flag'), unflag: t('Unflag'), archive: t('Archive'), unarchive: t('Move to the inbox'),
+                move: t('Move'), trash: t('Move to the trash') }[payload.action] || t('Change');
+            const count = Array.isArray(payload.targets) ? payload.targets.length : 0;
+            return count > 1 ? fill(t('{action}: {count} threads'), { action, count }) : action;
+        },
+        outboxClass(op) { return op.state === 'failed' ? 'text-negative' : (op.state === 'conflict' ? 'text-warning' : ''); },
         outboxSubject(op) { const fields = (op.payload && op.payload.fields) || {}; return fields.subject || t('(no subject)'); },
         outboxTo(op) {
             const fields = (op.payload && op.payload.fields) || {};
@@ -1231,17 +1333,41 @@ module.exports = {
             return names.length ? t('To') + ' ' + names.join(', ') : '';
         },
         outboxStateText(op) {
+            const change = op.kind === 'mail-state';
             if (op.state === 'sending') return t('Sending…');
-            if (op.state === 'failed') return op.error ? t('Not sent:') + ' ' + op.error : t('Not sent');
+            if (op.state === 'conflict' && change) {
+                const conflicts = (op.current && Array.isArray(op.current.conflicts)) ? op.current.conflicts : [];
+                const said = conflicts.map((entry) => entry && entry.message).filter((text) => text)[0];
+                return t('Changed on the server: the thread shows its state there') + (said ? ' (' + said + ')' : '');
+            }
+            if (op.state === 'conflict') return t('Changed elsewhere: your version is kept as a copy');
+            if (op.state === 'failed') return op.error ? (change ? t('Not made:') : t('Not sent:')) + ' ' + op.error : (change ? t('Not made') : t('Not sent'));
             if (op.state === 'held') return t('Waiting: sign in again to send it');
             return this.noConnection ? t('Waiting for the connection') : t('Waiting to send');
         },
-        outboxIcon(op) { return op.state === 'failed' ? 'sym_o_error' : (op.state === 'sending' ? 'sym_o_send' : 'sym_o_schedule'); },
-        outboxRetry(op) { const host = moqui.hostOutbox(); if (host) host.retry(op.id).then(() => this.readOutbox(), (err) => moqui.notifyMessages(null, (err && err.message) || String(err))); },
+        outboxIcon(op) {
+            if (op.state === 'conflict') return 'sym_o_sync_problem';
+            return op.state === 'failed' ? 'sym_o_error' : (op.state === 'sending' ? 'sym_o_send' : 'sym_o_schedule');
+        },
+        outboxRetry(op) {
+            const host = moqui.hostOutbox();
+            if (!host) return;
+            const go = () => host.retry(op.id).then(() => this.readOutbox(), (err) => moqui.notifyMessages(null, (err && err.message) || String(err)));
+            // a thread change that conflicted, with a later change of the same thread made here since: retried, it would
+            // land after that one and undo it, so the user chooses
+            if (op.kind !== 'mail-state' || op.state !== 'conflict' || !this.laterChange(op)) { go(); return; }
+            this.$q.dialog({ title: t('Retry this change?'), message: t('You changed this thread again since. Retried now, this older change is made after that one and undoes it.'),
+                cancel: { label: t('Keep the later change'), flat: true, noCaps: true }, ok: { label: t('Retry anyway'), color: 'primary', unelevated: true, noCaps: true } })
+                .onOk(() => go());
+        },
         outboxDiscard(op) {
             const host = moqui.hostOutbox();
             if (!host) return;
-            this.$q.dialog({ title: t('Discard this message?'), message: t('It was not sent; it is removed from this device, with its files.'), cancel: true,
+            const change = op.kind === 'mail-state';
+            const message = change ? t('The change is not made; the thread stays as the server has it.')
+                : (op.state === 'conflict' ? t('It is not sent; the draft changed elsewhere stays, and your version stays here as a copy.')
+                    : t('It was not sent; it is removed from this device, with its files.'));
+            this.$q.dialog({ title: change ? t('Discard this change?') : t('Discard this message?'), message, cancel: true,
                 ok: { label: t('Discard'), color: 'negative', unelevated: true, noCaps: true } })
                 .onOk(() => host.discard(op.id).then(() => this.readOutbox(), (err) => moqui.notifyMessages(null, (err && err.message) || String(err))));
         },
@@ -2410,7 +2536,10 @@ module.exports = {
         // the desktop client's outbox: what waits, as it changes
         const host = moqui.hostOutbox();
         if (host && typeof host.on === 'function') {
-            this.outboxOff = host.on((event) => { this.readOutbox(); if (event && event.kind === 'sent' && event.op === 'mail-send') this.loadList(true); });
+            this.outboxOff = host.on((event) => {
+                // the chat feeds' news is not the outbox's
+                if (event && event.kind === 'rooms') return;
+                this.readOutbox(); if (event && event.kind === 'sent' && event.op === 'mail-send') this.loadList(true); });
             this.readOutbox();
         }
     },

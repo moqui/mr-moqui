@@ -814,16 +814,62 @@ through the room's `update` push. `chat.typingText(roomId, userId)` is an agent'
 **The pushes** are NotificationMessages that are not persisted and show no alert, routed by the socket to their users only:
 
 ```
-chatRoom:<chatRoomId>  {kind: 'event', chatRoomId, eventSeq, event}           // to the room's members: a new event, as get#Timeline lists one
+chatRoom:<chatRoomId>  {kind: 'event', chatRoomId, eventSeq, event, roomChangeSeq}   // to the room's members: a new event, as get#Timeline lists one
                        {kind: 'typing', chatRoomId, userId, typing, statusText}   // to the other members (signal#Typing; nothing stored; statusText: an agent's "Searching…")
                        {kind: 'read', chatRoomId, userId, lastReadEventSeq}    // a member's read marker (read receipts; none when CHAT_READ_RECEIPTS is N)
-                       {kind: 'update', chatRoomId, eventSeq, threadRootEventSeq, fields}   // a message's linkPreviews, poll or assist card changed; the same for everyone
-chatUser:<userId>      {kind: 'room', action: 'joined'|'left'|'changed'|'role'|'settings', chatRoomId}
-                       {kind: 'read', chatRoomId, lastReadEventSeq} | {kind: 'read', all: true}   // read in another tab
+                       {kind: 'update', chatRoomId, eventSeq, threadRootEventSeq, fields, roomChangeSeq}   // a message's linkPreviews, poll or assist card changed; the same for everyone
+chatUser:<userId>      {kind: 'room', action: 'joined'|'left'|'changed'|'role'|'settings', chatRoomId, changeSeq}
+                       {kind: 'read', chatRoomId, lastReadEventSeq, changeSeq} | {kind: 'read', all: true, changeSeq}   // read in another tab or device
 userStatus             {userId, presence, statusText, emoji, clearAtDate, inCall}   // to the user's room members; self and status to the user
 ```
 
-`presence` is `online`, `away`, `dnd` or `offline` (an invisible user is offline to others). The shell's own `shellCounts` topic carries the
+`presence` is `online`, `away`, `dnd` or `offline` (an invisible user is offline to others). `changeSeq` on a `room` or
+`read` push of `chatUser:` is that change's number in the user's changes feed, and `roomChangeSeq` on a `chatRoom:` event
+or update push is the number of the message change it made in the room's feed (below). A number more than one past the
+client's cursor is normal, not a sign of falling behind: not every change is pushed (a room change for the other
+members, retention) and a change replaces an earlier one of the same thing with a new number. It only means "read the
+feed" after the cursor.
+
+**The changes feeds** are what a client that keeps chat offline (the desktop client's store) reads to catch up. There
+are two, so a change of a room's messages costs one row however many members it has:
+
+- **The user's**, one cursor across all rooms: `GET <comms root>/Chat/chatChanges?afterSeq=&limit=&heads=&headsSince=`
+  (`ChatServices.get#UserChanges`, the current user's only), answering
+  `{changes: [{changeSeq, kind, chatRoomId, eventSeq, changeDate, data}], lastSeq, more, reset, heads, headsSince}`.
+- **The room's**, of its messages changed after they were sent, one cursor per room:
+  `GET <comms root>/Chat/roomChanges?chatRoomId=&afterSeq=&limit=` (`get#RoomChanges`, for a user who may read the room;
+  another room is not found), answering `{changes: [{changeSeq, eventSeq, changeDate, data}], lastSeq, more, reset}`, where
+  `eventSeq` is the message's and `data` is `{cause: edit | reaction | redaction | pin | update, causeEventSeq, redacted,
+  threadRootEventSeq}`: read the message again (`timeline?eventSeq=`), or drop it when `redacted`. The room's
+  `lastChangeSeq` is in `room` (`roomView`, `room`) and in the heads.
+
+Both are oldest first, `limit` 200 (at most 1000), `lastSeq` the cursor to keep (the last change answered, or `afterSeq`),
+`more` when there are more after it. `reset` is true, with no changes and `lastSeq` the last number, when `afterSeq` is not
+given (a first sync), is older than what the purge kept, or is past the last number (another database): the client reads
+its rooms (or that room's held messages) again and goes on from `lastSeq`. The page that ends the user's feed has `heads`
+(unless `heads=false`), the rooms the user is in as `{chatRoomId, lastEventSeq, lastMessageSeq, lastEventDate,
+lastChangeSeq, lastReadEventSeq}`: new messages are in neither feed, so new activity is a head past what the client holds
+(read with `timeline?afterSeq=`), and a `lastChangeSeq` past the room's cursor means reading `roomChanges`. Give the answer's
+`headsSince` back next time and only the rooms with an event or a message change since then come (it overlaps by two
+minutes, so a late commit is not missed; a room joined since is a `membership` change). The user's kinds and their `data`:
+
+| `kind` | `eventSeq` | `data` | For |
+|---|---|---|---|
+| `membership` | the membership event (none for a direct room) | `{member, roleEnumId, action: joined \| left \| role, byUserId}` | the user's own membership as it is now: `member` false after leaving, being taken out or hiding a direct room; a join and a role change unseen are one state |
+| `room` | the event, when one | `{reason}`: `members`, `renamed`, `topic`, `archived`, `unarchived`, `details` | the room's details or members changed: read it again (`room`) |
+| `settings` | | `{notificationLevelEnumId, isMuted, isPinned}` | the user's settings in the room |
+| `read` | | `{lastReadEventSeq}` | the user's read marker, from another tab or device (`markAllRead` gives one per room) |
+| `retention` | the last event deleted | `{deletedCount}` | the room's retention deleted everything up to `eventSeq` (a range tombstone; the room's changes of those messages go with them) |
+
+A change replaces the earlier change of the same thing (a user's kind and room; a room's message) with a new number, so
+each feed holds one row per thing that changed. An agent's chat user and system users get no user changes. Changes older
+than `chat_changes_keep_days` (30) are purged daily (`clean#ChatChanges`). A thread reply is a new message and is in no
+feed; when a reply is deleted its `redaction` change has the reply's `eventSeq` and its `threadRootEventSeq`, and the
+root's `threadReplyCount` and last reply change with it: read the root again (or the room's threads). The server side,
+and why it is split this way, is in `ChatServices.xml` (`record#UserChange`, `record#RoomChange`) and `ChatEntities.xml`
+(`ChatUserChange`, `ChatUserState`, `ChatRoomChange`).
+
+The shell's own `shellCounts` topic carries the
 header's Chat badge (`counts.chat`, the app's counts service adding `get#UnreadCounts`).
 
 **The store** (`moqui.chat`; its `state` is a Vue reactive object):
@@ -994,6 +1040,34 @@ as a notification.
 The server keeps its key in `web_push_vapid_key` (generated, an `is-secret` default-property shared by the cluster) and
 names itself to the push services with `web_push_subject` (a `mailto:` or `https:` URL; set it in production).
 
+**Native apps (FCM).** The mobile app is not a browser and gets no Web Push. Signed in with its device key, it registers
+its Firebase Cloud Messaging token (`POST /qapps/registerClientPush` with `provider=fcm`, `token`, `appId`, `platform`;
+`register#PushDevice`), stored in the same `WebPushSubscription` entity with `pushProviderEnumId` `PushFcm` and the device
+key (`loginKey`). A request not signed in by a device key is refused, so the registration ends with its device: the
+key's revoke (`revoke#UserDeviceKey`, or logout with `revokeLoginKey`) deletes it, its renewal moves it to the new key,
+and one whose key ended otherwise is deleted at the next push. `POST /qapps/unregisterClientPush` forgets it.
+`/qapps/clientConfig` says what the server offers in `server.features.nativePush` (`providers`, `fcmConfigured`,
+`registered`).
+
+`send#WebPush` sends to these through FCM's HTTP v1 API (`service/fcm.rs`) as a data message, which the app's own code
+shows: `{kind, title, link, topic, tag}`, `kind` `notification` or `ring`; a call's ring adds `callSessionId`,
+`chatRoomId`, `caller` (FCM reserves `from`), `video`, `expiresAt` and `ringSeconds` (the time left when it is sent),
+with `android.priority` `HIGH` and the ring time as its `ttl`, so the app can show the incoming call with the screen
+locked. Every message carries `pushId`, the registration's `subscriptionId` (which `registerClientPush` answered), so
+the app knows which of its accounts it is for. When the ring is over a `ringEnded` message
+(`callSessionId`, `reason`: answered or declined to that user's other devices, timedOut or ended to everyone; high
+priority, a minute to live, the ring's tag) lets its ring screen stop; browsers get none. A message carries what Web
+Push carries, never a message's body, and its data is cut to 3 KB. FCM answering 404, `UNREGISTERED`,
+`SENDER_ID_MISMATCH` or a 400 about `message.token` disables the registration; another 400 is logged as an error and
+leaves it. 429 and 5xx are tried twice more with a growing wait, never past a ring's end; after that, as with no access
+token, the rest of that send is not tried and no device is counted against, so an outage disables nothing.
+
+The server signs in to FCM as a Firebase project's service account: `fcm_service_account` is its JSON key file's path
+or the JSON itself (an `is-secret` default-property, from the environment or `runtime/.env`, not generated), and
+`fcm_project_id` the project (by default the key's `project_id`). An RS256 JWT is exchanged at the key's `token_uri` for
+an access token, kept until five minutes before it expires. Unset, nothing goes to FCM and the log says so once.
+`fcm_base_url` replaces `https://fcm.googleapis.com`, for a test stand-in.
+
 ## In the desktop app
 
 The desktop app's page bridge (`crates/moqui-desktop/src/bridge.js`) defines `window.moquiDesktop`, and the client calls
@@ -1009,7 +1083,7 @@ app windows (`moqui-app`) show the server's own `/qapps`. The bridge then also h
 |---|---|
 | `socket(url)` | a socket-like object the host holds for `/notws` and `/callws` (text frames), which `moqui.openSocket(url)` returns in place of a WebSocket. The node in process has it too, for `/notws`, `/callws` and `/termws`, whose binary frames it carries as an `ArrayBuffer` |
 | `storageScope` | what `moqui.scopedKey(key)` puts browser storage keys of a server's data under (the chat outbox, the crypto device and store, drafts); `moqui.storageScope` set to a string is used instead. Empty on the web |
-| `outbox` | the host's outbox of the window's account: `add(kind, payload, files)`, `list()`, `retry(id)`, `discard(id)`, `on(fn)` for each change; kinds `chat-send`, `chat-read`, `mail-send`, `mail-state` |
+| `outbox` | the host's outbox of the window's account: `add(kind, payload, files)`, `list()` (each with its `state`, a rejection's `status` and `error`, a conflict's `current`), `kinds()` (what the server takes queued), `retry(id)`, `discard(id)`, `on(fn)` for each change; kinds `chat-send`, `chat-read`, `mail-send`, `mail-state`, and with a server at `clientApi` 4 `chat-edit`, `chat-redact`, `chat-react`, `poll-vote` and `internal-send` ([Desktop-Client](Desktop-Client.md#the-outbox-and-drafts)) |
 | `drafts` | the host's drafts and their files: `get`, `list`, `put`, `remove`, `saveFile` |
 | `deviceName` | the shell's name for its chat crypto device ("MR Moqui desktop on <host>"), which `WebrootCrypto.js` uses |
 | `openInShell(path)` | app windows: shows a comms screen (an encrypted room, a call) in the shell, for the window's account while it is current |
@@ -1022,11 +1096,17 @@ web and in the client:
 - `moqui.hostOutbox()` answers `moquiDesktop.outbox`, or null on the web. `moqui.chat` keeps its outbox there when there
   is one, with its own flush off (the host sends with the same rules), and moves the outbox it kept in scoped
   `localStorage` into it once, item by item, each taken off the browser's list when the host has it. Compose queues a
-  mail send there, with its files, when the server cannot be reached; an internal message is not queued.
-- `moqui.drafts` (`ready`, `get`, `keys`, `files`, `put`, `remove`, `saveFile`) is the drafts of Chat and Compose: the
-  host's where there is one, else `localStorage` under `scopedKey`. `ready()` resolves once the host's are read, and
-  moves the drafts this browser kept before into the host once, the newer copy kept; in the client `get` and `keys`
-  answer nothing until then, so callers wait for it.
+  mail send there, with its files, when the server cannot be reached; an internal message only where `kinds()` says
+  `internalSend`. With a server at `clientApi` 4, `moqui.chat.queueChange(kind, payload)` queues a message's edit,
+  redaction, reaction or poll vote there (null where `kinds()` lacks the kind), `moqui.chat.state.changes` lists those
+  waiting, `changed` tells a screen one was answered, and `rooms` that the host's changes feeds changed the held
+  messages of rooms
+  ([Desktop-Client](Desktop-Client.md#offline-in-the-screens)).
+- `moqui.drafts` (`ready`, `get`, `keys`, `files`, `put`, `remove`, `saveFile`, `fetch`) is the drafts of Chat and
+  Compose: the host's where there is one, else `localStorage` under `scopedKey`. `ready()` resolves once the host's are
+  read, and moves the drafts this browser kept before into the host once, the newer copy kept; in the client `get` and
+  `keys` answer nothing until then, so callers wait for it. `fetch(key)` reads one again from the host, for a draft
+  the host kept itself since (a conflict's copy).
 - `moqui.scopedKey(key)` keeps the rest (the crypto device pointer and store) apart per account.
 
 **Connection.** With a host outbox, `moqui.connection.offline` (reactive; `moqui.onConnection(fn)` hears each change)

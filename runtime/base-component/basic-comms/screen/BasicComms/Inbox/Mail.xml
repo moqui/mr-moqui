@@ -56,6 +56,22 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <!-- the mail change cursor of a client that keeps the mail (plans/Mobile-Desktop.md MD5): the threads changed after afterSeq,
+        each with its messages as they are now, {changes, lastSeq, more, reset} (EmailClientServices.get#MailChanges); reset true
+        says to read the folders again and go on from lastSeq; unsupported true, when an app answers the Inbox without a cursor,
+        says to read them again each time; uncoveredStores names the stores of an app whose changes are not in changes
+        (IronStone: internal), whose threads the client reads again each time -->
+    <transition name="mailChanges" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const seq = afterSeq != null && afterSeq !== '' ? Number(afterSeq) : NaN
+            const out = ec.service.sync().name('org.moqui.comms.InboxServices.run#Operation').parameters({operation: 'get#MailChanges', parameters: {
+                afterSeq: Number.isNaN(seq) ? null : seq, limit: Number(limit) > 0 ? Number(limit) : 200}}).call()?.result || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : out.unsupported ? {unsupported: true, changes: [], lastSeq: null, more: false, reset: false}
+                : {changes: out.changes || [], lastSeq: out.lastSeq, more: out.more === true, reset: out.reset === true,
+                    uncoveredStores: out.uncoveredStores || []})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
     <!-- the drive picker of Save to Files -->
     <transition-include name="pickerData" location="component://basic-comms/template/FilePickerTransitions.xml"/>
     <transition-include name="pickerFolder" location="component://basic-comms/template/FilePickerTransitions.xml"/>
@@ -105,26 +121,31 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <!-- ========== Writes ========== -->
 
-    <!-- an action on threads or messages: read, unread, flag, archive, trash, spam, snooze, move, labels, close, by store -->
+    <!-- an action on threads or messages: read, unread, flag, archive, trash, spam, snooze, move, labels, close, by store; a
+        client that queued it offline gives each target the state it saw (seen: a target changed on the server since is in
+        failedList with reason conflict) and the request its clientRef (once: sent again it answers duplicate true) -->
     <transition name="state">
         <actions><script><![CDATA[
             const list = (text) => text ? String(text).split(',').map((id) => id.trim()).filter((id) => id) : []
             const out = ec.service.sync().name('org.moqui.comms.InboxServices.run#Operation').parameters({operation: 'set#ThreadState', parameters: {targetsJson: targetsJson || '[]', action: action || '',
                 snoozedThruDate: snoozedThruDate ? new Date(Number(snoozedThruDate)) : null, emailFolderId: emailFolderId || null,
-                addLabelIdList: list(addLabelIds), removeLabelIdList: list(removeLabelIds)}}).call()?.result || {}
-            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {updatedCount: out.updatedCount, failedList: out.failedList, doneKeys: out.doneKeys})
+                addLabelIdList: list(addLabelIds), removeLabelIdList: list(removeLabelIds), clientRef: clientRef || null}}).call()?.result || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {updatedCount: out.updatedCount, failedList: out.failedList, doneKeys: out.doneKeys,
+                duplicate: out.duplicate === true})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
-    <!-- an action on every thread of the view -->
+    <!-- an action on every thread of the view; once per clientRef, as state -->
     <transition name="viewAction">
         <actions><script><![CDATA[
             const list = (text) => text ? String(text).split(',').map((id) => id.trim()).filter((id) => id) : []
             const out = ec.service.sync().name('org.moqui.comms.InboxServices.run#Operation').parameters({operation: 'apply#ViewAction', parameters: {view: view || null, emailAccountId: account || null,
                 emailFolderId: folder || null, emailLabelId: label || null, contactListId: mailbox || null, searchText: q || null,
                 unreadOnly: String(unreadOnly) === 'true', action: action || '', snoozedThruDate: snoozedThruDate ? new Date(Number(snoozedThruDate)) : null,
-                targetEmailFolderId: emailFolderId || null, addLabelIdList: list(addLabelIds), removeLabelIdList: list(removeLabelIds)}}).call()?.result || {}
-            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {updatedCount: out.updatedCount, failedList: out.failedList, threadCount: out.threadCount})
+                targetEmailFolderId: emailFolderId || null, addLabelIdList: list(addLabelIds), removeLabelIdList: list(removeLabelIds),
+                clientRef: clientRef || null}}).call()?.result || {}
+            ec.web.sendJsonResponse(ec.message.hasError() ? {} : {updatedCount: out.updatedCount, failedList: out.failedList, threadCount: out.threadCount,
+                duplicate: out.duplicate === true})
         ]]></script></actions>
         <default-response type="none"/>
     </transition>
