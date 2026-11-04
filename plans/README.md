@@ -3,6 +3,7 @@
 Design, status and review documents for MR Moqui. User guides for built features are in [`../docs/`](../docs/), not here.
 
 **Start here**
+- [UI-Refinement.md](UI-Refinement.md): activity-based review and refinement of the framework apps, shared controls and web TUI; the plan, coverage, findings and running verification notes.
 - [Remaining-Work.md](Remaining-Work.md): what is still open, in one place, grouped by domain (agents, mail, git, screens, apps, tests and the rest), each item linking to its detail.
 - [Future-Plans.md](Future-Plans.md): digest of the unbuilt proposals.
 - [Performance-Summary.md](Performance-Summary.md): digest of the performance plan, the recorded numbers and the Mantle USL audit.
