@@ -36,7 +36,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use axum::response::Response;
-use http::header::{self, HeaderValue};
+use http::header;
 use hyper::body::Incoming;
 use hyper_util::rt::TokioIo;
 use moqui_core::context::ExecutionContextFactory;
@@ -46,7 +46,7 @@ use tower::ServiceExt as _;
 use super::{
     CLIENT_HEADER, PROTO_HEADER, TUNNEL_HEADER, TUNNEL_HTTPS, TUNNEL_PROTOCOL, TUNNEL_SSH, TUNNEL_XMPP, TUNNEL_XMPPS,
 };
-use crate::http::{plain, DownServe, ExtendedConnect, Peer};
+use crate::http::{plain, DownServe, Peer};
 
 /// How long a passthrough tunnel's PROXY header may take, and its TLS handshake when the listener has no header
 /// timeout.
@@ -200,22 +200,7 @@ fn forwarded(
             let headers = request.headers_mut();
             super::web::strip_forwarding(headers, app.guard.conf().addressing().header());
             // HTTP/2 names the host in :authority; the app reads Host, as from an HTTP/1.1 client
-            if !headers.contains_key(header::HOST) {
-                if let Some(host) = request
-                    .uri()
-                    .authority()
-                    .and_then(|authority| HeaderValue::from_str(authority.as_str()).ok())
-                {
-                    request.headers_mut().insert(header::HOST, host);
-                }
-            }
-            let path = request.uri().path_and_query().map_or("/", |path| path.as_str());
-            if let Ok(origin_form) = path.parse::<http::Uri>() {
-                *request.uri_mut() = origin_form;
-            }
-            if protocol(&request) == Some("websocket") {
-                request.extensions_mut().insert(ExtendedConnect);
-            }
+            crate::http::h2_request_form(&mut request);
             let peer = Peer {
                 remote: client,
                 client: client.ip(),

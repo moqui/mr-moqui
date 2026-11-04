@@ -64,20 +64,126 @@ fn permanent_rejections_are_not_retried_or_counted_as_a_down_peer() {
     }
     let refuse = Arc::new(Refuse(AtomicUsize::new(0)));
     let sender: Arc<dyn Sender> = refuse.clone();
-    assert!(super::post_with_retry(
+    assert!(super::post_batch_with_retry(
         &sender,
         "https://peer",
-        "collab-update",
-        b"body"
+        &[("collab-update", b"body".to_vec())]
     ));
-    assert!(super::post_with_retry(
+    assert!(super::post_batch_with_retry(
         &sender,
         "https://peer",
-        "entity-cache-invalidate",
-        b"next"
+        &[("entity-cache-invalidate", b"next".to_vec())]
     ));
     assert_eq!(refuse.0.load(Ordering::SeqCst), 2);
     assert!(super::PostOutcome::from_status(503).is_err());
+}
+
+/// A sender that carries a whole batch in one exchange and answers for the messages up to the first that fails.
+struct Batches {
+    /// The batches posted, each as its payloads.
+    batches: Mutex<Vec<Vec<String>>>,
+    /// Payloads that fail (busy) this many more times.
+    busy: Mutex<Vec<(&'static str, usize)>>,
+}
+
+impl Sender for Batches {
+    fn post(&self, _: &str, _: &str, _: &[u8]) -> Result<super::PostOutcome, Error> {
+        panic!("a batch sender is posted to by batch")
+    }
+
+    fn post_batch(&self, _: &str, messages: &[(&str, &[u8])]) -> super::BatchOutcome {
+        let payloads: Vec<String> = messages
+            .iter()
+            .map(|(_, payload)| String::from_utf8_lossy(payload).into_owned())
+            .collect();
+        sync::lock(&self.batches).push(payloads.clone());
+        let mut outcomes = Vec::new();
+        for payload in payloads {
+            let mut busy = sync::lock(&self.busy);
+            if let Some((_, left)) = busy.iter_mut().find(|(name, left)| *name == payload && *left > 0) {
+                *left -= 1;
+                return super::BatchOutcome {
+                    outcomes,
+                    failed: Some(Error::new("busy")),
+                };
+            }
+            drop(busy);
+            outcomes.push(super::PostOutcome::Accepted);
+        }
+        super::BatchOutcome { outcomes, failed: None }
+    }
+}
+
+fn batches(busy: &[(&'static str, usize)]) -> Arc<Batches> {
+    Arc::new(Batches {
+        batches: Mutex::new(Vec::new()),
+        busy: Mutex::new(busy.to_vec()),
+    })
+}
+
+fn messages(names: &[&str]) -> Vec<(&'static str, Vec<u8>)> {
+    names
+        .iter()
+        .map(|name| ("collab-update", name.as_bytes().to_vec()))
+        .collect()
+}
+
+/// The default `post_batch` posts one message after another and stops at the first that fails, so the rest are sent
+/// again in order rather than ahead of it.
+#[test]
+fn the_default_batch_stops_at_the_first_failure() {
+    let scripted = Scripted {
+        only: "second",
+        fails_left: AtomicUsize::new(1),
+        calls: AtomicUsize::new(0),
+    };
+    let outcome = scripted.post_batch(
+        "https://peer",
+        &[
+            ("collab-update", b"first"),
+            ("collab-update", b"second"),
+            ("collab-update", b"third"),
+        ],
+    );
+    assert_eq!(outcome.outcomes, vec![super::PostOutcome::Accepted]);
+    assert!(outcome.failed.is_some());
+    let outcome = scripted.post_batch(
+        "https://peer",
+        &[("collab-update", b"second"), ("collab-update", b"third")],
+    );
+    assert_eq!(outcome.outcomes.len(), 2);
+    assert!(outcome.failed.is_none());
+}
+
+/// What a busy peer left unapplied is sent again from where it stopped, in order; each try that gets further starts the
+/// count of tries again, and a peer that takes nothing three times running is down.
+#[test]
+fn a_batch_is_sent_again_from_the_first_unapplied_message() {
+    let sender = batches(&[("b", 2), ("d", 1)]);
+    let as_sender: Arc<dyn Sender> = sender.clone();
+    assert!(super::post_batch_with_retry(
+        &as_sender,
+        "https://peer",
+        &messages(&["a", "b", "c", "d", "e"])
+    ));
+    let sent = sync::lock(&sender.batches).clone();
+    assert_eq!(
+        sent,
+        vec![
+            vec!["a", "b", "c", "d", "e"],
+            vec!["b", "c", "d", "e"],
+            vec!["b", "c", "d", "e"],
+            vec!["d", "e"],
+        ]
+    );
+    let down = batches(&[("x", 3)]);
+    let as_sender: Arc<dyn Sender> = down.clone();
+    assert!(!super::post_batch_with_retry(
+        &as_sender,
+        "https://peer",
+        &messages(&["x", "y"])
+    ));
+    assert_eq!(sync::lock(&down.batches).len(), 3);
 }
 
 struct Clean;
@@ -598,6 +704,52 @@ fn many_writes_in_one_wait_reach_a_peer_as_one_invalidation_and_the_commit_does_
         .count();
     // The first commit callback may be taken alone before the rest are queued; the rest arrive together.
     assert!((1..=2).contains(&visitor_posts), "{visitor_posts} posts for 200 writes");
+}
+
+/// Peers are posted to at once: one that is slow to answer does not hold up the others. Two peers that each take
+/// 600 ms are both done in well under the 1.2 s one after the other would take, whichever is first.
+#[test]
+fn a_slow_peer_does_not_hold_up_the_others() {
+    let _lock = lock();
+    let _clean = Clean;
+    preset("inst-parallel");
+    let fingerprints = super::configured_fingerprints().unwrap();
+    struct Timed {
+        started: std::time::Instant,
+        posts: Mutex<Vec<(String, Duration)>>,
+    }
+    impl Sender for Timed {
+        fn post(&self, base_url: &str, _topic: &str, _payload: &[u8]) -> Result<super::PostOutcome, Error> {
+            std::thread::sleep(Duration::from_millis(600));
+            sync::lock(&self.posts).push((base_url.to_string(), self.started.elapsed()));
+            Ok(super::PostOutcome::Accepted)
+        }
+    }
+    let (ctx, facade) = open_facade();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    for (id, url) in [
+        ("inst-par-one", "https://one.example:8444"),
+        ("inst-par-two", "https://two.example:8444"),
+    ] {
+        put_member(&facade, id, url, now_value(), &fingerprints.session, &fingerprints.cert);
+    }
+    super::start(ctx.factory()).unwrap();
+    let timed = Arc::new(Timed {
+        started: std::time::Instant::now(),
+        posts: Mutex::new(Vec::new()),
+    });
+    super::install_sender(ctx.factory(), Arc::clone(&timed) as Arc<dyn Sender>);
+    write_visitor(&facade, "PAR-V1", true);
+    assert!(super::wait_for_sends(ctx.factory(), Duration::from_secs(5)));
+    let posts = sync::lock(&timed.posts);
+    let visitor: Vec<&(String, Duration)> = posts.iter().collect();
+    assert_eq!(visitor.len(), 2, "{posts:?}");
+    let last = visitor.iter().map(|(_, at)| *at).max().unwrap_or_default();
+    assert!(
+        last < Duration::from_millis(1_100),
+        "the peers were posted to one after the other: {posts:?}"
+    );
 }
 
 #[test]

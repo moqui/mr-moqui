@@ -12,19 +12,28 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Cluster HTTPS listener and the blocking peer client.
+//! The cluster port (plans/archive/Cluster.md): its listener, its senders, and the path a peer's topic message takes on
+//! this member, whichever transport carried it.
 //!
 //! Empty `cluster_https_port` is 8444 on `cluster_bind_address` (default `0.0.0.0`, so other hosts reach it; the
 //! listener takes only peers that present the cluster certificate). `0` is ephemeral: the listener binds port 0
 //! and [`ClusterEdge::address`] is the address the kernel chose. The public HTTP and HTTPS listeners do not ask
 //! for a client certificate.
+//!
+//! - **Protocols** (`cluster_protocol`, [`Protocol`]). On one port, TLS picks by ALPN: gRPC on HTTP/2
+//!   (`moqui.cluster.v1.Cluster`, [`grpc`]) or `POST /cluster/{topic}` on HTTP/1.1, the same messages and statuses.
+//!   gRPC is the default where it is built; `rest` keeps a member to HTTP/1.1, both as listener and as sender. A client
+//!   that offers no ALPN, such as a member built before gRPC, gets HTTP/1.1.
+//! - **Listener** ([`listen`], `listen.rs`): on the host's runtime (`crate::edge::handle`), in a build with `axum`.
+//! - **Senders** ([`https_sender`]): the gRPC sender, with the blocking HTTP/1.1 client here for a peer that does not
+//!   choose h2; or the HTTP/1.1 client alone.
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use moqui_lib::sync::lock;
@@ -39,17 +48,23 @@ use sha2::{Digest, Sha256};
 
 use crate::tls_pin::{Pin, PinVerifier};
 
+#[cfg(feature = "grpc")]
+mod grpc;
+#[cfg(feature = "axum")]
+mod listen;
+#[cfg(feature = "grpc")]
+pub(crate) mod proto;
+
+#[cfg(feature = "axum")]
+pub(crate) use listen::{listen, ClusterEdge};
+
 const DEFAULT_PORT: u16 = 8444;
 const BODY_LIMIT: usize = moqui_core::cluster::MAX_CLUSTER_BODY;
 const HEADER_LIMIT: usize = 16 * 1024;
-/// How often a connection with nothing to read checks whether the listener is stopping.
-const READ_IDLE: Duration = Duration::from_millis(250);
 const CLIENT_IO: Duration = Duration::from_secs(10);
 /// How long a kept-alive connection may sit between exchanges. The listener closes it then, so the sender drops its
 /// end too, which also lets go of a member that has left the cluster.
 const CONNECTION_IDLE: Duration = Duration::from_secs(60);
-/// Connections served at once; one more is closed, and the peer's post tries again.
-const MAX_CONNECTIONS: usize = 64;
 /// Topics kept for [`ClusterEdge::posts`], newest last.
 const POSTS_KEPT: usize = 256;
 /// The first and the longest wait between submits in [`apply_topic_patiently`].
@@ -85,14 +100,67 @@ pub(crate) fn listen_port(raw: &str) -> Result<u16, HostError> {
         .map_err(|_| HostError::new("cluster_https_port is not a port"))
 }
 
-/// The HTTPS sender, which the SSH sender also uses for a peer whose base URL is `https://`.
+/// How this member speaks on the cluster port, from `cluster_protocol`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Protocol {
+    /// gRPC on HTTP/2 where TLS chose h2, HTTP/1.1 otherwise: the listener offers both, and the sender posts over
+    /// gRPC to a peer that chooses h2 and over HTTP/1.1 to one that does not.
+    Grpc,
+    /// HTTP/1.1 only: the listener offers only `http/1.1`, and the sender posts `POST /cluster/{topic}`.
+    Rest,
+}
+
+/// `cluster_protocol`: empty is gRPC where this build has it, else HTTP/1.1; `grpc` or `rest` sets it.
+///
+/// # Errors
+///
+/// When the value is neither, or it is `grpc` in a build without gRPC.
+pub(crate) fn protocol() -> Result<Protocol, HostError> {
+    let raw = moqui_lib::env::get_prop_or_env("cluster_protocol");
+    match raw.trim() {
+        "" if cfg!(feature = "grpc") => Ok(Protocol::Grpc),
+        "" | "rest" => Ok(Protocol::Rest),
+        "grpc" if cfg!(feature = "grpc") => Ok(Protocol::Grpc),
+        "grpc" => Err(HostError::new(
+            "cluster_protocol is grpc and gRPC is not built into this host",
+        )),
+        other => Err(HostError::new(format!("cluster_protocol {other} is not grpc or rest"))),
+    }
+}
+
+/// The ALPN protocols the listener offers for `protocol`, h2 first.
+fn alpn_protocols(protocol: Protocol) -> Vec<Vec<u8>> {
+    match protocol {
+        Protocol::Grpc => vec![b"h2".to_vec(), b"http/1.1".to_vec()],
+        Protocol::Rest => vec![b"http/1.1".to_vec()],
+    }
+}
+
+/// The HTTPS sender, which the SSH sender also uses for a peer whose base URL is `https://`: over gRPC, with the
+/// HTTP/1.1 POST for a peer that does not choose h2, unless `cluster_protocol` is `rest`.
 pub(crate) fn https_sender() -> Result<Arc<dyn Sender>, HostError> {
     let material = load_material()?;
     let config = client_config(&material)?;
-    Ok(Arc::new(PeerSender {
-        config,
+    let rest: Arc<dyn Sender> = Arc::new(PeerSender {
+        config: Arc::clone(&config),
         live: Mutex::new(HashMap::new()),
-    }))
+    });
+    match protocol()? {
+        Protocol::Rest => Ok(rest),
+        Protocol::Grpc => Ok(grpc_sender(&config, rest)),
+    }
+}
+
+#[cfg(feature = "grpc")]
+fn grpc_sender(config: &rustls::ClientConfig, rest: Arc<dyn Sender>) -> Arc<dyn Sender> {
+    let mut config = config.clone();
+    config.alpn_protocols = alpn_protocols(Protocol::Grpc);
+    Arc::new(grpc::GrpcSender::new(Arc::new(config), rest))
+}
+
+#[cfg(not(feature = "grpc"))]
+fn grpc_sender(_config: &rustls::ClientConfig, rest: Arc<dyn Sender>) -> Arc<dyn Sender> {
+    rest
 }
 
 /// The shared cluster key `cluster_tls_key`, as DER, for the SSH channel's derived login key.
@@ -100,238 +168,6 @@ pub(crate) fn https_sender() -> Result<Arc<dyn Sender>, HostError> {
 pub(crate) fn cluster_key_der() -> Result<Vec<u8>, HostError> {
     let material = load_material()?;
     Ok(material.key)
-}
-
-/// Bind the cluster listener. Call after [`moqui_core::cluster::start`] so the member row exists.
-pub(crate) fn listen(
-    factory: Arc<ExecutionContextFactory>,
-    posts: Arc<Mutex<Vec<String>>>,
-) -> Result<ClusterEdge, HostError> {
-    let material = load_material()?;
-    let config = Arc::new(server_config(&material)?);
-    let port = listen_port(&moqui_lib::env::get_prop_or_env("cluster_https_port"))?;
-    let bind = SocketAddr::from((bind_address()?, port));
-    let listener = TcpListener::bind(bind).map_err(|err| HostError::new(format!("could not bind {bind}: {err}")))?;
-    let address = listener
-        .local_addr()
-        .map_err(|err| HostError::new(format!("cluster listener has no address: {err}")))?;
-    let stop = Arc::new(AtomicBool::new(false));
-    let joins: Arc<Mutex<Vec<JoinHandle<()>>>> = Arc::new(Mutex::new(Vec::new()));
-    let accept_stop = Arc::clone(&stop);
-    let accept_posts = Arc::clone(&posts);
-    let accept_joins = Arc::clone(&joins);
-    let accept = thread::Builder::new()
-        .name("moqui-cluster".to_string())
-        .spawn(move || accept_loop(listener, config, factory, accept_posts, accept_stop, accept_joins))
-        .map_err(|err| HostError::new(format!("cluster listener did not start: {err}")))?;
-    Ok(ClusterEdge {
-        address,
-        posts,
-        stop,
-        joins,
-        accept: Some(accept),
-    })
-}
-
-pub(crate) struct ClusterEdge {
-    address: SocketAddr,
-    posts: Arc<Mutex<Vec<String>>>,
-    stop: Arc<AtomicBool>,
-    joins: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    accept: Option<JoinHandle<()>>,
-}
-
-impl ClusterEdge {
-    pub(crate) fn address(&self) -> SocketAddr {
-        self.address
-    }
-
-    pub(crate) fn posts(&self) -> Arc<Mutex<Vec<String>>> {
-        Arc::clone(&self.posts)
-    }
-}
-
-impl Drop for ClusterEdge {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
-        let _ = TcpStream::connect_timeout(&self.address, Duration::from_millis(200));
-        if let Some(handle) = self.accept.take() {
-            join_handle("cluster listener", handle);
-        }
-        let children = {
-            let mut guard = lock(&self.joins);
-            std::mem::take(&mut *guard)
-        };
-        for handle in children {
-            join_handle("cluster connection", handle);
-        }
-    }
-}
-
-fn accept_loop(
-    listener: TcpListener,
-    config: Arc<rustls::ServerConfig>,
-    factory: Arc<ExecutionContextFactory>,
-    posts: Arc<Mutex<Vec<String>>>,
-    stop: Arc<AtomicBool>,
-    joins: Arc<Mutex<Vec<JoinHandle<()>>>>,
-) {
-    while !stop.load(Ordering::SeqCst) {
-        match listener.accept() {
-            Ok((stream, _)) => {
-                if stop.load(Ordering::SeqCst) {
-                    break;
-                }
-                spawn_conn(&config, &factory, &posts, &stop, &joins, stream);
-            }
-            Err(err) => {
-                if stop.load(Ordering::SeqCst) {
-                    break;
-                }
-                tracing::warn!(error = %err, "cluster accept failed");
-                thread::sleep(Duration::from_millis(20));
-            }
-        }
-    }
-}
-
-fn spawn_conn(
-    config: &Arc<rustls::ServerConfig>,
-    factory: &Arc<ExecutionContextFactory>,
-    posts: &Arc<Mutex<Vec<String>>>,
-    stop: &Arc<AtomicBool>,
-    joins: &Mutex<Vec<JoinHandle<()>>>,
-    stream: TcpStream,
-) {
-    {
-        // Finished connections are joined as new ones come, so the list holds only the live ones.
-        let mut live = lock(joins);
-        let (done, running): (Vec<_>, Vec<_>) = std::mem::take(&mut *live)
-            .into_iter()
-            .partition(JoinHandle::is_finished);
-        *live = running;
-        drop(live);
-        for handle in done {
-            join_handle("cluster connection", handle);
-        }
-    }
-    if lock(joins).len() >= MAX_CONNECTIONS {
-        tracing::warn!("cluster listener is at {MAX_CONNECTIONS} connections; one was closed");
-        return;
-    }
-    let config = Arc::clone(config);
-    let factory = Arc::clone(factory);
-    let posts = Arc::clone(posts);
-    let stop = Arc::clone(stop);
-    let spawned = thread::Builder::new()
-        .name("moqui-cluster-conn".to_string())
-        .spawn(move || {
-            if let Err(err) = serve_conn(stream, config, factory, posts, stop) {
-                tracing::debug!(error = %err, "cluster connection closed");
-            }
-        });
-    match spawned {
-        Ok(handle) => lock(joins).push(handle),
-        Err(err) => tracing::warn!(error = %err, "cluster connection thread did not start"),
-    }
-}
-
-fn serve_conn(
-    stream: TcpStream,
-    config: Arc<rustls::ServerConfig>,
-    factory: Arc<ExecutionContextFactory>,
-    posts: Arc<Mutex<Vec<String>>>,
-    stop: Arc<AtomicBool>,
-) -> Result<(), String> {
-    let _ = stream.set_read_timeout(Some(READ_IDLE));
-    let _ = stream.set_write_timeout(Some(CLIENT_IO));
-    let _ = stream.set_nodelay(true);
-    let conn = rustls::ServerConnection::new(config).map_err(|err| err.to_string())?;
-    let tls = rustls::StreamOwned::new(conn, stream);
-    serve_exchanges(tls, ConnLimits::DEFAULT, &stop, |exchange| {
-        handle_exchange(&factory, &posts, exchange)
-    })
-}
-
-/// How long a cluster connection may wait on its peer.
-#[derive(Clone, Copy)]
-struct ConnLimits {
-    /// From accept to the end of the first request, the TLS handshake included. A peer that never presents its
-    /// certificate gives its slot back after this.
-    first: Duration,
-    /// From the end of one exchange to the start of the next. The sender reconnects to a peer that closed it.
-    idle: Duration,
-    /// From the first byte of a request to its last.
-    partial: Duration,
-}
-
-impl ConnLimits {
-    const DEFAULT: Self = Self {
-        first: CLIENT_IO,
-        idle: CONNECTION_IDLE,
-        partial: CLIENT_IO,
-    };
-}
-
-/// Answer the requests on one connection until it closes, a limit passes, or the listener stops. The stream's read
-/// timeout sets how often the limits and `stop` are checked.
-fn serve_exchanges<S: Read + Write>(
-    mut stream: S,
-    limits: ConnLimits,
-    stop: &AtomicBool,
-    mut handle: impl FnMut(&Exchange) -> u16,
-) -> Result<(), String> {
-    let mut buf = Vec::new();
-    let accepted = std::time::Instant::now();
-    // When the last exchange ended; none yet means the first request is still due.
-    let mut last_exchange: Option<std::time::Instant> = None;
-    // When a request began arriving: a pause inside one is waited out up to `partial`, not refused.
-    let mut partial_since: Option<std::time::Instant> = None;
-    while !stop.load(Ordering::SeqCst) {
-        match read_exchange(&mut stream, &mut buf) {
-            Ok(Some(exchange)) => {
-                partial_since = None;
-                let status = handle(&exchange);
-                write_status(&mut stream, status).map_err(|err| err.to_string())?;
-                last_exchange = Some(std::time::Instant::now());
-            }
-            Ok(None) => return Ok(()),
-            Err(IoFail::Timeout) if buf.is_empty() => {
-                partial_since = None;
-                match last_exchange {
-                    None if accepted.elapsed() > limits.first => {
-                        return Err("cluster connection sent no request".to_string());
-                    }
-                    Some(at) if at.elapsed() > limits.idle => return Ok(()),
-                    _ => {}
-                }
-            }
-            Err(IoFail::Timeout) => {
-                let since = *partial_since.get_or_insert_with(std::time::Instant::now);
-                if since.elapsed() > limits.partial || (last_exchange.is_none() && accepted.elapsed() > limits.first) {
-                    let _ = write_status(&mut stream, 400);
-                    return Err("cluster request was incomplete".to_string());
-                }
-            }
-            Err(IoFail::Closed) => return Ok(()),
-            Err(IoFail::TooLarge) => {
-                let _ = write_status(&mut stream, 413);
-                return Err("cluster body is too large".to_string());
-            }
-            Err(IoFail::Bad(message)) => {
-                let _ = write_status(&mut stream, 400);
-                return Err(message);
-            }
-        }
-    }
-    Ok(())
-}
-
-fn handle_exchange(factory: &Arc<ExecutionContextFactory>, posts: &Mutex<Vec<String>>, exchange: &Exchange) -> u16 {
-    let Some(topic) = cluster_topic(request_method(&exchange.start), request_path(&exchange.start)) else {
-        return 404;
-    };
-    apply_topic(factory, posts, topic, &exchange.body)
 }
 
 /// One topic message from a peer, by either transport: checked, counted, and applied on a request worker. The answer
@@ -584,17 +420,9 @@ fn server_name(host: &str) -> Result<ServerName<'static>, CoreError> {
     ServerName::try_from(host.to_string()).map_err(|_| CoreError::new(format!("cluster host {host} is not a DNS name")))
 }
 
+/// A peer's answer to a post: its status line. The body, if any, is read and dropped.
 struct Exchange {
     start: String,
-    body: Vec<u8>,
-}
-
-fn request_method(start: &str) -> &str {
-    start.split_whitespace().next().unwrap_or("")
-}
-
-fn request_path(start: &str) -> &str {
-    start.split_whitespace().nth(1).unwrap_or("")
 }
 
 enum IoFail {
@@ -631,9 +459,8 @@ fn take_exchange(stream: &mut impl Read, buf: &mut Vec<u8>, split: usize) -> Res
             return Err(IoFail::Closed);
         }
     }
-    let body = buf[split + 4..total].to_vec();
     buf.drain(..total);
-    Ok(Some(parse_exchange(&head, body)?))
+    Ok(Some(parse_exchange(&head)?))
 }
 
 fn read_some(stream: &mut impl Read, buf: &mut Vec<u8>) -> Result<usize, IoFail> {
@@ -659,12 +486,12 @@ fn read_some(stream: &mut impl Read, buf: &mut Vec<u8>) -> Result<usize, IoFail>
     }
 }
 
-fn parse_exchange(head: &str, body: Vec<u8>) -> Result<Exchange, IoFail> {
+fn parse_exchange(head: &str) -> Result<Exchange, IoFail> {
     let start = head.split("\r\n").next().unwrap_or("").to_string();
-    if request_method(&start).is_empty() || request_path(&start).is_empty() {
-        return Err(IoFail::Bad("cluster request line is empty".to_string()));
+    if start.split_whitespace().nth(1).is_none() {
+        return Err(IoFail::Bad("cluster status line is empty".to_string()));
     }
-    Ok(Exchange { start, body })
+    Ok(Exchange { start })
 }
 
 fn content_length(head: &str) -> Result<usize, IoFail> {
@@ -679,7 +506,8 @@ fn content_length(head: &str) -> Result<usize, IoFail> {
                 .map_err(|_| IoFail::Bad("cluster content-length is not a number".to_string()));
         }
     }
-    Err(IoFail::Bad("cluster message has no content-length".to_string()))
+    // an answer with no body, such as a 204, has none
+    Ok(0)
 }
 
 fn find_header_end(buf: &[u8]) -> Option<usize> {
@@ -692,20 +520,6 @@ fn status_code(start: &str) -> u16 {
         .nth(1)
         .and_then(|text| text.parse().ok())
         .unwrap_or(0)
-}
-
-fn write_status(stream: &mut impl Write, status: u16) -> std::io::Result<()> {
-    let reason = match status {
-        204 => "No Content",
-        400 => "Bad Request",
-        404 => "Not Found",
-        413 => "Payload Too Large",
-        503 => "Service Unavailable",
-        _ => "Error",
-    };
-    let bytes = format!("HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\nConnection: keep-alive\r\n\r\n");
-    stream.write_all(bytes.as_bytes())?;
-    stream.flush()
 }
 
 fn load_material() -> Result<Material, HostError> {
@@ -771,107 +585,6 @@ fn fingerprint_verifier(material: &Material, provider: &rustls::crypto::CryptoPr
     PinVerifier::new(Pin::Certificate(material.digest), true, provider)
 }
 
-fn join_handle(name: &str, handle: JoinHandle<()>) {
-    if handle.thread().id() == thread::current().id() {
-        std::mem::forget(handle);
-        return;
-    }
-    if handle.join().is_err() {
-        tracing::error!("{name} thread panicked");
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use std::io::{Read, Write};
-    use std::net::{TcpListener, TcpStream};
-    use std::sync::atomic::AtomicBool;
-    use std::time::{Duration, Instant};
-
-    use super::{listen_port, serve_exchanges, ConnLimits, READ_IDLE};
-
-    #[test]
-    fn the_https_body_limit_is_shared_and_rejected_before_reading_an_oversized_body() {
-        let max = moqui_core::cluster::MAX_CLUSTER_BODY;
-        let head = format!(
-            "POST /cluster/collab-update HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
-            max + 1
-        );
-        let split = head.len() - 4;
-        let mut buf = head.into_bytes();
-        assert!(matches!(
-            super::take_exchange(&mut std::io::empty(), &mut buf, split),
-            Err(super::IoFail::TooLarge)
-        ));
-        let body = vec![b'x'; max];
-        let head = format!("POST /cluster/collab-update HTTP/1.1\r\nContent-Length: {max}\r\n\r\n");
-        let split = head.len() - 4;
-        let mut buf = head.into_bytes();
-        buf.extend_from_slice(&body);
-        assert_eq!(
-            super::take_exchange(&mut std::io::empty(), &mut buf, split)
-                .ok()
-                .flatten()
-                .unwrap()
-                .body
-                .len(),
-            max
-        );
-    }
-
-    const SHORT: ConnLimits = ConnLimits {
-        first: Duration::from_millis(300),
-        idle: Duration::from_millis(600),
-        partial: Duration::from_millis(300),
-    };
-
-    /// The server end of a fresh connection, with the listener's read timeout, and the client end.
-    fn pair() -> (TcpStream, TcpStream) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (server, _) = listener.accept().unwrap();
-        server
-            .set_read_timeout(Some(READ_IDLE.min(Duration::from_millis(50))))
-            .unwrap();
-        (server, client)
-    }
-
-    #[test]
-    fn a_connection_that_sends_nothing_gives_its_slot_back() {
-        let (server, _client) = pair();
-        let started = Instant::now();
-        let ended = serve_exchanges(server, SHORT, &AtomicBool::new(false), |_| 204);
-        assert!(ended.is_err());
-        let elapsed = started.elapsed();
-        assert!(
-            elapsed >= SHORT.first && elapsed < Duration::from_secs(3),
-            "{elapsed:?}"
-        );
-    }
-
-    #[test]
-    fn a_kept_alive_connection_closes_once_idle() {
-        let (server, mut client) = pair();
-        let serving = std::thread::spawn(move || serve_exchanges(server, SHORT, &AtomicBool::new(false), |_| 204));
-        client
-            .write_all(b"POST /cluster/x HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}")
-            .unwrap();
-        let mut answer = [0_u8; 12];
-        client.read_exact(&mut answer).unwrap();
-        assert_eq!(&answer, b"HTTP/1.1 204");
-        let answered = Instant::now();
-        assert!(serving.join().unwrap().is_ok());
-        let elapsed = answered.elapsed();
-        assert!(
-            elapsed >= Duration::from_millis(500) && elapsed < Duration::from_secs(3),
-            "{elapsed:?}"
-        );
-    }
-
-    #[test]
-    fn empty_cluster_https_port_listens_on_8444_and_zero_is_ephemeral() {
-        assert_eq!(listen_port("").unwrap(), 8444);
-        assert_eq!(listen_port("0").unwrap(), 0);
-        assert!(listen_port("nope").is_err());
-    }
-}
+#[path = "tests.rs"]
+mod tests;

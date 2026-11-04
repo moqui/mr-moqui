@@ -34,7 +34,7 @@ use sha1::{Digest as _, Sha1};
 use super::accept::EdgeServer;
 use super::hosts::Mode;
 use super::{CLIENT_HEADER, PROTO_HEADER, TUNNEL_HEADER};
-use crate::http::{plain, Peer, TlsConnection};
+use crate::http::{plain, ExtendedConnect, Peer, TlsConnection};
 
 /// The offline page of a terminate host whose node's link is down, unless `edge_offline_page` names another.
 pub(crate) const DEFAULT_OFFLINE_PAGE: &str = r#"<!doctype html>
@@ -255,11 +255,13 @@ where
     B: hyper::body::Body<Data = bytes::Bytes> + Send + 'static,
     B::Error: Into<axum::BoxError>,
 {
-    // only a WebSocket upgrade becomes a CONNECT down the link: a client's own CONNECT is never forwarded
-    if request.method() == http::Method::CONNECT {
+    // only a WebSocket becomes a CONNECT down the link, by HTTP/1.1 upgrade or HTTP/2 extended CONNECT (RFC 8441): a
+    // client's own CONNECT is never forwarded
+    let h2_websocket = request.extensions().get::<ExtendedConnect>().is_some();
+    if request.method() == http::Method::CONNECT && !h2_websocket {
         return plain(405, "CONNECT is not served here");
     }
-    let websocket = is_websocket(&request);
+    let websocket = h2_websocket || is_websocket(&request);
     let (mut parts, body) = request.into_parts();
     let Some(host) = parts
         .headers
@@ -331,27 +333,36 @@ where
         server.count("moqui.edgelink.forwards", "terminate");
         return response.map(axum::body::Body::new);
     }
-    let (Some(on_upgrade), Some(key)) = (on_upgrade, key) else {
-        return plain(400, "a WebSocket upgrade without its key");
+    let Some(on_upgrade) = on_upgrade else {
+        return plain(400, "a WebSocket upgrade the connection cannot take");
+    };
+    // an HTTP/1.1 upgrade carries its key; an HTTP/2 extended CONNECT has none, and is answered 200 (RFC 8441 §5)
+    let key = match (h2_websocket, key) {
+        (true, _) => None,
+        (false, Some(key)) => Some(key),
+        (false, None) => return plain(400, "a WebSocket upgrade without its key"),
     };
     if !response.status().is_success() {
         return response.map(axum::body::Body::new);
     }
     let mut answer = Response::new(axum::body::Body::empty());
-    *answer.status_mut() = http::StatusCode::SWITCHING_PROTOCOLS;
-    let accept = websocket_accept(key.as_bytes());
     {
         let headers = answer.headers_mut();
-        headers.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
-        headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
-        if let Ok(accept) = HeaderValue::from_str(&accept) {
-            headers.insert(header::SEC_WEBSOCKET_ACCEPT, accept);
+        if let Some(key) = key {
+            headers.insert(header::CONNECTION, HeaderValue::from_static("upgrade"));
+            headers.insert(header::UPGRADE, HeaderValue::from_static("websocket"));
+            if let Ok(accept) = HeaderValue::from_str(&websocket_accept(key.as_bytes())) {
+                headers.insert(header::SEC_WEBSOCKET_ACCEPT, accept);
+            }
         }
         for name in [header::SEC_WEBSOCKET_PROTOCOL, header::SEC_WEBSOCKET_EXTENSIONS] {
             if let Some(value) = response.headers().get(&name) {
                 headers.insert(name, value.clone());
             }
         }
+    }
+    if !h2_websocket {
+        *answer.status_mut() = http::StatusCode::SWITCHING_PROTOCOLS;
     }
     let local = hyper::upgrade::on(response);
     tokio::spawn(async move {

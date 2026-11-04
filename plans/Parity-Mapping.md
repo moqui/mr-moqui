@@ -380,7 +380,7 @@ Framework service XML with no Rust body (`BasicServices`, `UserServices`, `Serve
 | `moqui-host/src/notws.rs` | `NotificationEndpoint` at `GET /notws`. The socket does not hold an execution context. | Port |
 | `moqui-host/src/tls.rs` | Public HTTPS certificates from `runtime/cert`. Java terminated TLS at a proxy. | Native |
 | `moqui-host/src/edge.rs` | Tokio runtime for PDF, SSH, SSO, and IPP. An execution-context thread never enters it. | Native |
-| `moqui-host/src/cluster_edge.rs` | Cluster HTTPS listener and peer client. [Cluster](archive/Cluster.md). | Redesign |
+| `moqui-host/src/cluster_edge/` | Cluster listener (gRPC or HTTP/1.1 by ALPN) and peer clients. [Cluster](archive/Cluster.md). | Redesign |
 | `moqui-host/src/lib.rs` | Process commands (`run`, `load`, `save-db`, `load-save`, `test`, `lint`, `types`, `convert`). | Partial |
 | `moqui/src/main.rs` | Binary entry. Calls `moqui_host::main`. Keeps linked component crates. | Native |
 

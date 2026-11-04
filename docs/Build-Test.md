@@ -76,7 +76,7 @@ build, with no features of its own.
 
 | Feature | Crate | What it gates | Lite | Enterprise | Maximal |
 |---|---|---|---|---|---|
-| `axum` | host | The HTTP server, its listeners and routes | yes | yes | yes |
+| `axum` | host | The HTTP server, its listeners and routes; HTTP/2 by ALPN on the HTTPS listener; the cluster port | yes | yes | yes |
 | `postgres` | host (`moqui-drivers`) | The Postgres driver | yes | yes | yes |
 | `embedded-postgres` | host (`moqui-drivers`) | The embedded Postgres clusters (entity, search, sim), `save-db`, `load-save`, backups, and `moqui test` when it opens a database (`--db fresh`, `snapshot`, or `existing`). `--db none` does not need it | yes | | yes |
 | `mysql` | host (`moqui-drivers`) | The MySQL driver | | yes | yes |
@@ -92,7 +92,7 @@ build, with no features of its own.
 | `sip` | host (`moqui-sip`; includes `rtc`) | Phone calls over SIP trunks: the SIP engine on rsipstack, its trunk registration and the RTP of phone legs, joined to the call media ([SIP](interfaces/SIP.md)); it starts only when `sip_port` or `sip_tls_port` is set, and the voice services run in every build (without it `get#VoiceCapabilities` says not supported). In Debug too | | yes | yes |
 | `channels` | host (`moqui-channels`) | Business messaging channels: the `sms` chat bridge adapter, SMS and MMS on the Telnyx Messaging API v2 ([SMS](interfaces/SMS.md)). The `/channels/` webhook and media routes are in every build with `axum` and answer only when `channels_webhooks_enabled` is true; without this feature no adapter answers them and an SMS bridge stays not connected. | | yes | yes |
 | `xmpp` | host (`moqui-xmpp`; includes `axum`) | XMPP for local users: client streams with STARTTLS, direct TLS and WebSocket, SASL2 with SCRAM-SHA-256-PLUS and FAST, rooms as MUC, history, PEP and uploads over Moqui chat ([XMPP](interfaces/XMPP.md)); it starts only when `xmpp_domain` is set. In Debug too | | yes | yes |
-| `grpc` | host (includes `telemetry`, `axum`) | The host's gRPC listener (tonic): the OTLP/gRPC receiver, opened only when `<telemetry><receiver grpc-enabled="true">` is set, and with `edge` the direct PASS authority ([Edge-Node](../plans/Edge-Node.md) §5.5) | | yes | yes |
+| `grpc` | host (includes `telemetry`, `axum`) | gRPC on tonic: the cluster's protocol on the cluster port (`cluster_protocol`, [Cluster](../plans/archive/Cluster.md)); the host's gRPC listener: the OTLP/gRPC receiver, opened only when `<telemetry><receiver grpc-enabled="true">` is set, and with `edge` the direct PASS authority ([Edge-Node](../plans/Edge-Node.md) §5.5) | yes | yes | yes |
 | `edge` | host (includes `grpc`) | The edge link ([Edge-Node](../plans/Edge-Node.md)): a local node's dialer when `edge_node_url` is set, and on an edge node (`node_role=edge`) the link's hand-off on the HTTPS listener, web access, delegated calls, the queue and replication; the PASS authority over gRPC (direct when `pass_authority_grpc_enabled=true`, and on the link) and scripts' `ec.service.passAuthority` | | yes | yes |
 | `devtools` | host, moqui-devkit (`watch`) | What only development needs ([design-dev-aide](../plans/design-dev-aide.md) 3.3): the framework's file watcher that reloads changed artifacts on a dev instance, and in the binary crates the dev-component crates of `runtime/dev-component`; in Maximal (the default) and Debug | | | yes |
 | `smtp` | host (`moqui-mail`) | Outbound mail: `send#EmailMessage`, `send#EmailTemplate`, password reset and notification mail | yes | yes | yes |
@@ -113,7 +113,8 @@ The definitions still load, so components, screens and service files are the sam
   `service <name>: <feature> is not built into this host` in the message facade (`rust_services::missing_feature`).
 - The host integrations report through the framework's existing messages: SFTP and SSO calls say no client is
   installed, network printing says it is not installed, and `cluster_transport=ssh` cannot start without the SSH
-  server. A cluster peer that advertises `ssh://` gets an error naming the missing feature.
+  server. A cluster peer that advertises `ssh://` gets an error naming the missing feature. Without `grpc` the
+  cluster port speaks only HTTP/1.1, which every member still takes, and `cluster_protocol=grpc` fails at startup.
 - An `xlsx` render fails with `xlsx is not built into this host`; an elFinder thumbnail is left out; a `git://`
   location has no provider, and `/git/...` is not routed.
 - gitECA rules are still read and checked; nothing runs them, since there are no git events.

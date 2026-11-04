@@ -20,9 +20,10 @@
 //! edge node's hook is the one the services reach.
 //!
 //! Through the edge node, in terminate mode (`term.localhost`) and passthrough mode (`pass.localhost`): an app page, a
-//! `/notws` WebSocket, a DAV PROPFIND and git's smart HTTP; in terminate mode the local node's web protection and its
-//! visit see the client the edge node believed. With the link down: the offline page, and passthrough refused. A PROXY
-//! header on the local node's own sockets is refused. The SSH tunnel port reaches the local node's SSH server.
+//! `/notws` WebSocket (by HTTP/1.1 upgrade and by HTTP/2 extended CONNECT), a DAV PROPFIND and git's smart HTTP; in
+//! terminate mode the local node's web protection and its visit see the client the edge node believed. With the link
+//! down: the offline page, and passthrough refused. A PROXY header on the local node's own sockets is refused. The SSH
+//! tunnel port reaches the local node's SSH server.
 
 #![cfg(all(unix, feature = "edge", feature = "ssh", feature = "embedded-postgres"))]
 
@@ -93,7 +94,11 @@ pub(crate) fn issue(authority: &Authority, names: &[&str]) -> (String, String) {
 }
 
 /// An EdgeServices service on the edge node, as an administrator.
-pub(crate) fn call(gate: &Gate, verb_noun: &str, parameters: &[(&str, &str)]) -> Result<BTreeMap<String, Value>, String> {
+pub(crate) fn call(
+    gate: &Gate,
+    verb_noun: &str,
+    parameters: &[(&str, &str)],
+) -> Result<BTreeMap<String, Value>, String> {
     let factory = gate.server.factory();
     let context = factory.new_context();
     let _entered = context.enter();
@@ -268,6 +273,74 @@ fn websocket(
     })
 }
 
+/// Open `/notws` with a login key by HTTP/2 extended CONNECT (RFC 8441) over `port` for `host`, as a browser on HTTP/2
+/// does, then trade a ping for a pong: the answer's status.
+fn h2_websocket(rt: &tokio::runtime::Runtime, root: &CertificateDer<'static>, port: u16, host: &str, key: &str) -> u16 {
+    rt.block_on(async {
+        let mut config = (*client_config(root)).clone();
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        let stream = browser(&Arc::new(config), port, host).await.unwrap();
+        assert_eq!(
+            stream.get_ref().1.alpn_protocol(),
+            Some(b"h2".as_slice()),
+            "{host} chose h2"
+        );
+        let (mut send, connection) = hyper::client::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+            .handshake(hyper_util::rt::TokioIo::new(stream))
+            .await
+            .unwrap();
+        tokio::spawn(connection);
+        let request = || {
+            http::Request::connect(format!("https://{host}/notws"))
+                .version(http::Version::HTTP_2)
+                .header("sec-websocket-version", "13")
+                .header("login_key", key)
+                .extension(hyper::ext::Protocol::from_static("websocket"))
+                .body(axum::body::Body::empty())
+                .unwrap()
+        };
+        // the server's SETTINGS, which allow extended CONNECT, may come just after the handshake
+        let mut answered = None;
+        for _ in 0..40 {
+            send.ready().await.unwrap();
+            match send.send_request(request()).await {
+                Ok(response) => {
+                    answered = Some(response);
+                    break;
+                }
+                Err(_) => tokio::time::sleep(Duration::from_millis(50)).await,
+            }
+        }
+        let response = answered.expect("the extended CONNECT was sent");
+        let status = response.status().as_u16();
+        if status != 200 {
+            return status;
+        }
+        let upgraded = hyper::upgrade::on(response).await.unwrap();
+        let mut stream = hyper_util::rt::TokioIo::new(upgraded);
+        // a masked ping with "edge" (RFC 6455 §5.2)
+        let mask = [1_u8, 2, 3, 4];
+        let mut frame = vec![0x89, 0x80 | 4];
+        frame.extend_from_slice(&mask);
+        frame.extend(b"edge".iter().zip(mask.iter().cycle()).map(|(byte, mask)| byte ^ mask));
+        stream.write_all(&frame).await.unwrap();
+        loop {
+            let mut start = [0_u8; 2];
+            tokio::time::timeout(Duration::from_secs(10), stream.read_exact(&mut start))
+                .await
+                .expect("a frame back")
+                .unwrap();
+            let mut payload = vec![0_u8; usize::from(start[1] & 0x7F)];
+            stream.read_exact(&mut payload).await.unwrap();
+            if start[0] & 0x0F == 0xA {
+                assert_eq!(payload, b"edge");
+                break;
+            }
+        }
+        status
+    })
+}
+
 fn has_header(head: &str, name: &str, value: &str) -> bool {
     head.lines().any(|line| {
         line.split_once(':')
@@ -412,6 +485,13 @@ fn the_apps_reach_the_local_node_through_the_edge_node_in_both_modes() {
             has_header(&head, "sec-websocket-accept", "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="),
             "{host}: {head}"
         );
+        // the same socket from a browser on HTTP/2: the edge node's front (terminate) or the local node's listener
+        // (passthrough) takes the extended CONNECT
+        assert_eq!(
+            h2_websocket(&rt, &authority.root, edge_port, host, &login_key),
+            200,
+            "{host}"
+        );
         // DAV
         let propfind = request(
             "PROPFIND",
@@ -503,8 +583,15 @@ fn the_apps_reach_the_local_node_through_the_edge_node_in_both_modes() {
         ],
     );
     assert_eq!(https(&rt, &tls, edge_port, TERM, &again).0, 200);
-    assert!(visits_from(&local, "198.51.100.8") >= 1, "the local node's visit is not from the believed client");
-    assert_eq!(visits_from(&local, "203.0.113.1"), 0, "the local node took the forged client header");
+    assert!(
+        visits_from(&local, "198.51.100.8") >= 1,
+        "the local node's visit is not from the believed client"
+    );
+    assert_eq!(
+        visits_from(&local, "203.0.113.1"),
+        0,
+        "the local node took the forged client header"
+    );
     // and the other way: a forged allowed address does not lift the local node's denial of the believed client
     let hiding = request(
         "GET",

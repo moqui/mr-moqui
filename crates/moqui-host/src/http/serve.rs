@@ -15,16 +15,27 @@
 //! Serving one connection and one request (plans/Edge-Node.md §5.3): what a request is served with ([`WebApp`]), where
 //! it came from ([`Peer`]), the per-request checks and the router or an edge node's forward ([`serve_request`]), shared
 //! by the listeners, the edge link's down connection and its passthrough tunnels ([`serve_tunneled`]).
+//!
+//! A connection is HTTP/1.1, or HTTP/2 when its TLS handshake chose `h2` ([`Http`], [`run_connection`]). An HTTP/2
+//! request is put in the form the app reads from HTTP/1.1 ([`h2_request_form`]); a gRPC call of a service the HTTPS
+//! listener carries goes to it before the router ([`WebApp::grpc`]); a connection with no request for the header
+//! timeout is closed with a GOAWAY, and so is one whose answer asks to close it (web protection's refusals).
 
 use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
+use std::time::Instant;
+
 use axum::extract::ConnectInfo;
 use axum::response::Response;
 use axum::Router;
-use hyper_util::rt::{TokioIo, TokioTimer};
+use http::header::{self, HeaderValue};
+use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
+use moqui_lib::sync::lock;
 use tower::ServiceExt as _;
 
 use super::{forwarded_https, plain, ClientAddr, HttpsRequest, ListenLimits, TlsConnection};
@@ -39,6 +50,10 @@ pub(crate) struct WebApp {
     pub guard: Arc<Guard>,
     /// On an edge node: the terminate host names, whose requests go down a local node's link.
     pub edge: Option<Arc<crate::edge_link::WebFront>>,
+    /// The gRPC services the HTTPS listener carries over HTTP/2 (the OTLP receiver's and the PASS authority's, those
+    /// that are on), which a gRPC call goes to instead of the router.
+    #[cfg(feature = "grpc")]
+    pub grpc: Option<tonic::service::Routes>,
 }
 
 impl WebApp {
@@ -48,6 +63,26 @@ impl WebApp {
             limits,
             guard,
             edge: None,
+            #[cfg(feature = "grpc")]
+            grpc: None,
+        }
+    }
+}
+
+/// Which HTTP a connection speaks: HTTP/2 when its TLS handshake chose `h2`, else HTTP/1.1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Http {
+    One,
+    Two,
+}
+
+impl Http {
+    /// The protocol `session`'s handshake chose.
+    pub(crate) fn of(session: &rustls::ServerConnection) -> Self {
+        if session.alpn_protocol() == Some(b"h2".as_slice()) {
+            Self::Two
+        } else {
+            Self::One
         }
     }
 }
@@ -107,6 +142,91 @@ pub(crate) fn http1_builder(limits: &ListenLimits) -> hyper::server::conn::http1
     builder
 }
 
+/// HTTP/2 PINGs this often find a client that went away; one not answered in [`H2_PING_TIMEOUT`] closes the
+/// connection.
+const H2_PING_EVERY: Duration = Duration::from_secs(30);
+const H2_PING_TIMEOUT: Duration = Duration::from_secs(20);
+/// Streams a client may reset before the server has taken them, the rapid-reset bound (h2's default, set here).
+const H2_PENDING_RESETS: usize = 20;
+/// Streams the server may reset for a client's protocol errors before the connection is closed (hyper's default).
+const H2_ERROR_RESETS: usize = 1024;
+/// How often, at most, an HTTP/2 connection checks whether it has been idle for the header timeout.
+const H2_IDLE_CHECK: Duration = Duration::from_secs(5);
+
+/// The HTTP/2 connection settings of the HTTPS listener, from `limits`: WebSockets by extended CONNECT (RFC 8441),
+/// `http2-max-streams` streams at once, and the request head bounded by `max-header-bytes`.
+pub(crate) fn http2_builder(limits: &ListenLimits) -> hyper::server::conn::http2::Builder<TokioExecutor> {
+    let mut builder = hyper::server::conn::http2::Builder::new(TokioExecutor::new());
+    builder
+        .timer(TokioTimer::new())
+        .keep_alive_interval(H2_PING_EVERY)
+        .keep_alive_timeout(H2_PING_TIMEOUT)
+        .enable_connect_protocol()
+        .max_concurrent_streams(limits.http2_max_streams)
+        .max_header_list_size(u32::try_from(limits.max_header_bytes).unwrap_or(u32::MAX))
+        .max_pending_accept_reset_streams(H2_PENDING_RESETS)
+        .max_local_error_reset_streams(H2_ERROR_RESETS);
+    builder
+}
+
+/// An HTTP/2 request in the form the app reads from HTTP/1.1: `Host` from `:authority` when it has none, the URI in
+/// origin form, and a WebSocket's extended CONNECT (RFC 8441) marked [`ExtendedConnect`].
+pub(crate) fn h2_request_form<B>(request: &mut http::Request<B>) {
+    if !request.headers().contains_key(header::HOST) {
+        if let Some(host) = request
+            .uri()
+            .authority()
+            .and_then(|authority| HeaderValue::from_str(authority.as_str()).ok())
+        {
+            request.headers_mut().insert(header::HOST, host);
+        }
+    }
+    let path = request.uri().path_and_query().map_or("/", |path| path.as_str());
+    if let Ok(origin_form) = path.parse::<http::Uri>() {
+        *request.uri_mut() = origin_form;
+    }
+    let websocket = request.method() == http::Method::CONNECT
+        && request
+            .extensions()
+            .get::<hyper::ext::Protocol>()
+            .is_some_and(|protocol| protocol.as_str() == "websocket");
+    if websocket {
+        request.extensions_mut().insert(ExtendedConnect);
+    }
+}
+
+/// Requests in flight on one connection, and when the last one ended, to close a connection that sits idle.
+pub(crate) struct Activity {
+    in_flight: AtomicUsize,
+    last: Mutex<Instant>,
+}
+
+impl Activity {
+    pub(crate) fn new() -> Self {
+        Self {
+            in_flight: AtomicUsize::new(0),
+            last: Mutex::new(Instant::now()),
+        }
+    }
+
+    pub(crate) fn started(&self) {
+        self.in_flight.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub(crate) fn ended(&self) {
+        *lock(&self.last) = Instant::now();
+        self.in_flight.fetch_sub(1, Ordering::SeqCst);
+    }
+
+    /// How long the connection has had no request in flight; zero while one is.
+    pub(crate) fn idle_for(&self) -> Duration {
+        if self.in_flight.load(Ordering::SeqCst) > 0 {
+            return Duration::ZERO;
+        }
+        lock(&self.last).elapsed()
+    }
+}
+
 /// Serve an HTTPS connection that came another way than the listener as the listener serves its own: the edge link's
 /// passthrough tunnel, whose client `remote` its PROXY header named (plans/Edge-Node.md §5.3). The caller has had the
 /// guard admit the client, before the TLS handshake; `closing` turning true shuts the connection down gracefully.
@@ -123,6 +243,7 @@ pub(crate) async fn serve_tunneled<S>(
     let exporter = moqui_xmpp::conn::exporter(stream.get_ref().1).map(Arc::new);
     #[cfg(not(feature = "xmpp"))]
     let exporter = None;
+    let http = Http::of(stream.get_ref().1);
     let serving = Serving {
         remote,
         builder: http1_builder(&web.limits),
@@ -130,7 +251,7 @@ pub(crate) async fn serve_tunneled<S>(
         closing,
         exporter,
     };
-    run_connection(stream, true, serving).await;
+    run_connection(stream, true, http, serving).await;
 }
 
 /// What one connection is served with.
@@ -143,7 +264,18 @@ pub(crate) struct Serving {
     pub exporter: Option<Arc<Vec<u8>>>,
 }
 
-pub(crate) async fn run_connection<S>(stream: S, secure: bool, serving: Serving)
+/// Serve one connection as `http` until it closes or `serving.closing` turns true, then shut it down gracefully.
+pub(crate) async fn run_connection<S>(stream: S, secure: bool, http: Http, serving: Serving)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    match http {
+        Http::One => run_http1(stream, secure, serving).await,
+        Http::Two => run_http2(stream, serving).await,
+    }
+}
+
+async fn run_http1<S>(stream: S, secure: bool, serving: Serving)
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
@@ -181,6 +313,133 @@ where
             let _ = connection.await;
         }
     }
+}
+
+type Answer = std::pin::Pin<Box<dyn Future<Output = Result<Response, std::convert::Infallible>> + Send>>;
+
+/// An HTTP/2 connection, which is always over this process's TLS.
+async fn run_http2<S>(stream: S, serving: Serving)
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let Serving {
+        remote,
+        web,
+        mut closing,
+        exporter,
+        ..
+    } = serving;
+    let idle_limit = web.limits.header;
+    let builder = http2_builder(&web.limits);
+    let activity = Arc::new(Activity::new());
+    // an answer that asks to close its connection (a web protection refusal) turns this true
+    let (close, mut close_asked) = tokio::sync::watch::channel(false);
+    let service = {
+        let activity = Arc::clone(&activity);
+        hyper::service::service_fn(move |mut request: hyper::Request<hyper::body::Incoming>| -> Answer {
+            activity.started();
+            h2_request_form(&mut request);
+            let answer = h2_answer(&web, request, remote, exporter.clone());
+            let (activity, close) = (Arc::clone(&activity), close.clone());
+            Box::pin(async move {
+                let mut response = answer.await?;
+                activity.ended();
+                // HTTP/2 has no Connection header: the connection is shut down with a GOAWAY instead
+                let closes = response
+                    .headers()
+                    .get(header::CONNECTION)
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|value| value.eq_ignore_ascii_case("close"));
+                if closes {
+                    response.headers_mut().remove(header::CONNECTION);
+                    let _ = close.send(true);
+                }
+                Ok(response)
+            })
+        })
+    };
+    let connection = builder.serve_connection(TokioIo::new(Lingering::new(stream)), service);
+    let mut connection = std::pin::pin!(connection);
+    let mut check = tokio::time::interval(idle_limit.map_or(H2_IDLE_CHECK, |limit| limit.min(H2_IDLE_CHECK)));
+    let mut shutting = false;
+    loop {
+        tokio::select! {
+            result = connection.as_mut() => {
+                if let Err(err) = result {
+                    tracing::trace!("http/2 connection from {remote} ended: {err}");
+                }
+                return;
+            }
+            _ = closing.changed(), if !shutting => {
+                shutting = true;
+                connection.as_mut().graceful_shutdown();
+            }
+            _ = close_asked.changed(), if !shutting => {
+                shutting = true;
+                connection.as_mut().graceful_shutdown();
+            }
+            _ = check.tick(), if !shutting && idle_limit.is_some() => {
+                if idle_limit.is_some_and(|limit| activity.idle_for() >= limit) {
+                    shutting = true;
+                    connection.as_mut().graceful_shutdown();
+                }
+            }
+        }
+    }
+}
+
+/// One HTTP/2 request: a gRPC call of a service the listener carries, else [`serve_request`].
+fn h2_answer(
+    web: &WebApp,
+    request: hyper::Request<hyper::body::Incoming>,
+    remote: SocketAddr,
+    exporter: Option<Arc<Vec<u8>>>,
+) -> Answer {
+    #[cfg(feature = "grpc")]
+    if let Some(grpc) = grpc_routes(web, &request) {
+        let mut request = request;
+        // the PASS authority reads the client's address from this (`crate::pass_authority`)
+        request.extensions_mut().insert(remote);
+        let call = grpc.oneshot(request);
+        return Box::pin(async move {
+            match call.await {
+                Ok(response) => Ok(response.map(axum::body::Body::new)),
+                Err(never) => match never {},
+            }
+        });
+    }
+    let client = web.guard.client_of(remote.ip(), request.headers());
+    let peer = Peer {
+        remote,
+        client,
+        secure: true,
+        https: true,
+        exporter,
+    };
+    Box::pin(serve_request(web, request, &peer))
+}
+
+/// The listener's gRPC services for `request`, when it is a gRPC call (not gRPC-Web) and they are on. A request for an
+/// edge node's terminate host is not one: it goes down its node's link as any other.
+#[cfg(feature = "grpc")]
+fn grpc_routes<B>(web: &WebApp, request: &http::Request<B>) -> Option<tonic::service::Routes> {
+    let routes = web.grpc.as_ref()?;
+    let grpc = request
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            value == "application/grpc"
+                || value.starts_with("application/grpc+")
+                || value.starts_with("application/grpc;")
+        });
+    if !grpc {
+        return None;
+    }
+    if web.edge.as_ref().is_some_and(|front| front.target(request).is_some()) {
+        return None;
+    }
+    Some(routes.clone())
 }
 
 /// Serve one request with `web`, from `peer`: the URI length and web protection checks, then on an edge node the
@@ -396,3 +655,7 @@ impl<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static> D
         });
     }
 }
+
+#[cfg(all(test, feature = "grpc"))]
+#[path = "serve_tests.rs"]
+mod tests;

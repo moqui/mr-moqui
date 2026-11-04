@@ -509,8 +509,8 @@ external database.
 | Port | Listener | Default | Properties |
 |---|---|---|---|
 | 8080 | HTTP | On, every address | `webapp_http_port`, `webapp_http_bind` |
-| 8443 | HTTPS, certificates from `runtime/cert` | On when there is a certificate (dev makes one) | `webapp_https_listen_port` (`off`) |
-| 8444 | Cluster HTTPS, client certificate required | On in every serving process, every address | `cluster_https_port`, `cluster_bind_address` |
+| 8443 | HTTPS, certificates from `runtime/cert`; HTTP/2 or HTTP/1.1 by ALPN, and gRPC over HTTP/2 when a gRPC service is on | On when there is a certificate (dev makes one) | `webapp_https_listen_port` (`off`), `webapp_http2` |
+| 8444 | Cluster: TLS with the cluster certificate, client certificate required; gRPC on HTTP/2, or HTTP/1.1 | On in every serving process, every address | `cluster_https_port`, `cluster_bind_address`, `cluster_protocol` |
 | `ssh_port` | SSH: SFTP, git, admin shell, the apps (`ssh -p 2222 john.doe@localhost` in dev) | Off; 2222 on 127.0.0.1 in the dev conf | `ssh_port`, `ssh_host` |
 | `smtp_listen_port` | Inbound SMTP behind a mail gateway ([Mail-Inbound](interfaces/Mail-Inbound.md)) | Off; Maximal and Enterprise only | `smtp_listen_port`, `smtp_listen_host` |
 | `rtc_media_port` (UDP) | Call media: every browser leg of a call through the SFU ([WebRTC](interfaces/WebRTC.md)); with `rtc_cascade_enabled`, the relay links between the media nodes of a call too, so the nodes must reach each other's | Off; Maximal, Enterprise and Debug only | `rtc_media_port`, `rtc_media_host`, `rtc_public_address`, `rtc_cascade_enabled` |
@@ -524,6 +524,21 @@ XMPP clients find the server by DNS: `_xmpp-client._tcp.<domain>` (5222, STARTTL
 `rooms.<domain>` and `upload.<domain>` (a wildcard of the domain does). `_xmpp-server._tcp` waits for federation (C3b).
 
 `/health` answers `{"ready":true}` to loopback and to the addresses in `webapp_status_ips`, and 404 to everyone else.
+
+### HTTP/2
+
+The HTTPS listener offers HTTP/2 and HTTP/1.1 by ALPN, so browsers and other clients that speak HTTP/2 use it; the
+plain HTTP listener is HTTP/1.1 only. `webapp_http2=false` keeps HTTPS to HTTP/1.1.
+
+- **WebSockets** (`/notws`, `/callws`, `/termws`, `/xmpp-websocket`) open on an HTTP/2 connection by extended CONNECT
+  (RFC 8441), or on a connection of their own over HTTP/1.1, as the client chooses.
+- **gRPC.** When the OTLP/gRPC receiver or the PASS authority's gRPC is on, the HTTPS listener takes their calls over
+  HTTP/2 too, so a client can use the HTTPS port instead of 4317; the gRPC listener stays.
+- **Limits.** One HTTP/2 connection carries at most `webapp_http2_max_streams` (100) requests at once. One with no
+  request for `webapp_header_timeout` (30 seconds) is closed with a GOAWAY, as an idle HTTP/1.1 connection is closed,
+  and so is a client's connection when web protection refuses that client.
+- **Behind a proxy**, HTTP/2 is between the client and the proxy; the proxy may reach the server over HTTP/1.1 or, on
+  the HTTPS port, over HTTP/2 (gRPC through a proxy needs HTTP/2 to the server).
 
 ### Certificates
 
@@ -956,8 +971,9 @@ node pairs and runs the wizard as with a dedicated edge node (above), and sees n
 ## Cluster
 
 Several members share one database and run behind a load balancer. Members find each other in the
-`moqui.server.ClusterMember` table, with heartbeats on the database clock; there is no Hazelcast or Redis. Over HTTPS
-with client certificates they send each other entity cache clears, notifications, co-editing updates and session ends.
+`moqui.server.ClusterMember` table, with heartbeats on the database clock; there is no Hazelcast or Redis. Over gRPC on
+TLS with client certificates they send each other entity cache clears, notifications, co-editing updates, session ends
+and call signaling.
 Sessions are rows in the shared database, so any member can serve any request.
 
 ```
@@ -1003,9 +1019,19 @@ Sessions are rows in the shared database, so any member can serve any request.
 
 | Value | How |
 |---|---|
-| empty (default) | HTTPS POST to `cluster_base_url` |
+| empty (default) | Its cluster port at `cluster_base_url` (8444): TLS with the cluster certificate, then gRPC or HTTP/1.1 (below) |
 | `notify` | Postgres `LISTEN`/`NOTIFY` on the shared database, for members that cannot connect to each other; needs Postgres |
 | `ssh` | Through the member's SSH server (`ssh_port`); needs the `ssh` feature |
+
+On the cluster port TLS picks the protocol by ALPN. `cluster_protocol` sets what a member speaks there, as listener and
+as sender:
+
+| Value | How |
+|---|---|
+| empty (default), `grpc` | gRPC on HTTP/2 (`moqui.cluster.v1.Cluster`): each peer gets what was waiting for it as one call. A peer that does not choose HTTP/2 is posted to over HTTP/1.1 |
+| `rest` | HTTP/1.1 only: `POST /cluster/{topic}`, one message each |
+
+Members on different settings, or of different builds, still reach each other: the HTTP/1.1 POST is always there.
 
 ### What is shared and what is not
 
@@ -1062,7 +1088,9 @@ edge node as the PASS server, the local node's Edge Node wizard writes the clien
    For gRPC clients, set `pass_authority_grpc_enabled=true`: the gRPC listener (`pass_authority_grpc_port`, 4317) then
    takes PASS calls, with the client's ID and secret in metadata and TLS from the HTTPS listener's certificate. With no
    certificate in `cert/` the listener falls back to plain h2c, and then takes PASS calls only on a loopback address
-   (an error is logged otherwise), unless `pass_authority_grpc_insecure=true` says to send the secrets in clear.
+   (an error is logged otherwise), unless `pass_authority_grpc_insecure=true` says to send the secrets in clear. The
+   HTTPS listener takes the same calls over [HTTP/2](#http2), so a PASS server's `pass_backend_grpc_url` can name the
+   HTTPS port (`grpcs://boss.example.com:443`) and no other port needs to be open.
 3. Create the sites and bind their hosts and mounts with `mantle.public.SiteServices.create#Site` and `store#Mounts`
    (Deployment.md, Provisioning).
 4. When web protection is on (`webapp_trusted_proxies` set, or `webapp_web_protection=true`), exempt the PASS servers,

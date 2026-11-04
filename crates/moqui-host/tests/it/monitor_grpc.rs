@@ -223,3 +223,128 @@ fn each_signal_over_grpc_with_the_ingest_key_limits_and_partial_success() {
         );
     }
 }
+
+fn pem(label: &str, der: &[u8]) -> String {
+    use base64::Engine as _;
+    let body = base64::engine::general_purpose::STANDARD.encode(der);
+    let mut text = format!("-----BEGIN {label}-----\n");
+    for line in body.as_bytes().chunks(64) {
+        text.push_str(std::str::from_utf8(line).unwrap());
+        text.push('\n');
+    }
+    text.push_str(&format!("-----END {label}-----\n"));
+    text
+}
+
+/// A generated gRPC client's channel on an HTTP/2 connection of the test's own (TLS to the HTTPS listener).
+#[derive(Clone)]
+struct H2(hyper::client::conn::http2::SendRequest<tonic::body::Body>);
+
+impl tower::Service<http::Request<tonic::body::Body>> for H2 {
+    type Response = http::Response<hyper::body::Incoming>;
+    type Error = hyper::Error;
+    type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut std::task::Context<'_>) -> std::task::Poll<Result<(), Self::Error>> {
+        self.0.poll_ready(cx)
+    }
+
+    fn call(&mut self, request: http::Request<tonic::body::Body>) -> Self::Future {
+        Box::pin(self.0.send_request(request))
+    }
+}
+
+/// The HTTPS listener takes OTLP/gRPC over HTTP/2 as the gRPC listener does, with the same ingest key check, so a
+/// sender can use the HTTPS port instead of 4317 (docs/Run-Deploy.md, HTTP/2).
+#[test]
+fn otlp_over_grpc_on_the_https_port() {
+    if !common::own_process() {
+        return;
+    }
+    let key = rcgen::KeyPair::generate().unwrap();
+    let cert = rcgen::CertificateParams::new(vec!["localhost".to_string()])
+        .unwrap()
+        .self_signed(&key)
+        .unwrap();
+    let (cert_pem, key_pem) = (pem("CERTIFICATE", cert.der()), pem("PRIVATE KEY", &key.serialize_der()));
+    let gate = common::start_with_conf_files(
+        "monitor-grpc-https",
+        None,
+        r#"<telemetry sample-ratio="0"><receiver grpc-enabled="true" grpc-port="0"/></telemetry>"#,
+        &[("webapp_https_listen_port", "0")],
+        &[("cert/localhost.crt", &cert_pem), ("cert/localhost.key", &key_pem)],
+    );
+    let factory = gate.server.factory();
+    let context = factory.new_context();
+    let _entered = context.enter();
+    moqui_core::user::internal_login_user("john.doe").unwrap();
+    let key = moqui_core::service::sync(
+        "org.moqui.monitor.MonitorServices.create#IngestKey",
+        &[("source".to_string(), Value::string("grpc-fixture"))]
+            .into_iter()
+            .collect(),
+    )
+    .unwrap();
+    let token = key.get("accessToken").and_then(Value::as_str).unwrap().to_owned();
+    let https = gate
+        .server
+        .https_address()
+        .expect("the HTTPS listener, on the dev certificate");
+    use rustls::pki_types::pem::PemObject as _;
+    let mut roots = rustls::RootCertStore::empty();
+    roots
+        .add(rustls::pki_types::CertificateDer::from_pem_slice(cert_pem.as_bytes()).unwrap())
+        .unwrap();
+    let mut config =
+        rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
+    config.alpn_protocols = vec![b"h2".to_vec()];
+    let now = u64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let tcp = tokio::net::TcpStream::connect(https).await.unwrap();
+        let tls = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config))
+            .connect(rustls::pki_types::ServerName::try_from("localhost").unwrap(), tcp)
+            .await
+            .unwrap();
+        assert_eq!(tls.get_ref().1.alpn_protocol(), Some(b"h2".as_slice()));
+        let (send, connection) = hyper::client::conn::http2::Builder::new(hyper_util::rt::TokioExecutor::new())
+            .handshake(hyper_util::rt::TokioIo::new(tls))
+            .await
+            .unwrap();
+        tokio::spawn(connection);
+        let mut client = TraceServiceClient::with_origin(H2(send), "https://localhost".parse().unwrap());
+        let refused = client
+            .export(tonic::Request::new(traces(vec![span("grpc-https-span", now)])))
+            .await
+            .unwrap_err();
+        assert_eq!(refused.code(), tonic::Code::Unauthenticated, "{refused}");
+        let answer = client
+            .export(authorized(traces(vec![span("grpc-https-span", now)]), &token))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(answer.partial_success.is_none(), "{answer:?}");
+    });
+    moqui_core::telemetry::for_factory(factory).flush();
+    let search = moqui_core::search::installed(factory).unwrap();
+    let found = search
+        .search(
+            &moqui_core::search::Target::Index("otel_spans".into()),
+            &moqui_core::search::SearchRequest::new(moqui_core::search::Query::eq(
+                "name",
+                Value::string("grpc-https-span"),
+            )),
+        )
+        .unwrap();
+    assert!(
+        !found.hits.is_empty(),
+        "the span sent over the HTTPS port was not stored"
+    );
+}

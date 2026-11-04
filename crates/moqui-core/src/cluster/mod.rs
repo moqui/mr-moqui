@@ -17,7 +17,9 @@
 //!
 //! Fan-out is not done on the thread that published: the message goes on a queue, and one sender thread posts it to
 //! the live peers, as `plans/archive/Cluster.md` says. Invalidations waiting together are sent once per entity, since a peer
-//! clears the entity's whole cache for one. The peer list is kept and read again on the heartbeat tick.
+//! clears the entity's whole cache for one. Each peer gets what was waiting as one batch, in order
+//! ([`Sender::post_batch`]: one gRPC call, or one POST after another), and several peers are posted to at once. The
+//! peer list is kept and read again on the heartbeat tick.
 //!
 //! Each factory keeps its own state (sender, member id, queue, peers): a write or notification fans out only to the
 //! peers of the factory whose entity facade made it, so two factories in one process do not post for each other.
@@ -170,10 +172,37 @@ impl PostOutcome {
     }
 }
 
-/// Posts one topic message to a peer. Errors represent retryable transport or server failures.
+/// What a peer did with a batch from [`Sender::post_batch`]: the outcome of each of the first `outcomes.len()` messages,
+/// in order, and, when not every message has one, why the rest were not applied (a transport failure or a busy peer),
+/// so they are sent again, still in order.
+#[derive(Debug)]
+pub struct BatchOutcome {
+    pub outcomes: Vec<PostOutcome>,
+    pub failed: Option<Error>,
+}
+
+/// Posts topic messages to a peer. Errors represent retryable transport or server failures.
 pub trait Sender: Send + Sync {
     /// `base_url` has no trailing slash. `topic` is the topic name, not a path.
     fn post(&self, base_url: &str, topic: &str, payload: &[u8]) -> Result<PostOutcome, Error>;
+
+    /// Post `messages` (topic, payload) to one peer, in order, stopping at the first that fails retryably: those after it
+    /// are not applied. This posts them one at a time; a transport that carries several in one exchange (gRPC) does so.
+    fn post_batch(&self, base_url: &str, messages: &[(&str, &[u8])]) -> BatchOutcome {
+        let mut outcomes = Vec::with_capacity(messages.len());
+        for (topic, payload) in messages {
+            match self.post(base_url, topic, payload) {
+                Ok(outcome) => outcomes.push(outcome),
+                Err(err) => {
+                    return BatchOutcome {
+                        outcomes,
+                        failed: Some(err),
+                    }
+                }
+            }
+        }
+        BatchOutcome { outcomes, failed: None }
+    }
 }
 
 /// Replace `factory`'s sender. A later call replaces the previous one.
@@ -648,22 +677,45 @@ fn send_batch(state: &ClusterState, batch: &[(&'static str, TopicMessage)]) {
         }
         return;
     };
-    for (topic, message) in batch {
-        let payload = match payload_bytes(message) {
-            Ok(bytes) => bytes,
+    let payloads: Vec<(&str, Vec<u8>)> = batch
+        .iter()
+        .filter_map(|(topic, message)| match payload_bytes(message) {
+            Ok(bytes) => Some((*topic, bytes)),
             Err(err) => {
                 tracing::warn!(topic, error = %err, "cluster fan-out message was skipped");
-                continue;
+                None
             }
-        };
-        for base_url in &peers {
-            if peer_down(state, base_url) {
-                continue;
-            }
-            if !post_with_retry(&sender, base_url, topic, &payload) {
-                mark_peer_down(state, base_url);
-            }
+        })
+        .collect();
+    if payloads.is_empty() {
+        return;
+    }
+    let live: Vec<&str> = peers
+        .iter()
+        .map(String::as_str)
+        .filter(|base_url| !peer_down(state, base_url))
+        .collect();
+    let send = |base_url: &str| {
+        if !post_batch_with_retry(&sender, base_url, &payloads) {
+            mark_peer_down(state, base_url);
         }
+    };
+    // Each peer gets the whole batch in order; with more than one they are posted to at once, so a slow or unreachable
+    // peer does not hold up the others.
+    match live.as_slice() {
+        [] => {}
+        [only] => send(only),
+        several => std::thread::scope(|scope| {
+            for base_url in several {
+                let spawned = std::thread::Builder::new()
+                    .name("moqui-cluster-peer".to_string())
+                    .spawn_scoped(scope, || send(base_url));
+                if let Err(err) = spawned {
+                    tracing::warn!("cluster peer send thread did not start, so {base_url} is posted to inline: {err}");
+                    send(base_url);
+                }
+            }
+        }),
     }
 }
 
@@ -787,27 +839,44 @@ fn payload_bytes(message: &TopicMessage) -> Result<Vec<u8>, Error> {
     Ok(bytes)
 }
 
-/// Post, trying again after a short and then a longer wait. False when every try failed.
-fn post_with_retry(sender: &Arc<dyn Sender>, base_url: &str, topic: &str, payload: &[u8]) -> bool {
-    for attempt in 0..RETRIES {
-        match sender.post(base_url, topic, payload) {
-            Ok(PostOutcome::Accepted) => return true,
-            Ok(PostOutcome::Rejected(status)) => {
+/// Post `messages` to one peer in order, sending again, after a short and then a longer wait, the ones a transport
+/// failure or a busy peer left unapplied. Each message gets [`RETRIES`] tries: the count starts again when a try gets
+/// further. A refused message (4xx) is logged and not sent again. False when the peer took nothing on the last try.
+fn post_batch_with_retry(sender: &Arc<dyn Sender>, base_url: &str, messages: &[(&str, Vec<u8>)]) -> bool {
+    let mut done = 0;
+    let mut tries = 0;
+    loop {
+        let pending: Vec<(&str, &[u8])> = messages[done..]
+            .iter()
+            .map(|(topic, payload)| (*topic, payload.as_slice()))
+            .collect();
+        let BatchOutcome { outcomes, failed } = sender.post_batch(base_url, &pending);
+        let taken = outcomes.len().min(pending.len());
+        for ((topic, _), outcome) in pending.iter().zip(&outcomes) {
+            if let PostOutcome::Rejected(status) = outcome {
                 tracing::warn!(
                     base_url,
                     topic,
                     status,
                     "cluster message rejected; peer remains available"
                 );
-                return true;
             }
-            Err(err) if attempt + 1 == RETRIES => {
-                tracing::warn!("cluster post to {base_url} failed for topic {topic}: {err}");
-            }
-            Err(_) => std::thread::sleep(RETRY_WAITS[usize::try_from(attempt).unwrap_or(0).min(RETRY_WAITS.len() - 1)]),
         }
+        done += taken;
+        if done >= messages.len() {
+            return true;
+        }
+        tries = if taken > 0 { 1 } else { tries + 1 };
+        if tries >= RETRIES {
+            let err = failed.unwrap_or_else(|| Error::new("the peer answered for fewer messages than it was sent"));
+            let topic = messages[done].0;
+            let left = messages.len() - done;
+            tracing::warn!("cluster post to {base_url} failed for topic {topic} ({left} messages left): {err}");
+            return false;
+        }
+        let wait = usize::try_from(tries - 1).unwrap_or(0).min(RETRY_WAITS.len() - 1);
+        std::thread::sleep(RETRY_WAITS[wait]);
     }
-    false
 }
 
 fn invalidation_body(entity_name: &str, pk_fields: &[String], values: &crate::entity::FieldMap) -> serde_json::Value {

@@ -663,6 +663,10 @@ along with this software (see the LICENSE.md file). If not, see
                         (webapp_header_timeout, 30); 0 is no limit.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="shutdown-timeout" type="xs:string"><xs:annotation><xs:documentation>
                         Seconds open connections may take to finish after a stop (webapp_shutdown_timeout, 30).</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="http2-max-streams" type="xs:string"><xs:annotation><xs:documentation>
+                        Requests one HTTP/2 connection of the HTTPS listener may have open at once
+                        (webapp_http2_max_streams, 100). An HTTP/2 connection with no request for header-timeout is
+                        closed with a GOAWAY.</xs:documentation></xs:annotation></xs:attribute>
                 </xs:complexType></xs:element>
                 <xs:element minOccurs="0" name="requests"><xs:complexType>
                     <xs:attribute name="methods" type="xs:string"><xs:annotation><xs:documentation>

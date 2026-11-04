@@ -93,8 +93,8 @@ How an edge node changes the topologies in [Run-Deploy](../docs/Run-Deploy.md#ch
 
 These pieces exist today. Each is a seam or a model for the edge node; none does the job yet.
 
-- **Cluster transports.** HTTPS POST with one shared client certificate on 8444
-  (`crates/moqui-host/src/cluster_edge.rs`), Postgres `LISTEN`/`NOTIFY` (`cluster_notify.rs`), and SSH
+- **Cluster transports.** gRPC, or the HTTP/1.1 POST, with one shared client certificate on 8444
+  (`crates/moqui-host/src/cluster_edge/`), Postgres `LISTEN`/`NOTIFY` (`cluster_notify.rs`), and SSH
   (`ssh/cluster.rs`).
   - They carry 5 topics, cache invalidation and `rtc-signal` among them, sent through `cluster::send_to`
     (`crates/moqui-core/src/cluster/direct.rs`).
@@ -103,7 +103,8 @@ These pieces exist today. Each is a seam or a model for the edge node; none does
 - **gRPC.** tonic 0.14 runs the server only, for the OTLP receiver on its own port 4317
   (`crates/moqui-host/src/monitor/grpc.rs`). It is the `grpc` feature, in Enterprise and Maximal.
   - There is no client and no `.proto` of our own: the OTLP messages come pre-generated.
-  - The main listener is HTTP/1.1 only (`http.rs:378`, ALPN `http/1.1` in `tls.rs:143`).
+  - The main listener was HTTP/1.1 only then (ALPN `http/1.1` in `tls.rs`); it has offered `h2` as well since
+    2026-11-03 ([Run-Deploy](../docs/Run-Deploy.md#http2)).
 - **An outbound reconnecting socket.** `moqui tui --server` (`crates/moqui-host/src/tui_remote.rs`) reconnects to
   `/notws` with a backoff from 2 s to 60 s. It is the only reconnecting outbound socket, and it is client only.
 - **Instance-to-instance data.**
@@ -255,7 +256,8 @@ access is a service call. It does read audio files itself, through `factory.reso
 
 - **Port.** The local node dials the edge node's 443, the one port nearly every network lets out. TLS uses ALPN
   `moqui-edge/1`, so the HTTPS listener hands the connection to the link handler. Browsers' `h2` and `http/1.1` are not
-  touched, and the listener otherwise stays HTTP/1.1. A port of its own, as the OTLP receiver has, is the fallback.
+  touched: the listener serves them as before, HTTP/2 included. A port of its own, as the OTLP receiver has, is the
+  fallback.
 - **Identity.**
   - The edge node's certificate is checked by WebPKI, and the fingerprint seen at pairing is pinned.
   - The local node has a key of its own, which the edge node pins at pairing: mutual TLS with one key per local node,
@@ -504,7 +506,9 @@ one of the four ways. The MMS copy the local node uploads to the edge node is pa
   (`ClientAddressing::of_factory`). A WebSocket upgrade becomes an extended
   CONNECT with `:protocol` `websocket`; axum's `WebSocketUpgrade` takes it (the `axum/http2` feature, and the socket
   routes also take `CONNECT`), and web protection checks it as a GET. The edge node answers the browser 101 itself and
-  pipes the two. While the link is down: 503 with `Retry-After: 30`, the built-in page or `edge_offline_page`. A
+  pipes the two. A browser on HTTP/2 opens its WebSocket by extended CONNECT itself; that goes down the same way, and
+  the edge node answers it 200 (RFC 8441). On a passthrough host the local node's listener takes HTTP/2 as on its own
+  port. While the link is down: 503 with `Retry-After: 30`, the built-in page or `edge_offline_page`. A
   passthrough host on plain HTTP is sent to its https URL; one asked for under another TLS name is answered 421.
 - **Passthrough** (`edge_link/tunnel.rs`). The edge node reads the ClientHello itself (rustls `Acceptor`), keeps the
   bytes, and picks the link's settings, a passthrough host's tunnel or the web settings by it. A tunnel writes a PROXY
@@ -1265,7 +1269,8 @@ operator's own choices stay off until `.env` sets them: SIP ports, the XMPP doma
     to the binary, 0.7% (313,281,368 to 315,394,216 bytes). A one-line rebuild: 4.3 s before, 4.3 to 5 s after.
   - **Lite** has 423 crates, and already has prost, h2 and hyper's `http2`. `grpc` would add 5 crates (tonic,
     tonic-prost, hyper-timeout, pin-project, pin-project-internal) and turn on hyper-util's `server-auto` and more of
-    tower (balance, buffer, discover, limit, load). Its size cost was not measured. Lite keeps REST (decision 8).
+    tower (balance, buffer, discover, limit, load). Its size cost was not measured. Lite has `grpc` now, for the
+    cluster; PASS on Lite keeps REST (decision 8).
   - **Code generation.** protoc is not installed, and builds must not need it.
     - The `.proto` files go in `crates/moqui-host/proto/`, package `moqui.edge.v1`.
     - tonic-prost-build 0.14.9 generates the Rust, with protox 0.10.0, a protobuf compiler in Rust, in place of
@@ -1746,7 +1751,8 @@ When it is built (done in E10 unless marked; all done):
 7. **gRPC payloads.** One generic operation message, with the input and the result as JSON, to start. Typed messages
    may come later, for efficiency or for what they make possible.
 8. **Lite and gRPC.** Lite keeps REST for PASS, not gRPC, as a supported mode for the long term, and REST is the default
-   transport on Lite (§5.5). Adding `grpc` to Lite would add 5 crates (§5.6).
+   transport on Lite (§5.5). Lite has `grpc` since 2026-11-03, for the cluster ([Cluster](archive/Cluster.md)), 5 crates
+   (§5.6); PASS's gRPC binding is in `edge`, which Lite still leaves out, so PASS on Lite stays on REST.
 
 ## 9. References
 
@@ -1761,7 +1767,7 @@ When it is built (done in E10 unless marked; all done):
   `plan/design-shop.md` (authority outage, caches).
 - Cluster: [Cluster](archive/Cluster.md), [Ssh](archive/Ssh.md) (the cluster channel).
 - Code:
-  - the link's models: `crates/moqui-core/src/cluster/`, `crates/moqui-host/src/cluster_edge.rs`,
+  - the link's models: `crates/moqui-core/src/cluster/`, `crates/moqui-host/src/cluster_edge/`,
     `crates/moqui-host/src/tui_remote.rs`;
   - gRPC: `crates/moqui-host/src/monitor/grpc.rs`;
   - the listener: `crates/moqui-host/src/http.rs`, `tls.rs`;

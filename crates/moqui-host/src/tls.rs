@@ -138,8 +138,9 @@ fn listen_port(raw: &str, use_default_port: bool) -> Result<Option<u16>, Error> 
 }
 
 /// The listener's TLS settings on `store`, which may be shared: an edge node's link (ALPN `moqui-edge/1`) has settings
-/// of its own on the same certificates, chosen by the ClientHello before the handshake (`edge_link`), so this
-/// listener's ALPN stays `http/1.1` alone and a browser is never asked for a client certificate.
+/// of its own on the same certificates, chosen by the ClientHello before the handshake (`edge_link`), so a browser is
+/// never asked for a client certificate. ALPN offers `h2` then `http/1.1` ([`web_alpn`]); the connection is served as
+/// the protocol the handshake chose (`crate::http::serve`).
 pub(crate) fn server_config(store: impl Into<Arc<CertStore>>) -> Result<rustls::ServerConfig, Error> {
     let store: Arc<CertStore> = store.into();
     let mut config = rustls::ServerConfig::builder_with_provider(Arc::new(aws_lc_rs::default_provider()))
@@ -147,9 +148,24 @@ pub(crate) fn server_config(store: impl Into<Arc<CertStore>>) -> Result<rustls::
         .map_err(|err| Error::new(format!("could not set up the HTTPS listener: {err}")))?
         .with_no_client_auth()
         .with_cert_resolver(store);
-    // The listener speaks HTTP/1.1 only.
-    config.alpn_protocols = vec![b"http/1.1".to_vec()];
+    config.alpn_protocols = web_alpn(http2_enabled());
     Ok(config)
+}
+
+/// `webapp_http2`: HTTP/2 on the HTTPS listener, on unless `false`.
+pub(crate) fn http2_enabled() -> bool {
+    !moqui_lib::env::get_prop_or_env("webapp_http2")
+        .trim()
+        .eq_ignore_ascii_case("false")
+}
+
+/// The HTTPS listener's ALPN: `h2` first when `http2`, then `http/1.1`. A client that offers none gets HTTP/1.1.
+pub(crate) fn web_alpn(http2: bool) -> Vec<Vec<u8>> {
+    if http2 {
+        vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+    } else {
+        vec![b"http/1.1".to_vec()]
+    }
 }
 
 /// The pairs in the directory by lowercase name, as of `read`. Lookups never touch the file system, so a name a

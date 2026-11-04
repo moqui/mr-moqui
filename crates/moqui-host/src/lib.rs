@@ -55,6 +55,9 @@ pub mod edge_link;
 #[cfg(all(feature = "axum", not(feature = "edge")))]
 #[path = "edge_link_off.rs"]
 mod edge_link;
+// gRPC clients on HTTP/2 connections of our own: the cluster's, the PASS authority's and the edge link's.
+#[cfg(feature = "grpc")]
+mod grpc_client;
 // The host's gRPC listener: the OTLP receiver's and the PASS authority's routes.
 #[cfg(feature = "grpc")]
 mod grpc_listen;

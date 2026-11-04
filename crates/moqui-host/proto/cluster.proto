@@ -1,0 +1,49 @@
+// This software is in the public domain under CC0 1.0 Universal plus a
+// Grant of Patent License.
+//
+// To the extent possible under law, the author(s) have dedicated all
+// copyright and related and neighboring rights to this software to the
+// public domain worldwide. This software is distributed without any
+// warranty.
+//
+// You should have received a copy of the CC0 Public Domain Dedication
+// along with this software (see the LICENSE.md file). If not, see
+// <http://creativecommons.org/publicdomain/zero/1.0/>.
+
+// Cluster coordination over gRPC (plans/archive/Cluster.md): the topic messages one member posts to another, on the
+// cluster port (8444) when TLS chose h2. A member that chose http/1.1 takes the same messages as POST /cluster/{topic}.
+//
+// One request carries the messages the sender had waiting for this peer, in order; the reply has one status for each,
+// the HTTP status the POST would have answered, so both transports retry and refuse the same way.
+//
+// Changes are additive only: a new field or RPC gets a new number or name, and none is removed, renamed or renumbered.
+//
+// The Rust code in crates/moqui-host/src/cluster_edge/proto/ is generated from this file and checked in:
+//   MOQUI_REGENERATE_PROTO=1 cargo test -p moqui-host --lib cluster_edge::proto
+
+syntax = "proto3";
+
+package moqui.cluster.v1;
+
+service Cluster {
+  // Apply each message on this member, in order.
+  rpc Post(PostRequest) returns (PostReply);
+}
+
+message ClusterMessage {
+  // The topic: entity-cache-invalidate, notification-message, collab-update, session-end, rtc-signal,
+  // runtime-settings or component-deploy.
+  string topic = 1;
+  // The message as JSON (UTF-8), the body of the HTTP/1.1 POST: origin_id, message_id and body.
+  bytes payload = 2;
+}
+
+message PostRequest {
+  repeated ClusterMessage messages = 1;
+}
+
+message PostReply {
+  // One for each message of the request, in its order: 204 applied, 400 a bad message, 404 an unknown topic, 413 too
+  // large, 503 busy (try again), 500 failed.
+  repeated uint32 status = 1;
+}
