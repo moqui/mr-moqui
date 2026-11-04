@@ -541,14 +541,14 @@ pub fn request(ctx: &mut TurnContext<'_>, request: &ApprovalRequest) -> Requeste
         Some(sequence) => format!("AgentToolPolicy {}#{sequence}", ctx.agent.agent_id),
         None => format!("AgentToolPolicy {}", ctx.agent.agent_id),
     });
-    let node = ctx.events.node().to_string();
+    let holder = ctx.events.holder().clone();
     let tool_call_id = ctx.call.tool_call_id.clone();
     let stored = {
         // run bookkeeping the runtime writes, under the run's lease, so a read tool's fence lifts for it
         let _lifted = fence::lift();
         quietly(|| {
             in_tx(&facade, || {
-                run::held(&facade, &run.run_id, &node, Hold::Lease)?;
+                run::held(&facade, &run.run_id, &holder, Hold::Lease)?;
                 let mut row = facade.make_value(APPROVAL)?;
                 row.set("approvalId", Value::string(&approval_id));
                 row.set("runId", Value::string(&run.run_id));
@@ -833,14 +833,14 @@ pub fn begin(ctx: &mut TurnContext<'_>, approval_id: &str, args: &Json) -> Resul
             )],
         )
     };
-    let node = ctx.events.node().to_string();
+    let holder = ctx.events.holder().clone();
     let run_id = ctx.run.map(|run| run.run_id.clone());
     let moved = {
         let _lifted = fence::lift();
         quietly(|| {
             in_tx(&facade, || {
                 if let Some(run_id) = &run_id {
-                    run::held(&facade, run_id, &node, Hold::Lease)?;
+                    run::held(&facade, run_id, &holder, Hold::Lease)?;
                 }
                 move_status(&facade, approval_id, &[ApprovalStatus::Approved], to, fields)
             })
@@ -896,13 +896,13 @@ fn settle(ctx: &mut TurnContext<'_>, approval_id: &str, from: &[ApprovalStatus],
     let Some((_, facade)) = factory_and_facade() else {
         return;
     };
-    let node = ctx.events.node().to_string();
+    let holder = ctx.events.holder().clone();
     let run_id = ctx.run.map(|run| run.run_id.clone());
     let _lifted = fence::lift();
     let settled = quietly(|| {
         in_tx(&facade, || {
             if let Some(run_id) = &run_id {
-                run::held(&facade, run_id, &node, Hold::Lease)?;
+                run::held(&facade, run_id, &holder, Hold::Lease)?;
             }
             move_status(
                 &facade,

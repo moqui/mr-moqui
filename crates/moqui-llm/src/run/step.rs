@@ -41,7 +41,7 @@ use serde_json::{json, Value as Json};
 use super::context::{Approvals, Exhausted, RunRef, ScreenHandle, Spill, ToolCallRef, UserRef};
 use super::{
     engine, held, in_tx, lease, load_run, now_millis, pool, quietly, stamp, transition, AgentDef, Budget, Change,
-    EventSink, Hold, LocalRun, RunRow, RunState, TurnContext, INPUT, MESSAGE, PART, QUESTION, RUN, TOOL_CALL,
+    EventSink, Hold, Holder, LocalRun, RunRow, RunState, TurnContext, INPUT, MESSAGE, PART, QUESTION, RUN, TOOL_CALL,
 };
 use crate::prompt::{self, Catalog, PrefixSpec, PromptTexts, PromptVars};
 use crate::provider::{
@@ -546,14 +546,14 @@ fn store_result_with(
     hold: Hold,
     artifact: Option<&tools::spill::Artifact>,
 ) -> Result<(), Error> {
-    let node = sink.node().to_string();
+    let holder = sink.holder().clone();
     // the artifact is a resource of the run's factory
     let factory = match artifact {
         Some(_) => Some(sink.factory().ok_or_else(|| Error::new("the server is stopping"))?),
         None => None,
     };
     let stored = in_tx(facade, || {
-        held(facade, &run.run_id, &node, hold)?;
+        held(facade, &run.run_id, &holder, hold)?;
         if let (Some(artifact), Some(factory)) = (artifact, &factory) {
             artifact.write(factory.resource(), facade)?;
         }
@@ -613,12 +613,12 @@ fn store_result_with(
 fn set_call_status(
     facade: &EntityFacade,
     run_id: &str,
-    node: &str,
+    holder: &Holder,
     tool_call_id: &str,
     status_id: &str,
 ) -> Result<(), Error> {
     in_tx(facade, || {
-        held(facade, run_id, node, Hold::Lease)?;
+        held(facade, run_id, holder, Hold::Lease)?;
         let mut fields = vec![("statusId".to_string(), Value::string(status_id))];
         if status_id == "AgtcRunning" {
             fields.push(("startedDate".to_string(), stamp(now_millis())));
@@ -752,12 +752,17 @@ fn step(factory: &Arc<ExecutionContextFactory>, run_id: &str, local: &Arc<LocalR
         engine.forget_if(run_id, local);
         return Ok(Next::Stop);
     }
-    if !quietly(|| lease::claim(&facade, run_id, engine.node(), lease::lease_millis(factory)))? {
+    let claimed = quietly(|| lease::claim_generation(&facade, run_id, engine.node(), lease::lease_millis(factory)))?;
+    let Some(generation) = claimed else {
         tracing::info!("agent run {run_id} is held by another node, so this node leaves it");
         engine.forget_if(run_id, local);
         return Ok(Next::Stop);
-    }
+    };
+    // the step writes at the generation of this claim: once the run is claimed again, by another node or by a resume
+    // here, its writes are refused (HL-042)
+    local.set_generation(generation);
     let mut sink = EventSink::new(factory, &facade, run_id, &run.user_id);
+    sink.hold_at(Some(generation));
     if run.cancel_requested || local.cancel.is_canceled() {
         quietly(|| {
             transition(
@@ -871,8 +876,8 @@ fn step(factory: &Arc<ExecutionContextFactory>, run_id: &str, local: &Arc<LocalR
         return next;
     }
     let elapsed = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
-    let node = engine.node().to_string();
-    if let Err(error) = quietly(|| add_active_time(&facade, run_id, &node, elapsed)) {
+    let holder = turn.sink.holder().clone();
+    if let Err(error) = quietly(|| add_active_time(&facade, run_id, &holder, elapsed)) {
         tracing::error!("the working time of agent run {run_id} could not be stored: {error}");
     }
     turn.sink.flush_logged();
@@ -959,10 +964,10 @@ fn tool_counts(facade: &EntityFacade, run_id: &str) -> Result<HashMap<String, u3
     Ok(counts)
 }
 
-fn add_active_time(facade: &EntityFacade, run_id: &str, node: &str, millis: i64) -> Result<(), Error> {
+fn add_active_time(facade: &EntityFacade, run_id: &str, holder: &Holder, millis: i64) -> Result<(), Error> {
     in_tx(facade, || {
         // a step that paused or ended the run gave its lease up already
-        let mut row = held(facade, run_id, node, Hold::LeaseOrNone)?;
+        let mut row = held(facade, run_id, holder, Hold::LeaseOrNone)?;
         let carried = int_of(&row, "activeSeconds").unwrap_or(0) * 1000;
         row.set("activeSeconds", Value::I64((carried + millis + 500) / 1000));
         row.update(facade)
@@ -993,11 +998,11 @@ impl Turn {
                 ToolsEnd::Canceled => return self.end_canceled(),
             }
         }
-        let node = self.sink.node().to_string();
+        let holder = self.sink.holder().clone();
         for input in inputs {
             let folded = quietly(|| {
                 in_tx(&facade, || {
-                    held(&facade, &run_id, &node, Hold::Lease)?;
+                    held(&facade, &run_id, &holder, Hold::Lease)?;
                     // read again under its lock: the user may have edited it (its text now) or canceled it (taken)
                     let Some(input) = locked_input(&facade, &input)? else {
                         return Ok(false);
@@ -1081,10 +1086,10 @@ impl Turn {
             return fail(&facade, &mut self.sink, &run_id, "budget_exhausted", &text);
         }
         let text = format!("This run reached its limit of {}. Continue?", exhausted.as_str());
-        let node = self.sink.node().to_string();
+        let holder = self.sink.holder().clone();
         let question_id = quietly(|| {
             in_tx(&facade, || {
-                held(&facade, &run_id, &node, Hold::Lease)?;
+                held(&facade, &run_id, &holder, Hold::Lease)?;
                 let mut row = facade.make_value(QUESTION)?;
                 row.set_sequenced_id_primary(&facade)?;
                 row.set("runId", Value::string(&run_id));
@@ -1297,10 +1302,10 @@ impl Turn {
         let message_id = entry.message_id.clone();
         let mut metadata = entry.metadata.clone();
         metadata.insert("tail".to_string(), json!(tail));
-        let node = self.sink.node().to_string();
+        let holder = self.sink.holder().clone();
         let stored = quietly(|| {
             in_tx(&self.facade, || {
-                held(&self.facade, &self.run.run_id, &node, Hold::Lease)?;
+                held(&self.facade, &self.run.run_id, &holder, Hold::Lease)?;
                 self.facade
                     .find(MESSAGE)?
                     .eq("messageId", Value::string(&message_id))
@@ -1357,7 +1362,7 @@ impl Turn {
             None,
             target.reasoning != crate::conf::ReasoningLevel::None,
         );
-        let node = self.sink.node().to_string();
+        let holder = self.sink.holder().clone();
         let compactor = Compactor {
             factory: &self.factory,
             facade: &self.facade,
@@ -1365,7 +1370,7 @@ impl Turn {
             conversation_id: &self.run.conversation_id,
             user_id: &self.run.user_id,
             step_seq: self.run_ref.step_seq,
-            node: &node,
+            holder: &holder,
             cancel: &self.local.cancel,
             side: &self.side,
         };
@@ -1687,10 +1692,10 @@ impl Turn {
         self.budget.cost += spent.cost;
         let facade = self.facade.clone();
         let run_id = self.run.run_id.clone();
-        let node = self.sink.node().to_string();
+        let holder = self.sink.holder().clone();
         quietly(|| {
             in_tx(&facade, || {
-                let mut row = held(&facade, &run_id, &node, Hold::LeaseOrNone)?;
+                let mut row = held(&facade, &run_id, &holder, Hold::LeaseOrNone)?;
                 let add = |row: &EntityValue, field: &str, value: u64| {
                     Value::I64(int_of(row, field).unwrap_or(0) + i64::try_from(value).unwrap_or(i64::MAX))
                 };
@@ -1808,9 +1813,9 @@ impl Turn {
                 Some(call.error.clone()),
             )
         }));
-        let node = self.sink.node().to_string();
+        let holder = self.sink.holder().clone();
         let (calls, bad) = in_tx(&facade, || {
-            held(&facade, &run.run_id, &node, Hold::Lease)?;
+            held(&facade, &run.run_id, &holder, Hold::Lease)?;
             let mut step = facade.make_value("moqui.agent.AgentRunStep")?;
             step.set("runId", Value::string(&run.run_id));
             step.set("stepSeq", Value::I64(step_seq));
@@ -1978,7 +1983,7 @@ impl Turn {
                         set_call_status(
                             &facade,
                             &self.run.run_id,
-                            self.sink.node(),
+                            self.sink.holder(),
                             &call.tool_call_id,
                             "AgtcUnknownOutcome",
                         )
@@ -2014,10 +2019,10 @@ impl Turn {
                     let input = at.map(|at| inputs.remove(at));
                     let outcome = match (&offered, &input) {
                         (Some(offered), Some(input)) => {
-                            let node = self.sink.node().to_string();
+                            let holder = self.sink.holder().clone();
                             quietly(|| {
                                 in_tx(&facade, || {
-                                    held(&facade, &self.run.run_id, &node, Hold::Lease)?;
+                                    held(&facade, &self.run.run_id, &holder, Hold::Lease)?;
                                     consume_input(&facade, &input.input_id)
                                 })
                             })?;
@@ -2291,7 +2296,7 @@ impl Turn {
                 set_call_status(
                     &facade,
                     &self.run.run_id,
-                    self.sink.node(),
+                    self.sink.holder(),
                     &call.tool_call_id,
                     "AgtcRunning",
                 )?;
@@ -2504,7 +2509,7 @@ impl Turn {
                     set_call_status(
                         &facade,
                         &self.run.run_id,
-                        self.sink.node(),
+                        self.sink.holder(),
                         &call.tool_call_id,
                         "AgtcAwaiting",
                     )
@@ -2579,7 +2584,7 @@ struct Compactor<'a> {
     conversation_id: &'a str,
     user_id: &'a str,
     step_seq: i64,
-    node: &'a str,
+    holder: &'a Holder,
     cancel: &'a provider::CancelToken,
     side: &'a std::sync::Mutex<SideSpend>,
 }
@@ -2612,7 +2617,7 @@ impl Compactor<'_> {
         if outcome.changed() {
             quietly(|| {
                 in_tx(self.facade, || {
-                    held(self.facade, self.run_id, self.node, Hold::Lease)?;
+                    held(self.facade, self.run_id, self.holder, Hold::Lease)?;
                     window::persist(self.facade, self.conversation_id, history)
                 })
             })?;

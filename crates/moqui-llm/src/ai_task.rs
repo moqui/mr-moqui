@@ -1089,7 +1089,12 @@ fn update_with_ai(
         "reason": reason});
     quietly(|| {
         run::in_tx(facade, || {
-            run::held(facade, &started.run_id, &node, run::Hold::Lease)?;
+            run::held(
+                facade,
+                &started.run_id,
+                &run::Holder::node_only(&node),
+                run::Hold::Lease,
+            )?;
             facade
                 .find(run::CONVERSATION)?
                 .eq("conversationId", Value::string(&started.conversation_id))

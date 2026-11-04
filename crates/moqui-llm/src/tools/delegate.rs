@@ -396,8 +396,8 @@ impl DelegateTool {
         };
         let mut kept_id = waiting.map(|waiting| waiting.remote_task_id.clone());
         if ctx.run.is_some() {
-            let node = ctx.events.node().to_string();
-            match remote::keep(facade, &node, kept_id.as_deref(), &kept) {
+            let holder = ctx.events.holder().clone();
+            match remote::keep(facade, &holder, kept_id.as_deref(), &kept) {
                 Ok(id) => kept_id = Some(id),
                 Err(error) => tracing::error!(
                     "the remote task of {} could not be kept: {error}",
@@ -646,10 +646,10 @@ pub(crate) fn keep_state(
     let Some(run) = ctx.run else {
         return;
     };
-    let node = ctx.events.node().to_string();
+    let holder = ctx.events.holder().clone();
     let kept = remote::keep(
         facade,
-        &node,
+        &holder,
         Some(&waiting.remote_task_id),
         &Keep {
             run_id: &run.run_id,
@@ -826,11 +826,11 @@ pub(crate) fn answer_of(ctx: &mut TurnContext<'_>, input: &ToolInput) -> Answere
         || text.trim().eq_ignore_ascii_case("cancel");
     if let (Some(run), Ok(facade)) = (ctx.run, facade()) {
         let _lifted = moqui_core::entity::fence::lift();
-        let node = ctx.events.node().to_string();
+        let holder = ctx.events.holder().clone();
         let answer = json!({"text": text, "cancel": cancel});
         let answered = crate::run::quietly(|| {
             crate::run::in_tx(&facade, || {
-                crate::run::held(&facade, &run.run_id, &node, crate::run::Hold::Lease)?;
+                crate::run::held(&facade, &run.run_id, &holder, crate::run::Hold::Lease)?;
                 facade
                     .find(QUESTION)?
                     .eq("runId", Value::string(&run.run_id))

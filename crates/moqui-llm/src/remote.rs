@@ -722,14 +722,14 @@ pub struct Keep<'a> {
 /// Returns an error when the row cannot be written or the run's lease is gone.
 pub(crate) fn keep(
     facade: &EntityFacade,
-    node: &str,
+    holder: &crate::run::Holder,
     remote_task_id: Option<&str>,
     keep: &Keep<'_>,
 ) -> Result<String, Error> {
     let _lifted = fence::lift();
     crate::run::quietly(|| {
         crate::run::in_tx(facade, || {
-            crate::run::held(facade, keep.run_id, node, crate::run::Hold::Lease)?;
+            crate::run::held(facade, keep.run_id, holder, crate::run::Hold::Lease)?;
             let existing = match remote_task_id {
                 Some(id) => facade
                     .find(REMOTE_TASK)?
