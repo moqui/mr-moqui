@@ -1,5 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
+.m-wrap-anywhere { overflow-wrap:anywhere; }
+
 /*
  * The style sheet of the html render mode. It styles the elements and data attributes that ScreenHtml.js writes
  * (see ../js/README.md), so it holds element selectors and a few attribute selectors and no framework class names.

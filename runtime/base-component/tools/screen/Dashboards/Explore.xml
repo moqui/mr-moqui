@@ -209,42 +209,22 @@
         }
     ]]></script></actions>
     <widgets>
-        <link url="split" text="Compare ranges or versions" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru}"/>
-        <form-single name="OpenSavedSearch" transition=".">
-            <field name="savedSearchId"><default-field title="Saved search"><drop-down allow-empty="true"><list-options list="savedSearches" key="${id}" text="${title}"/></drop-down></default-field></field>
-            <field name="open"><default-field><submit text="Open saved search"/></default-field></field>
-        </form-single>
-        <section name="ExploreSaveAvailable" condition="!queryError"><widgets>
-        <container-dialog id="SaveExplore" button-text="Save search / add to dashboard">
-            <form-single name="SaveSearch" transition="saveSearch">
-            <field name="filtersJson"><default-field><hidden/></default-field></field>
-                <field name="datasetId"><default-field><hidden/></default-field></field>
-                <field name="queryString"><default-field><hidden/></default-field></field>
-                <field name="from"><default-field><hidden/></default-field></field>
-                <field name="thru"><default-field><hidden/></default-field></field>
-                <field name="retrievalMode"><default-field><hidden/></default-field></field>
-                <field name="searchId"><default-field title="Search ID"><text-line/></default-field></field>
-                <field name="searchTitle"><default-field title="Title"><text-line/></default-field></field>
-                <field name="save"><default-field><submit text="Save search"/></default-field></field>
-            </form-single>
-            <form-single name="AddExplorePanel" transition="addPanel">
-            <field name="filtersJson"><default-field><hidden/></default-field></field>
-                <field name="datasetId"><default-field><hidden/></default-field></field>
-                <field name="queryString"><default-field><hidden/></default-field></field>
-                <field name="retrievalMode"><default-field><hidden/></default-field></field>
-                <field name="from"><default-field><hidden/></default-field></field>
-                <field name="thru"><default-field><hidden/></default-field></field>
-                <field name="dashboardId"><default-field title="Editable dashboard"><drop-down><list-options list="editableDashboards" key="${id}" text="${title}"/></drop-down></default-field></field>
-                <field name="panelId"><default-field title="Panel ID"><text-line/></default-field></field>
-                <field name="panelTitle"><default-field title="Panel title"><text-line/></default-field></field>
-                <field name="add"><default-field><submit text="Add to dashboard"/></default-field></field>
-            </form-single>
-        </container-dialog>
-        </widgets></section>
-        <form-single name="DatasetOptions" transition=".">
-            <field name="datasetId"><default-field title="Dataset"><drop-down><list-options list="datasetList" key="${id}" text="${title || id}"/></drop-down></default-field></field>
-            <field name="choose"><default-field><submit text="Choose dataset"/></default-field></field>
-        </form-single>
+        <container-row>
+            <row-col md="6">
+                <form-single name="DatasetOptions" transition=".">
+                    <field name="datasetId"><default-field title="Dataset"><drop-down><list-options list="datasetList" key="${id}" text="${title || id}"/></drop-down></default-field></field>
+                    <field name="choose"><default-field><submit text="Choose dataset"/></default-field></field>
+                    <field-layout><field-ref name="datasetId"/><field-row-big><field-ref name="choose"/></field-row-big></field-layout>
+                </form-single>
+            </row-col>
+            <row-col md="6">
+                <form-single name="OpenSavedSearch" transition=".">
+                    <field name="savedSearchId"><default-field title="Saved search"><drop-down allow-empty="true"><list-options list="savedSearches" key="${id}" text="${title}"/></drop-down></default-field></field>
+                    <field name="open"><default-field><submit text="Open saved search"/></default-field></field>
+                    <field-layout><field-ref name="savedSearchId"/><field-row-big><field-ref name="open"/></field-row-big></field-layout>
+                </form-single>
+            </row-col>
+        </container-row>
         <form-single name="SearchOptions" transition=".">
             <field name="datasetId"><default-field><hidden/></default-field></field>
             <field name="queryString">
@@ -265,6 +245,22 @@
             <field name="order"><default-field title="Order"><drop-down><option key="newest" text="Newest first"/><option key="oldest" text="Oldest first within page"/></drop-down></default-field></field>
             <field name="pageSize"><default-field title="Page size"><drop-down><option key="50"/><option key="100"/><option key="250"/></drop-down></default-field></field>
             <field name="find"><default-field><submit text="Search"/></default-field></field>
+            <field-layout>
+                <field-ref name="datasetId"/>
+                <field-col-row>
+                    <field-col md="8">
+                        <field-group title="Query and filters" box="true"><field-ref name="queryString"/><field-ref name="filtersJson"/></field-group>
+                    </field-col>
+                    <field-col md="4">
+                        <field-group title="Range and display" box="true">
+                            <field-row><field-ref name="from"/><field-ref name="thru"/></field-row>
+                            <field-ref name="retrievalMode"/>
+                            <field-row><field-ref name="order"/><field-ref name="pageSize"/></field-row>
+                        </field-group>
+                    </field-col>
+                </field-col-row>
+                <field-row-big><field-ref name="find"/></field-row-big>
+            </field-layout>
         </form-single>
         <section name="ExploreQueryFailed" condition="queryError"><widgets>
             <container id="ExploreQueryError" style="q-pa-sm">
@@ -300,6 +296,36 @@
                 <field name="add"><default-field><submit text="Add filter"/></default-field></field>
             </form-single>
         </widgets></section>
+        <container style="row items-center q-gutter-sm q-mb-md">
+            <section name="ExploreSaveAvailable" condition="!queryError"><widgets>
+                <container-dialog id="SaveExplore" button-text="Save search / add to dashboard">
+                    <form-single name="SaveSearch" transition="saveSearch">
+                        <field name="filtersJson"><default-field><hidden/></default-field></field>
+                        <field name="datasetId"><default-field><hidden/></default-field></field>
+                        <field name="queryString"><default-field><hidden/></default-field></field>
+                        <field name="from"><default-field><hidden/></default-field></field>
+                        <field name="thru"><default-field><hidden/></default-field></field>
+                        <field name="retrievalMode"><default-field><hidden/></default-field></field>
+                        <field name="searchId"><default-field title="Search ID"><text-line/></default-field></field>
+                        <field name="searchTitle"><default-field title="Title"><text-line/></default-field></field>
+                        <field name="save"><default-field><submit text="Save search"/></default-field></field>
+                    </form-single>
+                    <form-single name="AddExplorePanel" transition="addPanel">
+                        <field name="filtersJson"><default-field><hidden/></default-field></field>
+                        <field name="datasetId"><default-field><hidden/></default-field></field>
+                        <field name="queryString"><default-field><hidden/></default-field></field>
+                        <field name="retrievalMode"><default-field><hidden/></default-field></field>
+                        <field name="from"><default-field><hidden/></default-field></field>
+                        <field name="thru"><default-field><hidden/></default-field></field>
+                        <field name="dashboardId"><default-field title="Editable dashboard"><drop-down><list-options list="editableDashboards" key="${id}" text="${title}"/></drop-down></default-field></field>
+                        <field name="panelId"><default-field title="Panel ID"><text-line/></default-field></field>
+                        <field name="panelTitle"><default-field title="Panel title"><text-line/></default-field></field>
+                        <field name="add"><default-field><submit text="Add to dashboard"/></default-field></field>
+                    </form-single>
+                </container-dialog>
+            </widgets></section>
+            <link url="split" text="Compare ranges or versions" parameter-map="{datasetId:datasetId,queryString:queryString,from:from,thru:thru}"/>
+        </container>
         <label text="Queries run with your dataset permissions and row filters. Search syntax: field:value, AND, OR, NOT, quoted text, term~ for native typo matching, and clause^2 for relevance boosts. Fuzzy matches can differ between PostgreSQL and OpenSearch. Use attributes.key:value, attributes.key:*, and keyword wildcards for custom attributes. Numbered fuzziness and phrase slop are unsupported." type="p"/>
         <section name="ExploreResults" condition="!queryError"><widgets>
         <report-panel frame="histogramFrame" panel="{title:'Documents over time',visualization:'timeSeries'}"/>

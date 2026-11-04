@@ -15,8 +15,6 @@
     sri.write($csv(ec.l10n.localize("Status")));
     $sep();
     sri.write($csv(ec.l10n.localize(ec.resource.expand("Open"))));
-    $sep();
-    sri.write($csv(ec.l10n.localize(ec.resource.expand("Do"))));
     sri.write("\n");
     for (let $index = 0; $index < $info.count; $index++) {
         sri.startFormListRow($info, $index);
@@ -32,11 +30,10 @@
                 $sep();
                 sri.write($csv(ec.l10n.formatCurrency(sri.getFieldValue({"name":"field","attrs":{"name":"amt","hide":"hideAmt"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}, ""), 'USD')));
             }
+            $sep();
             if (status == 'X') {
-                $sep();
                 sri.write($csv(ec.resource.expand("Excluded")));
             } else {
-                $sep();
                 sri.write($csv(sri.getFieldValueString({"name":"display","attrs":{},"parent":{"name":"default-field","attrs":{},"parent":{"name":"field","attrs":{"name":"status"},"parent":{"name":"form-list","attrs":{"name":"Rows","list":"rowList"},"parent":{"name":"widgets","attrs":{}}}}}})));
             }
             $sep();

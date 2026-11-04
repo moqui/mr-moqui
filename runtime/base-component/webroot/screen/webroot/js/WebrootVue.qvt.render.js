@@ -5966,7 +5966,7 @@
                 : _createCommentVNode("", true)
             }
         } },
-        "m-qapps-root": { hash: "9ce340b9", make: function (Vue) {
+        "m-qapps-root": { hash: "f938a38a", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, createVNode: _createVNode, renderList: _renderList, Fragment: _Fragment, withModifiers: _withModifiers, withKeys: _withKeys, resolveDirective: _resolveDirective, withDirectives: _withDirectives, normalizeClass: _normalizeClass, resolveDynamicComponent: _resolveDynamicComponent, createElementVNode: _createElementVNode, vShow: _vShow } = Vue
 
             return function render(_ctx, _cache) {
@@ -6184,72 +6184,79 @@
                                                     class: "text-weight-medium"
                                                   }, null, 8, ["label"]))
                                                 : (navMenuItem.subscreens && navMenuItem.subscreens.length && !navMenuItem.hasTabMenu)
-                                                  ? (_openBlock(), _createBlock(_component_q_breadcrumbs_el, {
-                                                      key: 1,
-                                                      class: "cursor-pointer"
-                                                    }, {
+                                                  ? (_openBlock(), _createBlock(_component_q_breadcrumbs_el, { key: 1 }, {
                                                       default: _withCtx(() => [
-                                                        _createTextVNode(_toDisplayString(navMenuItem.title), 1),
-                                                        _createVNode(_component_q_icon, {
-                                                          name: "arrow_drop_down",
-                                                          size: "xs"
-                                                        }),
-                                                        _createVNode(_component_q_menu, {
-                                                          anchor: "bottom left",
-                                                          self: "top left"
+                                                        _createVNode(_component_q_btn, {
+                                                          flat: "",
+                                                          dense: "",
+                                                          "no-caps": "",
+                                                          class: "m-breadcrumb-menu"
                                                         }, {
                                                           default: _withCtx(() => [
-                                                            _createVNode(_component_q_list, {
-                                                              dense: "",
-                                                              style: {"min-width":"200px"}
+                                                            _createTextVNode(_toDisplayString(navMenuItem.title), 1),
+                                                            _createVNode(_component_q_icon, {
+                                                              name: "arrow_drop_down",
+                                                              size: "xs"
+                                                            }),
+                                                            _createVNode(_component_q_menu, {
+                                                              anchor: "bottom left",
+                                                              self: "top left"
                                                             }, {
                                                               default: _withCtx(() => [
-                                                                (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(navMenuItem.subscreens, (subscreen) => {
-                                                                  return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
-                                                                    key: subscreen.name,
-                                                                    clickable: "",
-                                                                    active: subscreen.active,
-                                                                    "active-class": "text-primary text-weight-medium",
-                                                                    to: subscreen.pathWithParams,
-                                                                    onKeydown: _withKeys(_withModifiers(() => {}, ["prevent"]), ["enter"])
-                                                                  }, {
-                                                                    default: _withCtx(() => [
-                                                                      _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                                _createVNode(_component_q_list, {
+                                                                  dense: "",
+                                                                  style: {"min-width":"200px"}
+                                                                }, {
+                                                                  default: _withCtx(() => [
+                                                                    (_openBlock(true), _createElementBlock(_Fragment, null, _renderList(navMenuItem.subscreens, (subscreen) => {
+                                                                      return _withDirectives((_openBlock(), _createBlock(_component_q_item, {
+                                                                        key: subscreen.name,
+                                                                        clickable: "",
+                                                                        active: subscreen.active,
+                                                                        "active-class": "text-primary text-weight-medium",
+                                                                        to: subscreen.pathWithParams,
+                                                                        onKeydown: _withKeys(_withModifiers(() => {}, ["prevent"]), ["enter"])
+                                                                      }, {
                                                                         default: _withCtx(() => [
-                                                                          (subscreen.image && subscreen.imageType === 'icon')
-                                                                            ? (_openBlock(), _createBlock(_component_m_menu_icon, {
-                                                                                key: 0,
-                                                                                name: subscreen.image,
-                                                                                size: "xs"
-                                                                              }, null, 8, ["name"]))
-                                                                            : (subscreen.image)
-                                                                              ? (_openBlock(), _createElementBlock("img", {
-                                                                                  key: 1,
-                                                                                  src: subscreen.image,
-                                                                                  alt: subscreen.title,
-                                                                                  width: "18",
-                                                                                  class: "invertible"
-                                                                                }, null, 8, ["src", "alt"]))
-                                                                              : (_openBlock(), _createBlock(_component_q_icon, {
-                                                                                  key: 2,
-                                                                                  name: "chevron_right",
-                                                                                  size: "xs"
-                                                                                }))
+                                                                          _createVNode(_component_q_item_section, { avatar: "" }, {
+                                                                            default: _withCtx(() => [
+                                                                              (subscreen.image && subscreen.imageType === 'icon')
+                                                                                ? (_openBlock(), _createBlock(_component_m_menu_icon, {
+                                                                                    key: 0,
+                                                                                    name: subscreen.image,
+                                                                                    size: "xs"
+                                                                                  }, null, 8, ["name"]))
+                                                                                : (subscreen.image)
+                                                                                  ? (_openBlock(), _createElementBlock("img", {
+                                                                                      key: 1,
+                                                                                      src: subscreen.image,
+                                                                                      alt: subscreen.title,
+                                                                                      width: "18",
+                                                                                      class: "invertible"
+                                                                                    }, null, 8, ["src", "alt"]))
+                                                                                  : (_openBlock(), _createBlock(_component_q_icon, {
+                                                                                      key: 2,
+                                                                                      name: "chevron_right",
+                                                                                      size: "xs"
+                                                                                    }))
+                                                                            ]),
+                                                                            _: 2
+                                                                          }, 1024),
+                                                                          _createVNode(_component_q_item_section, null, {
+                                                                            default: _withCtx(() => [
+                                                                              _createTextVNode(_toDisplayString(subscreen.title), 1)
+                                                                            ]),
+                                                                            _: 2
+                                                                          }, 1024)
                                                                         ]),
                                                                         _: 2
-                                                                      }, 1024),
-                                                                      _createVNode(_component_q_item_section, null, {
-                                                                        default: _withCtx(() => [
-                                                                          _createTextVNode(_toDisplayString(subscreen.title), 1)
-                                                                        ]),
-                                                                        _: 2
-                                                                      }, 1024)
-                                                                    ]),
-                                                                    _: 2
-                                                                  }, 1032, ["active", "to", "onKeydown"])), [
-                                                                    [_directive_close_popup]
-                                                                  ])
-                                                                }), 128))
+                                                                      }, 1032, ["active", "to", "onKeydown"])), [
+                                                                        [_directive_close_popup]
+                                                                      ])
+                                                                    }), 128))
+                                                                  ]),
+                                                                  _: 2
+                                                                }, 1024)
                                                               ]),
                                                               _: 2
                                                             }, 1024)

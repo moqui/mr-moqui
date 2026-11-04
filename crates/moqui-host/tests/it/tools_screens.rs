@@ -385,7 +385,7 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         address,
         &john,
         "/System/Cache/CacheElements?orderByField=key&cacheName=l10n.message&pageSize=1000",
-        &["::en_US", "Elements for Cache [l10n.message]"],
+        &["::en_US", "Cache entries", "l10n.message"],
     );
     assert_page(address, &john, "/System/Localization/Messages", &["Add", "Añadir"]);
     assert_page(

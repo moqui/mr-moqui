@@ -5,6 +5,16 @@
     const moqui = root.moqui;
     const report = moqui.report = {};
     const finite = (v) => v !== null && v !== undefined && v !== "" && Number.isFinite(Number(v));
+    // Opt in only the native elements created by this renderer. Embedded Quasar/Markdown controls keep their own styles.
+    const nativeTags = new Set(["button", "input", "select", "textarea", "summary"]);
+    function reportElement(tag, props, children) {
+        const marker = nativeTags.has(tag) ? "m-report-native" : tag === "label" ? "m-report-label" : null;
+        if (!marker) return root.Vue.h(...arguments);
+        if (arguments.length === 2 && (typeof props !== "object" || Array.isArray(props) || root.Vue.isVNode(props))) {
+            children = props; props = null;
+        }
+        return root.Vue.h(tag, Object.assign({}, props, { class: [props && props.class, marker] }), children);
+    }
     // Text in the viewer's language from the loaded catalog (MoquiL10n.js), else as written; looked up when drawn, since the
     // catalog may load after this file. `{0}`, `{1}` are filled from the arguments.
     const T = report.t = (text, ...args) => {
@@ -150,6 +160,47 @@
     };
     report.aggregationRoles=panel=>{const roles={};const visit=query=>{for(const aggregation of query.aggregations || [])roles[aggregation.id]=aggregation.role;for(const child of query.queries || [])visit(child);};for(const query of panel && panel.queries || [])visit(query);return roles;};
     report.seriesIndexes=(fields,panel,x)=>{const roles=report.aggregationRoles(panel),documents=(panel && panel.queries || []).some(query=>query.mode==='documents');return fields.map((field,at)=>({field,at})).filter(({field,at})=>at!==x && !report.isMetadata(field,roles[field.name]) && (['series','split-series','splitSeries','splitRows','splitChart'].includes(field.role || field.config && field.config.role || roles[field.name]) || field.config && field.config.bucket || !documents && !report.numericField(field))).map(item=>item.at);};
+    // Only the axis is abbreviated: full labels remain the tooltip titles and values keep their exact filter/zoom meaning.
+    // Bucket display labels carry the server's zone; ordinary time fields already display in the browser's local zone.
+    const timeAxis = (coordinates, field) => {
+        if ((field?.type || field?.kind) !== 'time' || !coordinates.length) return {};
+        const bucketLabels = Array.isArray(field.config?.bucket?.labels), pad = value => String(value).padStart(2, '0');
+        if (!bucketLabels && (field.config?.mappings || field.mappings || []).length) return {};
+        const parts = coordinates.map(point => {
+            if (bucketLabels) {
+                const match = /^(\d{4})-(\d\d)-(\d\d)[T ](\d\d):(\d\d):(\d\d)(?:\.(\d+))?(Z|[+-]\d\d:?\d\d)$/.exec(point.label);
+                const at = Date.parse(point.label);
+                // Explicit custom bucket labels are already presentation, not timestamps to reinterpret.
+                if (!match || !Number.isFinite(at)) return null;
+                const zone = match[8] === 'Z' ? 'UTC' : 'UTC' + match[8].replace(/^([+-]\d\d)(\d\d)$/, '$1:$2');
+                return {date:match[1]+'-'+match[2]+'-'+match[3], year:match[1], clock:match[4]+':'+match[5],
+                    seconds:match[6], fraction:(match[7] || '').replace(/0+$/, ''), zone, at};
+            }
+            const date = new Date(/^\d+$/.test(String(point.value)) ? Number(point.value) : point.value), at = date.getTime();
+            if (point.value == null || !Number.isFinite(at)) return null;
+            const offset = -date.getTimezoneOffset(), zone = offset === 0 ? 'UTC' : 'UTC'+(offset<0?'-':'+')+pad(Math.floor(Math.abs(offset)/60))+':'+pad(Math.abs(offset)%60);
+            return {date:date.getFullYear()+'-'+pad(date.getMonth()+1)+'-'+pad(date.getDate()), year:String(date.getFullYear()),
+                clock:pad(date.getHours())+':'+pad(date.getMinutes()), seconds:pad(date.getSeconds()),
+                fraction:String(date.getMilliseconds()).padStart(3,'0').replace(/0+$/, ''), zone, at};
+        });
+        if (parts.some(part => !part)) return {};
+        const days = new Set(parts.map(part=>part.date)), years = new Set(parts.map(part=>part.year)), zones = new Set(parts.map(part=>part.zone));
+        const times = Array.from(new Set(parts.map(part=>part.at))).sort((a,b)=>a-b);
+        let step = Infinity;
+        for (let at=1;at<times.length;at++) step = Math.min(step,times[at]-times[at-1]);
+        const showDate = days.size>1, showTime = !showDate || step<86400000;
+        const showSeconds = step<60000 || parts.some(part=>part.seconds!=='00' || part.fraction);
+        const fractions = Math.max(...parts.map(part=>part.fraction.length));
+        const labels = parts.map(part => {
+            const date = years.size>1 ? part.date : part.date.slice(5);
+            const clock = part.clock+(showSeconds?':'+part.seconds:'')+(fractions?'.'+part.fraction.padEnd(fractions,'0'):'');
+            const zone = zones.size>1 ? ' '+part.zone.replace(/^UTC(?=[+-])/, '') : '';
+            return showDate ? (showTime ? [date,clock+zone] : date+zone) : clock+zone;
+        });
+        const context = !showDate ? parts[0].date : years.size===1 ? parts[0].year : '';
+        return {ticks:{maxRotation:0,autoSkip:true,callback:value=>labels[value] ?? coordinates[value]?.label ?? ''},
+            title:{display:true,text:[context,zones.size===1?parts[0].zone:T('UTC offsets')].filter(Boolean).join(' · ')}};
+    };
     report.chart = (frame, panel, onFilter) => {
         panel=panel || {};
         const fields=report.configuredFields(frame,panel),rows=report.rows(frame),roles=report.aggregationRoles(panel);
@@ -189,7 +240,7 @@
             onClick(event,elements,chart){if(event.type && event.type!=='click' && event.type!=='contextmenu')return;if(chart && chart.$reportSuppressClick){chart.$reportSuppressClick=false;return;}if(!onFilter || !elements.length)return;const hit=elements[0],row=datasets[hit.datasetIndex || 0]?._reportRows[hit.index];if(row==null)return;const pills=[x,...split].map(at=>report.bucketPill(frame,panel,at,row,false)).filter(Boolean);if(!pills.length)return;const pill=pills[0],queries=[];for(const item of pills)if(item.datasetId===pill.datasetId && !queries.some(query=>JSON.stringify(query)===JSON.stringify(item.query)))queries.push(item.query);pill.query=queries.length===1?queries[0]:{bool:{all:queries}};pill.negated=!!((event.native || event).shiftKey);onFilter(pill);},
             events:['click','mousemove','mouseout','mousedown','mouseup','touchstart','touchmove','touchend','dblclick'],interaction:{mode:'index',intersect:false},
             plugins:{tooltip:{callbacks:{label:context=>context.dataset.label+': '+report.format(context.raw,context.dataset._reportField || {})}}},
-            scales:['pie','donut'].includes(visual)?undefined:{x:{stacked:!!panel.stacked},y:{stacked:!!panel.stacked,ticks:{callback:value=>report.format(value,numeric[0] && numeric[0].field || {})}},...(panel.secondAxis?{y1:{position:'right',grid:{drawOnChartArea:false},ticks:{callback:value=>report.format(value,numeric[1] && numeric[1].field || {})}}}:{})}}};
+            scales:['pie','donut'].includes(visual)?undefined:{x:{stacked:!!panel.stacked,...timeAxis(coordinates,fields[x])},y:{stacked:!!panel.stacked,ticks:{callback:value=>report.format(value,numeric[0] && numeric[0].field || {})}},...(panel.secondAxis?{y1:{position:'right',grid:{drawOnChartArea:false},ticks:{callback:value=>report.format(value,numeric[1] && numeric[1].field || {})}}}:{})}}};
     };
     // An LLM call's model and token use from its OTel gen_ai.* attributes, for the waterfall and the AI screen.
     report.genAiLabel = (span) => {
@@ -678,12 +729,13 @@
             choose(item){this.query=report.replaceQueryToken(this.query,item.value);this.suggesting=false;this.choice=0;},
             key(event){if(event.key==='ArrowDown'){event.preventDefault();this.suggesting=true;this.choice=(this.choice+1)%Math.max(1,this.suggestions.length);}else if(event.key==='ArrowUp'){event.preventDefault();this.choice=(this.choice+this.suggestions.length-1)%Math.max(1,this.suggestions.length);}else if(event.key==='Escape'){this.suggesting=false;}else if(event.key==='Enter' && this.suggesting && this.suggestions[this.choice]){event.preventDefault();this.choose(this.suggestions[this.choice]);}else if(event.key==='Enter'){this.remember();}}
         },
-        render(){const h=root.Vue.h;return h('section',{class:'q-pa-sm',onSubmit:this.remember},[
-            this.filterOnly?null:h('label',['Query ',h('input',{type:'text',value:this.query,style:{width:'min(100%,60rem)'},'aria-label':'Search query','aria-autocomplete':'list','aria-expanded':this.suggesting,onInput:event=>{this.query=event.target.value;this.suggesting=true;this.choice=0;},onKeydown:this.key,onFocus:()=>{this.suggesting=true;},onBlur:()=>{root.setTimeout(()=>{this.suggesting=false;},150);this.remember();}})]),
+        render(){const h=reportElement;return h('section',{class:'q-pa-sm',onSubmit:this.remember},[
+            this.filterOnly?null:h('div',{class:'m-report-query-tools'},[
+                h('label',{class:'m-report-query-text'},['Query ',h('input',{type:'text',value:this.query,'aria-label':'Search query','aria-autocomplete':'list','aria-expanded':this.suggesting,onInput:event=>{this.query=event.target.value;this.suggesting=true;this.choice=0;},onKeydown:this.key,onFocus:()=>{this.suggesting=true;},onBlur:()=>{root.setTimeout(()=>{this.suggesting=false;},150);this.remember();}})]),
+                h('label',{class:'m-report-query-history'},['Recent queries ',h('select',{'aria-label':'Query history',value:'',onChange:event=>{this.query=event.target.value;}},[h('option',{value:''},'Choose a query'),...this.history.map(query=>h('option',{value:query},query))])]),
+                h('button',{type:'button',onClick:()=>{this.history=[];report.storage.write(this.storageKey+'.history',[]);}},'Clear query history')]),
             this.suggesting && this.suggestions.length?h('ul',{role:'listbox',class:'q-pa-xs'},this.suggestions.map((item,at)=>h('li',{role:'option','aria-selected':at===this.choice},[h('button',{type:'button',onClick:()=>this.choose(item)},item.text)]))):null,
-            this.filterOnly?null:h('label',['Recent queries ',h('select',{'aria-label':'Query history',value:'',onChange:event=>{this.query=event.target.value;}},[h('option',{value:''},'Choose a query'),...this.history.map(query=>h('option',{value:query},query))])]),
-            this.filterOnly?null:h('button',{type:'button',onClick:()=>{this.history=[];report.storage.write(this.storageKey+'.history',[]);}},'Clear query history'),
-            h('div',{class:'row q-gutter-sm','aria-label':'Query filters'},this.pills.map((pill,at)=>h('div',{class:'q-pa-xs',style:{border:'1px solid var(--q-secondary)',opacity:pill.disabled?0.6:1}},[
+            h('div',{class:'m-report-query-pills','aria-label':'Query filters'},this.pills.map((pill,at)=>h('div',{class:'q-pa-xs',style:{border:'1px solid var(--q-secondary)',opacity:pill.disabled?0.6:1}},[
                 h('span',(pill.negated?'NOT ':'')+(pill.label || JSON.stringify(pill.query))+(pill.disabled?' (disabled)':'')),
                 h('button',{type:'button','aria-pressed':!!pill.pinned,onClick:()=>this.change(at,'pinned')},pill.pinned?'Unpin':'Pin'),
                 h('button',{type:'button','aria-pressed':!!pill.negated,onClick:()=>this.change(at,'negated')},'Negate'),
@@ -704,8 +756,8 @@
         set(value,path,next){const parts=String(path).split('.');let target=value;for(let at=0;at<parts.length-1;at++){const key=parts[at];target=target[key] || (target[key]=/^\d+$/.test(parts[at+1])?[]:{});}if(next===undefined)delete target[parts[parts.length-1]];else target[parts[parts.length-1]]=next;},
         list:value=>String(value || '').split(',').map(value=>value.trim()).filter(Boolean),
         move(items,at,delta){const to=at+delta;if(to<0 || to>=items.length)return;[items[at],items[to]]=[items[to],items[at]];},
-        button(text,click,disabled){return root.Vue.h('button',{type:'button',disabled:!!disabled,onClick:click,class:'q-btn q-btn--flat q-btn--rectangle q-px-sm q-py-xs text-primary'},T(text));},
-        control(label,value,change,type,choices,disabled,classes){const h=root.Vue.h;let input;
+        button(text,click,disabled){return reportElement('button',{type:'button',disabled:!!disabled,onClick:click,class:'q-btn q-btn--flat q-btn--rectangle q-px-sm q-py-xs text-primary'},T(text));},
+        control(label,value,change,type,choices,disabled,classes){const h=reportElement;let input;
             if(choices)input=h('select',{value:value??'',disabled:!!disabled,onChange:event=>change(event.target.value)},choices.map(choice=>h('option',{value:typeof choice==='object'?choice.value:choice},typeof choice==='object'?choice.text || choice.value:choice)));
             else if(type==='textarea')input=h('textarea',{value:value??'',rows:3,disabled:!!disabled,onChange:event=>change(event.target.value)});
             else input=h('input',{type:type==='list'?'text':type || 'text',value:type==='list'?(value || []).join(','):value??'',checked:type==='checkbox'?!!value:undefined,disabled:!!disabled,onChange:event=>change(type==='checkbox'?event.target.checked:type==='number'?(event.target.value===''?undefined:Number(event.target.value)):type==='list'?E.list(event.target.value):event.target.value)});
@@ -718,7 +770,7 @@
     components['m-report-transform-editor']={
         props:{value:{type:Array,default:()=>[]},disabled:Boolean},emits:['change'],
         methods:{change(at,path,value){const copy=E.clone(this.value);E.set(copy[at],path,value);this.$emit('change',copy);}},
-        render(){const h=root.Vue.h,disabled=this.disabled;
+        render(){const h=reportElement,disabled=this.disabled;
             const fields=this.value.map((step,at)=>{const controls=[],put=(label,path,type,choices)=>controls.push(E.control(label,E.get(step,path),value=>this.change(at,path,value),type,choices,disabled));
                 put('Transformation type','type','select',['limit','sort','reduce','filter','calculate','organize','join','joinByTime','merge','pivot','partitionByValues','longToWide','wideToLong','timeSeriesToTable','groupBy','runningTotal','movingAverage','delta','percentOfTotal','timeShift','patterns']);put('Disabled','disabled','checkbox');
                 if(['sort','filter','runningTotal','movingAverage','delta','percentOfTotal','timeShift'].includes(step.type))put('Field','field');
@@ -755,7 +807,7 @@
     components['m-report-field-editor']={
         props:{value:{type:Object,default:()=>({})},disabled:Boolean},emits:['change'],
         methods:{change(path,value){const copy=E.clone(this.value);E.set(copy,path,value);this.$emit('change',copy);}},
-        render(){const h=root.Vue.h,disabled=this.disabled,config=this.value;
+        render(){const h=reportElement,disabled=this.disabled,config=this.value;
             const settings=(value,change,title)=>{const rows=[],put=(label,path,type,choices)=>rows.push(E.control(label,E.get(value,path),next=>{const copy=E.clone(value);E.set(copy,path,next);change(copy);},type,choices,disabled));
                 put('Display name','displayName');put('Field unit','unit');put('Decimal places','decimals','number');put('Field minimum','min','number');put('Field maximum','max','number');put('No-value text','noValue');put('Hidden','hidden','checkbox');put('Frozen column','frozen','checkbox');put('Cell display','cellDisplay','select',[{value:'',text:'Automatic'},{value:'text',text:'Text'},{value:'sparkline',text:'Sparkline'}]);put('Data link URL (${value} or ${field})','link');put('Threshold mode','thresholdMode','select',['absolute','percent']);
                 const mappings=value.mappings || [];mappings.forEach((mapping,at)=>rows.push(h('fieldset',{class:'m-report-editor-group'},[h('legend','Value mapping '+(at+1)),E.control('Exact value',mapping.value,next=>{const copy=E.clone(value);copy.mappings[at].value=next;delete copy.mappings[at].from;delete copy.mappings[at].to;change(copy);},null,null,disabled),E.control('Range from',mapping.from,next=>{const copy=E.clone(value);copy.mappings[at].from=next;delete copy.mappings[at].value;change(copy);},'number',null,disabled),E.control('Range through',mapping.to,next=>{const copy=E.clone(value);copy.mappings[at].to=next;delete copy.mappings[at].value;change(copy);},'number',null,disabled),E.control('Display text',mapping.text,next=>{const copy=E.clone(value);copy.mappings[at].text=next;change(copy);},null,null,disabled),...E.listControls(mappings,at,next=>{const copy=E.clone(value);copy.mappings=next;change(copy);},disabled)])));
@@ -771,7 +823,7 @@
     components['m-report-variable-editor']={
         props:{value:{type:Array,default:()=>[]},datasets:{type:Array,default:()=>[]},disabled:Boolean},emits:['change'],
         methods:{change(at,path,value){const copy=E.clone(this.value);E.set(copy[at],path,value);this.$emit('change',copy);}},
-        render(){const h=root.Vue.h,disabled=this.disabled;
+        render(){const h=reportElement,disabled=this.disabled;
             return h('section',[...this.value.map((variable,at)=>{const controls=[],put=(label,path,type,choices)=>controls.push(E.control(label,E.get(variable,path),value=>this.change(at,path,value),type,choices,disabled));
                 put('Variable name','name');put('Label','label');put('Kind','kind','select',['query','custom','constant','interval','text','groupBy']);put('Dataset','datasetId','select',[{value:'',text:'All query datasets'},...this.datasets.map(item=>({value:item.id,text:item.title || item.id}))]);put('Field','field');put('Multiple values','multi','checkbox');put('Include All','includeAll','checkbox');
                 controls.push(E.control('Default value',Array.isArray(variable.default)?variable.default.join(','):variable.default,value=>this.change(at,'default',variable.multi?E.list(value):value),null,null,disabled));
@@ -783,7 +835,7 @@
     };
     components['m-report-layout-editor']={
         props:{value:{type:Object,default:()=>({type:'autoGrid',items:[]})},panelIds:{type:Array,default:()=>[]},variableNames:{type:Array,default:()=>[]},disabled:Boolean},emits:['change'],
-        render(){const h=root.Vue.h,disabled=this.disabled;
+        render(){const h=reportElement,disabled=this.disabled;
             const render=(node,change,depth)=>{if(depth>12)return h('p',{role:'alert'},'Layout nesting exceeds 12 levels');const items=node.items || node.children || [],type=node.type || 'autoGrid';
                 const setItems=next=>change(Object.assign({},node,{items:next}));
                 return h('fieldset',{class:'m-report-editor-group'},[h('legend','Layout level '+(depth+1)),E.control('Layout type',type,value=>change(E.layout(value,E.panelIds(node))), 'select',['autoGrid','grid','rows','tabs'],disabled),
@@ -799,7 +851,7 @@
         inject:{mForm:{default:null}},props:{name:{type:String,default:'definitionJson'},dashboards:{type:Array,default:()=>[]},readOnly:Boolean},
         computed:{body(){try{return JSON.parse(this.mForm.fields[this.name] || '{}');}catch(_){return null;}}},
         methods:{write(body){if(!this.readOnly)this.mForm.fields[this.name]=JSON.stringify(body,null,2);},change(path,value){const copy=E.clone(this.body);E.set(copy,path,value);this.write(copy);}},
-        render(){const h=root.Vue.h,body=this.body,disabled=this.readOnly;if(!body || typeof body!=='object')return h('p',{role:'alert'},'Correct the JSON to use the report editor');const rows=body.dashboards || [];
+        render(){const h=reportElement,body=this.body,disabled=this.readOnly;if(!body || typeof body!=='object')return h('p',{role:'alert'},'Correct the JSON to use the report editor');const rows=body.dashboards || [];
             if(body.kind==='playlist'){const items=body.playlist || [];return h('section',{class:'m-report-editor'},[h('h4','Playlist options'),E.control('Seconds per dashboard',body.seconds || 30,value=>this.change('seconds',value),'number',null,disabled),...items.map((entry,at)=>h('fieldset',{class:'m-report-editor-group'},[h('legend','Playlist item '+(at+1)),E.control('Dashboard',entry.definitionId,value=>this.change('playlist.'+at+'.definitionId',value),'select',this.dashboards.map(item=>({value:item.id,text:item.title || item.id})),disabled),...E.listControls(items,at,value=>this.change('playlist',value),disabled)])),E.button('Add playlist dashboard',()=>this.change('playlist',[...E.clone(items),{definitionId:this.dashboards[0] && this.dashboards[0].id || ''}]),disabled)]);}
             return h('section',{class:'m-report-editor'},[h('h4','Report composition'),E.control('Orientation',body.orientation || 'portrait',value=>this.change('orientation',value),'select',['portrait','landscape'],disabled),E.control('Paper',body.paper || 'letter',value=>this.change('paper',value),'select',[{value:'letter',text:'Letter'},{value:'a4',text:'A4'}],disabled),E.control('Report layout',body.layout || 'grid',value=>this.change('layout',value),'select',['grid','rows'],disabled),E.control('Appendix',body.appendix,value=>this.change('appendix',value),'checkbox',null,disabled),
                 ...rows.map((entry,at)=>h('fieldset',{class:'m-report-editor-group'},[h('legend','Dashboard '+(at+1)),E.control('Dashboard',entry.dashboardRef,value=>this.change('dashboards.'+at+'.dashboardRef',value),'select',this.dashboards.map(item=>({value:item.id,text:item.title || item.id})),disabled),E.control('From',entry.from,value=>this.change('dashboards.'+at+'.from',value),null,null,disabled),E.control('Through',entry.thru,value=>this.change('dashboards.'+at+'.thru',value),null,null,disabled),
@@ -813,7 +865,7 @@
         props:{datasetId:String,field:String,value:null,label:String,link:String,filters:{type:Array,default:()=>[]},range:Object,hideValue:Boolean},
         data:()=>({open:false,error:''}),
         methods:{apply(negated){try{const pill={datasetId:this.datasetId,query:{field:{name:this.field,op:this.value==null?'exists':'eq',...(this.value==null?{}:{value:this.value})}},negated:this.value==null?!negated:negated,label:this.field+': '+report.format(this.value,{}),disabled:false,pinned:false};root.location.assign(report.filterUrl(pill,{filters:this.filters,range:this.range}));}catch(error){this.error=String(error.message || error);}}},
-        render(){const h=root.Vue.h,text=this.label ?? report.format(this.value,{});return h('span',{class:'m-report-value-filter','data-report-filter-field':this.field},[this.hideValue?null:this.link?h('a',{href:report.safeLink(this.link)},text):h('span',text),E.button('Filter',()=>{this.open=!this.open;}),this.open?h('span',{role:'menu'},[E.button('Filter for',()=>this.apply(false)),E.button('Filter out',()=>this.apply(true)),E.button('Cancel',()=>{this.open=false;})]):null,this.error?h('span',{role:'alert'},this.error):null]);}
+        render(){const h=reportElement,text=this.label ?? report.format(this.value,{});return h('span',{class:'m-report-value-filter','data-report-filter-field':this.field},[this.hideValue?null:this.link?h('a',{href:report.safeLink(this.link)},text):h('span',text),E.button('Filter',()=>{this.open=!this.open;}),this.open?h('span',{role:'menu'},[E.button('Filter for',()=>this.apply(false)),E.button('Filter out',()=>this.apply(true)),E.button('Cancel',()=>{this.open=false;})]):null,this.error?h('span',{role:'alert'},this.error):null]);}
     };
     components["m-report-definition-editor"] = {
         inject: { mForm: { default: null } },
@@ -905,7 +957,7 @@
             }
         },
         render() {
-            const h = root.Vue.h;
+            const h = reportElement;
             if (!this.body) return h("p", { role: "alert" }, "Correct the JSON below to use the panel options.");
             const panel = this.panels[this.selectedId] || {}, options = [];
             const read = (path) => path.split(".").reduce((value, key) => value && value[key], panel);
@@ -1016,7 +1068,7 @@
             }
         },
         render() {
-            const h = root.Vue.h;
+            const h = reportElement;
             return h("section", { class: "q-pa-sm" }, [h("button", { type: "button", class: "q-btn q-pa-xs", "aria-pressed": this.active, onClick: this.toggle }, this.active ? "Pause live tail" : "Start live tail"),
                 this.error ? h("p", { role: "alert", class: "text-negative" }, this.error + " — telemetry is unavailable") : null,
                 this.removed ? h("p", this.removed + " older entries removed from this view; search or export to read them") : null,
@@ -1035,7 +1087,7 @@
         props: { spans: { type: Array, default: () => [] } }, emits: ["select"],
         data: () => ({ selected: null }),
         render() {
-            const h = root.Vue.h, rows = report.waterfall(this.spans);
+            const h = reportElement, rows = report.waterfall(this.spans);
             if (!rows.length) return h("p", { role: "status" }, "No spans in this time range. Telemetry may be missing.");
             return h("div", { class: "m-trace-waterfall" }, [
                 ...rows.map((row) => h("button", { type: "button", class: "full-width text-left q-pa-sm", key: row.span.span_id,
@@ -1086,7 +1138,7 @@
             }
         },
         render() {
-            const h = root.Vue.h, seconds = (ms) => (ms / 1000).toFixed(1) + " s";
+            const h = reportElement, seconds = (ms) => (ms / 1000).toFixed(1) + " s";
             const status = this.state === "loading" ? T("Loading the replay") : this.state === "empty" ? T("This replay has no events.")
                 : this.state === "failed" ? T("The replay could not be loaded: {0}", this.message) : null;
             return h("div", { class: "m-session-replay" }, [
@@ -1104,7 +1156,7 @@
         mounted() { this.timer=root.setInterval(()=>{ if (!this.paused && !root.document.hidden && this.items.length) this.at=(this.at+1)%this.items.length; }, Math.max(5,this.seconds)*1000); },
         beforeUnmount() { if (this.timer) root.clearInterval(this.timer); },
         render() {
-            const h=root.Vue.h,item=this.items[this.at];
+            const h=reportElement,item=this.items[this.at];
             if (!item) return h("p",{role:"status"},"No accessible dashboards in this playlist.");
             return h("section",[h("div",{class:"row items-center q-gutter-sm"},[
                 h("button",{type:"button",onClick:()=>{this.at=(this.at+this.items.length-1)%this.items.length;}},"Previous"),
@@ -1179,7 +1231,7 @@
                 moqui.saveBlob((this.title || this.panel.title || "report") + ".csv", blob); }
         },
         render() {
-            const h = root.Vue.h, frame = this.frames && this.frames[0] || this.frame;
+            const h = reportElement, frame = this.frames && this.frames[0] || this.frame;
             const fields = report.configuredFields(frame, this.panel), rows = report.rows(frame), visual = this.panel.visualization || this.panel.type || "table";
             const title = this.title || this.panel.title;
             const named = title || T("Report");
@@ -1194,7 +1246,7 @@
                 item(this.embedded ? "Open in Dashboards" : "View", this.viewPanel, this.embedded || !this.single), item("Edit", this.editPanel), item("Share", this.sharePanel),
                 item("Explore", this.explorePanel, !!report.firstQuery(this.panel)), item("Inspect", () => { this.menu = false; this.inspect(); }),
                 item("Duplicate", () => this.changePanel("duplicatePanel"), this.editable), item("Remove", () => this.changePanel("removePanel"), this.editable),
-                alerting ? h("a", { role: "menuitem", class: "q-btn q-pa-xs", href: report.appPath("/apps/dashboards/AlertRule?dashboardId=" + encodeURIComponent(this.dashboardId) + "&panelId=" + encodeURIComponent(this.panelId)) }, T("New alert rule")) : null]) : null;
+                alerting ? h("a", { role: "menuitem", class: "m-report-native q-btn q-pa-xs", href: report.appPath("/apps/dashboards/AlertRule?dashboardId=" + encodeURIComponent(this.dashboardId) + "&panelId=" + encodeURIComponent(this.panelId)) }, T("New alert rule")) : null]) : null;
             const shared = this.status ? h("p", { role: "status", class: "q-my-xs" }, [this.status, " ", this.shared ? h("input", { type: "text", readonly: true, value: this.shared, "aria-label": T("Panel link"), style: { width: "min(100%,40rem)" }, onFocus: (event) => event.target.select() }) : null,
                 E.button("Close", () => { this.status = ""; this.shared = ""; })]) : null;
             let content;
@@ -1285,7 +1337,7 @@
                 const footer = report.footerRows(fields, this.panel);
                 content = h("div", { class: "scroll" }, [h("table", { class: "q-table full-width" }, [
                     h("thead", [h("tr", visible.map(({ field, index }) => h("th", { style: { textAlign: "left" }, "aria-sort": this.sortField === index ? (this.descending ? "descending" : "ascending") : "none" }, [
-                        h("button", { type: "button", onClick: () => { this.descending = this.sortField === index ? !this.descending : false; this.sortField = index; } }, field.displayName || field.name) ])))]),
+                        h("button", { type: "button", class: "m-report-sort", onClick: () => { this.descending = this.sortField === index ? !this.descending : false; this.sortField = index; } }, field.displayName || field.name) ])))]),
                     h("tbody", sorted.map((row, at) => h("tr", { key: at }, visible.map(({ field, index }) => {
                         const value = row[index], text = report.cellText(value, field,row.sourceRow), record = Object.fromEntries(fields.map((item, i) => [item.name, row[i]]));
                         const link = field.link ? report.dataLink(field.link, value, record, this.range) : "", spark = report.sparklineCell(field, value);
@@ -1321,7 +1373,7 @@
             shift(key){const range=report.shiftRange(this.absolute,key);if(range)this.apply(range);},
             key(event){if(event.key==='Escape' && this.open){event.preventDefault();event.stopPropagation();this.open=false;}}
         },
-        render(){const h=root.Vue.h,label=report.rangeLabel(this.value && this.value.from?this.value:this.absolute) || T('Choose a time range');
+        render(){const h=reportElement,label=report.rangeLabel(this.value && this.value.from?this.value:this.absolute) || T('Choose a time range');
             const choice=(range,text)=>h('li',{key:range.from+'|'+range.thru},[h('button',{type:'button',class:'q-btn q-pa-xs','aria-current':range.from===this.value.from && (range.thru || 'now')===(this.value.thru || 'now')?'true':undefined,onClick:()=>this.apply(range)},text || report.rangeLabel(range))]);
             return h('div',{class:'m-report-time-picker',onKeydown:this.key},[
                 h('div',{class:'row items-center q-gutter-xs'},[
@@ -1342,7 +1394,7 @@
         props:{dashboard:{type:Object,required:true}},emits:['apply'],
         data(){return {dataset:Object.keys(this.dashboard.datasetFields || {})[0] || '',form:{fields:{queryString:'',filtersJson:JSON.stringify(this.dashboard.filters || [])}}};},
         provide(){return {mForm:this.form};},
-        render(){const h=root.Vue.h,fields=this.dashboard.datasetFields || {};return h('details',[h('summary','Dashboard filters ('+report.parsePills(this.form.fields.filtersJson).length+')'),E.control('Filter dataset',this.dataset,value=>{this.dataset=value;},'select',Object.keys(fields)),h(components['m-report-querybar'],{filterOnly:true,fields:fields[this.dataset] || [],datasetId:this.dataset,viewerId:this.dashboard.viewerId}),E.button('Apply dashboard filters',()=>this.$emit('apply',report.parsePills(this.form.fields.filtersJson))),h('p','Filters are enforced by the server for matching datasets and included in inspection and exports.')]);}
+        render(){const h=reportElement,fields=this.dashboard.datasetFields || {};return h('details',[h('summary','Dashboard filters ('+report.parsePills(this.form.fields.filtersJson).length+')'),E.control('Filter dataset',this.dataset,value=>{this.dataset=value;},'select',Object.keys(fields)),h(components['m-report-querybar'],{filterOnly:true,fields:fields[this.dataset] || [],datasetId:this.dataset,viewerId:this.dashboard.viewerId}),E.button('Apply dashboard filters',()=>this.$emit('apply',report.parsePills(this.form.fields.filtersJson))),h('p','Filters are enforced by the server for matching datasets and included in inspection and exports.')]);}
     };
     components["m-dashboard"] = {
         props: { dashboard: { type: Object, default: () => ({ panels: {} }) }, frames: { type: Object, default: () => ({}) } },
@@ -1404,7 +1456,7 @@
             }
         },
         render() {
-            const h = root.Vue.h, panels = this.dashboard.panels || {};
+            const h = reportElement, panels = this.dashboard.panels || {};
             const entries = Array.isArray(panels) ? panels.map((panel, at) => [panel.id || String(at), panel]) : Object.entries(panels);
             const byId = Object.fromEntries(entries);
             const panel = (id, position) => byId[id] ? h("div", { key: id, style: Object.assign({minWidth:"0"},position),onFocusin:()=>{this.selectedPanel=id;},onMouseenter:()=>{this.selectedPanel=id;} }, [h(components["m-report-panel"], { ref:instance=>{this.panelRefs[id]=instance;},panel: byId[id], frames: this.frames[id] || byId[id].frames,

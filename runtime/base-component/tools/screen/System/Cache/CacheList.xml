@@ -64,7 +64,8 @@ along with this software (see the LICENSE.md file). If not, see
             <link text="Clear All Artifact" url="clearArtifactCaches"/>
         </row-col><row-col lg="6" md="6">
             <form-single name="FilterForm" transition=".">
-                <field name="filterRegexp"><default-field><text-line size="30"/></default-field></field>
+                <field name="filterRegexp"><default-field title="Cache name filter"
+                        tooltip="Enter part of a name or a regular expression. Unsupported patterns are treated as literal text."><text-line size="30"/></default-field></field>
                 <field name="submitButton"><default-field title="Filter"><submit/></default-field></field>
                 <field-layout><field-row-big><field-ref name="filterRegexp"/><field-ref name="submitButton"/></field-row-big></field-layout>
             </form-single>

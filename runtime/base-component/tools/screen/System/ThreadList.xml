@@ -30,6 +30,9 @@ along with this software (see the LICENSE.md file). If not, see
     <actions>
         <set field="workerPool" from="ec.factory.workerPool"/>
         <set field="jobRunner" from="ec.service.getJobRunner()"/>
+        <set field="jobRunnerLastCheckText" from="jobRunner &amp;&amp; jobRunner.executeCount &gt; 0 ? (jobRunner.lastExecuteTime != null ? ec.l10n.format(jobRunner.lastExecuteTime, null) : ec.l10n.localize('Unavailable')) : ec.l10n.localize('Not run yet')"/>
+        <set field="processInfo" from="ec.factory.getStatusMap().Process"/>
+        <set field="threadCountText" from="processInfo.Threads != null ? ec.l10n.format(processInfo.Threads, '#,##0') : ec.l10n.localize('Unavailable')"/>
 
         <set field="orderByField" from="orderByField || 'threadName'"/>
 
@@ -38,58 +41,78 @@ along with this software (see the LICENSE.md file). If not, see
         <script>orderMapList(threadMapList, [orderByField])</script>
     </actions>
     <widgets>
-        <label text="Threads: ${threadMapList.length}"/>
+        <label text="Threads: ${threadCountText}" type="p"/>
 
-        <container>
-            <label text="Worker Pool" type="strong"/>
-            <label text="Threads" type="strong"/>
-            <label text="Active: ${workerPool.activeCount} Cur: ${workerPool.poolSize} Max: ${workerPool.maximumPoolSize}"
-                    style="${workerPool.activeCount == workerPool.maximumPoolSize ? 'text-warning' : ''}"/>
-            <label text="Queue" type="strong"/>
-            <label text="Cur: ${workerPool.queueSize} Rem: ${workerPool.remainingCapacity}"
-                    style="${workerPool.remainingCapacity == 0 ? 'text-danger' : (workerPool.queueSize &gt; workerPool.remainingCapacity ? 'text-warning' : '')}"/>
-        </container>
+        <container-row>
+            <row-col md="6">
+                <container-box><box-header title="Worker pool"/><box-body>
+                    <container-row>
+                        <row-col sm="6">
+                            <label text="Threads" type="strong"/>
+                            <label text="Active: ${workerPool.activeCount}" type="div"
+                                    style="${workerPool.activeCount == workerPool.maximumPoolSize ? 'text-warning' : ''}"/>
+                            <label text="Current: ${workerPool.poolSize} · Maximum: ${workerPool.maximumPoolSize}" type="div"/>
+                        </row-col>
+                        <row-col sm="6">
+                            <label text="Queue" type="strong"/>
+                            <label text="Current: ${workerPool.queueSize}" type="div"/>
+                            <label text="Remaining capacity: ${workerPool.remainingCapacity}" type="div"
+                                    style="${workerPool.remainingCapacity == 0 ? 'text-danger' : (workerPool.queueSize &gt; workerPool.remainingCapacity ? 'text-warning' : '')}"/>
+                        </row-col>
+                    </container-row>
+                </box-body></container-box>
+            </row-col>
+            <row-col md="6">
+                <container-box><box-header title="Service job scheduler"/><box-body>
+                    <section name="JobRunnerInfo" condition="jobRunner"><widgets>
+                        <label text="Last check: ${jobRunnerLastCheckText}" type="div"/>
+                        <label text="Checks performed: ${jobRunner.executeCount} · Jobs run: ${jobRunner.totalJobsRun}" type="div"/>
+                        <label text="At last check: ${jobRunner.lastJobsActive} active · ${jobRunner.lastJobsPaused} paused" type="div" style="m-muted"/>
+                    </widgets><fail-widgets>
+                        <label text="The service job scheduler is not running." type="div"/>
+                        <label text="A scheduled-job-check-time of 0 disables the scheduler." type="div" style="m-muted"/>
+                    </fail-widgets></section>
+                </box-body></container-box>
+            </row-col>
+        </container-row>
 
-        <!-- Java lists its ScheduledThreadPoolExecutor; the port's scheduled work runs on the scheduler thread's pass -->
-        <section name="JobRunnerInfo" condition="jobRunner"><widgets>
-            <label text="Last job runner execute: &lt;strong&gt;${jobRunner.lastExecuteTime}&lt;/strong&gt;, runner executes: ${jobRunner.executeCount}, total jobs run: ${jobRunner.totalJobsRun}, last active: ${jobRunner.lastJobsActive}, last paused: ${jobRunner.lastJobsPaused}" encode="false"/>
+        <section name="ThreadDetails" condition="threadMapList.length &gt; 0"><widgets>
+            <form-list name="ThreadList" list="threadMapList" skip-form="true" select-columns="true">
+                <field name="threadName"><header-field title="Name" show-order-by="case-insensitive"/><default-field><display/></default-field></field>
+                <field name="threadId"><header-field title="ID" show-order-by="true"/><default-field><display/></default-field></field>
+                <field name="threadState"><header-field title="State" show-order-by="true"/><default-field><display/></default-field></field>
+
+                <field name="cpuTime"><header-field title="CPU Time" show-order-by="true"/><default-field>
+                    <display text="${ec.l10n.format(cpuTime/1E9, '#,##0.000')}s"/></default-field></field>
+                <field name="userTime"><header-field show-order-by="true"/><default-field>
+                    <display text="${ec.l10n.format(userTime/1E9, '#,##0.000')}s"/></default-field></field>
+
+                <field name="lockName"><header-field title="Lock" show-order-by="true"/><default-field><display/></default-field></field>
+                <field name="lockOwnerName"><header-field title="Lock Owner" show-order-by="true"/><default-field><display/></default-field></field>
+                <field name="lockOwnerId"><header-field title="Lock Owner ID" show-order-by="true"/><default-field><display/></default-field></field>
+
+                <field name="blockedTime"><header-field title="Blocked Total" show-order-by="true"/><default-field><display/></default-field></field>
+                <field name="waitedTime"><header-field title="Waited Total" show-order-by="true"/><default-field><display/></default-field></field>
+
+                <field name="stack"><default-field title="">
+                    <container-dialog id="StackListDialog" button-text="Stack" type="default" width="960">
+                        <label text="${(stackList || []).join('\n')}" type="pre"/>
+                    </container-dialog>
+                </default-field></field>
+                <field name="interrupt"><default-field title="">
+                    <link url="interruptThread" text="Interrupt" confirmation="Really interrupt thread ${threadName}?" btn-type="danger"/>
+                </default-field></field>
+
+                <form-list-column><field-ref name="threadName"/></form-list-column>
+                <form-list-column><field-ref name="threadId"/></form-list-column>
+                <form-list-column><field-ref name="threadState"/></form-list-column>
+                <form-list-column><field-ref name="cpuTime"/></form-list-column>
+                <form-list-column><field-ref name="userTime"/></form-list-column>
+                <form-list-column><field-ref name="stack"/></form-list-column>
+                <form-list-column><field-ref name="interrupt"/></form-list-column>
+            </form-list>
         </widgets><fail-widgets>
-            <label text="No Service Job Runner active (generally because scheduled-job-check-time is set to 0)"/>
+            <label text="Thread details are unavailable on this server." type="p" style="m-muted"/>
         </fail-widgets></section>
-
-        <form-list name="ThreadList" list="threadMapList" skip-form="true" select-columns="true">
-            <field name="threadName"><header-field title="Name" show-order-by="case-insensitive"/><default-field><display/></default-field></field>
-            <field name="threadId"><header-field title="ID" show-order-by="true"/><default-field><display/></default-field></field>
-            <field name="threadState"><header-field title="State" show-order-by="true"/><default-field><display/></default-field></field>
-
-            <field name="cpuTime"><header-field title="CPU Time" show-order-by="true"/><default-field>
-                <display text="${ec.l10n.format(cpuTime/1E9, '#,##0.000')}s"/></default-field></field>
-            <field name="userTime"><header-field show-order-by="true"/><default-field>
-                <display text="${ec.l10n.format(userTime/1E9, '#,##0.000')}s"/></default-field></field>
-
-            <field name="lockName"><header-field title="Lock" show-order-by="true"/><default-field><display/></default-field></field>
-            <field name="lockOwnerName"><header-field title="Lock Owner" show-order-by="true"/><default-field><display/></default-field></field>
-            <field name="lockOwnerId"><header-field title="Lock Owner ID" show-order-by="true"/><default-field><display/></default-field></field>
-
-            <field name="blockedTime"><header-field title="Blocked Total" show-order-by="true"/><default-field><display/></default-field></field>
-            <field name="waitedTime"><header-field title="Waited Total" show-order-by="true"/><default-field><display/></default-field></field>
-
-            <field name="stack"><default-field title="">
-                <container-dialog id="StackListDialog" button-text="Stack" type="default" width="960">
-                    <label text="${(stackList || []).join('\n')}" type="pre"/>
-                </container-dialog>
-            </default-field></field>
-            <field name="interrupt"><default-field title="">
-                <link url="interruptThread" text="Interrupt" confirmation="Really interrupt thread ${threadName}?" btn-type="danger"/>
-            </default-field></field>
-
-            <form-list-column><field-ref name="threadName"/></form-list-column>
-            <form-list-column><field-ref name="threadId"/></form-list-column>
-            <form-list-column><field-ref name="threadState"/></form-list-column>
-            <form-list-column><field-ref name="cpuTime"/></form-list-column>
-            <form-list-column><field-ref name="userTime"/></form-list-column>
-            <form-list-column><field-ref name="stack"/></form-list-column>
-            <form-list-column><field-ref name="interrupt"/></form-list-column>
-        </form-list>
     </widgets>
 </screen>

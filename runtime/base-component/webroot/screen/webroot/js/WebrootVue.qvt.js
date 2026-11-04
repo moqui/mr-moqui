@@ -8946,7 +8946,8 @@
         "        <q-breadcrumbs v-if=\"!handheld\" id=\"m-breadcrumbs\" class=\"gt-xs\" gutter=\"xs\" separator-color=\"grey-5\" active-color=\"grey-8\">\n" +
         "            <template v-for=\"(navMenuItem, menuIndex) in navMenuList\" :key=\"navMenuItem.path || menuIndex\"><template v-if=\"menuIndex >= breadcrumbStart && (menuIndex === navMenuList.length - 1 || navMenuList[menuIndex + 1].title !== navMenuItem.title)\">\n" +
         "                <q-breadcrumbs-el v-if=\"menuIndex === navMenuList.length - 1\" :label=\"navMenuItem.title\" class=\"text-weight-medium\"></q-breadcrumbs-el>\n" +
-        "                <q-breadcrumbs-el v-else-if=\"navMenuItem.subscreens && navMenuItem.subscreens.length && !navMenuItem.hasTabMenu\" class=\"cursor-pointer\">\n" +
+        "                <q-breadcrumbs-el v-else-if=\"navMenuItem.subscreens && navMenuItem.subscreens.length && !navMenuItem.hasTabMenu\">\n" +
+        "                    <q-btn flat dense no-caps class=\"m-breadcrumb-menu\">\n" +
         "                    {{navMenuItem.title}}<q-icon name=\"arrow_drop_down\" size=\"xs\"></q-icon>\n" +
         "                    <q-menu anchor=\"bottom left\" self=\"top left\"><q-list dense style=\"min-width:200px;\">\n" +
         "                        <q-item v-for=\"subscreen in navMenuItem.subscreens\" :key=\"subscreen.name\" clickable v-close-popup :active=\"subscreen.active\" active-class=\"text-primary text-weight-medium\" :to=\"subscreen.pathWithParams\" @keydown.enter.prevent>\n" +
@@ -8958,6 +8959,7 @@
         "                            <q-item-section>{{subscreen.title}}</q-item-section>\n" +
         "                        </q-item>\n" +
         "                    </q-list></q-menu>\n" +
+        "                    </q-btn>\n" +
         "                </q-breadcrumbs-el>\n" +
         "                <q-breadcrumbs-el v-else :label=\"navMenuItem.title\" :to=\"getNavHref(menuIndex)\"></q-breadcrumbs-el>\n" +
         "            </template></template>\n" +

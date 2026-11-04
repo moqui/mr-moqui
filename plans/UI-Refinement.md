@@ -169,13 +169,23 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-027 | B03: edit a draft while an earlier save is in flight, then Close | P1 reproduced data-loss race | Acknowledge the content snapshot after watchers settle; Close awaits newer writes, with local recovery retained through reconnect failure | Before failed; ShellSync 9/9 after. Deferred server/device saves, failed follow-up/retry, assigned ID and clearing an initially pending offline draft covered. |
 | UI-028 | Shared app menu: keyboard Enter on Dev AIDE → Home | P3 observed console defect; navigation completes | Routed QItems prevent native Enter keydown activation, leaving Quasar keyup as the single activation | 30/30 focused checks include Enter, Space, modified click and popup closure. Live Monitor menu→Logs Enter navigates with no console warning/error. |
 
-| UI-029 | M01 Overview time-series labels | P2 observed readability / deferred next reporting batch | Full ISO timestamps consume much of the chart and repeat date/offset on each tick | 1920, 1280 and 390 screenshots; keep full precision in tooltips/export while shortening display labels. |
-| UI-030 | M02 Explore filters and reporting native controls | P2 observed layout/theme inconsistency / deferred next reporting batch | Full-width stacked filters consume the desktop; raw query/select/table buttons retain browser-white fills in dark mode | Dark recovery and overview screenshots; group related controls, style native controls consistently and retain responsive access. |
+| UI-029 | M01 Overview time-series labels | P2 fixed and visually retested | Compact clock/date ticks with one date/timezone caption replace repeated ISO timestamps | Light/dark at 1920 and dark at 390 visually retested; existing 47-feature fixture checks unchanged underlying labels/tooltips/export data. |
+| UI-030 | M02 Explore filters and reporting native controls | P2 fixed and visually retested | Grouped query/range controls and semantic native-control styles replace full-width stacking and browser-white fills | 1920 light/dark, 1280 and 390; query width 831px in a 1209px group, visible disclosure, keyboard/filter creation; follow-up UI-037. |
 
-| UI-031 | S01 Cache List → populated native cache → Cache Elements | P2 observed misleading blank detail | Reported count can be nonzero while the generic entry facade cannot enumerate native cache entries; distinguish unavailable details from empty cache | ScreenColorScheme count 1, zero detail rows observed; source ownership confirmed. Screen-only correction proposed, pending next administration batch. |
-| UI-032 | S01 Thread List and S05 Service Job List, macOS | P2 observed misleading metric and raw timestamp | Empty platform thread enumeration is shown as Threads: 0; scheduler last-execute value is raw milliseconds | ThreadList screenshot; use nullable Process.Threads and localized scheduler timestamp/clear labels. Pending next administration batch. |
+| UI-031 | S01 Cache List → populated native cache → Cache Elements | P2 fixed and retested | Reported count can be nonzero while the generic entry facade cannot enumerate native cache entries; distinguish unavailable details from empty cache | ScreenColorScheme count 1, zero detail rows observed; source ownership confirmed. Screen-only correction retested at 1920 and 390, Material/Standard; zero entries has a distinct message. |
+| UI-032 | S01 Thread List and S05 Service Job List, macOS | P2 fixed and retested | Empty platform thread enumeration is shown as Threads: 0; scheduler last-execute value is raw milliseconds | ThreadList screenshot; use nullable Process.Threads and localized scheduler timestamp/clear labels. Corrected and retested in both themes and 390px; AdminOverview 7/7. |
 | UI-033 | S11 Usage → Check a Quota → empty Check | P3 observed validation gap | Empty form closes silently; valid EX_JOHN_DOE displays quota without a clear cost currency | Empty and valid checks observed; no model request. Required user input and clearer quota presentation deferred. |
-| UI-034 | Shared nested breadcrumb menu, System → LLM and Agents → Models | P2 observed keyboard-access defect | Menu opener is a span with tabIndex -1 and no role; Tab from System skips to Search | Native pointer opens it; keyboard skips it. Routed child Enter is fixed, but opener semantics/focus remain a follow-up. |
+| UI-034 | Shared nested breadcrumb menu, System → LLM and Agents → Models | P2 fixed and retested | Menu opener was a span with tabIndex -1 and no role; Tab from System skips to Search | Real button opener: Tab/Enter/Space/Escape and child navigation passed. Text contrast raised from 2.72:1 to 16.9:1 in default dark; existing QVT fixture 30/30. |
+| UI-035 | T02 Tools entity browser and edit | P3 observed hierarchy/layout | Database maintenance actions precede discovery; two short edit fields span 1920px; Find return loses the prior filter | Create/find/edit and duplicate recovery work; layout and return-context refinement deferred. `tools-entity-edit-before.jpg` |
+| UI-036 | T02/T03 EntityDataFind CSV export | P2 fixed and browser retested | Headers and values share the same exportable field set; conditional empty cells retain their column | Existing CSV fixture/core tests pass; rebuilt debug browser export has two matching headers, quoted text and empty cell. `/tmp/ui-review-entity-export-after.csv` |
+| UI-037 | M02 Explore → Add filter without Label | P3 observed terminology / deferred | Filter pill exposes the full query JSON instead of a readable field/operator/value summary; expanded Add filter action aligns with labels instead of input baselines | Default light/dark, 1920/1280/390; functional create/search passed. Follow-up in shared reporting query controls; preserve stored query structure. |
+| UI-038 | G08 Wizard required-field recovery, default dark | P2 observed / next shared batch | Validation text #c10015 on #1d1d1d is too dark; selected-field error label is also difficult to read | Empty Customer name → Next; screenshot `gallery-wizard-error-dark-before-1920.jpg`; shared Quasar field error colors. |
+| UI-039 | G08 Wizard at 390px | P2 observed accessibility / next shared batch | Step labels disappear; completed step buttons have no accessible name | Options/Review after first step completed; source investigation pending; preserve step title for assistive tech and visible current-step context. |
+| UI-040 | G04 New container dialog → Escape | P2 observed focus / next shared batch | Closing returns focus to BODY instead of invoker, including keyboard Enter opening | Dialog hidden awaited before DOM focus inspection at 390; investigate shared dialog lifecycle. |
+| UI-041 | G07 Split filter → country detail → Countries | P2 observed lost context / next Gallery batch | Country=United gives four rows; selecting United States drops the filter and returning shows the full list | Light at 390; selection URL contains only geoId=USA, Country is blank after return. Gallery links/state ownership under investigation. |
+| UI-042 | G06 QVue Board and Calendar controls | P2 observed accessibility / next Gallery batch | Board cards are pointer-only draggable divs; calendar arrows and interactive dates/events lack accessible controls; Done event fill/text contrast needs correction | Light at 1920/390; pointer movement and month navigation pass. Add keyboard equivalents and clear demo feedback while retaining routes and transition contracts. |
+| UI-043 | G06 Calendar → another app screen | P2 observed stale request / next Gallery batch | Leaving Calendar requests destination/events and shows a screen-not-found toast | Next → Today → Gallery menu → Task; source confirms unguarded shell-parameter watcher and mutable endpoint. |
+| UI-044 | G05 Task Confirm → Short | P2 observed fragment leakage / next Gallery batch | Short opens a full route containing stepOnly=Y, hiding intro and Remaining lines | Confirm reloads line 1, then Short advances to line 2 with fragment-only output as the full page. |
 
 ## Running implementation notes
 
@@ -282,7 +292,7 @@ served framework 148/148. The five environmental host failures were rerun succes
 5435 expression sites, zero parse failures and 87 unchanged idiom flags. Generated clients/goldens and whitespace
 checks passed. UI-025 through UI-028 are next-batch findings, not claims that this batch fixed them.
 
-Local commits so far (unpushed): `67d3270f` establishes this plan and baseline; `883fffe8` contains the foundations, administration entry points, GroovyShell removal, guide. The evidence directory is retained locally and ignored by Git at the user’s request; the original foundations commit was rewritten to exclude it.
+Local commits so far (unpushed): `67d3270f` establishes this plan and baseline; `883fffe8` contains the foundations, administration entry points, GroovyShell removal and guide; `da924d4b` contains retained-work, diagnostic and development flows with their verification notes. The evidence directory is retained locally and ignored by Git at the user’s request; the original foundations commit was rewritten to exclude it.
 
 ### Batch 2 — retained work, diagnostic recovery and workspace navigation
 
@@ -384,6 +394,135 @@ Additional live activities during gate 7 (default dark, 1920×1080, John Doe):
 - T05 repeat on the final isolated runtime: `SELECT 1 AS ui_review_value` returns one row; `SELECT FROM` displays
   a syntax error with inputs retained; correction to `SELECT 2 AS ui_review_value` returns one row without navigation.
 
+### Batch 3 — diagnostic readability, keyboard access and export alignment
+
+Intent: resolve findings from the preceding live review while retaining chart data, query parameters, cache
+contracts and navigation routes. Work covers compact time-axis labels, explicit theme styles for report-created
+native controls, grouped Explore controls, keyboard breadcrumb menus, truthful cache/thread availability and
+localized scheduler times. The actual CSV export found a shared header/row mismatch (UI-036); its correction belongs
+in the existing CSV renderer and render fixture, without duplicating an application render.
+
+Live checks so far: Thread List at 1920 light/dark and 390 light shows unavailable platform metrics, readable
+scheduler time and stacked cards without horizontal overflow. ScreenColorScheme reports one cached entry with
+zero enumerable details and explains the limitation. Its old long heading overflowed to 678px at a 390px viewport;
+the name is now separate from the title with an opt-in wrapping utility. Material and Standard cache details both
+retested at 390px with document width 390px and no console errors. The dark breadcrumb text resolves to white on
+#1d1d1d (16.9:1), replacing the previously measured 2.72:1 gray. Breadcrumb Tab → Cache → Enter/Space
+opens the menu; Escape returns focus; child Enter navigates once with no console warnings/errors.
+
+Tools T02 fixture: created `UiReviewType`, found it by prefix, updated its description, attempted a duplicate,
+then corrected the key to `UiReviewTypeRetry` without re-entering the retained description. Both rows are visible
+and the original retains its updated description. Export contains exactly those two records but initially has
+two extra action headers. No database-maintenance action was invoked. Deletion remains unverified because the
+browser's native-confirmation problem is still open; these rows remain in the disposable review DB.
+
+Focused verification for this batch:
+
+- `AdminOverview`: 7/7, feature 1.5s within its 3s budget; `/tmp/ui-admin-cache-threads-regression-final.log`.
+- Existing reporting fixture: 47/47 after time-axis/native-control changes; `/tmp/ui-refinement-report-time-axis.log`
+  and `/tmp/ui-querybar-layout-after.log`. Final live review caught an overlapping Add filter disclosure; the empty negative-gutter row was
+  replaced by explicit spacing and the native disclosure marker restored. Final regression: 47/47 in 1.41s
+  (`/tmp/ui-querybar-spacing-after.log`); live Enter/Space opening/closing, filter creation and 1920/1280/390 reflow passed.
+- Existing QVT client fixture: 30/30, feature 6.8s within 34s budget; `/tmp/ui-native-qvt-after.log`.
+  Precompiled-client golden regeneration/check: 1/1; `/tmp/ui-breadcrumb-template-generation.log`.
+- Tools Monitoring acceptance: 19/19 in 46.23s; `/tmp/ui-refinement-monitoring-layout.log`.
+- CSV regression failed before the fix and passed afterward. `cargo test -p moqui-core --all-features -j 4 -- --test-threads=4`:
+  1458 unit, 4 browser-library and 12 native-component tests passed, 3 unit and 2 doc tests ignored;
+  `/tmp/ui-csv-alignment-core.log`. Only the affected existing CSV golden changed.
+- Changed cache-heading compatibility assertion: named Tools/System host acceptance 1/1 in 27.58s;
+  `/tmp/ui-cache-heading-tools-acceptance.log`. `cargo lint` and `cargo lint-min` passed;
+  `/tmp/ui-csv-alignment-lint.log`, `/tmp/ui-csv-alignment-lint-min.log`.
+- Screen lint: 362 files, 5446 sites, zero parse errors; 87 existing review flags. Command:
+  `env -u MOQUI_CONF MOQUI_RUNTIME=/tmp/mui-8092-5l9n060c target/release/moqui lint --screens /tmp/ui-admin-cache-threads-screen-lint.txt`;
+  log `/tmp/ui-admin-cache-threads-screen-lint.log`, exit 0.
+
+The first browser export retest still used the old release binary: ScreenCsv is embedded by the generator's
+`include_str!`, so editing the JavaScript file cannot hot-reload that macro. A current debug framework binary was
+built with `CARGO_BUILD_JOBS=4 cargo build -p moqui -j 4` (2m39s; macOS linker unwind-table warning only), then
+started in a separate disposable fixture runtime on port 8094. The actual browser CSV export now passes: exactly
+`Enum Type ID,Description`, with two review rows, correctly quoted comma/quote text and a preserved empty final cell.
+Evidence: `/tmp/ui-review-entity-export-after.csv` and local `tools-entity-export-after-1920.jpg`. The review-created
+Downloads file was content-checked, copied to `/tmp`, and removed. The user clarified that the long download wait
+was the harness awaiting their permission, not a product failure or server timeout.
+
+Final Explore screenshots: local `monitor-explore-dark-after-1920.jpg` and `monitor-explore-dark-after-390.jpg`.
+Default light and dark, 1280px, native disclosure focus, actual INFO filter creation and submission passed; console
+errors were empty. Filter pills still expose raw JSON when no label is supplied, recorded as follow-up UI-037.
+Full framework gate 8 completed with
+`env -u MOQUI_RUNTIME MOQ_TEST_WORKERS=2 CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=1 ./moq test-framework --debug --nobuild`
+(`/tmp/moqui-ui-framework-gate8.log`, exit 1). The current debug binary includes the corrected embedded CSV generator.
+Functional framework results: server 350/350, demo 10/10, offline webroot 385/385, offline Dev AIDE 48/48 and served
+browser 148/148. Shell checks passed 342/342. Core tests passed 1458 unit, 4 browser-library and 12 native-component
+checks; host integration passed 166 with 23 ignored. Cargo still stopped at the same three SIP tests that bind
+unaliased macOS loopback addresses (`127.0.0.2`, `.4`, `.6`); their socket setup fails before the assertions.
+Later Cargo suites were not reached by this gate.
+
+Debug server regression timings exceeded the 15s spec limit for ArtifactIndex (49.63s), ArtifactDocs (28.68s) and
+EntityModeler (28.13s), and component limits for Tools and Dev AIDE. A release server-stage rerun passed all 350
+functional checks in 53.98s, but ArtifactIndex was still just over its limit at 15.79s under concurrent browser
+and other-workspace test load (`/tmp/moqui-ui-framework-server-release.log`, exit 1). After this gate finished,
+`env -u MOQUI_RUNTIME ./moq test --nobuild dev-aide --spec ArtifactIndex` passed 6/6 with 6.6s feature time
+(`/tmp/moqui-ui-artifact-index-isolated.log`, exit 0). This targeted command selected only the Dev AIDE spec but used
+the repository's full component registry in its disposable fixture; no addon tests were selected. No budget was
+raised, and these narrower results do not turn the failed full gate into a passing result. The release browser
+server remains on 8090; the current debug review server remains isolated on 8094.
+
+Read-only continuation during gate 8 — Gallery:
+
+- G08, John Doe, default dark, 1920 and 390: cleared Customer name → Next stayed on Customer with inline error;
+  corrected to `UI review customer`, continued to Options, unchecked newsletter, and verified Review showed No.
+  Back through both steps retained the name and option. Completing at 390 returned to Customer defaults with the
+  explicit “gallery demo: nothing is written” message. No horizontal overflow. Validation helper text is
+  `#c10015` on `#1d1d1d` (2.63:1), visibly too dark (UI-038); phone step names vanish and completed step buttons lose
+  accessible names (UI-039). These are next-batch shared fixes, not closed by the passing wizard flow.
+- G04, Dialog: New focuses ID; Escape closes; dynamic View loads the correct ENTCO_BETWEEN record. The 390px
+  detail dialog fits the viewport with its close control visible. Keyboard New → Enter → Escape returns focus
+  to BODY instead of New (UI-040). Create's native confirmation remains outside this manual run. The new dialog
+  defaults Type to Agent Message Part Kind despite the Comparison operators list; inspect the Gallery default
+  in the next batch. Existing server acceptance is supporting coverage, not proof of these UI checks.
+- G05 Handheld: A-100 auto-submit, NOPE retained with no-match message, DUP-1 chooser cancellation returns focus
+  and retains code, choosing the lot resolves it, wrong-type A-100 in Bin is refused, B-01-07 waits for explicit
+  Confirm then reports success and refocuses/clears Bin. GS1 `(01)04006381333931(10)LOT-7` opens a lot/product chooser
+  and resolves LOT-7. Default dark at 1920/390 and light at 390 inspected, no console errors. Success toast white/bright-green
+  contrast belongs with UI-038; the persistent scan result already uses the readable semantic foreground.
+- G10 quick create on ENTCO_BETWEEN: Gallery note and task both show the exact Enumeration context; each Save
+  closes the dialog, leaves the detail route and reports explicitly simulated work. Empty note/task values are
+  currently accepted by these demos; this is not evidence of required-field refusal. Dirty-discard remains pending.
+- G07 Split at 390 light: Country=United → four results → United States opens a correctly named detail, with an
+  honest no-regions state. Countries returns to an unfiltered list; selected-row navigation dropped the find
+  parameters (UI-041), contrary to the Gallery explanation. No data edited.
+- G06 Board at 1920 light: dragged Acme from Qualify to Propose; counts/sums updated from 3/$229,000 to 2/$109,000
+  and 2/$248,500 to 3/$368,500, with successful transition feedback. Search with no match shows 0/10 and empty columns;
+  clearing restores cards. Cards are draggable divs without keyboard semantics or a movement alternative (UI-042).
+  The source transition writes nothing, so this verifies simulated movement, not persistence.
+- G06 Calendar at 1920 light: clicked November 18 → New event shows 09:00–10:00; Create accepts an empty title and
+  closes with explicit nothing-written feedback. Week shows its unsupported-view explanation and Back to month
+  recovers. Next updates the bookmark to 2026-12; Today returns to November. At 390 the grid stays within the viewport
+  with event dots. Calendar arrows/dates/events and Done-event contrast are follow-up UI-042.
+- Calendar → Task produced `screen path not found: events under component://example/screen/Gallery/Task.xml`.
+  The Calendar watcher resolves a request against the destination during navigation (UI-043). Task Confirm reloads
+  the same first step with demo feedback; subsequent Short advances to line 2 but leaks `stepOnly=Y` into the full
+  route, hiding the surrounding sections (UI-044). Source investigation has identified local fixes for the next batch.
+- Local evidence: `gallery-wizard-error-dark-before-1920.jpg`. Full application/wave coverage remains open.
+
+### Next bounded batch — shared feedback and Gallery recovery (planned)
+
+Source investigations are complete; no edits for this batch began while batch 3 was frozen.
+
+- Shared field errors: use the semantic negative foreground for helper text; keep automatically changed-field
+  backgrounds subtle enough for error labels. Preserve explicit field background overrides. Scope notification
+  styling to built-in fill/text pairs and verify captions/actions along with body text.
+- Wizard: retain visible and accessible step titles at phone width; preserve previous-step-only navigation.
+  Dialog: reproduce opener capture/refocus in an existing mounted fixture before adding restoration behavior.
+- Gallery Split: capture find/operator/case/sort parameters before row context replaces field names; preserve that
+  whitelist through country links and Edit responses. Set New Enumeration's supported initial Type to ComparisonOperator.
+- Board: add a keyboard Move control sharing the existing pointer-move path and a focusable title link. Describe
+  demo-only movement accurately. Calendar: name month/date controls, expose mobile event descriptions, use readable
+  status presentation and capture/guard its endpoint across SPA navigation. Remove its dialog on unmount.
+- Task: keep fragment-only request parameters out of full-page navigation and inspect the intended demo progression.
+- Extend existing fixtures and existing Gallery acceptance rows; no additional sweep or duplicate regression renders.
+  Run the changed cases and full example acceptance once all three owners' Gallery changes are integrated.
+
 ### Verification environment corrections
 
 The first full gate inherited the review runtime and created an ignored Shop template in the real dev-component
@@ -482,7 +621,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | XML file / logical route | Presentation and companions | Activity | Review status |
 |---|---|---|---|
 | `System/AuditLog.xml` | XML widgets | S06 | P |
-| `System/Cache/CacheElements.xml` | XML widgets | S01 | V/P: native-cache unavailable detail observed (UI-031); generic populated entries/clear pending |
+| `System/Cache/CacheElements.xml` | XML widgets | S01 | V/P: native count-only and reported-empty states explained; generic populated entries/clear pending |
 | `System/Cache/CacheList.xml` | XML widgets | S01 | V/P: valid/literal-fallback filter and recovery, summary→detail/back; cache clearing pending |
 | `System/Cache.xml` | Container → CacheList | S01 | V/P: normal parent navigation |
 | `System/Components.xml` | XML widgets | S02 | V/P; parent observation |
@@ -600,7 +739,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/SystemMessage/Type/MessageTypeList.xml` | hidden menu | S06 | P |
 | `System/SystemMessage/Type.xml` | Container → MessageTypeList | S06 | P |
 | `System/SystemMessage.xml` | Container → Message | S06 | P |
-| `System/ThreadList.xml` | XML widgets | S01 | V/P: unavailable platform state and scheduler timestamp inspected (UI-032) |
+| `System/ThreadList.xml` | XML widgets | S01 | V/P: unavailable state/localized scheduler verified at 1920 light/dark and 390; Linux details pending |
 | `System/Visit/VisitDetail.xml` | hidden menu | S06 | P |
 | `System/Visit/VisitList.xml` | XML widgets | S06 | P |
 | `System/Visit.xml` | Container → VisitList | S06 | P |
@@ -617,10 +756,10 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `Tools/DataView/FindDbView.xml` | XML widgets | T04 | P |
 | `Tools/DataView/ViewDbView.xml` | XML widgets | T04 | P |
 | `Tools/DataView.xml` | Container → FindDbView | T04 | P |
-| `Tools/Entity/DataEdit/EntityDataEdit.xml` | XML widgets | T02 | P |
-| `Tools/Entity/DataEdit/EntityDataFind.xml` | XML widgets | T02 | P |
+| `Tools/Entity/DataEdit/EntityDataEdit.xml` | XML widgets | T02 | V/P: disposable EnumerationType update persisted; relationship navigation and narrow layout pending |
+| `Tools/Entity/DataEdit/EntityDataFind.xml` | XML widgets | T02 | V/P: create/filter/edit/duplicate correction passed; CSV mismatch found (UI-036), deletion unverified |
 | `Tools/Entity/DataEdit/EntityDetail.xml` | XML widgets | T02 | P |
-| `Tools/Entity/DataEdit/EntityList.xml` | XML widgets | T02 | P |
+| `Tools/Entity/DataEdit/EntityList.xml` | XML widgets | T02 | V/P: exact entity filter and Find navigation passed; maintenance controls inspected only |
 | `Tools/Entity/DataEdit.xml` | Container → EntityList | T02 | P |
 | `Tools/Entity/DataExport.xml` | XML widgets | T03 | P |
 | `Tools/Entity/DataImport.xml` | XML widgets | T03 | P |
@@ -1461,7 +1600,7 @@ Gallery is a framework fixture over real framework data. A successful demo messa
 
 ## Complete Gallery screen-to-activity mapping
 
-Paths are relative to `runtime/dev-component/example/screen/`. The Gallery root plus descendants contain **31 XML definitions**, **3 QVue templates** and **2 external TUI JSON twins**. The table accounts for every file. Every activity remains pending execution by this documentation assignment; the last column lists **available test coverage**, not a new passing result.
+Paths are relative to `runtime/dev-component/example/screen/`. The Gallery root plus descendants contain **31 XML definitions**, **3 QVue templates** and **2 external TUI JSON twins**. The table accounts for every file. The last column lists **available test coverage**, not a new passing result. Coordinator browser execution is recorded separately in the bounded-batch notes; G05, G08 and parts of G04/G10 now have explicit live outcomes there.
 
 `GS` = entry appears in `acceptance/Gallery.spec.js`'s general render list; `GB` = entry appears in `acceptance/client/GallerySmoke.spec.js`'s browser render list. `Targeted` means the existing server acceptance has additional stated assertions. The general lists have23 entries; they do not cover all31XML routes, every variant or every user action.
 
@@ -1503,8 +1642,8 @@ Paths are relative to `runtime/dev-component/example/screen/`. The Gallery root 
 
 ## Remaining coverage and next bounded review choices
 
-1. Refine the newly observed Monitor/Dashboards timestamp axes and native controls (UI-029/030), then retest at 1920 in light/dark and narrow widths. Overview → Logs invalid-query recovery, saved-search reopen, and dashboard Copy → edit → save → Open/export/filter have now been exercised; the remaining per-screen inventory is still open.
-2. Run a real **G02/G04/G08/G10** keyboard/responsive pass, explicitly including hidden Contact/EditExample/CodeField and wizard child routes absent from the generic browser sweep. Carry shared fixes back to actual System/Tools/Monitor pages.
+1. Finish the next shared/Gallery batch: semantic validation/notification contrast, named mobile wizard steps, dialog focus restoration, retained split filters, Board/Calendar keyboard controls and Calendar/Task navigation lifecycle (UI-038–044). UI-029/030 are corrected and retested in batch 3; retain UI-037 query-label polish as a reporting follow-up.
+2. Complete **G02/G04/G09/G10** keyboard/responsive coverage, including hidden Contact/EditExample/CodeField. G05 scanning, G08 wizard and portions of G04/G06/G07/G10 have now been exercised; retest the identified fixes and complete the remaining recovery/input modes. Carry shared fixes back to actual System/Tools/Monitor pages.
 3. Give **D06 alerts**, **D07 reports/playlists/schedules**, **M08 replay**, **M09 release detail**, **M10 incident/recovery** and **M11 diagnostic settings** separate bounded fixtures and activity reviews. Their administrative lists currently have little or no functional acceptance coverage.
 4. Verify one **Monitor-only** actor can follow Monitor-local trace/context/compare/export paths, and one denied dataset yields useful refusal. The admin19-feature run is not permission-isolation proof.
 5. Exercise **D08 GitSync** only with scratch repository/local remote; reports/alerts only with captured mail/local sinks; recovery only with fake adapters. Explicitly retain external/provider failure or unavailable statuses when a successful fixture is missing.

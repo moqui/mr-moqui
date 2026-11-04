@@ -147,6 +147,9 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
 /* the app title as the menu of the app's top-level screens: the same size as the toolbar title, not a toolbar button */
 .q-btn.m-app-screens { min-height:0; padding:0 8px 0 0; }
 .q-btn.m-app-screens .q-icon { font-size:18px; }
+#m-breadcrumbs .q-breadcrumbs__el { color:var(--m-header-fg); }
+.q-btn.m-breadcrumb-menu { min-height:1.5em; margin:0; padding:0 2px; font:inherit; }
+.q-btn.m-breadcrumb-menu:focus-visible { outline:2px solid var(--m-link) !important; outline-offset:2px; }
 /* the suite shell (IronStone style-guide 2.2, 2.4): the key hint, the palette and the tray panel */
 /* a keyboard key as text: the palette hint on the Search button, the ? overlay */
 .m-kbd { font-size:11px; line-height:16px; padding:0 5px; border:1px solid currentColor; border-radius:4px; opacity:.65; white-space:nowrap; }
@@ -206,6 +209,7 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
 
 /* a caption: grey-7 in light, grey-5 in dark */
 .m-muted { color:var(--m-text-muted); }
+.m-wrap-anywhere { overflow-wrap:anywhere; }
 /* the tonal tint of .m-btn-tonal on a q-chip or q-badge, a status chip: the tint follows the text color, so the variants are the
    text-<color> classes (class="m-tonal text-positive"; not color=, whose bg-* class would cover the tint); primary without one */
 .q-chip.m-tonal, .q-badge.m-tonal { color:var(--m-link); background:color-mix(in srgb, currentColor 12%, transparent); }
@@ -958,9 +962,45 @@ body.m-radius-round :is(.q-btn:not(.q-btn--round), .q-field--outlined .q-field__
 .m-report-log-message { display: block; max-width: 40rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .m-report-export-only { display: none; }
 
+.m-report-native { --m-report-control-border:color-mix(in srgb, var(--m-text) 50%, var(--m-panel-bg));
+    box-sizing:border-box; max-width:100%; font:inherit; line-height:1.4; color:var(--m-text); color-scheme:light; }
+.body--dark .m-report-native { color-scheme:dark; }
+.m-report-label { display:inline-flex; flex-direction:column; gap:.25rem; min-width:0; max-width:100%; margin:.2rem; vertical-align:top; }
+.m-report-query-tools { display:flex; flex-wrap:wrap; align-items:flex-end; gap:.5rem; margin-bottom:.5rem; }
+.m-report-query-tools > .m-report-query-text { flex:1 1 28rem; margin:0; }
+.m-report-query-tools > .m-report-query-history { flex:0 1 14rem; margin:0; }
+.m-report-query-text input, .m-report-query-history select { width:100%; }
+.m-report-query-tools > button { margin:0; }
+.m-report-query-pills { display:flex; flex-wrap:wrap; gap:.5rem; margin:.5rem 0; }
+.m-report-query-pills:empty { display:none; }
+summary.m-report-native { display:list-item; list-style-position:inside; cursor:pointer; }
+summary.m-report-native::marker { color:var(--m-link); }
+summary.m-report-native:hover { text-decoration:underline; }
+input.m-report-native:not([type=checkbox]):not([type=radio]):not([type=range]), select.m-report-native, textarea.m-report-native {
+    min-width:0; min-height:32px; padding:.25rem .5rem; border:1px solid var(--m-report-control-border); border-radius:3px; background:var(--m-panel-bg); }
+textarea.m-report-native { resize:vertical; }
+.m-report-native::placeholder { color:var(--m-text-muted); opacity:1; }
+.m-report-native:is([type=checkbox], [type=radio], [type=range]) { accent-color:var(--m-link); }
+button.m-report-native, a.m-report-native { min-height:32px; margin:2px; padding:.25rem .5rem; border:1px solid var(--m-report-control-border);
+    border-radius:3px; background:color-mix(in srgb, var(--m-text) 6%, var(--m-panel-bg)); text-transform:none; white-space:normal; cursor:pointer; }
+.m-report-native.q-btn:before { box-shadow:none; }
+button.m-report-native.q-btn--flat { background:transparent; border-color:transparent; }
+.m-report-native:is(button, a):not(:disabled):hover { background:color-mix(in srgb, var(--m-text) 12%, var(--m-panel-bg)); }
+.m-report-native:is([aria-pressed=true], [aria-selected=true], [aria-current=true], [aria-expanded=true]) {
+    color:var(--m-link); border-color:var(--m-link); background:color-mix(in srgb, var(--m-link) 12%, var(--m-panel-bg)); }
+.m-report-native:focus-visible { outline:2px solid var(--m-link) !important; outline-offset:2px; }
+button.m-report-native.m-report-sort { min-height:1.5em; margin:0; padding:2px 4px; border-color:transparent; background:transparent; font-weight:600; }
+th[aria-sort=ascending] > .m-report-sort:after { content:" ↑"; }
+th[aria-sort=descending] > .m-report-sort:after { content:" ↓"; }
+button.m-report-native.m-report-cell-filter { min-height:0; margin:0; padding:0; border:0; background:transparent; }
+@media (max-width:599px) {
+    .m-report-query-tools > .m-report-query-text { flex-basis:100%; }
+    .m-report-query-tools > .m-report-query-history { flex:1 1 10rem; }
+    input.m-report-native:not([type=checkbox]):not([type=radio]):not([type=range]), select.m-report-native,
+    button.m-report-native:not(.m-report-sort):not(.m-report-cell-filter), a.m-report-native { min-height:44px; }
+}
+
 .m-report-editor-control { display: inline-flex; vertical-align: top; flex-direction: column; gap: .25rem; padding: .35rem; max-width: 100%; }
-.m-report-editor button:focus-visible { outline:2px solid var(--m-link); outline-offset:2px; }
-.m-report-editor-control input:not([type=checkbox]), .m-report-editor-control select, .m-report-editor-control textarea { color: inherit; background: transparent; border: 1px solid var(--q-secondary); border-radius: 3px; padding: .35rem; max-width: 100%; }
 .m-report-editor-group { margin: .6rem 0; padding: .5rem; border: 1px solid var(--q-secondary); border-radius: 4px; min-width: 0; }
 .m-report-editor-layout-item { border-left: 2px solid var(--q-primary); padding: .5rem; margin: .4rem 0; }
 .m-report-cell-filter { border: 0; padding: 0; color: inherit; background: transparent; cursor: pointer; text-align: inherit; text-decoration: underline dotted; }

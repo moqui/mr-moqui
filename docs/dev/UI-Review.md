@@ -13,8 +13,9 @@ and acceptance walks before adding coverage.
 Use a disposable runtime and database with representative demo data. For framework-only review, link only individually tracked base and
 dev component directories into the runtime and leave its addon directory empty: installed addons can extend or hide framework
 screens. Do not symlink the parent `dev-component` directory: component-creation fixtures must create their files only in the disposable runtime. Never link a mutable database, source-editing workspace or external integration configuration into the
-review runtime. Use the existing binary for screen, CSS and most JavaScript changes. ScreenQvt generator templates are embedded
-in the core binary; rebuild when their source changes so the live server actually uses the new generator.
+review runtime. Use the existing binary for screen, CSS and most JavaScript changes. Built-in screen generator modules, including ScreenQvt and ScreenCsv, are embedded
+in the core binary; rebuild when their source changes so the live server actually uses the new generator. Use an
+incremental debug binary for iteration and retain the existing release binary until the final release build.
 
 `moqui test framework --spec ClientFixtures --db fresh --serve 127.0.0.1:8090` supplies demo data and limited-access
 fixture users in a scratch runtime; select the bootstrap runtime with `MOQUI_RUNTIME`. The fixture runner also
@@ -156,5 +157,11 @@ Further patterns established during the review:
   container for targets that need clearance below the fixed Material toolbar; keep existing fragment identifiers.
 - Canvas charts need explicit readable text defaults, including legend and axis options. DOM text color alone
   does not recolor pixels already drawn. Preserve caller colors and the existing chart instance on theme changes.
-
-For native change-on-blur editor fields, verify the rendered sibling/model changes after input. If an automation fill helper changes only the DOM value, use native typing and Tab before Save; do not report a product persistence defect from that helper alone.
+- Abbreviate time-axis ticks without changing underlying labels, tooltips, exports or filter values. Retain date
+  and timezone context, including offset changes, so shorter labels stay unambiguous.
+- Give script-created native controls explicit component classes and theme-aware text, backgrounds, borders and
+  focus indicators. Scope those styles to owned controls; embedded widgets retain their own styling.
+- Menu openers are buttons, including those nested in breadcrumbs. Verify Tab order, Enter/Space opening, Escape
+  focus return and text/focus contrast in both themes.
+- An export's headers and records use the same data columns. Omit action-only columns and preserve empty cells
+  when a conditional field has no value; inspect the downloaded file, not just the download event.

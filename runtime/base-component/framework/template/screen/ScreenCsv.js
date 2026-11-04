@@ -18,6 +18,7 @@
 // Differences from the FreeMarker macros: a date-time with no format is formatted with the type's default
 // pattern, where FreeMarker failed on a date it could not treat as text. A label is not written: the FreeMarker
 // macro wrote its text with no line break after it, so the header row of the list ran on from the label.
+// Fields that never write data have no header, and conditional empty cells keep their place in the row.
 (function (T, S) {
     "use strict";
 
@@ -85,12 +86,14 @@ const $sep = () => { if ($hasPrev) sri.write(","); else $hasPrev = true; };
     });
 
     // The code for one cell, which first writes the comma that separates it from the cell before.
-    const cellCode = (field) => fieldChain(field, (sub) =>
-        widgetless(sub) ? "" : setCode(sub) + "$sep();\n" + widgetsSource(sub));
+    const cellCode = (field) => "$sep();\n" + fieldChain(field, (sub) =>
+        widgetless(sub) ? "" : setCode(sub) + widgetsSource(sub));
 
     const formListMacro = stmt((node) => {
         const columns = S.formListColumns(node);
-        const fields = [].concat(...columns);
+        const fields = [].concat(...columns).filter((field) =>
+            [child(field, "default-field"), ...childrenNamed(field, "conditional-field")]
+                .some((sub) => sub && !widgetless(sub)));
         const headers = fields.map((field) => S.hideGuard(field, js`
             $sep();
             sri.write($csv(${headerTitle(S.headerSub(field))}));

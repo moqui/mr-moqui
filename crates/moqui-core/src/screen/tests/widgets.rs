@@ -160,11 +160,11 @@ fn a_form_single_and_a_form_list_in_text() {
 #[test]
 fn a_form_list_in_csv_and_xml_and_a_form_single_in_neither() {
     let context = ExecutionContextFactory::test_context();
-    // csv quotes a value with a comma or a quote and doubles its quotes. The submit has a title
-    // in the header and no cell, as in the FreeMarker macro.
+    // CSV omits submit-only columns, quotes commas, quotes and line breaks, and preserves the empty
+    // cells of a hidden conditional branch and of a conditional field with no matching branch.
     assert_eq!(
         body(context.factory(), "/Forms.csv", &[]),
-        "Item ID,Name,Price,Note,Do\nI1,\"Widget, \"\"large\"\"\",12.50,first line\nI2,Gadget,3.00,\n"
+        "Item ID,Name,Price,Note\nI1,\"Widget, \"\"large\"\"\",12.50,\"first line\nsecond line\"\nI2,,3.00,\n"
     );
     // xml writes an entry for each row with an attribute for each displayed field.
     assert_eq!(

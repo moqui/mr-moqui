@@ -27,9 +27,18 @@
         <form-list name="ItemList" list="itemList">
             <field name="itemId"><header-field show-order-by="true"><text-find size="10"/></header-field>
                 <default-field><display/></default-field></field>
-            <field name="name"><default-field><text-line size="30"/></default-field></field>
+            <field name="name">
+                <!-- Exercise a CSV-only empty middle cell without changing the other modes' fixture values. -->
+                <conditional-field condition="sri.getRenderMode() == 'csv' &amp;&amp; itemId == 'I2'"><hidden/></conditional-field>
+                <default-field><text-line size="30"/></default-field>
+            </field>
             <field name="price" align="right"><default-field><display format="#,##0.00"/></default-field></field>
-            <field name="note"><default-field><display/></default-field></field>
+            <field name="note">
+                <!-- A conditional field with no matching branch still occupies its CSV column. -->
+                <conditional-field condition="sri.getRenderMode() != 'csv' || itemId == 'I1'">
+                    <display text="${note}${sri.getRenderMode() == 'csv' ? String.fromCharCode(10) + 'second line' : ''}"/>
+                </conditional-field>
+            </field>
             <field name="id2"><default-field><hidden/></default-field></field>
             <field name="act"><default-field title="Do"><submit/></default-field></field>
         </form-list>

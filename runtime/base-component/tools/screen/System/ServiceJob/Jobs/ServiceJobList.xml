@@ -20,6 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions>
         <set field="jobRunner" from="ec.service.getJobRunner()"/>
+        <set field="jobRunnerLastCheckText" from="jobRunner &amp;&amp; jobRunner.executeCount &gt; 0 ? (jobRunner.lastExecuteTime != null ? ec.l10n.format(jobRunner.lastExecuteTime, null) : ec.l10n.localize('Unavailable')) : ec.l10n.localize('Not run yet')"/>
 
         <entity-find-count entity-name="moqui.service.message.SystemMessage" count-field="outgoingCount">
             <econdition field-name="statusId" value="SmsgProduced"/>
@@ -33,11 +34,18 @@ along with this software (see the LICENSE.md file). If not, see
             <econdition field-name="statusId" value="SmsgError"/></entity-find-count>
     </actions>
     <widgets>
-        <section name="JobRunnerInfo" condition="jobRunner"><widgets>
-            <label text="Last job runner execute: &lt;strong&gt;${jobRunner.lastExecuteTime}&lt;/strong&gt;, runner executes: ${jobRunner.executeCount}, total jobs run: ${jobRunner.totalJobsRun}, last active: ${jobRunner.lastJobsActive}, last paused: ${jobRunner.lastJobsPaused}" encode="false"/>
-        </widgets><fail-widgets>
-            <label text="No Service Job Runner active (generally because scheduled-job-check-time is set to 0)"/>
-        </fail-widgets></section>
+        <container-box><box-header title="Service job scheduler"/><box-body>
+            <section name="JobRunnerInfo" condition="jobRunner"><widgets>
+                <container-row>
+                    <row-col md="4"><label text="Last check: ${jobRunnerLastCheckText}" type="div"/></row-col>
+                    <row-col md="4"><label text="Checks performed: ${jobRunner.executeCount} · Jobs run: ${jobRunner.totalJobsRun}" type="div"/></row-col>
+                    <row-col md="4"><label text="At last check: ${jobRunner.lastJobsActive} active · ${jobRunner.lastJobsPaused} paused" type="div" style="m-muted"/></row-col>
+                </container-row>
+            </widgets><fail-widgets>
+                <label text="The service job scheduler is not running." type="div"/>
+                <label text="A scheduled-job-check-time of 0 disables the scheduler." type="div" style="m-muted"/>
+            </fail-widgets></section>
+        </box-body></container-box>
 
         <form-list name="ServiceJobList" list="serviceJobList" skip-form="true" show-page-size="true">
             <entity-find entity-name="moqui.service.job.ServiceJob" list="serviceJobList">

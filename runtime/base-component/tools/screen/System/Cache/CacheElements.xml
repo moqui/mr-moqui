@@ -40,38 +40,54 @@ along with this software (see the LICENSE.md file). If not, see
 
         <set field="pageSize" from="pageSize || 40"/>
         <set field="cacheElementList" from="ec.cache.makeElementInfoList(cacheName, orderByField || '+key')"/>
+        <script><![CDATA[
+            // Native framework caches may report their size without exposing individual entries.
+            const cacheInfo = ec.cache.getAllCachesInfo('+name').find(info => info.name === cacheName)
+            cacheReportedSize = cacheInfo && cacheInfo.size != null ? cacheInfo.size : null
+            cacheEntryCount = cacheElementList.length
+            cacheReportedSizeText = cacheReportedSize != null ? ec.l10n.format(cacheReportedSize, '#,##0') : ec.l10n.localize('Unavailable')
+            cacheEmptyText = cacheReportedSize === 0
+                ? 'No entries are reported for this cache.'
+                : 'Entry details are not available in this view. Some framework caches expose counts only.'
+        ]]></script>
         <script>CollectionUtilities.paginateList("cacheElementList", null, context)</script>
     </actions>
     <widgets>
-        <label text="Elements for Cache [${cacheName}]" type="h3"/>
-        <label text="${totalSize &gt; displayLimit ? totalSize + ' elements, displaying first ' + displayLimit : ''}" display-if-empty="false"/>
-        <form-list name="CacheElements" list="cacheElementList" skip-form="true">
-            <field name="key">
-                <header-field show-order-by="true"/>
-                <default-field><display also-hidden="false"/></default-field>
-            </field>
-            <field name="value">
-                <default-field><display text="${value != null &amp;&amp; value.length > 200 ? value.substring(0, 200) : value}" also-hidden="false"/></default-field>
-            </field>
-            <field name="hitCount">
-                <header-field title="Hits" show-order-by="true"/>
-                <default-field><display also-hidden="false"/></default-field>
-            </field>
-            <field name="creationTime">
-                <header-field title="Created" show-order-by="true"/>
-                <default-field><display also-hidden="false"/></default-field>
-            </field>
-            <field name="lastUpdateTime">
-                <header-field title="Last Update" show-order-by="true"/>
-                <default-field><display also-hidden="false"/></default-field>
-            </field>
-            <field name="lastAccessTime">
-                <header-field title="Last Access" show-order-by="true"/>
-                <default-field><display also-hidden="false"/></default-field>
-            </field>
-            <field name="clear">
-                <default-field><link text="Clear" url="clearCacheElement" link-type="hidden-form-link"><parameter name="key"/></link></default-field>
-            </field>
-        </form-list>
+        <label text="Cache entries" type="h3"/>
+        <label text="${cacheName}" type="p" style="m-wrap-anywhere"/>
+        <label text="Reported entries: ${cacheReportedSizeText} · Details available: ${ec.l10n.format(cacheEntryCount, '#,##0')}" type="p" style="m-muted"/>
+        <section name="CacheEntryDetails" condition="cacheEntryCount &gt; 0"><widgets>
+            <form-list name="CacheElements" list="cacheElementList" skip-form="true">
+                <field name="key">
+                    <header-field show-order-by="true"/>
+                    <default-field><display also-hidden="false"/></default-field>
+                </field>
+                <field name="value">
+                    <default-field><display text="${value != null &amp;&amp; value.length > 200 ? value.substring(0, 200) : value}" also-hidden="false"/></default-field>
+                </field>
+                <field name="hitCount">
+                    <header-field title="Hits" show-order-by="true"/>
+                    <default-field><display also-hidden="false"/></default-field>
+                </field>
+                <field name="creationTime">
+                    <header-field title="Created" show-order-by="true"/>
+                    <default-field><display also-hidden="false"/></default-field>
+                </field>
+                <field name="lastUpdateTime">
+                    <header-field title="Last Update" show-order-by="true"/>
+                    <default-field><display also-hidden="false"/></default-field>
+                </field>
+                <field name="lastAccessTime">
+                    <header-field title="Last Access" show-order-by="true"/>
+                    <default-field><display also-hidden="false"/></default-field>
+                </field>
+                <field name="clear">
+                    <default-field><link text="Clear" url="clearCacheElement" link-type="hidden-form-link"><parameter name="key"/></link></default-field>
+                </field>
+            </form-list>
+        </widgets><fail-widgets>
+            <label text="${ec.l10n.localize(cacheEmptyText)}" type="p"/>
+        </fail-widgets></section>
+        <link url="../CacheList" text="Back to caches"/>
     </widgets>
 </screen>

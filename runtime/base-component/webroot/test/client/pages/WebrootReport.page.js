@@ -88,21 +88,65 @@ test("sparklines retain gaps and bounded log views deduplicate entries", () => {
     assert.deepEqual(merged.hits.map((hit) => hit.id), ["b", "c"]);
     assert.equal(merged.removed, 1);
 });
-test("dashboard tabs and 24-column layouts render the selected panel", async () => {
+test("dashboard tabs retain explicit layouts and native controls follow the theme", async () => {
     const target = document.createElement("div"); document.body.appendChild(target);
-    const dashboard = { panels: { first: { title: "First panel", visualization: "stat" }, second: { title: "Second panel", visualization: "stat" } },
+    const styles = ["/libs/quasar/quasar.prod.css", "/css/WebrootVue.qvt.css"].map(href => {
+        const link = document.createElement("link"); link.rel = "stylesheet"; link.href = href; return link;
+    });
+    await Promise.all(styles.map(link => new Promise(resolve => { link.onload = resolve; document.head.appendChild(link); })));
+    const wasDark = document.body.classList.contains("body--dark");
+    const dashboard = { variables: [{ name: "team", label: "Team", kind: "custom", default: "Support" }],
+        panels: { first: { title: "First panel", visualization: "table", queries: [{ datasetId: "orders", mode: "documents" }] }, second: { title: "Second panel", visualization: "text", text: "Embedded content" } },
         layout: { type: "tabs", items: [{ title: "One", layout: { type: "grid", items: [{ panelId: "first", x: 0, w: 12 }] } },
             { title: "Two", layout: { type: "autoGrid", items: [{ panelId: "second" }] } }] } };
     const frame = { fields: [{ name: "value", type: "number", values: [12] }] };
     const app = Vue.createApp({ render() { return Vue.h(moqui.qvtComponents["m-dashboard"], { dashboard, frames: { first: [frame], second: [frame] } }); } });
+    app.component("m-markdown", { render() { return Vue.h("button", { id: "embedded-control" }, "Embedded control"); } });
+    const luminance = color => {
+        const context = document.createElement("canvas").getContext("2d");
+        context.fillStyle = color; context.fillRect(0, 0, 1, 1);
+        const channels = Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3).map(value => {
+            const c = value / 255; return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        });
+        return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+    };
+    const contrast = (first, second) => { const a = luminance(first), b = luminance(second); return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05); };
+    try {
     app.mount(target);
     assert.equal(target.textContent.includes("First panel"), true);
     assert.equal(target.textContent.includes("Second panel"), false);
     assert.equal(target.querySelector('[role="tabpanel"] > div').style.gridTemplateColumns.includes("24"), true);
+    const input = target.querySelector("input.m-report-native"), select = target.querySelector("select.m-report-native");
+    const button = Array.from(target.querySelectorAll("button.m-report-native")).find(item => item.textContent === "Refresh now");
+    const sort = target.querySelector(".m-report-sort"), cell = target.querySelector(".m-report-cell-filter");
+    assert.ok(input && select && button && sort && cell);
+    for (const dark of [false, true]) {
+        document.body.classList.toggle("body--dark", dark);
+        for (const element of [input, select, button]) {
+            const style = getComputedStyle(element);
+            assert.equal(style.colorScheme, dark ? "dark" : "light");
+            assert.ok(contrast(style.color, style.backgroundColor) >= 4.5, "native text contrast in " + (dark ? "dark" : "light"));
+            assert.ok(contrast(style.borderTopColor, style.backgroundColor) >= 3, "native control boundary contrast");
+        }
+        input.focus();
+        const focus = getComputedStyle(input), background = getComputedStyle(document.body).backgroundColor;
+        assert.equal(focus.outlineStyle, "solid");
+        assert.equal(focus.outlineWidth, "2px");
+        assert.ok(contrast(focus.outlineColor, background) >= 3, "native focus contrast");
+        assert.equal(getComputedStyle(sort).backgroundColor, "rgba(0, 0, 0, 0)");
+        assert.ok(parseFloat(getComputedStyle(sort).minHeight) <= 28, "table sort control remains compact");
+        assert.equal(getComputedStyle(cell).minHeight, "0px");
+    }
+    sort.click(); await Vue.nextTick();
+    assert.equal(sort.closest("th").getAttribute("aria-sort"), "ascending");
+    assert.ok(getComputedStyle(sort, "::after").content.includes("↑"));
     target.querySelectorAll('[role="tab"]')[1].click(); await Vue.nextTick();
     assert.equal(target.textContent.includes("Second panel"), true);
     assert.equal(target.textContent.includes("First panel"), false);
-    app.unmount(); target.remove();
+    assert.equal(target.querySelector("#embedded-control").classList.contains("m-report-native"), false, "embedded renderers keep their controls");
+    } finally {
+        app.unmount(); target.remove(); styles.forEach(link => link.remove()); document.body.classList.toggle("body--dark", wasDark);
+    }
 });
 test("panel option edits and unlinking a library reference update the draft until save", async () => {
     const target = document.createElement("div"); document.body.appendChild(target);
@@ -204,8 +248,11 @@ test("real Chart.js panels share timestamps across different bucket widths and s
     const a=new Chart(first,report.chart(frame([1000,2000,3000]),{syncGroup:'chart-test'})),b=new Chart(second,report.chart(frame([1000,1500,2000,2500,3000]),{syncGroup:'chart-test'}));
     const plugin=a.config.plugins.find(plugin=>plugin.id==='moquiReportSync'),range=[];const onRange=event=>range.push(event.detail);document.addEventListener('moqui-report-range',onRange);
     try {
+        assert.equal(a.scales.x.labelRotation,0);
+        assert.ok(a.scales.x.ticks.every(tick=>/^\d\d:\d\d:\d\d$/.test(tick.label)), 'the rendered axis abbreviates ordinary time fields');
         plugin.afterEvent(a,{event:{type:'mousemove',x:a.scales.x.getPixelForValue(1),y:a.chartArea.top+5}});
         assert.equal(b.getActiveElements()[0].index,2);
+        assert.deepEqual(b.tooltip.title,[report.format(2000,{type:'time'})], 'the synchronized tooltip keeps the full timestamp');
         plugin.afterEvent(a,{event:{type:'mousedown',x:a.scales.x.getPixelForValue(0),y:a.chartArea.top+5}});
         plugin.afterEvent(a,{event:{type:'mouseup',x:a.scales.x.getPixelForValue(1),y:a.chartArea.top+5}});
         assert.equal(a.options.scales.x.max,1);assert.equal(b.options.scales.x.max,2);assert.equal(range[0].from,'1970-01-01T00:00:01.000Z');assert.equal(range[0].thru,'1970-01-01T00:00:02.000Z');
@@ -231,8 +278,33 @@ test("retained partial buckets use the typed time axis and exclude metadata seri
     assert.deepEqual(config.data.labels,[report.format(1000,{type:'time'}),report.format(2000,{type:'time'})]);
     assert.deepEqual(config.data.datasets.map(dataset=>dataset.label),['requests']);
     assert.deepEqual(config.data.datasets[0].data,[3,4]);
+    const local = new Date(1000), clock = [local.getHours(),local.getMinutes(),local.getSeconds()].map(value=>String(value).padStart(2,'0')).join(':');
+    assert.equal(config.options.scales.x.ticks.callback(0),clock, 'ordinary time values retain the browser local zone');
     const textAxis=report.chart({fields:[frame.fields[0],{name:'category',type:'string',values:['A','B']},frame.fields[4]]},{});
     assert.deepEqual(textAxis.data.labels,['A','B']);
+    assert.equal(textAxis.options.scales.x.ticks,undefined, 'category labels keep their existing presentation');
+
+    const iso = ['2026-11-04T00:00:00Z','2026-11-04T00:15:00Z'];
+    const bucketFrame = labels=>({fields:[{name:'time',type:'time',values:labels,config:{bucket:{labels}}},{name:'count',type:'number',values:[2,3]}]});
+    const source = bucketFrame(iso), exported = report.csv(source), chart = report.chart(source,{}), axis = chart.options.scales.x;
+    assert.deepEqual(chart.data.labels,iso, 'full server labels remain the tooltip title source');
+    assert.equal(axis.ticks.callback(0),'00:00');assert.equal(axis.ticks.callback(1),'00:15');
+    assert.equal(axis.title.text,'2026-11-04 · UTC');
+    assert.equal(report.csv(source),exported, 'axis formatting does not change exported timestamps');
+    assert.ok(exported.includes(iso[0]));
+    const year = report.chart(bucketFrame(['2026-12-31T23:45:00-06:00','2027-01-01T00:00:00-06:00']),{}).options.scales.x;
+    assert.deepEqual(year.ticks.callback(0),['2026-12-31','23:45']);assert.deepEqual(year.ticks.callback(1),['2027-01-01','00:00']);
+    assert.equal(year.title.text,'UTC-06:00', 'server display offsets are preserved rather than converted to local time');
+    const days = report.chart(bucketFrame(['2026-01-01T00:00:00Z','2026-01-02T00:00:00Z']),{}).options.scales.x;
+    assert.equal(days.ticks.callback(0),'01-01');assert.equal(days.ticks.callback(1),'01-02');assert.equal(days.title.text,'2026 · UTC');
+    const dst = report.chart(bucketFrame(['2026-11-01T01:30:00-05:00','2026-11-01T01:30:00-06:00']),{}).options.scales.x;
+    assert.equal(dst.ticks.callback(0),'01:30 -05:00');assert.equal(dst.ticks.callback(1),'01:30 -06:00');
+    assert.equal(dst.title.text,'2026-11-01 · UTC offsets', 'repeated wall-clock times remain distinguishable');
+    const seconds = report.chart(bucketFrame(['2026-11-04T00:00:00.125Z','2026-11-04T00:00:00.500Z']),{}).options.scales.x;
+    assert.equal(seconds.ticks.callback(0),'00:00:00.125');assert.equal(seconds.ticks.callback(1),'00:00:00.500');
+    source.fields[0].config.bucket.labels=['Earlier','Later'];
+    const custom = report.chart(source,{});
+    assert.deepEqual(custom.data.labels,['Earlier','Later']);assert.equal(custom.options.scales.x.ticks,undefined, 'custom bucket labels are not reinterpreted');
 });
 function reportBoundComponent(name,value,props) {
     const target=document.createElement('div');document.body.appendChild(target);const model=Vue.reactive({value});let child;
