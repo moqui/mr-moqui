@@ -661,6 +661,10 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="header-timeout" type="xs:string"><xs:annotation><xs:documentation>
                         Seconds for the request head, the TLS handshake, and an idle kept-alive connection
                         (webapp_header_timeout, 30); 0 is no limit.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="write-timeout" type="xs:string"><xs:annotation><xs:documentation>
+                        Seconds a write to a client may take nothing before the connection, or the WebSocket on it, is
+                        closed (webapp_write_timeout, 60); a write that moves any bytes starts it again. Also the
+                        connections' TCP_USER_TIMEOUT on Linux. 0 is no limit.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="shutdown-timeout" type="xs:string"><xs:annotation><xs:documentation>
                         Seconds open connections may take to finish after a stop (webapp_shutdown_timeout, 30).</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="http2-max-streams" type="xs:string"><xs:annotation><xs:documentation>

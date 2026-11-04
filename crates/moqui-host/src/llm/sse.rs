@@ -22,7 +22,7 @@
 //! Both authenticate as `/notws` does (the session cookie, else a `login_key` header, with the origin check), and only
 //! the run's owner sees a run: for anyone else it is not found. The stream is written by a thread of its own into the
 //! response body (the `ChannelBody` of `git_http.rs`), so it holds no request worker; at most 256 are open on a node,
-//! and one more is answered 503 with `Retry-After`. The stream follows the hub with a `Follower`, which fills a gap
+//! and one more is answered 503 with `Retry-After`. A client that takes nothing for a minute ends its stream. The stream follows the hub with a `Follower`, which fills a gap
 //! in the stored sequence from the database.
 
 use std::collections::HashMap;
@@ -55,6 +55,8 @@ const CHECK_EVERY: Duration = Duration::from_secs(5);
 const PAGE: i64 = 500;
 /// Event streams open at once on this node; one more is answered 503, and the client tries again.
 const MAX_STREAMS: usize = 256;
+/// How long the stream's thread waits for a client that takes nothing before it ends the stream.
+const SEND_STALL: std::time::Duration = std::time::Duration::from_secs(60);
 
 static STREAMS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -235,7 +237,8 @@ fn stream(
     tx: &mpsc::Sender<Chunk>,
     shutdown: &tokio::sync::watch::Receiver<bool>,
 ) {
-    let send = |text: String| tx.blocking_send(Ok(Bytes::from(text))).is_ok();
+    // a client that takes nothing for SEND_STALL ends the stream and gives back its slot (HL-027)
+    let send = |text: String| crate::stall::send_within(tx, Ok(Bytes::from(text)), SEND_STALL).is_ok();
     let Some(facade) = factory.entity() else {
         return;
     };

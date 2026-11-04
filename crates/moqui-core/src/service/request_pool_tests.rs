@@ -43,6 +43,59 @@ fn idle_rejects_and_runs_nothing() {
     assert_eq!(ran.load(Ordering::SeqCst), 0);
 }
 
+/// The completion hook gets the result on the worker, after the job's context has ended; a job still queued when the
+/// pool stops gets an error.
+#[test]
+fn the_completion_hook_gets_the_result_and_a_stop_fails_a_queued_job() {
+    let pool = RequestPool::idle();
+    pool.start(1, 4).unwrap();
+    let factory = test_factory();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let done_tx = tx.clone();
+    pool.try_submit_then(
+        Arc::clone(&factory),
+        || Ok::<_, Error>(7),
+        move |result| {
+            let entered = crate::context::ExecutionContext::is_entered();
+            let _ = done_tx.send((result.map_err(|err| err.to_string()), entered));
+        },
+    )
+    .unwrap();
+    let (result, entered) = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(result, Ok(7));
+    assert!(!entered, "the hook runs after the job's context ended");
+
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let _release = NotifyOnDrop(Arc::clone(&gate));
+    let running = Arc::new((Mutex::new(false), Condvar::new()));
+    let (gate_job, running_job) = (Arc::clone(&gate), Arc::clone(&running));
+    pool.try_submit_then(
+        Arc::clone(&factory),
+        move || {
+            set_flag(&running_job);
+            wait_flag(&gate_job);
+            Ok::<_, Error>(0)
+        },
+        |_| {},
+    )
+    .unwrap();
+    wait_flag(&running);
+    let queued_tx = tx.clone();
+    pool.try_submit_then(
+        Arc::clone(&factory),
+        || Ok::<_, Error>(1),
+        move |result| {
+            let _ = queued_tx.send((result.map_err(|err| err.to_string()), false));
+        },
+    )
+    .unwrap();
+    let stopping = std::thread::spawn(move || pool.shutdown());
+    let (result, _) = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(result.unwrap_err().contains("not running"));
+    set_flag(&gate);
+    stopping.join().unwrap();
+}
+
 #[test]
 fn full_queue_rejects_without_running_the_job() {
     let pool = RequestPool::idle();

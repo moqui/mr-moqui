@@ -91,6 +91,9 @@ pub(crate) struct ListenLimits {
     /// `http2-max-streams` (`webapp_http2_max_streams`), default 100: the requests one HTTP/2 connection may have
     /// open at once.
     pub http2_max_streams: u32,
+    /// `write-timeout` (`webapp_write_timeout`), default 60: a write to a client that takes nothing for this long fails
+    /// and the connection closes, a WebSocket's too; `TCP_USER_TIMEOUT` is set to it where the platform has it.
+    pub write: Option<Duration>,
 }
 
 /// The smallest read buffer hyper takes.
@@ -127,6 +130,7 @@ impl ListenLimits {
                 100,
             ))
             .unwrap_or(u32::MAX),
+            write: seconds("connections", "write-timeout", "webapp_write_timeout", 60),
         }
     }
 
@@ -144,6 +148,7 @@ impl ListenLimits {
             max_header_bytes: 64 * 1024,
             max_headers: 100,
             http2_max_streams: 100,
+            write: None,
         }
     }
 }
@@ -513,17 +518,20 @@ async fn serve(
             continue;
         };
         let _ = stream.set_nodelay(true);
+        tune_socket(&stream, limits.write);
+        let hold: serve::ConnectionHold = Box::new((slot, permit));
         let builder = builder.clone();
         let closing = closing_rx.clone();
         let tls = tls.clone();
         let web = web.clone();
         tokio::spawn(async move {
-            let serving = Serving {
+            let mut serving = Serving {
                 remote,
                 web,
                 builder,
                 closing,
                 exporter: None,
+                hold: Some(hold),
             };
             match tls {
                 None => run_connection(stream, false, Http::One, serving).await,
@@ -535,11 +543,14 @@ async fn serve(
                     };
                     match secured {
                         Some(Ok(crate::edge_link::Secured::Link(handoff))) => {
-                            // a link, or a passthrough tunnel: each ends with the listeners' stop on its own
+                            // a link, or a passthrough tunnel: each ends with the listeners' stop on its own, and holds
+                            // its connection slots until then
+                            let hold = serving.hold.take();
                             drop(serving);
                             if let Some(edge) = &tls.edge {
                                 edge.serve(handoff, remote).await;
                             }
+                            drop(hold);
                         }
                         Some(Ok(crate::edge_link::Secured::Http(stream))) => {
                             // the TLS session's exporter, for XMPP channel binding over /xmpp-websocket (RFC 9266)
@@ -556,8 +567,6 @@ async fn serve(
                     }
                 }
             }
-            drop(slot);
-            drop(permit);
         });
     }
     drop(closing_rx);
@@ -575,6 +584,22 @@ async fn serve(
         None => closing.closed().await,
     }
 }
+
+/// TCP keepalive, so a peer that is gone is found while a connection is idle, and `TCP_USER_TIMEOUT` of the write
+/// timeout where the platform has it, so data the peer does not acknowledge fails the connection (HL-027).
+fn tune_socket(stream: &tokio::net::TcpStream, write: Option<Duration>) {
+    let socket = socket2::SockRef::from(stream);
+    let _ = socket.set_tcp_keepalive(&socket2::TcpKeepalive::new().with_time(KEEPALIVE_IDLE));
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    if let Some(limit) = write {
+        let _ = socket.set_tcp_user_timeout(Some(limit));
+    }
+    #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+    let _ = write;
+}
+
+/// How long a connection is idle before TCP keepalive probes start.
+const KEEPALIVE_IDLE: Duration = Duration::from_secs(60);
 
 /// Ctrl-c or SIGTERM ends the binary gracefully. Failed handlers wait on `stop`, used by embedded servers.
 /// The watch tells open notification sockets to close so graceful shutdown can finish. A restart asked for from the

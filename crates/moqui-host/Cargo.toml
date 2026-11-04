@@ -168,6 +168,7 @@ rustls = { workspace = true }
 tokio-rustls = { workspace = true }
 rcgen = { workspace = true }
 sha2 = { workspace = true }
+socket2 = { workspace = true, features = ["all"] }
 # The WebSocket accept key of a forwarded upgrade on an edge node (src/edge_link/web.rs). Already in the graph.
 sha1 = { workspace = true, optional = true }
 base64 = { workspace = true }

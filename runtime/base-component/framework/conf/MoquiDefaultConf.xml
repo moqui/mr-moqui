@@ -766,7 +766,8 @@
             -->
             <web-protection enabled="${webapp_web_protection}" client-ipv6-prefix="64" max-tracked-clients="100000">
                 <connections max="${webapp_max_connections}" max-per-client="64"
-                        header-timeout="${webapp_header_timeout}" shutdown-timeout="${webapp_shutdown_timeout}"
+                        header-timeout="${webapp_header_timeout}" write-timeout="${webapp_write_timeout}"
+                        shutdown-timeout="${webapp_shutdown_timeout}"
                         http2-max-streams="${webapp_http2_max_streams}"/>
                 <requests methods="GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS" max-uri-length="8192"
                         max-header-bytes="65536" max-headers="100" max-body="${webapp_max_body}"

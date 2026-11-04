@@ -17,7 +17,7 @@
 use std::any::Any;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
@@ -107,8 +107,27 @@ impl RequestPool {
     where
         T: Send + 'static,
     {
-        let shared = self.running()?;
         let (tx, rx) = mpsc::channel();
+        self.try_submit_then(factory, job, move |result| {
+            let _ = tx.send(result);
+        })?;
+        Ok(rx)
+    }
+
+    /// Queue `job` and hand its result to `done`, which runs on the worker once the job's context and cleanup have
+    /// ended: the completion hook an async caller finishes its own future from, so no thread waits on the reply
+    /// (`plans/High-Level-Review.md` HL-006). A full or stopped pool returns an error and calls neither; a job still
+    /// queued when the pool stops gets `done` with an error.
+    pub fn try_submit_then<T>(
+        &self,
+        factory: Arc<ExecutionContextFactory>,
+        job: impl FnOnce() -> Result<T, Error> + Send + 'static,
+        done: impl FnOnce(Result<T, Error>) + Send + 'static,
+    ) -> Result<(), Error>
+    where
+        T: Send + 'static,
+    {
+        let shared = self.running()?;
         {
             let mut state = lock(&shared.state);
             if state.stop {
@@ -117,10 +136,10 @@ impl RequestPool {
             if state.queue.len() >= shared.queue_cap {
                 return Err(Error::of_kind(ErrorKind::Unavailable, "request queue is full"));
             }
-            state.queue.push_back(pack(factory, job, tx));
+            state.queue.push_back(pack(factory, job, done));
         }
         shared.wake.notify_all();
-        Ok(rx)
+        Ok(())
     }
 
     /// Jobs waiting for a worker. A job a worker has already taken is not included.
@@ -225,17 +244,16 @@ pub fn spare_connections(factory: &ExecutionContextFactory) -> Option<u32> {
     })
 }
 
-fn pack<T, F>(factory: Arc<ExecutionContextFactory>, job: F, tx: Sender<Result<T, Error>>) -> Work
+fn pack<T, F, D>(factory: Arc<ExecutionContextFactory>, job: F, done: D) -> Work
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, Error> + Send + 'static,
+    D: FnOnce(Result<T, Error>) + Send + 'static,
 {
     Work {
         factory,
         run: Box::new(move || job().map(|value| Box::new(value) as JobOutput)),
-        finish: Box::new(move |result| {
-            let _ = tx.send(map_job_result(result));
-        }),
+        finish: Box::new(move |result| done(map_job_result(result))),
     }
 }
 

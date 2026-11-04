@@ -64,6 +64,17 @@ const SOCKET_QUEUE: usize = 256;
 /// A ping goes out this often, so a dead peer is noticed and proxies keep the connection.
 const PING_EVERY: std::time::Duration = std::time::Duration::from_secs(30);
 const SESSION_CHECK: std::time::Duration = std::time::Duration::from_secs(60);
+/// A send to a socket whose client takes nothing for this long fails, and the socket closes, so a blocked write does
+/// not hold up the loop's own timeouts (`plans/High-Level-Review.md` HL-027). The connection's write timeout does the
+/// same under HTTP/1.1; this covers a socket over HTTP/2, where one stream's window does not block the connection.
+pub(crate) const SEND_STALL: std::time::Duration = std::time::Duration::from_secs(60);
+/// Topics one socket may follow; a subscribe past it is ignored, so one socket cannot grow its set without end.
+const MAX_TOPICS: usize = 256;
+
+/// Send `message` on `socket` within [`SEND_STALL`]. False when the socket is gone or the client took nothing.
+pub(crate) async fn send_within(socket: &mut WebSocket, message: Message) -> bool {
+    matches!(tokio::time::timeout(SEND_STALL, socket.send(message)).await, Ok(Ok(())))
+}
 
 #[derive(Clone)]
 enum Credential {
@@ -72,16 +83,16 @@ enum Credential {
 }
 
 impl Credential {
-    fn user(&self, factory: Arc<ExecutionContextFactory>) -> Result<Option<String>, CoreError> {
+    /// The user the credential is for now, from a request worker, awaited without a waiting thread.
+    async fn user(&self, factory: &Arc<ExecutionContextFactory>) -> Result<Option<String>, CoreError> {
         match self {
-            Self::Session(id) => session_user(factory, id.clone()),
+            Self::Session(id) => {
+                let (looked, id) = (Arc::clone(factory), id.clone());
+                on_pool(factory, move || user_of(&looked, &id)).await
+            }
             Self::LoginKeyHash(hash) => {
                 let hash = hash.clone();
-                let owner = Arc::clone(&factory);
-                let rx = factory
-                    .request_pool()
-                    .try_submit(owner, move || moqui_core::user::login_key_user_by_hash(&hash))?;
-                rx.recv().map_err(|_| CoreError::new("request worker stopped"))?
+                on_pool(factory, move || moqui_core::user::login_key_user_by_hash(&hash)).await
             }
         }
     }
@@ -145,10 +156,12 @@ pub(crate) async fn upgrade(
                 Ok(_) | Err(_) => return plain(401, "unauthorized"),
             };
             let lookup_id = session_id.clone();
+            let looked = Arc::clone(&factory);
+            let found = on_pool(&factory, move || user_of(&looked, &lookup_id).map(|user| (user, false))).await;
             (
-                session_id,
-                Credential::Session(lookup_id.clone()),
-                tokio::task::spawn_blocking(move || session_user(factory, lookup_id).map(|user| (user, false))).await,
+                session_id.clone(),
+                Credential::Session(session_id),
+                Ok::<_, tokio::task::JoinError>(found),
             )
         }
         None => {
@@ -167,7 +180,7 @@ pub(crate) async fn upgrade(
             (
                 "login-key".to_string(),
                 Credential::LoginKeyHash(hashed),
-                tokio::task::spawn_blocking(move || key_user(factory, key)).await,
+                Ok::<_, tokio::task::JoinError>(on_pool(&factory, move || key_login(&key)).await),
             )
         }
     };
@@ -280,20 +293,23 @@ pub(crate) fn key_user(
     key: String,
 ) -> Result<(Option<String>, bool), CoreError> {
     let owner = Arc::clone(&factory);
-    let rx = factory.request_pool().try_submit(owner, move || {
-        let login = moqui_core::user::login_user_key(&key);
-        let failed = moqui_core::web::take_auth_failure();
-        let user = if login.is_ok() {
-            moqui_core::user::current_user_id()?.filter(|id| !id.is_empty())
-        } else {
-            None
-        };
-        Ok((user, failed))
-    })?;
+    let rx = factory.request_pool().try_submit(owner, move || key_login(&key))?;
     match rx.recv() {
         Ok(result) => result,
         Err(_) => Err(CoreError::new("request worker stopped")),
     }
+}
+
+/// On a request worker: log in with `key`; the user, and whether the attempt counts as an authentication failure.
+fn key_login(key: &str) -> Result<(Option<String>, bool), CoreError> {
+    let login = moqui_core::user::login_user_key(key);
+    let failed = moqui_core::web::take_auth_failure();
+    let user = if login.is_ok() {
+        moqui_core::user::current_user_id()?.filter(|id| !id.is_empty())
+    } else {
+        None
+    };
+    Ok((user, failed))
 }
 
 fn user_of(factory: &ExecutionContextFactory, session_id: &str) -> Result<Option<String>, CoreError> {
@@ -357,20 +373,17 @@ async fn run_socket(
             }
             () = slot.overflow.notified() => {
                 tracing::warn!(session_id = %slot.session_id, "notification socket closed: the client fell behind");
-                let _ = socket
-                    .send(Message::Close(Some(axum::extract::ws::CloseFrame {
-                        code: 1008,
-                        reason: "too many notifications waiting".into(),
-                    })))
-                    .await;
+                let _ = send_within(&mut socket, Message::Close(Some(axum::extract::ws::CloseFrame {
+                    code: 1008,
+                    reason: "too many notifications waiting".into(),
+                })))
+                .await;
                 break;
             }
             _ = check.tick() => {
-                let lookup = Arc::clone(&factory);
-                let credential = credential.clone();
-                let current = tokio::task::spawn_blocking(move || credential.user(lookup)).await;
-                if !matches!(current, Ok(Ok(Some(ref user))) if user == &slot.user_id) {
-                    let _ = socket.send(Message::Close(Some(axum::extract::ws::CloseFrame {
+                let current = credential.user(&factory).await;
+                if !matches!(current, Ok(Some(ref user)) if user == &slot.user_id) {
+                    let _ = send_within(&mut socket, Message::Close(Some(axum::extract::ws::CloseFrame {
                         code: 1008,
                         reason: "authentication is no longer valid".into(),
                     }))).await;
@@ -389,7 +402,7 @@ async fn run_socket(
                 let Some(push) = push else {
                     break;
                 };
-                if socket.send(Message::Text(push.text.into())).await.is_err() {
+                if !send_within(&mut socket, Message::Text(push.text.into())).await {
                     break;
                 }
                 // Marking it sent is a database write; it does not hold up the next notification.
@@ -400,7 +413,7 @@ async fn run_socket(
                     tracing::debug!(session_id = %slot.session_id, "notification socket idle, closed");
                     break;
                 }
-                if socket.send(Message::Ping(Vec::new().into())).await.is_err() {
+                if !send_within(&mut socket, Message::Ping(Vec::new().into())).await {
                     break;
                 }
             }
@@ -445,7 +458,7 @@ async fn handle_incoming(
             }
             true
         }
-        Some(Ok(Message::Ping(payload))) => socket.send(Message::Pong(payload)).await.is_ok(),
+        Some(Ok(Message::Ping(payload))) => send_within(socket, Message::Pong(payload)).await,
         Some(Ok(Message::Close(_))) | Some(Err(_)) | None => false,
         Some(Ok(_)) => true,
     }
@@ -475,6 +488,10 @@ fn apply_command(slot: &Slot, command: TopicCommand) {
     match command {
         TopicCommand::Subscribe(names) => {
             for name in names {
+                if topics.len() >= MAX_TOPICS && !topics.contains(&name) {
+                    tracing::warn!(session_id = %slot.session_id, "notification socket over {MAX_TOPICS} topics; {name} not followed");
+                    continue;
+                }
                 topics.insert(name);
             }
         }
@@ -573,19 +590,14 @@ fn flatten_call(ran: Result<Result<(), CoreError>, tokio::task::JoinError>) -> R
     }
 }
 
-/// Run `job` on a request worker in a fresh context, without blocking the async runtime.
+/// Run `job` on a request worker in a fresh context, without blocking the async runtime: the host's one async adapter
+/// ([`crate::worker::submit`]).
 async fn on_pool<T, F>(factory: &Arc<ExecutionContextFactory>, job: F) -> Result<T, CoreError>
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, CoreError> + Send + 'static,
 {
-    let factory = Arc::clone(factory);
-    tokio::task::spawn_blocking(move || {
-        let rx = factory.request_pool().try_submit(Arc::clone(&factory), job)?;
-        rx.recv().map_err(|_| CoreError::new("request worker stopped"))?
-    })
-    .await
-    .map_err(|_| CoreError::new("request worker panicked"))?
+    crate::worker::submit(Arc::clone(factory), job).await
 }
 
 fn deliver_notice(message: &TopicMessage) {

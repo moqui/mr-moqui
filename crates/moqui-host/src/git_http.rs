@@ -40,7 +40,6 @@ use crate::http::{forwarded_https, plain, ClientAddr, HttpState, TlsConnection};
 
 const DEFAULT_MAX_REQUEST: u64 = 64 * 1024 * 1024;
 const DEFAULT_MAX_PUSH: u64 = 2 * 1024 * 1024 * 1024;
-const DEFAULT_IDLE: Duration = Duration::from_secs(120);
 
 /// An attribute of the conf's `git-server` as a positive number, else `default`.
 fn size_setting(state: &HttpState, name: &str, default: u64) -> u64 {
@@ -49,11 +48,9 @@ fn size_setting(state: &HttpState, name: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-/// The conf's `git-server` `idle-timeout` in seconds, else [`DEFAULT_IDLE`].
+/// The conf's `git-server` `idle-timeout`: for the request body, and for the response a client stops reading.
 fn idle_timeout(state: &HttpState) -> Duration {
-    Some(state.factory.conf_number("git-server", "idle-timeout", 0u64))
-        .filter(|seconds| *seconds > 0)
-        .map_or(DEFAULT_IDLE, Duration::from_secs)
+    crate::git_bridge::idle_timeout(&state.factory)
 }
 
 /// The response body: chunks from the job until it drops its writer.
@@ -211,7 +208,7 @@ pub(crate) async fn handle(
         let mut reader = ChannelReader::new(body_rx);
         let mut responder = Responder {
             head: Some(head_tx),
-            body: ChannelWriter::new(out_tx),
+            body: ChannelWriter::new(out_tx, idle),
         };
         server::serve_http(&git_request, &mut reader, &mut responder);
         let _ = std::io::Write::flush(&mut responder.body);
@@ -302,7 +299,7 @@ async fn handle_lfs(
         let mut reader = ChannelReader::new(body_rx);
         let mut responder = Responder {
             head: Some(head_tx),
-            body: ChannelWriter::new(out_tx),
+            body: ChannelWriter::new(out_tx, idle),
         };
         lfs::serve_lfs(&request, &mut reader, &mut responder);
         let _ = std::io::Write::flush(&mut responder.body);

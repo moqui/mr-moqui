@@ -250,6 +250,7 @@ pub(crate) async fn serve_tunneled<S>(
         web,
         closing,
         exporter,
+        hold: None,
     };
     run_connection(stream, true, http, serving).await;
 }
@@ -262,6 +263,8 @@ pub(crate) struct Serving {
     pub closing: tokio::sync::watch::Receiver<bool>,
     /// The TLS session's exporter (RFC 9266), when the xmpp feature takes it at the handshake.
     pub exporter: Option<Arc<Vec<u8>>>,
+    /// The listener's slots the connection holds, given back when its socket closes ([`WriteStall`]).
+    pub hold: Option<ConnectionHold>,
 }
 
 /// Serve one connection as `http` until it closes or `serving.closing` turns true, then shut it down gracefully.
@@ -285,7 +288,9 @@ where
         builder,
         mut closing,
         exporter,
+        hold,
     } = serving;
+    let io = WriteStall::new(Lingering::new(stream), web.limits.write, hold);
     let service = hyper::service::service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
         let client = web.guard.client_of(remote.ip(), request.headers());
         let https = secure || forwarded_https(request.headers(), remote.ip(), web.guard.conf().addressing());
@@ -298,9 +303,7 @@ where
         };
         serve_request(&web, request, &peer)
     });
-    let connection = builder
-        .serve_connection(TokioIo::new(Lingering::new(stream)), service)
-        .with_upgrades();
+    let connection = builder.serve_connection(TokioIo::new(io), service).with_upgrades();
     let mut connection = std::pin::pin!(connection);
     tokio::select! {
         result = connection.as_mut() => {
@@ -327,8 +330,10 @@ where
         web,
         mut closing,
         exporter,
+        hold,
         ..
     } = serving;
+    let io = WriteStall::new(Lingering::new(stream), web.limits.write, hold);
     let idle_limit = web.limits.header;
     let builder = http2_builder(&web.limits);
     let activity = Arc::new(Activity::new());
@@ -358,7 +363,7 @@ where
             })
         })
     };
-    let connection = builder.serve_connection(TokioIo::new(Lingering::new(stream)), service);
+    let connection = builder.serve_connection(TokioIo::new(io), service);
     let mut connection = std::pin::pin!(connection);
     let mut check = tokio::time::interval(idle_limit.map_or(H2_IDLE_CHECK, |limit| limit.min(H2_IDLE_CHECK)));
     let mut shutting = false;
@@ -543,6 +548,110 @@ where
             },
             None => call.await,
         })
+    }
+}
+
+/// What a connection holds until its socket closes: its slot of the listeners' connections and its client's slot.
+pub(crate) type ConnectionHold = Box<dyn Send + Sync>;
+
+/// A stream whose write fails once it has made no progress for `limit`, so a client that stops reading cannot keep its
+/// connection, or a push loop's write, past it (`plans/High-Level-Review.md` HL-027). A write that moves any bytes starts
+/// the time again: a slow download that is still progressing goes on, and so does backpressure. The stream carries the
+/// connection's [`ConnectionHold`], so an upgraded socket (a WebSocket hyper handed off) keeps its connection slots
+/// until it closes.
+pub(crate) struct WriteStall<S> {
+    inner: S,
+    limit: Option<Duration>,
+    stalled: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+    _hold: Option<ConnectionHold>,
+}
+
+impl<S> WriteStall<S> {
+    pub(crate) fn new(inner: S, limit: Option<Duration>, hold: Option<ConnectionHold>) -> Self {
+        Self {
+            inner,
+            limit,
+            stalled: None,
+            _hold: hold,
+        }
+    }
+
+    /// After a write or flush that could not go on: the error once it has waited `limit`, else wake at that time.
+    fn stall(&mut self, cx: &mut std::task::Context<'_>) -> Option<std::io::Error> {
+        let limit = self.limit?;
+        let sleep = self.stalled.get_or_insert_with(|| Box::pin(tokio::time::sleep(limit)));
+        sleep.as_mut().poll(cx).is_ready().then(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "the client took nothing for the write timeout",
+            )
+        })
+    }
+
+    fn progress<T>(
+        &mut self,
+        polled: std::task::Poll<std::io::Result<T>>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<T>> {
+        match polled {
+            std::task::Poll::Pending => match self.stall(cx) {
+                Some(err) => std::task::Poll::Ready(Err(err)),
+                None => std::task::Poll::Pending,
+            },
+            ready => {
+                self.stalled = None;
+                ready
+            }
+        }
+    }
+}
+
+impl<S: tokio::io::AsyncRead + Unpin> tokio::io::AsyncRead for WriteStall<S> {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl<S: tokio::io::AsyncWrite + Unpin> tokio::io::AsyncWrite for WriteStall<S> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let polled = std::pin::Pin::new(&mut self.inner).poll_write(cx, buf);
+        self.progress(polled, cx)
+    }
+
+    fn poll_write_vectored(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let polled = std::pin::Pin::new(&mut self.inner).poll_write_vectored(cx, bufs);
+        self.progress(polled, cx)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let polled = std::pin::Pin::new(&mut self.inner).poll_flush(cx);
+        self.progress(polled, cx)
+    }
+
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }
 

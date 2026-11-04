@@ -537,6 +537,9 @@ plain HTTP listener is HTTP/1.1 only. `webapp_http2=false` keeps HTTPS to HTTP/1
 - **Limits.** One HTTP/2 connection carries at most `webapp_http2_max_streams` (100) requests at once. One with no
   request for `webapp_header_timeout` (30 seconds) is closed with a GOAWAY, as an idle HTTP/1.1 connection is closed,
   and so is a client's connection when web protection refuses that client.
+- **Slow readers.** A connection whose client takes nothing of a response for `webapp_write_timeout` (60 seconds) is
+  closed, a WebSocket's included; a download that keeps moving is not. A WebSocket keeps its connection's place in
+  `webapp_max_connections` and web protection's `max-per-client` until it closes.
 - **Behind a proxy**, HTTP/2 is between the client and the proxy; the proxy may reach the server over HTTP/1.1 or, on
   the HTTPS port, over HTTP/2 (gRPC through a proxy needs HTTP/2 to the server).
 

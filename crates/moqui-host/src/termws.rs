@@ -155,12 +155,14 @@ async fn close(socket: &mut WebSocket, reason: &str) {
     while !reason.is_char_boundary(end) {
         end -= 1;
     }
-    let _ = socket
-        .send(Message::Close(Some(CloseFrame {
+    let _ = crate::notws::send_within(
+        socket,
+        Message::Close(Some(CloseFrame {
             code: 1000,
             reason: reason[..end].into(),
-        })))
-        .await;
+        })),
+    )
+    .await;
 }
 
 async fn run_socket(mut socket: WebSocket, opened: Opened, mut shutdown: tokio::sync::watch::Receiver<bool>) {
@@ -232,7 +234,7 @@ async fn run_socket(mut socket: WebSocket, opened: Opened, mut shutdown: tokio::
                 // The session ended and closed its end of the pipe.
                 Ok(0) | Err(_) => break,
                 Ok(read) => {
-                    if open && socket.send(Message::Binary(buffer[..read].to_vec().into())).await.is_err() {
+                    if open && !crate::notws::send_within(&mut socket, Message::Binary(buffer[..read].to_vec().into())).await {
                         open = false;
                         let _ = to_session.shutdown().await;
                     }
@@ -250,7 +252,7 @@ async fn run_socket(mut socket: WebSocket, opened: Opened, mut shutdown: tokio::
                     }
                 }
                 Some(Ok(Message::Ping(payload))) => {
-                    let _ = socket.send(Message::Pong(payload)).await;
+                    let _ = crate::notws::send_within(&mut socket, Message::Pong(payload)).await;
                 }
                 Some(Ok(Message::Close(_)) | Err(_)) | None => {
                     open = false;
@@ -259,7 +261,7 @@ async fn run_socket(mut socket: WebSocket, opened: Opened, mut shutdown: tokio::
                 Some(Ok(_)) => {}
             },
             _ = ping.tick(), if open => {
-                if socket.send(Message::Ping(Vec::new().into())).await.is_err() {
+                if !crate::notws::send_within(&mut socket, Message::Ping(Vec::new().into())).await {
                     open = false;
                     let _ = to_session.shutdown().await;
                 }

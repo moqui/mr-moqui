@@ -101,8 +101,10 @@ mod tui_cmd;
 pub mod tui_remote;
 pub mod types;
 pub mod usage;
-// The request-worker handoff of the SSH server, the SMTP listener, the XMPP server, the edge link and the SIP engine.
+// The request-worker handoff of the SSH server, the SMTP listener, the XMPP server, the edge link, the SIP engine and
+// the notification socket.
 #[cfg(any(
+    feature = "axum",
     feature = "ssh",
     feature = "inbound-smtp",
     feature = "xmpp",
@@ -149,6 +151,8 @@ mod sip;
 mod source_body;
 #[cfg(feature = "rtc")]
 mod speech_local;
+#[cfg(any(all(feature = "git", any(feature = "axum", feature = "ssh")), all(feature = "axum", feature = "llm")))]
+mod stall;
 #[cfg(feature = "axum")]
 mod systemd_notify;
 #[cfg(all(feature = "axum", feature = "tui"))]
