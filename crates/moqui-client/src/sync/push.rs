@@ -34,10 +34,10 @@
 //! the head range, or whose row is kept, is in already. A frame that does
 //! not parse, or that the store does not take, is logged and passed over.
 
-use moqui_client::store::{ChatEvent, Store};
+use crate::store::{ChatEvent, Store};
 use serde_json::{json, Value};
 
-use super::offline::{chat_event, number};
+use crate::offline::{chat_event, number};
 
 /// Keep what a `/notws` text frame of `me`'s says of chat; anything else is passed over.
 pub(crate) fn keep_frame(store: &Store, me: &str, text: &str) {
@@ -444,7 +444,7 @@ fn new_message(store: &Store, me: &str, room: &str, seq: i64, event: &Value) -> 
 /// The room read up to `last_read` (none: all of it) here or on another device, or by a mark-read waiting in the outbox:
 /// no unread or mentions.
 pub(crate) fn read_room(store: &Store, room: &str, last_read: Value) -> Result<(), String> {
-    super::offline::note_read(store, room, &last_read)?;
+    crate::offline::note_read(store, room, &last_read)?;
     let Some(mut kept) = store.chat_room(room) else {
         return Ok(());
     };

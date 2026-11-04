@@ -14,8 +14,9 @@
 
 //! The shell's own files, which the `moqui-shell` scheme serves with no network: the page and its scripts
 //! (`crates/moqui-desktop/shell`) and the webroot's client and libraries it loads (`js/`, `libs/`, `css/`). A development
-//! run reads them from the repository; a bundle from `shell-assets/` in its resources, which `./moq desktop build`
-//! stages in the same layout (`shell/`, and `webroot/js`, `webroot/libs`, `webroot/css`).
+//! run reads them from the repository (the host names the directories, [`Assets::new`]); a bundle from `shell-assets/`
+//! in its resources ([`Assets::staged`]), which `./moq desktop build` stages in the same layout (`shell/`, and
+//! `webroot/js`, `webroot/libs`, `webroot/css`).
 
 use std::path::{Path, PathBuf};
 
@@ -30,7 +31,7 @@ use std::path::{Path, PathBuf};
 /// a `<video>` or `<audio>` of a `MediaStream` (`srcObject`) is not a fetch `media-src` governs, `RTCPeerConnection`
 /// is not a fetch either, and its signaling goes over the account's `/notws`, which the host holds
 /// (`moquiDesktop.socket`), so `connect-src` has no WebSocket.
-pub(crate) const SHELL_CSP: &str = "default-src 'self'; \
+pub const SHELL_CSP: &str = "default-src 'self'; \
      script-src http://moqui-shell.localhost/shell/ http://moqui-shell.localhost/js/ http://moqui-shell.localhost/libs/ 'wasm-unsafe-eval'; \
      style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; \
      connect-src 'self' http://ipc.localhost; media-src 'self' blob:; frame-src 'none'; \
@@ -39,43 +40,39 @@ pub(crate) const SHELL_CSP: &str = "default-src 'self'; \
 
 /// The script of an encrypted call's SFrame worker (`WebrootCallKeys.js` starts it for `RTCRtpScriptTransform`), the
 /// one worker the shell's CSP allows.
-pub(crate) const SFRAME_WORKER: &str = "/js/WebrootSFrameWorker.js";
+pub const SFRAME_WORKER: &str = "/js/WebrootSFrameWorker.js";
 
 /// The policy the SFrame worker's script is answered with, which a worker runs under: the SFrame code it imports
 /// (`WebrootSFrame.js`) and nothing else, no requests (its keys come from the page by message), no workers of its own.
-pub(crate) const WORKER_CSP: &str =
+pub const WORKER_CSP: &str =
     "default-src 'none'; script-src http://moqui-shell.localhost/js/WebrootSFrame.js; worker-src 'none'; base-uri 'none'";
 
 /// Where the shell's files are, and the libraries it may load (`shell/libs.txt`, which `./moq desktop build` stages).
-pub(crate) struct Assets {
+pub struct Assets {
     shell: PathBuf,
     webroot: PathBuf,
     libs: Vec<String>,
 }
 
 /// A file of the shell, as the scheme answers it.
-pub(crate) struct Asset {
-    pub(crate) body: Vec<u8>,
-    pub(crate) content_type: &'static str,
+pub struct Asset {
+    pub body: Vec<u8>,
+    pub content_type: &'static str,
     /// The page: it gets the CSP.
-    pub(crate) page: bool,
+    pub page: bool,
     /// The SFrame worker's script: it gets the worker's CSP.
-    pub(crate) worker: bool,
+    pub worker: bool,
 }
 
 impl Assets {
-    /// The repository's files in a development run, else the bundle's.
-    pub(crate) fn choose(dev: bool, resources: &Path) -> Self {
-        let (shell, webroot) = if dev {
-            let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            (
-                crate_dir.join("shell"),
-                crate_dir.join("../../runtime/base-component/webroot/screen/webroot"),
-            )
-        } else {
-            let staged = resources.join("shell-assets");
-            (staged.join("shell"), staged.join("webroot"))
-        };
+    /// The bundle's files, staged in `shell-assets/` of its resources.
+    pub fn staged(resources: &Path) -> Self {
+        let staged = resources.join("shell-assets");
+        Self::new(staged.join("shell"), staged.join("webroot"))
+    }
+
+    /// The shell's files in `shell` (with its `libs.txt`) and the webroot's in `webroot`.
+    pub fn new(shell: PathBuf, webroot: PathBuf) -> Self {
         let libs = std::fs::read_to_string(shell.join("libs.txt"))
             .unwrap_or_else(|err| {
                 tracing::error!("The shell's libs.txt was not read: {err}");
@@ -91,7 +88,7 @@ impl Assets {
 
     /// Whether a path is one of the shell's own (its page, or under `/shell/`, `/js/`, `/libs/` or `/css/`): answered from
     /// its staged files or not found, never forwarded to the server.
-    pub(crate) fn is_static(&self, path: &str) -> bool {
+    pub fn is_static(&self, path: &str) -> bool {
         if matches!(path, "/" | "/index.html") {
             return true;
         }
@@ -124,7 +121,7 @@ impl Assets {
     }
 
     /// The file of `path`, read; none when it is not a shell path or there is no such file.
-    pub(crate) fn read(&self, path: &str) -> Option<Asset> {
+    pub fn read(&self, path: &str) -> Option<Asset> {
         let file = self.file_of(path)?;
         let body = std::fs::read(&file).ok()?;
         let content_type = content_type(&file);

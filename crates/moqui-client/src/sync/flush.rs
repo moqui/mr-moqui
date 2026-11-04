@@ -31,18 +31,18 @@
 //! change an operation, never across a request, and one operation that fails (or panics) never stops the others.
 
 use std::collections::HashSet;
-use std::sync::{Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
-use moqui_client::account::Account;
-use moqui_client::proxy::Request;
-use moqui_client::store::{OutboxOp, OutboxState, OutboxUpdate, Store, FILE_GRACE};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager};
 
-use super::offline::{chat_base, compose_base, mail_base};
 use super::outbox::{self, backoff_ms, classify, payload_of, Next, CHAT_READ, CHAT_SEND, MAIL_SEND, MAIL_STATE};
-use super::{Client, SHELL_ORIGIN};
+use crate::account::Account;
+use crate::app::{Client, ClientHost};
+use crate::offline::{chat_base, compose_base, mail_base};
+use crate::proxy::Request;
+use crate::store::{OutboxOp, OutboxState, OutboxUpdate, Store, FILE_GRACE};
+use crate::SHELL_ORIGIN;
 
 /// Operations taken in one claim.
 const CLAIM: u32 = 10;
@@ -541,7 +541,7 @@ fn post_form(job: &Job<'_>, path: &str, params: &[(String, String)]) -> Sent {
 
 /// Parameters as an `application/x-www-form-urlencoded` body.
 pub(crate) fn form_body(params: &[(String, String)]) -> String {
-    let mut url = tauri::Url::parse("http://form.invalid/").unwrap_or_else(|_| unreachable!("a fixed url parses"));
+    let mut url = url::Url::parse("http://form.invalid/").unwrap_or_else(|_| unreachable!("a fixed url parses"));
     url.query_pairs_mut()
         .extend_pairs(params.iter().map(|(name, value)| (name.as_str(), value.as_str())));
     url.query().unwrap_or("").to_string()
@@ -552,7 +552,7 @@ pub(crate) fn form_body(params: &[(String, String)]) -> String {
 pub(crate) fn multipart(fields: &[(&str, &str)], name: &str, content_type: &str, bytes: &[u8]) -> (String, Vec<u8>) {
     let boundary = format!(
         "----moqui{}",
-        moqui_client::store::new_client_ref().unwrap_or_else(|_| "outbox0boundary".to_string())
+        crate::store::new_client_ref().unwrap_or_else(|_| "outbox0boundary".to_string())
     );
     // a quote or line break in the name would end its header
     let file_name: String = name
@@ -585,14 +585,14 @@ pub(crate) fn multipart(fields: &[(&str, &str)], name: &str, content_type: &str,
 
 /// The flusher's wake: set by the outbox's changes, the network coming back and a sign-in, taken by the thread.
 #[derive(Default)]
-pub(crate) struct Flusher {
+pub struct Flusher {
     woken: Mutex<bool>,
     signal: Condvar,
 }
 
 impl Flusher {
     /// Have the thread look at the outboxes now.
-    pub(crate) fn wake(&self) {
+    pub fn wake(&self) {
         *moqui_lib::sync::lock(&self.woken) = true;
         self.signal.notify_all();
     }
@@ -609,19 +609,17 @@ impl Flusher {
 }
 
 /// Start the flusher's thread.
-pub(crate) fn start(app: &AppHandle) {
-    let app = app.clone();
+pub fn start(client: &Arc<Client>, host: &Arc<dyn ClientHost>) {
+    let client = Arc::clone(client);
+    let host = Arc::clone(host);
     let started = std::thread::Builder::new()
         .name("client-outbox".to_string())
         .spawn(move || loop {
-            let next =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| flush_all(&app))).unwrap_or_else(|_| {
+            let next = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| flush_all(&client, host.as_ref())))
+                .unwrap_or_else(|_| {
                     tracing::error!("The outbox pass panicked");
                     Some(now_ms() + 60_000)
                 });
-            let Some(client) = app.try_state::<Client>() else {
-                return;
-            };
             let wait = next.map_or(IDLE, |next| {
                 Duration::from_millis(u64::try_from(next - now_ms()).unwrap_or(0).max(200)).min(IDLE)
             });
@@ -633,7 +631,7 @@ pub(crate) fn start(app: &AppHandle) {
 }
 
 /// Make the held operations of an account due again (a sign-in, a renewed key) and wake the thread.
-pub(crate) fn release_held(client: &Client, id: &str) {
+pub fn release_held(client: &Client, id: &str) {
     match client.with_store(id, Store::outbox_release_held) {
         Some(Ok(count)) if count > 0 => tracing::info!("{count} held operations of {id} are sent again"),
         Some(Err(err)) => tracing::warn!("The held operations of {id} were not released: {err}"),
@@ -643,8 +641,7 @@ pub(crate) fn release_held(client: &Client, id: &str) {
 }
 
 /// One pass over every account signed in here; gives when the next operation is due.
-fn flush_all(app: &AppHandle) -> Option<i64> {
-    let client = app.try_state::<Client>()?;
+fn flush_all(client: &Client, host: &dyn ClientHost) -> Option<i64> {
     let accounts = moqui_lib::sync::lock(&client.accounts).list().to_vec();
     let mut next: Option<i64> = None;
     for account in accounts {
@@ -652,13 +649,13 @@ fn flush_all(app: &AppHandle) -> Option<i64> {
             continue;
         };
         let transport = ProxyTransport {
-            app,
-            client: &client,
+            host,
+            client,
             account: &account,
             key: &key,
         };
         let store = AccountStore {
-            client: &client,
+            client,
             id: &account.id,
         };
         let job = Job {
@@ -666,14 +663,14 @@ fn flush_all(app: &AppHandle) -> Option<i64> {
             store: &store,
             comms_root: client.comms_root_of(&account.id),
             now: &now_ms,
-            claimed: &|| outbox::notify_pages(app, &account.id, &json!({ "kind": "changed" })),
+            claimed: &|| host.notify_pages(&account.id, &json!({ "kind": "changed" })),
         };
         let flushed = flush(&job);
         if flushed.changed {
-            outbox::notify_pages(app, &account.id, &json!({ "kind": "changed" }));
+            host.notify_pages(&account.id, &json!({ "kind": "changed" }));
         }
         for event in &flushed.sent {
-            outbox::notify_pages(app, &account.id, event);
+            host.notify_pages(&account.id, event);
         }
         if let Some(due) = flushed.next_ms {
             next = Some(next.map_or(due, |kept| kept.min(due)));
@@ -702,7 +699,7 @@ impl StoreAccess for AccountStore<'_> {
 
 /// The account's server through the proxy, with its key, as the pages' requests go.
 struct ProxyTransport<'a> {
-    app: &'a AppHandle,
+    host: &'a dyn ClientHost,
     client: &'a Client,
     account: &'a Account,
     key: &'a str,
@@ -733,7 +730,7 @@ impl Transport for ProxyTransport<'_> {
         };
         let status = upstream.status;
         if status == 401 {
-            super::scheme::check_key(self.app, self.account);
+            self.host.check_key(self.account);
         }
         match upstream.body() {
             Ok(body) => Sent::Answer(status, body),

@@ -12,11 +12,11 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use moqui_client::store::{MailThread, OutboxState, Store};
+use crate::store::{MailThread, OutboxState, Store};
 use serde_json::{json, Value};
 
 use super::*;
-use crate::client::offline::chat_room;
+use crate::offline::chat_room;
 
 const NOW: i64 = 1_700_000_000_000;
 
@@ -166,7 +166,7 @@ fn adding_again_keeps_one_and_the_outbox_holds_fifty() {
     store
         .outbox_update(
             "c1",
-            &moqui_client::store::OutboxUpdate {
+            &crate::store::OutboxUpdate {
                 state: OutboxState::Acked,
                 attempts: 1,
                 next_ms: NOW,
@@ -294,7 +294,7 @@ fn an_echo_removes_only_its_chat_send_and_retry_makes_one_due() {
     store
         .outbox_update(
             "c2",
-            &moqui_client::store::OutboxUpdate {
+            &crate::store::OutboxUpdate {
                 state: OutboxState::Failed,
                 attempts: 3,
                 next_ms: NOW,
@@ -323,20 +323,17 @@ fn the_echo_of_my_message_names_its_client_ref() {
         .to_string()
     };
     assert_eq!(
-        crate::client::push::echo_ref("ME", &frame("ME", "chatRoom:R1")).as_deref(),
+        crate::sync::push::echo_ref("ME", &frame("ME", "chatRoom:R1")).as_deref(),
         Some("c1")
     );
-    assert_eq!(
-        crate::client::push::echo_ref("ME", &frame("OTHER", "chatRoom:R1")),
-        None
-    );
-    assert_eq!(crate::client::push::echo_ref("ME", &frame("ME", "chatUser:ME")), None);
+    assert_eq!(crate::sync::push::echo_ref("ME", &frame("OTHER", "chatRoom:R1")), None);
+    assert_eq!(crate::sync::push::echo_ref("ME", &frame("ME", "chatUser:ME")), None);
     // the message as JSON text
     let text = json!({ "topic": "chatRoom:R1", "message": json!({ "kind": "event",
         "event": { "senderUserId": "ME", "clientRef": "c2" } }).to_string() })
     .to_string();
-    assert_eq!(crate::client::push::echo_ref("ME", &text).as_deref(), Some("c2"));
-    assert_eq!(crate::client::push::echo_ref("ME", "not json"), None);
+    assert_eq!(crate::sync::push::echo_ref("ME", &text).as_deref(), Some("c2"));
+    assert_eq!(crate::sync::push::echo_ref("ME", "not json"), None);
 }
 
 #[test]

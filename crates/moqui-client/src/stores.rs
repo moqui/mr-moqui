@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The accounts' stores (`moqui_client::store`, plans/Mobile-Desktop.md §6, MD4): one per account, opened when first
+//! The accounts' stores ([`crate::store`], plans/Mobile-Desktop.md §6, MD4): one per account, opened when first
 //! used and kept open. Each is behind a lock of its own, held only while the store is read or written, never across a
 //! request to the server.
 //!
@@ -28,19 +28,19 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use moqui_client::store::Store;
+use crate::store::Store;
 
 /// An account's store, or none once it was forgotten.
 type Slot = Arc<Mutex<Option<Store>>>;
 
 /// The stores of the accounts, in the client's directory (`data/`, beside `accounts.json`).
-pub(crate) struct Stores {
+pub struct Stores {
     dir: PathBuf,
     open: Mutex<HashMap<String, Slot>>,
 }
 
 impl Stores {
-    pub(crate) fn new(dir: &Path) -> Self {
+    pub fn new(dir: &Path) -> Self {
         Self {
             dir: dir.to_path_buf(),
             open: Mutex::new(HashMap::new()),
@@ -51,7 +51,7 @@ impl Stores {
     /// the account is still kept here. `may_open` is asked under this set's lock, which [`Self::forget`] takes too, so a
     /// late write for an account being forgotten never makes its store again. None when it may not or cannot be opened
     /// (logged), or was forgotten while `work` waited for it.
-    pub(crate) fn with<T>(
+    pub fn with<T>(
         &self,
         account: &str,
         max_bytes: u64,
@@ -79,7 +79,7 @@ impl Stores {
 
     /// Close the store of `account` and delete it with its files, and any MD3 answer files left of it. Logged when a
     /// part cannot be removed.
-    pub(crate) fn forget(&self, account: &str) {
+    pub fn forget(&self, account: &str) {
         let mut open = moqui_lib::sync::lock(&self.open);
         let removed = match open.remove(account) {
             // under the slot's lock: a reader holding the slot sees it empty after this
@@ -87,13 +87,13 @@ impl Stores {
                 Some(store) => store.forget(),
                 None => Ok(()),
             },
-            None => moqui_client::store::forget(&self.dir, account),
+            None => crate::store::forget(&self.dir, account),
         };
         drop(open);
         if let Err(err) = removed {
             tracing::error!("The data of {account} on this device was not all removed: {err}");
         }
-        moqui_client::cache::forget(&self.dir.join("cache"), account);
+        crate::cache::forget(&self.dir.join("cache"), account);
     }
 
     fn open_store(&self, account: &str, max_bytes: u64) -> Option<Store> {
@@ -108,7 +108,7 @@ impl Stores {
         if let Err(err) = store.mark_chat_heads_stale() {
             tracing::warn!("The chat heads of {account} were not marked stale: {err}");
         }
-        let moved = moqui_client::cache::migrate(&self.dir.join("cache"), account, &store);
+        let moved = crate::cache::migrate(&self.dir.join("cache"), account, &store);
         if moved > 0 {
             tracing::info!("Moved {moved} kept answers of {account} into its store");
         }

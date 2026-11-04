@@ -14,7 +14,7 @@
 
 use std::path::PathBuf;
 
-use moqui_client::store::{ChatEvent, EventPage};
+use crate::store::{ChatEvent, EventPage};
 
 use super::Stores;
 

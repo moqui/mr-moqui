@@ -16,12 +16,12 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use moqui_client::conf::{ClientConf, DeviceMode};
-use moqui_client::store::Store;
+use crate::conf::{ClientConf, DeviceMode};
+use crate::store::Store;
 use serde_json::{json, Value};
 
 use super::*;
-use crate::client::offline::{self as answers, Kind, DEFAULT_COMMS_ROOT};
+use crate::offline::{self as answers, Kind, DEFAULT_COMMS_ROOT};
 
 const NOW: i64 = 1_000 * 24 * 3600 * 1000;
 const DAY: i64 = 24 * 3600 * 1000;

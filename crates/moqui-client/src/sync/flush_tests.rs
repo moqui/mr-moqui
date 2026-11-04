@@ -16,12 +16,12 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
-use moqui_client::store::{OutboxState, Store};
+use crate::store::{OutboxState, Store};
 use serde_json::{json, Value};
 
 use super::*;
-use crate::client::offline::DEFAULT_COMMS_ROOT;
-use crate::client::outbox::{add, check, echoed};
+use crate::offline::DEFAULT_COMMS_ROOT;
+use crate::sync::outbox::{add, check, echoed};
 
 const NOW: i64 = 1_700_000_000_000;
 /// Past the wall clock, which a release of held operations sets them due at.
@@ -228,7 +228,7 @@ fn one_failed_operation_does_not_hold_up_the_others() {
     // a chat send whose url the comms app no longer has (checked again when sent)
     {
         let locked = store.lock().unwrap();
-        let mut bad = moqui_client::store::OutboxOp::new(
+        let mut bad = crate::store::OutboxOp::new(
             "c0",
             outbox::CHAT_SEND,
             "R9",
@@ -550,7 +550,7 @@ fn an_internal_message_queued_before_is_refused() {
     let (store, dir) = store("internal");
     {
         let locked = store.lock().unwrap();
-        let op = moqui_client::store::OutboxOp::new(
+        let op = crate::store::OutboxOp::new(
             "m9",
             outbox::MAIL_SEND,
             "",

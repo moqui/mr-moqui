@@ -16,80 +16,64 @@
 //! `client` mode). The window shows the bundled shell (`shell/`), which opens with no network; each account is a server
 //! and a user with a device key the host keeps in the OS key store, and the pages never hold it.
 //!
+//! What does not need Tauri is in `moqui_client`: the client's state ([`moqui_client::app::Client`]), each account's
+//! store, the offline answers, the pushes, the outbox and its sender, the mirror, the key renewal, the device modes,
+//! the shell's files and the pages' sockets. This module is its Tauri host ([`DesktopHost`], a
+//! [`moqui_client::app::ClientHost`]) and what only the app has:
+//!
 //! - [`scheme`]: two app schemes. `moqui-shell` (`http://moqui-shell.localhost`) serves the shell's files and forwards
 //!   the rest to the current account's server; `moqui-app` (`http://moqui-app.localhost`) forwards everything, so an
 //!   app window shows the server's own `/qapps` and scripts. Both add the key (`moqui_client::proxy`).
-//! - [`sockets`]: `/notws` and `/callws`, which a page cannot open through a scheme, held by the host and bridged.
+//! - [`sockets`]: the commands of the sockets a page cannot open through a scheme (`/notws`, `/callws`), which the host
+//!   holds and bridges (`moqui_client::bridge`), and the node in process's.
 //! - [`commands`]: sign-in, sign-out and the accounts, for the shell; [`windows`]: the shell and the app windows.
-//! - [`keystore`]: the OS key store, else a file only the user can read; [`renewal`]: the keys renewed before they
-//!   run out.
-//! - [`stores`]: each account's store (MD4), behind the schemes: [`offline`] keeps the comms transitions' answers and
-//!   answers them when the server cannot be reached, [`push`] keeps the chat pushes, [`mirror`] reads ahead.
-//! - [`outbox`]: the outbox and drafts the host keeps for the pages, and [`flush`]: the outbox sent from a thread of
-//!   its own, for every account signed in here.
-//! - [`conf`]: the client's settings (`<client-conf>`), and [`modes`]: what each device mode keeps.
+//! - [`keystore`]: the OS key store, else a file only the user can read.
+//! - [`outbox`]: the commands of the outbox and drafts the host keeps for the pages (`moqui_client::sync`).
+//! - [`conf`]: the client's settings (`<client-conf>`), read from the runtime's conf.
 //!
 //! The shell's origin may call the shell commands, the sockets, the outbox and the drafts; an app window's origin only
 //! the sockets, the outbox and the drafts of its own account, which reach nothing its requests do not already reach
 //! with the key (plans/Mobile-Desktop.md "Remote applications and
 //! authentication").
 
-mod assets;
 pub(crate) mod commands;
 mod conf;
-mod flush;
 mod keystore;
-mod mirror;
-mod modes;
-mod offline;
 pub(crate) mod outbox;
-mod push;
-mod renewal;
 mod scheme;
 pub(crate) mod sockets;
-mod stores;
 pub(crate) mod windows;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 
-use moqui_client::account::{Account, Accounts};
+use moqui_client::account::Account;
+use moqui_client::app::ClientHost;
+use moqui_client::assets::Assets;
 use moqui_client::conf::{ClientConf, DeviceMode};
-use moqui_client::proxy::Proxy;
-use moqui_client::store::Store;
+use serde_json::Value;
 use tauri::{AppHandle, Manager, Url};
 
 /// The scheme of the shell, and its origin on Chromium (`http://<scheme>.localhost`).
 pub(crate) const SHELL_SCHEME: &str = "moqui-shell";
-pub(crate) const SHELL_ORIGIN: &str = "http://moqui-shell.localhost";
+pub(crate) const SHELL_ORIGIN: &str = moqui_client::SHELL_ORIGIN;
 /// The scheme of the app windows, the server's pages, and its origin.
 pub(crate) const APP_SCHEME: &str = "moqui-app";
 pub(crate) const APP_ORIGIN: &str = "http://moqui-app.localhost";
 
-/// The client's state, on the app while it runs as a client.
+/// The client's state, on the app while it runs as a client: the host-neutral core and what only the app has.
 pub(crate) struct Client {
-    accounts: Mutex<Accounts>,
-    keys: keystore::Keys,
-    /// The accounts' stores, in `data/` of the client's directory.
-    stores: stores::Stores,
-    /// The runtime whose conf has the client's settings, and the settings once read.
-    runtime: Option<PathBuf>,
-    conf: OnceLock<ClientConf>,
-    /// Each account's comms app (`calls.appRoot` of its client config), once known.
-    comms: Mutex<HashMap<String, String>>,
+    pub(crate) core: Arc<moqui_client::app::Client>,
+    /// This app as the core's host.
+    pub(crate) host: Arc<dyn ClientHost>,
     /// What the shell tells the user when it next loads an account (a sign-in that kept the account personal).
     notice: Mutex<HashMap<String, String>>,
     /// Accounts whose data the pages keep (scoped browser storage, the crypto store) is to be cleared: by the shell when
     /// it next loads, and by the next app window.
     cleared: Mutex<Cleared>,
-    mirror: mirror::Mirror,
-    /// Wakes the thread that sends the outboxes.
-    flusher: flush::Flusher,
-    proxy: Proxy,
-    assets: assets::Assets,
-    sockets: sockets::Sockets,
+    assets: Assets,
     /// The app windows (`remote-<n>`) and the account each shows.
     windows: Mutex<Vec<(String, String)>>,
     next_window: AtomicU64,
@@ -106,21 +90,18 @@ pub(crate) struct Client {
 }
 
 impl Client {
-    fn new(dir: &Path, resources: &Path, runtime: Option<PathBuf>) -> Result<Self, String> {
+    fn new(app: &AppHandle, dir: &Path, resources: &Path, runtime: Option<PathBuf>) -> Result<Self, String> {
+        let read_conf = Box::new(move || match &runtime {
+            Some(runtime) => conf::read(runtime),
+            None => ClientConf::default(),
+        });
+        let core = moqui_client::app::Client::new(dir, keystore::open_keys(&dir.join("keys")), read_conf)?;
         Ok(Self {
-            accounts: Mutex::new(Accounts::load(dir)),
-            keys: keystore::Keys::open(&dir.join("keys")),
-            stores: stores::Stores::new(dir),
-            runtime,
-            conf: OnceLock::new(),
-            comms: Mutex::new(HashMap::new()),
+            core: Arc::new(core),
+            host: Arc::new(DesktopHost { app: app.clone() }),
             notice: Mutex::new(HashMap::new()),
             cleared: Mutex::new(Cleared::default()),
-            mirror: mirror::Mirror::default(),
-            flusher: flush::Flusher::default(),
-            proxy: Proxy::new().map_err(|err| err.to_string())?,
-            assets: assets::Assets::choose(tauri::is_dev(), resources),
-            sockets: sockets::Sockets::default(),
+            assets: shell_assets(tauri::is_dev(), resources),
             windows: Mutex::new(Vec::new()),
             next_window: AtomicU64::new(1),
             checking: AtomicBool::new(false),
@@ -130,74 +111,62 @@ impl Client {
         })
     }
 
-    /// The current account and its key, if it has one.
-    fn current(&self) -> Option<(Account, Option<String>)> {
-        let account = moqui_lib::sync::lock(&self.accounts).current().cloned()?;
-        let key = self.keys.get(&account.id);
-        Some((account, key))
-    }
-
-    /// The account and key of an account id.
-    fn account(&self, id: &str) -> Option<(Account, Option<String>)> {
-        let account = moqui_lib::sync::lock(&self.accounts).get(id).cloned()?;
-        let key = self.keys.get(&account.id);
-        Some((account, key))
-    }
-
     /// The account a webview shows: the shell's is the current one, an app window's its own.
     fn account_of(&self, label: &str) -> Option<(Account, Option<String>)> {
+        self.core.account_of(self.host.as_ref(), label)
+    }
+
+    /// The id of the account a webview shows ([`Self::account_of`]), from the windows and the accounts alone.
+    fn page_account(&self, label: &str) -> Option<String> {
         if label == "main" {
-            return self.current();
+            return moqui_lib::sync::lock(&self.core.accounts)
+                .current()
+                .map(|account| account.id.clone());
         }
-        let id = moqui_lib::sync::lock(&self.windows)
+        moqui_lib::sync::lock(&self.windows)
             .iter()
             .find(|(window, _)| window == label)
-            .map(|(_, account)| account.clone())?;
-        self.account(&id)
+            .map(|(_, account)| account.clone())
+    }
+}
+
+/// The shell's files: the repository's in a development run, else the bundle's (`shell-assets/` in its resources).
+fn shell_assets(dev: bool, resources: &Path) -> Assets {
+    if dev {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        Assets::new(
+            crate_dir.join("shell"),
+            crate_dir.join("../../runtime/base-component/webroot/screen/webroot"),
+        )
+    } else {
+        Assets::staged(resources)
+    }
+}
+
+/// The app as the client core's host: its webviews are the pages.
+struct DesktopHost {
+    app: AppHandle,
+}
+
+impl ClientHost for DesktopHost {
+    fn page_account(&self, page: &str) -> Option<String> {
+        self.app.try_state::<Client>()?.page_account(page)
     }
 
-    /// The client's settings, read from the runtime's conf the first time they are asked for.
-    fn conf(&self) -> &ClientConf {
-        self.conf.get_or_init(|| match &self.runtime {
-            Some(runtime) => conf::read(runtime),
-            None => ClientConf::default(),
-        })
+    fn notify_pages(&self, account: &str, event: &Value) {
+        outbox::notify_pages(&self.app, account, event);
     }
 
-    /// Run `work` on the store of the account `id`, opened if it is not yet; none for an account no longer kept here
-    /// (so a late answer does not make the store of a forgotten account again), or a store that does not open.
-    fn with_store<T>(&self, id: &str, work: impl FnOnce(&Store) -> T) -> Option<T> {
-        // asked under the stores' lock, so an account removed before its store is forgotten is never opened again
-        let kept = || moqui_lib::sync::lock(&self.accounts).get(id).is_some();
-        self.stores.with(id, self.conf().store_max_bytes(), kept, work)
-    }
-
-    /// The device mode an account's data is kept by ([`modes::effective`]).
-    fn mode_of(&self, id: &str) -> DeviceMode {
-        let mode = moqui_lib::sync::lock(&self.accounts)
-            .get(id)
-            .and_then(|account| account.device_mode);
-        modes::effective(mode, self.conf().device_mode)
-    }
-
-    /// The comms app of an account's server: `calls.appRoot` of its kept client config, else the default.
-    fn comms_root_of(&self, id: &str) -> String {
-        if let Some(root) = moqui_lib::sync::lock(&self.comms).get(id) {
-            return root.clone();
+    fn socket_event(&self, page: &str, id: u64, event: &Value) {
+        if let Some(window) = self.app.get_webview_window(page) {
+            let _ = window.eval(format!(
+                "window.__moquiSocketEvent && window.__moquiSocketEvent({id}, {event})"
+            ));
         }
-        let root = self
-            .with_store(id, |store| store.answer("/qapps/clientConfig", ""))
-            .flatten()
-            .and_then(|config| comms_root_in(&config.body))
-            .unwrap_or_else(|| offline::DEFAULT_COMMS_ROOT.to_string());
-        moqui_lib::sync::lock(&self.comms).insert(id.to_string(), root.clone());
-        root
     }
 
-    /// A client config of an account was answered: its comms app noted.
-    fn config_seen(&self, id: &str, body: &[u8]) {
-        let root = comms_root_in(body).unwrap_or_else(|| offline::DEFAULT_COMMS_ROOT.to_string());
-        moqui_lib::sync::lock(&self.comms).insert(id.to_string(), root);
+    fn check_key(&self, account: &Account) {
+        scheme::check_key(&self.app, account);
     }
 }
 
@@ -218,15 +187,6 @@ impl Cleared {
     }
 }
 
-/// `calls.appRoot` of a client config's JSON.
-fn comms_root_in(config: &[u8]) -> Option<String> {
-    let config: serde_json::Value = serde_json::from_slice(config).ok()?;
-    config["calls"]["appRoot"]
-        .as_str()
-        .filter(|root| !root.is_empty())
-        .map(str::to_string)
-}
-
 /// The schemes on the app, for every mode: in a node's mode no client is managed, and they answer 404.
 pub(crate) fn register(builder: tauri::Builder) -> tauri::Builder {
     builder
@@ -243,36 +203,15 @@ pub(crate) fn register(builder: tauri::Builder) -> tauri::Builder {
 pub(crate) fn start(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let dir = app.path().app_config_dir()?.join("client");
     let resources = app.path().resource_dir()?;
-    app.manage(Client::new(&dir, &resources, conf::runtime_dir(app))?);
-    warm(app);
+    let client = Client::new(app, &dir, &resources, conf::runtime_dir(app))?;
+    let (core, host) = (Arc::clone(&client.core), Arc::clone(&client.host));
+    app.manage(client);
+    core.warm();
     windows::add_capabilities(app);
     windows::shell_window(app)?;
-    renewal::start(app);
-    flush::start(app);
+    moqui_client::renewal::start(&core, &host);
+    moqui_client::sync::flush::start(&core, &host);
     Ok(())
-}
-
-/// Read the conf and the current account's comms app on a thread of their own, so neither is first read on the main
-/// thread (a deep link) or holds up the shell's first request.
-fn warm(app: &AppHandle) {
-    let app = app.clone();
-    let started = std::thread::Builder::new()
-        .name("client-warm".to_string())
-        .spawn(move || {
-            let Some(client) = app.try_state::<Client>() else {
-                return;
-            };
-            client.conf();
-            let current = moqui_lib::sync::lock(&client.accounts)
-                .current()
-                .map(|account| account.id.clone());
-            if let Some(id) = current {
-                client.comms_root_of(&id);
-            }
-        });
-    if let Err(err) = started {
-        tracing::warn!("The client's conf was not read ahead: {err}");
-    }
 }
 
 /// Whether the app runs as a client.
@@ -325,9 +264,8 @@ pub(crate) fn shell_origin() -> Url {
 /// starts, and when a client config is answered), never the store or the conf.
 pub(crate) fn comms_root(app: &AppHandle) -> Option<String> {
     let client = app.try_state::<Client>()?;
-    let id = moqui_lib::sync::lock(&client.accounts).current()?.id.clone();
-    let root = moqui_lib::sync::lock(&client.comms).get(&id).cloned();
-    root
+    let id = moqui_lib::sync::lock(&client.core.accounts).current()?.id.clone();
+    client.core.noted_comms_root(&id)
 }
 
 /// A name for this computer in the user's device list.

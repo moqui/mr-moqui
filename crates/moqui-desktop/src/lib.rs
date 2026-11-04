@@ -93,7 +93,7 @@ pub fn run() {
             // the window's cookies of the node, which the host keeps, and its pages' sockets
             let jar = node::Jar::open(handle.path().app_config_dir()?.join("node-cookies"));
             handle.manage(node::scheme::Local::new(jar));
-            handle.manage(client::sockets::Sockets::default());
+            handle.manage(moqui_client::bridge::Sockets::default());
         }
         let origin = Arc::clone(&handle.state::<NodeState>().origin);
         main_window(&handle, &origin)?;
@@ -193,7 +193,7 @@ fn main_window(app: &AppHandle, origin: &Arc<OnceLock<Url>>) -> tauri::Result<We
         .on_page_load(|window, payload| {
             // a page of the node in process loses its sockets when it loads again
             if payload.event() == tauri::webview::PageLoadEvent::Started {
-                if let Some(sockets) = window.app_handle().try_state::<client::sockets::Sockets>() {
+                if let Some(sockets) = window.app_handle().try_state::<moqui_client::bridge::Sockets>() {
                     sockets.close_for(window.label());
                 }
             }

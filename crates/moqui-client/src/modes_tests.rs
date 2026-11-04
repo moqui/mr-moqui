@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use moqui_client::conf::DeviceMode::{Choose, Personal, Shared};
+use crate::conf::DeviceMode::{Choose, Personal, Shared};
 
 use super::*;
 

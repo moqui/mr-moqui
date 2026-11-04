@@ -5,9 +5,12 @@ computer (configuration 3 of [Mobile-Desktop](../../plans/Mobile-Desktop.md), MD
 user with a device key the host keeps. The shell opens with no network, keeps each account's data in a store on this
 computer, answers from it offline, and sends what was queued once the server can be reached.
 
-- **Host:** `crates/moqui-desktop/src/client/` and `shell/` ([moqui-desktop](../../crates/moqui-desktop/README.md), which
-  has how to run and test it), on [moqui-client](../../crates/moqui-client/README.md) (accounts, keys, sign-in, the
-  proxy, sockets, the store, the conf), which has no Tauri or framework and builds for Android.
+- **Host:** `crates/moqui-desktop/src/client/` (the Tauri host: the schemes, the commands, the windows, the OS key
+  store and the conf's reading) and `shell/` ([moqui-desktop](../../crates/moqui-desktop/README.md), which has how to
+  run and test it), on [moqui-client](../../crates/moqui-client/README.md) (accounts, keys, sign-in, the proxy,
+  sockets, the store, the conf, and the client's core: its state behind a host trait, the offline answers, the
+  pushes, the outbox and its sender, the mirror, the renewal and the device modes), which has no Tauri or framework
+  and builds for Android, so the mobile app reuses it.
 - **Pages:** the webroot's own scripts and BasicComms' `.qvue` screens; what a page sees of the host
   (`window.moquiDesktop`, `moqui.drafts`, `moqui.connection`) is in
   [Qvt-Client, In the desktop app](Qvt-Client.md#in-the-desktop-app).
@@ -23,7 +26,7 @@ Two origins, each an app scheme of the host:
   (`shell/`, and the webroot's `js/`, `libs/` and `css/` named in `shell/libs.txt`; a bundle's staged copy in
   `shell-assets/`), and nothing else under its own paths (a 404, never forwarded). Its CSP has no `unsafe-eval`: only
   `wasm-unsafe-eval`, for the crypto device's module, and one worker, an encrypted call's staged SFrame transform,
-  answered with its own policy (`client/assets.rs`). It forwards the server's data to the current account's server:
+  answered with its own policy (`moqui_client::assets`). It forwards the server's data to the current account's server:
   its JSON, images, media and downloads, never its pages, frames or scripts. Its query parameters are read only on a
   load the host started.
 - **App windows**, `moqui-app` (`http://moqui-app.localhost`, windows `remote-<n>`), show the server's own `/qapps`;
@@ -62,7 +65,7 @@ Chromium's. An event stream is answered 503.
   closing for authentication, has the host check the key and, if it no longer signs in, forget it and show the
   sign-in. What is kept then depends on the device mode (below).
 - **Renewal:** at start and every six hours, a key with less than a third of its life left is renewed
-  (`client/renewal.rs`, `/qapps/renewClientDevice`), and its pages' sockets open again with the new one; the server ends
+  (`moqui_client::renewal`, `/qapps/renewClientDevice`), and its pages' sockets open again with the new one; the server ends
   the old key ten minutes later. The shell says to update the app when the server's `clientApi` is newer than it knows.
 - **Apps and devices:** the account menu lists the account's apps and devices signed in by a key of their own
   (`/qapps/clientDevices`), each to sign out; so does My Account's Account page in BOSS.
@@ -100,18 +103,18 @@ defaults. The element is in `moqui-conf-3.xsd`; the parsing is `moqui_client::co
   window once). Before a shared sign-out the shell lists what is unsent and asks. The next sign-in creates the account
   again with whatever mode is chosen then.
 - **Personal:** sign-out and revocation keep everything; removing the account deletes it.
-- **Removing an account** always deletes its data, going on past a failed save (`client/modes.rs`).
+- **Removing an account** always deletes its data, going on past a failed save (`moqui_client::modes`).
 
 ## The store and offline answers
 
 Each account's data is in its store (`moqui_client::store`, `client/data/<account>.db`, one SQLite file, owner-only,
-WAL, migrated by `user_version`), opened only while the account is listed (`client/stores.rs`), with the cap of
+WAL, migrated by `user_version`), opened only while the account is listed (`moqui_client::stores`), with the cap of
 `store-max-mb` (the cached reads go least recently read first, and always keep a quarter of the cap). The answers MD3 kept in `client/cache/` move into it once. It is plain SQLite: the OS's disk encryption
 protects it at rest, and the keys are in the key store, not in it.
 
 - **Kept:** the shell's `/qapps/clientConfig`, `/shellData` and `/shellCounts`, and the comms app's Chat (`chatData`,
   `rooms`, `roomView`, `room`, `timeline`), Mail (`inboxData`, `threads`, `thread`) and Compose (`composeData`) 200 JSON
-  answers, keyed by path and sorted query less `_`, `moquiSessionToken` and `pageTraceId` (`client/offline.rs`).
+  answers, keyed by path and sorted query less `_`, `moquiSessionToken` and `pageTraceId` (`moqui_client::offline`).
 - **Rows:** besides the answers, the store keeps structured rows: timeline pages with the `eventSeq` ranges held whole
   per room and thread, rooms, mail folders, a folder's thread pages by cursor (BasicComms' one store, or mr-mantle's
   several) and threads.
@@ -138,10 +141,10 @@ protects it at rest, and the keys are in the key store, not in it.
   the shell only; a revoked device's is dropped, and it goes with the account.
 
 **Pushes.** The chat pushes on the account's `/notws` (`chatRoom:*`, `chatUser:*`) are written into the store as
-`get#Timeline` shows them (`client/push.rs`): edits, reactions and redactions folded into their message, encrypted rooms
+`get#Timeline` shows them (`moqui_client::sync::push`): edits, reactions and redactions folded into their message, encrypted rooms
 too, the same push from two sockets once. A drop marks the timelines' heads stale.
 
-**The mirror.** When the shell's `/notws` opens, `client/mirror.rs` reads ahead on a thread of its own: a personal device
+**The mirror.** When the shell's `/notws` opens, `moqui_client::sync::mirror` reads ahead on a thread of its own: a personal device
 all rooms and mail folders back to `mirror-days`, a shared one the `prefetch-rooms` latest rooms and the inbox's first
 `prefetch-mail` threads. Both read the new message's `composeData`, so mail can be written offline. A run is bounded,
 cancelled on a switch or sign-out, and stops on a 401 or when offline. After a drop, each room's latest page is read
@@ -149,8 +152,9 @@ again.
 
 ## The outbox and drafts
 
-What a page sends offline is kept in the account's store and sent by the host (`client/outbox.rs`, `client/flush.rs`),
-on a thread of its own for every account with a key here, so it goes while the window is hidden.
+What a page sends offline is kept in the account's store and sent by the host (`moqui_client::sync::outbox` and
+`flush`; the commands in `client/outbox.rs`), on a thread of its own for every account with a key here, so it goes
+while the window is hidden.
 
 | Operation | What |
 |---|---|

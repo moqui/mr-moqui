@@ -14,10 +14,10 @@
 
 //! The server's answers kept in an account's store and answered from it when the server cannot be reached
 //! (plans/Mobile-Desktop.md §6, MD4: "the scheme handler answers the existing JSON transitions from the store"), so the
-//! shared screens work offline without a fork. The scheme (`scheme.rs`) and the mirror (`mirror.rs`) write through
-//! [`keep`]; the scheme answers through [`answer`].
+//! shared screens work offline without a fork. The host's scheme (the desktop app's `client/scheme.rs`) and the mirror
+//! (`sync::mirror`) write through [`keep`]; the scheme answers through [`answer`].
 //!
-//! The transitions ([`Kind`]): the shell's settings, apps and counts (`moqui_client::cache::PATHS`, by path alone), and
+//! The transitions ([`Kind`]): the shell's settings, apps and counts (`crate::cache::PATHS`, by path alone), and
 //! under the account's comms app (`calls.appRoot` of its client config, `/qapps/BasicComms` by default, asked for under
 //! `/apps` or `/qapps`): Chat's `chatData`, `rooms`, `roomView`, `room` and `timeline`, Mail's `inboxData`, `threads`
 //! and `thread`, and Compose's `composeData`.
@@ -41,11 +41,11 @@
 //!   draft as its kept message says (with its kept answer or the draft Compose kept here, `moqui.drafts`), mailto-style
 //!   values on the new message's.
 
-use moqui_client::store::{ChatEvent, ChatRoom, EventPage, EventSlice, MailFolder, MailMessage, MailThread, Store};
+use crate::store::{ChatEvent, ChatRoom, EventPage, EventSlice, MailFolder, MailMessage, MailThread, Store};
 use serde_json::{json, Map, Value};
 
 /// The comms app of a server whose client config does not name one.
-pub(crate) const DEFAULT_COMMS_ROOT: &str = "/qapps/BasicComms";
+pub const DEFAULT_COMMS_ROOT: &str = "/qapps/BasicComms";
 
 /// Query parameters that change from request to request without changing the answer: left out of an answer's key.
 pub(crate) const VOLATILE: [&str; 3] = ["_", "moquiSessionToken", "pageTraceId"];
@@ -64,7 +64,7 @@ const PAGE_MAX: u32 = 200;
 
 /// A transition whose answers are kept.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Kind {
+pub enum Kind {
     /// The shell's settings, apps or counts, kept by path alone.
     Shell,
     ChatData,
@@ -80,8 +80,8 @@ pub(crate) enum Kind {
 
 /// The kind of a `GET` of `bare` (the path with no query), under the comms app `comms_root`; none for a request whose
 /// answer is not kept.
-pub(crate) fn classify(bare: &str, comms_root: &str) -> Option<Kind> {
-    if moqui_client::cache::PATHS.contains(&bare) {
+pub fn classify(bare: &str, comms_root: &str) -> Option<Kind> {
+    if crate::cache::PATHS.contains(&bare) {
         return Some(Kind::Shell);
     }
     let app = app_path(comms_root);
@@ -152,7 +152,7 @@ struct Params(Vec<(String, String)>);
 impl Params {
     fn of(query: &str) -> Self {
         let query = query.trim_start_matches('?');
-        let parsed = tauri::Url::parse(&format!("http://query.invalid/?{query}"));
+        let parsed = url::Url::parse(&format!("http://query.invalid/?{query}"));
         Self(parsed.map_or_else(
             |_| Vec::new(),
             |url| {
@@ -192,7 +192,7 @@ pub(crate) fn number(value: &Value) -> Option<i64> {
 
 /// Keep a 200 JSON answer of `kind` to `bare` with `query`: whole, and as rows where they serve offline paging. A
 /// failure is logged and the rest kept: the store only helps.
-pub(crate) fn keep(store: &Store, kind: Kind, bare: &str, query: &str, body: &[u8]) {
+pub fn keep(store: &Store, kind: Kind, bare: &str, query: &str, body: &[u8]) {
     if let Err(err) = store.put_answer(bare, &kept_query(kind, query), "application/json", body) {
         tracing::warn!("The answer of {bare} was not kept: {err}");
     }
@@ -239,7 +239,7 @@ pub(crate) fn keep(store: &Store, kind: Kind, bare: &str, query: &str, body: &[u
 /// The answer of `kind` to `bare` with `query` from the store, for when the server cannot be reached: built from the
 /// rows where they answer it (a timeline page, a room view, the room list, a folder's threads, a thread), so what pushes
 /// and later pages changed shows; else the kept answer; none when nothing is kept.
-pub(crate) fn answer(store: &Store, kind: Kind, bare: &str, query: &str) -> Option<Vec<u8>> {
+pub fn answer(store: &Store, kind: Kind, bare: &str, query: &str) -> Option<Vec<u8>> {
     let params = Params::of(query);
     if kind == Kind::Compose {
         return compose_answer(store, bare, query, &params);
@@ -1209,7 +1209,7 @@ fn quote_of(message: &Value, forward: bool) -> String {
     let from = people(&message["from"]).into_iter().next();
     let from_text = from.as_ref().map(Address::text).unwrap_or_default();
     let html = match message["html"].as_str().filter(|html| has_tag(html)) {
-        Some(html) => moqui_core::service::clean_safe_html(html),
+        Some(html) => moqui_lib::safe_html::clean(html),
         None => text_paragraph(
             message["text"]
                 .as_str()
@@ -1365,7 +1365,7 @@ fn new_message(compose: &mut Map<String, Value>, params: &Params) {
     }
     if let Some(body) = params.text("body") {
         let html = if has_tag(body) {
-            moqui_core::service::clean_safe_html(body)
+            moqui_lib::safe_html::clean(body)
         } else {
             text_paragraph(body)
         };

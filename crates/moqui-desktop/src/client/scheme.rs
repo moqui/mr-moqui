@@ -18,19 +18,20 @@
 //! takes it, so an attachment or a large file a window opens is saved by the host, streamed (`crate::download`); a
 //! small download goes through Chromium's (bridge.rs `on_download`), which asks the scheme again.
 //!
-//! The shell's settings, apps and counts, and the comms app's chat and mail transitions, are kept in the account's store
-//! when the server answers them (`offline.rs`), and answered from it, marked `X-Moqui-Offline`, when it cannot be
-//! reached, so the shell and the comms screens open with no network. The page's chat store passphrase
+//! The shell's settings, apps and counts, and the comms app's chat and mail transitions, are kept in the account's
+//! store when the server answers them (`moqui_client::offline`), and answered from it, marked `X-Moqui-Offline`, when
+//! it cannot be reached, so the shell and the comms screens open with no network. The page's chat store passphrase
 //! (`/ChatKeys/storeKey`) is kept in the key store, and answered offline to the shell only. A 401 to a request with the
 //! key has the host check the key and, if it no longer signs in, sign the account out here.
 
 use moqui_client::account::Account;
+use moqui_client::assets;
+use moqui_client::offline::{self, Kind};
 use moqui_client::proxy::{header, Request};
 use tauri::http::{Response, StatusCode};
 use tauri::{AppHandle, Manager, UriSchemeContext, UriSchemeResponder};
 
-use super::offline::{self, Kind};
-use super::{assets, Client, APP_ORIGIN, SHELL_ORIGIN};
+use super::{Client, APP_ORIGIN, SHELL_ORIGIN};
 use crate::scheme::{document_request, has_script_policy, plain, run};
 
 /// The page's chat store passphrase (WebrootCrypto.js `storeKeysOf`, docs/interfaces/Chat-Keys.md "Store key").
@@ -117,7 +118,7 @@ fn answer(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>, 
     let document = document_request(request.headers());
     let query = path.split_once('?').map_or("", |(_, query)| query).to_string();
     let kept = if get && !document {
-        offline::classify(&bare, &client.comms_root_of(&account.id))
+        offline::classify(&bare, &client.core.comms_root_of(&account.id))
     } else {
         None
     };
@@ -135,17 +136,22 @@ fn answer(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>, 
             .collect(),
         body: request.into_body(),
     };
-    let upstream = match client.proxy.send(&account.server, key.as_deref(), origin, forwarded) {
+    let upstream = match client
+        .core
+        .proxy
+        .send(&account.server, key.as_deref(), origin, forwarded)
+    {
         Ok(upstream) => upstream,
         Err(err) => {
             tracing::info!("{} {bare}: {err}", account.server);
             let offline_body = match (kept, &store_key_device) {
                 (Some(kind), _) => client
+                    .core
                     .with_store(&account.id, |store| offline::answer(store, kind, &bare, &query))
                     .flatten(),
                 // the passphrase only to the shell, which runs no server code
                 (None, Some(device)) if origin == SHELL_ORIGIN => {
-                    client.keys.chat_store_key(&account.id, device).map(|key| {
+                    client.core.keys.chat_store_key(&account.id, device).map(|key| {
                         serde_json::json!({ "storeKey": key, "legacyStoreKey": null })
                             .to_string()
                             .into_bytes()
@@ -201,9 +207,11 @@ fn answer(app: &AppHandle, label: &str, request: tauri::http::Request<Vec<u8>>, 
     let json = header(&headers, "content-type").is_some_and(|kind| kind.contains("json"));
     if let (Some(kind), true, true) = (kept, status == 200, json) {
         if kind == Kind::Shell && bare == "/qapps/clientConfig" {
-            client.config_seen(&account.id, &body);
+            client.core.config_seen(&account.id, &body);
         }
-        client.with_store(&account.id, |store| offline::keep(store, kind, &bare, &query, &body));
+        client
+            .core
+            .with_store(&account.id, |store| offline::keep(store, kind, &bare, &query, &body));
     }
     if let (Some(device), true) = (&store_key_device, json) {
         store_key_answered(&client, &account.id, device, &body);
@@ -246,7 +254,7 @@ pub(crate) fn check_key(app: &AppHandle, account: &Account) {
         let Some(client) = app.try_state::<Client>() else {
             return;
         };
-        let still = client.keys.get(&account.id).map(|key| {
+        let still = client.core.keys.get(&account.id).map(|key| {
             std::panic::catch_unwind(|| moqui_client::login::client_config(&account.server, &key))
                 .unwrap_or_else(|_| Err(moqui_client::Error::new("the check panicked")))
         });
@@ -282,8 +290,8 @@ pub(crate) fn store_key_change(body: &[u8]) -> Option<Option<String>> {
 
 fn store_key_answered(client: &Client, account: &str, device: &str, body: &[u8]) {
     let changed = match store_key_change(body) {
-        Some(Some(key)) => client.keys.set_chat_store_key(account, device, &key),
-        Some(None) => client.keys.remove_chat_store_key(account, device),
+        Some(Some(key)) => client.core.keys.set_chat_store_key(account, device, &key),
+        Some(None) => client.core.keys.remove_chat_store_key(account, device),
         None => Ok(()),
     };
     if let Err(err) = changed {

@@ -22,11 +22,11 @@
 //! - Sign-out and a revocation delete a `shared` account's data and the account itself; a `personal` one keeps all.
 //!   An account with no mode (from before MD4) follows the build's mode when it names one, else keeps its data.
 
-use moqui_client::account::kept_mode;
-use moqui_client::conf::DeviceMode;
+use crate::account::kept_mode;
+use crate::conf::DeviceMode;
 
 /// What the shell tells the user when a sign-in asked for shared and the account stays personal.
-pub(crate) const KEPT_PERSONAL: &str = "This account already has data kept for a personal device on this computer, so \
+pub const KEPT_PERSONAL: &str = "This account already has data kept for a personal device on this computer, so \
     it runs as a personal device: its data stays here after you sign out.";
 
 /// The mode a sign-in asks for: the conf's when it is not `choose`, else what the user chose (`personal` or `shared`);
@@ -35,7 +35,7 @@ pub(crate) const KEPT_PERSONAL: &str = "This account already has data kept for a
 /// # Errors
 ///
 /// Returns an error for a choice that is not `personal` or `shared`.
-pub(crate) fn wanted(conf: DeviceMode, chosen: Option<&str>) -> Result<Option<DeviceMode>, String> {
+pub fn wanted(conf: DeviceMode, chosen: Option<&str>) -> Result<Option<DeviceMode>, String> {
     if conf != DeviceMode::Choose {
         return Ok(Some(conf));
     }
@@ -50,7 +50,7 @@ pub(crate) fn wanted(conf: DeviceMode, chosen: Option<&str>) -> Result<Option<De
 
 /// The mode an account runs as after a sign-in that asked for `wanted`, given the mode it is kept with (`kept`, none
 /// for an account that is new or has none), and whether the user is told that it stays personal.
-pub(crate) fn resolved(kept: Option<DeviceMode>, wanted: Option<DeviceMode>) -> (Option<DeviceMode>, bool) {
+pub fn resolved(kept: Option<DeviceMode>, wanted: Option<DeviceMode>) -> (Option<DeviceMode>, bool) {
     let mode = kept_mode(kept, wanted);
     let told = kept == Some(DeviceMode::Personal) && wanted == Some(DeviceMode::Shared);
     (mode, told)
@@ -67,7 +67,7 @@ pub(crate) fn effective(mode: Option<DeviceMode>, conf: DeviceMode) -> DeviceMod
 }
 
 /// Whether sign-out, or a revocation of the key, deletes the account's data and the account.
-pub(crate) fn forgets_on_sign_out(mode: Option<DeviceMode>, conf: DeviceMode) -> bool {
+pub fn forgets_on_sign_out(mode: Option<DeviceMode>, conf: DeviceMode) -> bool {
     effective(mode, conf) == DeviceMode::Shared
 }
 

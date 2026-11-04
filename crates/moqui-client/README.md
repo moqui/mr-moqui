@@ -37,7 +37,27 @@ Each installed client is a device with its own login key. The host keeps the key
 - `sso`: sign-in through the server's identity providers in the system browser (RFC 8252): a PKCE verifier and state,
   the server's `/sso/appLogin`, the hand-back's state checked, and the code taken with the verifier for a device key.
 
-The patterns follow `moqui tui --server` (`crates/moqui-host/src/tui_remote.rs`).
+The client's core, what the desktop app's client mode runs and the mobile app is to reuse
+([Desktop-Client](../../docs/ui/Desktop-Client.md)):
+
+- `app`: `Client`, the state while the app runs as a client (the accounts, `keys::Keys`, the stores, the conf read
+  once through the host, the comms app of each account, the mirror, the outbox's sender, the proxy and the pages'
+  sockets), held by the host in an `Arc`; and `ClientHost`, what the host does for it: which account a page shows,
+  whether a page is the shell, telling an account's pages of an outbox change, handing a page its socket's events,
+  and checking a key the server answered 401 to. `keys::Keys` keeps the keys in memory over the host's `KeyStore`,
+  with each account's chat store passphrases.
+- `bridge`: the pages' sockets by id and page (`Sockets`, any `PageSocket`), `/notws` and `/callws` opened on the
+  account's server (`open_remote`), and a client's `/notws` frames kept in the store, the heads marked stale on a drop,
+  the mirror started and the outbox woken when the shell's opens.
+- `stores`: each account's store, opened when first used and only while the account is kept; `offline`: the comms
+  transitions' answers and rows kept, and answered when the server cannot be reached.
+- `sync`: `push` (the chat pushes folded into the store), `outbox` (the operations and drafts, their checks and
+  limits), `flush` (the outbox sent from a thread of its own, with WebrootChat's retry rules) and `mirror` (the current
+  account's chat and mail read ahead).
+- `modes` (what each device mode keeps), `renewal` (each key renewed on a thread before it runs out) and `assets` (the
+  shell's own files and their CSP).
+
+The threads are plain threads with blocking requests. The patterns follow `moqui tui --server` (`crates/moqui-host/src/tui_remote.rs`).
 
 ## Test
 

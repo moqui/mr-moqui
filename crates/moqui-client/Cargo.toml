@@ -12,6 +12,8 @@ publish.workspace = true
 [dependencies]
 base64 = { workspace = true }
 getrandom = { workspace = true }
+# The dates of a quoted message in the offline Compose (src/offline.rs), as moqui-lib's.
+jiff = { workspace = true }
 moqui-lib = { workspace = true }
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
@@ -22,6 +24,7 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 tracing = { workspace = true }
 tungstenite = { workspace = true }
+url = { workspace = true }
 
 [lints]
 workspace = true

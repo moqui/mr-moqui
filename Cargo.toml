@@ -195,6 +195,9 @@ webpki-roots = "1"
 # The OS trust store for the desktop client's sockets (crates/moqui-client), as reqwest's rustls verifies its requests with.
 # Already in the graph under reqwest. On Android it needs its JVM init (rustls_platform_verifier::android).
 rustls-platform-verifier = "0.7"
+# The query strings the desktop and mobile client reads and writes (crates/moqui-client offline, sync). Already in the
+# graph under reqwest.
+url = "2"
 # TLS acceptor for the public HTTPS listener. aws-lc via the rustls entry above; ring stays off.
 tokio-rustls = { version = "0.26", default-features = false, features = ["tls12"] }
 # The public key of a presented certificate, which the edge link pins (moqui-host tls_pin.rs). Already in the graph

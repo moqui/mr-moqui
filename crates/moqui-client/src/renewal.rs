@@ -20,22 +20,22 @@
 //! One account that fails (its server down, or older than `clientApi` 2) is logged and the others go on; its key is
 //! tried again on the next pass, and a key that runs out sends the user to the sign-in as a revoked one does.
 
+use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::{AppHandle, Manager};
-
-use super::Client;
+use crate::app::{Client, ClientHost};
 
 /// How often the keys are looked at.
 const EVERY: Duration = Duration::from_secs(6 * 3600);
 
 /// Look at the keys now and every few hours, on a thread of its own (reqwest's blocking client).
-pub(crate) fn start(app: &AppHandle) {
-    let app = app.clone();
+pub fn start(client: &Arc<Client>, host: &Arc<dyn ClientHost>) {
+    let client = Arc::clone(client);
+    let host = Arc::clone(host);
     let started = std::thread::Builder::new()
         .name("client-renewal".to_string())
         .spawn(move || loop {
-            renew_due(&app);
+            renew_due(&client, host.as_ref());
             std::thread::sleep(EVERY);
         });
     if let Err(err) = started {
@@ -44,19 +44,16 @@ pub(crate) fn start(app: &AppHandle) {
 }
 
 /// Renew each account's key that is due.
-fn renew_due(app: &AppHandle) {
-    let Some(client) = app.try_state::<Client>() else {
-        return;
-    };
+fn renew_due(client: &Client, host: &dyn ClientHost) {
     let accounts = moqui_lib::sync::lock(&client.accounts).list().to_vec();
     for account in accounts {
         let Some(key) = client.keys.get(&account.id) else {
             continue;
         };
-        match renew_one(&client, &account.server, &account.id, &key) {
+        match renew_one(client, &account.server, &account.id, &key) {
             Ok(true) => {
-                let reopened = client.sockets.reopen_account(app, &client, &account.id);
-                super::flush::release_held(&client, &account.id);
+                let reopened = client.sockets.reopen_account(client, host, &account.id);
+                crate::sync::flush::release_held(client, &account.id);
                 tracing::info!(
                     "Renewed the device key of {} ({reopened} sockets open again)",
                     account.id
@@ -71,22 +68,22 @@ fn renew_due(app: &AppHandle) {
 /// Renew one key if it is due; whether it was.
 fn renew_one(client: &Client, server: &str, id: &str, key: &str) -> Result<bool, String> {
     // a key the server no longer takes is the 401 path's to handle, when a page next asks
-    let Some((from, thru)) = moqui_client::login::key_period(server, key).map_err(|err| err.to_string())? else {
+    let Some((from, thru)) = crate::login::key_period(server, key).map_err(|err| err.to_string())? else {
         return Ok(false);
     };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |since| i64::try_from(since.as_millis()).unwrap_or(i64::MAX));
-    if !moqui_client::login::renew_due(from, thru, now) {
+    if !crate::login::renew_due(from, thru, now) {
         return Ok(false);
     }
-    let Some(renewed) = moqui_client::login::renew(server, key).map_err(|err| err.to_string())? else {
+    let Some(renewed) = crate::login::renew(server, key).map_err(|err| err.to_string())? else {
         return Ok(false);
     };
     // the old key still signs in for a few minutes; a new key that cannot be kept is revoked, not left in the device
     // list, and the user signs in again once the old one ends
     if let Err(err) = client.keys.set(id, &renewed) {
-        if let Err(revoke) = moqui_client::login::sign_out(server, &renewed) {
+        if let Err(revoke) = crate::login::sign_out(server, &renewed) {
             tracing::warn!("The new key of {id}, not kept, was not revoked: {revoke}");
         }
         return Err(format!("the new key was not kept: {err}"));

@@ -31,17 +31,17 @@
 
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use moqui_client::account::Account;
-use moqui_client::conf::{ClientConf, DeviceMode};
-use moqui_client::proxy::{header, Request};
 use serde_json::Value;
-use tauri::{AppHandle, Manager};
 
-use super::offline::{self, chat_base, compose_base, mail_base, number};
-use super::{Client, SHELL_ORIGIN};
+use crate::account::Account;
+use crate::app::{Client, ClientHost};
+use crate::conf::{ClientConf, DeviceMode};
+use crate::offline::{self, chat_base, compose_base, mail_base, number};
+use crate::proxy::{header, Request};
+use crate::SHELL_ORIGIN;
 
 /// The pause between two requests of a run.
 const PAUSE: Duration = Duration::from_millis(150);
@@ -308,7 +308,7 @@ fn mail(run: &mut Run<'_, '_>) -> Result<(), Ended> {
 
 /// The mirror runs of the client: one at a time, for the current account.
 #[derive(Default)]
-pub(crate) struct Mirror {
+pub struct Mirror {
     /// Bumped to cancel the run under way.
     generation: AtomicU64,
     /// The account of the run under way, with its generation.
@@ -371,40 +371,35 @@ impl Mirror {
     }
 
     /// Stop the run under way: the account changed, signed out or was removed.
-    pub(crate) fn cancel(&self) {
+    pub fn cancel(&self) {
         self.generation.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Forget when an account last ran, so its next sign-in runs at once.
-    pub(crate) fn forget(&self, account: &str) {
+    pub fn forget(&self, account: &str) {
         moqui_lib::sync::lock(&self.last).retain(|(id, _)| id != account);
     }
 }
 
 /// Start a run for the account `id` on a thread of its own, as [`Mirror::begin`] decides.
-pub(crate) fn start(app: &AppHandle, id: &str) {
-    let Some(client) = app.try_state::<Client>() else {
-        return;
-    };
+pub fn start(client: &Arc<Client>, host: &Arc<dyn ClientHost>, id: &str) {
     let Some((generation, heads_only)) = client.mirror.begin(id) else {
         return;
     };
-    let thread_app = app.clone();
+    let thread_client = Arc::clone(client);
+    let thread_host = Arc::clone(host);
     let thread_id = id.to_string();
     let started = std::thread::Builder::new()
         .name("client-mirror".to_string())
         .spawn(move || {
-            let Some(client) = thread_app.try_state::<Client>() else {
-                return;
-            };
             let ended = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                run_for(&thread_app, &client, &thread_id, generation, heads_only)
+                run_for(thread_host.as_ref(), &thread_client, &thread_id, generation, heads_only)
             }))
             .unwrap_or_else(|_| {
                 tracing::error!("The mirror of {thread_id} panicked");
                 Ended::Cancelled
             });
-            client.mirror.end(&thread_id, generation, ended);
+            thread_client.mirror.end(&thread_id, generation, ended);
         });
     if let Err(err) = started {
         tracing::error!("The mirror of {id} did not start: {err}");
@@ -413,13 +408,13 @@ pub(crate) fn start(app: &AppHandle, id: &str) {
 }
 
 /// One run for the account `id`, with its key, mode and comms app.
-fn run_for(app: &AppHandle, client: &Client, id: &str, generation: u64, heads_only: bool) -> Ended {
+fn run_for(host: &dyn ClientHost, client: &Client, id: &str, generation: u64, heads_only: bool) -> Ended {
     let Some((account, Some(key))) = client.account(id) else {
         return Ended::Cancelled;
     };
     let comms_root = client.comms_root_of(id);
     let transport = ProxyTransport {
-        app,
+        host,
         client,
         account: &account,
         key: &key,
@@ -457,7 +452,7 @@ fn run_for(app: &AppHandle, client: &Client, id: &str, generation: u64, heads_on
 
 /// The account's server through the proxy, with its key, as the shell's requests go.
 struct ProxyTransport<'a> {
-    app: &'a AppHandle,
+    host: &'a dyn ClientHost,
     client: &'a Client,
     account: &'a Account,
     key: &'a str,
@@ -484,7 +479,7 @@ impl Transport for ProxyTransport<'_> {
         };
         let status = upstream.status;
         if status == 401 {
-            super::scheme::check_key(self.app, self.account);
+            self.host.check_key(self.account);
             return Fetched::Unauthorized;
         }
         let json = header(&upstream.headers, "content-type").is_some_and(|kind| kind.contains("json"));

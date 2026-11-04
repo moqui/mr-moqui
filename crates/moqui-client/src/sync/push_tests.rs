@@ -12,11 +12,11 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use moqui_client::store::{EventPage, Store};
+use crate::store::{EventPage, Store};
 use serde_json::{json, Value};
 
 use super::keep_frame;
-use crate::client::offline::{chat_event, chat_room};
+use crate::offline::{chat_event, chat_room};
 
 const ME: &str = "ME";
 

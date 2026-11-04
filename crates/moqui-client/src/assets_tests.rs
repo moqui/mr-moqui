@@ -14,9 +14,18 @@
 
 use super::*;
 
+/// The repository's shell and webroot, as the desktop app's development run reads them.
+fn repository() -> Assets {
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    Assets::new(
+        crates.join("moqui-desktop/shell"),
+        crates.join("../runtime/base-component/webroot/screen/webroot"),
+    )
+}
+
 #[test]
 fn the_shell_serves_its_page_scripts_and_libraries_and_nothing_else() {
-    let assets = Assets::choose(true, Path::new("/nowhere"));
+    let assets = repository();
     let page = assets.read("/").expect("the page");
     assert!(page.page && page.content_type.starts_with("text/html"));
     assert!(String::from_utf8_lossy(&page.body).contains("/shell/js/shell.js"));
@@ -78,7 +87,7 @@ fn the_shell_serves_its_page_scripts_and_libraries_and_nothing_else() {
 
 #[test]
 fn the_shells_own_paths_are_never_forwarded() {
-    let assets = Assets::choose(true, Path::new("/nowhere"));
+    let assets = repository();
     // a library not staged, a script not there, any path under the shell's directories: its own (404), not the server's
     for path in [
         "/",
@@ -140,7 +149,7 @@ fn the_shell_runs_one_worker_an_encrypted_call_s_staged_sframe_transform() {
     assert_eq!(directive(SHELL_CSP, "media-src"), vec!["'self'", "blob:"]);
     assert!(!SHELL_CSP.contains("ws:") && !SHELL_CSP.contains("wss:"));
     // a staged file, answered with a policy of its own that lets it import the SFrame code only
-    let assets = Assets::choose(true, Path::new("/nowhere"));
+    let assets = repository();
     let worker = assets.read(SFRAME_WORKER).expect("the worker is staged");
     assert!(worker.worker && !worker.page);
     assert!(String::from_utf8_lossy(&worker.body).contains("importScripts(\"/js/WebrootSFrame.js\")"));
@@ -166,7 +175,7 @@ fn the_shell_runs_one_worker_an_encrypted_call_s_staged_sframe_transform() {
 
 #[test]
 fn a_bundle_reads_its_staged_copy() {
-    let assets = Assets::choose(false, Path::new("/App/Resources"));
+    let assets = Assets::staged(Path::new("/App/Resources"));
     assert_eq!(
         assets.file_of("/js/MoquiLib.js").unwrap(),
         PathBuf::from("/App/Resources/shell-assets/webroot/js/MoquiLib.js")

@@ -14,7 +14,7 @@
 
 use std::path::PathBuf;
 
-use moqui_client::store::Store;
+use crate::store::Store;
 use serde_json::{json, Value};
 
 use super::*;

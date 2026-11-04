@@ -245,11 +245,11 @@ pub(crate) fn open_page(app: &AppHandle, url: &Url) {
     let Some(client) = app.try_state::<Client>() else {
         return;
     };
-    let current = client.current();
+    let current = client.core.current();
     let signed_in = current.as_ref().is_some_and(|(_, key)| key.is_some());
     let root = current.map_or_else(
-        || super::offline::DEFAULT_COMMS_ROOT.to_string(),
-        |(account, _)| client.comms_root_of(&account.id),
+        || moqui_client::offline::DEFAULT_COMMS_ROOT.to_string(),
+        |(account, _)| client.core.comms_root_of(&account.id),
     );
     match page_goes(&path, &root, signed_in) {
         PageGoes::Shell { poke } => keep_for_shell(app, &client, path, poke),
@@ -302,12 +302,12 @@ pub(crate) fn open_in_shell(app: AppHandle, webview: tauri::Webview, path: Strin
         .iter()
         .find(|(window, _)| *window == label)
         .map(|(_, account)| account.clone());
-    let current = client.current();
+    let current = client.core.current();
     let signed_in = current.as_ref().is_some_and(|(_, key)| key.is_some());
     let current_id = current.map(|(account, _)| account.id);
     let root = window_account.as_deref().map_or_else(
-        || super::offline::DEFAULT_COMMS_ROOT.to_string(),
-        |id| client.comms_root_of(id),
+        || moqui_client::offline::DEFAULT_COMMS_ROOT.to_string(),
+        |id| client.core.comms_root_of(id),
     );
     shell_path_for(&path, &root, window_account.as_deref(), current_id.as_deref())?;
     keep_for_shell(&app, &client, path, signed_in);
@@ -346,7 +346,7 @@ pub(crate) fn shell_window(app: &AppHandle) -> tauri::Result<()> {
         .on_page_load(|window, payload| {
             if payload.event() == PageLoadEvent::Started {
                 if let Some(client) = window.app_handle().try_state::<Client>() {
-                    client.sockets.close_for(window.label());
+                    client.core.sockets.close_for(window.label());
                 }
             }
         })
@@ -383,7 +383,7 @@ pub(crate) fn load_shell(app: &AppHandle, query: Option<&str>) {
 /// open.
 pub(crate) fn open_remote(app: &AppHandle, path: &str) -> Result<(), String> {
     let client = app.try_state::<Client>().ok_or("Not a client of a server")?;
-    let (account, key) = client.current().ok_or("No account is signed in")?;
+    let (account, key) = client.core.current().ok_or("No account is signed in")?;
     if key.is_none() {
         return Err("The account is signed out".to_string());
     }
@@ -412,7 +412,7 @@ pub(crate) fn open_remote(app: &AppHandle, path: &str) -> Result<(), String> {
         .on_page_load(|window, payload| {
             if payload.event() == PageLoadEvent::Started {
                 if let Some(client) = window.app_handle().try_state::<Client>() {
-                    client.sockets.close_for(window.label());
+                    client.core.sockets.close_for(window.label());
                 }
             }
         })
@@ -451,7 +451,7 @@ pub(crate) fn close_remotes(app: &AppHandle, account: Option<&str>) {
         closing.into_iter().map(|(label, _)| label).collect()
     };
     for label in closing {
-        client.sockets.close_for(&label);
+        client.core.sockets.close_for(&label);
         if let Some(window) = app.get_webview_window(&label) {
             let _ = window.destroy();
         }
@@ -463,7 +463,7 @@ pub(crate) fn closed(app: &AppHandle, label: &str) {
     let Some(client) = app.try_state::<Client>() else {
         return;
     };
-    client.sockets.close_for(label);
+    client.core.sockets.close_for(label);
     moqui_lib::sync::lock(&client.windows).retain(|(window, _)| window != label);
 }
 
