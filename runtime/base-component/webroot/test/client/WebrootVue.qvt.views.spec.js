@@ -6,3 +6,12 @@ browser.runInPage({
     scripts: ["/js/MoquiLib.js", "/js/WebrootVue.qvt.js"],
     test: "/files/runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.views.page.js",
 })
+
+// From WebrootVue.qvt.htmlview.spec.js, merged here to share a spec run.
+// Was js/WebrootVue.qvt.htmlview.test.js.
+// WebrootVue.qvt.js starts the Vue app only when the page has #moqui-config plus Vue and Quasar. This page has none of those.
+
+browser.runInPage({
+    scripts: ["/js/MoquiLib.js", "/js/WebrootVue.qvt.js"],
+    test: "/files/runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.htmlview.page.js",
+})
