@@ -109,10 +109,7 @@ pub(crate) fn note_touch(
     {
         return;
     }
-    let keep_fields = !facade.flags().disable_data_feed
-        && entity_name != SKIP_FEED_ENTITY
-        && entity_name != PENDING_ENTITY
-        && feed_may_target(facade, entity_name);
+    let keep_fields = feed_keeps_values(facade, entity_name);
     let touch = Touch {
         entity_name: entity_name.to_string(),
         operation: operation.to_string(),
@@ -121,6 +118,15 @@ pub(crate) fn note_touch(
         origin_agent: keep_fields.then(|| (crate::hooks::get().agent_id)()).flatten(),
     };
     TOUCHES.with(|touches| touches.borrow_mut().entry(frame).or_default().push(touch));
+}
+
+/// Whether the data feed keeps the values of a write of `entity_name` ([`note_touch`]), so a bulk write that would
+/// read only the primary key reads whole rows (plans/High-Level-Review.md HL-033).
+pub(crate) fn feed_keeps_values(facade: &EntityFacade, entity_name: &str) -> bool {
+    !facade.flags().disable_data_feed
+        && entity_name != SKIP_FEED_ENTITY
+        && entity_name != PENDING_ENTITY
+        && feed_may_target(facade, entity_name)
 }
 
 /// False when the feed configuration, as last read and not older than the feed definitions, has no document on

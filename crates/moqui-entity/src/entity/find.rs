@@ -34,6 +34,10 @@ use super::value::{EntityArtifact, EntityList, EntityValue};
 use crate::driver::DbRow;
 use crate::transaction::TransactionManager;
 
+mod bulk;
+
+pub use bulk::{Purged, BULK_CHUNK};
+
 /// A find builder. Methods consume `self` so conditions chain. A clone is the same find, for a count beside a list.
 #[derive(Clone)]
 pub struct EntityFind {
@@ -64,6 +68,8 @@ pub struct EntityFind {
     use_clone: bool,
     /// SQL actually executed by this find; clones retain its diagnostic history.
     query_texts: Arc<Mutex<Vec<String>>>,
+    /// Rows a bulk write reads in one query ([`Self::bulk_chunk`]); `None` is [`BULK_CHUNK`].
+    bulk_chunk: Option<i64>,
 }
 
 impl EntityFind {
@@ -88,6 +94,7 @@ impl EntityFind {
             scrollable: false,
             use_clone: false,
             query_texts: Arc::new(Mutex::new(Vec::new())),
+            bulk_chunk: None,
         }
     }
 
@@ -348,42 +355,6 @@ impl EntityFind {
             return None;
         }
         cache::store_fence(&self.facade, lookup)
-    }
-
-    /// Java `updateAll`: set `fields` on each row found and update the rows that change, so each update runs its
-    /// entity ECA rules. Returns how many rows were updated. Not for a `create-only` entity. The find skips the cache.
-    pub fn update_all(self, fields: impl IntoIterator<Item = (String, Value)>) -> Result<i64, Error> {
-        let fields: Vec<(String, Value)> = fields.into_iter().collect();
-        let _authz = self.authz_guard();
-        let facade = self.facade.clone();
-        self.refuse_create_only("updated")?;
-        let list = self.use_cache(false).list()?;
-        let mut updated = 0_i64;
-        for value in list.values() {
-            let mut changed = value.clone();
-            for (name, new_value) in &fields {
-                changed.set(name.clone(), new_value.clone());
-            }
-            // As Java's `updateAll`, only a row the fields change is updated, and only those fields are written.
-            if changed.is_modified() {
-                changed.update(&facade)?;
-                updated += 1;
-            }
-        }
-        Ok(updated)
-    }
-
-    /// Java `deleteAll`: delete each row found through the value path, so each delete runs its entity ECA rules.
-    /// Returns how many rows were deleted. Not for a `create-only` entity. The find skips the cache.
-    pub fn delete_all(self) -> Result<i64, Error> {
-        let _authz = self.authz_guard();
-        let facade = self.facade.clone();
-        self.refuse_create_only("deleted")?;
-        let list = self.use_cache(false).list()?;
-        for value in list.values() {
-            value.delete(&facade)?;
-        }
-        Ok(i64::try_from(list.len()).unwrap_or(i64::MAX))
     }
 
     fn refuse_create_only(&self, verb: &str) -> Result<(), Error> {

@@ -550,6 +550,31 @@ impl HostFind {
         })
     }
 
+    /// `purge(maxSeconds, chunkSize)`: delete the rows the find matches, each chunk of rows by primary key in a
+    /// transaction of its own, a failed chunk logged and passed over, and no chunk begun after `maxSeconds` (none:
+    /// no limit). Returns how many rows the committed chunks deleted. For the cleanup jobs whose backlog may not fit
+    /// one transaction (plans/High-Level-Review.md HL-033).
+    fn purge<'js>(
+        &self,
+        ctx: Ctx<'js>,
+        max_seconds: Opt<JsValue<'js>>,
+        chunk_size: Opt<JsValue<'js>>,
+    ) -> rquickjs::Result<JsValue<'js>> {
+        host_guard(&ctx, || {
+            let number = |value: &Opt<JsValue<'js>>| value.0.as_ref().and_then(JsValue::as_number);
+            let deadline = number(&max_seconds)
+                .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
+                .map(|seconds| std::time::Instant::now() + std::time::Duration::from_secs_f64(seconds));
+            let mut find = take_find(&ctx, &self.inner)?;
+            if let Some(rows) = number(&chunk_size).filter(|rows| rows.is_finite() && *rows >= 1.0) {
+                // A finite number of at least 1: the cast saturates at most.
+                find = find.bulk_chunk(rows as i64);
+            }
+            let purged = find.purge(deadline).map_err(|err| throw_lib(&ctx, &err))?;
+            i64_to_js(&ctx, purged.deleted)
+        })
+    }
+
     /// A script reads the whole result. A streaming cursor is the host's `EntityFind::iterator`.
     fn iterator<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<Class<'js, HostList>> {
         self.list(ctx)

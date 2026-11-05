@@ -1348,3 +1348,70 @@ fn resource_digests_archives_and_line_windows() {
     let _ = std::fs::remove_dir_all(&dir);
     clear_context_stack();
 }
+
+/// plans/High-Level-Review.md HL-033: a bulk delete reads its rows a chunk at a time and still runs each row's delete
+/// rule; a script's `purge` commits each chunk, and a chunk whose rule fails is rolled back and passed over.
+#[test]
+fn bulk_deletes_run_each_rows_rule_and_a_purge_passes_over_a_failed_chunk() {
+    clear_context_stack();
+    let tape = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let facade = crate::testing::open_with(
+        &crate::testing::framework_dir(),
+        crate::testing::Options {
+            entity_eca: true,
+            data_feed: false,
+            tape: Some(std::sync::Arc::clone(&tape)),
+        },
+    );
+    let context = ExecutionContextFactory::test_context();
+    context.factory().set_entity(facade.clone());
+    let _entered = context.enter();
+    run_script(
+        r#"for (const type of ["D", "P"]) for (let n = 0; n < 5; n++) {
+            const value = ec.entity.makeValue("moqui.basic.Enumeration");
+            value.enumId = type + n;
+            value.enumTypeId = type;
+            value.create();
+        }"#,
+    )
+    .unwrap();
+    crate::entity::load_feed::add_eca_rules(
+        &facade,
+        r#"<eecas><eeca entity="moqui.basic.Enumeration" on-delete="true"><actions><script>
+            if (enumId === "P3") throw new Error("P3 may not go");
+            const gone = ec.entity.makeValue("moqui.basic.EnumerationType");
+            gone.enumTypeId = "GONE-" + enumId;
+            gone.create();
+        </script></actions></eeca></eecas>"#,
+    )
+    .unwrap();
+    let enum_reads = || {
+        tape.lock()
+            .unwrap()
+            .iter()
+            .filter(|sql| sql.starts_with("SELECT") && sql.contains("\"enumeration\""))
+            .count()
+    };
+    let before = enum_reads();
+    let deleted = facade
+        .find("moqui.basic.Enumeration")
+        .unwrap()
+        .eq("enumTypeId", moqui_lib::object::Value::string("D"))
+        .bulk_chunk(2)
+        .delete_all()
+        .unwrap();
+    assert_eq!(deleted, 5);
+    assert_eq!(enum_reads() - before, 3, "2 + 2 + 1 rows");
+    holds(r#"ec.entity.find("moqui.basic.EnumerationType").condition("enumTypeId", "like", "GONE-D%").count() === 5"#);
+
+    // P2 and P3 are one chunk: P3's rule fails, so P2 stays too, and the purge goes on to P4.
+    holds(r#"ec.entity.find("moqui.basic.Enumeration").condition("enumTypeId", "P").purge(null, 2) === 3"#);
+    holds(
+        r#"ec.entity.find("moqui.basic.Enumeration").condition("enumTypeId", "P").list().map(e => e.enumId).join() === "P2,P3""#,
+    );
+    holds(
+        r#"ec.entity.find("moqui.basic.EnumerationType").condition("enumTypeId", "like", "GONE-P%").orderBy("enumTypeId")
+            .list().map(e => e.enumTypeId).join() === "GONE-P0,GONE-P1,GONE-P4""#,
+    );
+    clear_context_stack();
+}

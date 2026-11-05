@@ -1396,9 +1396,10 @@ static ENTITY_CALL: LazyLock<Regex> = LazyLock::new(|| {
 static ASSIGNED: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:[A-Za-z_][A-Za-z0-9_.]*\.)?\s*$").expect("assignment pattern")
 });
-/// A write on an entity value: `.create(`, `.update(`, `.store(`, `.createOrUpdate(`, `.delete(`, `.deleteAll(`.
+/// A write on an entity value: `.create(`, `.update(`, `.store(`, `.createOrUpdate(`, `.delete(`, `.deleteAll(`,
+/// `.purge(`.
 static VALUE_WRITE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\.\s*(createOrUpdate|create|update|store|deleteAll|delete)\s*\(").expect("value write pattern")
+    Regex::new(r"\.\s*(createOrUpdate|create|update|store|deleteAll|purge|delete)\s*\(").expect("value write pattern")
 });
 
 /// A service or entity name in a string literal of a script.
@@ -1409,7 +1410,7 @@ pub struct ScriptName {
     /// The byte offset of the name in the script.
     pub offset: usize,
     /// What the call does ([`RefRow::operation`]): `call` (or an entity-auto verb) for a service; for an entity `find`,
-    /// `delete` for a find's `deleteAll()`, and the write made on a `makeValue` (in its chain, or on the name it is
+    /// `delete` for a find's `deleteAll()` or `purge()`, and the write made on a `makeValue` (in its chain, or on the name it is
     /// assigned to), else empty.
     pub operation: &'static str,
 }
@@ -1458,10 +1459,10 @@ pub fn script_names(text: &str) -> Vec<ScriptName> {
                 Some("create") => "create",
                 Some("update") => "update",
                 Some("store" | "createOrUpdate") => "store",
-                Some("delete" | "deleteAll") => "delete",
+                Some("delete" | "deleteAll" | "purge") => "delete",
                 _ => "",
             }
-        } else if write == Some("deleteAll") {
+        } else if matches!(write, Some("deleteAll" | "purge")) {
             "delete"
         } else {
             "find"
