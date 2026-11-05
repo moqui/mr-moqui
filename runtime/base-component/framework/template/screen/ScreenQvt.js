@@ -1190,11 +1190,13 @@
             if (at(when, "from")) value = ec.resource.expression(at(when, "from"), "");
             else value = ec.resource.expand(at(when, "value"), "");
             if (blank(value)) return null;
-            if (typeof value === "string" && value.indexOf(",") >= 0) value = value.split(",");
-            const equal = Array.isArray(value) || (value && typeof value === "object" && value.length !== undefined && typeof value !== "string")
-                ? arr(Array.from(value)) + ".includes(" + target + ")"
-                : sq(value) + "==" + target;
-            return operator === "not-equals" ? "!(" + equal + ")" : equal;
+            // the values trimmed, and a multiple field's value (a list) meets equals when any one of it is in them
+            const list = (typeof value === "string" ? value.split(",") : Array.isArray(value) || (value && typeof value === "object" && value.length !== undefined)
+                ? Array.from(value) : [value]).map((part) => String(part).trim());
+            const equal = list.length === 1
+                ? "(Array.isArray(" + target + ")?" + target + ".map(String).includes(" + sq(list[0]) + "):" + sq(list[0]) + "==" + target + ")"
+                : "(Array.isArray(" + target + ")?" + target + ":[" + target + "]).some(($p)=>" + arr(list) + ".includes(String($p)))";
+            return operator === "not-equals" ? "!" + equal : equal;
         };
         const visibleStyle = (when) => {
             const holds = whenExpr(when);

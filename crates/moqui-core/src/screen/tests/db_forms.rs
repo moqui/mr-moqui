@@ -178,7 +178,10 @@ fn a_dated_db_form_renders_as_of_a_date_with_its_dependencies() {
     let mut get = request("GET", "/");
     get.query.push(("renderMode".into(), "qvt".into()));
     let qvt = serve_at(&world.factory, get, &root).body_text();
-    assert!(qvt.contains(r#":required="'B'==formProps.fields.kind""#), "{qvt}");
+    assert!(
+        qvt.contains(r#":required="(Array.isArray(formProps.fields.kind)?formProps.fields.kind.map(String).includes('B'):'B'==formProps.fields.kind)""#),
+        "{qvt}"
+    );
     assert!(
         qvt.contains("{display:(!(formProps.fields.kind==null||formProps.fields.kind===''||(Array.isArray(formProps.fields.kind)&amp;&amp;!formProps.fields.kind.length))?'':'none')}")
             || qvt.contains("{display:(!(formProps.fields.kind==null||formProps.fields.kind===''||(Array.isArray(formProps.fields.kind)&&!formProps.fields.kind.length))?'':'none')}"),
