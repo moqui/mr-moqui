@@ -103,8 +103,8 @@ along with this software (see the LICENSE.md file). If not, see
                         <container style="row q-col-gutter-sm q-mt-xs">
                             <container style="col-6 col-sm-3"><label type="div" text="Unread" style="text-caption m-muted"/>
                                 <label type="div" text="${account.unreadCount != null ? ec.l10n.format(account.unreadCount, '#,##0') : '–'}" style="text-subtitle1"/></container>
-                            <container style="col-6 col-sm-3"><label type="div" text="Last sync" style="text-caption m-muted"/>
-                                <label type="div" text="${account.lastSyncText || 'Not yet'}" style="text-body2"/></container>
+                            <container style="col-6 col-sm-3"><label type="div" text="${account.deliveredHere === true ? 'Delivery' : 'Last sync'}" style="text-caption m-muted"/>
+                                <label type="div" text="${account.deliveredHere === true ? 'Mail gateway' : (account.lastSyncText || 'Not yet')}" style="text-body2"/></container>
                             <container style="col-6 col-sm-3"><label type="div" text="Folders" style="text-caption m-muted"/>
                                 <label type="div" text="${account.folderCount}" style="text-subtitle1"/></container>
                             <container style="col-6 col-sm-3"><label type="div" text="Not sent" style="text-caption m-muted"/>

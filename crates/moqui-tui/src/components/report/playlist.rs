@@ -23,10 +23,14 @@ impl Component for ReportPlaylist {
                 params.insert(key.into(), value.into());
             }
         }
-        params.insert(
-            "index".into(),
-            state.local["playlistAt"].as_u64().unwrap_or(0).to_string(),
-        );
+        let at = state.local["playlistAt"].as_u64().unwrap_or(0);
+        // The screen leaves out inaccessible dashboards; its entry index still names the original playlist item.
+        let index = usize::try_from(at)
+            .ok()
+            .and_then(|at| props["items"].get(at))
+            .and_then(|item| item["index"].as_u64())
+            .unwrap_or(at);
+        params.insert("index".into(), index.to_string());
         Some((props["source"].as_str().unwrap_or("data").into(), params))
     }
     fn lines(&self, props: &Value, state: &ComponentState, width: u16, wide: bool) -> Vec<Line> {

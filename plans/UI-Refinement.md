@@ -123,7 +123,7 @@ before/after evidence use the agreed 1920×1080 target.
 | System and Tools | Administration and data/service tools | Refined; partial activities | Overview both themes, Components, SQL success/error/recovery, service XML and echo output/validation/retry observed. Deep administration groups remain pending. |
 | Monitor and Dashboards | Diagnosis, reporting and authoring | Refined; partial activities | Monitoring 19/19 at 1440×1000; dashboard copy/edit/save/open, CSV export and filter/remove visually observed at 1920; saved log search restores query/range. See assertion limits and screen map below. |
 | Dev AIDE | Artifact discovery, editing, simulation, previews and Git | Refined; verification in progress | Home, creation-dialog cancellation, search empty states, source navigation and Search → References → Docs/copy/package/diagram navigation observed. All eight disposable-repository journeys passed; detailed limits are recorded below. |
-| BasicComms | Mail, chat, calls and settings | Recovery fixes tested; partial visual | Local fake-media/encrypted-call/chat10/10; failed-save retention/retry passed. Hosted wizard Back/header/Finish/new-account recovery, mounted Inbox links, message keyboard controls, identity/text-block confirmation/focus and reply date clearing/validation/Standard roundtrip observed. Triage/sending/settings remain partial; TUI display passes but saving awaits UI-074. |
+| BasicComms | Mail, chat, calls and settings | Recovery fixes tested; partial visual | Local fake-media/encrypted-call/chat10/10; failed-save retention/retry passed. Hosted wizard Back/header/Finish/new-account recovery, mounted Inbox links, message keyboard controls, identity/text-block confirmation/focus and reply date clearing/validation/Standard roundtrip observed. Triage/sending/settings remain partial; TUI saving now preserves rich bodies and dates; narrow radio labels remain UI087. |
 | Integration | Cross-app patterns and remaining routes | In progress | Shared styles observed in System, Tools, Dashboards and Dev AIDE; full remaining inventory is explicit below. |
 
 ## Findings
@@ -205,7 +205,7 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-059 | Shared navigation: Find → immediate result link | P2 corrected; deterministic regression passes | Latest menu request wins; stale completion cannot replace newer route metadata | Deferred-response browser fixture passes; live Jobs→Job Runs→run→Trace/Logs navigation succeeds. Original intermittent Find race is not claimed to be repeatedly reproduced. |
 
 | UI-060 | B04 hosted mail setup Options → Back → Next | P2 fixed and retested | Unsaved name and filing policy survive Back and step-header navigation within the scoped wizard | Disposable100051: both paths preserve edits; Next/Finish saves; Add another account starts empty. Deferred-response/scope/teardown fixtures pass. |
-| UI-061 | B04 hosted mail setup and Account | P3 partially fixed; account-list follow-up | Hosted setup describes gateway delivery and activation; remote import controls are absent; Account explains local storage | Live100001/100051, both hosted. Mail-account list still says Last sync/Not yet; two-label follow-up prepared for batch8. |
+| UI-061 | B04 hosted mail setup, Account and list | P3 fixed and retested | Hosted copy explains gateway delivery and activation; remote import controls are absent | Live100001/100051; list now shows Delivery / Mail gateway. Screenshot comms-hosted-list-dark-after-1920.png. |
 | UI-062 | B04 Account → Open Inbox | P2 fixed and retested | Both links resolve the current app mount and preserve the account filter | Account100001 opens imported thread; setup-completion100051 opens its empty Inbox. |
 | UI-063 | B02 thread reading | P2 fixed and retested | Named message and recipient disclosure buttons work with Enter/Space and retain focus | Dark1920, imported thread100000: older body/attachment and recipients expand/collapse; row name identifies subject, senders and count without nested action text. |
 | UI-064 | B05 Text Blocks and Identities row actions | P2 fixed and retested | Delete has visible text and a record-specific tooltip; confirmation names the record | Keyboard activation opens confirmation; Cancel retains alias and text block. |
@@ -214,14 +214,14 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-067 | M02 Trace Detail title at390 | P3 fixed and retested | Shared wrapping utility keeps the full trace ID within the viewport | Live light/dark390: document scrollWidth390; title readable and selected-span controls retained. |
 | UI-068 | Shared box headers, observed S12 ModelDetail at390 | P2 fixed and retested | Title remains above wrapping phone actions; Collapse/Expand controls name their section and expose expanded state | Live Model title width100.83px at390, keyboard toggle works; dark1280 and desktop grouping retained; mounted layout regression passes. |
 | UI-069 | B02 thread message flag | P2 fixed and retested | Message action changes from Flag to Remove flag after acknowledgment | Dark1920: Enter flags Alex message; accessible name updates; Enter removes flag and restores original state. It is a next-action button, without aria-pressed. |
-| UI-070 | B05 Out of office save → reload | P2 fixed and retested | Carry instants separately from public display strings and format once | Material Save/reload and Standard Save retain Nov8/9 09:00; TUI displays the same values. Normal/DST/null service/static fixtures pass. Reply remains off; TUI save is not claimed (UI-074). |
-| UI-071 | D07 Reports overview | P3 observed grouping / prepared follow-up | Empty playlist and schedule tables show only headers; eight full-width schedule fields separate unrelated lists without section headings | John Doe/dark1920. Evidence dashboard-reports-dark-before-1920.png. Group downloads, playlists and scheduling; bound forms and explain empty lists. |
-| UI-072 | D07 playlist playback | P1 observed functional failure / investigation | Counter and dashboard link advance but same-origin dashboard iframe refuses to connect | John Doe/dark1920, disposable ui-d07-playlist, monitor-overview/monitor-services. Pause and keyboard Previous work; embedded dashboard is unavailable. Investigate response framing policy before choosing a correction. |
+| UI-070 | B05 Out of office save → reload | P2 fixed and retested | Carry instants separately from public display strings and format once | Material, Standard and terminal Save/reload retain Nov8/9 09:00; normal/DST/null fixtures pass. Reply remains off. |
+| UI-071 | D07 Reports overview | P3 fixed and retested | Group preview, playlists, scheduling and scheduled reports; bounded responsive forms and useful empty states | John Doe, both themes1920; light1280/390 and keyboard dialog cancellation. Populated8096 and empty8094 inspected. |
+| UI-072 | D07 playlist playback | P1 fixed and retested | Authorized in-page dashboard data replaces the refused iframe; frame policy is unchanged | Both themes1920/390, keyboard Previous/Next, timed advance, pause/resume and owning-dashboard filter/time confirmed. Panel inspection now succeeds with its separate server-transition mount (UI091). |
 
-| UI-073 | D07 TUI playlist after inaccessible items are filtered | P2 source-confirmed index mismatch / prepared follow-up | TUI uses filtered position instead of the retained original item index | Private Rust patch extends the existing bounded-rotation test; no live claim or passing result yet. |
-| UI-074 | B05 terminal Out of office | P2 observed shared form issues / follow-up | Extra selected N checkbox and blank row submit; rich fields show HTML source and are read-only | Dark1920. Direct Save field avoids the row defect in batch7. Source review also identifies potential loss of omitted rich fields on TUI save; no terminal save performed. Shared renderer and app-scoped preservation correction pending. |
+| UI-073 | D07 TUI playlist after inaccessible items are filtered | P2 fixed and regression-tested | Retain each accessible item's original request index instead of its filtered position | Existing bounded-rotation test covers noncontiguous indices; terminal crate202 pass,1 ignored. No live inaccessible-playlist claim. |
+| UI-074 | B05 terminal Out of office | P2 fixed and retested | No phantom N checkbox; row buttons remain usable; omitted read-only HTML is preserved, with explicit guidance | Fresh light/dark1920 and narrow hint checks; keyboard subject/toggle/Save preserves both bodies and09:00 dates. Explicit empty clears in Material. Long radio options remain UI087. |
 | UI-075 | B04 wizard post-submit navigation superseded by browser Back | P2 source-confirmed and regression-tested | Wizard-owned navigation tokens release a superseded wait; obsolete callbacks cannot release a newer submission | Existing deferred A/B menu fixture checks retained wizard recovery and teardown. Shared navigation/wizard43/43 pass; this race is not claimed as a live browser reproduction. |
-| UI-076 | D07 scheduled report state and actions | P3 observed misleading labels / prepared follow-up | State is raw false/true, action always says Pause / resume, and file-only confirmation refers to recipients | Schedule100000 on8096, ui-d07-report, CSV/file-only, future2099 and paused. Cancel immediate-run confirmation returns focus; no report executed. Refine Active/Paused, Pause/Resume and Run now copy. |
+| UI-076 | D07 scheduled report state and actions | P3 fixed and retested | Active/Paused, Pause/Resume and Run now distinguish state from actions; confirmation names the saved delivery settings | Schedule100000, future2099/file-only: Resume→Active→Pause→Paused. Keyboard Run now/Cancel returns focus; no report executed. |
 
 
 | UI-077 | D06 Alerts empty overview | P3 observed grouping and empty states / prepared follow-up | No page/rules/instances title and five empty tables show only headers; shared sections have weak separation | John Doe/dark1920 on8096. Evidence dashboard-alerts-dark-before-1920.png. Group rule activity, instances and shared delivery/quieting definitions without changing actions. |
@@ -234,6 +234,17 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-083 | D06 AlertRule reload → change pause → save | P2 observed numeric round-trip failure / investigation | Saved1000000000 reloads as1,000,000,000 and fails finite-number validation on a later unrelated save | Dark1920, ui-d06-alert. Removing commas through the field permits Save and retains Paused Y. Inspect shared formatting and other JSON-backed numeric fields before selecting a correction. |
 | UI-084 | M08 Replays search | P3 observed layout/empty state / prepared review | User/Visit inputs span1920px and both initial empty and no-match result show only table headers | Dark1920, no recording fixture yet; filter ui-review-no-recording and clear both complete. Evidence monitor-replays-dark-before-1920.png. Playback and masking remain unverified. |
 | UI-085 | M09 Releases → Release Detail | P3 observed hierarchy/readability / prepared review | Empty regression list has no explanation or heading; revision/times are compressed into prose and error fingerprints dominate row labels | Dark1920, moqui0.1.0. Error link reaches the corresponding known schedule-validation error; Back retains release context. Evidence monitor-release-detail-dark-before-1920.png. Synthetic comparative regression/disposition remains pending. |
+
+| UI-086 | TUI Ctrl+K → Apps → Comms | P2 observed routing failure / prepared follow-up | Shell supplies /qapps target to the terminal and opens a browser-only placeholder | F3 then numbered AppList recovers. Normalize shell navigation to /apps while preserving query and unrelated URLs. |
+| UI-087 | B05 TUI Reply to at390/1280 | P2 observed clipping / prepared follow-up | Long radio audience options run beyond their field width | Read-only HTML hints wrap and Save is visible; radio layout needs shared height/wrapping without changing keyboard selection. |
+| UI-088 | M08 enable recording → Gallery interaction → Replays | P1 observed capture failure / design pending | Initial replay exceeds256KiB receiver body limit and capture stops without user feedback | Confirmed server log03:14:31 and Monitor error; no recording stored. All temporary settings restored. Preserve masking and bounded ingestion in the correction. |
+| UI-089 | M08 replay player data request | P2 source-confirmed route mismatch / prepared follow-up | report.appPath changes the /apps JSON transition into a /qapps HTML wrapper | Same distinction as playlist loading; focused private patch prepared. Live playback awaits a successful recording fixture. |
+| UI-090 | Shared dark drawer current/on-path labels | P2 measured contrast failure / prepared follow-up | Accent #1976d2 is reused for small selected text over its own26% fill on #1d1d1d | Current Reports link2.77:1; measured DOM foreground and composited background. Use the readable semantic text color and retain accent indicators. |
+| UI-091 | D07 embedded playlist → Inspect panel | P2 fixed and retested | Keep the original server screenUrl for inspection/export transitions while navigation uses the Material mount | Reproduced JSON parse error, corrected, then live Inspect returns diagnostic data with no alert. Existing fixture clicks Inspect and asserts /apps endpoint plus definition/panel IDs;47/47 passes. |
+| UI-092 | Standard Dashboard tabular fallback | P3 observed readability / deferred | Time columns display epoch milliseconds instead of human-readable dates | Targeted /apps playlist link reaches Monitor overview and shows data, but time1793242800000 requires interpretation. Retain compatibility; refine shared fallback formatting later. |
+| UI-093 | B06 Chat → New room → Members search | P1 observed functional failure / investigation | Searching the disposable sec.view.only account returns Method POST is not supported instead of choices | John Doe/dark1920 on8094; Name/Topic retained, no participant added. Evidence comms-chat-member-search-dark-before-1920.png. Source review of request method/route is pending. |
+| UI-094 | B06 main/thread/edit message editors | P2 observed accessibility / prepared follow-up | Rich editor role=textbox has no accessible name; placeholder is only a paragraph data attribute | DOM inspection with two simultaneous editors confirms ambiguity. Shared rich text supports labels; caller bindings need names. |
+| UI-095 | B06 keyboard message actions | P2 observed keyboard gap / prepared follow-up | Toolbar is exposed only by pointer/tap; message row has no keyboard entry | Desktop after edit: Room→Tab reaches1reply, nextTab composerBold; reaction/edit/reply actions cannot be reached. Source confirms hover/tap-only condition. |
 
 ## Running implementation notes
 
@@ -1043,6 +1054,86 @@ configured for this rule, and evaluation/delivery/quieting branches remain pendi
   No budgets were raised or failures suppressed. This mechanical commit has passing focused crates/Clippy;
   the full gate remains nonzero and the recurring SIP fixture assumption is being inspected separately.
 
+### Batch 9 — playlist playback and terminal form preservation
+
+Batch8 committed locally as `f26f815b`. Applied UI-061 hosted-account list labels, UI-071/076 Reports grouping and
+schedule action copy, UI-072 authorized in-page playlist rendering and UI-073 original playlist indices, plus
+UI-074 terminal check/row controls, omitted HTML preservation and read-only guidance. A private cross-review found
+that an embedded dashboard filter used the Playlist route; it now opens the owning dashboard with its filter and
+displayed absolute time. Ordinary Monitor routes remain unchanged. No framing/security policy was relaxed.
+
+- Fresh terminal crate regressions pass; core TUI generator26/26 pass; debug build passes in49.80s. BasicComms8/8
+  passes in6.06s (2.4/8s component), including explicit-empty versus omitted HTML and unchanged09:00 dates.
+  A missing closing brace initially prevented the report fixture from registering; corrected before rerun.
+  WebrootReport47/47 passes in1.15s (0.2/34s). Debug and release builds pass. Logs /tmp/ui-batch9-*.log.
+- M11 on isolated8096: created15-minute Replay enabled=true, Replay sample ratio=1 and RUM enabled=true overrides,
+  each with a review reason. Ratio2 is rejected with0–1 guidance and retained inputs; correcting1 succeeds.
+  Active overrides expose owner/reason/expiry; one-setting Revert restores Replay=false. Revert all Cancel preserves
+  the remaining two, Confirm restores RUM=false and ratio0.1, and full reload removes WebrootRum from the document.
+  Evidence monitor-settings-overrides-dark-1920.png and monitor-settings-restored-dark-1920.png.
+- M08 capture remains unverified: with all three overrides active, full reload emitted replay=true/sample1 settings
+  and the rrweb script, and a disposable Gallery navigation/filter interaction completed. Replays remained empty.
+  No relevant console error appeared. Server log03:14:31 confirms receive#BrowserReplay failed because its body
+  exceeded the configured256KiB limit (UI088). The error also appears in the Monitor overview. Inline styles alone
+  exceed300KiB. Bounded capture and playback request-mount proposals are separate follow-ups, not successful coverage.
+  All overrides were explicitly restored. No external browser data or provider was involved.
+- Repeated SIP gate failures are platform-fixture prerequisites: macOS has127.0.0.1 but no separately bindable
+ 127.0.0.2–.6 aliases. The three security tests fail before assertions. Different ports would invalidate IP-based
+  trust/rate/block coverage, so no skip or weakened test was added. A portable virtual UDP fixture is separate work.
+
+- Live UI074 on8094: terminal Save changed the subject with both rich bodies preserved. Enabled was toggled on/off
+  before save; reply stayed off. Material restored the subject and explicitly cleared the temporary internal body;
+  reload retained that clear, the original external body and09:00 dates. Hint is readable at1920/1280/390; radio clipping
+  is recorded separately as UI087. Fresh dark and light screenshots are local evidence only.
+- Live D07 on8096: playlist loads actual panels, keyboard Previous/Next retain focus, Resume advances automatically,
+  and Pause stops rotation. Filtering the overview's service cell opens its owning dashboard with the same absolute
+  time bounds and filter. Light/dark1920 and390 screenshots inspected. Reports at1920/1280/390 retain grouped forms;
+  phone dialog Save/Close are reachable and closing returns focus. Schedule100000 resumes then pauses correctly;
+  keyboard Run now/Cancel returns focus without running the report. Empty playlists/schedules inspected on8094.
+- A live load exposed /qapps HTML rewriting on the playlist JSON source; preserve its supplied /apps transition URL.
+  The regression now uses the actual server mount. Final review then found the same distinction on embedded panel
+  inspection (UI091), reproduced through Inspect. Fixed the embedded screenUrl without changing navigation links;
+  fresh-client retest returns inspection/requests data with no alert. The extended existing fixture passes47/47
+  in1.08s. Evidence dashboard-playlist-inspect-dark-after-1920.png. Export download remains unverified.
+- Gate16 found the expected TUI generator golden change; regenerated and inspected its three-line diff. Gate17
+  completed with only the three known SIP loopback-bind failures: shell342, server352/352(30.42s), demo10,
+  offline webroot394, Dev AIDE48 and served client148 all pass. Webroot44.4/34s warns, below51s failure threshold.
+  Final screen lint:362files,5527sites,0parse failures,87pre-existing idiom flags;202fancy bodies compiled.
+  Log /tmp/moqui-ui-framework-gate17.log. No budgets raised or failures hidden.
+- Gate18 after UI091: core1458, shell342, server352/352, demo10, webroot394, Dev AIDE48 and all148 served client
+  features pass. The overall command remains nonzero: two host tests could not initialize Postgres because macOS
+  shared-memory IDs were exhausted, and served framework timing16.8s exceeded its9s failure threshold during
+  concurrent build load. This Rust run stopped at the host binary before reaching the known SIP unit failures;
+  it is not a new SIP result. After verifying zero attachments and dead creator/last-user PIDs, removed five stale
+  56-byte segments; both exact host tests then pass (7.54s and6.28s). No active database or kernel limit changed.
+  The separate served framework rerun passes135/135 in17.67s, with5.7/6s feature time. Webroot45.9/34s warns but
+  remains below51s. Logs: gate18, sim-step/duplicate retests and framework-client-retest. No threshold was changed.
+- Standard compatibility on8096: Reports keeps the grouped forms and Paused/Resume state; New dashboard playlist
+  opens and keyboard Close returns focus. Standard Playlist intentionally lists dashboard links, and Monitor overview
+  opens with its tabular data. The fallback still exposes epoch-millisecond time cells; formatting is deferred (UI092).
+  Evidence dashboard-reports-standard-after-1920.png. No Standard autoplay claim.
+- Reusable guide now covers authorized embedded rendering, owning-dashboard context, latest-response identity and
+  preserving omitted read-only HTML without preventing explicit clears. Screenshots stay ignored and untracked.
+
+### Next activity baseline — B06 chat
+
+While batch9 gate18 runs, inspected Chat on8094 as John Doe. The empty split workspace offers direct message/room
+entry. Created private room100000, UI review room, topic Disposable local UI review conversation, with John only.
+Member search failed with405 (UI093); no other participant was added. Posted a local root message, opened its thread
+and posted one reply. Main count becomes1reply; phone Thread Back returns to the room. React 👍 adds1 and keyboard
+activation removes it. Edit→Escape retains the original; Edit→Save changes it to UI review: local conversation fixture,
+revised. and shows(edited). Both editors are unnamed (UI094), and Tab skips the pointer-only action toolbar (UI095).
+The first pointer Edit attempt did not open an editor; a later keyboard activation worked, so no separate edit failure
+is claimed. At390 the layout settles to one column with visible reply composer and no horizontal page overflow; the
+initial resize frame still showed the old desktop layout and is not counted as a defect. Screenshots
+comms-chat-empty-dark-before-1920.png, comms-chat-thread-dark-before-1920.png and
+comms-chat-thread-dark-before-390.png. Search for fixture returns the revised message; ui-no-match-zz reports No messages match. Uploaded the synthetic
+48-byte ui-review-chat.txt through Attach files, sent it without a body, and downloaded it through the posted attachment
+button; downloaded bytes equal the fixture. Members shows only John Doe, Active/Owner. Evidence
+comms-chat-attachment-dark-before-1920.png. This is one-user partial coverage, not two-user/encrypted success.
+An attempted browser zoom shortcut left viewport1920×1080, devicePixelRatio1 and visual scale1 unchanged;
+actual200% zoom remains unverified and is not substituted with a narrow viewport.
+
 ### Verification environment corrections
 
 The first full gate inherited the review runtime and created an ignored Shop template in the real dev-component
@@ -1315,7 +1406,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `BasicComms/Calls/Voicemail.xml` | hidden menu; modes vue,qvue,tui; `BasicComms/Calls/Voicemail.qvue`; `BasicComms/Calls/Voicemail.tui.json` | B09 | P |
 | `BasicComms/Calls/VoicemailTui.xml` | hidden menu; explicit TUI screen | B09 | P |
 | `BasicComms/Calls.xml` | Container → History | B08 | S/P |
-| `BasicComms/Chat.xml` | modes vue,qvue,tui; `BasicComms/Chat.qvue`; `BasicComms/Chat.tui.json` | B06/B07 | S/P |
+| `BasicComms/Chat.xml` | modes vue,qvue,tui; `BasicComms/Chat.qvue`; `BasicComms/Chat.tui.json` | B06/B07 | V/P: single-user private room, thread, edit/cancel, reactions, search and attachment; UI093–095 pending; encryption/two-user/TUI remain |
 | `BasicComms/ChatTui.xml` | hidden menu; explicit TUI screen | B06/B07 | P |
 | `BasicComms/Home.xml` | XML widgets | B01 | S/P |
 | `BasicComms/Inbox/Compose.xml` | hidden menu; modes vue,qvue,tui; `BasicComms/Inbox/Compose.qvue`; `BasicComms/Inbox/Compose.tui.json` | B03 | S/P |

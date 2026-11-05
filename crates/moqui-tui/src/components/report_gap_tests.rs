@@ -472,4 +472,18 @@ fn playlist_rotation_is_bounded_pauses_and_preserves_request_authority() {
     assert_eq!(params["definitionId"], "my-playlist");
     ReportPlaylist.key(&props, &mut state, &KeyPress::plain(Key::Char('p')), false);
     assert_eq!(ReportPlaylist.poll_millis(&props, &state), None);
+    // An older caller without entry indices keeps positional behavior above; a filtered screen keeps original indices.
+    let mut filtered = props.clone();
+    filtered["items"] = json!([{"title":"B","index":1},{"title":"D","index":3}]);
+    let mut filtered_state = ComponentState::default();
+    assert_eq!(
+        ReportPlaylist.source(&filtered, &filtered_state).unwrap().1["index"],
+        "1"
+    );
+    assert_eq!(ReportPlaylist.tick(&filtered, &mut filtered_state), vec![Act::Reload]);
+    let params = ReportPlaylist.source(&filtered, &filtered_state).unwrap().1;
+    assert_eq!(params["index"], "3");
+    assert_eq!(params["definitionId"], "my-playlist");
+    assert_eq!(params["from"], "now-1h");
+    assert_eq!(params["thru"], "now");
 }

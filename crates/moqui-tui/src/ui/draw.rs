@@ -839,6 +839,15 @@ fn draw_field(paint: &mut Painter, session: &Session, field: &LaidField, x: u16,
     };
     paint.spot(&field.id, value_x, value_y);
     draw_value(paint, session, field, &info.widget, value_x, value_y);
+    for (at, line) in field.hint.iter().enumerate() {
+        paint.text(
+            value_x,
+            value_y + field.rows + at,
+            line,
+            Look::role(Role::Text),
+            field.value_width,
+        );
+    }
     field.height()
 }
 

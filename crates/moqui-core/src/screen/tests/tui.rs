@@ -508,6 +508,7 @@ fn every_phase_two_widget_and_region_is_a_node_the_client_reads() {
     parameters.insert("descr_op".to_string(), Value::string("begins"));
     parameters.insert("descr_not".to_string(), Value::string("Y"));
     parameters.insert("amount_from".to_string(), Value::string("5"));
+    parameters.insert("flag".to_string(), Value::string("N"));
     let output = render(
         "widgets",
         r#"<screen require-authentication="false"><widgets>
@@ -560,7 +561,8 @@ fn every_phase_two_widget_and_region_is_a_node_the_client_reads() {
     assert_eq!(field("code")["w"]["inputType"], json!("number"));
     assert_eq!(field("types")["w"]["multiple"], json!(true));
     assert_eq!(field("types")["w"]["allowEmpty"], json!(true));
-    assert_eq!(field("flag")["w"]["options"][0]["label"], json!("Yes"));
+    assert_eq!(field("flag")["w"]["value"], json!("N"));
+    assert_eq!(field("flag")["w"]["options"], json!([{"value":"Y","label":"Yes"}]));
     assert_eq!(field("extra")["visibleWhen"], json!({"field": "flag", "value": "Y"}));
     assert_eq!(field("go")["w"]["confirm"], json!("Sure?"));
     let regions: Vec<&str> = nodes(&doc)

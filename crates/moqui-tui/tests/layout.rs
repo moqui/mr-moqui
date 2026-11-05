@@ -149,14 +149,28 @@ fn field_row_cells_stay_side_by_side_while_each_has_its_label_and_24_columns() {
     let form = screen(
         r#"{"t":"form","id":"F","name":"F","c":[{"t":"row","id":"F.l0","c":[
             {"t":"field","id":"F.a","name":"a","title":"First name of person","w":{"kind":"textLine","value":""}},
-            {"t":"field","id":"F.b","name":"b","title":"Second","w":{"kind":"textLine","value":""}}]}]}"#,
+            {"t":"field","id":"F.b","name":"b","title":"Second","w":{"kind":"textLine","value":""}}]},
+            {"t":"row","id":"F.actions","c":[
+                {"t":"field","id":"F.save","name":"save","title":"Save","w":{"kind":"submit","text":"Save"}},
+                {"t":"field","id":"F.hidden","name":"applyToAll","title":"Apply To All","w":{"kind":"hidden","value":"N"}}]},
+            {"t":"row","id":"F.more","c":[
+                {"t":"field","id":"F.reset","name":"reset","title":"Reset","w":{"kind":"reset","text":"Reset"}},
+                {"t":"field","id":"F.active","name":"active","title":"Active","w":{"kind":"check","value":"N","options":[{"value":"Y","label":"Active"}]}}]}]}"#,
     );
     // Each cell needs its label (20), the ` : ` and 24 columns: 47, so two fit at 120 and not at 90.
     let wide = outline(&form, 120);
     assert!(wide.contains("cells First name of person@0 Second@60"), "{wide}");
+    assert!(wide.contains("buttons F.save F.reset"), "{wide}");
+    assert!(wide.contains("field Active beside"), "{wide}");
+    assert!(
+        !wide.contains("Apply To All") && !wide.contains("cells Save") && !wide.contains("cells Reset"),
+        "{wide}"
+    );
     let narrow = outline(&form, 90);
     assert!(narrow.contains("field First name of person beside"), "{narrow}");
     assert!(narrow.contains("field Second beside"), "{narrow}");
+    assert!(narrow.contains("buttons F.save F.reset"), "{narrow}");
+    assert!(!narrow.contains("Apply To All"), "{narrow}");
 }
 
 #[test]

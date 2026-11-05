@@ -46,7 +46,8 @@ $formWrites = !!$made && (!$made.isScreenUrl() || $made.isTransition()) && !$mad
         const $options = [];
         const $map = sri.getFieldOptions({"name":"drop-down","attrs":{},"children":[{"name":"option","attrs":{"key":"US","text":"United States"}}],"parent":{"name":"default-field","attrs":{"title":"Country"},"parent":{"name":"field","attrs":{"name":"countryGeoId"},"parent":{"name":"form-single","attrs":{"name":"Find","transition":"search"},"parent":{"name":"widgets","attrs":{}}}}}});
         if ($map && $map.forEach) $map.forEach(($label, $key) => $options.push({value:String($key),label:String($label == null ? "" : $label)}));
-        if ($value && !$options.some(($opt) => $opt.value === $value)) $options.push({value:$value,label:$value});
+        // Checks offer declared options only: a saved N means unchecked, not an additional checkbox.
+        if (true && $value && !$options.some(($opt) => $opt.value === $value)) $options.push({value:$value,label:$value});
         return {kind:"dropDown",value:$value,options:$options};
     })()};
             if ($required) $field.required = true;

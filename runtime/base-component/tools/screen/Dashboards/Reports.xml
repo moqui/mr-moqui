@@ -48,53 +48,136 @@
     ]]></script></actions>
     <widgets>
         <label text="Dashboard reports" type="h4"/>
-        <link url="//apps/dashboards/Definition" text="Compose a multi-dashboard report" parameter-map="{definitionType:'report'}"/>
         <label text="Reports run with their owner's current dataset access. Empty reports are skipped." type="p"/>
-        <container-dialog id="CreatePlaylist" button-text="New dashboard playlist">
-            <label text="Enter dashboard IDs in playback order. Each dashboard is checked with your current access when opened." type="p"/>
-            <form-list name="PlaylistAvailableDashboards" list="dashboards" skip-form="true">
-                <field name="id"><default-field><display/></default-field></field>
-                <field name="title"><default-field><display/></default-field></field>
-            </form-list>
-            <form-single name="CreateDashboardPlaylist" transition="createPlaylist">
-                <field name="playlistId"><default-field title="Playlist ID"><text-line/></default-field></field>
-                <field name="playlistTitle"><default-field title="Title"><text-line/></default-field></field>
-                <field name="playlistDashboardIds"><default-field title="Dashboard IDs, comma separated"><text-area rows="3" cols="70"/></default-field></field>
-                <field name="playlistSeconds"><default-field title="Seconds per dashboard"><text-line default-value="30"/></default-field></field>
-                <field name="create"><default-field><submit text="Save playlist"/></default-field></field>
-            </form-single>
-        </container-dialog>
-        <form-list name="DashboardPlaylists" list="playlists" skip-form="true">
-            <field name="title"><default-field><display/></default-field></field>
-            <field name="open"><default-field><link url="playlist" text="Play dashboards" parameter-map="{definitionId:id}"/></default-field></field>
-            <field name="edit"><default-field><link url="//apps/dashboards/Definition" text="Edit playlist" parameter-map="{definitionId:id}"/></default-field></field>
-        </form-list>
-        <form-single name="CreateReportSchedule" transition="createSchedule">
-            <field name="definitionId"><default-field title="Dashboard / report"><drop-down><list-options list="reportDefinitions" key="${id}" text="${title}"/></drop-down></default-field></field>
-            <field name="cronExpression"><default-field title="Cron schedule"><text-line default-value="0 0 7 * * ?"/></default-field></field>
-            <field name="renderMode"><default-field title="Format"><drop-down><option key="pdf" text="PDF"/><option key="png" text="PNG"/><option key="csv" text="CSV"/><option key="xlsx" text="Excel"/></drop-down></default-field></field>
-            <field name="delivery"><default-field title="Delivery"><drop-down><option key="file" text="Save to file"/><option key="email" text="Email"/><option key="both" text="Email and file"/></drop-down></default-field></field>
-            <field name="emailTemplateId"><default-field title="Email template"><text-line default-value="DASHBOARD_REPORT"/></default-field></field>
-            <field name="userId"><default-field title="Recipient user"><text-line/></default-field></field>
-            <field name="userGroupId"><default-field title="Recipient group"><text-line/></default-field></field>
-            <field name="saveToLocation"><default-field title="Save to location"><text-line size="70"/></default-field></field>
-            <field name="create"><default-field><submit text="Schedule report"/></default-field></field>
-        </form-single>
-        <form-list name="ReportPreviews" list="reportDefinitions" skip-form="true">
-            <field name="title"><default-field><display/></default-field></field>
-            <field name="previewPdf"><default-field><link url="preview" text="Preview PDF" link-type="anchor" target-window="_blank" parameter-map="{definitionId:id,renderMode:'pdf'}"/></default-field></field>
-            <field name="previewPng"><default-field><link url="preview" text="Preview PNG" link-type="anchor" target-window="_blank" parameter-map="{definitionId:id,renderMode:'png'}"/></default-field></field>
-            <field name="csv"><default-field><link url="preview" text="CSV" link-type="anchor" parameter-map="{definitionId:id,renderMode:'csv'}"/></default-field></field>
-            <field name="xlsx"><default-field><link url="preview" text="Excel" link-type="anchor" parameter-map="{definitionId:id,renderMode:'xlsx'}"/></default-field></field>
-        </form-list>
-        <form-list name="ReportSchedules" list="schedules" skip-form="true">
-            <field name="screenScheduledId"><default-field title="Schedule"><display/></default-field></field>
-            <field name="definitionId"><default-field title="Report"><display/></default-field></field>
-            <field name="cronExpression"><default-field><display/></default-field></field>
-            <field name="renderMode"><default-field><display/></default-field></field>
-            <field name="paused"><default-field><display/></default-field></field>
-            <field name="send"><default-field><link url="send" text="Send now" link-type="hidden-form-link" confirmation="Send this report to its recipients now?" parameter-map="{screenScheduledId:screenScheduledId}"/></default-field></field>
-            <field name="pause"><default-field><link url="pause" text="Pause / resume" link-type="hidden-form-link" parameter-map="{screenScheduledId:screenScheduledId,paused:paused}"/></default-field></field>
-        </form-list>
+        <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[<div style="width:100%;max-width:1600px">]]></text>
+            <text type="tui" template="false">[]</text></render-mode>
+        <container-row>
+            <row-col xs="12" md="7">
+                <container-box>
+                    <box-header title="Preview and download"/>
+                    <box-toolbar>
+                        <link url="//apps/dashboards/Definition" text="Compose a multi-dashboard report" parameter-map="{definitionType:'report'}"/>
+                    </box-toolbar>
+                    <box-body>
+                        <section name="AvailableReportPreviews" condition="reportDefinitions.length"><widgets>
+                            <form-list name="ReportPreviews" list="reportDefinitions" skip-form="true">
+                                <field name="title"><default-field title="Dashboard / report"><display/></default-field></field>
+                                <field name="previewPdf"><default-field title="PDF"><link url="preview" text="Preview PDF" link-type="anchor" target-window="_blank" parameter-map="{definitionId:id,renderMode:'pdf'}"/></default-field></field>
+                                <field name="previewPng"><default-field title="PNG"><link url="preview" text="Preview PNG" link-type="anchor" target-window="_blank" parameter-map="{definitionId:id,renderMode:'png'}"/></default-field></field>
+                                <field name="csv"><default-field title="CSV"><link url="preview" text="CSV" link-type="anchor" parameter-map="{definitionId:id,renderMode:'csv'}"/></default-field></field>
+                                <field name="xlsx"><default-field title="Excel"><link url="preview" text="Excel" link-type="anchor" parameter-map="{definitionId:id,renderMode:'xlsx'}"/></default-field></field>
+                                <columns type="mobile">
+                                    <column><field-ref name="title"/></column>
+                                    <column><field-ref name="previewPdf"/><field-ref name="previewPng"/><field-ref name="csv"/><field-ref name="xlsx"/></column>
+                                </columns>
+                            </form-list>
+                        </widgets><fail-widgets>
+                            <label text="No dashboards or reports are available to preview." type="p"/>
+                        </fail-widgets></section>
+                    </box-body>
+                </container-box>
+                <container-box>
+                    <box-header title="Dashboard playlists"/>
+                    <box-toolbar>
+                        <container-dialog id="CreatePlaylist" title="New dashboard playlist" button-text="New dashboard playlist">
+                            <label text="Enter dashboard IDs in playback order. Each dashboard is checked with your current access when opened." type="p"/>
+                            <section name="AvailablePlaylistDashboards" condition="dashboards.length"><widgets>
+                                <form-list name="PlaylistAvailableDashboards" list="dashboards" skip-form="true">
+                                    <field name="id"><default-field><display/></default-field></field>
+                                    <field name="title"><default-field><display/></default-field></field>
+                                </form-list>
+                            </widgets><fail-widgets>
+                                <label text="No dashboards are available. Create a dashboard in the library before creating a playlist." type="p"/>
+                            </fail-widgets></section>
+                            <form-single name="CreateDashboardPlaylist" transition="createPlaylist">
+                                <field name="playlistId"><default-field title="Playlist ID"><text-line/></default-field></field>
+                                <field name="playlistTitle"><default-field title="Title"><text-line/></default-field></field>
+                                <field name="playlistDashboardIds"><default-field title="Dashboard IDs, comma separated"><text-area rows="3" cols="70"/></default-field></field>
+                                <field name="playlistSeconds"><default-field title="Seconds per dashboard"><text-line default-value="30"/></default-field></field>
+                                <field name="create"><default-field><submit text="Save playlist"/></default-field></field>
+                                <field-layout>
+                                    <field-row><field-ref name="playlistId"/><field-ref name="playlistTitle"/></field-row>
+                                    <field-ref name="playlistDashboardIds"/>
+                                    <field-ref name="playlistSeconds"/>
+                                    <field-row-big><field-ref name="create"/></field-row-big>
+                                </field-layout>
+                            </form-single>
+                        </container-dialog>
+                    </box-toolbar>
+                    <box-body>
+                        <section name="SavedDashboardPlaylists" condition="playlists.length"><widgets>
+                            <form-list name="DashboardPlaylists" list="playlists" skip-form="true">
+                                <field name="title"><default-field><display/></default-field></field>
+                                <field name="open"><default-field><link url="playlist" text="Play dashboards" parameter-map="{definitionId:id}"/></default-field></field>
+                                <field name="edit"><default-field><link url="//apps/dashboards/Definition" text="Edit playlist" parameter-map="{definitionId:id}"/></default-field></field>
+                                <columns type="mobile">
+                                    <column><field-ref name="title"/></column>
+                                    <column><field-ref name="open"/><field-ref name="edit"/></column>
+                                </columns>
+                            </form-list>
+                        </widgets><fail-widgets>
+                            <label text="No dashboard playlists yet. Create one to rotate through dashboards in a chosen order." type="p"/>
+                        </fail-widgets></section>
+                    </box-body>
+                </container-box>
+            </row-col>
+            <row-col xs="12" md="5">
+                <container-box>
+                    <box-header title="Schedule a report"/>
+                    <box-body>
+                        <form-single name="CreateReportSchedule" transition="createSchedule">
+                            <field name="definitionId"><default-field title="Dashboard / report"><drop-down><list-options list="reportDefinitions" key="${id}" text="${title}"/></drop-down></default-field></field>
+                            <field name="cronExpression"><default-field title="Cron schedule"><text-line default-value="0 0 7 * * ?"/></default-field></field>
+                            <field name="renderMode"><default-field title="Format"><drop-down><option key="pdf" text="PDF"/><option key="png" text="PNG"/><option key="csv" text="CSV"/><option key="xlsx" text="Excel"/></drop-down></default-field></field>
+                            <field name="delivery"><default-field title="Delivery"><drop-down><option key="file" text="Save to file"/><option key="email" text="Email"/><option key="both" text="Email and file"/></drop-down></default-field></field>
+                            <field name="emailTemplateId"><default-field title="Email template"><text-line default-value="DASHBOARD_REPORT"/></default-field></field>
+                            <field name="userId"><default-field title="Recipient user"><text-line/></default-field></field>
+                            <field name="userGroupId"><default-field title="Recipient group"><text-line/></default-field></field>
+                            <field name="saveToLocation"><default-field title="Save to location"><text-line size="70"/></default-field></field>
+                            <field name="create"><default-field><submit text="Schedule report"/></default-field></field>
+                            <field-layout>
+                                <field-group title="Report and schedule">
+                                    <field-ref name="definitionId"/>
+                                    <field-row><field-ref name="cronExpression"/><field-ref name="renderMode"/></field-row>
+                                    <field-ref name="delivery"/>
+                                </field-group>
+                                <field-group title="File delivery (when selected)">
+                                    <field-ref name="saveToLocation"/>
+                                </field-group>
+                                <field-group title="Email delivery (when selected)">
+                                    <field-ref name="emailTemplateId"/>
+                                    <field-row><field-ref name="userId"/><field-ref name="userGroupId"/></field-row>
+                                </field-group>
+                                <field-row-big><field-ref name="create"/></field-row-big>
+                            </field-layout>
+                        </form-single>
+                    </box-body>
+                </container-box>
+            </row-col>
+        </container-row>
+        <container-box>
+            <box-header title="Scheduled reports"/>
+            <box-body>
+                <section name="SavedReportSchedules" condition="schedules.length"><widgets>
+                    <form-list name="ReportSchedules" list="schedules" skip-form="true">
+                        <field name="screenScheduledId"><default-field title="Schedule"><display/></default-field></field>
+                        <field name="definitionId"><default-field title="Report"><display/></default-field></field>
+                        <field name="cronExpression"><default-field title="Cron schedule"><display/></default-field></field>
+                        <field name="renderMode"><default-field title="Format"><display/></default-field></field>
+                        <field name="paused"><default-field title="Status"><display text="${(String(paused) === 'Y' || String(paused) === 'true') ? 'Paused' : 'Active'}"/></default-field></field>
+                        <field name="send"><default-field title="Run report"><link url="send" text="Run now" link-type="hidden-form-link" confirmation="Run report ${definitionId} now using this schedule's saved delivery settings?" parameter-map="{screenScheduledId:screenScheduledId}"/></default-field></field>
+                        <field name="pause"><default-field title="Change status"><link url="pause" text="${(String(paused) === 'Y' || String(paused) === 'true') ? 'Resume' : 'Pause'}" link-type="hidden-form-link" parameter-map="{screenScheduledId:screenScheduledId,paused:paused}"/></default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="screenScheduledId"/><field-ref name="definitionId"/><field-ref name="cronExpression"/><field-ref name="renderMode"/><field-ref name="paused"/></column>
+                            <column><field-ref name="send"/><field-ref name="pause"/></column>
+                        </columns>
+                    </form-list>
+                </widgets><fail-widgets>
+                    <label text="No report schedules yet. Choose a dashboard or report and its delivery settings above." type="p"/>
+                </fail-widgets></section>
+            </box-body>
+        </container-box>
+        <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[</div>]]></text>
+            <text type="tui" template="false">[]</text></render-mode>
     </widgets>
 </screen>

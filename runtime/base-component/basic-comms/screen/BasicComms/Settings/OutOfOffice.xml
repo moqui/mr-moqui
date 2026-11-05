@@ -27,10 +27,28 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="emailAccountId"/>
 
     <transition name="storeReply">
-        <service-call name="org.moqui.comms.MailSettingsServices.store#OutOfOffice" out-map="storeOut" in-map="{emailAccountId:emailAccountId, enabled:(enabled == 'Y' ? 'Y' : 'N'),
-                fromDate:(fromDate || null), thruDate:(thruDate || null), subject:subject, bodyHtml:bodyHtml, internalBodyHtml:internalBodyHtml,
-                replyOncePerDays:replyOncePerDays, replyAudienceEnumId:(replyAudienceEnumId || null), internalDomains:internalDomains, applyToAll:applyToAll}"/>
-        <actions><if condition="!ec.message.hasError()"><message type="success">${enabled == 'Y' ? (storeOut.storedCount &gt; 1 ? 'Automatic reply saved on ' + storeOut.storedCount + ' accounts' : 'Automatic reply saved') : 'Automatic reply off'}</message></if></actions>
+        <actions>
+            <script><![CDATA[
+                // TUI rich-text fields are read-only and omitted from its submit. An explicit empty value still clears.
+                const posted = ec.web.requestParameters || {}
+                const hasBody = Object.prototype.hasOwnProperty.call(posted, 'bodyHtml')
+                const hasInternalBody = Object.prototype.hasOwnProperty.call(posted, 'internalBodyHtml')
+                if (!hasBody || !hasInternalBody) {
+                    const current = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailOutOfOffice')
+                        .parameter('emailAccountId', emailAccountId).call()
+                    if (!ec.message.hasError()) {
+                        if (!hasBody) bodyHtml = current?.outOfOffice?.bodyHtml ?? null
+                        if (!hasInternalBody) internalBodyHtml = current?.outOfOffice?.internalBodyHtml ?? null
+                    }
+                }
+            ]]></script>
+            <if condition="!ec.message.hasError()">
+                <service-call name="org.moqui.comms.MailSettingsServices.store#OutOfOffice" out-map="storeOut" in-map="{emailAccountId:emailAccountId, enabled:(enabled == 'Y' ? 'Y' : 'N'),
+                        fromDate:(fromDate || null), thruDate:(thruDate || null), subject:subject, bodyHtml:bodyHtml, internalBodyHtml:internalBodyHtml,
+                        replyOncePerDays:replyOncePerDays, replyAudienceEnumId:(replyAudienceEnumId || null), internalDomains:internalDomains, applyToAll:applyToAll}"/>
+                <if condition="!ec.message.hasError()"><message type="success">${enabled == 'Y' ? (storeOut.storedCount &gt; 1 ? 'Automatic reply saved on ' + storeOut.storedCount + ' accounts' : 'Automatic reply saved') : 'Automatic reply off'}</message></if>
+            </if>
+        </actions>
         <default-response url="."><parameter name="emailAccountId"/></default-response>
         <error-response url="."/>
     </transition>

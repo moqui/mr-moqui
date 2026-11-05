@@ -680,13 +680,15 @@ const WIDGETS_JSON: &str = r#"{
     { "t": "field", "id": "W.when", "name": "when", "title": "When",
       "w": { "kind": "dateTime", "type": "date", "format": "yyyy-MM-dd", "value": "2026-10-20" } },
     { "t": "field", "id": "W.flag", "name": "flag", "title": "Flag",
-      "w": { "kind": "check", "value": "", "options": [{ "value": "Y", "label": "Yes" }] } },
+      "w": { "kind": "check", "value": "N", "options": [{ "value": "Y", "label": "Yes" }] } },
     { "t": "field", "id": "W.size", "name": "size", "title": "Size",
       "w": { "kind": "radio", "value": "S", "options": [{ "value": "S", "label": "Small" }, { "value": "L", "label": "Large" }] } },
     { "t": "field", "id": "W.extra", "name": "extra", "title": "Extra", "visibleWhen": { "field": "flag", "value": "Y" },
       "w": { "kind": "textLine", "value": "" } },
     { "t": "field", "id": "W.count", "name": "count", "title": "Count", "rules": [{ "kind": "integer", "message": "Whole number" }],
       "w": { "kind": "textLine", "value": "" } },
+    { "t": "field", "id": "W.html", "name": "html", "title": "HTML body",
+      "w": { "kind": "textArea", "value": "<p>Keep <strong>HTML</strong></p>", "editorType": "rich", "readOnly": true } },
     { "t": "field", "id": "W.go", "name": "go", "title": "Go", "w": { "kind": "submit", "text": "Go", "confirm": "Really?" } }
   ]}]
 }"#;
@@ -695,6 +697,8 @@ const WIDGETS_JSON: &str = r#"{
 fn dates_checks_radios_rules_and_visible_when() {
     let link = FakeLink::from_json(&[WIDGETS_JSON]).unwrap();
     let mut session = Session::new(ScreenModel::from_json(WIDGETS_JSON).unwrap());
+    assert_eq!(session.buffer("W.html"), "<p>Keep <strong>HTML</strong></p>");
+    assert!(!session.focus_order().iter().any(|item| item.key == "W.html"));
     // F4 opens the picker on the field's date; Right is the next day.
     press(&mut session, &link, Key::F(4));
     assert!(matches!(session.top_overlay(), Some(Overlay::Picker(_))));
@@ -707,6 +711,12 @@ fn dates_checks_radios_rules_and_visible_when() {
     assert!(!session.focus_order().iter().any(|item| item.key == "W.extra"));
     press(&mut session, &link, Key::Tab);
     assert_eq!(session.focus_id(), "W.flag");
+    assert_eq!(session.buffer("W.flag"), "N");
+    press(&mut session, &link, Key::Char(' '));
+    assert_eq!(session.buffer("W.flag"), "Y");
+    assert!(session.dropdown().is_none());
+    press(&mut session, &link, Key::Char(' '));
+    assert_eq!(session.buffer("W.flag"), "");
     press(&mut session, &link, Key::Char(' '));
     assert_eq!(session.buffer("W.flag"), "Y");
     assert!(session.focus_order().iter().any(|item| item.key == "W.extra"));
@@ -731,6 +741,11 @@ fn dates_checks_radios_rules_and_visible_when() {
     assert_eq!(posted[0].1.get("when").map(String::as_str), Some("2026-10-22"));
     assert_eq!(posted[0].1.get("flag").map(String::as_str), Some("Y"));
     assert_eq!(posted[0].1.get("size").map(String::as_str), Some("L"));
+    assert!(
+        !posted[0].1.contains_key("html"),
+        "read-only rich text is omitted, not posted as empty HTML"
+    );
+    assert_eq!(session.buffer("W.html"), "<p>Keep <strong>HTML</strong></p>");
 }
 
 #[test]

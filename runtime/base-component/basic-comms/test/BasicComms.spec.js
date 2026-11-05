@@ -387,6 +387,37 @@ feature("out of office retains user-zone date strings and supplies instants to t
             assert.equal(cleared.replyTimestamps.fromDate, null)
             assert.equal(cleared.replyTimestamps.thruDate, null)
             checkFormDates(cleared)
+            // TUI can edit dates and subject, but deliberately omits the read-only HTML fields. Exercise the actual
+            // transition's preparation with real services; the one QVT template/actions render above remains enough.
+            const prepare = /<transition name="storeReply">[\s\S]*?<script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/.exec(source)[1]
+            const parameters = {emailAccountId, enabled:"N", fromDate:"2026-11-08 09:00", thruDate:"2026-11-09 09:00",
+                subject:"Read-only body fixture", replyOncePerDays:"4"}
+            assert.equal(settings("store#OutOfOffice", Object.assign({}, parameters, {
+                bodyHtml:"<p>Keep <strong>outside</strong> &amp; markup</p>", internalBodyHtml:"<p>Keep inside</p>"
+            })).storedCount, 1)
+            const original = settings("get#OutOfOfficeSettings", {emailAccountId})
+            const prepareAndSave = supplied => {
+                const state = {ec:{web:{requestParameters:supplied},service:ec.service,message:ec.message}, emailAccountId,
+                    bodyHtml:supplied.bodyHtml ?? null, internalBodyHtml:supplied.internalBodyHtml ?? null}
+                sys(() => runInContext(prepare, state))
+                assert.equal(ec.message.hasError(), false)
+                assert.equal(settings("store#OutOfOffice", Object.assign({}, parameters, supplied, {
+                    bodyHtml:state.bodyHtml, internalBodyHtml:state.internalBodyHtml
+                })).storedCount, 1)
+                return settings("get#OutOfOfficeSettings", {emailAccountId})
+            }
+            const retained = prepareAndSave({subject:"Subject changed from terminal"})
+            assert.equal(retained.reply.bodyHtml, original.reply.bodyHtml)
+            assert.equal(retained.reply.internalBodyHtml, original.reply.internalBodyHtml)
+            assert.equal(retained.reply.subject, "Subject changed from terminal")
+            assert.equal(retained.replyTimestamps.fromDate, Date.UTC(2026,10,8,15))
+            assert.equal(retained.replyTimestamps.thruDate, Date.UTC(2026,10,9,15))
+            const oneCleared = prepareAndSave({bodyHtml:""})
+            assert.equal(oneCleared.reply.bodyHtml, "", "explicit empty body still clears")
+            assert.equal(oneCleared.reply.internalBodyHtml, original.reply.internalBodyHtml, "omitted internal HTML stays unchanged")
+            const bothCleared = prepareAndSave({bodyHtml:"",internalBodyHtml:""})
+            assert.equal(bothCleared.reply.bodyHtml, "")
+            assert.equal(bothCleared.reply.internalBodyHtml, "")
         } finally { ec.message.clearErrors(); ec.user.internalLoginUser(previousUser) }
     }
 })

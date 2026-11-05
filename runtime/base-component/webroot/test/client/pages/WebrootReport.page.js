@@ -202,16 +202,81 @@ test("panel export keeps exact range and variables and decodes server XLSX bytes
         assert.deepEqual(Array.from(new Uint8Array(await blob.arrayBuffer())),[80,75,3,4]);assert.equal(download,'latency.xlsx');
     } finally {app.unmount();target.remove();window.fetch=previousFetch;URL.createObjectURL=previousCreate;URL.revokeObjectURL=previousRevoke;HTMLAnchorElement.prototype.click=previousClick;}
 });
-test("playlist controls move between accessible dashboards and pause rotation", async () => {
+test("playlist controls render authorized frames and reject stale or changed selections", async () => {
     const target=document.createElement('div');document.body.appendChild(target);
-    const app=Vue.createApp(moqui.qvtComponents['m-report-playlist'],{items:[{title:'First',url:'/first'},{title:'Second',url:'/second'}],seconds:3600});
-    const playlist=app.mount(target);
-    assert.equal(target.querySelector('iframe').title,'First');
-    Array.from(target.querySelectorAll('button')).find(button=>button.textContent==='Next').click();await Vue.nextTick();
-    assert.equal(target.querySelector('iframe').title,'Second');
-    Array.from(target.querySelectorAll('button')).find(button=>button.textContent==='Pause').click();await Vue.nextTick();
-    assert.equal(playlist.paused,true);
-    app.unmount();target.remove();
+    const previousRequest=moqui.request,previousInterval=window.setInterval,previousFetch=window.fetch,pending=[],inspected=[];let rotate;
+    moqui.request=(url,options)=>new Promise((resolve,reject)=>pending.push({url,options,resolve,reject}));
+    window.setInterval=(callback,ms)=>{if(ms===3600000)rotate=callback;return previousInterval(callback,ms);};
+    const app=Vue.createApp(moqui.qvtComponents['m-report-playlist'],{
+        source:'/apps/dashboards/Playlist/data?definitionId=fixture-playlist&from=now-1h&thru=now',
+        items:[{index:0,title:'First',url:'/apps/dashboards/Dashboard?definitionId=first&from=now-1h&thru=now&kiosk=true'},
+            {index:2,title:'Second',url:'/apps/dashboards/Dashboard?definitionId=second&from=now-1h&thru=now&kiosk=true'}],seconds:3600});
+    const button=text=>Array.from(target.querySelectorAll('button')).find(item=>item.textContent===text);
+    const answer=(title,value)=>({json:{dashboard:{definitionId:title.toLowerCase(),panels:{total:{title:title+' panel',visualization:'table'}}},
+        frames:{total:[{fields:[{name:'count',type:'number',values:[value]}]}]}}});
+    const settled=async()=>{await Promise.resolve();await Vue.nextTick();};
+    let unmounted=false;
+    try {
+        const playlist=app.mount(target);await Vue.nextTick();
+        assert.equal(target.querySelector('iframe'),null);
+        assert.equal(target.querySelector('[role="status"]').textContent,'Loading First…');
+        assert.equal(new URL(pending[0].url).searchParams.get('definitionId'),'fixture-playlist');
+        assert.equal(new URL(pending[0].url).pathname,'/apps/dashboards/Playlist/data','data requests retain the transition mount');
+        assert.equal(new URL(pending[0].url).searchParams.get('from'),'now-1h');
+        assert.equal(button('Next').tagName,'BUTTON');assert.equal(button('Next').tabIndex,0);
+        assert.equal(button('Next').getAttribute('aria-label'),'Next dashboard');
+        button('Next').focus();button('Next').click();await Vue.nextTick();
+        assert.equal(pending[0].options.signal.aborted,true);
+        assert.equal(new URL(pending[1].url).searchParams.get('index'),'2','filtered entries keep the original index');
+        assert.equal(target.querySelector('[aria-label="Dashboard 2 of 2"]').textContent,'2 / 2');
+        pending[1].resolve(answer('Second',22));await settled();
+        assert.equal(target.querySelector('.m-report-embed').textContent.includes('Second panel'),true);
+        assert.equal(target.querySelector('.m-report-embed').textContent.includes('22'),true);
+        assert.equal(playlist.dashboard.screenUrl,'/apps/dashboards/Dashboard');
+        assert.equal(playlist.dashboard.embedded,true);assert.equal(playlist.dashboard.kiosk,false);
+        assert.equal(document.activeElement,button('Next'),'data loading leaves keyboard focus on the control');
+        window.fetch=async(url)=>{inspected.push(new URL(url,location.href));return {ok:true,json:async()=>({inspection:[],frames:[],requests:[],notices:[]})};};
+        target.querySelector('button[aria-label="Inspect Second panel"]').click();await settled();await settled();
+        assert.equal(inspected.length,1);
+        assert.equal(inspected[0].pathname,'/apps/dashboards/Dashboard/inspectPanel','embedded inspection uses the server transition mount');
+        assert.equal(inspected[0].searchParams.get('definitionId'),'second');
+        assert.equal(inspected[0].searchParams.get('panelId'),'total');
+        window.fetch=previousFetch;
+        pending[0].resolve(answer('First',11));await settled();
+        assert.equal(target.querySelector('.m-report-embed').textContent.includes('First panel'),false);
+        assert.equal(playlist.dashboard.definitionId,'second');
+        button('Pause').click();await Vue.nextTick();
+        assert.equal(button('Resume').getAttribute('aria-pressed'),'true');rotate();await Vue.nextTick();
+        assert.equal(playlist.at,1);assert.equal(pending.length,2);
+        button('Previous').click();await Vue.nextTick();
+        assert.equal(target.querySelector('[aria-label="Dashboard 1 of 2"]').textContent,'1 / 2');
+        pending[2].reject({status:403});await settled();
+        assert.equal(target.querySelector('[role="alert"]').textContent,'Could not load this dashboard. Retry or open it directly.');
+        assert.equal(target.querySelector('.m-report-embed'),null);assert.equal(playlist.paused,true);
+        assert.equal(target.querySelector('a').textContent,'First');
+        button('Retry').click();await Vue.nextTick();pending[3].resolve(answer('First',33));await settled();
+        assert.equal(target.querySelector('[role="alert"]'),null);
+        assert.equal(target.querySelector('.m-report-embed').textContent.includes('33'),true);
+        // Native buttons keep their normal Tab/Enter behavior; no page-level keyboard handler is installed by the embed.
+        assert.equal(playlist.$el.querySelector('.m-report-embed').style.position,'');
+        // The server resolves the current saved index; its definition may change while this page still lists the old entry.
+        const reload=playlist.load();await Vue.nextTick();
+        pending[4].resolve(answer('Second',99));await reload;await Vue.nextTick();
+        assert.equal(playlist.dashboard,null);assert.deepEqual(playlist.frames,{});assert.equal(playlist.paused,true);
+        assert.equal(target.querySelector('.m-report-embed'),null);
+        assert.equal(target.textContent.includes('Second panel'),false,'a changed playlist never shows another dashboard under the selected title');
+        assert.equal(target.querySelector('[role="alert"]').textContent,'This playlist has changed. Reload the playlist to continue, or open the selected dashboard directly.');
+        assert.ok(button('Reload playlist'));assert.equal(button('Retry'),undefined);
+        assert.equal(target.querySelector('[aria-label="Dashboard 1 of 2"]').textContent,'1 / 2');
+        const direct=target.querySelector('a');
+        assert.equal(direct.textContent,'First');assert.equal(new URL(direct.href).searchParams.get('definitionId'),'first');
+        button('Resume').click();await Vue.nextTick();
+        // Use the same move action as the timer, independently of the test tab's visibility state.
+        playlist.move(1);await Vue.nextTick();const last=pending[pending.length-1];
+        app.unmount();unmounted=true;assert.equal(last.options.signal.aborted,true);
+        last.resolve(answer('Second',44));await settled();
+        assert.equal(target.textContent,'');
+    } finally {if(!unmounted)app.unmount();target.remove();moqui.request=previousRequest;window.setInterval=previousInterval;window.fetch=previousFetch;}
 });
 test("structural pills retain typed values, negation, disable, labels and user-scoped pins", async () => {
     const target=document.createElement('div');document.body.appendChild(target);
@@ -424,6 +489,9 @@ test('bucket clicks use exact server predicates for normal Missing and Other row
     assert.deepEqual(clicks[0].query,filters[1]);assert.equal(clicks[0].negated,false);assert.deepEqual(clicks[1].query,filters[2]);assert.equal(clicks[1].negated,true);assert.equal(report.bucketPill(frame,{},0,0,false).query.field.value,'(Missing)');
     const url=new URL(report.filterUrl(clicks[0],{dashboardId:'sales',filters:[],range:{from:'2026-01-01T00:00:00Z',thru:'2026-01-02T00:00:00Z'}},'https://example.test/apps/dashboards/Dashboard?definitionId=sales&cursor=old'));
     assert.equal(url.searchParams.has('cursor'),false);assert.equal(JSON.parse(url.searchParams.get('filtersJson'))[0].datasetId,'orders');assert.equal(url.searchParams.get('from'),'2026-01-01T00:00:00Z');
+    const monitor=new URL(report.filterUrl(clicks[0],{dashboardId:'monitor-services',filters:[]},'https://example.test/qapps/monitor/Services?serviceName=fixture'));
+    assert.equal(monitor.pathname,'/qapps/monitor/Services');assert.equal(monitor.searchParams.get('serviceName'),'fixture');
+    assert.deepEqual(JSON.parse(monitor.searchParams.get('filtersJson'))[0].query,filters[1]);
 });
 test('sorting table rows retains the original bucket predicate when clicking values',async()=>{
     const target=document.createElement('div');document.body.appendChild(target);const clicks=[];
@@ -607,16 +675,26 @@ test('the dashboard toolbar time picker sends the range to the URL and an embed 
     } finally {app.unmount();target.remove();report.navigate=navigate;}
     const embedTarget=document.createElement('div');document.body.appendChild(embedTarget);
     const embed=Vue.createApp(moqui.qvtComponents['m-dashboard'],{dashboard:{definitionId:'sales',title:'Sales',embedded:true,editable:true,requestedTime:{from:'now-7d',thru:'now'},absoluteTime:{from:'2026-01-01T00:00:00Z',thru:'2026-01-08T00:00:00Z'},
-        panels:{orders:{title:'Orders',visualization:'table',queries:[{datasetId:'orders'}],notices:[{level:'error',message:'Query failed'}]}}},frames:{orders:[{fields:[{name:'count',type:'number',values:[3]}]}]}});
+        panels:{orders:{title:'Orders',visualization:'table',queries:[{datasetId:'orders'}],notices:[{level:'error',message:'Query failed'}]}}},frames:{orders:[{fields:[
+            {name:'region',type:'string',values:['EU'],config:{bucket:{datasetId:'orders',filters:[{field:{name:'region',op:'eq',value:'EU'}}]}}},
+            {name:'count',type:'number',values:[3]}]}]}});
+    report.navigate=href=>visited.push(href);
     try {
         const dashboard=embed.mount(embedTarget);await Vue.nextTick();
         assert.equal(dashboard.onKey,undefined);assert.equal(embedTarget.textContent.includes('Kiosk (Alt+K)'),false);
         const open=Array.from(embedTarget.querySelectorAll('a')).find(a=>a.textContent==='Open in Dashboards');assert.equal(new URL(open.href).searchParams.get('definitionId'),'sales');assert.equal(new URL(open.href).searchParams.get('from'),'2026-01-01T00:00:00Z');
         assert.equal(embedTarget.textContent.includes('Orders: Query failed'),true);assert.equal(embedTarget.textContent.includes('Last 7 days'),true);
+        embedTarget.querySelector('tbody button').click();await Vue.nextTick();
+        const filtered=new URL(visited[visited.length-1]);
+        assert.equal(filtered.pathname,report.appRoot()+'/dashboards/Dashboard');
+        assert.equal(filtered.searchParams.get('definitionId'),'sales');
+        assert.equal(filtered.searchParams.get('from'),'2026-01-01T00:00:00Z');
+        assert.equal(filtered.searchParams.get('thru'),'2026-01-08T00:00:00Z');
+        assert.deepEqual(JSON.parse(filtered.searchParams.get('filtersJson'))[0].query,{field:{name:'region',op:'eq',value:'EU'}});
         embedTarget.querySelector('button[aria-label="Panel menu for Orders"]').click();await Vue.nextTick();
         const items=Array.from(embedTarget.querySelectorAll('[role="menuitem"]')).map(node=>node.textContent);
         assert.deepEqual(items,['Open in Dashboards','Edit','Share','Explore','Inspect']);
-    } finally {embed.unmount();embedTarget.remove();}
+    } finally {embed.unmount();embedTarget.remove();report.navigate=navigate;}
 });
 test('the panel menu views, edits, shares, explores, duplicates and removes a panel',async()=>{
     const target=document.createElement('div');document.body.appendChild(target);

@@ -407,7 +407,10 @@ fn a_long_text_area_scrolls_with_its_cursor() {
         r#"{{ "v": 1, "screen": {{ "path": "/note", "title": "Note" }}, "c": [
         {{ "t": "form", "id": "Note", "name": "Note", "transitionUrl": "/note/save", "c": [
           {{ "t": "field", "id": "Note.body", "name": "body", "title": "Body",
-            "w": {{ "kind": "textArea", "value": {}, "rows": 5, "editorType": "md" }} }} ] }} ] }}"#,
+            "w": {{ "kind": "textArea", "value": {}, "rows": 5, "editorType": "md" }} }},
+          {{ "t": "field", "id": "Note.html", "name": "html", "title": "HTML body",
+            "w": {{ "kind": "textArea", "value": "<p>Keep this HTML</p>", "editorType": "html", "readOnly": true }} }}
+        ] }} ] }}"#,
         serde_json::to_string(&body.join("\n")).unwrap()
     );
     let link = FakeLink::from_json(&[json.as_str()]).unwrap();
@@ -421,6 +424,17 @@ fn a_long_text_area_scrolls_with_its_cursor() {
         "{text}"
     );
     assert!(text.contains("▲"), "{text}");
+    assert!(text.contains("<p>Keep this HTML</p>"), "{text}");
+    assert!(
+        text.contains("HTML is read-only in the terminal. Use the browser form."),
+        "{text}"
+    );
+    assert_eq!(text.matches("HTML is read-only").count(), 1, "{text}");
+    assert!(
+        !view.session_mut().focus_key("Note.html"),
+        "read-only HTML has no edit target"
+    );
+    assert_eq!(view.session().buffer("Note.html"), "<p>Keep this HTML</p>");
     press(&mut view, Key::PageUp);
     let text = view.screen_text(100, 30);
     assert!(text.contains("line 21") && !text.contains("line 26"), "{text}");
@@ -437,4 +451,11 @@ fn a_long_text_area_scrolls_with_its_cursor() {
     press(&mut view, Key::PageDown);
     let text = view.screen_text(100, 30);
     assert!(text.contains("line 06") && text.contains("▲"), "{text}");
+    let narrow = view.screen_text(40, 30);
+    let words = narrow.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        words.contains("HTML is read-only in the terminal. Use the browser form."),
+        "{narrow}"
+    );
+    assert_eq!(view.session().buffer("Note.html"), "<p>Keep this HTML</p>");
 }

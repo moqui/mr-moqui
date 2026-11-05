@@ -1250,19 +1250,68 @@
         }
     };
     components["m-report-playlist"] = {
-        props: { items: {type:Array,default:()=>[]}, seconds: {type:Number,default:30} },
-        data: () => ({ at:0, paused:false, timer:null }),
-        mounted() { this.timer=root.setInterval(()=>{ if (!this.paused && !root.document.hidden && this.items.length) this.at=(this.at+1)%this.items.length; }, Math.max(5,this.seconds)*1000); },
-        beforeUnmount() { if (this.timer) root.clearInterval(this.timer); },
+        props: { source: String, items: {type:Array,default:()=>[]}, seconds: {type:Number,default:30} },
+        data: () => ({ at:0, paused:false, timer:null, loading:false, error:"", changed:false, dashboard:null, frames:{}, requestId:0, controller:null }),
+        computed: { selected() { return this.items[this.at]; } },
+        watch: { selected:"load", source:"load" },
+        mounted() {
+            this.load();
+            this.timer=root.setInterval(()=>{ if (!this.paused && !this.loading && !root.document.hidden) this.move(1); }, Math.max(5,this.seconds)*1000);
+        },
+        beforeUnmount() { root.clearInterval(this.timer); this.requestId++; if (this.controller) this.controller.abort(); },
+        methods: {
+            move(delta) { if (this.items.length) this.at=(this.at+this.items.length+delta)%this.items.length; },
+            async load() {
+                const requestId=++this.requestId,item=this.selected;
+                if (this.controller) this.controller.abort();
+                this.controller=null;this.dashboard=null;this.frames={};this.error="";this.changed=false;this.loading=!!item;
+                if (!item) return;
+                try {
+                    if (!this.source) throw new Error("Playlist data source is unavailable");
+                    // This is a JSON transition URL; only navigation links use the browser shell's /qapps mount.
+                    const url=new root.URL(this.source,root.location.href);
+                    if (url.origin!==root.location.origin) throw new Error("Playlist data source must be same-origin");
+                    // Entries may omit an inaccessible dashboard. Keep its original playlist index for the authorized transition.
+                    url.searchParams.set("index",String(item.index == null ? this.at : item.index));
+                    this.controller=new root.AbortController();
+                    const result=await moqui.request(url.href,{signal:this.controller.signal});
+                    if (requestId!==this.requestId) return;
+                    const json=result.json;
+                    if (!json || json.errors || json.error || !json.dashboard) throw new Error("Playlist dashboard is unavailable");
+                    // The owning screen URL is also used for JSON inspect/export transitions; retain its server mount.
+                    const link=new root.URL(item.url,root.location.href);
+                    // The saved playlist may have been reordered since this page loaded. Never mislabel another dashboard's frames.
+                    const expectedId=link.searchParams.get("definitionId");
+                    if (!expectedId || json.dashboard.definitionId!==expectedId) {
+                        this.changed=true;this.paused=true;
+                        this.error=T("This playlist has changed. Reload the playlist to continue, or open the selected dashboard directly.");
+                        return;
+                    }
+                    // Reuse the in-page embed; the application's frame-ancestors policy continues to prohibit iframe embedding.
+                    this.dashboard=Object.assign({},json.dashboard,{embedded:true,kiosk:false,refreshSeconds:0,title:item.title,
+                        screenUrl:link.pathname,requestedTime:{from:link.searchParams.get("from") || "now-7d",thru:link.searchParams.get("thru") || "now"}});
+                    this.frames=json.frames || {};
+                } catch (error) {
+                    if (requestId===this.requestId) {
+                        this.error=T("Could not load this dashboard. Retry or open it directly.");
+                        this.paused=true;
+                    }
+                } finally { if (requestId===this.requestId) { this.loading=false;this.controller=null; } }
+            }
+        },
         render() {
-            const h=reportElement,item=this.items[this.at];
-            if (!item) return h("p",{role:"status"},"No accessible dashboards in this playlist.");
+            const h=reportElement,item=this.selected;
+            if (!item) return h("p",{role:"status"},T("No accessible dashboards in this playlist."));
             return h("section",[h("div",{class:"row items-center q-gutter-sm"},[
-                h("button",{type:"button",onClick:()=>{this.at=(this.at+this.items.length-1)%this.items.length;}},"Previous"),
-                h("button",{type:"button",onClick:()=>{this.paused=!this.paused;}},this.paused?"Resume":"Pause"),
-                h("button",{type:"button",onClick:()=>{this.at=(this.at+1)%this.items.length;}},"Next"),
-                h("a",{href:report.safeLink(report.appPath(item.url))},item.title),h("span",(this.at+1)+" / "+this.items.length)]),
-                h("iframe",{key:this.at,src:report.safeLink(report.appPath(item.url)),title:item.title,style:{width:"100%",height:"80vh",border:0},referrerpolicy:"same-origin"})]);
+                h("button",{type:"button","aria-label":T("Previous dashboard"),onClick:()=>this.move(-1)},T("Previous")),
+                h("button",{type:"button","aria-pressed":this.paused,onClick:()=>{this.paused=!this.paused;}},this.paused?T("Resume"):T("Pause")),
+                h("button",{type:"button","aria-label":T("Next dashboard"),onClick:()=>this.move(1)},T("Next")),
+                h("a",{href:report.safeLink(report.appPath(item.url))},item.title),h("span",{"aria-label":T("Dashboard {0} of {1}",this.at+1,this.items.length)},(this.at+1)+" / "+this.items.length)]),
+                this.loading ? h("p",{role:"status"},T("Loading {0}…",item.title)) : null,
+                this.error ? h("div",[h("p",{role:"alert"},this.error),this.changed
+                    ? h("button",{type:"button",onClick:()=>root.location.reload()},T("Reload playlist"))
+                    : h("button",{type:"button",onClick:this.load},T("Retry"))]) : null,
+                this.dashboard ? h(components["m-dashboard"],{key:this.at,dashboard:this.dashboard,frames:this.frames}) : null]);
         }
     };
     components["m-report-panel"] = {
@@ -1562,7 +1611,12 @@
         methods: {
             allPanels(){root.location.assign(report.allPanelsUrl());},
             applyFilters(pills){const url=new root.URL(root.location.href);url.searchParams.set('filtersJson',JSON.stringify(pills));url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');root.location.assign(url.href);},
-            addFilter(pill){root.location.assign(report.filterUrl(pill,{dashboardId:this.dashboard.definitionId,filters:this.dashboard.filters,range:this.dashboard.absoluteTime}));},
+            addFilter(pill){
+                // An embed belongs to another page (including Playlist); apply its filter in the owning dashboard.
+                const href=this.dashboard.embedded?new root.URL(this.openUrl(),root.location.href).href:undefined;
+                const url=report.filterUrl(pill,{dashboardId:this.dashboard.definitionId,filters:this.dashboard.filters,range:this.dashboard.absoluteTime},href);
+                if(this.dashboard.embedded)report.navigate(url);else root.location.assign(url);
+            },
             timeRange(range) {const url=new root.URL(root.location.href);url.searchParams.set('from',range.from);url.searchParams.set('thru',range.thru);url.searchParams.delete('cursor');url.searchParams.delete('pageIndex');report.navigate(url.href);},
             setRefresh() {
                 root.clearInterval(this.timer);

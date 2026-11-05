@@ -311,7 +311,8 @@ $w("]");
         const $options = [];
         const $map = sri.getFieldOptions(${S.nodeLit(widget, true)});
         if ($map && $map.forEach) $map.forEach(($label, $key) => $options.push({value:String($key),label:String($label == null ? "" : $label)}));
-        if ($value && !$options.some(($opt) => $opt.value === $value)) $options.push({value:$value,label:${attr(widget, "current-description") ? `ec.resource.expand(${jsString(attr(widget, "current-description"))}, "") || $value` : "$value"}});
+        // Checks offer declared options only: a saved N means unchecked, not an additional checkbox.
+        if (${kind !== "check"} && $value && !$options.some(($opt) => $opt.value === $value)) $options.push({value:$value,label:${attr(widget, "current-description") ? `ec.resource.expand(${jsString(attr(widget, "current-description"))}, "") || $value` : "$value"}});
         return {kind:${jsString(kind)},value:$value,options:$options};
     })()`;
     // As qvt's remote(): the URL without its query, its fixed parameters, and {parameter: field} for depends-on.

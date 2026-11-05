@@ -408,15 +408,18 @@ pub struct LaidField {
     pub value_width: usize,
     /// Rows of the value: a text area's rows, else 1.
     pub rows: usize,
+    /// Wrapped guidance below the value; it is not an editable part of the field.
+    pub hint: Vec<String>,
 }
 
 impl LaidField {
-    /// Rows: the label's above, and the value's.
+    /// Rows: the label's above, the value's, and its guidance.
     pub fn height(&self) -> usize {
-        match self.mode {
+        let value = match self.mode {
             LabelMode::Above => 1 + self.rows,
             LabelMode::Beside => self.rows,
-        }
+        };
+        value + self.hint.len()
     }
 }
 
@@ -1401,10 +1404,17 @@ fn collect_form(
                 _ => lines.push(FormLine::Field(lay_field(id, title, w, ctx.mode, label_width, width))),
             },
             Node::Row { c, .. } => {
-                let fields: Vec<&Node> = c.iter().filter(|n| matches!(n, Node::Field { .. })).collect();
+                let fields: Vec<&Node> = c
+                    .iter()
+                    .filter(|n| matches!(n, Node::Field { w, .. } if !matches!(w, Widget::Hidden { .. })))
+                    .collect();
                 let count = u16::try_from(fields.len().max(1)).unwrap_or(1);
                 let cell_w = width.saturating_sub(count - 1) / count;
+                // Buttons use the ordinary collector, which makes focusable buttons instead of blank value cells.
                 let fits = fields.len() > 1
+                    && fields.iter().all(|node| {
+                        matches!(node, Node::Field { w, .. } if !matches!(w, Widget::Submit { .. } | Widget::Reset { .. }))
+                    })
                     && ctx.mode == LabelMode::Beside
                     && usize::from(cell_w) >= label_width + 3 + CELL_VALUE_MIN;
                 if fits {
@@ -1481,6 +1491,16 @@ fn lay_field(id: &str, title: &str, widget: &Widget, mode: LabelMode, label_widt
         mode,
         value_width: natural.min(room),
         rows,
+        hint: match widget {
+            Widget::TextArea {
+                read_only: true,
+                editor_type,
+                ..
+            } if matches!(editor_type.as_str(), "html" | "rich" | "rich-light") => {
+                wrap("HTML is read-only in the terminal. Use the browser form.", room)
+            }
+            _ => Vec::new(),
+        },
     }
 }
 

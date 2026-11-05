@@ -215,3 +215,16 @@ Further patterns established during the review:
 - Responsive field columns specify their phone width explicitly, for example `xs="12" md="8"`; a desktop-only
   width can leave narrow cards at their intrinsic width. Inspect the real phone layout instead of inferring stacking
   from the absence of horizontal overflow.
+- Render embedded application views through authorized in-page data transitions and existing components. Keep the
+  frame policy intact; an embed must not take over its host page's shortcuts, history or refresh behavior.
+  Adapt navigation links to the current app mount, but preserve server transition URLs for JSON data, inspection
+  and export requests; the Material wrapper route returns a page, not the transition response.
+- Embedded dashboard actions target the owning dashboard, retaining its identity, displayed time range and active
+  filters. Verify drill-through, filtering and sharing from the embed as well as from the ordinary dashboard route.
+- Associate asynchronous frames with both the selected definition and the latest request. Clear previous frames
+  while loading, ignore superseded responses even when cancellation races, and offer recovery when the saved
+  selection has changed. Filtering inaccessible playlist items must preserve their original request indices.
+- Read-only terminal HTML fields are omitted from submission. Preserve an omitted value in the application's save
+  transition by reading the selected record through its authorized service; do not write if that read fails. An
+  explicitly posted empty value still clears the field. Keep this handling scoped to the unsupported fields and
+  preserve the normal semantics of dates, audience choices and apply-to-all actions.
