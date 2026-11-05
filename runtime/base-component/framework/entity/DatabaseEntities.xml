@@ -54,6 +54,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="dependsOnSeqId" type="id"/>
         <field name="statusId" type="id"/>
         <field name="backendPid" type="number-integer"/>
+        <!-- Schema and jobs: when the session backendPid names started (Postgres pg_stat_activity.backend_start as
+            text), so a cancel from another instance reaches that session and not a later one with the pid -->
+        <field name="backendStart" type="text-medium"/>
         <field name="startTime" type="date-time"/>
         <field name="endTime" type="date-time"/>
         <field name="rowsAffected" type="number-integer"/>

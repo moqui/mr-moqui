@@ -31,6 +31,11 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.StatusItem statusId="DbjsCancelled" statusTypeId="DatabaseJob" sequenceNum="5" description="Cancelled" statusColor="warning"/>
     <moqui.basic.StatusItem statusId="DbjsSkipped" statusTypeId="DatabaseJob" sequenceNum="6" description="Skipped" statusColor="warning"/>
 
+    <!-- ========== Schema and jobs: a finished job tells its user (crates/moqui-tools/src/jobs.rs) ========== -->
+    <moqui.security.user.NotificationTopic topic="DatabaseJob" inboxEnumId="NinUpdates" description="Database Job"
+            typeString="info" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
+            titleTemplate="Database job ${jobId || ''} ${statusId || ''}"/>
+
     <!-- DatabaseAudit.actionEnumId (§14.2) -->
     <moqui.basic.EnumerationType enumTypeId="DatabaseAuditAction" description="Database Audit Action"/>
     <moqui.basic.Enumeration enumId="DbaSql" enumTypeId="DatabaseAuditAction" sequenceNum="1" description="SQL"/>

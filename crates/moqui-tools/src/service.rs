@@ -34,6 +34,8 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     crate::sql_service::register(map)?;
     // ---- the data grid (plans/Tools-Database.md §9): crate::grid_service ----
     crate::grid_service::register(map)?;
+    // ---------- Schema and jobs (plans/Tools-Database.md §5, §6, §7.3, §7.4) ----------
+    crate::register_schema_and_jobs(map)?;
     Ok(())
 }
 

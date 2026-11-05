@@ -52,6 +52,272 @@ along with this software (see the LICENSE.md file). If not, see
             DatabaseAudit row.</description>
     </service>
 
+    <!-- ========== Schema and jobs (plans/Tools-Database.md §5, §6, §7.3, §7.4) ========== -->
+    <!-- crates/moqui-tools/src/{schema,jobs,tables,activity}.rs. A refusal (not authorized, no DATABASE_ADMIN, an
+        unknown group or job, bad input) is a message-facade error and no out parameters; a part that could not be read
+        (a catalog view, progress) is named in reasons with the database's error, and the rest is answered. -->
+    <service verb="compare" noun="Schema" type="rust" location="moqui_tools::schema::compare_schema" transaction="ignore">
+        <description>Compare the entity model with the database (EntityDbMeta::compare): missing tables, missing, extra
+            and differently typed columns, missing, extra and invalid indexes, missing and extra foreign keys, and on
+            Postgres foreign keys no index leads with. entityNames empty compares every entity of the group. tables lists
+            only the tables with a difference, each with entityName, groupName, tableName, missingTable, missingColumns,
+            extraColumns, columnTypes, missingIndexes (with their ddl), extraIndexes, invalidIndexes,
+            missingForeignKeys (with ddl), extraForeignKeys and unindexedForeignKeys.</description>
+        <in-parameters>
+            <parameter name="db"/>
+            <parameter name="entityNames" type="List"><parameter name="entityName"/></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="db"/>
+            <parameter name="checked" type="Long"/>
+            <parameter name="tables" type="List"><parameter name="table" type="Map"/></parameter>
+            <parameter name="errors" type="List"><parameter name="error"/></parameter>
+        </out-parameters>
+    </service>
+    <service verb="plan" noun="SchemaChanges" type="rust" location="moqui_tools::schema::plan_schema_changes"
+            transaction="ignore">
+        <description>The statements that bring a selection of the comparison's differences in line, in the online
+            forms (§5.2): on Postgres CREATE INDEX CONCURRENTLY IF NOT EXISTS, DROP INDEX CONCURRENTLY IF EXISTS, ADD
+            CONSTRAINT ... NOT VALID then VALIDATE CONSTRAINT, and an invalid index dropped and created again (REINDEX
+            INDEX CONCURRENTLY for one the model does not have); on MySQL ALGORITHM=INPLACE LOCK=NONE, and a unique
+            index (a constraint there) is never dropped. changes is some of missingIndexes, invalidIndexes, extraIndexes
+            (dropped), missingForeignKeys, extraForeignKeys (dropped) and dropForeignKeys (every key of the selected
+            tables); empty is missingIndexes, invalidIndexes and missingForeignKeys. names limits the plan to these index
+            and key names (one row). Each statement has statementSeqId (six digits), statementText, dependsOnSeqId,
+            entityName, tableName, what and lockTimeout (whether it takes the job's lock timeout). With DATABASE_ADMIN the
+            plan is stored as a Pending DatabaseJob (kind DbjDdl, a DbaJob audit row of its texts and creator) and jobId
+            names it: run#DatabaseJob runs it as shown. Without, or with nothing to run, jobId is null and jobReason says
+            why.</description>
+        <in-parameters>
+            <parameter name="db"/>
+            <parameter name="entityNames" type="List"><parameter name="entityName"/></parameter>
+            <parameter name="changes" type="List"><parameter name="change"/></parameter>
+            <parameter name="names" type="List"><parameter name="name"/></parameter>
+            <parameter name="description"/>
+            <parameter name="lockTimeoutMs" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="db"/>
+            <parameter name="checked" type="Long"/>
+            <parameter name="statements" type="List"><parameter name="statement" type="Map"/></parameter>
+            <parameter name="warnings" type="List"><parameter name="warning"/></parameter>
+            <parameter name="jobId"/>
+            <parameter name="jobReason"/>
+        </out-parameters>
+    </service>
+    <service verb="plan" noun="LoadWrap" type="rust" location="moqui_tools::schema::plan_load_wrap" transaction="ignore">
+        <description>The two jobs that wrap a bulk load (Data › Load, Snapshots): dropJobId drops every foreign key of
+            the selected entities' tables; restoreJobId makes them again after the load (Postgres from each key's own
+            definition, NOT VALID then VALIDATE CONSTRAINT; MySQL from the model). Both are stored as Pending jobs of kind
+            DbjLoadWrap, as plan#SchemaChanges stores its plan.</description>
+        <in-parameters>
+            <parameter name="db"/>
+            <parameter name="entityNames" type="List"><parameter name="entityName"/></parameter>
+            <parameter name="description"/>
+            <parameter name="lockTimeoutMs" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="db"/>
+            <parameter name="dropStatements" type="List"><parameter name="statement" type="Map"/></parameter>
+            <parameter name="restoreStatements" type="List"><parameter name="statement" type="Map"/></parameter>
+            <parameter name="warnings" type="List"><parameter name="warning"/></parameter>
+            <parameter name="dropJobId"/>
+            <parameter name="restoreJobId"/>
+            <parameter name="jobReason"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="SchemaDdl" type="rust" location="moqui_tools::schema::get_schema_ddl" transaction="ignore">
+        <description>The DDL of entityNames (every entity of the group when empty) in the database's dialect, from the
+            builders the table check uses: CREATE TABLE (with the full-text columns), then the indexes, then the foreign
+            keys among the selected entities; for Download DDL as fileName.</description>
+        <in-parameters>
+            <parameter name="db"/>
+            <parameter name="entityNames" type="List"><parameter name="entityName"/></parameter>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="ddlText"/>
+            <parameter name="fileName"/>
+            <parameter name="entityCount" type="Long"/>
+        </out-parameters>
+    </service>
+
+    <!-- A DatabaseJob is only a plan the server made (plan#SchemaChanges, plan#TableMaintenance, plan#LoadWrap): no
+        service takes statement text, so a job is no way around the SQL runner's own permission. -->
+    <service verb="run" noun="DatabaseJob" type="rust" location="moqui_tools::jobs::run_database_job"
+            transaction="ignore">
+        <description>Run the plan job jobId, or run it again: queued on a service worker (out queued), or with wait here
+            (out statusId and the counts). Its statements not Done run in order, each on a connection of its own outside a
+            transaction that is closed after it, with no statement timeout, its backendPid and backendStart on its row.
+            Every statement but the light forms (CREATE/DROP INDEX CONCURRENTLY, REINDEX ... CONCURRENTLY, VALIDATE
+            CONSTRAINT alone, VACUUM without FULL, ANALYZE) waits at most the job's lock timeout and is tried three more
+            times; one whose dependsOnSeqId did not finish is DbjsSkipped; a failed one does not stop the others. An
+            invalid index a failed CONCURRENTLY build left is dropped before the build runs again. The job moves to
+            DbjsRunning only from the status read, so two runs cannot overlap; a job that is running, or was cancelled
+            before it ran, is refused. At the end the job is DbjsDone, DbjsFailed (a statement failed or was skipped) or
+            DbjsCancelled, its user is notified on topic DatabaseJob, a summary is logged and a DbaJob DatabaseAudit row
+            names the runner. Needs DATABASE_ADMIN.</description>
+        <in-parameters>
+            <parameter name="jobId" required="true"/>
+            <parameter name="wait" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="queued" type="Boolean"/>
+            <parameter name="statusId"/>
+            <parameter name="doneCount" type="Long"/>
+            <parameter name="failedCount" type="Long"/>
+            <parameter name="skippedCount" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="cancel" noun="DatabaseJob" type="rust" location="moqui_tools::jobs::cancel_database_job"
+            transaction="ignore">
+        <description>Cancel the job jobId. A Pending one (a plan not run, or one queued) is marked DbjsCancelled and
+            does not run (how notStarted). A Running one is marked DbjsCancelled so no further statement starts, and its
+            running statement is cancelled, with the canceller of this instance when it runs here (how local), else by
+            its backendPid and backendStart with pg_cancel_backend, or KILL QUERY of the connection running the job's
+            statement, on a connection of its own (how backend). One that ended, or changed since it was read, is
+            cancelled false, how none. Needs DATABASE_ADMIN; writes a DbaCancel DatabaseAudit row.</description>
+        <in-parameters><parameter name="jobId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="cancelled" type="Boolean"/>
+            <parameter name="how"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="DatabaseJobStatus" type="rust" location="moqui_tools::jobs::get_database_job_status"
+            transaction="ignore">
+        <description>The job jobId (its DatabaseJob fields), its statements (DatabaseJobStatement fields), and for a
+            statement running now the server's progress (Postgres pg_stat_progress_create_index, _vacuum, _analyze and
+            _cluster; MySQL performance_schema.events_stages_current; MariaDB the PROCESSLIST progress) and the sessions
+            blocking it (Postgres pg_blocking_pids joined to pg_stat_activity, MySQL sys.innodb_lock_waits, MariaDB
+            INNODB_LOCK_WAITS). The jobs calls run a cleanup at most every five minutes: a Running job of an instance
+            that is gone (this one, started before this process; another the cluster rows say is not live) is marked
+            DbjsFailed ("the server stopped"), and a plan job never run for a day is deleted.</description>
+        <in-parameters><parameter name="jobId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="job" type="Map"/>
+            <parameter name="statements" type="List"><parameter name="statement" type="Map"/></parameter>
+            <parameter name="progress" type="List"><parameter name="row" type="Map"/></parameter>
+            <parameter name="blocking" type="List"><parameter name="session" type="Map"/></parameter>
+            <parameter name="reasons" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="DatabaseJobs" type="rust" location="moqui_tools::jobs::get_database_jobs"
+            transaction="ignore">
+        <description>The latest database jobs, newest first, of statusId when given.</description>
+        <in-parameters>
+            <parameter name="statusId"/>
+            <parameter name="limit" type="Integer" default-value="50"/>
+        </in-parameters>
+        <out-parameters><parameter name="jobs" type="List"><parameter name="job" type="Map"/></parameter></out-parameters>
+    </service>
+
+    <service verb="get" noun="TableStats" type="rust" location="moqui_tools::tables::get_table_stats" transaction="ignore">
+        <description>Each table's estimated rows, total, table and index bytes, live and dead rows, last vacuum,
+            autovacuum, analyze and autoanalyze, sequential and index scans (Postgres), or the InnoDB estimates, free
+            bytes and update time (MySQL), largest first, from one catalog query, each with entity_name. reason is the
+            error when the query failed.</description>
+        <in-parameters><parameter name="db"/></in-parameters>
+        <out-parameters>
+            <parameter name="tables" type="List"><parameter name="table" type="Map"/></parameter>
+            <parameter name="reason"/>
+        </out-parameters>
+    </service>
+    <service verb="count" noun="TableRows" type="rust" location="moqui_tools::tables::count_table_rows" transaction="ignore">
+        <description>The exact row count of the table tableName (one the schema has).</description>
+        <in-parameters>
+            <parameter name="db"/>
+            <parameter name="tableName" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="tableName"/>
+            <parameter name="rowCount" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="plan" noun="TableMaintenance" type="rust" location="moqui_tools::tables::plan_table_maintenance"
+            transaction="ignore">
+        <description>The statements of a maintenance job on tableNames: action vacuumAnalyze (VACUUM (ANALYZE)),
+            analyze, reindex (REINDEX TABLE CONCURRENTLY), vacuumFull and cluster on Postgres, which take an ACCESS
+            EXCLUSIVE lock and need allowExclusiveLock; analyze (ANALYZE TABLE) and optimize (OPTIMIZE TABLE) on MySQL
+            and MariaDB. Out as plan#SchemaChanges: with DATABASE_ADMIN the plan is stored as a Pending job of kind
+            DbjMaintenance named by jobId, which run#DatabaseJob runs.</description>
+        <in-parameters>
+            <parameter name="db"/>
+            <parameter name="tableNames" type="List" required="true"><parameter name="tableName"/></parameter>
+            <parameter name="action" required="true"/>
+            <parameter name="allowExclusiveLock" type="Boolean" default-value="false"/>
+            <parameter name="description"/>
+            <parameter name="lockTimeoutMs" type="Long"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="db"/>
+            <parameter name="kindEnumId"/>
+            <parameter name="exclusiveLock" type="Boolean"/>
+            <parameter name="statements" type="List"><parameter name="statement" type="Map"/></parameter>
+            <parameter name="warnings" type="List"><parameter name="warning"/></parameter>
+            <parameter name="jobId"/>
+            <parameter name="jobReason"/>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="DatabaseActivity" type="rust" location="moqui_tools::activity::get_database_activity"
+            transaction="ignore">
+        <description>The database's sessions (Postgres pg_stat_activity of this database; MySQL and MariaDB the
+            PROCESSLIST) with state, wait event, query and transaction start and statement, each marked own_app (this
+            instance's, by the application_name the drivers set to the instance id), idle_in_transaction_long (over a
+            minute), running_long (over ten seconds), with blocked_by; and blockingChains, trees of pid and blocks from
+            the sessions that wait on no one.</description>
+        <in-parameters><parameter name="db"/></in-parameters>
+        <out-parameters>
+            <parameter name="sessions" type="List"><parameter name="session" type="Map"/></parameter>
+            <parameter name="blockingChains" type="List"><parameter name="chain" type="Map"/></parameter>
+            <parameter name="instanceName"/>
+            <parameter name="reasons" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="cancel" noun="DatabaseSession" type="rust" location="moqui_tools::activity::cancel_database_session"
+            transaction="ignore">
+        <description>Cancel the statement of session pid (pg_cancel_backend, KILL QUERY). The pid must be a client
+            session of this database (Postgres pg_stat_activity of current_database(), MySQL the PROCESSLIST), not a
+            server worker; this app's own sessions (its application_name: the framework's, a database job's) need force.
+            signalled is whether the server found the session. Needs DATABASE_ADMIN; writes a DbaCancel DatabaseAudit row
+            with force.</description>
+        <in-parameters>
+            <parameter name="db"/>
+            <parameter name="pid" type="Long" required="true"/>
+            <parameter name="force" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters><parameter name="signalled" type="Boolean"/></out-parameters>
+    </service>
+    <service verb="terminate" noun="DatabaseSession" type="rust"
+            location="moqui_tools::activity::terminate_database_session" transaction="ignore">
+        <description>End session pid (pg_terminate_backend, KILL), with the checks and force of
+            cancel#DatabaseSession. Needs DATABASE_ADMIN; writes a DbaTerminate DatabaseAudit row with force.</description>
+        <in-parameters>
+            <parameter name="db"/>
+            <parameter name="pid" type="Long" required="true"/>
+            <parameter name="force" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters><parameter name="signalled" type="Boolean"/></out-parameters>
+    </service>
+    <service verb="get" noun="IndexHealth" type="rust" location="moqui_tools::activity::get_index_health"
+            transaction="ignore">
+        <description>The index checks of §4.2: unindexedForeignKeys (Postgres: keys no index leads with),
+            unusedIndexes (not unique, never scanned since statsSince), duplicateIndexes (led by another index of the
+            table, with covered_by), invalidIndexes (a failed CONCURRENTLY build), and the transaction id wraparound
+            ages databaseAge and tableAge (Postgres).</description>
+        <in-parameters><parameter name="db"/></in-parameters>
+        <out-parameters>
+            <parameter name="unindexedForeignKeys" type="List"><parameter name="row" type="Map"/></parameter>
+            <parameter name="unusedIndexes" type="List"><parameter name="row" type="Map"/></parameter>
+            <parameter name="duplicateIndexes" type="List"><parameter name="row" type="Map"/></parameter>
+            <parameter name="invalidIndexes" type="List"><parameter name="row" type="Map"/></parameter>
+            <parameter name="databaseAge" type="List"><parameter name="row" type="Map"/></parameter>
+            <parameter name="tableAge" type="List"><parameter name="row" type="Map"/></parameter>
+            <parameter name="statsSince" type="Map"/>
+            <parameter name="reasons" type="Map"/>
+        </out-parameters>
+    </service>
+    <!-- ========== end Schema and jobs ========== -->
+
     <!-- ========== SQL (plans/Tools-Database.md §8, §7.2 Queries, §7.5, §14; crates/moqui-tools/src/sql.rs and
         sql_service.rs) ==========
         The SQL services need SQL_RUNNER_WEB and authorization for all actions on the Tools app, checked in the service
