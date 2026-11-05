@@ -62,22 +62,23 @@ unexpected_cfgs = { level = "deny", priority = -1 }
 [workspace.dependencies]
 moqui-lib = { path = "crates/moqui-lib" }
 moqui-db = { path = "crates/moqui-db" }
-# The entity facade, the transaction manager and DbDriver, below moqui-core (plans/Crate-Split.md).
+# The entity facade, the transaction manager and DbDriver, below moqui-core (plans/archive/Crate-Split.md).
 moqui-entity = { path = "crates/moqui-entity" }
 # default-features off so moqui-browser can leave out mail, http, and cluster-tls; moqui-host names them.
 moqui-core = { path = "crates/moqui-core", default-features = false }
 # The agent runtime, on moqui-core (plans/LLM-A2A-Assist.md); the host links it under its llm feature.
 moqui-llm = { path = "crates/moqui-llm" }
-# git:// locations, the git services and the git server, on moqui-core (plans/Crate-Split.md); the host links it under
-# its git feature.
+# git:// locations, the git services and the git server, on moqui-core (plans/archive/Crate-Split.md); the host links it
+# under its git feature.
 moqui-git = { path = "crates/moqui-git" }
-# The email services, on moqui-core (plans/Crate-Split.md); the host links it under its smtp feature, and turns on its
-# imap feature under its own. default-features off so a host without imap leaves it out.
+# The email services, on moqui-core (plans/archive/Crate-Split.md); the host links it under its smtp feature, and turns
+# on its imap feature under its own. default-features off so a host without imap leaves it out.
 moqui-mail = { path = "crates/moqui-mail", default-features = false }
-# Reports, dashboards, alerts, report schedules and monitoring keys, on moqui-core (plans/Crate-Split.md); the host and
-# the browser link it in every build. default-features off so the browser leaves out xlsx.
+# Reports, dashboards, alerts, report schedules and monitoring keys, on moqui-core (plans/archive/Crate-Split.md); the
+# host and the browser link it in every build. default-features off so the browser leaves out xlsx.
 moqui-report = { path = "crates/moqui-report", default-features = false }
-# Co-edited documents and the collab services, on moqui-core (plans/Crate-Split.md); the host links it in every build.
+# Co-edited documents and the collab services, on moqui-core (plans/archive/Crate-Split.md); the host links it in every
+# build.
 moqui-collab = { path = "crates/moqui-collab" }
 # Calls: the WebRTC endpoint and the selective forwarding unit on str0m, sans-IO (plans/Comms-Framework.md §6); the host
 # links it under its rtc feature and owns the sockets.
@@ -91,14 +92,14 @@ moqui-sip = { path = "crates/moqui-sip" }
 # XMPP for local users: the client stream, SASL2, SCRAM and FAST, and the chat mapping (plans/Comms-Framework.md §4.3,
 # C3a); the host links it under its xmpp feature, owns the listeners and runs the chat services it names.
 moqui-xmpp = { path = "crates/moqui-xmpp" }
-# The DAV server, the VCard and ICalendar tools and the elFinder connector, on moqui-core (plans/Crate-Split.md); the
-# host links it in every build.
+# The DAV server, the VCard and ICalendar tools and the elFinder connector, on moqui-core
+# (plans/archive/Crate-Split.md); the host links it in every build.
 moqui-dav = { path = "crates/moqui-dav" }
 # The development kit (reload, the file watcher, check, the artifact index, typegen, the spec runner), on moqui-core
-# (plans/Crate-Split.md); the host links it in every build, and its watch feature under devtools.
+# (plans/archive/Crate-Split.md); the host links it in every build, and its watch feature under devtools.
 moqui-devkit = { path = "crates/moqui-devkit" }
-# The database drivers, out of moqui-host (plans/Crate-Split.md); the host links it and forwards postgres, mysql and
-# embedded-postgres.
+# The database drivers, out of moqui-host (plans/archive/Crate-Split.md); the host links it and forwards postgres, mysql
+# and embedded-postgres.
 moqui-drivers = { path = "crates/moqui-drivers" }
 # default-features off so the binary crate picks the package (crates/moqui, docs/Build-Test.md).
 moqui-host = { path = "crates/moqui-host", default-features = false }
@@ -219,8 +220,8 @@ totp-rs = { version = "6", default-features = false, features = [
     "gen_secret",
 ] }
 tracing = "0.1"
-# The live log filter and telemetry settings read on each span and callsite (plans/archive/Monitor-Settings.md). Already in
-# the graph (MIT OR Apache-2.0).
+# The live log filter and telemetry settings read on each span and callsite (plans/archive/Monitor-Settings.md). Already
+# in the graph (MIT OR Apache-2.0).
 arc-swap = "1.9"
 # Direct SDK instrumentation; no tracing bridge. gRPC is only the receiver, under moqui-host's `grpc`.
 opentelemetry = { version = "0.33", default-features = false, features = ["trace", "metrics", "logs"] }

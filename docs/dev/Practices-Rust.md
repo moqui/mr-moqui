@@ -18,8 +18,8 @@ Contents: [1 crates](#1-crates-and-where-code-goes) · [2 organization](#2-organ
 ## 1. Crates and where code goes
 
 One workspace, one `src/` tree per crate. The cut and its reasons are in
-[Crate-Layout](../../plans/archive/Crate-Layout.md), and the splits under way in
-[Crate-Split](../../plans/Crate-Split.md). Dependencies point one way:
+[Crate-Layout](../../plans/archive/Crate-Layout.md), and the later splits in
+[Crate-Split](../../plans/archive/Crate-Split.md). Dependencies point one way:
 
 ```
 moqui (bin) → moqui-host → moqui-llm, moqui-git, moqui-mail, moqui-tui (optional features), moqui-report, moqui-collab, moqui-dav, moqui-devkit
@@ -38,7 +38,7 @@ moqui-client → moqui-lib
 | `moqui-entity` | The entity facade, the transaction manager and the `DbDriver` port. No ExecutionContext: what it needs of the thread's context (the user, authorization, scripts, services, entity ECA rules) it calls through `moqui_entity::hooks`, which core fills. Core re-exports it at `moqui_core::entity`, `transaction`, `driver` and `context::Error`; code above core uses those paths. |
 | `moqui-core` | The framework: the ExecutionContext and facades, screens, services, scripts. Synchronous, on `std::thread`. |
 | `moqui-llm` | The agent runtime and model providers. Core reaches it only through the hook traits in `moqui_core::llm_hooks`, so an edit here does not rebuild the framework. |
-| `moqui-git` | `git://` locations, `org.moqui.impl.GitServices` and the git server, on gitoxide. A framework crate: core reaches it only through its `moqui_core::extension` entry ([Crate-Split](../../plans/Crate-Split.md)). |
+| `moqui-git` | `git://` locations, `org.moqui.impl.GitServices` and the git server, on gitoxide. A framework crate: core reaches it only through its `moqui_core::extension` entry ([Crate-Split](../../plans/archive/Crate-Split.md)). |
 | `moqui-mail` | The email services: outbound SMTP and, under its `imap` feature, IMAP and POP3, the mail client's sync, IDLE, import and OAuth sign-in, and the delivery of mail the host's SMTP listener received. A framework crate, as `moqui-git`. |
 | `moqui-report` | Reports, dashboards and their alerts and annotations, scheduled report delivery and the monitoring sources' ingest keys. A framework crate, as `moqui-git`, linked in every build and in the browser. |
 | `moqui-collab` | Co-edited documents (a Yjs document per record, on yrs) and `org.moqui.impl.CollabServices`. A framework crate, as `moqui-git`, linked in every host build and left out of the browser. |
@@ -64,7 +64,7 @@ generated crate in `target/moqui-app` ([Native-Components](Native-Components.md)
   (`crates/moqui-core/src/entity/*_tests.rs`); the others are in `moqui-entity`, where no hooks are linked and each
   hook answers as with no context entered.
 - Do not move code between crates as part of other work; a new crate or a move needs its own plan
-  ([Crate-Split](../../plans/Crate-Split.md) is the current one, with the seam rules and the files a new crate touches).
+  ([Crate-Split](../../plans/archive/Crate-Split.md) has the seam rules and the files a new crate touches).
 - A feature-gated module has an off stub with the same API, so callers need no `cfg` of their own:
 
   ```rust
@@ -354,8 +354,8 @@ Do not "fix" these:
   not add async to core.
 - **Crates along hook seams.** Google favors small crates and a flat layout. Here a crate is split off only along a
   seam a hook can carry (a register entry above core, a hook table below it), when the split saves rebuild time or
-  keeps a heavy dependency out of core ([Crate-Split](../../plans/Crate-Split.md)). Modules inside a crate carry the
-  rest of the structure; do not split by facade or by module for its own sake.
+  keeps a heavy dependency out of core ([Crate-Split](../../plans/archive/Crate-Split.md)). Modules inside a crate carry
+  the rest of the structure; do not split by facade or by module for its own sake.
 - **Docs.** This is application code, so there is no `missing_docs`. Module docs and comments follow §2 and §4.
 - **Library-API rules** (`impl Into<T>`, returning `impl Iterator`, `#[non_exhaustive]`, generics over `dyn`). This is
   application code in one workspace, so `Vec` returns and `dyn` registries are fine.

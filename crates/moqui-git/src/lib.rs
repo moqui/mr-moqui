@@ -23,10 +23,10 @@
 //! A write commits at once, by the current user, with a `Moqui-User-Id` trailer the history reads back. Guide:
 //! `docs/data/Revision-Management.md`.
 //!
-//! This crate is on moqui-core (plans/Crate-Split.md), which reaches it through the [`moqui_core::extension`] entry
-//! below: the `org.moqui.impl.GitServices` Rust services ([`service`]) and the `git` resource scheme, which the conf's
-//! `resource-reference scheme="git"` installs on each factory. The git server ([`server`]) is called by the host's
-//! HTTP and SSH listeners.
+//! This crate is on moqui-core (plans/archive/Crate-Split.md), which reaches it through the [`moqui_core::extension`]
+//! entry below: the `org.moqui.impl.GitServices` Rust services ([`service`]) and the `git` resource scheme, which the
+//! conf's `resource-reference scheme="git"` installs on each factory. The git server ([`server`]) is called by the
+//! host's HTTP and SSH listeners.
 
 pub mod attributes;
 pub(crate) mod browse;

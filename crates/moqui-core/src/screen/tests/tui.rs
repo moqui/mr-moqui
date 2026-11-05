@@ -1241,6 +1241,35 @@ fn a_list_gives_its_exports_and_columns() {
     assert!(exp.exports.len() >= 4);
 }
 
+/// A list's column chooser offers no field its hide condition hides, as the list shows no column for it (477f9e89; a
+/// money column for a user without financial read), in each mode's own chooser: ScreenHtml's dialog, ScreenQvt's tree
+/// and ScreenTui's `selectColumns`.
+#[test]
+fn a_column_chooser_leaves_out_a_field_its_hide_hides() {
+    let xml = format!(
+        r#"<screen require-authentication="false"><actions><script>{ROWS}</script></actions><widgets>
+            <form-list name="Cols" list="rows" select-columns="true">
+                <field name="name"><header-field title="Name"/><default-field><display/></default-field></field>
+                <field name="extra"><default-field title="Offered field"><display/></default-field></field>
+                <field name="rate" hide="1 == 1"><default-field title="Hidden rate"><display/></default-field></field>
+                <form-list-column><field-ref name="name"/></form-list-column>
+            </form-list>
+        </widgets></screen>"#
+    );
+    for mode in ["html", "qvt"] {
+        let body = render_in("column-chooser", mode, &xml).body_text();
+        assert!(body.contains("Offered field"), "{mode}: {body}");
+        assert!(!body.contains("Hidden rate"), "{mode}: {body}");
+    }
+    let doc = document(&render_in("column-chooser", "tui", &xml));
+    let columns = &list_named(&doc, "Cols")["selectColumns"];
+    assert_eq!(
+        columns["hidden"],
+        json!([{"name": "extra", "title": "Offered field"}]),
+        "{columns}"
+    );
+}
+
 /// A user's saved finds of a list: each with the URL that applies it, the user's own marked, the current find's parameters
 /// and the URL that clears it.
 #[test]

@@ -1,9 +1,9 @@
-# The email services, on top of moqui-core (plans/Crate-Split.md): outbound SMTP (send#EmailMessage, send#EmailTemplate,
-# the server test) and, under imap, IMAP and POP3, the mail client's sync, IDLE and import, the OAuth sign-in of mail
-# accounts and the delivery of mail the host's SMTP listener received. Its own crate so an edit here does not rebuild
-# the framework, and lettre, imap, mail-parser and rustls stay out of core. Core reaches it only through
-# moqui_core::extension, which this crate fills with an inventory entry; moqui-host links it under its smtp feature.
-# lettre SMTP is blocking (tokio1 off). imap is blocking (native-tls off).
+# The email services, on top of moqui-core (plans/archive/Crate-Split.md): outbound SMTP (send#EmailMessage,
+# send#EmailTemplate, the server test) and, under imap, IMAP and POP3, the mail client's sync, IDLE and import, the
+# OAuth sign-in of mail accounts and the delivery of mail the host's SMTP listener received. Its own crate so an edit
+# here does not rebuild the framework, and lettre, imap, mail-parser and rustls stay out of core. Core reaches it only
+# through moqui_core::extension, which this crate fills with an inventory entry; moqui-host links it under its smtp
+# feature. lettre SMTP is blocking (tokio1 off). imap is blocking (native-tls off).
 
 [package]
 name = "moqui-mail"

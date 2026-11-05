@@ -2,8 +2,8 @@
 //! definitions ([`definitions`]), dashboard alerts ([`alert`]), annotations and releases ([`annotations`]), scheduled
 //! delivery ([`schedule`]), the monitoring sources' keys ([`monitor`]) and Monitor › Settings ([`settings`]).
 //!
-//! This crate is on moqui-core (plans/Crate-Split.md), which reaches it through the [`moqui_core::extension`] entry
-//! below: its native services, whose locations stay `moqui_core::report::…`, `moqui_core::report_schedule::…` and
+//! This crate is on moqui-core (plans/archive/Crate-Split.md), which reaches it through the [`moqui_core::extension`]
+//! entry below: its native services, whose locations stay `moqui_core::report::…`, `moqui_core::report_schedule::…` and
 //! `moqui_core::monitor::…` as the service files name them, and the load of the components' shipped definitions after
 //! boot. moqui-host and moqui-browser link it in every build.
 

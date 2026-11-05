@@ -12,13 +12,14 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The development kit (plans/design-dev-aide.md 17, plans/Crate-Split.md): the reload of what a changed file defines
-//! ([`reload`], with the file watcher [`watch`] under the `watch` feature), `moqui check` ([`check`], [`schema`],
-//! [`screen_lint`], [`lint_hazards`]), the artifact index ([`index`]), other projects' artifacts ([`project`]) and references ([`refs`]), entity ECA rule lists
-//! ([`eca`]), the Groovy to JavaScript converter ([`groovy_convert`]), the TypeScript declarations of `moqui types`
-//! ([`typegen`]), the spec runner of `moqui test` ([`testkit`]) and `org.moqui.impl.DevToolsServices` ([`service`]).
-//! They serve the dev-aide component, the file watcher, `moqui check`, `moqui test` and agents outside the server
-//! alike, so they are the framework's and not the dev-aide's.
+//! The development kit (plans/design-dev-aide.md 17, plans/archive/Crate-Split.md): the reload of what a changed file
+//! defines ([`reload`], with the file watcher [`watch`] under the `watch` feature), `moqui check` ([`check`],
+//! [`schema`], [`screen_lint`], [`lint_hazards`]), the artifact index ([`index`]), other projects' artifacts
+//! ([`project`]) and references ([`refs`]), entity ECA rule lists ([`eca`]), the Groovy to JavaScript converter
+//! ([`groovy_convert`]), the TypeScript declarations of `moqui types` ([`typegen`]), the spec runner of `moqui test`
+//! ([`testkit`]) and `org.moqui.impl.DevToolsServices` ([`service`]). They serve the dev-aide component, the file
+//! watcher, `moqui check`, `moqui test` and agents outside the server alike, so they are the framework's and not the
+//! dev-aide's.
 //!
 //! This crate is on moqui-core, which reaches it only through the [`moqui_core::extension`] entry below (the feature
 //! `devkit` and the Rust services of `DevToolsServices`); what core itself needs of the tools stays in

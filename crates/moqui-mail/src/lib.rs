@@ -12,11 +12,11 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Outbound SMTP and inbound IMAP/POP3 for the email services, on top of moqui-core (plans/Crate-Split.md). The send
-//! path lives in [`implementation`], the receive path in [`inbound`] (the `imap` feature), with the mail client's sync
-//! engine beside it: [`sync`] (`sync#EmailAccount` and the job), [`remote`] (local changes onto the server), [`idle`]
-//! (IMAP IDLE workers), [`store`] (a received message as a row), [`discover`] (autodiscover), [`import`] (.eml and
-//! .mbox), [`export`] (a stored message as .eml), [`oauth`] (sign-in with Google or Microsoft, the token store and
+//! Outbound SMTP and inbound IMAP/POP3 for the email services, on top of moqui-core (plans/archive/Crate-Split.md). The
+//! send path lives in [`implementation`], the receive path in [`inbound`] (the `imap` feature), with the mail client's
+//! sync engine beside it: [`sync`] (`sync#EmailAccount` and the job), [`remote`] (local changes onto the server),
+//! [`idle`] (IMAP IDLE workers), [`store`] (a received message as a row), [`discover`] (autodiscover), [`import`] (.eml
+//! and .mbox), [`export`] (a stored message as .eml), [`oauth`] (sign-in with Google or Microsoft, the token store and
 //! XOAUTH2) and [`delivery`] (mail the host's SMTP listener received for hosted and shared accounts), all of them
 //! `imap`; [`edge_mail`] carries mail through an edge node, in and out, and with `imap` [`auth`] (SPF, DKIM, DMARC, ARC
 //! and DKIM signing), [`dns`] (its resolver) and [`mx`] (the edge node's MX delivery) are the MTA in moqui. The

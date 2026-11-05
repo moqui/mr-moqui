@@ -12,10 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The framework crates on top of this one (moqui-git, moqui-mail, moqui-report, moqui-collab, moqui-dav, moqui-devkit, plans/Crate-Split.md). Each submits one [`Extension`], which the
-//! framework calls to register the crate's Rust services and native implementations. A binary that does not link a
-//! crate has no entry for it: a service at one of its locations still loads, and a call reports that the feature is
-//! not built into this host ([`missing_feature`]).
+//! The framework crates on top of this one (moqui-git, moqui-mail, moqui-report, moqui-collab, moqui-dav, moqui-devkit,
+//! plans/archive/Crate-Split.md). Each submits one [`Extension`], which the framework calls to register the crate's
+//! Rust services and native implementations. A binary that does not link a crate has no entry for it: a service at one
+//! of its locations still loads, and a call reports that the feature is not built into this host ([`missing_feature`]).
 
 use std::collections::BTreeMap;
 

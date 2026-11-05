@@ -12,9 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Where the entity facade reaches the execution context (plans/Crate-Split.md). The framework above submits one
-//! [`EntityHooks`]; with none linked, each function here answers as code outside an entered context sees it: no user,
-//! no authorization, no scripts, ECA rules not run, the clock for the effective time.
+//! Where the entity facade reaches the execution context (plans/archive/Crate-Split.md). The framework above submits
+//! one [`EntityHooks`]; with none linked, each function here answers as code outside an entered context sees it: no
+//! user, no authorization, no scripts, ECA rules not run, the clock for the effective time.
 
 use std::any::Any;
 use std::collections::BTreeMap;

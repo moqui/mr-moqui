@@ -19,7 +19,8 @@
 //! (`suite(["SpecA", "SpecB"])`), then the other `*.spec.js` files by name. Components run in the order they load. `--spec` picks specs by name and adds the specs
 //! their `dependsOn` names, in suite order. Each spec runs in its own execution context. A `dependsOn` name a spec's
 //! component lacks comes from the run's other components. Each component's `test/MoquiConf.xml` merges after its
-//! `MoquiConf.xml` in a test run, and `--serve` then serves the scratch database (`serve.rs`, plans/archive/ClientTestHarness.md 6).
+//! `MoquiConf.xml` in a test run, and `--serve` then serves the scratch database (`serve.rs`,
+//! plans/archive/ClientTestHarness.md 6).
 //!
 //! Discovery, argument parsing, factory boot and `run_spec` are in every build. `--db none` boots the factory and
 //! leaves the entity facade unset. `fixture::open`, `--serve`, coverage and `--agents` need `embedded-postgres`.
@@ -713,7 +714,8 @@ pub fn dispatch_test(args: &[String]) -> Result<(), Error> {
         }
         components = picked;
     }
-    // A fixture runs where a served suite names it, not again in a plain run (plans/Test-Reduction.md, "Fixtures once").
+    // A fixture runs where a served suite names it, not again in a plain run (plans/archive/Test-Reduction.md,
+    // "Fixtures once").
     if !args.acceptance && args.specs.is_empty() && args.serve.is_none() {
         let left_out = drop_served_fixtures(&mut components);
         if !left_out.is_empty() {

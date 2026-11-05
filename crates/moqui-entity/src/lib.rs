@@ -13,8 +13,8 @@
  */
 
 //! The entity facade ([`entity`]), the transaction manager and connection pool ([`transaction`]) and the port a
-//! database driver implements ([`driver`]), below moqui-core (plans/Crate-Split.md). No ExecutionContext: where the
-//! facade needs the context entered on the thread (the user, authorization, scripts, services, entity ECA rules) it
+//! database driver implements ([`driver`]), below moqui-core (plans/archive/Crate-Split.md). No ExecutionContext: where
+//! the facade needs the context entered on the thread (the user, authorization, scripts, services, entity ECA rules) it
 //! calls [`hooks`], which core fills. moqui-core re-exports these modules at its own paths, `moqui_core::entity` and so
 //! on, and code above core uses those.
 

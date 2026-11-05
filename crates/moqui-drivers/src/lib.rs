@@ -14,8 +14,8 @@
 
 //! `DbDriver` implementations: Postgres (the host's own blocking client on postgres-protocol, over TCP, TLS or a Unix
 //! socket), MySQL and the embedded Postgres cluster with its backups, and how the host opens the entity facade over them.
-//! The pool stays in moqui-entity. moqui-host links this crate (plans/Crate-Split.md) and keeps it at its old path,
-//! `moqui_host::db`, forwarding its `postgres`, `mysql` and `embedded-postgres` features; no Tokio here.
+//! The pool stays in moqui-entity. moqui-host links this crate (plans/archive/Crate-Split.md) and keeps it at its old
+//! path, `moqui_host::db`, forwarding its `postgres`, `mysql` and `embedded-postgres` features; no Tokio here.
 // Without a database client the conf and the facade code is still compiled, for the host without its default features.
 #![cfg_attr(not(any(feature = "postgres", feature = "mysql")), allow(dead_code, unused_imports))]
 

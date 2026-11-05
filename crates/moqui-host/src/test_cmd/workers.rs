@@ -12,12 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui test --workers N` (plans/Test-Reduction.md, "Cheaper machinery"): the specs of the run in N child `moqui test`
-//! processes, each on its own copy of the `--db snapshot` database. The specs are cut into units that share no data: a
-//! component's `suite.js` chain is one unit, and a spec joins the unit of each spec its `dependsOn` names; every other
-//! spec is a unit of its own. The units go to the workers longest first (by the size of their files), so the workers
-//! end at about the same time. A spec that reads what another spec wrote without naming it in `dependsOn` passes in a
-//! serial run and fails here: name it.
+//! `moqui test --workers N` (plans/archive/Test-Reduction.md, "Cheaper machinery"): the specs of the run in N child
+//! `moqui test` processes, each on its own copy of the `--db snapshot` database. The specs are cut into units that
+//! share no data: a component's `suite.js` chain is one unit, and a spec joins the unit of each spec its `dependsOn`
+//! names; every other spec is a unit of its own. The units go to the workers longest first (by the size of their
+//! files), so the workers end at about the same time. A spec that reads what another spec wrote without naming it in
+//! `dependsOn` passes in a serial run and fails here: name it.
 //!
 //! Each child writes its results as JSON (`--results-json`); the parent prints each child's lines when it ends, then
 //! one summary and the JUnit files of the whole run.

@@ -137,7 +137,7 @@ BOSS Comms today is about 11,400 lines of screens and 6,350 lines of `ironstone.
   - Zimbra's server files are GPL-2.0, and its voice web client is CPAL-1.0.
   - The applications in §10.2 are design references. Nothing is copied from them unless its license allows it and the
     copy is recorded.
-- **Crates above core** go through `moqui_core::extension` ([Crate-Split](Crate-Split.md#the-seam-rules)).
+- **Crates above core** go through `moqui_core::extension` ([Crate-Split](archive/Crate-Split.md#the-seam-rules)).
 
 **What runs where** (libraries in [§10.1](#101-libraries-and-protocols))
 

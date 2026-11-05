@@ -66,8 +66,8 @@ The framework features are in `crates/moqui-core`; the host features, and the pa
 package features `lite`, `enterprise` and `maximal`, `devtools`, and `inbound-smtp` for a lite build that wants
 one. The agents are the `moqui-llm` crate, on `moqui-core`, which the host's `llm` feature links; core reaches them
 through `moqui_core::llm_hooks`, so in a binary without them their services report that `llm` is not built in. The
-framework crates above core ([Crate-Split](../plans/Crate-Split.md): `moqui-git`, `moqui-mail`) are linked the same
-way by a host feature (`git`; `smtp`, with `imap` turning on the mail crate's own), and core reaches them through
+framework crates above core ([Crate-Split](../plans/archive/Crate-Split.md): `moqui-git`, `moqui-mail`) are linked the
+same way by a host feature (`git`; `smtp`, with `imap` turning on the mail crate's own), and core reaches them through
 `moqui_core::extension`; `moqui-report`, `moqui-collab`, `moqui-dav` and `moqui-devkit` are four more, linked in
 every host build (the host's `xlsx` turns on the report crate's own, for the xlsx format of a scheduled report, and its
 `devtools` the dev kit's `watch`, the file watcher), and the browser build links the reports and `moqui-dav` (the VCard

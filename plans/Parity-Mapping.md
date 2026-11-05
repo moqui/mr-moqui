@@ -76,7 +76,7 @@ Other Native modules are marked in their own sections.
 | `moqui-entity/src/entity/params.rs` | Driver value binding. `moqui-db` binds the SQL values. |
 | `moqui-entity/src/entity/exec.rs` | Statement execution, timing, and the span. |
 | `moqui-entity/src/entity/mod.rs`, `moqui-core/src/entity/mod.rs`, `service/mod.rs` | Module spines and re-exports. |
-| `moqui-entity/src/hooks.rs`, `moqui-core/src/entity_hooks.rs` | The entity facade's calls into the execution context, a hook table since the entity facade is a crate below core (plans/Crate-Split.md); Java's entity facade calls `ec` directly. |
+| `moqui-entity/src/hooks.rs`, `moqui-core/src/entity_hooks.rs` | The entity facade's calls into the execution context, a hook table since the entity facade is a crate below core (plans/archive/Crate-Split.md); Java's entity facade calls `ec` directly. |
 | `moqui-core/src/service/util.rs` | Shared helpers. Java scatters the same bits. |
 | `moqui-core/src/service/coverage.rs` | `moqui test --coverage`. No Java equivalent. |
 | `moqui-core/src/service/rust_services.rs` | `type="rust"` function registry. New with the port. |

@@ -336,11 +336,11 @@ for streaming, bounded processing and shared use by browser, TUI, imports and AP
 | Optional Overture ingestion | Bounded regional GeoParquet reads, schema/provenance validation, Places indexing, Buildings overlays and release reconciliation; later address candidate matching. Evaluate Rust Parquet/geometry tooling and prepared-data import options before adding dependencies. ResourceFacade owns input/derived storage; reuse or integrate tile-generation tooling rather than requiring a new Rust cartography engine. |
 | Spatial data queries | Begin with bounded, indexed latitude/longitude queries and domain scope filters. Add spatial indexes/PostGIS or dynamic vector tiles when dataset size/query needs justify them; no unbounded download of all parties/assets to the client. |
 
-Follow [Rust practices](../docs/dev/Practices-Rust.md) and [crate seams](Crate-Split.md): reuse existing lower-level
-modules and extension hooks. If map services warrant a `moqui-maps` framework extension crate, decide its dependency
-and feature boundary during P0; `moqui-host` owns async/process edges and core must not depend upward on it. Domain
-rules stay in Mantle, with XML Actions first for normal entity workflows. A new crate is not needed merely to serve
-a resource's bytes.
+Follow [Rust practices](../docs/dev/Practices-Rust.md) and [crate seams](archive/Crate-Split.md): reuse existing
+lower-level modules and extension hooks. If map services warrant a `moqui-maps` framework extension crate, decide its
+dependency and feature boundary during P0; `moqui-host` owns async/process edges and core must not depend upward on it.
+Domain rules stay in Mantle, with XML Actions first for normal entity workflows. A new crate is not needed merely to
+serve a resource's bytes.
 
 Large imports run as bounded jobs with progress, cancellation and per-item failures. A full geocoder/search engine,
 planet basemap generator or routing engine is not an initial Rust rewrite; integrate established services or use

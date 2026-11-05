@@ -710,12 +710,12 @@ Not in this plan's delivery. Recorded so the grid and the server are built not t
 
 ## 13. Where the code goes
 
-**A new framework crate, `moqui-database`**, as `moqui-report` and `moqui-collab` are: it adds services and submits
-a `moqui_core::extension::Extension` (`crates/moqui-core/src/extension.rs:35`), so an edit to it does not rebuild
-core. It is linked in every host build and left out of the browser. The checklist is
-[Crate-Split, Adding a crate](Crate-Split.md#adding-a-crate): workspace members, the host feature and `use … as _`,
-`moq` `write_app_crate`, `scripts/check-packages.sh`, the Features table, and a registry test against the service
-XML's locations.
+**A new framework crate, `moqui-database`**, as `moqui-report` and `moqui-collab` are: it adds services and submits a
+`moqui_core::extension::Extension` (`crates/moqui-core/src/extension.rs:35`), so an edit to it does not rebuild core. It
+is linked in every host build and left out of the browser. The checklist is [Crate-Split, Adding a
+crate](archive/Crate-Split.md#adding-a-crate): workspace members, the host feature and `use … as _`, `moq`
+`write_app_crate`, `scripts/check-packages.sh`, the Features table, and a registry test against the service XML's
+locations.
 
 | Piece | Where |
 | --- | --- |

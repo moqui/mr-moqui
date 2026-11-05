@@ -1,7 +1,7 @@
-# The database drivers (plans/Crate-Split.md): Postgres on the host's own blocking client (postgres-protocol, over TCP,
-# TLS or a Unix socket), MySQL, and the embedded Postgres cluster with its archive and backups, with how the host opens
-# the entity facade over them. Taken out of moqui-host so a host edit does not compile them or rewrite their part of
-# its rlib; no Tokio. moqui-host links it as `moqui_host::db` and forwards the features.
+# The database drivers (plans/archive/Crate-Split.md): Postgres on the host's own blocking client (postgres-protocol,
+# over TCP, TLS or a Unix socket), MySQL, and the embedded Postgres cluster with its archive and backups, with how the
+# host opens the entity facade over them. Taken out of moqui-host so a host edit does not compile them or rewrite their
+# part of its rlib; no Tokio. moqui-host links it as `moqui_host::db` and forwards the features.
 
 [package]
 name = "moqui-drivers"

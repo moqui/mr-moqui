@@ -1,8 +1,8 @@
-# The entity facade, the transaction manager and DbDriver, below moqui-core (plans/Crate-Split.md). Its own crate so an
-# edit in core (screens, services, scripts) does not recompile it. It does not know the ExecutionContext: where it
-# needs the thread's context (the user, authorization, scripts, services, ECA rules) it calls moqui_entity::hooks,
-# which core fills with an inventory entry. Core re-exports its modules at their old paths (moqui_core::entity,
-# transaction, driver, context::Error).
+# The entity facade, the transaction manager and DbDriver, below moqui-core (plans/archive/Crate-Split.md). Its own
+# crate so an edit in core (screens, services, scripts) does not recompile it. It does not know the ExecutionContext:
+# where it needs the thread's context (the user, authorization, scripts, services, ECA rules) it calls
+# moqui_entity::hooks, which core fills with an inventory entry. Core re-exports its modules at their old paths
+# (moqui_core::entity, transaction, driver, context::Error).
 
 [package]
 name = "moqui-entity"

@@ -13,7 +13,7 @@ publish.workspace = true
 
 [dependencies]
 moqui-core = { workspace = true }
-# The development tools the dev-aide serves: reload, check, the artifact index (plans/Crate-Split.md).
+# The development tools the dev-aide serves: reload, check, the artifact index (plans/archive/Crate-Split.md).
 moqui-devkit = { workspace = true }
 moqui-llm = { workspace = true }
 moqui-lib = { workspace = true }

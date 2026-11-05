@@ -259,8 +259,8 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
 /// instance), and the name, size and change time of each one's entity and data files, which hold the schema and the
 /// data. A snapshot is made again when a file changes or a run loads another set of components: a server on a conf
 /// without the dev components once saved a snapshot that a run with example then restored, without example's tables.
-/// The binary is not part of the key, so a relink keeps the snapshots (plans/Test-Reduction.md, "Cheaper machinery");
-/// after a change to how the binary loads data, remove `runtime/save/test-*`.
+/// The binary is not part of the key, so a relink keeps the snapshots (plans/archive/Test-Reduction.md, "Cheaper
+/// machinery"); after a change to how the binary loads data, remove `runtime/save/test-*`.
 fn data_hash(scratch: &Path, framework: &Path) -> Result<u64, Error> {
     let mut hasher = DefaultHasher::new();
     env!("CARGO_PKG_VERSION").hash(&mut hasher);

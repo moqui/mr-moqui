@@ -27,9 +27,9 @@
 //! changes open is read again when the next editor joins; with changes open, the co-edited text is kept (logged) and
 //! the next save writes over it, the other change staying in the page's history.
 //!
-//! This crate is on moqui-core (plans/Crate-Split.md), which reaches it through the [`moqui_core::extension`] entry
-//! below: `org.moqui.impl.CollabServices` ([`service`]). moqui-host links it in every build and calls the rooms from its
-//! WebSocket; the browser build leaves it out, and its services report that `collab` is not built in.
+//! This crate is on moqui-core (plans/archive/Crate-Split.md), which reaches it through the [`moqui_core::extension`]
+//! entry below: `org.moqui.impl.CollabServices` ([`service`]). moqui-host links it in every build and calls the rooms
+//! from its WebSocket; the browser build leaves it out, and its services report that `collab` is not built in.
 
 pub mod markdown;
 pub mod service;

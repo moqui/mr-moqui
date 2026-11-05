@@ -14,7 +14,7 @@
 
 //! The DAV server ([`dav`]: WebDAV over the drives, CalDAV and CardDAV over an application's adapter services), the
 //! `VCard` and `ICalendar` tools ([`pim`]), `org.moqui.impl.DavServices` ([`service`]) and the elFinder connector
-//! ([`elfinder`], `org.moqui.impl.ElFinderServices`), on top of moqui-core (plans/Crate-Split.md).
+//! ([`elfinder`], `org.moqui.impl.ElFinderServices`), on top of moqui-core (plans/archive/Crate-Split.md).
 //!
 //! Core reaches this crate only through the [`moqui_core::extension`] entry below: the feature `dav`, the Rust services
 //! of `DavServices` and `run#ElFinderCommand` (at `moqui_dav::` locations), and the two tools, whose classes stay

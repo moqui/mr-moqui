@@ -12,9 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The framework's mail senders, which moved here with the send path (plans/Crate-Split.md): an email ECA that sends a
-//! template, a notification topic's email, the daily digest, the login code and the password reset mailed from the
-//! service worker, and the read fence on a send.
+//! The framework's mail senders, which moved here with the send path (plans/archive/Crate-Split.md): an email ECA that
+//! sends a template, a notification topic's email, the daily digest, the login code and the password reset mailed from
+//! the service worker, and the read fence on a send.
 
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};

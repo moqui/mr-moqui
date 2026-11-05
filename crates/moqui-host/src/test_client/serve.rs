@@ -12,12 +12,13 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui test-client --serve` (plans/archive/ClientTestHarness.md 6): the selected components grouped by the server their
-//! `test/client/suite.js` (with `--acceptance`, `acceptance/client/suite.js`) declares (`suite([...], { server: { components, specs, conf, properties } })`), and for each
-//! group this binary started as `moqui test <components> --spec <specs> --db snapshot --serve 127.0.0.1:0 --ready-file
-//! <file>`, with `MOQUI_CONF` set to the declared conf and the declared properties in its environment. Its standard input is a pipe this process holds, so the child also stops
-//! when the client dies without cleaning up. Once the ready file names the URL the group's specs run against it, then
-//! the pipe closes and the child stops and removes its scratch runtime.
+//! `moqui test-client --serve` (plans/archive/ClientTestHarness.md 6): the selected components grouped by the server
+//! their `test/client/suite.js` (with `--acceptance`, `acceptance/client/suite.js`) declares (`suite([...], { server: {
+//! components, specs, conf, properties } })`), and for each group this binary started as `moqui test <components>
+//! --spec <specs> --db snapshot --serve 127.0.0.1:0 --ready-file <file>`, with `MOQUI_CONF` set to the declared conf
+//! and the declared properties in its environment. Its standard input is a pipe this process holds, so the child also
+//! stops when the client dies without cleaning up. Once the ready file names the URL the group's specs run against it,
+//! then the pipe closes and the child stops and removes its scratch runtime.
 //!
 //! The client still opens no database and binds no port: the child does. A child that does not start fails its
 //! group's specs with the last lines of its output, and the other groups still run (D14). The child gets
@@ -118,7 +119,7 @@ pub(super) fn run_served(
 
 /// Whether two declarations can be one server: the same one, or the same conf and properties with named specs on both
 /// (an empty specs list runs every spec of its components, which a merge would widen). One server for the run's
-/// suites saves a server start each (plans/Test-Reduction.md, "Cheaper machinery").
+/// suites saves a server start each (plans/archive/Test-Reduction.md, "Cheaper machinery").
 fn shares_server(have: &SuiteServer, other: &SuiteServer) -> bool {
     have == other
         || (have.conf == other.conf

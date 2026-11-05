@@ -26,9 +26,9 @@
 //!   timestamp and the body, a replay window and cache, then `SmsServices.receive#Sms` for a text (the pair room, then
 //!   `ingest#Event`) and `ChatBridgeServices.note#DeliveryReceipt` for a delivery receipt.
 //!
-//! The crate is on moqui-core (plans/Crate-Split.md), which reaches it only through the [`moqui_core::extension`] entry
-//! below. moqui-host links it under its `channels` feature (Enterprise and Maximal); without it no `sms` adapter is
-//! registered, so an SMS bridge stays not connected and its webhook answers 404.
+//! The crate is on moqui-core (plans/archive/Crate-Split.md), which reaches it only through the
+//! [`moqui_core::extension`] entry below. moqui-host links it under its `channels` feature (Enterprise and Maximal);
+//! without it no `sms` adapter is registered, so an SMS bridge stays not connected and its webhook answers 404.
 
 pub mod telnyx;
 pub mod webhook;

@@ -16,7 +16,7 @@
 //! instance and who may use the tools there, restart from a running server, the log capture of a dev request, and the
 //! calls observed on the artifact stack ([`calls`], on the hot path of every push). The tools themselves (reload, the
 //! file watcher, `moqui check`, the artifact index, typegen and the spec runner) are moqui-devkit's
-//! (plans/Crate-Split.md).
+//! (plans/archive/Crate-Split.md).
 
 pub mod calls;
 pub mod log_capture;

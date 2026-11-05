@@ -1,13 +1,19 @@
 # Crate Split
 
+> Archived 2026-11-05: built. Phases 0 to 6 are done; two splits were left out on purpose: `moqui-test-client` stays in
+> the host (decided 2026-10-30, it would save a fraction of a 2 s host edit) and the SSH split was not justified (a
+> host edit is 1.8 s after `moqui-drivers`). The seam rules and "Adding a crate" stay current here, cited from
+> [Practices-Rust §1 and §8](../../docs/dev/Practices-Rust.md#1-crates-and-where-code-goes), which holds the crate
+> list; nothing is open.
+
 Status 2026-10-30: Phases 0 to 4 done (9788e711, 0bda5fdc, 9aa631f9, 4e962f93, 27ab3317: `moqui_core::extension`,
 `moqui-git`, `moqui-mail`, `moqui-entity`, `moqui-report`) and Phase 5 (8bebad83, ccbd0ca3, b6be4155:
 `moqui-collab`, `moqui-dav`, `moqui-devkit`), moqui-lib's unused `hmac` and `sha1` (19179589), and Phase 6's
 `moqui-drivers`; `moqui-test-client` left out on purpose ([Phases 5 and 6 in detail](#phases-5-and-6-in-detail)). Splits
 `moqui-core` along hook seams, above it for the tool subsystems and below it for the entity facade, and then the host,
-so an edit rebuilds less and more of the build runs in parallel. It revises [Crate-Layout](archive/Crate-Layout.md),
+so an edit rebuilds less and more of the build runs in parallel. It revises [Crate-Layout](Crate-Layout.md),
 whose "few, larger crates" rule this replaces
-([Practices-Rust §1, §8](../docs/dev/Practices-Rust.md#1-crates-and-where-code-goes)).
+([Practices-Rust §1, §8](../../docs/dev/Practices-Rust.md#1-crates-and-where-code-goes)).
 
 ## Why
 
@@ -181,7 +187,7 @@ report tests import `moqui_report as report`.
   it in `crates/moqui-host/src/lib.rs` when nothing else names the crate.
 - `moq` `write_app_crate`: the workspace crates kept at opt-level 0 in the generated `target/moqui-app`.
 - `scripts/check-packages.sh` when the crate has features of its own.
-- The Features table of [Build-Test](../docs/Build-Test.md) for a new feature; `[lints] workspace = true`; the
+- The Features table of [Build-Test](../../docs/Build-Test.md) for a new feature; `[lints] workspace = true`; the
   crate's purpose in a comment at the head of its `Cargo.toml` and in its `lib.rs` `//!` doc (the crates have no
   README).
 
@@ -215,7 +221,7 @@ Verification of a phase:
 - `cargo test -p <new crate>`, `cargo test -p moqui-core`, `cargo test -p moqui-host --test it`, `cargo test -p
   moqui-llm`; or `cargo test --workspace` (about 80 s with its build since e98c1c8e);
 - `./moq build`, then `./moq test-framework` (the framework's regression suite; the acceptance suite only when the
-  user asks, [Build-Test](../docs/Build-Test.md#the-two-suites)) or, for a narrower check, `./moq test <component>`;
+  user asks, [Build-Test](../../docs/Build-Test.md#the-two-suites)) or, for a narrower check, `./moq test <component>`;
 - the wasm browser build when core's features or the entity facade change;
 - `cargo tree -p moqui-core -e normal` to confirm the dependencies that left;
 - the touch set below, before and after, in the commit message and the table.
