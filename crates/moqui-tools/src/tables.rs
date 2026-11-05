@@ -217,7 +217,7 @@ pub(crate) fn plan_table_maintenance(
     if !crate::service::may_view_tools() {
         return Ok(Out::new());
     }
-    let Some(db) = GroupDb::of(parameters, facade) else {
+    let Some(db) = GroupDb::of_group(parameters, facade) else {
         return Ok(Out::new());
     };
     let action = text(parameters, "action");

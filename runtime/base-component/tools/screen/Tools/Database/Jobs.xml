@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The database jobs (plans/Tools-Database.md §6, org.moqui.impl.DatabaseServices.get#DatabaseJobs), newest first: a
+    schema or maintenance plan waiting to run, running, or ended. Each opens its page with the statements. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Jobs" default-menu-index="5">
+
+    <transition name="jobDetail"><default-response url="../JobDetail"/></transition>
+
+    <actions>
+        <script><![CDATA[
+            let found = null
+            jobsError = null
+            try { found = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DatabaseJobs').parameters({statusId: context.statusId || null, limit: 100}).call() }
+            catch (e) { jobsError = String(e.message || e) }
+            if (ec.message.hasError()) { jobsError = ec.message.errorsString; ec.message.clearErrors() }
+            // the times come as epoch milliseconds
+            const time = (value) => value == null || value === '' ? '' : ec.l10n.format(basicConvert(value, 'java.sql.Timestamp'), null)
+            jobList = ((found && found.jobs) || []).map((job) => Object.assign({}, job, {createdText: time(job.createdDate),
+                startText: time(job.startTime), endText: time(job.endTime)}))
+        ]]></script>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Database jobs"/><box-body>
+            <section-include name="DroppedKeys" location="component://tools/template/DatabaseParts.xml"/>
+            <label text="${jobsError}" type="p" style="text-negative" condition="jobsError"/>
+            <label text="Schema changes and table maintenance run as jobs: each is planned from Schema › Indexes and keys or Database › Tables, shown, and then run." type="p" style="m-muted"/>
+            <form-single name="FilterForm" transition=".">
+                <field name="statusId"><default-field title="Status">
+                    <drop-down allow-empty="true"><entity-options key="${statusId}" text="${description}">
+                        <entity-find entity-name="moqui.basic.StatusItem"><econdition field-name="statusTypeId" value="DatabaseJob"/>
+                            <order-by field-name="sequenceNum"/></entity-find></entity-options></drop-down>
+                </default-field></field>
+                <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+                <field-layout><field-row-big><field-ref name="statusId"/><field-ref name="submitButton"/></field-row-big></field-layout>
+            </form-single>
+            <label text="No database jobs yet." type="p" condition="!jobsError &amp;&amp; !jobList.length"/>
+            <form-list name="JobList" list="jobList" skip-form="true">
+                <field name="jobId"><header-field title="Job"/><default-field>
+                    <link url="jobDetail" text="${description || jobId}" link-type="anchor" parameter-map="{jobId: jobId}"/></default-field></field>
+                <field name="statusId"><header-field title="Status"/><default-field>
+                    <display-entity entity-name="moqui.basic.StatusItem" text="${description}"/></default-field></field>
+                <field name="kindEnumId"><header-field title="Kind"/><default-field>
+                    <display-entity entity-name="moqui.basic.Enumeration" text="${description}"/></default-field></field>
+                <field name="db"><header-field title="Database"/><default-field><display/></default-field></field>
+                <field name="userId"><header-field title="By"/><default-field>
+                    <display-entity entity-name="moqui.security.UserAccount" text="${userFullName || username}"/></default-field></field>
+                <field name="createdText"><header-field title="Planned"/><default-field><display/></default-field></field>
+                <field name="startText"><header-field title="Started"/><default-field><display/></default-field></field>
+                <field name="endText"><header-field title="Ended"/><default-field><display/></default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="jobId"/><field-ref name="db"/></column>
+                    <column><field-ref name="statusId"/><field-ref name="createdText"/></column>
+                </columns>
+            </form-list>
+        </box-body></container-box>
+    </widgets>
+</screen>

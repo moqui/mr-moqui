@@ -45,6 +45,7 @@ mod collab;
 mod component_deploy;
 mod component_load;
 mod create_or_update_race;
+mod database_external;
 mod database_jobs;
 mod etl_runs;
 mod devaide;

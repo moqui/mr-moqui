@@ -343,6 +343,8 @@ fn endpoint_at(port: u16) -> Endpoint {
         password: "secret".to_string(),
         database: "moqui".to_string(),
         tls: false,
+        tls_verify: moqui_core::entity::datasource::TlsVerify::Full,
+        tls_root_cert: None,
         read_timeout: Some(READ_TIMEOUT),
         isolation: None,
     }

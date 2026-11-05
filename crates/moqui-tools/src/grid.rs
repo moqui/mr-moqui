@@ -165,7 +165,15 @@ impl Source {
                     stamp_column: Some(text("stampColumn")).filter(|name| !name.is_empty()),
                 }),
                 Ok(crate::DbRef::Group(group)) => Err(refusal(format!("no entity group named {group}"))),
-                Ok(crate::DbRef::External(_)) => Err(refusal(crate::NOT_AVAILABLE)),
+                Ok(crate::DbRef::External(id)) => match crate::ext::external_group(facade, &id) {
+                    Some(group) => Ok(Self::Sql {
+                        group,
+                        sql: text("sql").trim().trim_end_matches(';').to_string(),
+                        key_columns: Vec::new(),
+                        stamp_column: None,
+                    }),
+                    None => Err(refusal(crate::NOT_AVAILABLE)),
+                },
                 Err(message) => Err(refusal(message)),
             },
             "file" => {
@@ -829,6 +837,9 @@ fn editable_table(
     group: &str,
     result: &moqui_core::entity::info::SqlResult,
 ) -> Result<(EntityDefinition, BTreeMap<String, String>), String> {
+    if catalog::is_external(group) {
+        return Err("A query of an external database is read only in the grid".to_string());
+    }
     if result.column_origins.is_empty() || result.column_origins.len() != result.columns.len() {
         return Err("The database did not say which table each column comes from".to_string());
     }

@@ -19,8 +19,8 @@
 //!
 //! A service that works on a database takes `db`: `group:<groupName>` for an entity group's database, or
 //! `ext:<connectionId>` for a `moqui.database.DatabaseConnection` ([`DbRef::parse`]). An external database is refused
-//! with one vague error ([`NOT_AVAILABLE`]) on a production instance or without `DATABASE_EXTERNAL` (§4.3); until
-//! external connections are built (§15 step 7) it is always refused so.
+//! with one vague error ([`NOT_AVAILABLE`]) on a production instance or without `DATABASE_EXTERNAL` (§4.3, [`ext`]).
+//! Schema, jobs and entity sources are the entity groups' only.
 //!
 //! This crate is on moqui-core (plans/archive/Crate-Split.md), which reaches it through the
 //! [`moqui_core::extension`] entry below. moqui-host links it in every build; the browser build leaves it out, and its
@@ -29,6 +29,7 @@
 pub mod audit;
 pub mod capabilities;
 pub mod catalog;
+pub mod ext;
 pub mod grid;
 pub mod grid_service;
 pub mod service;

@@ -246,6 +246,8 @@ fn a_cancel_to_a_stalled_host_does_not_hold_the_worker() {
                 password: target.password.clone(),
                 database: target.database.clone(),
                 tls: false,
+                tls_verify: moqui_core::entity::datasource::TlsVerify::Full,
+                tls_root_cert: None,
                 read_timeout: Some(read_timeout),
                 isolation: None,
             },

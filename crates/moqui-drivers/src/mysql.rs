@@ -65,6 +65,10 @@ mod driver {
         password: String,
         database: String,
         tls: bool,
+        /// What a TLS connection checks of the server's certificate, and the authorities to trust in place of the
+        /// public ones.
+        tls_verify: moqui_core::entity::datasource::TlsVerify,
+        tls_root_cert: Option<std::path::PathBuf>,
         /// The most one read waits; `None` without a limit.
         read_timeout: Option<Duration>,
         /// The session's isolation level as SQL writes it (`READ COMMITTED`); `None` leaves the server's default
@@ -98,7 +102,7 @@ mod driver {
                 .db_name(database)
                 .prefer_socket(false)
                 .stmt_cache_size(0usize)
-                .ssl_opts(self.tls.then(mysql::SslOpts::default))
+                .ssl_opts(self.tls.then(|| self.ssl_opts()))
                 .init(self.init())
                 .tcp_connect_timeout(Some(connect))
                 .read_timeout(read)
@@ -108,6 +112,23 @@ mod driver {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             let builder = builder.tcp_keepalive_probe_interval_secs(Some(KEEPALIVE_INTERVAL_SECS));
             builder
+        }
+
+        /// The TLS options of `sslMode` and `sslRootCert`: `require` encrypts without checking the certificate (with a
+        /// root certificate, as `verify-ca`), `verify-ca` checks the authority and not the host name, `verify-full` both.
+        fn ssl_opts(&self) -> mysql::SslOpts {
+            use moqui_core::entity::datasource::TlsVerify;
+            let mut opts = mysql::SslOpts::default();
+            if let Some(root) = &self.tls_root_cert {
+                opts = opts.with_root_cert_path(Some(std::borrow::Cow::Owned(root.clone())));
+            }
+            match (self.tls_verify, self.tls_root_cert.is_some()) {
+                (TlsVerify::Encrypt, false) => opts
+                    .with_danger_accept_invalid_certs(true)
+                    .with_danger_skip_domain_validation(true),
+                (TlsVerify::Encrypt | TlsVerify::Ca, _) => opts.with_danger_skip_domain_validation(true),
+                (TlsVerify::Full, _) => opts,
+            }
         }
 
         /// What each new connection runs first.
@@ -198,10 +219,22 @@ mod driver {
                     password: password.into(),
                     database: database.into(),
                     tls,
+                    tls_verify: moqui_core::entity::datasource::TlsVerify::Full,
+                    tls_root_cert: None,
                     read_timeout: Some(READ_TIMEOUT),
                     isolation: None,
                 },
             }
+        }
+
+        /// What TLS checks of the server's certificate (`sslMode`), and the PEM file of the authorities to trust in place
+        /// of the public ones (`sslRootCert`, empty for the public ones).
+        #[must_use]
+        pub fn tls_options(mut self, verify: moqui_core::entity::datasource::TlsVerify, root_cert: &str) -> Self {
+            self.endpoint.tls_verify = verify;
+            let root_cert = root_cert.trim();
+            self.endpoint.tls_root_cert = (!root_cert.is_empty()).then(|| std::path::PathBuf::from(root_cert));
+            self
         }
 
         /// The most one read waits, the sign-in's included; [`Duration::ZERO`] waits without a limit. The default is

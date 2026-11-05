@@ -77,14 +77,25 @@ pub fn conf_driver(conf: &ConfDb) -> Result<Arc<dyn DbDriver>, Error> {
         database,
         user,
         password,
+        ssl_mode,
+        ssl_root_cert,
         ..
     } = conf;
+    let mode = ssl_mode.trim();
     let driver: Arc<dyn DbDriver> = match db_type.as_str() {
         #[cfg(feature = "postgres")]
         "postgres" => {
             let port = port_of(5432)?;
             let driver = if host.starts_with('/') {
                 postgres_socket(user, database, host, port)?
+            } else if !mode.is_empty() {
+                // the connection's own sslmode, whatever the host
+                if moqui_core::entity::datasource::tls_wanted(mode) {
+                    let tls = pg_tls::TlsOptions::new(moqui_core::entity::datasource::tls_verify(mode), ssl_root_cert);
+                    postgres::PostgresDriver::external_with(user, database, host, port, &tls)?
+                } else {
+                    postgres::PostgresDriver::tcp_no_tls(user, database, host, port)
+                }
             } else if matches!(host.as_str(), "localhost" | "127.0.0.1" | "::1") {
                 postgres::PostgresDriver::tcp_no_tls(user, database, host, port)
             } else {
@@ -93,16 +104,19 @@ pub fn conf_driver(conf: &ConfDb) -> Result<Arc<dyn DbDriver>, Error> {
             Arc::new(driver.password(password))
         }
         #[cfg(feature = "mysql")]
-        "mysql" | "mysql8" => Arc::new(mysql::MysqlDriver::new(
-            host,
-            port_of(3306)?,
-            user,
-            password,
-            database,
-            false,
-        )),
+        "mysql" | "mysql8" => Arc::new(
+            mysql::MysqlDriver::new(
+                host,
+                port_of(3306)?,
+                user,
+                password,
+                database,
+                !mode.is_empty() && moqui_core::entity::datasource::tls_wanted(mode),
+            )
+            .tls_options(moqui_core::entity::datasource::tls_verify(mode), ssl_root_cert),
+        ),
         other => {
-            let _ = (host, database, user, password, port_of(0));
+            let _ = (host, database, user, password, mode, ssl_root_cert, port_of(0));
             Err(Error::new(format!("no database driver for database conf {other}")))?
         }
     };
@@ -166,6 +180,7 @@ mod tests {
             database: "postgres".to_string(),
             user,
             password,
+            ..ConfDb::default()
         })
         .unwrap();
         let mut conn = driver.connect().unwrap();

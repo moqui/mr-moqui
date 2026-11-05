@@ -82,9 +82,12 @@ fn group_of(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Opti
             add_error(format!("no entity group named {group}"));
             None
         }
-        Ok(DbRef::External(_)) => {
-            add_error(NOT_AVAILABLE);
-            None
+        Ok(DbRef::External(id)) => {
+            let group = crate::ext::external_group(facade, &id);
+            if group.is_none() {
+                add_error(NOT_AVAILABLE);
+            }
+            group
         }
         Err(message) => {
             add_error(message);
@@ -431,6 +434,17 @@ fn reset_database_statements(parameters: &BTreeMap<String, Value>, facade: &Enti
         add_error("Resetting statement stats is not done under the read fence");
         return none();
     }
+    match catalog::target(facade, &group) {
+        Ok(db) if db.read_only => {
+            add_error("This connection is read only");
+            return none();
+        }
+        Ok(_) => {}
+        Err(_) => {
+            add_error(NOT_AVAILABLE);
+            return none();
+        }
+    }
     let (sql, result) = if catalog::group_is_mysql(facade, &group) {
         let sql = catalog::mysql::STATEMENT_STATS_RESET;
         (sql, catalog::execute(facade, &group, sql).map(|_| ()))
@@ -443,7 +457,7 @@ fn reset_database_statements(parameters: &BTreeMap<String, Value>, facade: &Enti
         facade,
         &audit::AuditEntry {
             action: "DbaStatsReset",
-            db: Some(format!("group:{group}")),
+            db: Some(catalog::db_text(&group)),
             statement_text: Some(sql.to_string()),
             is_change: true,
             error_text: error.clone(),

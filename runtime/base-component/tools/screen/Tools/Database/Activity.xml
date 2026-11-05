@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The database's sessions (plans/Tools-Database.md §7.3, org.moqui.impl.DatabaseServices.get#DatabaseActivity): what
+    each runs and waits on, who blocks whom, and the marks: this server's own sessions, idle in a transaction for over a
+    minute, running for over ten seconds. Cancel stops a session's statement and End closes the session; both need
+    DATABASE_ADMIN; a session of this server is refused until a second question confirms it (force). Below, the index checks of
+    get#IndexHealth. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Activity" default-menu-index="2">
+
+    <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
+    <!-- Cancel and End: a session of this server is refused with "set force"; that refusal comes back as a second question
+        on the page (forcePid, forceSignal), and only its own confirmation sends force -->
+    <transition name="cancelSession" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.cancel#DatabaseSession').parameters({db,
+                pid: Number(context.pid), force: String(context.force) == 'true'}).call() || {}
+            forcePid = null
+            if (ec.message.hasError() && /set force/i.test(ec.message.errorsString) && String(context.force) != 'true') {
+                ec.message.clearErrors()
+                forcePid = String(context.pid)
+                forceSignal = 'cancel'
+            } else if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize(out.signalled ? 'The statement was cancelled' : 'The session was not found'), 'info')
+        ]]></script></actions>
+        <default-response url="."><parameter name="db"/><parameter name="forcePid"/><parameter name="forceSignal"/></default-response>
+        <error-response url="."><parameter name="db"/></error-response>
+    </transition>
+    <transition name="terminateSession" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.terminate#DatabaseSession').parameters({db,
+                pid: Number(context.pid), force: String(context.force) == 'true'}).call() || {}
+            forcePid = null
+            if (ec.message.hasError() && /set force/i.test(ec.message.errorsString) && String(context.force) != 'true') {
+                ec.message.clearErrors()
+                forcePid = String(context.pid)
+                forceSignal = 'terminate'
+            } else if (!ec.message.hasError()) ec.message.addMessage(ec.l10n.localize(out.signalled ? 'The session was ended' : 'The session was not found'), 'info')
+        ]]></script></actions>
+        <default-response url="."><parameter name="db"/><parameter name="forcePid"/><parameter name="forceSignal"/></default-response>
+        <error-response url="."><parameter name="db"/></error-response>
+    </transition>
+
+    <actions>
+        <script><![CDATA[
+            const call = (name) => {
+                let out = null, error = null
+                try { out = ec.service.sync().name('org.moqui.impl.DatabaseServices.' + name).parameters({db}).call() } catch (e) { error = String(e.message || e) }
+                if (ec.message.hasError()) { error = ec.message.errorsString; ec.message.clearErrors() }
+                return {out: out || {}, error}
+            }
+            const activity = call('get#DatabaseActivity')
+            activityError = activity.error
+            activityReasons = Object.entries(activity.out.reasons || {}).map(([part, reason]) => part + ': ' + reason)
+            instanceName = activity.out.instanceName || ''
+            const seconds = (ms) => ms == null ? '' : ms >= 60000 ? Math.round(ms / 60000) + ' min' : (ms / 1000).toFixed(1) + ' s'
+            sessionList = (activity.out.sessions || []).map((session) => ({pid: session.pid, user: session.user_name || '',
+                application: session.application_name || session.client_addr || '', state: session.state || session.command || '',
+                wait: [session.wait_event_type, session.wait_event].filter(Boolean).join(': '),
+                running: session.query_ms != null ? seconds(session.query_ms) : session.time_seconds != null ? session.time_seconds + ' s' : '',
+                transaction: seconds(session.xact_ms), query: session.query || '', blockedBy: session.blocked_by || '',
+                marks: [session.own_app ? 'this server' : '', session.idle_in_transaction_long ? 'idle in transaction' : '',
+                    session.running_long ? 'running long' : '', session.is_self ? 'this page' : ''].filter(Boolean).join(', '),
+                ownApp: !!session.own_app, isSelf: !!session.is_self}))
+            // the blocking chains as rows of a tree: a session that waits on no one, then those it blocks
+            blockingRows = []
+            const walk = (node, depth) => {
+                const session = sessionList.find((item) => String(item.pid) == String(node.pid))
+                blockingRows.push({indent: '    '.repeat(depth) + (depth ? '└ ' : ''), pid: node.pid,
+                    text: session ? [session.user, session.state, session.query.substring(0, 160)].filter(Boolean).join(' · ') : ''})
+                for (const child of node.blocks || []) walk(child, depth + 1)
+            }
+            for (const chain of activity.out.blockingChains || []) walk(chain, 0)
+            canAdmin = ec.user.hasPermission('DATABASE_ADMIN')
+
+            const health = call('get#IndexHealth')
+            healthError = health.error
+            const h = health.out
+            healthRows = []
+            const add = (check, rows, name, detail) => { for (const row of rows || []) healthRows.push({check, table: row.table_name || '',
+                name: name(row), detail: detail(row)}) }
+            add('Foreign key with no index', h.unindexedForeignKeys, (row) => row.constraint_name || '', (row) => [].concat(row.columns || []).join(', '))
+            add('Unused index', h.unusedIndexes, (row) => row.index_name || '', (row) => row.index_bytes != null ? ec.l10n.format(Number(row.index_bytes) / 1048576, '#,##0.0') + ' MiB' : '')
+            add('Duplicate index', h.duplicateIndexes, (row) => row.index_name || '', (row) => row.covered_by ? 'led by ' + row.covered_by : '')
+            add('Invalid index', h.invalidIndexes, (row) => row.index_name || '', () => 'a failed online build: drop it or build it again')
+            add('Transaction id age', h.databaseAge, (row) => row.database_name || 'database', (row) => row.xid_age != null ? ec.l10n.format(Number(row.xid_age), '#,##0') + ' of ' + ec.l10n.format(Number(row.freeze_max_age || 200000000), '#,##0') : '')
+            add('Table transaction id age', (h.tableAge || []).slice(0, 10), (row) => row.table_name || '', (row) => row.xid_age != null ? ec.l10n.format(Number(row.xid_age), '#,##0') : '')
+            healthReasons = Object.entries(h.reasons || {}).map(([part, reason]) => part + ': ' + reason)
+            statsSinceText = h.statsSince && Object.values(h.statsSince).find(Boolean) ? String(Object.values(h.statsSince).find(Boolean)) : ''
+        ]]></script>
+    </actions>
+    <widgets>
+        <section name="ForceQuestion" condition="forcePid &amp;&amp; canAdmin"><widgets>
+            <container-box type="warning"><box-header title="Session ${forcePid} is one of this server's own"/><box-body>
+                <label text="It is a connection of this server's pool or of a database job: ${forceSignal == 'terminate' ? 'ending it fails what uses it, and the pool opens another' : 'cancelling its statement fails the request or job running it'}." type="p"/>
+                <link url="terminateSession" text="End it anyway" link-type="hidden-form" btn-type="danger" condition="forceSignal == 'terminate'"
+                        parameter-map="{db: db, pid: forcePid, force: true}" confirmation="End session ${forcePid}, one of this server's own?"/>
+                <link url="cancelSession" text="Cancel it anyway" link-type="hidden-form" btn-type="danger" condition="forceSignal != 'terminate'"
+                        parameter-map="{db: db, pid: forcePid, force: true}" confirmation="Cancel the statement of session ${forcePid}, one of this server's own?"/>
+                <link url="." text="Leave it" parameter-map="{db: db}"/>
+            </box-body></container-box>
+        </widgets></section>
+        <container-box><box-header title="Sessions"/><box-body>
+            <section-include name="DatabasePicker" location="component://tools/template/DatabaseParts.xml"/>
+            <label text="${activityError}" type="p" style="text-negative" condition="activityError"/>
+            <section-iterate name="ActivityReasons" list="activityReasons" entry="reason"><widgets>
+                <label text="Not read: ${reason}" type="p" style="text-warning"/></widgets></section-iterate>
+            <label text="Sessions marked this server are of instance ${instanceName}." type="p" style="m-muted" condition="instanceName"/>
+            <form-list name="SessionList" list="sessionList" skip-form="true">
+                <field name="pid"><header-field title="Session"/><default-field><display/></default-field></field>
+                <field name="user"><default-field><display/></default-field></field>
+                <field name="application"><default-field title="Client"><display/></default-field></field>
+                <field name="state"><default-field><display/></default-field></field>
+                <field name="wait"><default-field title="Waiting on"><display/></default-field></field>
+                <field name="running"><default-field title="Statement for"><display/></default-field></field>
+                <field name="transaction"><default-field title="Transaction for"><display/></default-field></field>
+                <field name="blockedBy"><default-field title="Blocked by"><display/></default-field></field>
+                <field name="marks"><default-field><display/></default-field></field>
+                <field name="query"><default-field title="Statement"><display text="${query.length &gt; 300 ? query.substring(0, 300) + ' …' : query}"/></default-field></field>
+                <field name="actions"><default-field title="">
+                    <section name="SessionActions" condition="canAdmin &amp;&amp; !isSelf"><widgets>
+                        <link url="cancelSession" text="Cancel" link-type="hidden-form" parameter-map="{db: db, pid: pid}"
+                                confirmation="Cancel the statement of session ${pid}?"/>
+                        <link url="terminateSession" text="End" link-type="hidden-form" btn-type="danger" parameter-map="{db: db, pid: pid}"
+                                confirmation="End session ${pid}? Its transaction is rolled back."/>
+                    </widgets></section>
+                </default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="pid"/><field-ref name="query"/></column>
+                    <column><field-ref name="state"/><field-ref name="running"/><field-ref name="actions"/></column>
+                </columns>
+            </form-list>
+        </box-body></container-box>
+        <section name="BlockingSection" condition="blockingRows.length"><widgets>
+            <container-box><box-header title="Who blocks whom"/><box-body>
+                <section-iterate name="BlockingRows" list="blockingRows" entry="blockingRow"><widgets>
+                    <label text="${blockingRow.indent}${blockingRow.pid}  ${blockingRow.text}" type="div"/>
+                </widgets></section-iterate>
+            </box-body></container-box>
+        </widgets></section>
+        <container-box><box-header title="Index health"/><box-body>
+            <label text="${healthError}" type="p" style="text-negative" condition="healthError"/>
+            <section-iterate name="HealthReasons" list="healthReasons" entry="reason"><widgets>
+                <label text="Not read: ${reason}" type="p" style="text-warning"/></widgets></section-iterate>
+            <label text="Index use is counted since ${statsSinceText}." type="p" style="m-muted" condition="statsSinceText"/>
+            <label text="No index problems found." type="p" condition="!healthError &amp;&amp; !healthRows.length"/>
+            <form-list name="HealthList" list="healthRows" skip-form="true" paginate="false">
+                <field name="check"><default-field><display/></default-field></field>
+                <field name="table"><default-field><display/></default-field></field>
+                <field name="name"><default-field><display/></default-field></field>
+                <field name="detail"><default-field><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+    </widgets>
+</screen>

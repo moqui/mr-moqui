@@ -34,6 +34,8 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
     crate::sql_service::register(map)?;
     // ---- the data grid (plans/Tools-Database.md §9): crate::grid_service ----
     crate::grid_service::register(map)?;
+    // ---- external databases (plans/Tools-Database.md §4.3): crate::ext ----
+    crate::ext::register(map)?;
     // ---------- Schema and jobs (plans/Tools-Database.md §5, §6, §7.3, §7.4) ----------
     crate::register_schema_and_jobs(map)?;
     Ok(())
@@ -111,10 +113,14 @@ fn get_capabilities(
         }
     };
     match db {
-        DbRef::External(_) => {
-            // external connections come with §15 step 7; until then every one is refused as on production
-            add_error(NOT_AVAILABLE);
-            Ok(BTreeMap::new())
+        DbRef::External(id) => {
+            // the external Postgres, MySQL or MariaDB column of §4.1, through the gate
+            let Some(group) = crate::ext::external_group(facade, &id) else {
+                add_error(NOT_AVAILABLE);
+                return Ok(BTreeMap::new());
+            };
+            let caps = capabilities::group_capabilities(facade, &group, || false, flag(parameters, "refresh"));
+            Ok(caps.to_out())
         }
         DbRef::Group(group) => {
             if !facade.group_names().contains(&group) {

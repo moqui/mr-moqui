@@ -73,7 +73,7 @@ pub(crate) fn compare_schema(
     if !crate::service::may_view_tools() {
         return Ok(Out::new());
     }
-    let Some(db) = GroupDb::of(parameters, facade) else {
+    let Some(db) = GroupDb::of_group(parameters, facade) else {
         return Ok(Out::new());
     };
     let names = selected(parameters, facade, &db);
@@ -430,7 +430,7 @@ pub(crate) fn plan_schema_changes(
     if !crate::service::may_view_tools() {
         return Ok(Out::new());
     }
-    let Some(db) = GroupDb::of(parameters, facade) else {
+    let Some(db) = GroupDb::of_group(parameters, facade) else {
         return Ok(Out::new());
     };
     let mut changes: BTreeSet<String> = list(parameters, "changes").into_iter().collect();
@@ -570,7 +570,7 @@ pub(crate) fn plan_load_wrap(
     if !crate::service::may_view_tools() {
         return Ok(Out::new());
     }
-    let Some(db) = GroupDb::of(parameters, facade) else {
+    let Some(db) = GroupDb::of_group(parameters, facade) else {
         return Ok(Out::new());
     };
     let names = selected(parameters, facade, &db);
@@ -680,7 +680,7 @@ pub(crate) fn get_schema_ddl(
     if !crate::service::may_view_tools() {
         return Ok(Out::new());
     }
-    let Some(db) = GroupDb::of(parameters, facade) else {
+    let Some(db) = GroupDb::of_group(parameters, facade) else {
         return Ok(Out::new());
     };
     let names = selected(parameters, facade, &db);

@@ -117,31 +117,44 @@ pub mod mysql {
 /// The most one catalog query may take: past it the transaction's deadline cancels the statement.
 pub const QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
+/// The database `group` names: an entity group's, or an external connection's when it is `ext:<connectionId>`. The
+/// gate of an external one ([`crate::ext::gate`]) is the service's, before it names one here.
+///
+/// # Errors
+///
+/// Returns an error for an unknown group or a connection that does not open.
+pub fn target(facade: &EntityFacade, group: &str) -> Result<crate::group_db::GroupDb, Error> {
+    if let Some(id) = group.strip_prefix("ext:") {
+        return crate::ext::open(facade, id);
+    }
+    crate::group_db::GroupDb::named(facade, group).ok_or_else(|| Error::new(format!("no entity group named {group}")))
+}
+
+/// Whether `group` names an external connection (`ext:<connectionId>`).
+#[must_use]
+pub fn is_external(group: &str) -> bool {
+    group.starts_with("ext:")
+}
+
+/// The `db` text of `group`, as the services take it and the audit keeps it: `group:<name>` or `ext:<connectionId>`.
+#[must_use]
+pub fn db_text(group: &str) -> String {
+    if is_external(group) {
+        group.to_string()
+    } else {
+        format!("group:{group}")
+    }
+}
+
 /// Run one catalog query on `group`'s connection, in a transaction of its own (the caller's is suspended while it
 /// runs), so a failed probe cannot abort the caller's transaction, with a deadline of [`QUERY_TIMEOUT`] that cancels a
-/// hung statement. Rows are maps of the column names as the server gives them.
+/// hung statement; read only on a read-only external connection. Rows are maps of the column names in lower case.
 ///
 /// # Errors
 ///
 /// Returns an error for an unknown group or when the statement fails.
 pub fn query(facade: &EntityFacade, group: &str, sql: &str) -> Result<Vec<IndexMap<String, Value>>, Error> {
-    let tx = facade
-        .groups()
-        .find(|(name, _, _)| *name == group)
-        .map(|(_, _, tx)| tx.clone())
-        .ok_or_else(|| Error::new(format!("no entity group named {group}")))?;
-    let rows = tx.run(TransactionAttribute::ForceNew, Some(QUERY_TIMEOUT), || {
-        tx.with_connection(|conn| conn.query_once(sql, &[]))
-    })?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            row.columns
-                .into_iter()
-                .map(|(name, value)| (name.to_string(), value))
-                .collect()
-        })
-        .collect())
+    query_with(facade, group, sql, &[])
 }
 
 /// [`query`] with `params` bound to its `?` placeholders.
@@ -155,19 +168,7 @@ pub fn query_with(
     sql: &str,
     params: &[Value],
 ) -> Result<Vec<IndexMap<String, Value>>, Error> {
-    let tx = group_tx(facade, group)?;
-    let rows = tx.run(TransactionAttribute::ForceNew, Some(QUERY_TIMEOUT), || {
-        tx.with_connection(|conn| conn.query_once(sql, params))
-    })?;
-    Ok(rows
-        .into_iter()
-        .map(|row| {
-            row.columns
-                .into_iter()
-                .map(|(name, value)| (name.to_string(), value))
-                .collect()
-        })
-        .collect())
+    target(facade, group)?.query(sql, params)
 }
 
 /// Run one statement that gives no rows (a reset, `KILL QUERY`) as [`query`] runs a query; the rows it changed.
@@ -188,11 +189,7 @@ pub fn execute(facade: &EntityFacade, group: &str, sql: &str) -> Result<u64, Err
 ///
 /// Returns an error for an unknown group.
 pub fn group_tx(facade: &EntityFacade, group: &str) -> Result<moqui_core::transaction::TransactionManager, Error> {
-    facade
-        .groups()
-        .find(|(name, _, _)| *name == group)
-        .map(|(_, _, tx)| tx.clone())
-        .ok_or_else(|| Error::new(format!("no entity group named {group}")))
+    Ok(target(facade, group)?.tx)
 }
 
 /// Whether `group` is on MySQL or MariaDB.
@@ -204,6 +201,9 @@ pub fn group_is_mysql(facade: &EntityFacade, group: &str) -> bool {
 /// The dialect (`database-list` name) of `group`: `postgres`, `mysql` or `mysql8`.
 #[must_use]
 pub fn group_dialect(facade: &EntityFacade, group: &str) -> Option<String> {
+    if is_external(group) {
+        return target(facade, group).ok().map(|db| db.dialect.name);
+    }
     facade
         .groups()
         .find(|(name, _, _)| *name == group)

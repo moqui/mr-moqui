@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The Tools app's database services that are not in crates/moqui-tools (plans/Tools-Database.md §5.2, §6). -->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <service verb="run" noun="LoadWrap" transaction="ignore">
+        <description>A data load or a snapshot import between the two jobs of org.moqui.impl.DatabaseServices.plan#LoadWrap:
+            the drop job runs first (waited on), then the load when every key was dropped, and then, whatever the drop or
+            the load did, the restore job (ignorePreviousError), so the keys never stay dropped because the load failed. A
+            restore that does not finish is a failed or pending DbjLoadWrap job, which Database › Overview and Jobs name.
+            Run as the DatabaseLoadWrap ServiceJob from Data › Load and Data › Snapshots; the outcome is its results and a
+            notification. loadKind is data (the entity data options below) or snapshot (zipFilename and the import
+            options of import#EntityDataSnapshot). The jobs check DATABASE_ADMIN.</description>
+        <in-parameters>
+            <parameter name="dropJobId" required="true"/>
+            <parameter name="restoreJobId" required="true"/>
+            <parameter name="loadKind" default-value="data"/>
+            <parameter name="xmlText" allow-html="any"/>
+            <parameter name="jsonText" allow-html="any"/>
+            <parameter name="csvText" allow-html="any"/>
+            <parameter name="location"/>
+            <parameter name="types"/>
+            <parameter name="components"/>
+            <parameter name="onlyCreate" type="Boolean" default="false"/>
+            <parameter name="zipFilename"/>
+            <parameter name="dummyFks" type="Boolean" default="false"/>
+            <parameter name="useTryInsert" type="Boolean" default="false"/>
+            <parameter name="disableEntityEca" type="Boolean" default="true"/>
+            <parameter name="disableAuditLog" type="Boolean" default="true"/>
+            <parameter name="disableFkCreate" type="Boolean" default="true"/>
+            <parameter name="disableDataFeed" type="Boolean" default="true"/>
+            <parameter name="transactionTimeout" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="dropStatusId"/>
+            <parameter name="loaded" type="Boolean"/>
+            <parameter name="recordsLoaded" type="Long"/>
+            <parameter name="loadError"/>
+            <parameter name="restoreStatusId"/>
+            <parameter name="restoreFailedCount" type="Long"/>
+            <parameter name="outcome"/>
+        </out-parameters>
+        <actions>
+            <!-- the ADMIN grant of this service is not enough to drop keys: the caller needs DATABASE_ADMIN, before anything runs -->
+            <if condition="!ec.user.hasPermission('DATABASE_ADMIN')">
+                <return error="true" message="A load with the foreign keys dropped needs the DATABASE_ADMIN permission"/></if>
+            <script><![CDATA[
+            const runJob = (jobId) => {
+                const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.run#DatabaseJob').parameters({jobId, wait: true})
+                    .ignorePreviousError(true).call() || {}
+                return out
+            }
+            loaded = false
+            recordsLoaded = 0
+            loadError = null
+
+            const dropped = runJob(dropJobId)
+            dropStatusId = dropped.statusId || null
+            if (dropStatusId == 'DbjsDone' && !ec.message.hasError()) {
+                // the load, its errors kept apart so the restore runs
+                try {
+                    if (loadKind == 'snapshot') {
+                        const out = ec.service.sync().name('org.moqui.impl.EntityServices.import#EntityDataSnapshot').parameters({zipFilename,
+                            dummyFks, useTryInsert, disableEntityEca, disableAuditLog, disableFkCreate, disableDataFeed,
+                            transactionTimeout: transactionTimeout || 3600}).call() || {}
+                        recordsLoaded = Number(out.recordsLoaded || 0)
+                    } else {
+                        const edl = ec.entity.makeDataLoader()
+                        if (types || components) {
+                            if (types) edl.dataTypes(String(types).split(','))
+                            if (components) edl.componentNameList(String(components).split(','))
+                        } else if (location) {
+                            if (/^https?:/i.test(String(location))) throw new Error('Remote data load location is not allowed')
+                            edl.location(location)
+                        } else if (csvText) edl.csvText(csvText)
+                        else if (jsonText) edl.jsonText(jsonText)
+                        else if (xmlText) edl.xmlText(xmlText)
+                        if (transactionTimeout) edl.transactionTimeout(transactionTimeout)
+                        if (dummyFks) edl.dummyFks(true)
+                        if (useTryInsert) edl.useTryInsert(true)
+                        if (onlyCreate) edl.onlyCreate(true)
+                        edl.restrictSensitiveEntities(true)
+                        recordsLoaded = edl.load([])
+                    }
+                    loaded = !ec.message.hasError()
+                } catch (e) {
+                    loadError = String(e.message || e)
+                }
+                if (ec.message.hasError()) loadError = [loadError, ec.message.errorsString].filter(Boolean).join('; ')
+            } else {
+                loadError = 'Not loaded: dropping the foreign keys ended ' + (dropStatusId || 'with an error') + ' (database job ' + dropJobId + ')'
+            }
+
+            // always: the keys come back whatever the drop or the load did
+            const restored = runJob(restoreJobId)
+            restoreStatusId = restored.statusId || null
+            restoreFailedCount = Number(restored.failedCount || 0)
+            outcome = (loaded ? 'Loaded ' + recordsLoaded + ' records' : (loadError || 'Not loaded')) + '. Restoring the foreign keys (database job '
+                + restoreJobId + ') ended ' + (restoreStatusId || 'with an error') + (restoreFailedCount ? ', ' + restoreFailedCount + ' failed' : '') + '.'
+            if (restoreStatusId == 'DbjsDone') ec.logger.info('Load wrap: ' + outcome)
+            else ec.logger.error('Load wrap: ' + outcome + ' Run database job ' + restoreJobId + ' again to make the rest of the keys.')
+            // the outcome is the job run's results; the load's error is not the run's, as the restore did run
+            ec.message.clearErrors()
+            if (!loaded || restoreStatusId != 'DbjsDone') ec.message.addError(outcome)
+        ]]></script>
+        </actions>
+    </service>
+</services>
