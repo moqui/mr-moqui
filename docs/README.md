@@ -35,6 +35,7 @@ Screens, forms, templates and the clients.
 | [Qvt-Client.md](ui/Qvt-Client.md) | The client of the `qvt` render mode and the `/qapps` shell: page shell, screen loading, the `m-*` widgets |
 | [Desktop-Client.md](ui/Desktop-Client.md) | The desktop app as a client of a server: accounts, device modes and `<client-conf>`, the offline store, the outbox, the bundled Comms screens, crypto and calls |
 | [TUI.md](ui/TUI.md) | The terminal UI: `moqui tui`, the `tui` render mode, the apps over SSH, and agents driving it |
+| [Db-Forms.md](ui/Db-Forms.md) | Forms kept in the database: dated fields and options read as of a date, drafts, successor fields, and dependencies as `visible-when` and `require-when` |
 
 ## interfaces: System Interfaces
 

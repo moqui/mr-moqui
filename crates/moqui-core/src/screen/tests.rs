@@ -954,6 +954,7 @@ fn fop_sends_the_print_document_of_the_screen_as_pdf() {
 
 mod anonymous;
 mod authc;
+mod db_forms;
 mod decimal;
 mod files;
 mod forms;
