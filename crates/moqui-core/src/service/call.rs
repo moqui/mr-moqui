@@ -25,7 +25,7 @@ use moqui_lib::sync::{lock, read, write};
 use super::define::{Authenticate, ServiceDef, ServiceKind};
 use super::util::has_error;
 use super::validate;
-use crate::context::{Authz, Error, ExecutionContext, Tarpit};
+use crate::context::{AnonymousAccess, AnonymousLogin, Authz, Error, ExecutionContext, Tarpit};
 use crate::entity::{EntityFacade, EntityValue};
 use crate::transaction::TransactionAttribute;
 
@@ -777,7 +777,7 @@ impl Drop for ErrorsAside {
 /// call started.
 struct ServiceFrame {
     pushed: bool,
-    anonymous: bool,
+    anonymous: AnonymousLogin,
 }
 
 impl ServiceFrame {
@@ -785,7 +785,7 @@ impl ServiceFrame {
         if !crate::user::context_entered() {
             return Ok(Self {
                 pushed: false,
-                anonymous: false,
+                anonymous: AnonymousLogin::default(),
             });
         }
         let authz = Authz::required_if(def.authenticate == Authenticate::Required);
@@ -807,18 +807,22 @@ impl ServiceFrame {
         }
         let mut frame = Self {
             pushed: outcome.is_some(),
-            anonymous: false,
+            anonymous: AnonymousLogin::default(),
         };
-        // After the push, so the frame is the one marked.
-        let all = match def.authenticate {
-            Authenticate::AnonymousAll => Some(true),
-            Authenticate::AnonymousView => Some(false),
+        // After the push, so the frame is the one marked. The grant is for the caller, when one is logged in: a call
+        // below that logs in as someone else (authUsername) does not inherit it.
+        let access = match def.authenticate {
+            Authenticate::AnonymousAll => Some(AnonymousAccess::All),
+            Authenticate::AnonymousView => Some(AnonymousAccess::View),
             _ => None,
         };
-        if let Some(all) = all {
-            let user_id = crate::user::current_user_id().ok().flatten().unwrap_or_default();
-            crate::context::ExecutionContext::with_current(|ctx| ctx.set_anonymous_authorized(all, &user_id));
-            frame.anonymous = crate::user::login_anonymous().unwrap_or(false);
+        if let Some(access) = access {
+            let user_id = crate::user::current_user_id().ok().flatten();
+            crate::context::ExecutionContext::with_current(|ctx| ctx.grant_anonymous(access, user_id.as_deref()));
+            // Unlike a screen or REST path, the call goes on without the login: the grant already covers its artifacts.
+            if let Err(err) = frame.anonymous.begin() {
+                tracing::warn!(service = %def.name, error = %err, "the anonymous login of a service frame failed");
+            }
         }
         Ok(frame)
     }
@@ -826,9 +830,8 @@ impl ServiceFrame {
 
 impl Drop for ServiceFrame {
     fn drop(&mut self) {
-        if self.anonymous {
-            crate::user::logout_anonymous_only();
-        }
+        // The login ends before the frame pops.
+        self.anonymous.end();
         if self.pushed {
             crate::context::ExecutionContext::with_current(|ctx| {
                 let _ = ctx.pop();

@@ -2192,9 +2192,12 @@ fn index_feeds_on_start_empty(factory: &std::sync::Arc<moqui_core::context::Exec
     moqui_core::search::index_feeds_on_start_empty();
 }
 
-/// The `loadDataEmptyDb` frame of Java's `checkEmptyDb`, popped on drop.
+/// The `loadDataEmptyDb` frame of Java's `checkEmptyDb`: authorized for all actions, with the anonymous user logged in
+/// when nobody is. On drop the frame pops, then the anonymous login it started ends, as Java's `finally`.
 #[cfg(any(feature = "postgres", feature = "mysql"))]
-struct EmptyDbLoadFrame;
+struct EmptyDbLoadFrame {
+    anonymous: moqui_core::context::AnonymousLogin,
+}
 
 #[cfg(any(feature = "postgres", feature = "mysql"))]
 impl EmptyDbLoadFrame {
@@ -2208,12 +2211,18 @@ impl EmptyDbLoadFrame {
                 moqui_core::context::Tarpit::Count,
                 None,
             )?;
-            ctx.set_anonymous_authorized(true, "");
-            moqui_core::user::login_anonymous()?;
-            Ok::<(), moqui_core::context::Error>(())
+            let mut frame = Self {
+                anonymous: moqui_core::context::AnonymousLogin::default(),
+            };
+            ctx.grant_anonymous(moqui_core::context::AnonymousAccess::All, None);
+            if let Err(err) = frame.anonymous.begin() {
+                let _ = ctx.pop();
+                return Err(err);
+            }
+            Ok::<Self, moqui_core::context::Error>(frame)
         });
         match pushed {
-            Some(Ok(())) => Ok(Self),
+            Some(Ok(frame)) => Ok(frame),
             Some(Err(err)) => Err(moqui_lib::error::Error::new(err.to_string())),
             None => Err(moqui_lib::error::Error::new(
                 "the empty-db load has no execution context",
@@ -2228,6 +2237,7 @@ impl Drop for EmptyDbLoadFrame {
         moqui_core::context::ExecutionContext::with_current(|ctx| {
             let _ = ctx.pop();
         });
+        self.anonymous.end();
     }
 }
 

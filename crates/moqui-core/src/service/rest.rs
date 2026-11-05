@@ -27,7 +27,9 @@ use moqui_lib::sync::{lock, read, write};
 
 use super::call;
 use super::define::{ParamDef, Required};
-use crate::context::{Authz, Error, ErrorKind, ExecutionContext, ExecutionContextFactory, Tarpit};
+use crate::context::{
+    AnonymousAccess, AnonymousLogin, Authz, Error, ErrorKind, ExecutionContext, ExecutionContextFactory, Tarpit,
+};
 use crate::entity::{sensitive, EntityFacade};
 
 /// The REST resources of a factory, read once from its components' `service/*.rest.xml` files.
@@ -539,7 +541,7 @@ fn action_from_method(method: &str) -> &'static str {
 #[derive(Default)]
 struct PathFrame {
     pushed: bool,
-    anonymous: bool,
+    anonymous: AnonymousLogin,
 }
 
 impl PathFrame {
@@ -576,27 +578,21 @@ impl PathFrame {
         }
     }
 
-    /// `anonymous-all` and `anonymous-view` mark the top frame inheritable, and log in the anonymous user when no
-    /// one is logged in.
+    /// `anonymous-all` and `anonymous-view` mark the top frame inheritable for whoever runs under it, then log in
+    /// the anonymous user when no one is logged in. A session that cannot be read fails the path.
     fn apply_anonymous(&mut self, mode: &str) -> Result<(), Error> {
-        let all = match mode {
-            "anonymous-all" => true,
-            "anonymous-view" => false,
-            _ => return Ok(()),
+        let Some(access) = AnonymousAccess::from_mode(mode) else {
+            return Ok(());
         };
-        ExecutionContext::with_current(|ec| ec.set_anonymous_authorized(all, ""));
-        if crate::user::login_anonymous()? {
-            self.anonymous = true;
-        }
-        Ok(())
+        ExecutionContext::with_current(|ec| ec.grant_anonymous(access, None));
+        self.anonymous.begin()
     }
 }
 
 impl Drop for PathFrame {
     fn drop(&mut self) {
-        if self.anonymous {
-            crate::user::logout_anonymous_only();
-        }
+        // The login ends before the frame pops.
+        self.anonymous.end();
         if self.pushed {
             ExecutionContext::with_current(|ec| {
                 let _ = ec.pop();

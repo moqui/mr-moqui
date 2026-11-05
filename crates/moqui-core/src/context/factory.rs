@@ -29,6 +29,7 @@ use moqui_lib::env;
 use moqui_lib::node::MNode;
 use moqui_lib::sync::{lock, read, write};
 
+use super::anonymous::AnonymousAccess;
 use super::artifact::{ArtifactStack, Authz, AuthzGuard, AuthzRequired, Tarpit};
 
 thread_local! {
@@ -1208,13 +1209,16 @@ impl ExecutionContext {
         self.state.artifacts.borrow().authz_state().0
     }
 
-    /// Mark the top frame inheritable for an anonymous user: all actions, or view only.
-    pub fn set_anonymous_authorized(&self, all_actions: bool, user_id: &str) {
+    /// Mark the top frame inheritable with `access` for an anonymous user, so what runs under it is authorized as
+    /// [`AnonymousAccess`] says (the frame's side of [`super::AnonymousLogin`]). `identity` is the user the grant is
+    /// for: `None` for whoever runs under the frame (`_NA_`), or a user id, so a call below the frame that logs in as
+    /// someone else does not inherit it.
+    pub fn grant_anonymous(&self, access: AnonymousAccess, identity: Option<&str>) {
+        let identity = identity.unwrap_or("");
         if let Some(info) = self.state.artifacts.borrow_mut().top_info_mut() {
-            if all_actions {
-                info.anonymous_all(user_id);
-            } else {
-                info.anonymous_view(user_id);
+            match access {
+                AnonymousAccess::All => info.anonymous_all(identity),
+                AnonymousAccess::View => info.anonymous_view(identity),
             }
         }
     }

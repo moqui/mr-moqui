@@ -14,6 +14,7 @@
 
 //! Factory, conf, components, resources, cache, messages, and the artifact stack.
 
+mod anonymous;
 mod artifact;
 mod background;
 mod cache;
@@ -28,6 +29,7 @@ mod message;
 mod resource;
 pub mod status;
 
+pub use anonymous::{AnonymousAccess, AnonymousLogin};
 pub use artifact::{Authz, AuthzGuard, AuthzRequired, Tarpit};
 pub use cache::CacheFacade;
 pub use component::{
