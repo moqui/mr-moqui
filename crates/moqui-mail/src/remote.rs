@@ -41,7 +41,8 @@ use super::inbound::stamp_millis;
 use super::store::{update_fields, MESSAGE};
 use super::sync::{
     connection_lost, encode_mutf7, label_keyword, load_account, load_folders, quoted, run_sync, search_message_id,
-    select, update_folder, value_millis, value_number, FolderInfo, ImapConn, SyncFailure, SyncOptions, CHANGE, FOLDER,
+    select, update_folder, value_millis, value_number, FolderInfo, ImapConn, Lease, SyncFailure, SyncOptions, CHANGE,
+    FOLDER,
 };
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::{Condition, EntityFacade, EntityValue};
@@ -347,11 +348,14 @@ fn change_subject(change: &EntityValue) -> String {
 
 /// Make an account's queued changes, oldest first, but those of a subject in `held` (cut off earlier in this session).
 /// Each attempt is counted before its command goes. A connection lost ends the run, with the rest still queued: its
-/// subject goes into `held`, and the caller goes on with a new connection.
+/// subject goes into `held`, and the caller goes on with a new connection. The session's lease is kept before each
+/// change, so a long queue (a bulk move is a change per message) does not outlive it, and the run stops once another
+/// session has the account.
 pub(super) fn apply_queue(
     conn: &mut ImapConn,
     facade: &EntityFacade,
     account: &super::sync::AccountInfo,
+    lease: &Lease,
     held: &mut HashSet<String>,
 ) -> Result<QueueRun, SyncFailure> {
     let lost = |err: LibError| SyncFailure::Connect(err.to_string());
@@ -380,6 +384,7 @@ pub(super) fn apply_queue(
         if held.contains(&subject) {
             continue;
         }
+        lease.keep(facade)?;
         let tried = value_number(change.get("attemptCount")).unwrap_or(0);
         // its last try was cut off (a lost connection, a stopped session) after it had all its tries
         if tried >= MAX_ATTEMPTS {
