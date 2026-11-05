@@ -195,3 +195,28 @@ feature('an export goes to the user\'s own place unless they are a database admi
         authorized.data.length >= 2
     },
 })
+feature('a data document gives every field it defines, its expression field read only and computed in the rows', {
+    when() {
+        asAdmin(() => {
+            call('create#moqui.entity.document.DataDocument', { dataDocumentId: 'GridSpecDoc', documentName: 'Grid spec doc',
+                primaryEntityName: E })
+            call('create#moqui.entity.document.DataDocumentField', { dataDocumentId: 'GridSpecDoc', fieldSeqId: '01', fieldPath: 'enumId' })
+            call('create#moqui.entity.document.DataDocumentField', { dataDocumentId: 'GridSpecDoc', fieldSeqId: '02', fieldPath: 'description' })
+            call('create#moqui.entity.document.DataDocumentField', { dataDocumentId: 'GridSpecDoc', fieldSeqId: '03',
+                fieldPath: "(enumId + ' / ' + description)", fieldNameAlias: 'enumLabel' })
+        })
+        const doc = { type: 'entity', entityName: 'DataDocument.GridSpecDoc', conditions: { enumId: 'GS_A' } }
+        const columns = invoke(D + 'get#DataGridColumns', { source: doc })
+        const rows = invoke(D + 'get#DataGridRows', { source: doc, page: 1, size: 5 })
+        const sorted = invoke(D + 'get#DataGridRows', { source: doc, page: 1, size: 5, sort: [{ field: 'enumLabel', dir: 'asc' }] })
+        return { columns, rows, sorted }
+    },
+    then({ columns, rows, sorted }) {
+        columns.columns.map(c => c.name).includes('description')
+        columns.columns.find(c => c.name == 'enumLabel').editable == false
+        columns.readOnlyReason != null
+        rows.data.length == 1
+        rows.data[0].enumLabel == 'GS_A / ' + rows.data[0].description
+        sorted.error.includes('not a field the grid sorts or filters on')
+    },
+})

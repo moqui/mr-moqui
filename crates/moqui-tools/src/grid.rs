@@ -372,7 +372,40 @@ fn definition(facade: &EntityFacade, entity_name: &str) -> Result<EntityDefiniti
             })
             .collect();
     }
+    document_expression_fields(&mut entity);
     Ok(entity)
+}
+
+/// A `DataDocument.<id>` view's expression fields (its `pq-expression` aliases, which a read computes) as fields, after
+/// its column ones, so the grid shows every field the document defines. A view is read only in the grid, and an
+/// expression is not sorted or filtered on ([`is_expression`]).
+fn document_expression_fields(entity: &mut EntityDefinition) {
+    if !entity.full_name.starts_with("DataDocument.") {
+        return;
+    }
+    for alias in &entity.pq_aliases {
+        if entity.fields.iter().any(|field| field.name == alias.name) {
+            continue;
+        }
+        entity.fields.push(FieldDefinition {
+            name: alias.name.clone(),
+            column_name: String::new(),
+            field_type: "text-medium".to_string(),
+            java_type: "String".to_string(),
+            is_pk: false,
+            encrypt: false,
+            enable_audit_log: None,
+            enable_localization: false,
+            create_only: false,
+            default_value: None,
+            not_null: false,
+        });
+    }
+}
+
+/// Whether `field` is computed on read (a `pq-expression` alias), with no column to sort or filter on.
+fn is_expression(entity: &EntityDefinition, field: &str) -> bool {
+    entity.pq_aliases.iter().any(|alias| alias.name == field)
 }
 
 /// The columns of the grid: the source's fields or result columns, of `requested` (all when empty), in that order.
@@ -903,7 +936,7 @@ fn entity_find(
     let field_of = |name: &str| {
         entity
             .field(name)
-            .filter(|_| !hidden_value(entity, name))
+            .filter(|_| !hidden_value(entity, name) && !is_expression(entity, name))
             .ok_or_else(|| refusal(format!("{name} is not a field the grid sorts or filters on")))
     };
     for filter in filter {
@@ -949,7 +982,7 @@ fn entity_find(
     Ok(find)
 }
 
-fn row_value(entity: &EntityDefinition, value: &EntityValue, columns: &[String]) -> Value {
+fn row_value(facade: &EntityFacade, entity: &EntityDefinition, value: &EntityValue, columns: &[String]) -> Value {
     let mut map = IndexMap::new();
     let names: Vec<&str> = if columns.is_empty() {
         entity.fields.iter().map(|field| field.name.as_str()).collect()
@@ -961,9 +994,15 @@ fn row_value(entity: &EntityDefinition, value: &EntityValue, columns: &[String])
         if is_secret(name) {
             continue;
         }
-        let shown = match value.get(name) {
+        // an expression field of a data document is computed on read
+        let read = if is_expression(entity, name) {
+            value.get_localized(facade, name)
+        } else {
+            value.get(name).cloned()
+        };
+        let shown = match read {
             Some(value) if field.encrypt && !matches!(value, Value::Null) => Value::string(MASK),
-            Some(value) => value.clone(),
+            Some(value) => value,
             None => Value::Null,
         };
         map.insert(name.to_string(), shown);
@@ -1076,7 +1115,10 @@ pub fn rows(
                 .limit(i64::try_from(size + 1).unwrap_or(i64::MAX))
                 .list()
                 .map_err(|err| find_refusal(&err))?;
-            let data: Vec<Value> = list.iter().map(|value| row_value(&entity, value, columns)).collect();
+            let data: Vec<Value> = list
+                .iter()
+                .map(|value| row_value(facade, &entity, value, columns))
+                .collect();
             let estimate = (conditions.is_empty() && filter.is_empty() && !entity.is_view)
                 .then(|| estimate(facade, &entity))
                 .flatten();
@@ -1297,7 +1339,7 @@ pub fn export(
                     truncated = true;
                     break;
                 }
-                let Value::Map(row) = row_value(&entity, &value, &names) else {
+                let Value::Map(row) = row_value(facade, &entity, &value, &names) else {
                     continue;
                 };
                 let cells: Vec<Value> = names
