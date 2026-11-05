@@ -173,36 +173,120 @@ fn existence_text(text: &str) -> bool {
         || text.contains("duplicate foreign key constraint name")
 }
 
-pub(crate) fn split_sql(sql: &str) -> Vec<&str> {
+/// The statements of a script, split at each `;` that is outside a quoted string (`'…'`, and Postgres `E'…'` with its
+/// backslash escapes), a quoted identifier (`"…"`, MySQL `` `…` ``), a Postgres dollar-quoted body (`$$…$$`,
+/// `$tag$…$tag$`) and a comment (`--` to the end of the line, `/* … */`, which Postgres nests). Each statement is
+/// trimmed and keeps its comments; a piece that is only comments and space is left out (plans/Tools-Database.md 8.1).
+///
+/// A scanner over byte positions: it slices only at ASCII bytes, which are always on a character boundary.
+pub fn split_sql(sql: &str) -> Vec<&str> {
+    let bytes = sql.as_bytes();
     let mut out = Vec::new();
     let mut start = 0;
-    let mut in_quote = false;
-    let mut chars = sql.char_indices().peekable();
-    while let Some((index, ch)) = chars.next() {
-        if in_quote {
-            if ch == '\'' {
-                if chars.peek().is_some_and(|(_, next)| *next == '\'') {
-                    chars.next();
-                } else {
-                    in_quote = false;
+    // The current piece has something other than space and comments.
+    let mut code = false;
+    let mut at = 0;
+    while at < bytes.len() {
+        match bytes[at] {
+            b'-' if bytes.get(at + 1) == Some(&b'-') => {
+                at = sql[at..].find('\n').map_or(bytes.len(), |end| at + end + 1);
+            }
+            b'/' if bytes.get(at + 1) == Some(&b'*') => at = block_comment_end(bytes, at + 2),
+            quote @ (b'\'' | b'"' | b'`') => {
+                // `E'…'` takes backslash escapes; an `E` that ends a longer word is not that prefix.
+                let escapes = quote == b'\''
+                    && at > 0
+                    && matches!(bytes[at - 1], b'E' | b'e')
+                    && !(at > 1 && is_word_byte(bytes[at - 2]));
+                code = true;
+                at = quoted_end(bytes, at + 1, quote, escapes);
+            }
+            b'$' if !(at > 0 && is_word_byte(bytes[at - 1])) => {
+                code = true;
+                at = match dollar_tag(&sql[at..]) {
+                    Some(tag) => {
+                        let body = at + tag.len();
+                        sql[body..].find(tag).map_or(bytes.len(), |end| body + end + tag.len())
+                    }
+                    None => at + 1,
+                };
+            }
+            b';' => {
+                let piece = sql[start..at].trim();
+                if code && !piece.is_empty() {
+                    out.push(piece);
                 }
+                code = false;
+                at += 1;
+                start = at;
             }
-        } else if ch == '\'' {
-            in_quote = true;
-        } else if ch == ';' {
-            let piece = sql[start..index].trim();
-            if !piece.is_empty() {
-                out.push(piece);
+            byte => {
+                code |= !byte.is_ascii_whitespace();
+                at += 1;
             }
-            start = index + ch.len_utf8();
         }
     }
     let tail = sql[start..].trim();
-    if !tail.is_empty() {
+    if code && !tail.is_empty() {
         out.push(tail);
     }
     out
 }
+
+/// Past the `*/` that closes the block comment whose body starts at `at`, counting nested `/*`.
+fn block_comment_end(bytes: &[u8], mut at: usize) -> usize {
+    let mut depth = 1;
+    while at < bytes.len() && depth > 0 {
+        match (bytes[at], bytes.get(at + 1)) {
+            (b'/', Some(b'*')) => {
+                depth += 1;
+                at += 2;
+            }
+            (b'*', Some(b'/')) => {
+                depth -= 1;
+                at += 2;
+            }
+            _ => at += 1,
+        }
+    }
+    at.min(bytes.len())
+}
+
+/// Past the `quote` that closes the quoted text whose body starts at `at`; a doubled quote is one quote in the text.
+fn quoted_end(bytes: &[u8], mut at: usize, quote: u8, escapes: bool) -> usize {
+    while at < bytes.len() {
+        if escapes && bytes[at] == b'\\' {
+            at += 2;
+        } else if bytes[at] == quote {
+            if bytes.get(at + 1) != Some(&quote) {
+                return at + 1;
+            }
+            at += 2;
+        } else {
+            at += 1;
+        }
+    }
+    bytes.len()
+}
+
+/// A letter, digit, `_` or `$`, which continue an identifier, or a byte of a multi-byte character.
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$' || byte >= 0x80
+}
+
+/// The dollar-quote tag `text` starts with: `$$` or `$name$`, a name not starting with a digit (`$1` is a parameter).
+fn dollar_tag(text: &str) -> Option<&str> {
+    let (name, _) = text.strip_prefix('$')?.split_once('$')?;
+    let valid = name
+        .chars()
+        .enumerate()
+        .all(|(index, ch)| ch == '_' || ch.is_alphabetic() || (index > 0 && ch.is_ascii_digit()));
+    text.get(..name.len() + 2).filter(|_| valid)
+}
+
+#[cfg(test)]
+#[path = "split_sql_tests.rs"]
+mod split_sql_tests;
 
 fn trace<T>(sql: &str, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
     let started = Instant::now();

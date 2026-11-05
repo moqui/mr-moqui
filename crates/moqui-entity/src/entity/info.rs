@@ -24,7 +24,8 @@ use moqui_lib::error::Error;
 use moqui_lib::object::Value;
 
 use super::facade::EntityFacade;
-use crate::transaction::TransactionAttribute;
+use crate::driver::{ColumnOrigin, DbCancel, DbConnection};
+use crate::transaction::{TransactionAttribute, TransactionManager};
 
 /// `(?i).*filter.*`, as the Java list filters write it. The matcher has no inline flags, so the case is folded on both
 /// sides when the filter has no escape. A filter that is not a pattern the matcher reads is a plain substring.
@@ -699,10 +700,37 @@ pub fn datasource_group_names(facade: &EntityFacade) -> Vec<String> {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SqlResult {
     pub columns: Vec<String>,
+    /// Where each of `columns` comes from, as the driver told it (plans/Tools-Database.md 9.5): empty when it did not,
+    /// and with no rows. [`resolve_column_origins`] names the tables and columns.
+    pub column_origins: Vec<Option<ColumnOrigin>>,
     pub records: Vec<Vec<Value>>,
     pub limit_reached: bool,
     /// For a statement that is not a query.
     pub rows_affected: Option<u64>,
+}
+
+/// How [`run_sql_with`] runs its statement. The default reads every row, in the caller's transaction or none, and
+/// tells no one when the statement starts.
+#[derive(Default)]
+pub struct SqlRunOptions<'a> {
+    /// A query reads at most this many rows; 0 reads them all.
+    pub limit: usize,
+    /// Run in a read-only transaction of its own, so the database refuses a write: Postgres
+    /// `SET TRANSACTION READ ONLY`, MySQL `START TRANSACTION READ ONLY` (plans/Tools-Database.md 8.2). A caller's
+    /// transaction is suspended while it runs.
+    pub read_only: bool,
+    /// Called on the statement's connection just before the statement is sent, with what a cancel needs
+    /// (plans/Tools-Database.md 8.3).
+    pub on_start: Option<&'a mut dyn FnMut(SqlStart)>,
+}
+
+/// The connection a [`run_sql_with`] statement runs on, as [`SqlRunOptions::on_start`] is handed it.
+pub struct SqlStart {
+    /// Cancels the statement from another thread.
+    pub canceller: Box<dyn DbCancel>,
+    /// The server's id of the session, for a cancel from another instance (`pg_cancel_backend`, `KILL QUERY`) and
+    /// for the activity list: [`DbConnection::backend_id`].
+    pub backend_id: Option<i64>,
 }
 
 fn first_word(sql: &str) -> String {
@@ -713,8 +741,9 @@ fn first_word(sql: &str) -> String {
         .to_ascii_lowercase()
 }
 
-/// A statement whose first word reads rows: `SELECT`, `WITH`, `SHOW`, `VALUES`, `EXPLAIN`, `TABLE`.
-fn is_query(sql: &str) -> bool {
+/// A statement whose first word reads rows: `SELECT`, `WITH`, `SHOW`, `VALUES`, `EXPLAIN`, `TABLE`, `DESCRIBE`.
+#[must_use]
+pub fn is_query(sql: &str) -> bool {
     matches!(
         first_word(sql).as_str(),
         "select" | "with" | "show" | "values" | "explain" | "table" | "describe" | "desc"
@@ -722,13 +751,45 @@ fn is_query(sql: &str) -> bool {
 }
 
 /// A query a cursor can read, Postgres `DECLARE ... CURSOR FOR` taking only these. `SHOW`, `EXPLAIN` and `DESCRIBE`
-/// give a few rows and are read whole.
+/// give a few rows and are read whole, and so is a `WITH` that may change data (`WITH made AS (INSERT ... RETURNING
+/// ...) SELECT ...`), which Postgres refuses in a cursor: one with any of the words `INSERT`, `UPDATE`, `DELETE` or
+/// `MERGE` anywhere in it, a string or a name too, which at worst reads a plain query whole.
 fn is_streamable(sql: &str) -> bool {
-    matches!(first_word(sql).as_str(), "select" | "with" | "values" | "table")
+    match first_word(sql).as_str() {
+        "select" | "values" | "table" => true,
+        "with" => !sql
+            .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+            .any(|word| {
+                ["insert", "update", "delete", "merge"]
+                    .iter()
+                    .any(|verb| word.eq_ignore_ascii_case(verb))
+            }),
+        _ => false,
+    }
 }
 
 /// How long the transaction a query is read in may run: the screen begins none, so Java's statement has no timeout.
 const QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// Whether `sql` gives rows, as [`run_sql`] decides it: the database's description of the prepared statement (an
+/// `INSERT ... RETURNING` gives rows), else its first word ([`is_query`]). For a confirmation that lists the
+/// statements that may change data (plans/Tools-Database.md 8.2).
+///
+/// # Errors
+///
+/// Returns an error for an unknown group or when no connection can be had.
+pub fn sql_gives_rows(facade: &EntityFacade, group: &str, sql: &str) -> Result<bool, Error> {
+    let runtime = facade
+        .inner
+        .groups
+        .get(group)
+        .ok_or_else(|| Error::new(format!("no entity group named {group}")))?;
+    let sql = sql.trim().trim_end_matches(';');
+    Ok(runtime
+        .transactions
+        .with_connection(|conn| conn.returns_rows(sql))?
+        .unwrap_or_else(|| is_query(sql)))
+}
 
 /// Run one statement on the group's connection, as the SQL runner does with JDBC: in the caller's transaction when
 /// there is one, otherwise on its own connection. A query reads at most `limit` rows when `limit` is above 0, through
@@ -740,6 +801,29 @@ const QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
 ///
 /// Returns an error for an unknown group or when the statement fails.
 pub fn run_sql(facade: &EntityFacade, group: &str, sql: &str, limit: usize) -> Result<SqlResult, Error> {
+    run_sql_with(
+        facade,
+        group,
+        sql,
+        SqlRunOptions {
+            limit,
+            ..SqlRunOptions::default()
+        },
+    )
+}
+
+/// [`run_sql`] with its [`SqlRunOptions`]: read only, and told when the statement starts.
+///
+/// # Errors
+///
+/// Returns an error for an unknown group, when the statement fails (a write under `read_only` among them: the
+/// database refuses it) or when it was cancelled.
+pub fn run_sql_with(
+    facade: &EntityFacade,
+    group: &str,
+    sql: &str,
+    mut options: SqlRunOptions<'_>,
+) -> Result<SqlResult, Error> {
     let runtime = facade
         .inner
         .groups
@@ -748,13 +832,39 @@ pub fn run_sql(facade: &EntityFacade, group: &str, sql: &str, limit: usize) -> R
     let sql = sql.trim().trim_end_matches(';');
     // Raw SQL does not pass the write gate, so under the read fence only a plain query runs.
     super::fence::check_sql(sql)?;
+    let tx = &runtime.transactions;
+    if !options.read_only {
+        return run_statement(tx, sql, &mut options);
+    }
+    // Read only is set before any statement of the transaction, so it is one of its own.
+    tx.run(TransactionAttribute::ForceNew, Some(QUERY_TIMEOUT), || {
+        tx.with_connection(|conn| conn.set_transaction_read_only())?;
+        run_statement(tx, sql, &mut options)
+    })
+}
+
+/// Tell [`SqlRunOptions::on_start`] of the connection the statement is about to run on.
+fn started(conn: &dyn DbConnection, on_start: &mut Option<&mut dyn FnMut(SqlStart)>) {
+    if let Some(on_start) = on_start {
+        on_start(SqlStart {
+            canceller: conn.canceller(),
+            backend_id: conn.backend_id(),
+        });
+    }
+}
+
+fn run_statement(tx: &TransactionManager, sql: &str, options: &mut SqlRunOptions<'_>) -> Result<SqlResult, Error> {
+    let limit = options.limit;
+    let on_start = &mut options.on_start;
     // As JDBC's `execute`, the database says whether the statement gives rows; the first word when it cannot.
-    let gives_rows = runtime
-        .transactions
+    let gives_rows = tx
         .with_connection(|conn| conn.returns_rows(sql))?
         .unwrap_or_else(|| is_query(sql));
     if !gives_rows {
-        let count = runtime.transactions.with_connection(|conn| conn.execute(sql, &[]))?;
+        let count = tx.with_connection(|conn| {
+            started(conn, on_start);
+            conn.execute(sql, &[])
+        })?;
         return Ok(SqlResult {
             rows_affected: Some(count),
             ..SqlResult::default()
@@ -768,15 +878,19 @@ pub fn run_sql(facade: &EntityFacade, group: &str, sql: &str, limit: usize) -> R
         }
         if result.columns.is_empty() {
             result.columns = row.columns.iter().map(|(name, _)| name.to_string()).collect();
+            result.column_origins = row.origins.as_deref().map(<[_]>::to_vec).unwrap_or_default();
         }
         result
             .records
             .push(row.columns.into_iter().map(|(_, value)| value).collect());
         true
     };
-    let tx = &runtime.transactions;
     if !is_streamable(sql) {
-        for row in tx.with_connection(|conn| conn.query_once(sql, &[]))? {
+        let rows = tx.with_connection(|conn| {
+            started(conn, on_start);
+            conn.query_once(sql, &[])
+        })?;
+        for row in rows {
             if !add(row) {
                 break;
             }
@@ -785,6 +899,7 @@ pub fn run_sql(facade: &EntityFacade, group: &str, sql: &str, limit: usize) -> R
     }
     tx.run(TransactionAttribute::UseOrBegin, Some(QUERY_TIMEOUT), || {
         tx.with_connection(|conn| {
+            started(conn, on_start);
             // A find's cursor already open on the caller's connection keeps it; this query is read whole.
             if conn.stream_open() {
                 for row in conn.query_once(sql, &[])? {
@@ -808,6 +923,151 @@ pub fn run_sql(facade: &EntityFacade, group: &str, sql: &str, limit: usize) -> R
         })
     })?;
     Ok(result)
+}
+
+/// A table or view a Postgres result column comes from, by its oid.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Relation {
+    pub schema: String,
+    pub name: String,
+    /// A table (`relkind` `r` or `p`), not a view or other relation: a view's columns name the view, not the table
+    /// under it, so its rows are not edited through it (plans/Tools-Database.md 9.5).
+    pub is_table: bool,
+    /// Its columns' names by attribute number.
+    pub columns: BTreeMap<i16, String>,
+}
+
+/// The relations of these Postgres table oids (from [`ColumnOrigin::Postgres`]), read in one catalog query; an oid
+/// that names nothing (a table dropped since) is left out.
+///
+/// # Errors
+///
+/// Returns an error for an unknown group or when the catalog query fails.
+pub fn table_names_of_oids(facade: &EntityFacade, group: &str, oids: &[u32]) -> Result<BTreeMap<u32, Relation>, Error> {
+    let runtime = facade
+        .inner
+        .groups
+        .get(group)
+        .ok_or_else(|| Error::new(format!("no entity group named {group}")))?;
+    let mut relations = BTreeMap::new();
+    let Some(sql) = moqui_db::sql::catalog::pg_relations_of_oids(oids) else {
+        return Ok(relations);
+    };
+    for row in super::exec::query_tx(&runtime.transactions, &sql, &[])? {
+        let text = |name: &str| row.get(name).map(cell_text).unwrap_or_default();
+        let Ok(oid) = text("oid").parse::<u32>() else {
+            continue;
+        };
+        let relation = relations.entry(oid).or_insert_with(|| Relation {
+            schema: text("schema_name"),
+            name: text("table_name"),
+            is_table: matches!(text("kind").as_str(), "r" | "p"),
+            columns: BTreeMap::new(),
+        });
+        if let Ok(number) = text("column_number").parse::<i16>() {
+            relation.columns.insert(number, text("column_name"));
+        }
+    }
+    Ok(relations)
+}
+
+/// A result column's table column, named.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ColumnSource {
+    pub schema: String,
+    pub table: String,
+    pub column: String,
+    /// The relation is a table, not a view ([`Relation::is_table`]).
+    pub is_table: bool,
+}
+
+/// Name the tables and columns of `origins` (a [`SqlResult::column_origins`]): on Postgres by the oids, in one
+/// catalog query; on MySQL from the names the server sent, with one query of the tables' types. A column with no
+/// origin, or whose table is gone, is `None`.
+///
+/// # Errors
+///
+/// Returns an error for an unknown group or when a catalog query fails.
+pub fn resolve_column_origins(
+    facade: &EntityFacade,
+    group: &str,
+    origins: &[Option<ColumnOrigin>],
+) -> Result<Vec<Option<ColumnSource>>, Error> {
+    let mut oids: Vec<u32> = Vec::new();
+    let mut mysql_tables: BTreeSet<(String, String)> = BTreeSet::new();
+    for origin in origins.iter().flatten() {
+        match origin {
+            ColumnOrigin::Postgres { table_oid, .. } => oids.push(*table_oid),
+            ColumnOrigin::Mysql { schema, table, .. } => {
+                mysql_tables.insert((schema.to_string(), table.to_string()));
+            }
+        }
+    }
+    let relations = if oids.is_empty() {
+        BTreeMap::new()
+    } else {
+        table_names_of_oids(facade, group, &oids)?
+    };
+    let mysql_kinds = mysql_table_kinds(facade, group, &mysql_tables)?;
+    Ok(origins
+        .iter()
+        .map(|origin| match origin.as_ref()? {
+            ColumnOrigin::Postgres { table_oid, column } => {
+                let relation = relations.get(table_oid)?;
+                Some(ColumnSource {
+                    schema: relation.schema.clone(),
+                    table: relation.name.clone(),
+                    column: relation.columns.get(column)?.clone(),
+                    is_table: relation.is_table,
+                })
+            }
+            ColumnOrigin::Mysql { schema, table, column } => Some(ColumnSource {
+                schema: schema.to_string(),
+                table: table.to_string(),
+                column: column.to_string(),
+                is_table: mysql_kinds
+                    .get(&(schema.to_string(), table.to_string()))
+                    .copied()
+                    .unwrap_or(false),
+            }),
+        })
+        .collect())
+}
+
+/// Whether each MySQL table is a base table, from `information_schema.TABLES`.
+fn mysql_table_kinds(
+    facade: &EntityFacade,
+    group: &str,
+    tables: &BTreeSet<(String, String)>,
+) -> Result<BTreeMap<(String, String), bool>, Error> {
+    let mut kinds = BTreeMap::new();
+    if tables.is_empty() {
+        return Ok(kinds);
+    }
+    let runtime = facade
+        .inner
+        .groups
+        .get(group)
+        .ok_or_else(|| Error::new(format!("no entity group named {group}")))?;
+    let (sql, params) = moqui_db::sql::catalog::mysql_table_types(tables.iter().map(|(s, t)| (s.as_str(), t.as_str())));
+    for row in super::exec::query_tx(&runtime.transactions, &sql, &params)? {
+        let text = |at: usize| {
+            row.columns
+                .get(at)
+                .map(|(_, value)| cell_text(value))
+                .unwrap_or_default()
+        };
+        kinds.insert((text(0), text(1)), text(2) == "BASE TABLE");
+    }
+    Ok(kinds)
+}
+
+/// A catalog cell as text: a MySQL server may send `information_schema` text as bytes.
+pub(crate) fn cell_text(value: &Value) -> String {
+    match value {
+        Value::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => moqui_lib::object::to_plain_string(other),
+    }
 }
 
 /// Java's `EntityInfo.needsAuditLog`: a field (with the entity's attribute as its default) says `true` or `update`.

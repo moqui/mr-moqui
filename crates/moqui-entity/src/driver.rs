@@ -19,6 +19,7 @@
 //! keyed by SQL text. [`DbConnection::query_once`] must not take a cache slot.
 //! An open stream pins the connection until [`DbConnection::close_stream`].
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 
 use moqui_lib::sync::{read, write};
@@ -32,9 +33,39 @@ use moqui_lib::object::Value;
 #[derive(Clone, Debug, PartialEq)]
 pub struct DbRow {
     pub columns: Vec<(Arc<str>, Value)>,
+    /// Where each column comes from, in the order of `columns`, shared by the rows of one result; `None` when the
+    /// driver does not tell (plans/Tools-Database.md 9.5). A column the server names no table for (an expression, a
+    /// constant) is `None` in it.
+    pub origins: Option<Arc<[Option<ColumnOrigin>]>>,
+}
+
+/// The table column a result column was read from, as the wire protocol describes it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ColumnOrigin {
+    /// A Postgres `RowDescription` field: the table's oid and the column's attribute number. A view's column names
+    /// the view. [`crate::entity::info::table_names_of_oids`] gives the table names.
+    Postgres { table_oid: u32, column: i16 },
+    /// A MySQL column definition: the database, `org_table` and `org_name`.
+    Mysql {
+        schema: Arc<str>,
+        table: Arc<str>,
+        column: Arc<str>,
+    },
 }
 
 impl DbRow {
+    /// A row with these columns and no origins.
+    #[must_use]
+    pub fn new(columns: Vec<(Arc<str>, Value)>) -> Self {
+        Self { columns, origins: None }
+    }
+
+    /// The origin of the column at `index`, when the driver told it.
+    #[must_use]
+    pub fn origin(&self, index: usize) -> Option<&ColumnOrigin> {
+        self.origins.as_ref()?.get(index)?.as_ref()
+    }
+
     pub fn get(&self, name: &str) -> Option<&Value> {
         self.columns
             .iter()
@@ -124,6 +155,26 @@ pub trait DbConnection: Send {
     /// A handle the deadline thread can call while this connection is borrowed.
     fn canceller(&self) -> Box<dyn DbCancel>;
 
+    /// The server's id of this session, as its activity lists it: the Postgres backend pid (`pg_backend_pid()`) or
+    /// the MySQL `CONNECTION_ID()`. `None` when the driver does not know it (plans/Tools-Database.md 8.3).
+    fn backend_id(&self) -> Option<i64> {
+        None
+    }
+
+    /// Make the transaction just begun on this connection read only, before any statement in it, so the database
+    /// refuses a write (plans/Tools-Database.md 8.2). The default is Postgres' `SET TRANSACTION READ ONLY`.
+    fn set_transaction_read_only(&mut self) -> Result<(), Error> {
+        self.execute("SET TRANSACTION READ ONLY", &[]).map(|_| ())
+    }
+
+    /// Tell the server this session's [`application_name`] after it changed, for a session opened before. A driver
+    /// sends the name when it connects; one that can change it later (Postgres) does it here. The default does
+    /// nothing.
+    fn set_application_name(&mut self, name: &str) -> Result<(), Error> {
+        let _ = name;
+        Ok(())
+    }
+
     /// Whether `sql` gives rows, from the database's description of the prepared statement, as JDBC's `execute`
     /// tells a query from an update. `None` when this driver cannot tell or the statement does not prepare.
     fn returns_rows(&mut self, sql: &str) -> Result<Option<bool>, Error> {
@@ -148,6 +199,38 @@ pub trait DbConnection: Send {
         let _ = remaining;
         Ok(())
     }
+}
+
+/// The name each session of this process gives the database, so its activity can tell the app's own sessions, and
+/// one cluster member's from another's (plans/Tools-Database.md 7.3): Postgres `application_name`, a MySQL connection
+/// attribute. Core sets it to the instance id. The generation counts the changes, so the pool can bring a session
+/// opened before a change up to date ([`DbConnection::set_application_name`]).
+static APPLICATION_NAME: RwLock<Option<Arc<str>>> = RwLock::new(None);
+static APPLICATION_NAME_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Name this process's database sessions `name` from now on; an empty name is ignored.
+pub fn set_application_name(name: &str) {
+    if name.is_empty() {
+        return;
+    }
+    let mut slot = write(&APPLICATION_NAME);
+    if slot.as_deref() == Some(name) {
+        return;
+    }
+    *slot = Some(Arc::from(name));
+    APPLICATION_NAME_GENERATION.fetch_add(1, Ordering::Release);
+}
+
+/// The name a new database session gives the server, once [`set_application_name`] has set one.
+#[must_use]
+pub fn application_name() -> Option<Arc<str>> {
+    read(&APPLICATION_NAME).clone()
+}
+
+/// How many times [`set_application_name`] changed the name.
+#[must_use]
+pub fn application_name_generation() -> u64 {
+    APPLICATION_NAME_GENERATION.load(Ordering::Acquire)
 }
 
 /// A database named by its `database-list` conf name and its address, as Java's `getConfConnection` takes from the
@@ -249,6 +332,7 @@ mod tests {
         fn query_once(&mut self, _sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
             Ok(vec![DbRow {
                 columns: vec![("n".into(), params.first().cloned().unwrap_or(Value::Null))],
+                origins: None,
             }])
         }
 
@@ -265,6 +349,7 @@ mod tests {
             self.rows_left -= 1;
             Ok(Some(DbRow {
                 columns: vec![("n".into(), Value::I64(self.rows_left))],
+                origins: None,
             }))
         }
 

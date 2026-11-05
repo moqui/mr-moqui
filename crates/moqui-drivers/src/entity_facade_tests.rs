@@ -23,7 +23,7 @@ use moqui_lib::object::Value;
 use super::super::embedded::EmbeddedCluster;
 use super::open_entity_facade;
 
-struct DirGuard(PathBuf);
+pub(super) struct DirGuard(pub(super) PathBuf);
 
 impl Drop for DirGuard {
     fn drop(&mut self) {
@@ -758,7 +758,7 @@ fn stream_ids(facade: &moqui_core::entity::EntityFacade) -> Vec<String> {
     ids
 }
 
-fn temp_cluster_dir() -> PathBuf {
+pub(super) fn temp_cluster_dir() -> PathBuf {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

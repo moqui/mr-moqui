@@ -4824,6 +4824,7 @@ dependencies = [
  "flate2",
  "jiff",
  "moqui-core",
+ "moqui-db",
  "moqui-lib",
  "mysql",
  "postgres-protocol",

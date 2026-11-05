@@ -140,6 +140,7 @@ fn test_row() -> DbRow {
             ("testId".into(), Value::string("T1")),
             ("testMedium".into(), Value::string("kept")),
         ],
+        origins: None,
     }
 }
 
@@ -259,6 +260,7 @@ impl DbConnection for RecConn {
                         ("instanceHostId".into(), Value::string("H1")),
                         ("password".into(), Value::string(password)),
                     ],
+                    origins: None,
                 }]);
             }
         }
@@ -654,6 +656,7 @@ impl DbConnection for CursorConn {
         let number = i64::try_from(tape.fetched).unwrap_or_default();
         Ok(Some(DbRow {
             columns: vec![("n".into(), Value::I64(number))],
+            origins: None,
         }))
     }
 

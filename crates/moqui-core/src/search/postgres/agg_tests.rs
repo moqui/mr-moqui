@@ -108,6 +108,7 @@ fn min_and_max_levels_filter_and_read_null() {
         statements.push(sql.clone());
         Ok(vec![DbRow {
             columns: vec![("dc".into(), Value::I64(0))],
+            origins: None,
         }])
     };
     let out = aggregate(
@@ -133,6 +134,7 @@ fn a_level_past_the_group_cap_is_an_error() {
         if !sql.text.contains("GROUP BY") {
             return Ok(vec![DbRow {
                 columns: vec![("dc".into(), Value::I64(1))],
+                origins: None,
             }]);
         }
         // What the database returns for the LIMIT when there are more groups than that.
@@ -140,6 +142,7 @@ fn a_level_past_the_group_cap_is_an_error() {
         assert_eq!(limit, MAX_GROUPS + 1);
         let row = DbRow {
             columns: vec![("k0".into(), Value::string("p")), ("dc".into(), Value::I64(1))],
+            origins: None,
         };
         Ok(vec![row; limit])
     };
@@ -309,6 +312,7 @@ fn top_hits_under_buckets_are_one_ranked_statement() {
     );
     let row = |columns: Vec<(&str, Value)>| DbRow {
         columns: columns.into_iter().map(|(name, value)| (name.into(), value)).collect(),
+        origins: None,
     };
     let sample = |key: &str, id: &str| {
         row(vec![

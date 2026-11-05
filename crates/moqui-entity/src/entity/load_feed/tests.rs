@@ -239,6 +239,7 @@ fn db_row(pairs: &[(&str, &str)]) -> DbRow {
             .iter()
             .map(|(name, value)| ((*name).into(), Value::string(*value)))
             .collect(),
+        origins: None,
     }
 }
 

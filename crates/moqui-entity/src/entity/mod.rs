@@ -34,6 +34,7 @@ mod find;
 mod fk;
 pub mod info;
 mod meta;
+mod meta_compare;
 mod params;
 mod relink;
 mod schema;
@@ -58,6 +59,9 @@ pub use find::{EntityFind, EntityListIterator, Purged, BULK_CHUNK};
 #[doc(hidden)]
 pub use fk::FkScope;
 pub use meta::{DdlConf, EntityDbMeta, TableCheck};
+pub use meta_compare::{
+    CatalogForeignKey, CatalogIndex, ColumnTypeDiff, ForeignKeyDiff, IndexDiff, IndexKind, SchemaDiff, TableDiff,
+};
 /// The condition tree `EntityFind::condition` takes, so callers need not depend on `moqui-db`.
 pub use moqui_db::sql::{CompareOp, Condition};
 pub use relink::{RelinkPreview, RelinkReport};
