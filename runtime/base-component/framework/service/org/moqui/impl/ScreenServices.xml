@@ -400,7 +400,7 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/DbForms.js').execute('setDated', context))</script></actions>
     </service>
     <service verb="publish" noun="DbForm">
-        <description>Starts the drafts of a dated DbForm at fromDate (now by default): each draft field (ending the field
+        <description>Starts the drafts of a dated DbForm at fromDate (now by default; an earlier date is refused): each draft field (ending the field
             it replaces and that field's dependencies), option (ending the option of the same key) and dependency;
             fieldNames limits it to those fields. Refused, with nothing changed, when the dependencies would make a
             cycle or give a field two rules of one effect.</description>
@@ -443,7 +443,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="create" noun="DbFormFieldSuccessor">
         <description>A field that succeeds fieldName on a dated form, for a new type or meaning: its values default to
             the old field's, and its options, attributes and dependencies are copied. With no fromDate it is a draft
-            that replaces the old field when published; with fromDate it starts then and the old field ends then. The
+            that replaces the old field when published; with fromDate (now or later) it starts then and the old field ends then. The
             old field's answers keep its name.</description>
         <in-parameters>
             <parameter name="formId" required="true"/>
@@ -462,7 +462,8 @@ along with this software (see the LICENSE.md file). If not, see
             shows (effect show) or is required (effect require) while the source field meets the operator (equals,
             not-equals, empty, not-empty) and value (one or a comma-separated list, never an expression). Refused when
             the form's dependencies would make a cycle or give a field two rules of one effect. On a dated form a new
-            dependency with no fromDate is a draft.</description>
+            dependency with no fromDate is a draft, a fromDate before now is refused, and a published dependency is
+            not edited: it ends now and the returned dependencySeqId is its replacement, from now.</description>
         <in-parameters>
             <parameter name="formId" required="true"/>
             <parameter name="dependencySeqId"/>

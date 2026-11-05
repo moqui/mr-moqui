@@ -29,8 +29,8 @@ The services:
 | Service | What it does |
 | --- | --- |
 | `set#DbFormDated` | The form becomes dated; its rows with no `fromDate` start at `fromDate` (now) |
-| `publish#DbForm` | The drafts start at `fromDate` (now), each ending the row it replaces; `fieldNames` limits it. Refused when the dependencies would have a cycle |
-| `create#DbFormFieldSuccessor` | A new field for a new type or meaning, copying the old one's options, attributes and dependencies: a draft, or started at `fromDate` with the old field ended then. The answers keep the old name |
+| `publish#DbForm` | The drafts start at `fromDate` (now, or later: an earlier date is refused), each ending the row it replaces; `fieldNames` limits it. Refused when the dependencies would have a cycle |
+| `create#DbFormFieldSuccessor` | A new field for a new type or meaning, copying the old one's options, attributes and dependencies: a draft, or started at `fromDate` (now or later) with the old field ended then. The answers keep the old name |
 | `end#DbFormField`, `end#DbFormFieldOption` | End a field (with the dependencies that name it) or an option at `thruDate` (now) |
 | `update#DbFormField` | On a dated form, an in-place edit; a published field keeps its type, and the dates and `replacesFieldName` change only through the services above |
 | `delete#DbFormField`, `delete#DbFormFieldOption` | On a dated form, refused for a field or option with answers: end it |
@@ -43,7 +43,9 @@ comma-separated list, each trimmed; with several values, as a multiple select ha
 of them), `empty` and `not-empty`. A value is data, never an expression (`${` is refused), and `equals` and
 `not-equals` need one.
 
-- `store#DbFormFieldDependency` creates or updates one and `end#DbFormFieldDependency` ends one. Both check the
+- `store#DbFormFieldDependency` creates or updates one and `end#DbFormFieldDependency` ends one. On a dated form a
+  published dependency is never edited: storing it ends it now and creates its replacement from now, and a `fromDate`
+  before now is refused. Both check the
   operator and effect, that the two fields are the form's and differ, and, at now and each date a row starts or ends,
   that the rules make no cycle and give no field two rules of one effect.
 - The form maps the rows in effect to `visible-when` (show) and `require-when` (require) on the target field, and a

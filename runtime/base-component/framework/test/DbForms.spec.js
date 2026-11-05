@@ -93,18 +93,20 @@ feature('a dated form leaves a draft out until it is published, and logs its key
         make('moqui.screen.form.DbFormField', { formId: FORM, fieldName: 'extra', title: 'Extra', fieldTypeEnumId: 'DBFFT_text-line', layoutSequenceNum: 4 })
         const before = fieldNames(FORM)
         const preview = fieldNames(FORM, null, true)
+        const pastPublish = invoke('publish#DbForm', { formId: FORM, fieldNames: ['extra'], fromDate: new Date(Date.now() - 3600000) })
         const published = invoke('publish#DbForm', { formId: FORM, fieldNames: ['extra'] })
         const after = fieldNames(FORM)
         // a blank fromDate a form posts leaves the date as it is; a new one is publish's
         const edited = invoke('update#DbFormField', { formId: FORM, fieldName: 'serial', title: 'Serial number', isRequired: 'Y', fromDate: '' })
         const moved = invoke('update#DbFormField', { formId: FORM, fieldName: 'serial', fromDate: new Date() })
-        return { dated, before, preview, published, after, edited, moved, titleLog: audit('serial', 'title'), fromLog: audit('extra', 'fromDate'),
+        return { dated, before, preview, pastPublish, published, after, edited, moved, titleLog: audit('serial', 'title'), fromLog: audit('extra', 'fromDate'),
             names: fieldNames(FORM) }
     },
-    then({ dated, before, preview, published, after, edited, moved, titleLog, fromLog, names }) {
+    then({ dated, before, preview, pastPublish, published, after, edited, moved, titleLog, fromLog, names }) {
         dated.errors == ''
         !before.includes('extra')
         preview.includes('extra')
+        pastPublish.errors.includes('from now or later')
         published.errors == ''
         published.publishedFieldNames.includes('extra')
         after.includes('extra')
@@ -124,14 +126,17 @@ feature('a successor field from a date takes a new type, and an earlier response
         const response = invoke('create#FormResponse', { formId: FORM, responseDate: hourAgo, responseMap: { kind: 'A', q1: 'first answer' } })
         oldResponseId = response.formResponseId
         const retyped = invoke('update#DbFormField', { formId: FORM, fieldName: 'q1', fieldTypeEnumId: 'DBFFT_text-area' })
+        const pastSuccessor = invoke('create#DbFormFieldSuccessor', { formId: FORM, fieldName: 'q1', fieldTypeEnumId: 'DBFFT_text-area',
+            fromDate: hourAgo })
         const successor = invoke('create#DbFormFieldSuccessor', { formId: FORM, fieldName: 'q1', title: 'Question one, reworded',
-            fieldTypeEnumId: 'DBFFT_text-area', fromDate: new Date(Date.now() - 60000) })
+            fieldTypeEnumId: 'DBFFT_text-area', fromDate: new Date() })
         const read = invoke('get#FormResponse', { formResponseId: oldResponseId })
-        return { response, retyped, successor, now: fieldNames(FORM), then: fieldNames(FORM, hourAgo), read }
+        return { response, retyped, pastSuccessor, successor, now: fieldNames(FORM), then: fieldNames(FORM, hourAgo), read }
     },
-    then({ response, retyped, successor, now, then, read }) {
+    then({ response, retyped, pastSuccessor, successor, now, then, read }) {
         response.errors == ''
         retyped.errors.includes('successor')
+        pastSuccessor.errors.includes('now or later')
         successor.errors == ''
         successor.newFieldName == 'q1_2'
         now.includes('q1_2') && !now.includes('q1')
@@ -203,5 +208,25 @@ feature('the server evaluates a submit against the dependencies as of a date', {
         none.hiddenFieldNames.includes('extra')
         none.requiredFieldNames.includes('serial')
         none.missingFieldNames.includes('serial')
+    },
+})
+
+feature('a published dependency changed is ended and replaced from now, never edited', {
+    when() {
+        const rows = () => sys(() => Array.from(ec.entity.find('moqui.screen.form.DbFormFieldDependency')
+            .condition({ formId: FORM, targetFieldName: 'serial', effect: 'require' }).orderBy('dependencySeqId').list()))
+        const old = rows()[0]
+        const stored = invoke('store#DbFormFieldDependency', { formId: FORM, dependencySeqId: old.dependencySeqId, sourceFieldName: 'kind',
+            value: 'C', targetFieldName: 'serial', effect: 'require' })
+        const after = rows()
+        return { old, stored, after, c: invoke('evaluate#DbFormDependencies', { formId: FORM, values: { kind: 'C' } }) }
+    },
+    then({ old, stored, after, c }) {
+        stored.errors == ''
+        stored.dependencySeqId != old.dependencySeqId
+        after.length == 2
+        after[0].value == 'B' && after[0].thruDate != null
+        after[1].value == 'C' && after[1].fromDate != null && after[1].thruDate == null
+        c.missingFieldNames.includes('serial')
     },
 })

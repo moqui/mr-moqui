@@ -27,6 +27,13 @@ const ms = (value) => {
 const nowMs = () => ms(ec.user.nowTimestamp)
 const dateOf = (value, fallback) => new Date(ms(value) ?? fallback)
 
+/**
+ * A date a change starts from is now or later: an earlier one would change how a response made since then reads. A
+ * few seconds' grace covers a date the caller took just before the call.
+ */
+const GRACE_MS = 5000
+const isPast = (date) => date.getTime() < nowMs() - GRACE_MS
+
 function refuse(text) {
   ec.message.addError(ec.l10n.localize(text))
   return {}
@@ -165,6 +172,7 @@ function publish({ formId, fromDate, fieldNames }) {
   if (!form) return refuse(`DbForm ${formId} not found`)
   if (form.isDated !== 'Y') return refuse(`DbForm ${formId} is not dated: set#DbFormDated first`)
   const from = dateOf(fromDate, nowMs())
+  if (isPast(from)) return refuse(`A form is published from now or later, not ${from.toISOString()}`)
   const only = fieldNames && fieldNames.length ? new Set(Array.from(fieldNames).map(String)) : null
   const wanted = (name) => !only || only.has(name)
   const endAt = (row) => {
@@ -264,6 +272,7 @@ function createSuccessor(p) {
     for (let n = 2; !newFieldName; n++) if (!taken.has(base + '_' + n)) newFieldName = base + '_' + n
   }
   const from = p.fromDate != null && p.fromDate !== '' ? dateOf(p.fromDate) : null
+  if (from && isPast(from)) return refuse(`A successor field starts now or later, not ${from.toISOString()}`)
   const field = ec.entity.makeValue(FIELD)
   const copy = {}
   for (const name of ['condition', 'entryName', 'title', 'tooltip', 'fieldTypeEnumId', 'layoutSequenceNum', 'isRequired',
@@ -331,7 +340,8 @@ function nextDependencySeqId(formId) {
  * the allowlist, the value is data (no ${}), both fields are the form's and differ, and the form's dependencies have
  * no cycle and no field two rules of one effect. On a dated form a new row with no fromDate is a draft.
  */
-function storeDependency(p) {
+function storeDependency(parameters) {
+  let p = parameters
   const { formId } = p
   const form = formOf(formId)
   if (!form) return refuse(`DbForm ${formId} not found`)
@@ -348,10 +358,26 @@ function storeDependency(p) {
   for (const name of [p.sourceFieldName, p.targetFieldName]) {
     if (!names.has(name)) return refuse(`DbForm ${formId} has no field ${name}`)
   }
+  const dated = form.isDated === 'Y'
+  const fromGiven = p.fromDate != null && p.fromDate !== '' ? dateOf(p.fromDate) : null
+  if (dated && fromGiven && isPast(fromGiven)) return refuse(`A dependency starts now or later, not ${fromGiven.toISOString()}`)
   let row = null
   if (p.dependencySeqId) {
     row = ec.entity.find(DEPENDENCY).condition({ formId, dependencySeqId: p.dependencySeqId }).one()
     if (!row) return refuse(`Dependency ${p.dependencySeqId} of DbForm ${formId} not found`)
+    const started = ms(row.fromDate)
+    if (dated && started != null && started <= nowMs()) {
+      // a published dependency is never edited: it ends now and a replacement starts now (or at the date given)
+      const now = dateOf(null, nowMs())
+      const thru = ms(row.thruDate)
+      if (thru == null || thru > now.getTime()) {
+        row.set('thruDate', now)
+        row.update()
+      }
+      row = ec.entity.makeValue(DEPENDENCY)
+      row.setFields({ formId, dependencySeqId: nextDependencySeqId(formId), fromDate: fromGiven || now }, true, null, null)
+      p = Object.assign({}, p, { dependencySeqId: null, fromDate: undefined })
+    }
   } else {
     row = ec.entity.makeValue(DEPENDENCY)
     row.setFields({ formId, dependencySeqId: nextDependencySeqId(formId) }, true, null, null)
