@@ -41,20 +41,9 @@ pub enum LinkError {
     Code(CodeAsk),
 }
 
-/// What a login that needs a code says: why (the factors, or that the code was wrong), and the factors a code can be
-/// sent to.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct CodeAsk {
-    pub text: String,
-    pub sendable: Vec<Sendable>,
-}
-
-/// A factor the server sends a code to (email, SMS): its id, and what to show (the masked address or number).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Sendable {
-    pub id: String,
-    pub label: String,
-}
+/// What a login that needs a code says (why, and the factors a code can be sent to), and such a factor: the remote
+/// sign-in's own types, which the in-process link fills too.
+pub use moqui_lib::remote_login::{CodeAsk, Sendable};
 
 impl std::fmt::Display for LinkError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

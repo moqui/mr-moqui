@@ -17,6 +17,8 @@ ui = ["model", "dep:revue"]
 base64 = { workspace = true }
 inventory = { workspace = true }
 jiff = { workspace = true }
+# The second factor's ask of a remote sign-in (moqui_lib::remote_login), shared with the desktop client. No http.
+moqui-lib = { workspace = true }
 pulldown-cmark = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }

@@ -41,19 +41,4 @@ pub(crate) fn client_with(timeout: Duration) -> Result<reqwest::blocking::Client
         .map_err(|err| Error::new(format!("HTTP client: {err}")))
 }
 
-/// `a=1&b=x%20y`, as a form posts it.
-pub(crate) fn form_body<K: AsRef<str>, V: AsRef<str>>(pairs: &[(K, V)]) -> String {
-    let mut url = reqwest::Url::parse("http://form/").unwrap_or_else(|_| unreachable!("a fixed url parses"));
-    url.query_pairs_mut()
-        .extend_pairs(pairs.iter().map(|(key, value)| (key.as_ref(), value.as_ref())));
-    url.query().unwrap_or("").to_string()
-}
-
-/// The text of an error answer: `errors`, `error` or `message`, else the status.
-pub(crate) fn reason(value: &serde_json::Value, status: u16) -> String {
-    ["errors", "error", "message"]
-        .iter()
-        .find_map(|name| value.get(*name).and_then(serde_json::Value::as_str))
-        .filter(|text| !text.is_empty())
-        .map_or_else(|| format!("HTTP {status}"), str::to_string)
-}
+pub(crate) use moqui_lib::remote_login::{form_body, reason};

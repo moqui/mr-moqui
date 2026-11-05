@@ -38,16 +38,19 @@ runtime: each screen is a `GET <path>?renderMode=tui`, each form and transition 
 carries a login key. `--agent`, `--snapshot`, `--ascii` and `--no-color` work with it as they do on the runtime.
 
 - **Login.** The client asks for the username and password once and posts them to the REST `login` with
-  `createLoginKey=true`. The server answers with a login key (`login_key_expire_hours`), which the client keeps in
+  `createLoginKey=true` and a `deviceName` (`moqui tui on <host>`), the sign-in the desktop client makes too
+  (`moqui_lib::remote_login`). The server answers with a device's login key (`login-key/@device-expire-hours`), listed
+  in the user's devices where it can be revoked, which the client keeps in
   `~/.config/moqui/tui/<host>_<port>.toml` (or under `XDG_CONFIG_HOME`), readable by the user only. The password is not
-  kept. The next run uses the key; when the server stops taking it (it expired, or its `UserLoginKey` row was removed)
-  the login dialog comes back. `moqui tui --server <url> --forget` removes the key. An account with a second factor
+  kept. The next run uses the key; when the server stops taking it (it expired, or was revoked) the login dialog comes
+  back. A sign-in the server answers with no key is refused. `moqui tui --server <url> --forget` removes the key. An account with a second factor
   gets its code asked for in the dialog ("The login dialog", above).
 - **https.** Plain `http://` is refused except to this machine (`localhost`, `127.0.0.1`, `::1`), since the login
   would cross the network in the clear.
 - **Files.** Exports are saved to `XDG_DOWNLOAD_DIR` (else `~/Downloads`) on the user's machine, as in local mode.
 - **Counters.** The client opens `/notws` with its key, so the counters change when a notification comes, and the
-  notification's title shows on the message line. Without the socket it reads them each minute, as before.
+  notification's title shows on the message line. A dropped socket connects again after a wait that doubles up to a minute, at a random point
+  in the upper half of each step, so the clients of a restarted server do not all connect at once. Without the socket it reads them each minute, as before.
 - **Build.** The client alone builds without a database driver or the HTTP server:
   `cargo build -p moqui-host --no-default-features --features tui` (docs/Build-Test.md).
 
