@@ -136,6 +136,30 @@ impl DbDriver for Closed {
 pub fn transactional_conf(factory: &ExecutionContextFactory) -> Result<DatasourceConf, Error> {
     let conf = MNode::parse_shared("moqui-conf", &factory.conf_text())?;
     let mut transactional = datasource_conf(&conf, "transactional")?;
+    if transactional.kind == DatasourceKind::Embedded {
+        // the cluster is one postmaster: its settings are the transactional datasource's; another embedded
+        // datasource's that differ are logged and left out
+        for node in moqui_core::entity::datasource::datasource_nodes(&conf) {
+            let group = moqui_core::entity::datasource::datasource_attribute(&node, "group-name");
+            if group.is_empty() || group == "transactional" {
+                continue;
+            }
+            if let Ok(other) = datasource_conf(&conf, &group) {
+                if other.kind == DatasourceKind::Embedded
+                    && other.embedded_settings.any()
+                    && other.embedded_settings != transactional.embedded_settings
+                {
+                    static WARNED: std::sync::Once = std::sync::Once::new();
+                    WARNED.call_once(|| {
+                        tracing::warn!(
+                            "Datasource {group} sets embedded cluster settings that differ from the transactional \
+                             datasource's; the cluster uses the transactional ones"
+                        );
+                    });
+                }
+            }
+        }
+    }
     if transactional.kind == DatasourceKind::Embedded && !transactional.preload_pg_stat_statements {
         // the other embedded datasources are databases of the same cluster, whose postmaster loads the library
         transactional.preload_pg_stat_statements = moqui_core::entity::datasource::datasource_nodes(&conf)
@@ -264,6 +288,7 @@ fn open_embedded(
         role: ClusterRole::Entity,
         install_dir: Some(install_dir.to_path_buf()),
         pg_stat_statements: conf.preload_pg_stat_statements,
+        settings: conf.embedded_settings.clone(),
     };
     let (cluster, driver) = EmbeddedCluster::start_with(cluster_dir, &options)?;
     create_pg_stat_statements(&conf, &driver);

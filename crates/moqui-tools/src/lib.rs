@@ -33,6 +33,7 @@ pub mod ext;
 pub mod grid;
 pub mod grid_service;
 pub mod service;
+pub mod settings;
 pub mod sql;
 pub mod sql_service;
 

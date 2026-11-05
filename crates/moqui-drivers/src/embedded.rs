@@ -76,6 +76,10 @@ mod cluster {
         /// plans/Tools-Database.md §7.2). Postmaster-level: it applies when this process starts the cluster, not to
         /// one it adopts. The extension itself is created per database ([`crate::entity_db::create_pg_stat_statements`]).
         pub pg_stat_statements: bool,
+        /// `shared_buffers`, `work_mem`, `maintenance_work_mem` and `effective_cache_size` from the transactional
+        /// datasource's conf (plans/Tools-Database.md §4.4); `None` keeps the default from code. Postmaster-level, as
+        /// the others here: they apply when this process starts the cluster.
+        pub settings: moqui_core::entity::datasource::EmbeddedSettings,
     }
 
     impl StartOptions {
@@ -86,6 +90,7 @@ mod cluster {
                 role: ClusterRole::Entity,
                 install_dir: None,
                 pg_stat_statements: false,
+                settings: moqui_core::entity::datasource::EmbeddedSettings::default(),
             }
         }
     }
@@ -725,6 +730,7 @@ mod cluster {
             role,
             ref install_dir,
             pg_stat_statements,
+            settings: ref conf_settings,
         } = *options;
         let mut settings = Settings::new();
         // The unpacked install of this build's version (`install`), trusted as it is: nothing is looked up or
@@ -743,9 +749,19 @@ mod cluster {
             ClusterRole::Entity => "16MB",
             ClusterRole::Sim => "8MB",
         };
-        settings
-            .configuration
-            .insert("shared_buffers".to_string(), buffers.to_string());
+        settings.configuration.insert(
+            "shared_buffers".to_string(),
+            conf_settings
+                .shared_buffers
+                .clone()
+                .unwrap_or_else(|| buffers.to_string()),
+        );
+        // the conf's work_mem, maintenance_work_mem and effective_cache_size; Postgres's defaults otherwise
+        for (_, name, value) in conf_settings.entries() {
+            if let (Some(value), true) = (value, name != "shared_buffers") {
+                settings.configuration.insert(name.to_string(), value.to_string());
+            }
+        }
         settings.configuration.insert("fsync".to_string(), "on".to_string());
         if role == ClusterRole::Sim {
             settings
