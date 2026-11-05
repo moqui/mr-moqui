@@ -28,7 +28,8 @@ mod visit;
 pub(crate) use authz::current_user_groups;
 pub use authz::{authorize, authorize_own, context_entered, group_permits};
 pub(crate) use authz::{
-    denied, entity_permitted, is_authz_entity, is_permitted, note_entity_write, AuthInfo, Permit, StackAuthz,
+    denied, entity_permitted, is_authz_entity, is_permitted, note_entity_write, AuthInfo, Permit, RegisteredAuthz,
+    StackAuthz,
 };
 pub use factor::{
     login_with_code, random_code, random_string, reauthenticate, second_factor_required, send_login_code,
