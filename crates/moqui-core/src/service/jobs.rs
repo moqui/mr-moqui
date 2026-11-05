@@ -68,6 +68,34 @@ const DEFAULT_RETRY_MINUTES: i64 = 5;
 const DEFAULT_JOB_TIMEOUT_SECONDS: u64 = 1800;
 const TEXT_LIMIT: usize = 4000;
 
+thread_local! {
+    /// The `ServiceJobRun` whose service is running on this thread, while it runs.
+    static CURRENT_JOB_RUN: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Puts back the job run that was current before, when dropped.
+struct JobRunScope(Option<String>);
+
+impl JobRunScope {
+    fn enter(job_run_id: &str) -> Self {
+        Self(CURRENT_JOB_RUN.with(|slot| slot.replace(Some(job_run_id.to_string()))))
+    }
+}
+
+impl Drop for JobRunScope {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        CURRENT_JOB_RUN.with(|slot| *slot.borrow_mut() = previous);
+    }
+}
+
+/// The `jobRunId` of the `ServiceJobRun` whose service is running on this thread: set while a job's service is called,
+/// so a service can tell it runs as a job (an ETL run records it on its `EtlRun`). None outside a job.
+#[must_use]
+pub fn current_job_run_id() -> Option<String> {
+    CURRENT_JOB_RUN.with(|slot| slot.borrow().clone())
+}
+
 /// The time zone a ServiceJob cron expression is read in: the machine's zone, the one the operating
 /// system reports. It is not the server zone `default_time_zone` names.
 pub fn job_time_zone() -> jiff::tz::TimeZone {
@@ -803,6 +831,7 @@ pub(crate) fn run_job(job: JobRun) {
     // The job's time bounds its scripts even when the service begins no transaction; a transaction inside keeps the
     // earlier of the two.
     let _deadline = crate::script::DeadlineGuard::new(job.script_limit);
+    let _job_run = JobRunScope::enter(&job.job_run_id);
     let called = match &job.rules {
         Some(rules) => {
             let mut rules = super::pool::TxRules {

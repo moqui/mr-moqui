@@ -152,6 +152,46 @@ fn may_change_owned(
     false
 }
 
+/// Sign in as the owner of the saved mapping `mapping_id`, for a run with no user (a cron ServiceJob): then the owner's
+/// own checks apply as for a run of theirs.
+///
+/// # Errors
+///
+/// The mapping is not there or has no owner, or the owner is not there or is disabled.
+fn sign_in_owner(facade: &EntityFacade, mapping_id: &str) -> Result<(), LibError> {
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let Some(mapping) = facade.find(MAPPING)?.eq("mappingId", Value::string(mapping_id)).one()? else {
+        return Err(LibError::new(format!("no ETL mapping {mapping_id}")));
+    };
+    let owner = mapping.get("ownerUserId").map(to_plain_string).unwrap_or_default();
+    if owner.is_empty() {
+        return Err(LibError::new(format!(
+            "ETL mapping {mapping_id} has no owner to run as"
+        )));
+    }
+    let account = facade
+        .find("moqui.security.UserAccount")?
+        .eq("userId", Value::string(&owner))
+        .one()?;
+    let Some(account) = account else {
+        return Err(LibError::new(format!(
+            "The owner of ETL mapping {mapping_id} is not a user"
+        )));
+    };
+    if account.get("disabled").map(to_plain_string).as_deref() == Some("Y") {
+        return Err(LibError::new(format!(
+            "The owner of ETL mapping {mapping_id} is disabled"
+        )));
+    }
+    let username = account.get("username").map(to_plain_string).unwrap_or_default();
+    if username.is_empty() {
+        return Err(LibError::new(format!(
+            "The owner of ETL mapping {mapping_id} has no username"
+        )));
+    }
+    moqui_core::user::internal_login_user(&username).map_err(|err| LibError::new(err.to_string()))
+}
+
 /// [`may_change_owned`] of a saved mapping.
 fn may_change_mapping(facade: &EntityFacade, mapping_id: Option<&str>, what: &str) -> bool {
     may_change_owned(facade, MAPPING, "mappingId", "ownerUserId", mapping_id, what)
@@ -233,6 +273,10 @@ fn create_run(facade: &EntityFacade, mapping: &Mapping, check: bool, status: &st
             mapping.mapping_id.clone().map_or(Value::Null, Value::String),
         );
         row.set("userId", user_id.clone().map_or(Value::Null, Value::String));
+        row.set(
+            "jobRunId",
+            moqui_core::service::current_job_run_id().map_or(Value::Null, Value::String),
+        );
         row.set("instanceId", Value::string(instance_id()));
         row.set("isCheck", Value::string(if check { "Y" } else { "N" }));
         row.set("statusId", Value::string(status));
@@ -330,13 +374,34 @@ fn end_status(outcome: &RunOutcome, check: bool) -> &'static str {
 /// `failedRanges` (each rolled-back batch's `fromRow`, `toRow`, `message`), `errors` (the first 100: `rowNumber`,
 /// `fieldName`, `message`, `row`), `errorLocation` (the error file), `failure`, and for a check `diff`.
 ///
-/// The run is the user's (also on the worker, or as a ServiceJob as the job's user): authorization on for the run, its
-/// writes and its service calls, the Tools app's authorization for all actions checked again as the user. With
+/// The run is the user's (also on the worker): authorization on for the run, its writes and its service calls, the
+/// Tools app's authorization for all actions checked again as the user. Called with no user signed in (a cron
+/// ServiceJob) and a `mappingId`, it runs as the mapping's owner ([`sign_in_owner`]); an inline mapping with no user is
+/// refused. Called from a job it runs here, as with `wait`, and the `EtlRun` names the job's run (`jobRunId`). With
 /// `wait` the caller's transaction is suspended, so batches commit.
 pub(crate) fn run_etl_mapping(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
+    if current_user().is_empty() {
+        let mapping_id = text(parameters, "mappingId");
+        if mapping_id.is_empty() {
+            tracing::error!("Refused an ETL run of an inline mapping with no user signed in");
+            add_error("An ETL run of an inline mapping needs a signed-in user");
+            return Ok(Out::new());
+        }
+        if let Err(err) = sign_in_owner(facade, &mapping_id) {
+            tracing::error!(mapping = %mapping_id, error = %err, "Refused an ETL run with no user signed in");
+            add_error(err.to_string());
+            return Ok(Out::new());
+        }
+    }
+    let mut parameters = parameters.clone();
+    if moqui_core::service::current_job_run_id().is_some() {
+        // a job's run is already on a worker: run here, so the job's run ends with it
+        parameters.insert("wait".to_string(), Value::Bool(true));
+    }
+    let parameters = &parameters;
     let _user = match access::run_as_user() {
         Ok(user) => user,
         Err(err) => {

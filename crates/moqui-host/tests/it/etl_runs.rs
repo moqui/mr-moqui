@@ -257,6 +257,7 @@ fn a_saved_mapping_is_checked_run_as_a_job_and_rolled_back_on_a_bad_file() {
     let cleaned = call("clean#GridUploads", &[]);
     assert_eq!(text(&cleaned, "deleted"), "0", "{cleaned:?}");
 
+    scheduled_runs_run_as_the_owner(factory, &facade, &mapping_id);
     authorization_is_on(&context, &facade, &text(&bad, "runId"), &value_map_id);
 }
 
@@ -781,4 +782,134 @@ fn authorization_is_on(
             .is_none(),
         "the run wrote what its user may not: {detail:?}"
     );
+}
+
+/// A ServiceJob row calling run#EtlMapping with `mappingId`.
+fn etl_job(facade: &moqui_core::entity::EntityFacade, job_name: &str, mapping_id: &str) {
+    let mut job = facade.make_value("moqui.service.job.ServiceJob").unwrap();
+    job.set("jobName", Value::string(job_name));
+    job.set("serviceName", Value::string(format!("{SERVICES}.run#EtlMapping")));
+    job.set("paused", Value::string("Y"));
+    job.create(facade).unwrap();
+    let mut parameter = facade.make_value("moqui.service.job.ServiceJobParameter").unwrap();
+    parameter.set("jobName", Value::string(job_name));
+    parameter.set("parameterName", Value::string("mappingId"));
+    parameter.set("parameterValue", Value::string(mapping_id));
+    parameter.create(facade).unwrap();
+}
+
+/// Run the job `job_name` with no user signed in, as a cron run is; its run id.
+fn run_without_user(factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>, job_name: &str) -> String {
+    let context = factory.new_context();
+    let _entered = context.enter();
+    assert!(moqui_core::user::current_user_id().unwrap().is_none());
+    // as the scheduler: no user, and authorization off for the job's own rows
+    let _authz = context.disable_authz();
+    moqui_core::service::run_job_now(job_name, &BTreeMap::new()).unwrap()
+}
+
+/// A scheduled run with no user signed in runs as the mapping's owner, with the owner's checks: a saved mapping loads
+/// and its EtlRun names the owner and the job's run; one with an expression is refused for an owner without
+/// GROOVY_SHELL_WEB.
+fn scheduled_runs_run_as_the_owner(
+    factory: &std::sync::Arc<moqui_core::context::ExecutionContextFactory>,
+    facade: &moqui_core::entity::EntityFacade,
+    mapping_id: &str,
+) {
+    let _authz =
+        moqui_core::context::ExecutionContext::with_current(moqui_core::context::ExecutionContext::disable_authz);
+    etl_job(facade, "EtlHostScheduled", mapping_id);
+    // a mapping of the same owner with an expression, written as the framework (its own service would refuse it)
+    let mut scripted = facade.make_value("moqui.etl.EtlMapping").unwrap();
+    scripted.set("mappingId", Value::string("EtlHostScripted"));
+    scripted.set("ownerUserId", Value::string("EX_JOHN_DOE"));
+    scripted.set("sourceTypeEnumId", Value::string("EtlsFile"));
+    scripted.set("sourceLocation", Value::string("dbresource://moqui/etl/test/good.csv"));
+    scripted.set("targetTypeEnumId", Value::string("EtltEntity"));
+    scripted.set("targetName", Value::string("moqui.basic.Enumeration"));
+    scripted.create(facade).unwrap();
+    for (seq, target, column, expression) in [
+        ("000001", "enumId", "Id", None),
+        ("000002", "description", "Name", Some("'planted ' + value")),
+    ] {
+        let mut field = facade.make_value("moqui.etl.EtlMappingField").unwrap();
+        field.set("mappingId", Value::string("EtlHostScripted"));
+        field.set("fieldSeqId", Value::string(seq));
+        field.set("targetField", Value::string(target));
+        field.set("sourceColumn", Value::string(column));
+        if let Some(expression) = expression {
+            field.set("expression", Value::string(expression));
+        }
+        field.create(facade).unwrap();
+    }
+    etl_job(facade, "EtlHostScriptedJob", "EtlHostScripted");
+
+    let job_run = run_without_user(factory, "EtlHostScheduled");
+    let started = Instant::now();
+    let run = loop {
+        let found = facade
+            .find("moqui.etl.EtlRun")
+            .unwrap()
+            .eq("jobRunId", Value::string(&job_run))
+            .one()
+            .unwrap();
+        if let Some(run) = found.filter(|run| {
+            matches!(
+                run.get("statusId").map(to_plain_string).as_deref(),
+                Some("EtlrDone" | "EtlrFailed")
+            )
+        }) {
+            break run;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the scheduled run did not end"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert_eq!(
+        run.get("statusId").map(to_plain_string).as_deref(),
+        Some("EtlrDone"),
+        "{run:?}"
+    );
+    assert_eq!(
+        run.get("userId").map(to_plain_string).as_deref(),
+        Some("EX_JOHN_DOE"),
+        "{run:?}"
+    );
+    assert_eq!(
+        run.get("loadCount").map(to_plain_string).as_deref(),
+        Some("2"),
+        "{run:?}"
+    );
+
+    let job_run = run_without_user(factory, "EtlHostScriptedJob");
+    let started = Instant::now();
+    let errors = loop {
+        let found = facade
+            .find("moqui.service.job.ServiceJobRun")
+            .unwrap()
+            .eq("jobRunId", Value::string(&job_run))
+            .one()
+            .unwrap();
+        if let Some(errors) = found
+            .and_then(|row| row.get("errors").map(to_plain_string))
+            .filter(|errors| !errors.is_empty())
+        {
+            break errors;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "the scripted job did not end with an error"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(errors.contains("GROOVY_SHELL_WEB"), "{errors}");
+    assert!(facade
+        .find("moqui.etl.EtlRun")
+        .unwrap()
+        .eq("jobRunId", Value::string(&job_run))
+        .one()
+        .unwrap()
+        .is_none());
 }

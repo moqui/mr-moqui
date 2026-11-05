@@ -253,10 +253,14 @@ Mappings load files, SQL results and entity data into entities or services. The 
 - **Owners:**
   - A mapping or value map is changed, copied over or deleted only by its owner or a `DATABASE_ADMIN` holder.
   - `get#EtlRuns` and `get#EtlRun` show the user's own runs, or every run with `DATABASE_ADMIN`.
-- **Scheduling:** a `ServiceJob` that calls `run#EtlMapping` with a `mappingId` runs it as whoever the job runs as.
+- **Scheduling:** a `ServiceJob` that calls `run#EtlMapping` with a `mappingId`.
+  - A cron run has no user signed in (see [Attack-Surface, Jobs](../security/Attack-Surface.md#jobs)), so the run signs
+    in as the mapping's `ownerUserId` and then runs as that user. All of the owner's own checks apply: the Tools app,
+    `GROOVY_SHELL_WEB`, `SQL_RUNNER_WEB`, the locations and the `ext:` gate.
+  - An owner that is missing or disabled is refused, with a logged error. An inline mapping with no user is refused.
   - A run-now of the job runs as its caller.
-  - A cron run has no user signed in (see [Attack-Surface, Jobs](../security/Attack-Surface.md#jobs)), so the run is
-    refused: it needs a user with the Tools app. A run-as user for scheduled jobs is open work.
+  - A job's run is done on the job's own worker, as with `wait`, and its `EtlRun.jobRunId` names the `ServiceJobRun`
+    (`moqui_core::service::current_job_run_id`).
 - **`load#SpreadsheetEntity`** keeps its parameters and runs as an inline mapping in the caller's transaction, stopping
   at the first error.
 
@@ -391,6 +395,5 @@ services. The generic tools, entity REST, request loads, ETL targets and every e
   - query stats gathered from every cluster member;
   - a load that skips failed rows.
   - Listed in [plans/Remaining-Work.md](../../plans/Remaining-Work.md).
-- Scheduled ETL runs: a cron `ServiceJob` has no user, and an ETL run needs one.
 - The MySQL and MariaDB job runner paths (lock timeouts, progress, `KILL QUERY` cancel) have not been run against a
   server. Their host tests run on Postgres.
