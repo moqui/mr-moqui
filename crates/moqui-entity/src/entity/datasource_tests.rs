@@ -59,6 +59,26 @@ fn the_embedded_settings_are_sizes_of_the_datasource() {
 fsync=off"/>"#,
     );
     assert!(datasource_conf(&injected, "transactional").is_err());
+    for bad in ["64mb", "64", "64 MB", "MB", "1kB", "100GB"] {
+        let node = conf(&format!(
+            r#"<datasource group-name="transactional" database-conf-name="" shared-buffers="{bad}"/>"#
+        ));
+        let err = datasource_conf(&node, "transactional").unwrap_err().to_string();
+        assert!(
+            err.contains("transactional") && err.contains("shared-buffers"),
+            "{bad}: {err}"
+        );
+    }
+    // on a datasource that is not the embedded cluster's they are ignored, a bad value too
+    let external = conf(
+        r#"<datasource group-name="transactional" database-conf-name="postgres" schema-name="public" work-mem="lots"/>"#,
+    );
+    assert!(!datasource_conf(&external, "transactional")
+        .unwrap()
+        .embedded_settings
+        .any());
+    assert_eq!(size_bytes("4096kB"), size_bytes("4MB"));
+    assert_eq!(size_bytes("64mb"), None);
 }
 
 #[test]

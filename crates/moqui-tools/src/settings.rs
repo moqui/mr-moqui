@@ -40,8 +40,15 @@ const POSTGRES_SETTINGS: &str = "SELECT name AS name, setting AS setting, unit A
      short_desc AS short_desc, source AS source, pending_restart AS pending_restart, context AS context \
      FROM pg_settings ORDER BY name";
 const MYSQL_VARIABLES: &str = "SHOW VARIABLES";
-/// Whether the running value of a setting (`?` its name) is the size `?`, in bytes as Postgres reads both.
-const POSTGRES_SAME_SIZE: &str = "SELECT pg_size_bytes(current_setting(?)) = pg_size_bytes(?) AS same";
+/// The bytes of a `pg_settings` row's value: `setting` times its `unit` (`8kB`, `kB`, `MB`, `B`).
+fn running_bytes(row: &IndexMap<String, Value>) -> Option<u64> {
+    let setting: u64 = row.get("setting").map(to_plain_string)?.trim().parse().ok()?;
+    let unit = row.get("unit").map(to_plain_string).unwrap_or_default();
+    let digits = unit.chars().take_while(char::is_ascii_digit).count();
+    let count: u64 = if digits == 0 { 1 } else { unit[..digits].parse().ok()? };
+    let per = moqui_core::entity::datasource::size_bytes(&format!("1{}", &unit[digits..]))?;
+    setting.checked_mul(count)?.checked_mul(per)
+}
 
 /// What [`read`] answers.
 #[derive(Clone, Debug, Default)]
@@ -77,12 +84,17 @@ pub fn read(db: &GroupDb, filter: &str, embedded: Option<&EmbeddedSettings>) -> 
                     row.insert("confValue".to_string(), value.map_or(Value::Null, Value::string));
                     let differs = match value {
                         None => Value::Null,
-                        Some(value) => db
-                            .query(POSTGRES_SAME_SIZE, &[Value::string(&name), Value::string(value)])
-                            .ok()
-                            .and_then(|rows| rows.into_iter().next())
-                            .and_then(|row| row.get("same").cloned())
-                            .map_or(Value::Null, |same| Value::Bool(!matches!(same, Value::Bool(true)))),
+                        Some(value) => match (moqui_core::entity::datasource::size_bytes(value), running_bytes(&row)) {
+                            (Some(conf), Some(running)) => Value::Bool(conf != running),
+                            _ => {
+                                tracing::warn!(
+                                    "Could not compare {name}: the conf has {value}, the server {:?} {:?}",
+                                    row.get("setting"),
+                                    row.get("unit")
+                                );
+                                Value::Null
+                            }
+                        },
                     };
                     row.insert("differs".to_string(), differs);
                 }

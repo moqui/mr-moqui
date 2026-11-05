@@ -149,10 +149,13 @@ pub fn transactional_conf(factory: &ExecutionContextFactory) -> Result<Datasourc
                     && other.embedded_settings.any()
                     && other.embedded_settings != transactional.embedded_settings
                 {
-                    tracing::warn!(
-                        "Datasource {group} sets embedded cluster settings that differ from the transactional \
-                         datasource's; the cluster uses the transactional ones"
-                    );
+                    static WARNED: std::sync::Once = std::sync::Once::new();
+                    WARNED.call_once(|| {
+                        tracing::warn!(
+                            "Datasource {group} sets embedded cluster settings that differ from the transactional \
+                             datasource's; the cluster uses the transactional ones"
+                        );
+                    });
                 }
             }
         }

@@ -167,26 +167,32 @@ impl EmbeddedSettings {
         self.entries().iter().any(|(_, _, value)| value.is_some())
     }
 
-    /// Read the four attributes of a `datasource` node. A value that is not a size (digits, then an optional unit of
-    /// letters, as `64MB`) is refused, so nothing but a size reaches the cluster's configuration.
+    /// Read the four attributes of the embedded `datasource` node of `group`. Each is a size as Postgres writes one:
+    /// digits and a unit of exactly `B`, `kB`, `MB`, `GB` or `TB` (case as written), within the setting's bounds
+    /// ([`size_bounds`]), so nothing but a size the server takes reaches its configuration.
     ///
     /// # Errors
     ///
-    /// Names the attribute whose value is not a size.
-    pub fn of(node: &MNode) -> Result<Self, Error> {
+    /// Names the datasource and the attribute whose value is not such a size.
+    pub fn of(node: &MNode, group: &str) -> Result<Self, Error> {
         let read = |name: &str| -> Result<Option<String>, Error> {
             let value = expanded(node, name);
             if value.is_empty() {
                 return Ok(None);
             }
-            let digits = value.chars().take_while(char::is_ascii_digit).count();
-            let unit = &value[digits..];
-            if digits == 0 || !unit.chars().all(|ch| ch.is_ascii_alphabetic()) || unit.len() > 2 {
-                return Err(Error::new(format!(
-                    "datasource {name} \"{value}\" is not a size such as 64MB"
-                )));
+            let (low, high) = size_bounds(name);
+            match size_bytes(&value) {
+                Some(bytes) if (low..=high).contains(&bytes) => Ok(Some(value)),
+                Some(_) => Err(Error::new(format!(
+                    "datasource {group} attribute {name} \"{value}\" is outside {} to {}",
+                    size_text(low),
+                    size_text(high)
+                ))),
+                None => Err(Error::new(format!(
+                    "datasource {group} attribute {name} \"{value}\" is not a size such as 64MB (a number and B, kB, \
+                     MB, GB or TB)"
+                ))),
             }
-            Ok(Some(value))
         };
         Ok(Self {
             shared_buffers: read("shared-buffers")?,
@@ -195,6 +201,66 @@ impl EmbeddedSettings {
             effective_cache_size: read("effective-cache-size")?,
         })
     }
+
+    /// The four attributes on a datasource that is not the embedded cluster's: they do not apply, and are ignored with
+    /// a debug line (a bad value there is logged, not refused).
+    #[must_use]
+    pub fn ignored(node: &MNode, group: &str) -> Self {
+        for name in [
+            "shared-buffers",
+            "work-mem",
+            "maintenance-work-mem",
+            "effective-cache-size",
+        ] {
+            let value = expanded(node, name);
+            if !value.is_empty() {
+                tracing::debug!(
+                    "Datasource {group} attribute {name} \"{value}\" is ignored: it sets the embedded cluster only"
+                );
+            }
+        }
+        Self::default()
+    }
+}
+
+/// The bytes of a size as Postgres writes one in its configuration: digits and a unit of exactly `B`, `kB`, `MB`, `GB`
+/// or `TB`, case as written. `None` for anything else, a missing unit included.
+#[must_use]
+pub fn size_bytes(value: &str) -> Option<u64> {
+    let digits = value.chars().take_while(char::is_ascii_digit).count();
+    if digits == 0 || digits > 15 {
+        return None;
+    }
+    let number: u64 = value[..digits].parse().ok()?;
+    let unit: u64 = match &value[digits..] {
+        "B" => 1,
+        "kB" => 1 << 10,
+        "MB" => 1 << 20,
+        "GB" => 1 << 30,
+        "TB" => 1 << 40,
+        _ => return None,
+    };
+    number.checked_mul(unit)
+}
+
+/// The bytes a conf attribute's size may be, low and high: within what Postgres takes and sane for a server.
+#[must_use]
+pub fn size_bounds(attribute: &str) -> (u64, u64) {
+    match attribute {
+        "shared-buffers" => (128 << 10, 64 << 30),
+        "work-mem" => (64 << 10, 2 << 30),
+        "maintenance-work-mem" => (1 << 20, 16 << 30),
+        _ => (8 << 10, 16 << 40),
+    }
+}
+
+fn size_text(bytes: u64) -> String {
+    for (unit, size) in [("TB", 1_u64 << 40), ("GB", 1 << 30), ("MB", 1 << 20), ("kB", 1 << 10)] {
+        if bytes >= size && bytes.is_multiple_of(size) {
+            return format!("{}{unit}", bytes / size);
+        }
+    }
+    format!("{bytes}B")
 }
 
 /// One datasource, with `${}` expanded.
@@ -356,7 +422,11 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
         },
         pg_stat_statements: expanded(&datasource, "pg-stat-statements") == "true",
         preload_pg_stat_statements: false,
-        embedded_settings: EmbeddedSettings::of(&datasource)?,
+        embedded_settings: if kind == DatasourceKind::Embedded {
+            EmbeddedSettings::of(&datasource, group)?
+        } else {
+            EmbeddedSettings::ignored(&datasource, group)
+        },
         read_timeout: read_timeout(inline.as_ref())?,
     };
     conf.preload_pg_stat_statements = conf.pg_stat_statements;

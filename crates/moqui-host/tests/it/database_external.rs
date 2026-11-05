@@ -381,12 +381,77 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     login("ext.plain");
     let plain = call("get#Capabilities", &[("db", Value::string("ext:EXTSPEC"))]).unwrap_err();
     let plain_list = call("find#DatabaseConnections", &[]).unwrap_err();
+    let plain_settings = call(
+        "get#DatabaseSettings",
+        &[
+            ("db", Value::string("ext:EXTSPEC")),
+            ("filter", Value::string("work_mem")),
+        ],
+    )
+    .unwrap_err();
     login("john.doe");
+    assert_eq!(plain_settings, "Not available");
     assert!(used.is_ok(), "{used:?}");
     assert!(updated.unwrap_err().contains("another user's"));
     assert!(deleted.unwrap_err().contains("another user's"));
     assert_eq!(plain, "Not available");
     assert_eq!(plain_list, "Not available");
+
+    // the settings of the embedded cluster, filtered, with the conf's four marked
+    let settings = call("get#DatabaseSettings", &[("filter", Value::string("work_mem"))]).unwrap();
+    assert_eq!(settings.get("embedded"), Some(&Value::Bool(true)));
+    assert!(to_plain_string(&settings["note"]).contains("restart"), "{settings:?}");
+    let work_mem = rows(&settings, "settings")
+        .into_iter()
+        .find(|row| field(row, "name") == Value::string("work_mem"))
+        .expect("work_mem");
+    assert_eq!(field(&work_mem, "confAttribute"), Value::string("work-mem"));
+    assert!(rows(&settings, "settings")
+        .iter()
+        .all(|row| to_plain_string(&field(row, "name")).contains("work_mem")));
+    let external = call("get#DatabaseSettings", &[("db", Value::string("ext:EXTSPEC"))]).unwrap();
+    assert_eq!(external.get("embedded"), Some(&Value::Bool(false)));
+    // the Tools gate, with authorization on: the service granted outright, as a screen's inheritance would let it run,
+    // to a user the Tools app does not let in
+    entity_auto(
+        "create#moqui.security.ArtifactGroup",
+        &[
+            ("artifactGroupId", Value::string("EXT_SPEC_API")),
+            ("description", Value::string("External spec")),
+        ],
+    );
+    entity_auto(
+        "create#moqui.security.ArtifactGroupMember",
+        &[
+            ("artifactGroupId", Value::string("EXT_SPEC_API")),
+            (
+                "artifactName",
+                Value::string(format!("{SERVICES}.get#DatabaseSettings")),
+            ),
+            ("artifactTypeEnumId", Value::string("AT_SERVICE")),
+            ("inheritAuthz", Value::string("N")),
+        ],
+    );
+    entity_auto(
+        "create#moqui.security.ArtifactAuthz",
+        &[
+            ("artifactAuthzId", Value::string("EXT_SPEC_API_ALL")),
+            ("userGroupId", Value::string("ALL_USERS")),
+            ("artifactGroupId", Value::string("EXT_SPEC_API")),
+            ("authzTypeEnumId", Value::string("AUTHZT_ALLOW")),
+            ("authzActionEnumId", Value::string("AUTHZA_ALL")),
+        ],
+    );
+    login("ext.plain");
+    let gated = moqui_core::service::call::sync_checked(
+        &format!("{SERVICES}.get#DatabaseSettings"),
+        &BTreeMap::new(),
+        &moqui_core::service::call::CallOptions::default(),
+    )
+    .map_err(|err| err.message().to_string());
+    moqui_core::context::ExecutionContext::with_current(|ec| ec.message().clear_errors());
+    login("john.doe");
+    assert!(gated.unwrap_err().contains("Tools app"));
 
     // a production instance refuses ext: and the connection services with the one vague error
     let production = Purpose::set("production");
