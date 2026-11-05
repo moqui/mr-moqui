@@ -56,11 +56,38 @@ feature("a file mapping is matched, sampled with its errors, saved, listed and r
     },
 })
 
-feature("a run that is not there is no run, to anyone", {
+feature("a saved mapping's run done with no errors offers no rerun", {
     expect() {
-        const r = tools().render("Etl/Run", { runId: "NO_SUCH_ETL_RUN" }, null)
+        const steps = () => {
+            const location = "dbresource://moqui/etl/spec-done-" + Date.now().toString(36) + ".csv"
+            let mappingId = null, runId = null
+            try {
+                asSystem(() => ec.resource.getLocationReference(location).putText("Test Id\nETLSPECD" + Date.now().toString(36) + "\n"))
+                const mapping = { description: "Etl spec done run", sourceTypeEnumId: "EtlsFile", sourceLocation: location, targetTypeEnumId: "EtltEntity",
+                    targetName: "moqui.test.TestEntity", loadModeEnumId: "EtllCreate", fields: [{ targetField: "testId", sourceColumn: "Test Id" }] }
+                mappingId = json(tools().render("Etl/etlStore", { mappingJson: JSON.stringify(mapping) }, "post")).mappingId
+                let out = {}
+                ec.artifactExecution.runAsUser("component://tools/screen/Tools.xml", () => {
+                    out = ec.service.sync().name("org.moqui.impl.EtlServices.run#EtlMapping").parameters({ mappingId, wait: true }).call() || {}
+                })
+                ec.message.clearErrors()
+                runId = out.runId
+                const page = tools().render("Etl/Run", { runId }, null)
+                return { out, status: page.status, text: String(page.output) }
+            } finally {
+                if (mappingId) tools().render("Etl/Mappings/deleteMapping", { mappingId }, "post")
+                asSystem(() => {
+                    if (runId) for (const name of ["EtlRunError", "EtlRun"]) ec.entity.find("moqui.etl." + name).condition("runId", runId).deleteAll()
+                    ec.entity.find("moqui.test.TestEntity").condition("testId", "like", "ETLSPECD%").deleteAll()
+                    ec.resource.getLocationReference(location).delete()
+                })
+            }
+        }
+        const r = steps()
+        r.out.statusId == "EtlrDone" && r.out.errorCount == 0
         r.status == 200
-        String(r.output).includes("NO_SUCH_ETL_RUN")
+        r.text.includes("Done")
+        !r.text.includes("Run again")
     },
 })
 
