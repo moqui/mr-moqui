@@ -63,8 +63,9 @@ const IDENTITY_ADMIN_ENTITY_KEYS: &[&str] = &[
 /// plans/Tools-Database.md §4.3).
 const SECRET_CONFIG_ENTITY_KEYS: &[&str] = &["emailserver", "systemmessageremote", "databaseconnection"];
 
-/// Audit entities a request may never write: `DatabaseAudit`, what ran outside the entity facade (§14.2).
-const AUDIT_ENTITY_KEYS: &[&str] = &["databaseaudit"];
+/// Entities only their own services write: `DatabaseAudit`, what ran outside the entity facade (§14.2), and
+/// `SqlRunToken`, the one-time confirmations of SQL runs with changes (§8.2), which a generic write could forge.
+const AUDIT_ENTITY_KEYS: &[&str] = &["databaseaudit", "sqlruntoken"];
 
 /// The text after the last `.`, in lower case.
 fn simple_entity_key(entity_name: &str) -> String {
@@ -91,7 +92,8 @@ pub fn is_secret_config_entity(entity_name: &str) -> bool {
     SECRET_CONFIG_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
 }
 
-/// `DatabaseAudit`: written only by the services it records, never through generic entity writes or loads.
+/// `DatabaseAudit` and `SqlRunToken`: written only by their own services, never through generic entity writes or
+/// loads.
 pub fn is_audit_entity(entity_name: &str) -> bool {
     AUDIT_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
 }
@@ -183,6 +185,7 @@ mod tests {
         // the database audit: restricted, and no one writes it generically
         assert!(is_audit_entity("moqui.database.DatabaseAudit"));
         assert!(is_restricted_generic_entity("moqui.database.DatabaseAudit"));
+        assert!(is_audit_entity("moqui.database.SqlRunToken"));
         assert!(!is_audit_entity("moqui.entity.EntityAuditLog"));
         assert!(is_user_account_entity("moqui.security.UserAccount"));
         assert!(is_user_account_entity("users"));

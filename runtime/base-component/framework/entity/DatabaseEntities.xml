@@ -114,11 +114,30 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="errorText" type="text-very-long"/>
         <field name="startTime" type="date-time"/>
         <field name="detailJson" type="text-very-long"/>
+        <!-- a SQL run's statement: the run id the client named, and the statement's place in the script; the row's id is
+            the server's, so a run id used again replaces nothing -->
+        <field name="runId" type="id"/>
+        <field name="statementSeq" type="number-integer"/>
         <relationship type="one" title="DatabaseAuditAction" related="moqui.basic.Enumeration" short-alias="action">
             <key-map field-name="actionEnumId"/></relationship>
         <relationship type="one" related="moqui.security.UserAccount"/>
         <index name="DB_AUDIT_USER_TIME"><index-field name="userId"/><index-field name="startTime"/></index>
         <index name="DB_AUDIT_TIME"><index-field name="startTime"/></index>
+        <index name="DB_AUDIT_RUN"><index-field name="runId"/></index>
+    </entity>
+
+    <entity entity-name="SqlRunToken" package="moqui.database" use="transactional" cache="never">
+        <description>The one-time confirmation of a SQL run with changes allowed (§8.2), issued by classify#Sql and
+            spent by run#Sql or explain#Sql on any instance: a delete that must remove exactly this row. tokenHash is the
+            SHA-256 of the token (the token itself is only the client's); textHash the SHA-256 of the script it confirms.
+            Expired rows are purged with the audit (purge#DatabaseAudit). Never written or read through the generic
+            entity tools.</description>
+        <field name="tokenHash" type="id-long" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="db" type="text-medium"/>
+        <field name="textHash" type="text-medium"/>
+        <field name="expireTime" type="date-time"/>
+        <index name="DB_SQL_TOKEN_EXPIRE"><index-field name="expireTime"/></index>
     </entity>
 
     <entity entity-name="DatabaseConnection" package="moqui.database" use="configuration" cache="never">

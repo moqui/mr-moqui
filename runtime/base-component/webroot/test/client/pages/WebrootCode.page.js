@@ -18,6 +18,23 @@ test("the language of a file comes from its extension, else plain text", () => {
     assert.equal(editor.languageOf(""), "text");
 });
 
+test("a SQL editor takes the database's dialect and completes the schema's tables", () => {
+    assert.equal(editor.sqlDialectName("embedded-postgres"), "PostgreSQL");
+    assert.equal(editor.sqlDialectName("mysql8"), "MySQL");
+    assert.equal(editor.sqlDialectName("mariadb"), "MariaSQL");
+    assert.equal(editor.sqlDialectName(""), "StandardSQL");
+    const schema = { enumeration: ["enum_id", "description"] };
+    const config = editor.sqlConfig(CM, "sql:postgres", schema);
+    assert.equal(config.dialect, CM.PostgreSQL);
+    assert.equal(config.schema, schema);
+    assert.equal(editor.sqlConfig(CM, "sql").dialect, CM.StandardSQL);
+    // and lang-sql takes it
+    const extension = editor.languageExtension(CM, "sql:mariadb", schema);
+    const state = CM.EditorState.create({ doc: "select enum_id from enumeration", extensions: [extension] });
+    assert.equal(state.doc.lines, 1);
+    assert.ok(CM.MySQL && CM.MariaSQL, "the bundle has the dialects");
+});
+
 test("a folder shows its most pressing entry status", () => {
     assert.equal(editor.rollupStatus(["", "?", "M"]), "M");
     assert.equal(editor.rollupStatus(["A", "U", "M"]), "U");

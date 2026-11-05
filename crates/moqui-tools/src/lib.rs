@@ -13,8 +13,9 @@
  */
 
 //! The Tools app's server side (plans/Tools-Database.md §13): `org.moqui.impl.DatabaseServices` ([`service`]) on the
-//! entities of `framework/entity/DatabaseEntities.xml`. Now: what each database allows ([`capabilities`]) and the
-//! catalog queries per dialect ([`catalog`]). The jobs, SQL runs, data grid and ETL of the plan come here as well.
+//! entities of `framework/entity/DatabaseEntities.xml`: what each database allows ([`capabilities`]), the catalog
+//! queries per dialect ([`catalog`]), SQL runs, explain and the database's statement stats ([`sql`], with their
+//! services in [`sql_service`]) and the audit ([`audit`]). The jobs, data grid and ETL of the plan come here as well.
 //!
 //! A service that works on a database takes `db`: `group:<groupName>` for an entity group's database, or
 //! `ext:<connectionId>` for a `moqui.database.DatabaseConnection` ([`DbRef::parse`]). An external database is refused
@@ -29,6 +30,8 @@ pub mod audit;
 pub mod capabilities;
 pub mod catalog;
 pub mod service;
+pub mod sql;
+pub mod sql_service;
 
 // ---------- Schema and jobs (plans/Tools-Database.md §5, §6, §7.3, §7.4) ----------
 pub mod activity;

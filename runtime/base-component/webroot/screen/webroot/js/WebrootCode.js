@@ -4,7 +4,8 @@
  * The code editor widgets (plans/design-dev-aide.md 5.1, F9), on the vendored CodeMirror 6 bundle (libs/codemirror), which
  * loads when the first editor mounts:
  *   - m-code-editor: one file's text with its language (by `language` or `file-name`), line numbers, folding, search,
- *     completion (XML elements and attributes from a schema digest), lint (a `lint` function answering problems), the
+ *     completion (XML elements and attributes from a schema digest; for `sql:<kind>` the dialect, and tables and columns
+ *     from a schema map), lint (a `lint` function answering problems), the
  *     shell's dark mode, Mod-S as `save`; `ready` gives the EditorView to a host such as the dev-aide. When the bundle cannot
  *     load it is a plain text area, so a form still submits. In a form it writes a hidden input of `name`.
  *   - m-diff-view: two texts side by side (MergeView) or inline (unifiedMergeView), read only unless `editable`.
@@ -148,7 +149,24 @@
         return loading;
     };
 
+    // The lang-sql dialect of a database's kind (`get#Capabilities` backend, or the database conf): Postgres, MySQL or
+    // MariaDB, else standard SQL.
+    const SQL_DIALECTS = {
+        postgres: "PostgreSQL", postgresql: "PostgreSQL", "embedded-postgres": "PostgreSQL",
+        mysql: "MySQL", mysql8: "MySQL", mariadb: "MariaSQL"
+    };
+    editor.sqlDialectName = (kind) => SQL_DIALECTS[String(kind || "").toLowerCase()] || "StandardSQL";
+    // The lang-sql config of `sql` or `sql:<kind>`: the dialect, and `schema` ({table: [column, ...]}, or {schema:
+    // {table: [...]}}) for completion of table and column names.
+    editor.sqlConfig = (CM, language, schema) => {
+        const kind = String(language || "").split(":")[1];
+        const config = { dialect: CM[editor.sqlDialectName(kind)] };
+        if (schema && typeof schema === "object") config.schema = schema;
+        return config;
+    };
+
     function languageExtension(CM, language, schema) {
+        if (String(language || "").startsWith("sql:")) return CM.sql(editor.sqlConfig(CM, language, schema));
         switch (language) {
             case "xml": return CM.xml(schema ? { elements: editor.xmlElements(schema) } : {});
             case "html": return CM.html();
@@ -157,12 +175,13 @@
             case "json": return CM.json();
             case "css": return CM.css();
             case "markdown": return CM.markdown();
-            case "sql": return CM.sql();
+            case "sql": return CM.sql(editor.sqlConfig(CM, language, schema));
             case "yaml": return CM.yaml();
             case "rust": return CM.rust();
             default: return [];
         }
     }
+    editor.languageExtension = languageExtension;
 
     let darkStyle = null;
     function theme(CM, dark) {

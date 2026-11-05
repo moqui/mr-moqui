@@ -46,4 +46,9 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.Enumeration enumId="DbaLoad" enumTypeId="DatabaseAuditAction" sequenceNum="6" description="Load"/>
     <moqui.basic.Enumeration enumId="DbaEtlRun" enumTypeId="DatabaseAuditAction" sequenceNum="7" description="ETL Run"/>
     <moqui.basic.Enumeration enumId="DbaStatsReset" enumTypeId="DatabaseAuditAction" sequenceNum="8" description="Stats Reset"/>
+
+    <!-- DatabaseAudit rows older than the database_audit_days property (90 by default) go, daily -->
+    <moqui.service.job.ServiceJob jobName="DatabaseAuditPurge" description="Delete DatabaseAudit rows older than database_audit_days"
+            serviceName="org.moqui.impl.DatabaseServices.purge#DatabaseAudit" cronExpression="0 41 3 * * ?" paused="N"
+            errorHistoryOnly="Y"/>
 </entity-facade-xml>

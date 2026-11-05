@@ -781,9 +781,8 @@ fn run_statement(facade: &EntityFacade, db: &GroupDb, job_id: &str, seq: &str, s
     let strong = takes_strong_lock(sql);
     let mut attempt = 0;
     loop {
-        let result = db
-            .tx
-            .with_own_connection(|conn| on_connection(facade, db, conn, job_id, seq, sql, strong.then_some(lock_ms)));
+        let result =
+            db.own_connection(|conn| on_connection(facade, db, conn, job_id, seq, sql, strong.then_some(lock_ms)));
         let cancelled_here = lock(live()).get(job_id).is_some_and(|live| live.cancelled);
         match result {
             Ok(rows) => return Outcome::Done(rows),
@@ -1059,7 +1058,7 @@ pub(crate) fn signal_backend(db: &GroupDb, pid: i64, terminate: bool) -> Result<
         } else {
             format!("KILL QUERY {pid}")
         };
-        db.tx.with_own_connection(|conn| conn.execute(&kill, &[])).map(|_| true)
+        db.own_connection(|conn| conn.execute(&kill, &[])).map(|_| true)
     }
 }
 

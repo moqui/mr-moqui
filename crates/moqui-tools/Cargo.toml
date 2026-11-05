@@ -18,6 +18,8 @@ moqui-lib = { workspace = true }
 moqui-db = { workspace = true }
 indexmap = { workspace = true }
 jiff = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

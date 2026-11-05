@@ -30,6 +30,8 @@ use crate::{capabilities, DbRef, NOT_AVAILABLE};
 pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
     rust_service!(map, get_capabilities)?;
     rust_service!(map, reset_query_stats)?;
+    // ---- SQL (plans/Tools-Database.md §8): crate::sql_service ----
+    crate::sql_service::register(map)?;
     // ---------- Schema and jobs (plans/Tools-Database.md §5, §6, §7.3, §7.4) ----------
     crate::register_schema_and_jobs(map)?;
     Ok(())
@@ -37,7 +39,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
 
 /// The Tools app's root screen: its own authorization (`TOOLS_APP`) decides who may use these services, whatever
 /// screen or service calls them.
-const TOOLS_SCREEN: &str = "component://tools/screen/Tools.xml";
+pub(crate) const TOOLS_SCREEN: &str = "component://tools/screen/Tools.xml";
 
 /// Whether the current user may view the Tools app; when not, an error is added.
 pub(crate) fn may_view_tools() -> bool {
@@ -51,7 +53,7 @@ pub(crate) fn may_view_tools() -> bool {
     }
 }
 
-fn text(parameters: &BTreeMap<String, Value>, key: &str) -> String {
+pub(crate) fn text(parameters: &BTreeMap<String, Value>, key: &str) -> String {
     parameters
         .get(key)
         .filter(|value| !is_empty(value))
@@ -59,7 +61,7 @@ fn text(parameters: &BTreeMap<String, Value>, key: &str) -> String {
         .unwrap_or_default()
 }
 
-fn flag(parameters: &BTreeMap<String, Value>, key: &str) -> bool {
+pub(crate) fn flag(parameters: &BTreeMap<String, Value>, key: &str) -> bool {
     match parameters.get(key) {
         Some(Value::Bool(flag)) => *flag,
         Some(value) => matches!(to_plain_string(value).as_str(), "true" | "Y"),
@@ -67,14 +69,14 @@ fn flag(parameters: &BTreeMap<String, Value>, key: &str) -> bool {
     }
 }
 
-fn add_error(message: impl Into<String>) {
+pub(crate) fn add_error(message: impl Into<String>) {
     let message = message.into();
     ExecutionContext::with_current(|ec| ec.message().add_error(message));
 }
 
 /// Whether `group`'s database is on the embedded cluster this process runs, from the merged conf: its own datasource,
 /// else the transactional one, whose database a group without a datasource shares.
-fn group_is_embedded(group: &str) -> bool {
+pub(crate) fn group_is_embedded(group: &str) -> bool {
     let Some(text) = ExecutionContext::with_current(|ec| ec.factory().conf_text()) else {
         return false;
     };

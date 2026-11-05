@@ -725,6 +725,13 @@ pub struct SqlRunOptions<'a> {
     /// Called on the statement's connection just before the statement is sent, with what a cancel needs
     /// (plans/Tools-Database.md 8.3).
     pub on_start: Option<&'a mut dyn FnMut(SqlStart)>,
+    /// The values of the statement's `?` placeholders, bound by the driver, never pasted into the text (a SQL screen's
+    /// `:name` parameters).
+    pub params: &'a [Value],
+    /// Close the statement's connection after it, instead of returning it to the pool (at the end of the caller's
+    /// transaction, when there is one): a statement a user wrote may leave session state behind (`SET`, `SET ROLE`,
+    /// `USE`, a temporary table, an advisory lock). A read-only run always does.
+    pub discard_connection: bool,
 }
 
 /// The connection a [`run_sql_with`] statement runs on, as [`SqlRunOptions::on_start`] is handed it.
@@ -915,6 +922,19 @@ fn started(conn: &dyn DbConnection, on_start: &mut Option<&mut dyn FnMut(SqlStar
     Running(Some(armed))
 }
 
+/// The connection a statement of [`run_statement`] runs on: closed after it when [`SqlRunOptions::discard_connection`].
+fn statement_conn<T>(
+    tx: &TransactionManager,
+    discard: bool,
+    body: impl FnOnce(&mut dyn crate::driver::DbConnection) -> Result<T, Error>,
+) -> Result<T, Error> {
+    if discard {
+        tx.with_connection_closed_after(body)
+    } else {
+        tx.with_connection(body)
+    }
+}
+
 fn run_statement(
     tx: &TransactionManager,
     sql: &str,
@@ -922,15 +942,17 @@ fn run_statement(
     options: &mut SqlRunOptions<'_>,
 ) -> Result<SqlResult, Error> {
     let limit = options.limit;
+    let params = options.params;
+    let discard = options.discard_connection;
     let on_start = &mut options.on_start;
     // As JDBC's `execute`, the database says whether the statement gives rows; the first word when it cannot.
     let gives_rows = tx
         .with_connection(|conn| conn.returns_rows(sql))?
         .unwrap_or_else(|| is_query(sql));
     if !gives_rows {
-        let count = tx.with_connection(|conn| {
+        let count = statement_conn(tx, discard, |conn| {
             let _running = started(conn, on_start);
-            conn.execute(sql, &[])
+            conn.execute(sql, params)
         })?;
         return Ok(SqlResult {
             rows_affected: Some(count),
@@ -953,9 +975,9 @@ fn run_statement(
         true
     };
     if !is_streamable(sql, syntax) {
-        let rows = tx.with_connection(|conn| {
+        let rows = statement_conn(tx, discard, |conn| {
             let _running = started(conn, on_start);
-            conn.query_once(sql, &[])
+            conn.query_once(sql, params)
         })?;
         for row in rows {
             if !add(row) {
@@ -965,18 +987,18 @@ fn run_statement(
         return Ok(result);
     }
     tx.run(TransactionAttribute::UseOrBegin, Some(QUERY_TIMEOUT), || {
-        tx.with_connection(|conn| {
+        statement_conn(tx, discard, |conn| {
             let _running = started(conn, on_start);
             // A find's cursor already open on the caller's connection keeps it; this query is read whole.
             if conn.stream_open() {
-                for row in conn.query_once(sql, &[])? {
+                for row in conn.query_once(sql, params)? {
                     if !add(row) {
                         break;
                     }
                 }
                 return Ok(());
             }
-            conn.open_stream(sql, &[])?;
+            conn.open_stream(sql, params)?;
             let read = (|| {
                 while let Some(row) = conn.next_row()? {
                     if !add(row) {

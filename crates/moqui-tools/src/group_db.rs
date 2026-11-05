@@ -125,6 +125,19 @@ impl GroupDb {
             .collect())
     }
 
+    /// `body` on a connection of its own, outside any transaction (the caller's is suspended), closed after it rather
+    /// than returned to the pool ([`TransactionManager::with_connection_closed_after`] with no frame active): a
+    /// database job's statement, which may run long, must not be in a transaction (`CREATE INDEX CONCURRENTLY`) and
+    /// leaves its session settings behind.
+    pub(crate) fn own_connection<T>(
+        &self,
+        body: impl FnOnce(&mut dyn moqui_core::driver::DbConnection) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        self.tx.run(TransactionAttribute::IgnoreSuspend, None, || {
+            self.tx.with_connection_closed_after(body)
+        })
+    }
+
     /// [`Self::query`], an error logged and the rows empty, with the reason in `reasons` under `what`.
     pub(crate) fn query_or_note(
         &self,
