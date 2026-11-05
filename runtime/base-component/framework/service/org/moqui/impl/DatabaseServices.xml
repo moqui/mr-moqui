@@ -666,9 +666,15 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="store" noun="DatabaseConnection" type="rust" location="moqui_tools::ext::store_database_connection"
             transaction="ignore">
-        <description>Create or update a connection. connectionId is 1 to 40 letters, digits, _ or -; dbType is postgres,
-            mysql (MariaDB too) or mysql8. A store with no password keeps the stored one (encrypted). readOnly is true
-            unless false is given. A change closes the connection's pool.</description>
+        <description>Create a connection, owned by the current user, or replace one: a full replace, so a field not given
+            is stored empty, but for the password. Only the owner or a DATABASE_ADMIN holder may replace, delete or test a
+            connection; others may only use it. connectionId is 1 to 40 letters, digits, _ or -; dbType is postgres,
+            mysql (MariaDB too) or mysql8; host is a name or address reached over TCP (a socket path is refused). sslMode
+            is disable, require, verify-ca or verify-full (MySQL's DISABLED, REQUIRED, VERIFY_CA, VERIFY_IDENTITY too);
+            empty is verify-full for a host that is not loopback, and no TLS for localhost. sslRootCert is the path of a
+            PEM file of the authorities to trust. A store with no password keeps the stored one (encrypted) unless dbType,
+            host, port, userName, sslMode or sslRootCert changed: then it is cleared (passwordCleared) and must be entered
+            again. readOnly is true unless false is given. A store closes the connection's pool.</description>
         <in-parameters>
             <parameter name="connectionId" required="true"/>
             <parameter name="description"/>
@@ -682,7 +688,10 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="sslRootCert"/>
             <parameter name="readOnly" type="Boolean"/>
         </in-parameters>
-        <out-parameters><parameter name="connectionId"/></out-parameters>
+        <out-parameters>
+            <parameter name="connectionId"/>
+            <parameter name="passwordCleared" type="Boolean"/>
+        </out-parameters>
     </service>
     <service verb="delete" noun="DatabaseConnection" type="rust" location="moqui_tools::ext::delete_database_connection"
             transaction="ignore">

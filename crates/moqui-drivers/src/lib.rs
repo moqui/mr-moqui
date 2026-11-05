@@ -104,14 +104,17 @@ pub fn conf_driver(conf: &ConfDb) -> Result<Arc<dyn DbDriver>, Error> {
             Arc::new(driver.password(password))
         }
         #[cfg(feature = "mysql")]
-        "mysql" | "mysql8" => Arc::new(mysql::MysqlDriver::new(
-            host,
-            port_of(3306)?,
-            user,
-            password,
-            database,
-            !mode.is_empty() && moqui_core::entity::datasource::tls_wanted(mode),
-        )),
+        "mysql" | "mysql8" => Arc::new(
+            mysql::MysqlDriver::new(
+                host,
+                port_of(3306)?,
+                user,
+                password,
+                database,
+                !mode.is_empty() && moqui_core::entity::datasource::tls_wanted(mode),
+            )
+            .tls_options(moqui_core::entity::datasource::tls_verify(mode), ssl_root_cert),
+        ),
         other => {
             let _ = (host, database, user, password, mode, ssl_root_cert, port_of(0));
             Err(Error::new(format!("no database driver for database conf {other}")))?

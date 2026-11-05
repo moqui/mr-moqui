@@ -201,7 +201,7 @@ fn column_flag(row: Option<&Row>, name: &str) -> bool {
 /// Probe `group` of `facade` now. `embedded` says the group's database is on the embedded cluster this process runs.
 #[must_use]
 pub fn probe_group(facade: &EntityFacade, group: &str, embedded: bool) -> Capabilities {
-    let db = format!("group:{group}");
+    let db = catalog::db_text(group);
     // The driver's error can name the host and port: it goes to the log, and the reason the screen shows does not
     // carry it.
     let run = |name: &str, sql: &str| {

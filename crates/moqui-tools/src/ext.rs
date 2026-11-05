@@ -25,7 +25,6 @@
 //!   and a store without one keeps the stored one.
 
 use std::collections::{BTreeMap, HashMap};
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -62,8 +61,6 @@ struct Open {
     tx: TransactionManager,
     dialect: moqui_db::dialect::Dialect,
     read_only: bool,
-    /// The row's connection fields when the pool was made: a change of them makes a new pool.
-    signature: u64,
     last_used: Instant,
 }
 
@@ -95,6 +92,7 @@ pub fn close_idle() {
 /// Forget the pool of `connection_id` (its row changed or went).
 pub fn forget(connection_id: &str) {
     lock(pools()).remove(connection_id);
+    crate::group_db::forget_server(&format!("ext:{connection_id}"));
 }
 
 /// A connection row's fields as the conf connection factory takes them.
@@ -115,23 +113,6 @@ fn conf_of(row: &moqui_core::entity::EntityValue) -> moqui_core::driver::ConfDb 
         ssl_mode: field("sslMode"),
         ssl_root_cert: field("sslRootCert"),
     }
-}
-
-fn signature(conf: &moqui_core::driver::ConfDb, read_only: bool) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    (
-        &conf.db_type,
-        &conf.host,
-        &conf.port,
-        &conf.database,
-        &conf.user,
-        &conf.password,
-        &conf.ssl_mode,
-        &conf.ssl_root_cert,
-        read_only,
-    )
-        .hash(&mut hasher);
-    hasher.finish()
 }
 
 /// The dialect of a database conf: an open group's when one uses it, else the conf's `database-list` entry.
@@ -163,54 +144,89 @@ fn row_of(facade: &EntityFacade, connection_id: &str) -> Result<Option<moqui_cor
 ///
 /// No such row, an unknown database conf, or no driver for it.
 pub fn open(facade: &EntityFacade, connection_id: &str) -> Result<GroupDb, Error> {
-    let row = row_of(facade, connection_id)?.ok_or_else(|| Error::new(format!("no connection {connection_id}")))?;
-    let conf = conf_of(&row);
-    if !DB_TYPES.contains(&conf.db_type.as_str()) {
-        return Err(Error::new(format!(
-            "database conf {} is not postgres, mysql or mysql8",
-            conf.db_type
-        )));
-    }
-    let read_only = row.get("readOnly").map(to_plain_string).as_deref() != Some("N");
-    let signature = signature(&conf, read_only);
     let name = format!("ext:{connection_id}");
-    {
+    // the row is read and the pool made once, under the map's lock, so two requests share one pool; a pool is
+    // forgotten when its row is stored or deleted, the only ways it changes (generic writes are refused)
+    let (tx, dialect, read_only) = {
         let mut pools = lock(pools());
-        if let Some(open) = pools.get_mut(connection_id).filter(|open| open.signature == signature) {
+        if let Some(open) = pools.get_mut(connection_id) {
             open.last_used = Instant::now();
-            return Ok(GroupDb::on(
-                &name,
-                open.tx.clone(),
-                open.dialect.clone(),
-                true,
-                open.read_only,
-            ));
+            (open.tx.clone(), open.dialect.clone(), open.read_only)
+        } else {
+            let row =
+                row_of(facade, connection_id)?.ok_or_else(|| Error::new(format!("no connection {connection_id}")))?;
+            let conf = conf_of(&row);
+            if !DB_TYPES.contains(&conf.db_type.as_str()) {
+                return Err(Error::new(format!(
+                    "database conf {} is not postgres, mysql or mysql8",
+                    conf.db_type
+                )));
+            }
+            check_host(&conf.host).map_err(Error::new)?;
+            let read_only = row.get("readOnly").map(to_plain_string).as_deref() != Some("N");
+            let dialect = dialect_of(facade, &conf.db_type)?;
+            let driver = moqui_core::driver::conf_driver(&conf)?;
+            let tx = TransactionManager::new(
+                driver,
+                PoolConfig {
+                    min: 0,
+                    max: POOL_MAX,
+                    reserve: 0,
+                    acquire_timeout: Duration::from_secs(30),
+                    idle_timeout: Some(IDLE_CLOSE),
+                    ..PoolConfig::default()
+                },
+            )?;
+            pools.insert(
+                connection_id.to_string(),
+                Open {
+                    tx: tx.clone(),
+                    dialect: dialect.clone(),
+                    read_only,
+                    last_used: Instant::now(),
+                },
+            );
+            (tx, dialect, read_only)
         }
-    }
-    let dialect = dialect_of(facade, &conf.db_type)?;
-    let driver = moqui_core::driver::conf_driver(&conf)?;
-    let tx = TransactionManager::new(
-        driver,
-        PoolConfig {
-            min: 0,
-            max: POOL_MAX,
-            reserve: 0,
-            acquire_timeout: Duration::from_secs(30),
-            idle_timeout: Some(IDLE_CLOSE),
-            ..PoolConfig::default()
-        },
-    )?;
-    lock(pools()).insert(
-        connection_id.to_string(),
-        Open {
-            tx: tx.clone(),
-            dialect: dialect.clone(),
-            read_only,
-            signature,
-            last_used: Instant::now(),
-        },
-    );
+    };
     Ok(GroupDb::on(&name, tx, dialect, true, read_only))
+}
+
+/// A connection's host: a name or address reached over TCP. A Unix socket directory (a path) or a Windows pipe is
+/// refused, so a holder of `DATABASE_EXTERNAL` cannot reach this machine's server through local trust or peer
+/// authentication.
+fn check_host(host: &str) -> Result<(), &'static str> {
+    let host = host.trim();
+    if host.is_empty() {
+        return Err("host is required: a name or address reached over TCP");
+    }
+    if host.starts_with('/') || host.starts_with('\\') || host.starts_with('@') || host.contains(char::is_whitespace) {
+        return Err("host is a name or address reached over TCP, not a socket path");
+    }
+    Ok(())
+}
+
+/// A host on this machine's loopback, the only kind a connection may reach without TLS by default.
+fn is_loopback(host: &str) -> bool {
+    matches!(
+        host.trim().to_ascii_lowercase().as_str(),
+        "localhost" | "127.0.0.1" | "::1" | "[::1]"
+    )
+}
+
+/// `sslMode` as stored: `disable`, `require`, `verify-ca` or `verify-full` (MySQL's `DISABLED`, `REQUIRED`,
+/// `VERIFY_CA` and `VERIFY_IDENTITY` read so too). Empty is `verify-full` for a host that is not loopback, and stays
+/// empty (no TLS) for a loopback one.
+fn ssl_mode_of(mode: &str, host: &str) -> Result<String, &'static str> {
+    let mode = mode.trim().to_ascii_lowercase().replace('_', "-");
+    Ok(match mode.as_str() {
+        "" if is_loopback(host) => String::new(),
+        "" | "verify-full" | "verify-identity" => "verify-full".to_string(),
+        "disable" | "disabled" => "disable".to_string(),
+        "require" | "required" => "require".to_string(),
+        "verify-ca" => "verify-ca".to_string(),
+        _ => return Err("sslMode is disable, require, verify-ca or verify-full"),
+    })
 }
 
 /// The group name (`ext:<connectionId>`) of an external connection the user may use now: [`gate`] passes and the
@@ -371,11 +387,29 @@ fn store_database_connection(parameters: &BTreeMap<String, Value>, facade: &Enti
         add_error("port is a number");
         return none();
     }
+    let host = text(parameters, "host").trim().to_string();
+    if let Err(message) = check_host(&host) {
+        add_error(message);
+        return none();
+    }
+    let ssl_mode = match ssl_mode_of(&text(parameters, "sslMode"), &host) {
+        Ok(mode) => mode,
+        Err(message) => {
+            add_error(message);
+            return none();
+        }
+    };
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let existing = facade
         .find(DATABASE_CONNECTION)?
         .eq("connectionId", Value::string(&connection_id))
         .one()?;
+    if let Some(row) = &existing {
+        if !may_manage(row) {
+            add_error("That connection is another user's to change");
+            return none();
+        }
+    }
     let mut row = match &existing {
         Some(row) => row.clone(),
         None => {
@@ -391,23 +425,45 @@ fn store_database_connection(parameters: &BTreeMap<String, Value>, facade: &Enti
             row
         }
     };
-    for field in [
-        "description",
-        "host",
-        "databaseName",
-        "userName",
-        "sslMode",
-        "sslRootCert",
-    ] {
+    let port_value = port.parse::<i64>().map_or(Value::Null, Value::I64);
+    let new_values: [(&str, Value); 6] = [
+        ("dbType", Value::String(db_type)),
+        ("host", Value::String(host)),
+        ("port", port_value),
+        ("userName", Value::String(text(parameters, "userName"))),
+        ("sslMode", Value::String(ssl_mode)),
+        ("sslRootCert", Value::String(text(parameters, "sslRootCert"))),
+    ];
+    // where the password goes: a change of any of these without a new password clears it, so a stored password is
+    // never sent to a host, user or weaker TLS other than the one it was entered for
+    let text_of = |value: Option<&Value>| {
+        value
+            .filter(|value| !is_empty(value))
+            .map(to_plain_string)
+            .unwrap_or_default()
+    };
+    let redirected = existing.as_ref().is_some_and(|old| {
+        new_values
+            .iter()
+            .any(|(field, value)| text_of(old.get(field)) != text_of(Some(value)))
+    });
+    for (field, value) in new_values {
+        row.set(field, value);
+    }
+    for field in ["description", "databaseName"] {
         row.set(field, Value::String(text(parameters, field)));
     }
-    row.set("dbType", Value::String(db_type));
-    row.set("port", port.parse::<i64>().map_or(Value::Null, Value::I64));
     let read_only = parameters.get("readOnly").is_none_or(is_empty) || flag(parameters, "readOnly");
     row.set("readOnly", Value::string(if read_only { "Y" } else { "N" }));
     let password = text(parameters, "password");
+    let mut password_cleared = false;
     if !password.is_empty() {
         row.set("password", Value::String(password));
+    } else if redirected {
+        password_cleared = existing
+            .as_ref()
+            .is_some_and(|old| old.get("password").is_some_and(|value| !is_empty(value)));
+        row.set("password", Value::Null);
     }
     if existing.is_some() {
         row.update(facade)?;
@@ -417,7 +473,19 @@ fn store_database_connection(parameters: &BTreeMap<String, Value>, facade: &Enti
     forget(&connection_id);
     let mut out = BTreeMap::new();
     out.insert("connectionId".to_string(), Value::String(connection_id));
+    out.insert("passwordCleared".to_string(), Value::Bool(password_cleared));
     Ok(out)
+}
+
+/// Whether the current user may change, delete or test the connection `row`: its owner, or a `DATABASE_ADMIN`
+/// holder. Others may only use it.
+fn may_manage(row: &moqui_core::entity::EntityValue) -> bool {
+    let owner = row
+        .get("ownerUserId")
+        .map(to_plain_string)
+        .filter(|owner| !owner.is_empty());
+    let user = moqui_core::user::current_user_id().ok().flatten();
+    (owner.is_some() && owner == user) || moqui_core::user::has_permission("DATABASE_ADMIN").unwrap_or(false)
 }
 
 /// `delete#DatabaseConnection`.
@@ -432,6 +500,10 @@ fn delete_database_connection(parameters: &BTreeMap<String, Value>, facade: &Ent
         .eq("connectionId", Value::string(&connection_id))
         .one()?
     {
+        if !may_manage(&row) {
+            add_error("That connection is another user's to delete");
+            return none();
+        }
         row.delete(facade)?;
     }
     forget(&connection_id);
@@ -445,6 +517,17 @@ fn test_database_connection(parameters: &BTreeMap<String, Value>, facade: &Entit
         return none();
     }
     let connection_id = text(parameters, "connectionId");
+    match row_of(facade, &connection_id)? {
+        Some(row) if may_manage(&row) => {}
+        Some(_) => {
+            add_error("That connection is another user's to test");
+            return none();
+        }
+        None => {
+            add_error(format!("No connection {connection_id}"));
+            return none();
+        }
+    }
     let mut out = BTreeMap::new();
     let tested = open(facade, &connection_id).and_then(|db| {
         let sql = if db.is_mysql() {

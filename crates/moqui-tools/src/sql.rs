@@ -867,6 +867,15 @@ pub fn run(
         return Err(Refusal::new("There is no statement to run"));
     }
     refuse_transaction_control(&statements)?;
+    // the database once for the request; a read-only connection refuses changes before the token is spent, and a
+    // database that cannot be resolved refuses, never taken as one that allows changes
+    let target = catalog::target(facade, group).map_err(|err| {
+        tracing::info!(error = %err, "The database {group} of a SQL run is not available");
+        Refusal::new(crate::NOT_AVAILABLE)
+    })?;
+    if request.allow_changes && target.read_only {
+        return Err(Refusal::new("This connection is read only"));
+    }
     if request.allow_changes {
         let confirmed = if take_token(facade, &request.token, actor.user_id.as_deref(), &db, &request.sql_text) {
             if production {
@@ -887,9 +896,6 @@ pub fn run(
     let mut bound = Vec::with_capacity(statements.len());
     for statement in &statements {
         bound.push(bind_parameters(&statement.sql, syntax, &request.params, false)?);
-    }
-    if request.allow_changes && catalog::target(facade, group).is_ok_and(|db| db.read_only) {
-        return Err(Refusal::new("This connection is read only"));
     }
     let read_only = !request.allow_changes;
     let limit = match request.limit {
@@ -1255,8 +1261,13 @@ impl Statement {
 
 /// [`info::run_sql_on`] on the database `group` names: an entity group's, or an external connection's
 /// (`ext:<connectionId>`).
-fn run_on(facade: &EntityFacade, group: &str, sql: &str, options: SqlRunOptions<'_>) -> Result<SqlResult, Error> {
+/// On a read-only connection every statement runs read only, whatever the caller asked: this covers each path (an
+/// analyzed statement, a rolled-back one) at once.
+fn run_on(facade: &EntityFacade, group: &str, sql: &str, mut options: SqlRunOptions<'_>) -> Result<SqlResult, Error> {
     let db = catalog::target(facade, group)?;
+    if db.read_only {
+        options.read_only = true;
+    }
     info::run_sql_on(&db.tx, &db.dialect, sql, options)
 }
 
@@ -1408,7 +1419,11 @@ pub fn explain(
     refuse_transaction_control(&statements)?;
     let analyze = request.analyze;
     let changes = statement.changes;
-    if analyze && changes && catalog::target(facade, group).is_ok_and(|db| db.read_only) {
+    let target = catalog::target(facade, group).map_err(|err| {
+        tracing::info!(error = %err, "The database {group} of an explain is not available");
+        Refusal::new(crate::NOT_AVAILABLE)
+    })?;
+    if analyze && changes && target.read_only {
         return Err(Refusal::new("This connection is read only"));
     }
     if analyze && changes {

@@ -659,8 +659,8 @@ fn run_entity(
     let result = match operation {
         "list" | "one" | "count"
             if sensitive::is_identity_admin_entity(&full_name)
-                // an external database's password, behind DATABASE_EXTERNAL and refused on production (§4.3)
-                || full_name == "moqui.database.DatabaseConnection" =>
+                // the Tools database entities: their own services only (DatabaseConnection's password among them)
+                || sensitive::is_audit_entity(&full_name) =>
         {
             return refused("available")
         }

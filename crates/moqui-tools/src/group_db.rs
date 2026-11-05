@@ -216,21 +216,36 @@ impl GroupDb {
 }
 
 /// Whether the MySQL-dialect group's server is MariaDB, asked once per group.
-fn is_mariadb(group: &str, tx: &TransactionManager) -> bool {
+fn known_servers() -> &'static Mutex<BTreeMap<String, bool>> {
     static KNOWN: OnceLock<Mutex<BTreeMap<String, bool>>> = OnceLock::new();
-    let known = KNOWN.get_or_init(|| Mutex::new(BTreeMap::new()));
-    if let Some(answer) = lock(known).get(group) {
+    KNOWN.get_or_init(|| Mutex::new(BTreeMap::new()))
+}
+
+/// Forget what is known of the server of `group` (an external connection whose row changed or went).
+pub(crate) fn forget_server(group: &str) {
+    lock(known_servers()).remove(group);
+}
+
+/// Whether the MySQL-dialect group's server is MariaDB, asked once per group within the catalog deadline. A probe that
+/// fails answers MySQL for now and is asked again next time.
+fn is_mariadb(group: &str, tx: &TransactionManager) -> bool {
+    if let Some(answer) = lock(known_servers()).get(group) {
         return *answer;
     }
-    let answer = tx
-        .run(TransactionAttribute::IgnoreSuspend, None, || {
-            tx.with_connection(|conn| conn.query_once("SELECT VERSION() AS version", &[]))
-        })
-        .ok()
-        .and_then(|rows| rows.into_iter().next())
+    let probed = tx.run(
+        TransactionAttribute::ForceNew,
+        Some(crate::catalog::QUERY_TIMEOUT),
+        || tx.with_connection(|conn| conn.query_once("SELECT VERSION() AS version", &[])),
+    );
+    let Ok(rows) = probed else {
+        return false;
+    };
+    let answer = rows
+        .into_iter()
+        .next()
         .and_then(|row| row.columns.into_iter().next())
         .is_some_and(|(_, value)| to_plain_string(&value).contains("MariaDB"));
-    lock(known).insert(group.to_string(), answer);
+    lock(known_servers()).insert(group.to_string(), answer);
     answer
 }
 

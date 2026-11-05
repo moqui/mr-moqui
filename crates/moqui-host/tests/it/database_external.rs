@@ -13,10 +13,15 @@
  */
 
 //! External databases (plans/Tools-Database.md §4.3, §15 step 7): on a dev instance SQL runs on a second database of
-//! the embedded cluster through a `DatabaseConnection` row, read only as the row says; a production-purpose instance
-//! refuses `db=ext:…` and the connection services with the one vague error.
+//! the embedded cluster through a `DatabaseConnection` row, over TCP (a socket host is refused), read only as the row
+//! says; a stored password is cleared when its host changes; only the owner or a database admin changes a row; a
+//! user without `DATABASE_EXTERNAL`, and a production-purpose instance, get the one vague error.
 
 use std::collections::BTreeMap;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
+use std::os::unix::net::UnixStream;
+use std::path::{Path, PathBuf};
 
 use moqui_core::driver::DbConnection as _;
 use moqui_host::db::postgres::PostgresDriver;
@@ -45,6 +50,22 @@ fn call(verb_noun: &str, parameters: &[(&str, Value)]) -> Result<BTreeMap<String
     result
 }
 
+fn entity_auto(name: &str, parameters: &[(&str, Value)]) {
+    let parameters: BTreeMap<String, Value> = parameters
+        .iter()
+        .map(|(name, value)| ((*name).to_string(), value.clone()))
+        .collect();
+    moqui_core::service::call::sync_checked(
+        name,
+        &parameters,
+        &moqui_core::service::call::CallOptions {
+            disable_authz: true,
+            ..moqui_core::service::call::CallOptions::default()
+        },
+    )
+    .unwrap_or_else(|err| panic!("{name}: {err}"));
+}
+
 fn rows(out: &BTreeMap<String, Value>, key: &str) -> Vec<Value> {
     match out.get(key) {
         Some(Value::List(items)) => items.clone(),
@@ -59,6 +80,88 @@ fn field(item: &Value, key: &str) -> Value {
     }
 }
 
+/// Sets `instance_purpose` and puts the old one back when dropped, a panic included.
+struct Purpose(String);
+
+impl Purpose {
+    fn set(purpose: &str) -> Self {
+        let old = moqui_lib::env::get_property("instance_purpose").unwrap_or_default();
+        moqui_lib::env::set_property("instance_purpose", purpose);
+        Self(old)
+    }
+}
+
+impl Drop for Purpose {
+    fn drop(&mut self) {
+        moqui_lib::env::set_property("instance_purpose", self.0.clone());
+    }
+}
+
+/// A TCP port on loopback that forwards each connection to the cluster's Unix socket, so a connection row reaches the
+/// second database over TCP, as rows must (the embedded cluster itself listens on no TCP port).
+fn tcp_relay(socket: PathBuf) -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for client in listener.incoming().flatten() {
+            let Ok(server) = UnixStream::connect(&socket) else {
+                continue;
+            };
+            relay(client, server);
+        }
+    });
+    port
+}
+
+fn relay(client: TcpStream, server: UnixStream) {
+    let (mut client_read, mut server_write) = (client.try_clone().unwrap(), server.try_clone().unwrap());
+    std::thread::spawn(move || copy(&mut client_read, &mut server_write));
+    let (mut server_read, mut client_write) = (server, client);
+    std::thread::spawn(move || copy(&mut server_read, &mut client_write));
+}
+
+fn copy(from: &mut impl Read, to: &mut impl Write) {
+    let mut buffer = [0_u8; 16 * 1024];
+    while let Ok(read) = from.read(&mut buffer) {
+        if read == 0 || to.write_all(&buffer[..read]).is_err() {
+            break;
+        }
+    }
+}
+
+fn store(
+    id: &str,
+    host: &str,
+    port: u16,
+    password: Option<&str>,
+    read_only: bool,
+) -> Result<BTreeMap<String, Value>, String> {
+    let mut parameters = vec![
+        ("connectionId", Value::string(id)),
+        ("description", Value::string("Second database")),
+        ("dbType", Value::string("postgres")),
+        ("host", Value::string(host)),
+        ("port", Value::string(port.to_string())),
+        ("databaseName", Value::string("ext_spec")),
+        ("userName", Value::string("postgres")),
+        ("readOnly", Value::Bool(read_only)),
+    ];
+    if let Some(password) = password {
+        parameters.push(("password", Value::string(password)));
+    }
+    call("store#DatabaseConnection", &parameters)
+}
+
+fn run_sql(db: &str, sql: &str, extra: &[(&str, Value)]) -> Result<BTreeMap<String, Value>, String> {
+    let mut parameters = vec![("db", Value::string(db)), ("sqlText", Value::string(sql))];
+    parameters.extend(extra.iter().cloned());
+    call("run#Sql", &parameters)
+}
+
+fn login(user: &str) {
+    moqui_core::user::internal_login_user(user).unwrap();
+}
+
 #[test]
 fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses_it() {
     if !common::own_process() {
@@ -70,12 +173,11 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     let facade = factory.entity().expect("entity facade");
     let context = factory.new_context();
     let _entered = context.enter();
-    moqui_core::user::internal_login_user("john.doe").unwrap();
+    login("john.doe");
     // the gate's server is production-purpose; external databases are a dev or test instance's
-    let purpose = moqui_lib::env::get_property("instance_purpose").unwrap_or_default();
-    moqui_lib::env::set_property("instance_purpose", "test");
+    let purpose = Purpose::set("test");
 
-    // a second database of the embedded cluster, with a row in it
+    // a second database of the embedded cluster with a row, reached over TCP through a relay to its socket
     let data = std::fs::canonicalize(gate.cluster_dir.join("data")).unwrap();
     let password = std::fs::read_to_string(gate.cluster_dir.join("pgpass")).unwrap();
     let password = password.trim().to_string();
@@ -88,36 +190,16 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     conn.execute("INSERT INTO ext_note VALUES ('from the second database')", &[])
         .unwrap();
     drop(conn);
+    let port = tcp_relay(Path::new(&data).join(".s.PGSQL.5432"));
 
-    let stored = call(
-        "store#DatabaseConnection",
-        &[
-            ("connectionId", Value::string("EXTSPEC")),
-            ("description", Value::string("Second database")),
-            ("dbType", Value::string("postgres")),
-            ("host", Value::string(data.display().to_string())),
-            ("port", Value::string("5432")),
-            ("databaseName", Value::string("ext_spec")),
-            ("userName", Value::string("postgres")),
-            ("password", Value::string(&password)),
-        ],
-    )
-    .unwrap();
-    assert_eq!(stored.get("connectionId"), Some(&Value::string("EXTSPEC")));
-    // the password is never answered, and a store without one keeps it
-    call(
-        "store#DatabaseConnection",
-        &[
-            ("connectionId", Value::string("EXTSPEC")),
-            ("description", Value::string("Second database, read only")),
-            ("dbType", Value::string("postgres")),
-            ("host", Value::string(data.display().to_string())),
-            ("port", Value::string("5432")),
-            ("databaseName", Value::string("ext_spec")),
-            ("userName", Value::string("postgres")),
-        ],
-    )
-    .unwrap();
+    // a socket host is refused: only TCP
+    let socket = store("EXTSOCK", &data.display().to_string(), 5432, Some(&password), true).unwrap_err();
+    assert!(socket.contains("TCP"), "{socket}");
+
+    store("EXTSPEC", "127.0.0.1", port, Some(&password), true).unwrap();
+    // a store with no password and the same address keeps it; the password is never answered
+    let kept = store("EXTSPEC", "127.0.0.1", port, None, true).unwrap();
+    assert_eq!(kept.get("passwordCleared"), Some(&Value::Bool(false)));
     let found = call("find#DatabaseConnections", &[]).unwrap();
     let connection = rows(&found, "connections")
         .into_iter()
@@ -129,15 +211,18 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     let tested = call("test#DatabaseConnection", &[("connectionId", Value::string("EXTSPEC"))]).unwrap();
     assert_eq!(tested.get("connected"), Some(&Value::Bool(true)), "{tested:?}");
 
-    // SQL through the connection, read only as the row says
-    let ran = call(
-        "run#Sql",
-        &[
-            ("db", Value::string("ext:EXTSPEC")),
-            ("sqlText", Value::string("SELECT note FROM ext_note")),
-        ],
-    )
-    .unwrap();
+    // a change of the host with no password clears the stored one, so it is never sent elsewhere
+    let moved = store("EXTSPEC", "localhost", port, None, true).unwrap();
+    assert_eq!(moved.get("passwordCleared"), Some(&Value::Bool(true)));
+    let found = call("find#DatabaseConnections", &[]).unwrap();
+    assert!(rows(&found, "connections")
+        .iter()
+        .any(|row| field(row, "connectionId") == Value::string("EXTSPEC")
+            && field(row, "hasPassword") == Value::Bool(false)));
+    store("EXTSPEC", "127.0.0.1", port, Some(&password), true).unwrap();
+
+    // SQL through the read-only connection: reads, a write refused by the database, changes refused before any token
+    let ran = run_sql("ext:EXTSPEC", "SELECT note FROM ext_note", &[]).unwrap();
     let result = rows(&ran, "results").remove(0);
     assert_eq!(
         to_plain_string(&field(&result, "records")),
@@ -145,29 +230,50 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
             "from the second database"
         )])]))
     );
-    let write = call(
-        "run#Sql",
-        &[
-            ("db", Value::string("ext:EXTSPEC")),
-            ("sqlText", Value::string("INSERT INTO ext_note VALUES ('no')")),
-        ],
-    )
-    .unwrap();
+    let write = run_sql("ext:EXTSPEC", "INSERT INTO ext_note VALUES ('no')", &[]).unwrap();
     let error = to_plain_string(&field(&rows(&write, "results")[0], "error"));
     assert!(error.contains("read-only"), "{error}");
-    let changes = call(
-        "run#Sql",
+    let changes = run_sql(
+        "ext:EXTSPEC",
+        "INSERT INTO ext_note VALUES ('no')",
+        &[("allowChanges", Value::Bool(true)), ("token", Value::string("x"))],
+    )
+    .unwrap_err();
+    assert_eq!(changes, "This connection is read only");
+    let analyze = call(
+        "explain#Sql",
         &[
             ("db", Value::string("ext:EXTSPEC")),
             ("sqlText", Value::string("INSERT INTO ext_note VALUES ('no')")),
-            ("allowChanges", Value::Bool(true)),
+            ("analyze", Value::Bool(true)),
         ],
     )
     .unwrap_err();
-    assert!(
-        changes.contains("read only") || changes.contains("confirmation"),
-        "{changes}"
-    );
+    assert_eq!(analyze, "This connection is read only");
+    let reset = call("reset#DatabaseStatements", &[("db", Value::string("ext:EXTSPEC"))]).unwrap_err();
+    assert_eq!(reset, "This connection is read only");
+    let schema = call("compare#Schema", &[("db", Value::string("ext:EXTSPEC"))]).unwrap_err();
+    assert!(schema.contains("not offered on an external database"), "{schema}");
+
+    // a read-write connection lets a confirmed change through
+    store("EXTRW", "127.0.0.1", port, Some(&password), false).unwrap();
+    let insert = "INSERT INTO ext_note VALUES ('changed')";
+    let classified = call(
+        "classify#Sql",
+        &[("db", Value::string("ext:EXTRW")), ("sqlText", Value::string(insert))],
+    )
+    .unwrap();
+    let changed = run_sql(
+        "ext:EXTRW",
+        insert,
+        &[
+            ("allowChanges", Value::Bool(true)),
+            ("token", classified.get("token").cloned().unwrap_or(Value::Null)),
+        ],
+    )
+    .unwrap();
+    assert_eq!(field(&rows(&changed, "results")[0], "rowsAffected"), Value::I64(1));
+
     let authz_off = context.disable_authz();
     let audited = facade
         .find("moqui.database.DatabaseAudit")
@@ -201,21 +307,94 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
         ],
     )
     .unwrap();
-    assert_eq!(rows(&grid, "data").len(), 1);
+    assert_eq!(rows(&grid, "data").len(), 2);
+
+    // generic writes of the connection rows are refused, an ADMIN's through REST included
+    let john = common::basic("john.doe", "moqui");
+    let body = r#"{"connectionId":"EXTREST","dbType":"postgres","host":"203.0.113.9","password":"x"}"#;
+    let (status, _, response) = common::exchange(
+        gate.server.address(),
+        &common::http_request(
+            "POST",
+            "/rest/e1/moqui.database.DatabaseConnection",
+            &[("Authorization", &john), ("Content-Type", "application/json")],
+            body,
+        ),
+    );
+    assert!(status == 401 || status == 403, "{status} {response}");
+
+    // another user with DATABASE_EXTERNAL may use a connection but not change it; one without it gets the vague error
+    entity_auto(
+        "create#moqui.security.UserAccount",
+        &[
+            ("userId", Value::string("EXT_OTHER")),
+            ("username", Value::string("ext.other")),
+            ("userFullName", Value::string("External other")),
+        ],
+    );
+    entity_auto(
+        "create#moqui.security.UserAccount",
+        &[
+            ("userId", Value::string("EXT_PLAIN")),
+            ("username", Value::string("ext.plain")),
+            ("userFullName", Value::string("External plain")),
+        ],
+    );
+    entity_auto(
+        "create#moqui.security.UserGroup",
+        &[
+            ("userGroupId", Value::string("EXT_SPEC_USERS")),
+            ("description", Value::string("External spec")),
+        ],
+    );
+    entity_auto(
+        "create#moqui.security.UserGroupPermission",
+        &[
+            ("userGroupId", Value::string("EXT_SPEC_USERS")),
+            ("userPermissionId", Value::string("DATABASE_EXTERNAL")),
+            ("fromDate", Value::string("2000-01-01T00:00:00Z")),
+        ],
+    );
+    entity_auto(
+        "create#moqui.security.UserGroupPermission",
+        &[
+            ("userGroupId", Value::string("EXT_SPEC_USERS")),
+            ("userPermissionId", Value::string("SQL_RUNNER_WEB")),
+            ("fromDate", Value::string("2000-01-01T00:00:00Z")),
+        ],
+    );
+    entity_auto(
+        "create#moqui.security.UserGroupMember",
+        &[
+            ("userGroupId", Value::string("EXT_SPEC_USERS")),
+            ("userId", Value::string("EXT_OTHER")),
+            ("fromDate", Value::string("2000-01-01T00:00:00Z")),
+        ],
+    );
+    login("ext.other");
+    let used = run_sql("ext:EXTSPEC", "SELECT note FROM ext_note", &[]);
+    let updated = store("EXTSPEC", "203.0.113.9", 5432, None, true);
+    let deleted = call(
+        "delete#DatabaseConnection",
+        &[("connectionId", Value::string("EXTSPEC"))],
+    );
+    login("ext.plain");
+    let plain = call("get#Capabilities", &[("db", Value::string("ext:EXTSPEC"))]).unwrap_err();
+    let plain_list = call("find#DatabaseConnections", &[]).unwrap_err();
+    login("john.doe");
+    assert!(used.is_ok(), "{used:?}");
+    assert!(updated.unwrap_err().contains("another user's"));
+    assert!(deleted.unwrap_err().contains("another user's"));
+    assert_eq!(plain, "Not available");
+    assert_eq!(plain_list, "Not available");
 
     // a production instance refuses ext: and the connection services with the one vague error
-    moqui_lib::env::set_property("instance_purpose", "production");
-    let refused = call(
-        "run#Sql",
-        &[
-            ("db", Value::string("ext:EXTSPEC")),
-            ("sqlText", Value::string("SELECT note FROM ext_note")),
-        ],
-    )
-    .unwrap_err();
+    let production = Purpose::set("production");
+    let refused = run_sql("ext:EXTSPEC", "SELECT note FROM ext_note", &[]).unwrap_err();
     let listed = call("find#DatabaseConnections", &[]).unwrap_err();
     let databases = call("get#DatabaseList", &[]).unwrap();
-    moqui_lib::env::set_property("instance_purpose", purpose);
+    drop(production);
+    drop(purpose);
     assert_eq!(refused, "Not available");
     assert_eq!(listed, "Not available");
     assert!(!rows(&databases, "databases")

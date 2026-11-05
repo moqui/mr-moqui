@@ -58,14 +58,14 @@ const IDENTITY_ADMIN_ENTITY_KEYS: &[&str] = &[
     "userpasswordhistory",
 ];
 
-/// Secret-config entities: `EmailServer` (host and password), `SystemMessageRemote` (HMAC secret) and
-/// `DatabaseConnection` (an external database's host and password, refused on production even when a row was loaded;
-/// plans/Tools-Database.md §4.3).
-const SECRET_CONFIG_ENTITY_KEYS: &[&str] = &["emailserver", "systemmessageremote", "databaseconnection"];
+/// Secret-config entities: `EmailServer` (host and password) and `SystemMessageRemote` (HMAC secret).
+const SECRET_CONFIG_ENTITY_KEYS: &[&str] = &["emailserver", "systemmessageremote"];
 
-/// Entities only their own services write: `DatabaseAudit`, what ran outside the entity facade (§14.2), and
-/// `SqlRunToken`, the one-time confirmations of SQL runs with changes (§8.2), which a generic write could forge.
-const AUDIT_ENTITY_KEYS: &[&str] = &["databaseaudit", "sqlruntoken"];
+/// Entities only their own services read and write, never the generic tools, REST or request loads, an ADMIN's
+/// included: `DatabaseAudit`, what ran outside the entity facade (§14.2); `SqlRunToken`, the one-time confirmations of
+/// SQL runs with changes (§8.2), which a generic write could forge; and `DatabaseConnection`, an external database's
+/// host and password (§4.3), which a generic write could point at another host to have the password sent there.
+const AUDIT_ENTITY_KEYS: &[&str] = &["databaseaudit", "sqlruntoken", "databaseconnection"];
 
 /// The text after the last `.`, in lower case.
 fn simple_entity_key(entity_name: &str) -> String {
@@ -92,8 +92,8 @@ pub fn is_secret_config_entity(entity_name: &str) -> bool {
     SECRET_CONFIG_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
 }
 
-/// `DatabaseAudit` and `SqlRunToken`: written only by their own services, never through generic entity writes or
-/// loads.
+/// `DatabaseAudit`, `SqlRunToken` and `DatabaseConnection`: read and written only by their own services, never through
+/// generic entity reads, writes or loads.
 pub fn is_audit_entity(entity_name: &str) -> bool {
     AUDIT_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
 }
@@ -172,7 +172,6 @@ mod tests {
             ("moqui.security.UserPasswordHistory", true, false),
             ("moqui.basic.email.EmailServer", false, true),
             ("moqui.service.message.SystemMessageRemote", false, true),
-            ("moqui.database.DatabaseConnection", false, true),
             ("moqui.security.UserAccount", false, false),
             ("users", false, false),
             ("moqui.basic.Enumeration", false, false),
@@ -186,6 +185,9 @@ mod tests {
         assert!(is_audit_entity("moqui.database.DatabaseAudit"));
         assert!(is_restricted_generic_entity("moqui.database.DatabaseAudit"));
         assert!(is_audit_entity("moqui.database.SqlRunToken"));
+        assert!(is_audit_entity("moqui.database.DatabaseConnection"));
+        assert!(!is_secret_config_entity("moqui.database.DatabaseConnection"));
+        assert!(is_restricted_generic_entity("moqui.database.DatabaseConnection"));
         assert!(!is_audit_entity("moqui.entity.EntityAuditLog"));
         assert!(is_user_account_entity("moqui.security.UserAccount"));
         assert!(is_user_account_entity("users"));
