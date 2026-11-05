@@ -28,6 +28,8 @@
 //! Collections are made and removed in the application's screens (MKCALENDAR and a DELETE of a collection are refused).
 //! A client keeps in step by the collection's `getctag` and each object's `getetag` (sync-collection is not served).
 
+use std::collections::HashMap;
+
 use indexmap::IndexMap;
 use moqui_lib::object::Value;
 
@@ -389,33 +391,21 @@ fn report(context: &Context<'_>, adapter: &Adapter, collection_id: &str, writabl
         Kind::Contacts => body.is(CARDDAV, "addressbook-query"),
     };
     if multiget {
-        let mut asked: Vec<(String, String)> = Vec::new();
-        for href in body.children_named(DAV, "href") {
-            let text = href.text.trim();
-            let path = text
-                .split_once("://")
-                .map_or(text, |(_, after)| after.find('/').map_or("/", |slash| &after[slash..]));
-            let name = path.rsplit('/').next().map(super::decode_segment).unwrap_or_default();
-            asked.push((path.to_string(), name));
-        }
+        let asked = asked_hrefs(body);
         let names: Vec<String> = asked.iter().map(|(_, name)| name.clone()).collect();
         let objects = match adapter.objects(collection_id, Some(&names), with_data, None) {
             Ok(objects) => objects,
             Err(err) => return failed(&err),
         };
-        let responses: Vec<String> = asked
-            .iter()
-            .map(
-                |(path, name)| match objects.iter().find(|object| &text_of(object, "name") == name) {
-                    Some(object) if super::decode_segment(path).starts_with(&super::decode_segment(&base)) => {
-                        prop_response(
-                            &object_resource(context, adapter, collection_id, object, writable),
-                            &wanted,
-                        )
-                    }
-                    _ => status_response(path, 404),
-                },
-            )
+        let responses: Vec<String> = multiget_matches(&base, &asked, &objects)
+            .into_iter()
+            .map(|(path, object)| match object {
+                Some(object) => prop_response(
+                    &object_resource(context, adapter, collection_id, object, writable),
+                    &wanted,
+                ),
+                None => status_response(path, 404),
+            })
             .collect();
         return multistatus_of(&responses);
     }
@@ -440,6 +430,46 @@ fn report(context: &Context<'_>, adapter: &Adapter, collection_id: &str, writabl
         return multistatus(&resources, &wanted);
     }
     DavResponse::condition(403, DAV, "supported-report")
+}
+
+/// The hrefs a multiget asks for, each as its path and its decoded object name.
+fn asked_hrefs(body: &Element) -> Vec<(String, String)> {
+    body.children_named(DAV, "href")
+        .map(|href| {
+            let text = href.text.trim();
+            let path = text
+                .split_once("://")
+                .map_or(text, |(_, after)| after.find('/').map_or("/", |slash| &after[slash..]));
+            let name = path.rsplit('/').next().map(super::decode_segment).unwrap_or_default();
+            (path.to_string(), name)
+        })
+        .collect()
+}
+
+/// Each asked href with the object it names, or `None` (a 404) when the collection has no such object or the href is
+/// outside the collection at `base`. The objects are indexed by name once, so the cost is hrefs + objects rather than
+/// their product (HL-044).
+fn multiget_matches<'a, 'o>(
+    base: &str,
+    asked: &'a [(String, String)],
+    objects: &'o [IndexMap<String, Value>],
+) -> Vec<(&'a str, Option<&'o IndexMap<String, Value>>)> {
+    let mut by_name: HashMap<String, &IndexMap<String, Value>> = HashMap::with_capacity(objects.len());
+    for object in objects {
+        // the first object of a name wins, as the scan it replaces found
+        by_name.entry(text_of(object, "name")).or_insert(object);
+    }
+    let base = super::decode_segment(base);
+    asked
+        .iter()
+        .map(|(path, name)| {
+            let object = by_name
+                .get(name)
+                .copied()
+                .filter(|_| super::decode_segment(path).starts_with(&base));
+            (path.as_str(), object)
+        })
+        .collect()
 }
 
 /// The component and time range of a `calendar-query` filter: `VCALENDAR` > `VEVENT` or `VTODO` > `time-range`.
@@ -614,18 +644,5 @@ fn object(context: &Context<'_>, adapter: &Adapter, method: &str, collection_id:
 }
 
 #[cfg(test)]
-mod tests {
-    use super::ical_utc_millis;
-
-    #[test]
-    fn a_time_range_is_read_in_utc() {
-        assert_eq!(ical_utc_millis("19700101T000001Z"), Some(1000));
-        assert_eq!(ical_utc_millis("20240101T000000Z"), Some(1_704_067_200_000));
-        assert_eq!(ical_utc_millis("2024"), None);
-        assert_eq!(ical_utc_millis(" 19700102 "), Some(86_400_000));
-        assert_eq!(ical_utc_millis("19700101T00000"), None);
-        // eight bytes but not eight ASCII digits: None, where an index into the text panicked
-        assert_eq!(ical_utc_millis("202\u{e9}1310T000000Z"), None);
-        assert_eq!(ical_utc_millis("20240101T0\u{e9}0000Z"), None);
-    }
-}
+#[path = "pim_tests.rs"]
+mod tests;
