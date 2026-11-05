@@ -120,8 +120,8 @@ with a second factor signs in with an app password, which is made after it.
   (`policy-violation`). A WebSocket frame is at most 256 KiB, and parsed with the same depth limit.
 - A connection must sign in and bind a resource within a minute (closed at the next 30-second tick), and one with
   nothing from the client for 10 minutes is closed.
-- At most 20 connections from one address (over WebSocket, the client a trusted proxy names) and 10,000 in all, TCP
-  and WebSocket counted together. Failed sign-ins are counted per address, as above.
+- At most 20 connections from one source (an IPv4 address or an IPv6 /64; over WebSocket, the client a trusted proxy
+  names) and 10,000 in all, TCP and WebSocket counted together. Failed sign-ins are counted per address, as above.
 - Stream management keeps at most 1,000 unacknowledged stanzas; past that the oldest go and the session cannot be
   resumed. A user has at most 10 sessions waiting for resumption.
 - A stanza acts on at most 20 reactions, invitations or linked uploads; a session asks a client about at most 4

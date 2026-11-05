@@ -646,10 +646,7 @@ impl Drop for IpSlot<'_> {
 /// The key an address is limited by: an IPv4 address itself, an IPv6 address by its /64 (one site's or host's
 /// prefix, which hands its hosts any address in it).
 fn limit_key(ip: IpAddr) -> IpAddr {
-    match ip.to_canonical() {
-        IpAddr::V6(v6) => IpAddr::V6(std::net::Ipv6Addr::from(u128::from(v6) & !((1_u128 << 64) - 1))),
-        v4 => v4,
-    }
+    moqui_lib::source_guard::source_key(ip)
 }
 
 /// Count a connection from `ip` against the internet mode's limits: none when it is over one of them (why).

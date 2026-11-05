@@ -58,10 +58,10 @@ mod on_the_port {
     use moqui_lib::sync::lock;
     use sha2::{Digest as _, Sha256};
 
-    use super::super::listen::{listen_with, Apply};
+    use super::super::listen::{listen_with, Apply, Members};
     use super::super::{client_config, server_config, ClusterEdge, CoreError, Material, PeerSender, Protocol};
 
-    fn material() -> Material {
+    pub(super) fn material() -> Material {
         let key = rcgen::KeyPair::generate().unwrap();
         let cert = rcgen::CertificateParams::new(vec!["moqui-cluster".to_string()])
             .unwrap()
@@ -93,12 +93,22 @@ mod on_the_port {
     }
 
     fn start(material: &Material, protocol: Protocol, apply: Apply) -> (ClusterEdge, String) {
+        start_with_members(material, protocol, apply, Members::default())
+    }
+
+    fn start_with_members(
+        material: &Material,
+        protocol: Protocol,
+        apply: Apply,
+        members: Members,
+    ) -> (ClusterEdge, String) {
         let edge = listen_with(
             "127.0.0.1:0".parse().unwrap(),
             server_config(material).unwrap(),
             protocol,
             apply,
             Arc::default(),
+            members,
         )
         .unwrap();
         let base = format!("https://127.0.0.1:{}", edge.address().port());
@@ -223,5 +233,126 @@ mod on_the_port {
         assert!(outcome.outcomes.is_empty());
         assert!(outcome.failed.is_some());
         assert!(lock(&seen).is_empty());
+    }
+}
+
+/// `each` connections to `to` from each address of `from` that send nothing, so the ones the listener keeps hold
+/// their slots until the handshake deadline.
+#[cfg(feature = "grpc")]
+fn hold_slots(to: std::net::SocketAddr, from: &[&str], each: usize) -> Vec<std::net::TcpStream> {
+    let mut held = Vec::new();
+    for source in from {
+        let source: std::net::SocketAddr = format!("{source}:0").parse().unwrap();
+        for _ in 0..each {
+            let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+            socket.bind(&source.into()).unwrap();
+            socket.connect(&to.into()).unwrap();
+            held.push(socket.into());
+        }
+    }
+    held
+}
+
+/// Whether the listener closed `stream` (rather than keeping it, waiting for its handshake), within a second.
+#[cfg(feature = "grpc")]
+fn closed(stream: &std::net::TcpStream) -> bool {
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+        .unwrap();
+    let mut byte = [0_u8; 1];
+    match std::io::Read::read(&mut &*stream, &mut byte) {
+        Ok(0) => true,
+        Ok(_) => false,
+        Err(err) => !matches!(
+            err.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ),
+    }
+}
+
+#[cfg(feature = "grpc")]
+mod shares {
+    use std::sync::{Arc, Mutex};
+
+    use moqui_core::cluster::{PostOutcome, Sender};
+    use moqui_lib::sync::lock;
+
+    use super::super::listen::{listen_with, Members, MAX_CONNECTIONS, PER_SOURCE};
+    use super::super::{client_config, server_config, PeerSender, Protocol};
+    use super::{closed, hold_slots};
+
+    /// One address holding every slot it can does not keep a peer's post out; when the shared slots are all held, a
+    /// member's address still gets in by the members' own slots (HL-032).
+    #[test]
+    fn a_peer_posts_while_another_source_holds_its_share_and_a_member_while_all_are_held() {
+        let material = super::on_the_port::material();
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let kept = Arc::clone(&seen);
+        let apply: super::super::listen::Apply = Arc::new(move |topic: &str, body: &[u8]| {
+            lock(&kept).push(format!("{topic} {}", String::from_utf8_lossy(body)));
+            204
+        });
+        let members = Members::default();
+        let edge = listen_with(
+            "127.0.0.1:0".parse().unwrap(),
+            server_config(&material).unwrap(),
+            Protocol::Rest,
+            apply,
+            Arc::default(),
+            Arc::clone(&members),
+        )
+        .unwrap();
+        let base = format!("https://127.0.0.1:{}", edge.address().port());
+        // a sender of its own for each post, so each opens a connection rather than reuse a kept one
+        let peer = || PeerSender {
+            config: client_config(&material).unwrap(),
+            live: Mutex::default(),
+        };
+        // one address tries for every slot: it keeps its share, the rest are closed
+        let one = hold_slots(edge.address(), &["127.0.0.2"], MAX_CONNECTIONS);
+        assert!(closed(&one[MAX_CONNECTIONS - 1]));
+        assert!(
+            !closed(&one[PER_SOURCE - 1]),
+            "within the share, waiting for its handshake"
+        );
+        assert_eq!(
+            peer().post(&base, "collab-update", b"in").unwrap(),
+            PostOutcome::Accepted
+        );
+        drop(one);
+        // the closed connections give their slots back
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        // enough sources to hold every shared slot: a post from elsewhere is closed, a member's gets in
+        let sources: Vec<String> = (0..MAX_CONNECTIONS / PER_SOURCE)
+            .map(|n| format!("127.0.1.{}", n + 1))
+            .collect();
+        let sources: Vec<&str> = sources.iter().map(String::as_str).collect();
+        let all = hold_slots(edge.address(), &sources, PER_SOURCE);
+        let past = hold_slots(edge.address(), &["127.0.2.1"], 1);
+        assert!(closed(&past[0]), "every shared slot is held");
+        assert!(!closed(&all[0]), "held, waiting for its handshake");
+        assert!(peer().post(&base, "collab-update", b"out").is_err());
+        moqui_lib::sync::write(&members).insert("127.0.0.1".parse().unwrap());
+        assert_eq!(
+            peer().post(&base, "collab-update", b"member").unwrap(),
+            PostOutcome::Accepted
+        );
+        drop(all);
+        assert_eq!(*lock(&seen), ["collab-update in", "collab-update member"]);
+    }
+
+    #[test]
+    fn a_base_urls_host_and_port() {
+        use super::super::listen::url_host;
+        assert_eq!(
+            url_host("https://node2.example:8444"),
+            Some(("node2.example".to_string(), 8444))
+        );
+        assert_eq!(
+            url_host("ssh://[2001:db8::5]:2222/x"),
+            Some(("2001:db8::5".to_string(), 2222))
+        );
+        assert_eq!(url_host("https://10.0.0.5"), Some(("10.0.0.5".to_string(), 0)));
+        assert_eq!(url_host(""), None);
     }
 }
