@@ -281,6 +281,8 @@ dialog > .body { padding: 12px 14px; }
 .alert[data-type="danger"] { border-left-color: var(--danger); }
 .field-error { margin-top: 2px; color: var(--danger); font-size: .9em; }
 .field[data-invalid] input, .field[data-invalid] select, .field[data-invalid] textarea { border-color: var(--danger); }
+/* a field its require-when makes required now (moqui-form-when.js) */
+.field[data-required] > label::after { content: " *"; color: var(--danger); }
 #toasts { position: fixed; z-index: 100; top: 56px; right: 12px; display: flex; flex-direction: column; gap: 8px; max-width: min(24em, 92vw); }
 #toasts .alert { margin: 0; box-shadow: 0 4px 14px rgba(0, 0, 0, .3); }
 

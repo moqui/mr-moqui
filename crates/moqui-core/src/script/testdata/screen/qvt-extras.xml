@@ -23,6 +23,7 @@
             <field name="dep"><default-field><text-line default-transition="treeItems"><depends-on field="pick"/></text-line></default-field></field>
             <field name="who"><default-field><display-entity entity-name="moqui.basic.Enumeration" text="${description}" default-text="nobody"/></default-field></field>
             <field name="shown" ><default-field><text-line/><visible-when field="pick" value="B,C"/></default-field></field>
+            <field name="serial"><default-field><text-line/><visible-when field="pick" operator="not-empty"/><require-when field="pick" value="B"/></default-field></field>
             <field name="watch"><default-field><display dynamic-transition="treeItems"><depends-on field="pick" parameter="p"/></display></default-field></field>
             <field name="between"><default-field><date-find type="time"/></default-field></field>
             <field name="note"><default-field><text-area editor-type="md" rows="5"/></default-field></field>

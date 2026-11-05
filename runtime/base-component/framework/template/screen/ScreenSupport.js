@@ -51,7 +51,7 @@
         "field-row", "field-row-big", "field-col-row", "field-col", "field-ref", "fields-not-referenced",
         "form-list-column", "columns", "column", "auto-fields-entity", "auto-fields-service", "auto-widget-entity",
         "auto-widget-service", "exclude", "entity-find", "set", "hidden-parameters", "row-selection",
-        "visible-when", "editable-load", "action", "first-row", "second-row", "last-row", "entity-find-one", "view-board", "view-calendar", "view-tree"
+        "visible-when", "require-when", "editable-load", "action", "first-row", "second-row", "last-row", "entity-find-one", "view-board", "view-calendar", "view-tree"
     ];
     const allElements = widgetElements.concat(formElements);
 
@@ -60,7 +60,7 @@
         "section", "section-iterate", "section-include", "entity-find", "row-actions", "entity-options",
         "list-options", "dynamic-options", "option", "depends-on", "set", "hidden-parameters", "field-layout",
         "columns", "form-list-column", "row-selection", "auto-fields-entity", "auto-fields-service",
-        "auto-widget-entity", "auto-widget-service", "visible-when", "editable-load", "action", "tree",
+        "auto-widget-entity", "auto-widget-service", "visible-when", "require-when", "editable-load", "action", "tree",
         "dynamic-container", "dynamic-dialog", "button-menu", "include-content", "parameter"
     ];
 

@@ -233,7 +233,7 @@
         const validate = (sub) => {
             const v = validation(sub);
             const has = (name) => v.classes.indexOf(name) >= 0;
-            return { required: has("required"), email: has("email"), url: has("url"), number: has("number"), digits: has("digits"), v };
+            return { required: has("required") || at(sub, "required") === "true", email: has("email"), url: has("url"), number: has("number"), digits: has("digits"), v };
         };
 
         // ---- inputs ----
@@ -971,24 +971,40 @@
             const found = st.validationErrors.find((v) => v.field === name && (!v.form || v.form === st.formName));
             return found ? found.message : null;
         };
-        // A form-single field: the label and a box for the widgets. Returns what to close.
-        const fieldOpen = (name, title, isSubmit, containerStyle, big) => {
+        // A visible-when or require-when as the JSON moqui-form-when.js reads: the form, the field, the operator and the
+        // values (xml-form-3.xsd WhenAttributes).
+        const whenData = (when) => {
+            if (!when) return null;
+            let value = at(when, "from") ? ec.resource.expression(at(when, "from"), "") : x(at(when, "value"));
+            if (value === null || value === undefined) value = "";
+            const values = typeof value === "string" ? value.split(",").map((part) => part.trim()) : Array.from(value).map(String);
+            return JSON.stringify({ form: st.owner || st.fieldForm, field: at(when, "field"), operator: at(when, "operator") || "equals", values });
+        };
+        const whenAttrs = (whens) => {
+            if (!whens || (!whens.v && !whens.r)) return "";
+            if (footer_scripts) footer_scripts.add("/js/moqui-form-when.js");
+            return A({ "data-visible-when": whenData(whens.v), "data-require-when": whenData(whens.r) });
+        };
+        // A form-single field: the label and a box for the widgets. Returns what to close. whens: its visible-when and
+        // require-when ({v, r}), written on the box for moqui-form-when.js.
+        const fieldOpen = (name, title, isSubmit, containerStyle, big, whens) => {
             st.fieldForm = st.fieldForm || xn(st.formName);
             const forId = st.fieldForm + "_" + name + entry() + sec();
             const style = cls(containerStyle || null);
             const lc = st.labelCols ? " style=\"--lc:" + e(st.labelCols) + '"' : "";
             const error = isSubmit ? null : fieldError(name);
             const invalid = error ? " data-invalid" : "";
+            const when = whenAttrs(whens);
             if (big) {
-                w('<div class="big-item"><div class="field"' + invalid + lc + ">" + (title && !isSubmit ? '<label for="' + e(forId) + '">' + e(title) + "</label>" : "") + "<div" + A({ class: cls("widget", style) }) + ">");
+                w('<div class="big-item"><div class="field"' + when + invalid + lc + ">" + (title && !isSubmit ? '<label for="' + e(forId) + '">' + e(title) + "</label>" : "") + "<div" + A({ class: cls("widget", style) }) + ">");
                 return { error };
             }
             if (isSubmit) {
-                w('<div class="field" data-submit' + lc + '><span class="label"></span><div' + A({ class: cls("widget", style) }) + ">");
+                w('<div class="field" data-submit' + when + lc + '><span class="label"></span><div' + A({ class: cls("widget", style) }) + ">");
                 return { error };
             }
-            if (title) {
-                w('<div class="field"' + invalid + lc + '><label for="' + e(forId) + '">' + e(title) + "</label><div" + A({ class: cls("widget", style) }) + ">");
+            if (title || when) {
+                w('<div class="field"' + when + invalid + lc + ">" + (title ? '<label for="' + e(forId) + '">' + e(title) + "</label>" : '<span class="label"></span>') + "<div" + A({ class: cls("widget", style) }) + ">");
                 return { error };
             }
             if (error) w('<div class="field-error" role="alert">' + e(error) + "</div>");
@@ -1740,6 +1756,15 @@
     // other macros, after the set elements.
     const subWidgets = (sub) => widgetsSource(sub);
 
+    // The visible-when and require-when of a field sub-node as the last argument of $h.fieldOpen, or nothing.
+    const whensLit = (sub) => {
+        const pick = (name) => {
+            const found = child(sub, name);
+            return found ? JSON.stringify({ name: found.name, attrs: found.attrs || {} }) : "null";
+        };
+        return child(sub, "visible-when") || child(sub, "require-when") ? `, {v:${pick("visible-when")},r:${pick("require-when")}}` : "";
+    };
+
     // The code of one field of a form-single.
     const singleFieldCode = (field, bigRow) => {
         const code = fieldChain(field, (sub) => {
@@ -1750,7 +1775,7 @@
             return js`
                 {
                     const $title = ${titleCode(sub)};
-                    const $open = $h.fieldOpen(${lit(attr(field, "name"))}, $title, ${isSubmit}, ${style ? noL10n(style) : '""'}, ${!!bigRow});
+                    const $open = $h.fieldOpen(${lit(attr(field, "name"))}, $title, ${isSubmit}, ${style ? noL10n(style) : '""'}, ${!!bigRow}${whensLit(sub)});
                     sri.pushContext();
                     try {
                         ${setCode(sub)}

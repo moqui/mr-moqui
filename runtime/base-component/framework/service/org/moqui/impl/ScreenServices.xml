@@ -215,6 +215,8 @@ along with this software (see the LICENSE.md file). If not, see
     <!-- ========== DB Form Services ========== -->
 
     <service verb="get" noun="FormResponse">
+        <description>A response with its answers; for a DbForm, the form's fields as they were at the response date
+            (dbFormFieldList), so a response to a dated form reads as it was submitted.</description>
         <in-parameters><parameter name="formResponseId" required="true"/></in-parameters>
         <out-parameters>
             <auto-parameters entity-name="moqui.screen.form.FormResponse"/>
@@ -232,6 +234,12 @@ along with this software (see the LICENSE.md file). If not, see
                     <econdition field-name="formId" from="formResponse.formId"/>
                     <order-by field-name="layoutSequenceNum"/>
                 </entity-find>
+                <!-- the form as it was when the response was made: its fields in effect at the response date -->
+                <script>
+                    const asOfNames = new Set(ec.screen.getFormNode('DbForm#' + formResponse.formId, formResponse.responseDate ?? null)
+                        .children('field').map((field) => field.attribute('name')))
+                    dbFormFieldList = Array.from(dbFormFieldList).filter((field) => asOfNames.has(field.fieldName))
+                </script>
                 <set field="dbFormFieldPages" from="1"/>
                 <iterate list="dbFormFieldList" entry="dbFormField">
                     <set field="printPageNumber" from="dbFormField.printPageNumber || 1"/>
@@ -260,7 +268,7 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="create#moqui.screen.form.FormResponse" in-map="context" out-map="context"/>
 
             <if condition="responseMap">
-                <set field="formNode" from="ec.screen.getFormNode(formLocation)"/>
+                <set field="formNode" from="ec.screen.getFormNode(formLocation, responseDate)"/>
                 <iterate list="formNode.children('field')" entry="fieldNode">
                     <set field="fieldName" from="fieldNode.attribute('name')"/>
                     <if condition="Object.prototype.hasOwnProperty.call(responseMap, fieldName)">
@@ -283,7 +291,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="formResponseId"/></out-parameters>
         <actions>
             <entity-find-one entity-name="moqui.screen.form.FormResponse" value-field="formResponse"/>
-            <set field="formNode" from="ec.screen.getFormNode(formResponse.formLocation)"/>
+            <set field="formNode" from="ec.screen.getFormNode(formResponse.formLocation, formResponse.responseDate)"/>
             <iterate list="formNode.children('field')" entry="fieldNode">
                 <set field="fieldName" from="fieldNode.attribute('name')"/>
                 <if condition="Object.prototype.hasOwnProperty.call(responseMap, fieldName)">
@@ -314,11 +322,25 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
     <service verb="update" noun="DbFormField">
+        <description>On a form that is not dated, deletes the field and creates it again named from its title, with its
+            options. On a dated form (DbForm.isDated) the field is updated in place, keeping its name and answers (the
+            key fields are audit-logged); a published field keeps its type, which a successor field changes
+            (create#DbFormFieldSuccessor), and its dates and replacesFieldName change only through publish#DbForm,
+            end#DbFormField and create#DbFormFieldSuccessor.</description>
         <in-parameters>
             <auto-parameters entity-name="moqui.screen.form.DbFormField" include="nonpk"/>
             <auto-parameters entity-name="moqui.screen.form.DbFormField" include="pk" required="true"/>
         </in-parameters>
         <actions>
+            <set field="dated" from="ec.resource.script('component://framework/service/org/moqui/impl/DbForms.js').execute('checkFieldChange',
+                    {formId, fieldName, fieldTypeEnumId, fromDate, thruDate, replacesFieldName}).dated"/>
+            <if condition="ec.message.hasError()"><return/></if>
+            <if condition="dated">
+                <!-- the dates and the field replaced change only through publish, end and successor -->
+                <service-call name="update#moqui.screen.form.DbFormField" in-map="Object.fromEntries(Object.entries(Object.assign({}, context))
+                        .filter((entry) => !['fromDate', 'thruDate', 'replacesFieldName'].includes(entry[0])))"/>
+                <return/>
+            </if>
             <entity-find entity-name="moqui.screen.form.DbFormFieldOption" list="dbFormFieldOptionList">
                 <econdition field-name="formId" from="formId"/>
                 <econdition field-name="fieldName" from="fieldName"/>
@@ -339,11 +361,22 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
     <service verb="delete" noun="DbFormField">
+        <description>Deletes the field with its options and dependencies. On a dated form a field with answers is
+            refused: end it (end#DbFormField).</description>
         <in-parameters>
             <auto-parameters entity-name="moqui.screen.form.DbFormField" include="nonpk"/>
             <auto-parameters entity-name="moqui.screen.form.DbFormField" include="pk" required="true"/>
         </in-parameters>
         <actions>
+            <script>ec.resource.script('component://framework/service/org/moqui/impl/DbForms.js').execute('checkFieldChange', {formId, fieldName, deleting: true})</script>
+            <if condition="ec.message.hasError()"><return/></if>
+            <entity-delete-by-condition entity-name="moqui.screen.form.DbFormFieldDependency">
+                <econdition field-name="formId" from="formId"/>
+                <econditions combine="or">
+                    <econdition field-name="sourceFieldName" from="fieldName"/>
+                    <econdition field-name="targetFieldName" from="fieldName"/>
+                </econditions>
+            </entity-delete-by-condition>
             <entity-find entity-name="moqui.screen.form.DbFormFieldOption" list="dbFormFieldOptionList">
                 <econdition field-name="formId" from="formId"/>
                 <econdition field-name="fieldName" from="fieldName"/>
@@ -355,6 +388,122 @@ along with this software (see the LICENSE.md file). If not, see
             </entity-delete-by-condition>
             <service-call name="delete#moqui.screen.form.DbFormField" in-map="context"/>
         </actions>
+    </service>
+    <!-- Dated DbForms and their dependencies (docs/ui/Db-Forms.md; the bodies are in DbForms.js) -->
+    <service verb="set" noun="DbFormDated">
+        <description>Makes a DbForm dated (isDated): its fields, options and dependencies with no fromDate start at
+            fromDate. From then on a row with no fromDate is a draft.</description>
+        <in-parameters>
+            <parameter name="formId" required="true"/>
+            <parameter name="fromDate" type="Timestamp"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/DbForms.js').execute('setDated', context))</script></actions>
+    </service>
+    <service verb="publish" noun="DbForm">
+        <description>Starts the drafts of a dated DbForm at fromDate (now by default; an earlier date is refused): each draft field (ending the field
+            it replaces and that field's dependencies), option (ending the option of the same key) and dependency;
+            fieldNames limits it to those fields. Refused, with nothing changed, when the dependencies would make a
+            cycle or give a field two rules of one effect.</description>
+        <in-parameters>
+            <parameter name="formId" required="true"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="fieldNames" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="publishedFieldNames" type="List"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/DbForms.js').execute('publish', context))</script></actions>
+    </service>
+    <service verb="end" noun="DbFormField">
+        <description>Ends a field at thruDate (now by default), with the dependencies that name it. Its answers stay,
+            and a response made before then reads it (get#FormResponse).</description>
+        <in-parameters>
+            <parameter name="formId" required="true"/>
+            <parameter name="fieldName" required="true"/>
+            <parameter name="thruDate" type="Timestamp"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/DbForms.js').execute('endField', context))</script></actions>
+    </service>
+    <service verb="end" noun="DbFormFieldOption">
+        <in-parameters>
+            <parameter name="formId" required="true"/>
+            <parameter name="fieldName" required="true"/>
+            <parameter name="sequenceNum" type="Integer" required="true"/>
+            <parameter name="thruDate" type="Timestamp"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/DbForms.js').execute('endOption', context))</script></actions>
+    </service>
+    <service verb="delete" noun="DbFormFieldOption">
+        <description>Deletes an option; on a dated form an option with answers is refused: end it.</description>
+        <in-parameters>
+            <parameter name="formId" required="true"/>
+            <parameter name="fieldName" required="true"/>
+            <parameter name="sequenceNum" type="Integer" required="true"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/DbForms.js').execute('deleteOption', context))</script></actions>
+    </service>
+    <service verb="create" noun="DbFormFieldSuccessor">
+        <description>A field that succeeds fieldName on a dated form, for a new type or meaning: its values default to
+            the old field's, and its options, attributes and dependencies are copied. With no fromDate it is a draft
+            that replaces the old field when published; with fromDate (now or later) it starts then and the old field ends then. The
+            old field's answers keep its name.</description>
+        <in-parameters>
+            <parameter name="formId" required="true"/>
+            <parameter name="fieldName" required="true"/>
+            <parameter name="newFieldName"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="copyOptions" type="Boolean" default-value="true"/>
+            <parameter name="title"/><parameter name="tooltip"/><parameter name="fieldTypeEnumId"/>
+            <parameter name="isRequired"/><parameter name="layoutSequenceNum" type="Integer"/>
+        </in-parameters>
+        <out-parameters><parameter name="newFieldName"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/DbForms.js').execute('createSuccessor', context))</script></actions>
+    </service>
+    <service verb="store" noun="DbFormFieldDependency">
+        <description>Creates a dependency, or with dependencySeqId updates one in place (audit-logged): the target field
+            shows (effect show) or is required (effect require) while the source field meets the operator (equals,
+            not-equals, empty, not-empty) and value (one or a comma-separated list, never an expression). Refused when
+            the form's dependencies would make a cycle or give a field two rules of one effect. On a dated form a new
+            dependency with no fromDate is a draft, a fromDate before now is refused, and a published dependency is
+            not edited: it ends now and the returned dependencySeqId is its replacement, from now.</description>
+        <in-parameters>
+            <parameter name="formId" required="true"/>
+            <parameter name="dependencySeqId"/>
+            <parameter name="sourceFieldName" required="true"/>
+            <parameter name="operator" default-value="equals"/>
+            <parameter name="value"/>
+            <parameter name="targetFieldName" required="true"/>
+            <parameter name="effect" required="true"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="thruDate" type="Timestamp"/>
+        </in-parameters>
+        <out-parameters><parameter name="dependencySeqId"/></out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/DbForms.js').execute('storeDependency', context))</script></actions>
+    </service>
+    <service verb="end" noun="DbFormFieldDependency">
+        <in-parameters>
+            <parameter name="formId" required="true"/>
+            <parameter name="dependencySeqId" required="true"/>
+            <parameter name="thruDate" type="Timestamp"/>
+        </in-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/DbForms.js').execute('endDependency', context))</script></actions>
+    </service>
+    <service verb="evaluate" noun="DbFormDependencies">
+        <description>Checks submitted values against a DbForm as of asOfDate (now by default; its drafts too with
+            includeDrafts): the fields shown and hidden by their dependencies, the fields required (isRequired or a
+            require dependency, while shown) and those of them with no value. A hidden field's value counts as empty
+            for the fields that depend on it, as in the browser. For a caller's server-side check of a submit.</description>
+        <in-parameters>
+            <parameter name="formId" required="true"/>
+            <parameter name="values" type="Map"/>
+            <parameter name="asOfDate" type="Timestamp"/>
+            <parameter name="includeDrafts" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="visibleFieldNames" type="List"/>
+            <parameter name="hiddenFieldNames" type="List"/>
+            <parameter name="requiredFieldNames" type="List"/>
+            <parameter name="missingFieldNames" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/impl/DbForms.js').execute('evaluate', context))</script></actions>
     </service>
     <service verb="get" noun="FormResponseStats">
         <in-parameters>

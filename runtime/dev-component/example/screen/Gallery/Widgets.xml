@@ -12,7 +12,8 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Gallery: the section 4 widget guide as a fixture. Every field widget in one form-single, every button role, the
+<!-- Gallery: the section 4 widget guide as a fixture. Every field widget in one form-single, a form of field rules
+    (visible-when, require-when), every button role, the
     label types and text classes, a small form-list with header find, sort, paging, row selection and row actions,
     and the containers: box types, a dialog, a dynamic container, a lazy tree, an editable value and an image; a list whose cells
     hold a section (the cells after it stay in the list), chips whose btn-type is an expression, and a container-row of a
@@ -172,6 +173,23 @@ along with this software (see the LICENSE.md file). If not, see
                     <field-row><field-ref name="pwd"/><field-ref name="hid"/></field-row>
                     <field-row-big><field-ref name="saveButton"/></field-row-big>
                 </field-layout>
+            </form-single>
+        </box-body></container-box>
+
+        <!-- field rules: visible-when and require-when (docs/ui/Db-Forms.md) -->
+        <container-box><box-header title="Field rules (4.5): visible-when and require-when"/><box-body>
+            <form-single name="FieldRules" transition="noop">
+                <field name="ruleKind"><default-field title="Kind">
+                    <drop-down allow-empty="true"><option key="part" text="Part"/><option key="equipment" text="Equipment"/>
+                        <option key="other" text="Other"/></drop-down></default-field></field>
+                <field name="ruleSerial"><default-field title="Serial (required for equipment)"><text-line size="20"/>
+                    <require-when field="ruleKind" value="equipment"/></default-field></field>
+                <field name="ruleDetail"><default-field title="Detail (shown unless part, required for other)"><text-line size="40"/>
+                    <visible-when field="ruleKind" operator="not-equals" value="part"/>
+                    <require-when field="ruleKind" value="other"/></default-field></field>
+                <field name="ruleNote"><default-field title="Note (shown once a kind is chosen)"><text-line size="40"/>
+                    <visible-when field="ruleKind" operator="not-empty"/></default-field></field>
+                <field name="ruleSave"><default-field title="Save"><submit/></default-field></field>
             </form-single>
         </box-body></container-box>
 

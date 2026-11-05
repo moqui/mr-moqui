@@ -82,6 +82,7 @@ pub struct FieldInfo {
     pub rules: Vec<Rule>,
     pub tooltip: String,
     pub visible_when: Option<VisibleWhen>,
+    pub require_when: Option<VisibleWhen>,
     pub widget: Widget,
 }
 
@@ -523,6 +524,7 @@ impl Index {
             rules,
             tooltip,
             visible_when,
+            require_when,
             w,
         } = node
         else {
@@ -541,6 +543,7 @@ impl Index {
                 rules: rules.clone(),
                 tooltip: tooltip.clone(),
                 visible_when: visible_when.clone(),
+                require_when: require_when.clone(),
                 widget: w.clone(),
             },
         );
@@ -764,31 +767,61 @@ impl Index {
         out
     }
 
-    /// Whether a field shows: its `visible-when` field (in the same form) has the value it names.
+    /// Whether a field shows: the rule of its `visible-when` holds for the field it names (in the same form).
     pub fn visible(&self, field_id: &str, values: &dyn Fn(&str) -> String) -> bool {
+        self.visible_at(field_id, values, 0)
+    }
+
+    /// Whether a field is required now: its `required`, or the rule of its `require-when`, while it shows.
+    pub fn required(&self, field_id: &str, values: &dyn Fn(&str) -> String) -> bool {
+        let Some(field) = self.fields.get(field_id) else {
+            return false;
+        };
+        let by_rule = || {
+            field
+                .require_when
+                .as_ref()
+                .is_some_and(|when| when.holds(&self.rule_value(field, when, values, 0)))
+        };
+        (field.required || by_rule()) && self.visible(field_id, values)
+    }
+
+    /// [`Self::visible`] at a depth of the chain of rules: a field a hidden field's value decides counts that value as
+    /// empty, followed a few fields deep so a cycle of rules ends.
+    fn visible_at(&self, field_id: &str, values: &dyn Fn(&str) -> String, depth: usize) -> bool {
         let Some(field) = self.fields.get(field_id) else {
             return true;
         };
-        let Some(when) = &field.visible_when else {
-            return true;
+        field
+            .visible_when
+            .as_ref()
+            .is_none_or(|when| when.holds(&self.rule_value(field, when, values, depth)))
+    }
+
+    /// The value of the field a rule of `field` names, in its form: empty while that field is hidden by a rule itself.
+    fn rule_value(
+        &self,
+        field: &FieldInfo,
+        when: &VisibleWhen,
+        values: &dyn Fn(&str) -> String,
+        depth: usize,
+    ) -> String {
+        const MAX_DEPTH: usize = 8;
+        let Some(other) = self.sibling(field, &when.field) else {
+            return String::new();
         };
-        let other = self
-            .fields
-            .values()
-            .find(|other| other.name == when.field && other.form == field.form);
-        let value = other.map(|other| values(&other.id)).unwrap_or_default();
-        if when.value.is_empty() {
-            !value.is_empty()
-        } else {
-            value.split(',').any(|part| part.trim() == when.value)
+        if depth < MAX_DEPTH && other.visible_when.is_some() && !self.visible_at(&other.id, values, depth + 1) {
+            return String::new();
         }
+        values(&other.id)
     }
 
     /// The field ids whose `visible-when` names `name`.
     pub fn watched_by(&self, name: &str) -> bool {
-        self.fields
-            .values()
-            .any(|field| field.visible_when.as_ref().is_some_and(|when| when.field == name))
+        self.fields.values().any(|field| {
+            field.visible_when.as_ref().is_some_and(|when| when.field == name)
+                || field.require_when.as_ref().is_some_and(|when| when.field == name)
+        })
     }
 
     /// The drop-downs that depend on the field `name`.
@@ -1095,7 +1128,7 @@ pub fn check(index: &Index, field_ids: &[String], values: &dyn Fn(&str) -> Strin
             continue;
         }
         let value = values(id);
-        if field.required && value.trim().is_empty() && !matches!(field.widget, Widget::Submit { .. }) {
+        if index.required(id, values) && value.trim().is_empty() && !matches!(field.widget, Widget::Submit { .. }) {
             marks.push((id.clone(), "A value is required".to_string()));
             continue;
         }

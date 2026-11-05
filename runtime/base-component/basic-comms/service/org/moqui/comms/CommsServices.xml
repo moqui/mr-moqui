@@ -25,7 +25,8 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="userList" type="List"/></out-parameters>
         <actions>
-            <set field="termText" from="String(term || '').trim()"/>
+            <!-- the term as text: its % and _ are not wildcards (a search for _agent is not one for any character then agent) -->
+            <set field="termText" from="String(term || '').trim().replace(/[\\%_]/g, '\\$&amp;')"/>
             <set field="pageLimit" from="Math.min(Math.max(Number(limit) || 10, 1), 50)"/>
             <entity-find entity-name="moqui.security.UserAccount" list="accountList" limit="${pageLimit}" disable-authz="true">
                 <econditions combine="or">

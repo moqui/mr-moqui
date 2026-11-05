@@ -415,6 +415,10 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="printContainerHeight" type="text-short"/>
         <field name="printRepeatCount" type="number-integer"/>
         <field name="printRepeatNewPage" type="text-indicator"/>
+        <field name="isDated" type="text-indicator" enable-audit-log="true"><description>Y: the form's fields, options and
+            dependencies are effective-dated (fromDate, thruDate): the form is read as of a date, now by default, and a
+            row with no fromDate is a draft, left out unless drafts are asked for (a preview). Otherwise a row with no
+            fromDate is in effect, as before dates were added (docs/ui/Db-Forms.md).</description></field>
         <relationship type="one" title="DbFormPurpose" related="moqui.basic.Enumeration" short-alias="purposeEnum">
             <key-map field-name="purposeEnumId"/></relationship>
         <seed-data>
@@ -429,12 +433,18 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="condition" type="text-medium">
             <description>Only show this field if the condition evaluates to true (Groovy expression)</description></field>
         <field name="entryName" type="text-medium"/>
-        <field name="title" type="text-medium"/>
+        <field name="title" type="text-medium" enable-audit-log="true"/>
         <field name="tooltip" type="text-medium"/>
-        <field name="fieldTypeEnumId" type="id"><description>Field type for presentation, validation;
+        <field name="fieldTypeEnumId" type="id" enable-audit-log="true"><description>Field type for presentation, validation;
             always stored as plain text FormResponseAnswer</description></field>
         <field name="layoutSequenceNum" type="number-integer"/>
-        <field name="isRequired" type="text-indicator"/>
+        <field name="isRequired" type="text-indicator" enable-audit-log="true"/>
+        <field name="fromDate" type="date-time" enable-audit-log="true"><description>When the field starts. On a dated
+            form (DbForm.isDated) a field with no fromDate is a draft; publish#DbFormField starts it.</description></field>
+        <field name="thruDate" type="date-time" enable-audit-log="true"><description>When the field ends. An answered
+            field is ended (end#DbFormField), never deleted.</description></field>
+        <field name="replacesFieldName" type="text-medium" enable-audit-log="true"><description>The field this one
+            succeeds (create#DbFormFieldSuccessor): ended when this one starts, its answers kept under its own name.</description></field>
 
         <field name="printPageNumber" type="number-integer">
             <description>Defaults to 1, ie one page/section for all fields if nothing higher than 1 is specified.</description></field>
@@ -497,9 +507,35 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="formId" type="id" is-pk="true"/>
         <field name="fieldName" type="text-medium" is-pk="true"/>
         <field name="sequenceNum" type="number-integer" is-pk="true"/>
-        <field name="keyValue" type="text-medium"/>
-        <field name="text" type="text-medium"/>
+        <field name="keyValue" type="text-medium" enable-audit-log="true"/>
+        <field name="text" type="text-medium" enable-audit-log="true"/>
+        <field name="fromDate" type="date-time" enable-audit-log="true"><description>When the option starts; on a dated
+            form one with no fromDate is a draft, which replaces the option of the same keyValue when it starts.</description></field>
+        <field name="thruDate" type="date-time" enable-audit-log="true"><description>When the option ends. An answered
+            option is ended (end#DbFormFieldOption), never deleted.</description></field>
         <relationship type="one" related="moqui.screen.form.DbFormField" short-alias="dbFormField"/>
+    </entity>
+    <entity entity-name="DbFormFieldDependency" package="moqui.screen.form" use="configuration">
+        <description>A condition on one field of a DbForm that shows or requires another: the target field is shown
+            (effect show) or required (effect require) while the source field's value meets the operator and value.
+            The form maps the rows in effect to visible-when and require-when on the target field; the server checks a
+            submit with org.moqui.impl.ScreenServices.evaluate#DbFormDependencies. Saved through
+            store#DbFormFieldDependency, which checks the operator and effect and refuses a cycle (docs/ui/Db-Forms.md).</description>
+        <field name="formId" type="id" is-pk="true"/>
+        <field name="dependencySeqId" type="id" is-pk="true"/>
+        <field name="sourceFieldName" type="text-medium" enable-audit-log="true"/>
+        <field name="operator" type="text-short" enable-audit-log="true"><description>equals (the value, or one of a
+            comma-separated list), not-equals (none of them), empty or not-empty.</description></field>
+        <field name="value" type="text-medium" enable-audit-log="true"/>
+        <field name="targetFieldName" type="text-medium" enable-audit-log="true"/>
+        <field name="effect" type="text-short" enable-audit-log="true"><description>show or require.</description></field>
+        <field name="fromDate" type="date-time" enable-audit-log="true"/>
+        <field name="thruDate" type="date-time" enable-audit-log="true"/>
+        <relationship type="one" related="moqui.screen.form.DbForm" short-alias="dbForm"/>
+        <relationship type="one-nofk" title="Source" related="moqui.screen.form.DbFormField" short-alias="sourceField">
+            <key-map field-name="formId"/><key-map field-name="sourceFieldName" related="fieldName"/></relationship>
+        <relationship type="one-nofk" title="Target" related="moqui.screen.form.DbFormField" short-alias="targetField">
+            <key-map field-name="formId"/><key-map field-name="targetFieldName" related="fieldName"/></relationship>
     </entity>
     <entity entity-name="DbFormFieldEntOpts" package="moqui.screen.form" use="configuration">
         <field name="formId" type="id" is-pk="true"/>

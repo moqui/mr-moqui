@@ -917,6 +917,8 @@
         each(scope, "[data-move-to]", initMove);
         each(scope, "[data-rich-text]", initRichText);
         each(scope, "[data-nav-toggle]", (button) => button.addEventListener("click", () => button.closest(".navbar").classList.toggle("open")));
+        // visible-when and require-when (moqui-form-when.js) of content filled after the page loaded
+        if (root.moquiFormWhen) root.moquiFormWhen.apply();
     }
 
     // One listener on the document handles clicks on every element the macros write.
