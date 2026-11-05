@@ -2782,3 +2782,178 @@ fn an_idle_worker_takes_an_exists_before_the_continuation() {
     super::idle::stop_all(ctx.factory());
     assert!(stopping.elapsed() < Duration::from_secs(5), "{:?}", stopping.elapsed());
 }
+
+/// A sync whose lease lapsed during a stalled fetch, while a second sync took the account, stops at its next renewal
+/// without storing what it fetched, and its release leaves the second sync's lock (HL-037).
+#[test]
+fn a_sync_whose_lease_lapsed_stops_and_leaves_the_lock_to_the_next() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let imap = FakeImap::start(&["UIDPLUS"]);
+    let account = imap_account(imap.port, "app-password");
+    sync(&account);
+    imap.add(
+        "INBOX",
+        &mail(
+            "<lapse@example.com>",
+            "x@example.com",
+            "alice@example.com",
+            "Lapse",
+            "",
+            "l",
+        ),
+        &[],
+    );
+    // the first body fetch outlasts the first sync's lease; the second keeps the second sync going past the first's end
+    imap.stall_on("BODY.PEEK[]", Duration::from_millis(400));
+    imap.stall_on("BODY.PEEK[]", Duration::from_millis(400));
+    let run = |lease_millis: i64| {
+        let factory = std::sync::Arc::clone(ctx.factory());
+        let facade = facade.clone();
+        let account = account.clone();
+        std::thread::spawn(move || {
+            let context = factory.new_context();
+            let _entered = context.enter();
+            let _authz = context.disable_authz();
+            let options = super::sync::SyncOptions {
+                lease_millis: Some(lease_millis),
+                ..super::sync::SyncOptions::default()
+            };
+            super::sync::run_sync(&facade, &account, &options)
+        })
+    };
+    let started = Instant::now();
+    let first = run(100);
+    // the second starts once the first's lease has lapsed, during its stalled fetch
+    loop {
+        let row = one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account);
+        let until = row.get("syncLockedUntil").and_then(moqui_core::user::value_millis);
+        if !field(&row, "syncLockedBy").is_empty() && until.is_some_and(|until| until < now()) {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "the first sync's lease did not lapse"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let second = run(600_000);
+    let first = first.join().unwrap();
+    assert_eq!(first.outcome, "busy", "{first:?}");
+    assert_eq!(first.new_count, 0, "{first:?}");
+    let held = one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account);
+    assert!(
+        !field(&held, "syncLockedBy").is_empty(),
+        "the second sync keeps its lock"
+    );
+    assert!(by_message_id(&facade, &account, "<lapse@example.com>").is_none());
+    let second = second.join().unwrap();
+    assert_eq!(second.outcome, "synced", "{second:?}");
+    assert_eq!(second.new_count, 1, "{second:?}");
+    assert_eq!(
+        rows(
+            &facade,
+            MESSAGE,
+            &[("emailAccountId", &account), ("messageId", "<lapse@example.com>")]
+        )
+        .len(),
+        1
+    );
+    let released = one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account);
+    assert!(field(&released, "syncLockedBy").is_empty());
+    assert!(
+        field(&released, "lastSyncError").is_empty(),
+        "the lapsed sync recorded nothing"
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+/// With QRESYNC a sync reads the local rows of the UIDs involved, not every row of the folder: one flag change, one
+/// new message and one expunge in a large Inbox each read a handful of rows (HL-038).
+#[test]
+fn a_flag_change_or_a_new_message_reads_only_the_rows_involved() {
+    const KEPT: u32 = 500;
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let imap = FakeImap::start(&["CONDSTORE", "QRESYNC", "ENABLE", "UIDPLUS"]);
+    let account = imap_account(imap.port, "app-password");
+    sync(&account);
+    let inbox = folder_id(&facade, &account, "EfkInbox");
+    // a large Inbox kept already: the server's messages and their rows
+    for uid in 1..=KEPT {
+        let message_id = format!("<kept{uid}@example.com>");
+        let added = imap.add(
+            "INBOX",
+            &mail(&message_id, "x@example.com", "alice@example.com", "Kept", "", "k"),
+            &[],
+        );
+        assert_eq!(added, uid);
+        row(
+            &facade,
+            MESSAGE,
+            &[
+                ("emailMessageId", text(&format!("kept{uid}"))),
+                ("emailAccountId", text(&account)),
+                ("emailFolderId", text(&inbox)),
+                ("remoteFolderId", text(&inbox)),
+                ("remoteUid", Value::I64(i64::from(uid))),
+                ("messageId", text(&message_id)),
+                ("statusId", text("ES_RECEIVED")),
+                ("isRead", text("N")),
+                ("isFlagged", text("N")),
+                ("isAnswered", text("N")),
+            ],
+        );
+    }
+    let (validity, modseq) = {
+        let state = moqui_lib::sync::lock(&imap.state);
+        let folder = state.folders.iter().find(|folder| folder.name == "INBOX").unwrap();
+        (folder.validity, state.modseq)
+    };
+    update(
+        &facade,
+        FOLDER,
+        ("emailFolderId", &inbox),
+        &[
+            ("remoteUidValidity", Value::I64(i64::from(validity))),
+            ("remoteUidNext", Value::I64(i64::from(KEPT + 1))),
+            ("remoteHighestModSeq", Value::I64(i64::try_from(modseq).unwrap())),
+            ("totalCount", Value::I64(i64::from(KEPT))),
+        ],
+    );
+    let read = |label: &str| {
+        super::sync::ROWS_READ.with(|count| count.set(0));
+        sync(&account);
+        let count = super::sync::ROWS_READ.with(std::cell::Cell::get);
+        assert!(count <= 5, "{label}: {count} rows read");
+    };
+    imap.set_flags("INBOX", 400, &["\\Flagged"]);
+    read("a flag change");
+    assert_eq!(
+        field(&one(&facade, MESSAGE, "emailMessageId", "kept400"), "isFlagged"),
+        "Y"
+    );
+    imap.add(
+        "INBOX",
+        &mail(
+            "<fresh@example.com>",
+            "x@example.com",
+            "alice@example.com",
+            "Fresh",
+            "",
+            "f",
+        ),
+        &[],
+    );
+    read("a new message");
+    assert!(by_message_id(&facade, &account, "<fresh@example.com>").is_some());
+    imap.expunge("INBOX", 300);
+    read("an expunge");
+    assert!(by_message_id(&facade, &account, "<kept300@example.com>").is_none());
+}

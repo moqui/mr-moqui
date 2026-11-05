@@ -187,12 +187,12 @@ impl AgentTool for WriteUi {
             Err(refused) => return ToolOutcome::Failed(refused.error),
         };
         // the canvas is the run's own record, written under its lease; the read fence lifts for it as for an approval
-        let node = ctx.events.node().to_string();
+        let holder = ctx.events.holder().clone();
         let stored = {
             let _lifted = fence::lift();
             run::quietly(|| {
                 run::in_tx(&facade, || {
-                    run::held(&facade, &run.run_id, &node, Hold::Lease)?;
+                    run::held(&facade, &run.run_id, &holder, Hold::Lease)?;
                     Canvas::write_version(
                         &facade,
                         current.as_ref(),

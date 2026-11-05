@@ -72,7 +72,7 @@
             empty: "Ask about this page, or tell Assist what to do.", earlier: "Earlier messages", recommended: "recommended", other: "Other",
             commands: "Commands", help: "/new starts a conversation, /tier fast|balanced|thorough picks the tier, /skill <name> asks for a skill, /help shows this.",
             adminHelp: "Admin: /prompt, /tools, /skills, /context, /usage.", tier: "Tier", agent: "Agent", menu: "More", expired: "Expired",
-            approved: "Approved", rejected: "Rejected", executed: "Done", executing: "Running", handedOff: "Handed to you", decided: "Decided",
+            approved: "Approved", rejected: "Rejected", executed: "Done", executing: "Running", unknownOutcome: "Outcome unknown", handedOff: "Handed to you", decided: "Decided",
             errorTitle: "Something went wrong", nothingWaiting: "Nothing waiting", up: "Helpful", down: "Not helpful",
             canvas: "Canvas", backToPage: "Back to the page", showCanvas: "Show canvas", closeCanvas: "Close the canvas", loading: "Loading",
             adjust: "Ask Assist to change this canvas", adjustSend: "Adjust", canvasProblems: "The canvas reported", canvasUpdating: "Updating the canvas",
@@ -3070,7 +3070,7 @@
             editLabel() { return this.card.targetKind === "file" ? this.labels.reviewInEditor : this.labels.editInScreen; },
             statusLabel() {
                 const map = { approved: "approved", executing: "executing", executed: "executed", failed: "errorTitle", rejected: "rejected", expired: "expired",
-                    conflict: "conflict", "handed-off": "handedOff" };
+                    conflict: "conflict", "handed-off": "handedOff", "unknown-outcome": "unknownOutcome" };
                 return this.labels[map[this.status]] || this.status;
             },
             options() { return (this.card.options || []).map((option) => (typeof option === "string" ? { label: option } : option)); },

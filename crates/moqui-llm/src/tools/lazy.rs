@@ -479,13 +479,13 @@ fn claim(ctx: &TurnContext<'_>, entry: &Entry) -> Result<(), ToolError> {
     };
     let facade = facade()?;
     let limit = rule_for(ctx, entry).calls_per_run;
-    let node = ctx.events.node().to_string();
+    let holder = ctx.events.holder().clone();
     let tool_call_id = ctx.call.tool_call_id.clone();
     // run bookkeeping the runtime writes under the run's lease, so a read tool's fence lifts for it
     let _lifted = fence::lift();
     let claimed = crate::run::quietly(|| {
         crate::run::in_tx(&facade, || {
-            crate::run::held(&facade, &run.run_id, &node, crate::run::Hold::Lease)?;
+            crate::run::held(&facade, &run.run_id, &holder, crate::run::Hold::Lease)?;
             if let Some(limit) = limit {
                 let before = facade
                     .find(TOOL_CALL)?

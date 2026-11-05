@@ -15,7 +15,8 @@
 //! `EmailClientServices.sync#EmailAccount`: an IMAP or POP3 account's mail into `EmailMessage` rows, and its local
 //! changes onto the server.
 //!
-//! One session, under the account's sync lock (`syncLockedUntil`, so no two run at once on any server):
+//! One session, under the account's sync lock (`syncLockedUntil`, so no two run at once on any server; renewed as it
+//! goes, and a session whose lock lapsed to another stops, [`Lease`]):
 //!
 //! 1. The changes queued by `push#RemoteChanges` are made on the server, in order ([`super::remote`]). One that loses
 //!    the connection is counted and waits, with the later changes of its message; the session goes on with a new
@@ -27,7 +28,10 @@
 //!    `remoteUidNext` on, within the account's sync window (`SEARCH SINCE` on the first sync), at most
 //!    `email-client` `sync-batch` a session. With CONDSTORE the flags that changed come from `CHANGEDSINCE`, and with QRESYNC
 //!    the expunged UIDs from `VANISHED`; without them the flags of every message are read every `email-client` `flag-scan`
-//!    minutes and an expunge is found by comparing the UIDs.
+//!    minutes and an expunge is found by comparing the UIDs. Only the local rows of the UIDs involved are read (all of
+//!    them on a first sync, a flag scan, or an expunge found by count). The bodies are fetched by count and by bytes,
+//!    from the sizes the header fetch read, a large message alone; a message whose store keeps failing is read again
+//!    in at most [`STORE_TRIES`] sessions, then skipped and logged.
 //! 4. A message is stored once: one already kept under its folder and UID is not fetched again; one whose
 //!    Message-ID is a row that left another folder in this session is that row, moved (its links and labels kept);
 //!    one whose Message-ID is a local copy waiting for its UID (a sent copy, a move made without UIDPLUS) is that
@@ -69,10 +73,18 @@ pub(super) const SERVER: &str = "moqui.basic.email.EmailServer";
 pub(super) const CHANGE: &str = "moqui.basic.email.EmailRemoteChange";
 const SERVICES: &str = "org.moqui.impl.EmailClientServices";
 
-/// How long a sync holds its account; it is renewed for each folder.
+/// How long a sync holds its account; it is renewed as the session goes ([`Lease::keep`]).
 const LEASE_MILLIS: i64 = 15 * 60 * 1000;
-/// UIDs in one FETCH.
+/// UIDs in one FETCH of message bodies.
 const FETCH_CHUNK: usize = 25;
+/// Bytes of message bodies in one FETCH, by the sizes the header fetch read (`RFC822.SIZE`): the IMAP client holds a
+/// whole response, so a batch is bounded by size as well as by count, and a larger message is fetched alone
+/// (plans/High-Level-Review.md HL-038).
+const FETCH_BYTES: u64 = 8 * 1024 * 1024;
+/// The size counted for a message whose size the server did not give.
+const UNKNOWN_SIZE: u64 = 1024 * 1024;
+/// Sessions that read a message whose store fails again, before it is skipped (logged).
+const STORE_TRIES: u32 = 5;
 const HEADER_CHUNK: usize = 100;
 
 // ---- the account ----
@@ -314,12 +326,15 @@ pub(super) enum SyncFailure {
     SignIn(String),
     /// The server could not be reached or the connection broke: EasError, tried again later.
     Connect(String),
+    /// The session's lease on its account lapsed and another session has it ([`Lease::keep`]): this one stops
+    /// without recording anything on the account, which is the other session's now.
+    Lapsed(String),
 }
 
 impl std::fmt::Display for SyncFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Auth(text) | Self::SignIn(text) | Self::Connect(text) => f.write_str(text),
+            Self::Auth(text) | Self::SignIn(text) | Self::Connect(text) | Self::Lapsed(text) => f.write_str(text),
         }
     }
 }
@@ -789,6 +804,8 @@ pub(super) struct SyncOptions {
     pub(super) inbox_only: bool,
     /// A user asked for it: a paused account says so, an EasAuthFailed one is tried.
     pub(super) by_user: bool,
+    /// How long the session holds its account, when not [`LEASE_MILLIS`] (a test's short lease).
+    pub(super) lease_millis: Option<i64>,
 }
 
 #[derive(Debug, Default)]
@@ -872,6 +889,7 @@ pub(super) fn sync_account_service(
         push_only: flag("pushOnly"),
         inbox_only: flag("inboxOnly"),
         by_user: !authz_off,
+        lease_millis: None,
     };
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let report = run_sync(facade, &account_id, &options);
@@ -894,54 +912,124 @@ fn instance_name() -> String {
     format!("{host}:{}", std::process::id())
 }
 
-/// Take the account's sync lock for [`LEASE_MILLIS`], or renew the one this server holds. False when another sync has it.
+/// A session's hold on its account's sync lock (`syncLockedUntil`, `syncLockedBy`), under a holder name of its own:
+/// this server's instance and a random part, so a second sync on the same server is another holder.
 ///
-/// The row is read `FOR UPDATE`, here and in [`release_lease`]: an update of a row read writes back each field read, so
-/// without the row lock two syncs could both read the lock free and both take it, and a lock taken or released could
-/// write back the status a sync running at the same time had just recorded (a failed sync's EasError read as EasActive
-/// again). With it a second claim waits for the first, then reads the row it wrote: taken, so busy.
-fn claim_lease(facade: &EntityFacade, account_id: &str, renew: bool) -> Result<bool, LibError> {
-    let now = now_millis();
-    let me = instance_name();
-    force_new(facade, || {
-        let mut find = facade
-            .find(ACCOUNT)?
-            .eq("emailAccountId", Value::string(account_id))
-            .for_update(true);
-        let free = Condition::or(vec![
-            Condition::is_null("syncLockedUntil"),
-            Condition::less("syncLockedUntil", stamp_millis(now)),
-        ]);
-        find = if renew {
-            find.condition(Condition::or(vec![
-                free,
-                Condition::equals("syncLockedBy", Value::string(&me)),
-            ]))
-        } else {
-            find.condition(free)
-        };
-        let count = find.update_all([
-            ("syncLockedUntil".to_string(), stamp_millis(now + LEASE_MILLIS)),
-            ("syncLockedBy".to_string(), Value::string(&me)),
-        ])?;
-        Ok(count > 0)
-    })
+/// The session renews it by elapsed time, inside the change, folder and fetch loops ([`Lease::keep`]), so a long change
+/// phase or a long first folder does not outlive it. A renewal refused (the lock lapsed and another session took it, or
+/// it was released) ends the session before it writes again, and the release clears the lock only while this session
+/// holds it, so the session that took it over keeps it (plans/High-Level-Review.md HL-037).
+///
+/// The row is read `FOR UPDATE` in each of these: an update of a row read writes back each field read, so without the
+/// row lock two syncs could both read the lock free and both take it, and a lock taken or released could write back
+/// the status a sync running at the same time had just recorded (a failed sync's EasError read as EasActive again).
+/// With it a second claim waits for the first, then reads the row it wrote: taken, so busy.
+pub(super) struct Lease {
+    account_id: String,
+    holder: String,
+    millis: i64,
+    /// When the last renewal that held started.
+    renewed: std::cell::Cell<std::time::Instant>,
 }
 
-fn release_lease(facade: &EntityFacade, account_id: &str) {
-    let released = force_new(facade, || {
-        facade
+impl Lease {
+    /// Take the account's sync lock for `millis`; None when another sync has it.
+    fn claim(facade: &EntityFacade, account_id: &str, millis: i64) -> Result<Option<Self>, LibError> {
+        let mut random = [0_u8; 6];
+        if getrandom::fill(&mut random).is_err() {
+            random = now_millis().to_le_bytes()[..6].try_into().unwrap_or_default();
+        }
+        let holder = format!(
+            "{} {}",
+            instance_name(),
+            random.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+        );
+        let started = std::time::Instant::now();
+        let now = now_millis();
+        let taken = force_new(facade, || {
+            facade
+                .find(ACCOUNT)?
+                .eq("emailAccountId", Value::string(account_id))
+                .for_update(true)
+                .condition(Condition::or(vec![
+                    Condition::is_null("syncLockedUntil"),
+                    Condition::less("syncLockedUntil", stamp_millis(now)),
+                ]))
+                .update_all([
+                    ("syncLockedUntil".to_string(), stamp_millis(now + millis)),
+                    ("syncLockedBy".to_string(), Value::string(&holder)),
+                ])
+        })?;
+        Ok((taken > 0).then(|| Self {
+            account_id: account_id.to_string(),
+            holder,
+            millis,
+            renewed: std::cell::Cell::new(started),
+        }))
+    }
+
+    /// The lock while this session holds it: renewed once a third of the lease has passed since the last renewal.
+    /// An error when it is no longer this session's, so the session stops before writing again. A renewal that fails
+    /// on the database is tried again at the next call, until the lease has run out.
+    pub(super) fn keep(&self, facade: &EntityFacade) -> Result<(), SyncFailure> {
+        let since = i64::try_from(self.renewed.get().elapsed().as_millis()).unwrap_or(i64::MAX);
+        if since < self.millis / 3 {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        let now = now_millis();
+        let renewed = force_new(facade, || {
+            self.mine(facade)?
+                .update_all([("syncLockedUntil".to_string(), stamp_millis(now + self.millis))])
+        });
+        match renewed {
+            Ok(count) if count > 0 => {
+                self.renewed.set(started);
+                Ok(())
+            }
+            Ok(_) => Err(SyncFailure::Lapsed(format!(
+                "The sync lock of email account {} lapsed and another sync has it; this one stops",
+                self.account_id
+            ))),
+            Err(err) if since >= self.millis => Err(SyncFailure::Lapsed(format!(
+                "The sync lock of email account {} lapsed: it could not be renewed: {err}",
+                self.account_id
+            ))),
+            Err(err) => {
+                tracing::warn!(
+                    "Could not renew the sync lock of email account {}, tried again: {err}",
+                    self.account_id
+                );
+                Ok(())
+            }
+        }
+    }
+
+    /// The account row while this session holds its lock, read `FOR UPDATE`.
+    fn mine(&self, facade: &EntityFacade) -> Result<moqui_core::entity::EntityFind, LibError> {
+        Ok(facade
             .find(ACCOUNT)?
-            .eq("emailAccountId", Value::string(account_id))
-            .for_update(true)
-            .update_all([
-                ("syncLockedUntil".to_string(), Value::Null),
-                ("syncLockedBy".to_string(), Value::Null),
-            ])
-            .map(|_| ())
-    });
-    if let Err(err) = released {
-        tracing::error!("Could not release the sync lock of email account {account_id}: {err}");
+            .eq("emailAccountId", Value::string(&self.account_id))
+            .eq("syncLockedBy", Value::string(&self.holder))
+            .for_update(true))
+    }
+
+    /// Clear the lock, if this session still holds it.
+    fn release(&self, facade: &EntityFacade) {
+        let released = force_new(facade, || {
+            self.mine(facade)?
+                .update_all([
+                    ("syncLockedUntil".to_string(), Value::Null),
+                    ("syncLockedBy".to_string(), Value::Null),
+                ])
+                .map(|_| ())
+        });
+        if let Err(err) = released {
+            tracing::error!(
+                "Could not release the sync lock of email account {}: {err}",
+                self.account_id
+            );
+        }
     }
 }
 
@@ -972,11 +1060,11 @@ pub(super) fn run_sync(facade: &EntityFacade, account_id: &str, options: &SyncOp
         }
         _ => {}
     }
-    match claim_lease(facade, account_id, false) {
-        Ok(true) => {}
-        Ok(false) => return SyncReport::with("busy", format!("Email account {account_id} is syncing already")),
+    let lease = match Lease::claim(facade, account_id, options.lease_millis.unwrap_or(LEASE_MILLIS)) {
+        Ok(Some(lease)) => lease,
+        Ok(None) => return SyncReport::with("busy", format!("Email account {account_id} is syncing already")),
         Err(err) => return SyncReport::with("failed", format!("Could not lock email account {account_id}: {err}")),
-    }
+    };
     let mut report = SyncReport {
         outcome: "synced",
         ..SyncReport::default()
@@ -988,10 +1076,10 @@ pub(super) fn run_sync(facade: &EntityFacade, account_id: &str, options: &SyncOp
             if options.push_only {
                 Ok(())
             } else {
-                pop_sync(facade, &account, &server, &mut report, &mut progress)
+                pop_sync(facade, &account, &server, &lease, &mut report, &mut progress)
             }
         } else {
-            imap_sync(facade, &account, &server, options, &mut report, &mut progress)
+            imap_sync(facade, &account, &server, &lease, options, &mut report, &mut progress)
         }
     }))
     .unwrap_or_else(|payload| {
@@ -999,10 +1087,12 @@ pub(super) fn run_sync(facade: &EntityFacade, account_id: &str, options: &SyncOp
             "the sync stopped: {}",
             moqui_core::service::pool::panic_text(payload.as_ref())
         )))
-    });
+    })
+    // the account's state is recorded only while this session still holds it
+    .and_then(|()| lease.keep(facade));
     record_outcome(facade, &account, &result, &mut report, options);
     set_backlog(account_id, report.capped && report.outcome == "synced");
-    release_lease(facade, account_id);
+    lease.release(facade);
     progress.finish(&report);
     tracing::info!(
         account = %account_id,
@@ -1076,6 +1166,12 @@ fn record_outcome(
                 fields.push(("statusId", Value::string("EasError")));
                 fields.push(("lastSyncError", Value::string(clip(text, 4000))));
             }
+        }
+        // the account is the other session's now: nothing recorded on it
+        Err(SyncFailure::Lapsed(text)) => {
+            tracing::warn!(account = %account.id, "{text}");
+            report.outcome = "busy";
+            report.message = text.clone();
         }
     }
     if fields.is_empty() {
@@ -1320,6 +1416,7 @@ pub(super) fn publish_counts(account_id: &str) {
 struct Session<'a> {
     facade: &'a EntityFacade,
     account: &'a AccountInfo,
+    lease: &'a Lease,
     /// Messages with local changes still queued: the server's flags do not replace theirs, and they are not removed.
     pending_local: HashSet<String>,
     /// Rows whose message left its folder in this session, by emailMessageId, with the folder: claimed by Message-ID
@@ -1367,6 +1464,14 @@ enum FolderError {
     Lost(String),
     /// This folder failed; the others go on.
     Folder(String),
+    /// The session ends for another reason: its lease lapsed.
+    Stop(SyncFailure),
+}
+
+impl From<SyncFailure> for FolderError {
+    fn from(failure: SyncFailure) -> Self {
+        Self::Stop(failure)
+    }
 }
 
 impl From<imap::Error> for FolderError {
@@ -1408,7 +1513,7 @@ fn imap_date(millis: i64) -> String {
 }
 
 impl<'a> Session<'a> {
-    fn new(facade: &'a EntityFacade, account: &'a AccountInfo) -> Self {
+    fn new(facade: &'a EntityFacade, account: &'a AccountInfo, lease: &'a Lease) -> Self {
         let window = account.window_days.map(|days| {
             let start = now_millis() - days * 86_400_000;
             (imap_date(start), start)
@@ -1416,6 +1521,7 @@ impl<'a> Session<'a> {
         Self {
             facade,
             account,
+            lease,
             pending_local: HashSet::new(),
             vanished: HashMap::new(),
             incomplete: HashSet::new(),
@@ -1483,6 +1589,7 @@ fn imap_sync(
     facade: &EntityFacade,
     account: &AccountInfo,
     server: &ServerInfo,
+    lease: &Lease,
     options: &SyncOptions,
     report: &mut SyncReport,
     progress: &mut Progress,
@@ -1493,7 +1600,7 @@ fn imap_sync(
     // connection was counted; the session goes on with a new one, and that change waits for the next session, so one
     // change the server cannot take does not keep the account from its mail.
     let mut held = HashSet::new();
-    let run = super::remote::apply_queue(&mut conn, facade, account, &mut held)?;
+    let run = super::remote::apply_queue(&mut conn, facade, account, lease, &mut held)?;
     report.pushed_count += run.applied;
     if let Some(text) = run.lost {
         tracing::warn!(
@@ -1504,7 +1611,7 @@ fn imap_sync(
         conn = open_session(facade, server)?;
         if options.push_only {
             // the other changes still go
-            let again = super::remote::apply_queue(&mut conn, facade, account, &mut held)?;
+            let again = super::remote::apply_queue(&mut conn, facade, account, lease, &mut held)?;
             report.pushed_count += again.applied;
             if let Some(text) = again.lost {
                 tracing::warn!(
@@ -1527,6 +1634,7 @@ fn imap_sync(
         match list_folders(&mut conn, facade, account) {
             Ok(folders) => folders,
             Err(FolderError::Lost(text)) => return Err(SyncFailure::Connect(text)),
+            Err(FolderError::Stop(failure)) => return Err(failure),
             Err(FolderError::Folder(text)) => {
                 tracing::error!(account = %account.id, "Could not list the folders of email account {}: {text}", account.id);
                 report.folder_errors.push(format!("LIST: {text}"));
@@ -1534,7 +1642,7 @@ fn imap_sync(
             }
         }
     };
-    let mut session = Session::new(facade, account);
+    let mut session = Session::new(facade, account, lease);
     session.pending_local = super::remote::pending_message_ids(facade, &account.id).map_err(lost)?;
     // the rows of folders gone from the server may be claimed by a message that moved out of them
     for folder in folders.iter().filter(|folder| folder.removed) {
@@ -1554,15 +1662,14 @@ fn imap_sync(
         if options.inbox_only && index > 0 && folder.kind != "EfkInbox" && session.vanished.is_empty() {
             break;
         }
-        if index > 0 && claim_lease(facade, &account.id, true).is_err() {
-            tracing::warn!("Could not renew the sync lock of email account {}", account.id);
-        }
+        lease.keep(facade)?;
         progress.start_folder(&folder.name, &folder.path);
         let synced = sync_folder(&mut conn, &mut session, folder, report, progress);
         progress.end_folder();
         match synced {
             Ok(()) => report.folder_count += 1,
             Err(FolderError::Lost(text)) => return Err(SyncFailure::Connect(text)),
+            Err(FolderError::Stop(failure)) => return Err(failure),
             Err(FolderError::Folder(text)) => {
                 session.incomplete.insert(folder.id.clone());
                 tracing::error!(
@@ -1577,14 +1684,16 @@ fn imap_sync(
         }
     }
     // 3. copies, and what left and went nowhere
+    lease.keep(facade)?;
     resolve_pending(&mut conn, &mut session, report)?;
+    lease.keep(facade)?;
     remove_vanished(&mut session, report);
     // 4. the rules, on the new mail of the Inbox, then what new mail brings: a snoozed thread back, the automatic reply
     run_rules(&account.id, &session.new_inbox_ids);
     after_new_mail(&account.id, &session.new_inbox_ids);
     // 5. what the rules and the user changed meanwhile, with the changes a lost connection in 1 left (but those of the
     // message whose change lost it)
-    let run = super::remote::apply_queue(&mut conn, facade, account, &mut held)?;
+    let run = super::remote::apply_queue(&mut conn, facade, account, lease, &mut held)?;
     report.pushed_count += run.applied;
     if let Some(text) = run.lost {
         tracing::warn!(
@@ -1872,12 +1981,39 @@ pub(super) fn update_folder(facade: &EntityFacade, folder_id: &str, fields: &[(&
 
 // ---- one folder ----
 
+#[cfg(test)]
+thread_local! {
+    /// The message rows a sync read on this thread, for the tests of what a sync reads (HL-038).
+    pub(super) static ROWS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn count_read(_rows: usize) {
+    #[cfg(test)]
+    ROWS_READ.with(|count| count.set(count.get() + _rows));
+}
+
 /// The rows kept under a folder's UIDs.
 fn local_rows(facade: &EntityFacade, folder_id: &str) -> Result<HashMap<u32, LocalRow>, LibError> {
-    let rows = facade
+    let mut out = HashMap::new();
+    local_rows_into(facade, folder_id, None, &mut out)?;
+    Ok(out)
+}
+
+/// The rows kept under a folder's UIDs that `condition` (on `remoteUid`) selects, into `out`.
+fn local_rows_into(
+    facade: &EntityFacade,
+    folder_id: &str,
+    condition: Option<Condition>,
+    out: &mut HashMap<u32, LocalRow>,
+) -> Result<(), LibError> {
+    let mut find = facade
         .find(MESSAGE)?
         .eq("remoteFolderId", Value::string(folder_id))
-        .condition(Condition::is_not_null("remoteUid"))
+        .condition(Condition::is_not_null("remoteUid"));
+    if let Some(condition) = condition {
+        find = find.condition(condition);
+    }
+    let rows = find
         .select_field("emailMessageId")
         .select_field("remoteUid")
         .select_field("messageId")
@@ -1885,7 +2021,7 @@ fn local_rows(facade: &EntityFacade, folder_id: &str) -> Result<HashMap<u32, Loc
         .select_field("isFlagged")
         .select_field("isAnswered")
         .list()?;
-    let mut out = HashMap::new();
+    count_read(rows.values().len());
     for row in rows.values() {
         let Some(uid) = as_u32(row.get("remoteUid")) else {
             continue;
@@ -1901,7 +2037,59 @@ fn local_rows(facade: &EntityFacade, folder_id: &str) -> Result<HashMap<u32, Loc
             },
         );
     }
-    Ok(out)
+    Ok(())
+}
+
+/// The rows kept under these UIDs of a folder, into `out`, a bounded `IN` list at a time.
+fn local_rows_of(
+    facade: &EntityFacade,
+    folder_id: &str,
+    uids: &[u32],
+    out: &mut HashMap<u32, LocalRow>,
+) -> Result<(), LibError> {
+    for chunk in uids.chunks(500) {
+        let values = chunk.iter().map(|uid| Value::I64(i64::from(*uid))).collect();
+        local_rows_into(facade, folder_id, Some(Condition::is_in("remoteUid", values)), out)?;
+    }
+    Ok(())
+}
+
+/// The rows kept under UIDs in these ranges of a folder (a `VANISHED` answer), into `out`.
+fn local_rows_in(
+    facade: &EntityFacade,
+    folder_id: &str,
+    ranges: &[(u32, u32)],
+    out: &mut HashMap<u32, LocalRow>,
+) -> Result<(), LibError> {
+    for chunk in ranges.chunks(100) {
+        let condition = Condition::or(
+            chunk
+                .iter()
+                .map(|(low, high)| {
+                    Condition::and(vec![
+                        Condition::greater_equal("remoteUid", Value::I64(i64::from(*low))),
+                        Condition::less_equal("remoteUid", Value::I64(i64::from(*high))),
+                    ])
+                })
+                .collect(),
+        );
+        local_rows_into(facade, folder_id, Some(condition), out)?;
+    }
+    Ok(())
+}
+
+/// The lowest UID kept in a folder, where the server's state of the kept messages is read from.
+fn lowest_uid(facade: &EntityFacade, folder_id: &str) -> Result<Option<u32>, LibError> {
+    let rows = facade
+        .find(MESSAGE)?
+        .eq("remoteFolderId", Value::string(folder_id))
+        .condition(Condition::is_not_null("remoteUid"))
+        .select_field("remoteUid")
+        .order_by("remoteUid", false)
+        .limit(1)
+        .list()?;
+    count_read(rows.values().len());
+    Ok(rows.values().first().and_then(|row| as_u32(row.get("remoteUid"))))
 }
 
 fn search(conn: &mut ImapConn, query: &str) -> Result<Vec<u32>, imap::Error> {
@@ -1936,6 +2124,7 @@ fn decide(session: &mut Session<'_>, folder: &FolderInfo, message_id: &str) -> R
         .select_field("remoteUid")
         .select_field("emailFolderId")
         .list()?;
+    count_read(rows.values().len());
     let mut others = Vec::new();
     for row in rows.values() {
         let id = field_text(row, "emailMessageId");
@@ -2044,9 +2233,19 @@ fn sync_folder(
     let keywords = selected.keywords();
     let validity = mailbox.uid_validity.unwrap_or(0);
     let mut first = folder.uid_next.is_none() || folder.uid_validity.is_none();
-    // on a first sync too: a first sync that stopped part way kept what it stored, which is not stored again
-    let mut locals = local_rows(session.facade, &folder.id)?;
+    // The rows kept, by UID: on a first sync all of them (one that stopped part way kept what it stored, which is not
+    // stored again); after it only those the session needs, the new UIDs, the flags that changed and the UIDs that
+    // vanished, unless a flag scan or an expunge found by count needs them all (plans/High-Level-Review.md HL-038).
+    let mut locals = if first {
+        local_rows(session.facade, &folder.id)?
+    } else {
+        HashMap::new()
+    };
+    let mut all_loaded = first;
     if folder.uid_validity.is_some_and(|known| known != validity) {
+        if !all_loaded {
+            locals = local_rows(session.facade, &folder.id)?;
+        }
         tracing::warn!(
             account = %session.account.id,
             "UIDVALIDITY of email folder {} of account {} changed from {:?} to {validity}: reading it again",
@@ -2069,6 +2268,7 @@ fn sync_folder(
         }
         locals.clear();
         first = true;
+        all_loaded = true;
     }
     let start = if first { 1 } else { folder.uid_next.unwrap_or(1).max(1) };
     // every UID from the start on (for the expunge count), then those in the sync window
@@ -2089,11 +2289,26 @@ fn sync_folder(
             .collect(),
         _ => all_new.clone(),
     };
+    // rows already kept under the new UIDs (a session cut short after storing some)
+    if !all_loaded {
+        if let Some(low) = wanted.first() {
+            local_rows_into(
+                session.facade,
+                &folder.id,
+                Some(Condition::greater_equal("remoteUid", Value::I64(i64::from(*low)))),
+                &mut locals,
+            )?;
+        }
+    }
     wanted.retain(|uid| !locals.contains_key(uid));
     // the flags and the expunges of the messages kept
     let mut scanned = false;
-    if !first && !locals.is_empty() {
-        let min_uid = locals.keys().copied().min().unwrap_or(1);
+    let lowest = if first {
+        None
+    } else {
+        lowest_uid(session.facade, &folder.id)?
+    };
+    if let Some(min_uid) = lowest {
         let mut flags: Vec<(u32, FlagSet)> = Vec::new();
         let mut gone: Vec<u32> = Vec::new();
         let mut count_check = true;
@@ -2111,17 +2326,29 @@ fn sync_folder(
                 }
             }
             drop(fetches);
+            let mut vanished: Vec<(u32, u32)> = Vec::new();
             for response in conn.session.take_all_unsolicited() {
                 if let imap::types::UnsolicitedResponse::Vanished { uids, .. } = response {
-                    for range in uids {
-                        if range.end().saturating_sub(*range.start()) <= 1_000_000 {
-                            gone.extend(range.filter(|uid| locals.contains_key(uid)));
-                        }
-                    }
+                    vanished.extend(uids.iter().map(|range| (*range.start(), *range.end())));
                 }
             }
+            // only the rows of these UIDs
+            let changed: Vec<u32> = flags
+                .iter()
+                .map(|(uid, _)| *uid)
+                .filter(|uid| !locals.contains_key(uid))
+                .collect();
+            local_rows_of(session.facade, &folder.id, &changed, &mut locals)?;
+            let mut left = HashMap::new();
+            local_rows_in(session.facade, &folder.id, &vanished, &mut left)?;
+            gone.extend(left.keys().copied());
+            locals.extend(left);
             count_check = !conn.qresync;
         } else if scan_due {
+            if !all_loaded {
+                locals.extend(local_rows(session.facade, &folder.id)?);
+                all_loaded = true;
+            }
             let fetches = conn.session.uid_fetch(format!("{min_uid}:*"), "(UID FLAGS)")?;
             let mut present = HashSet::new();
             for fetch in fetches.iter() {
@@ -2140,10 +2367,15 @@ fn sync_folder(
                 .unwrap_or(0)
                 .saturating_add(u32::try_from(all_new.len()).unwrap_or(u32::MAX));
             if mailbox.exists < expected {
+                if !all_loaded {
+                    locals.extend(local_rows(session.facade, &folder.id)?);
+                    all_loaded = true;
+                }
                 let present: HashSet<u32> = search(conn, &format!("UID {min_uid}:*"))?.into_iter().collect();
                 gone.extend(locals.keys().copied().filter(|uid| !present.contains(uid)));
             }
         }
+        session.lease.keep(session.facade)?;
         report.updated_count += apply_flags(session, &locals, &flags, keywords)?;
         gone.sort_unstable();
         gone.dedup();
@@ -2158,9 +2390,15 @@ fn sync_folder(
     report.capped |= capped;
     let pending = wanted.len();
     wanted.truncate(session.batch);
-    progress.new_mail(wanted.len(), pending, locals.len());
+    let kept = if all_loaded {
+        locals.len()
+    } else {
+        usize::try_from(folder.total.unwrap_or(0)).unwrap_or(0)
+    };
+    progress.new_mail(wanted.len(), pending, kept);
     let mut failed_from: Option<u32> = None;
     for chunk in wanted.chunks(HEADER_CHUNK) {
+        session.lease.keep(session.facade)?;
         let heads = conn.session.uid_fetch(
             uid_set(chunk),
             "(UID FLAGS INTERNALDATE RFC822.SIZE BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])",
@@ -2204,18 +2442,20 @@ fn sync_folder(
                 Decision::Store => to_fetch.push((uid, flags, internal, size)),
             }
         }
-        for batch in to_fetch.chunks(FETCH_CHUNK) {
+        let sizes: Vec<Option<i64>> = to_fetch.iter().map(|item| item.3).collect();
+        for range in fetch_batches(&sizes, FETCH_CHUNK, FETCH_BYTES) {
+            let batch = &to_fetch[range];
             let uids: Vec<u32> = batch.iter().map(|item| item.0).collect();
             let bodies = conn.session.uid_fetch(uid_set(&uids), "(UID BODY.PEEK[])")?;
-            let mut raw_by_uid: HashMap<u32, Vec<u8>> = HashMap::new();
-            for fetch in bodies.iter() {
-                if let (Some(uid), Some(body)) = (fetch.uid, fetch.body()) {
-                    raw_by_uid.insert(uid, body.to_vec());
-                }
-            }
-            drop(bodies);
+            // a fetch can outlast the lease: nothing is stored once another session has the account
+            session.lease.keep(session.facade)?;
+            // the bodies as the response holds them, not copied
+            let raw_by_uid: HashMap<u32, &[u8]> = bodies
+                .iter()
+                .filter_map(|fetch| Some((fetch.uid?, fetch.body()?)))
+                .collect();
             for (uid, flags, internal, size) in batch {
-                let Some(raw) = raw_by_uid.remove(uid) else {
+                let Some(raw) = raw_by_uid.get(uid).copied() else {
                     tracing::warn!(
                         account = %session.account.id,
                         "Email UID {uid} of folder {} of account {} has no body on the server; skipped",
@@ -2225,8 +2465,9 @@ fn sync_folder(
                     report.skipped_messages += 1;
                     continue;
                 };
-                match store_new(session, folder, *uid, &raw, flags, *internal, *size, keywords) {
+                match store_new(session, folder, *uid, raw, flags, *internal, *size, keywords) {
                     Ok(id) => {
+                        store_failed(&folder.id, *uid, false);
                         report.new_count += 1;
                         progress.fetched_one();
                         if folder.kind == "EfkInbox" {
@@ -2235,7 +2476,7 @@ fn sync_folder(
                                 run_stored_ecas(
                                     session.facade,
                                     &StoredMessage {
-                                        raw: &raw,
+                                        raw,
                                         server_id: session
                                             .account
                                             .server
@@ -2265,16 +2506,28 @@ fn sync_folder(
                         report.skipped_messages += 1;
                     }
                     Err(StoreFailure::Write(text)) => {
-                        tracing::error!(
-                            account = %session.account.id,
-                            folder = %folder.path,
-                            uid = uid,
-                            "Could not store email UID {uid} of folder {} of account {}, read again next time: {text}",
-                            folder.path,
-                            session.account.id
-                        );
                         report.skipped_messages += 1;
-                        failed_from = Some(failed_from.map_or(*uid, |known| known.min(*uid)));
+                        if store_failed(&folder.id, *uid, true) {
+                            tracing::error!(
+                                account = %session.account.id,
+                                folder = %folder.path,
+                                uid = uid,
+                                "Could not store email UID {uid} of folder {} of account {} in {STORE_TRIES} sessions; \
+                                 skipped: {text}",
+                                folder.path,
+                                session.account.id
+                            );
+                        } else {
+                            tracing::error!(
+                                account = %session.account.id,
+                                folder = %folder.path,
+                                uid = uid,
+                                "Could not store email UID {uid} of folder {} of account {}, read again next time: {text}",
+                                folder.path,
+                                session.account.id
+                            );
+                            failed_from = Some(failed_from.map_or(*uid, |known| known.min(*uid)));
+                        }
                     }
                 }
             }
@@ -2316,6 +2569,54 @@ fn sync_folder(
     }
     force_new(session.facade, || update_folder(session.facade, &folder.id, &fields))?;
     Ok(())
+}
+
+/// The body fetches of messages of these sizes, in order, as index ranges: at most `count` messages and `budget` bytes
+/// each, a message larger than `budget` alone.
+fn fetch_batches(sizes: &[Option<i64>], count: usize, budget: u64) -> Vec<std::ops::Range<usize>> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut bytes = 0_u64;
+    for (index, size) in sizes.iter().enumerate() {
+        let size = size.and_then(|size| u64::try_from(size).ok()).unwrap_or(UNKNOWN_SIZE);
+        if index > start && (index - start >= count || bytes.saturating_add(size) > budget) {
+            out.push(start..index);
+            start = index;
+            bytes = 0;
+        }
+        bytes = bytes.saturating_add(size);
+    }
+    if start < sizes.len() {
+        out.push(start..sizes.len());
+    }
+    out
+}
+
+/// The messages whose store failed, by folder and UID, with the sessions it failed in. Kept in memory: a restart
+/// tries each again, at most [`STORE_TRIES`] sessions more, and an entry goes when its message is stored or skipped.
+fn store_failures() -> &'static std::sync::Mutex<HashMap<(String, u32), u32>> {
+    static FAILURES: std::sync::OnceLock<std::sync::Mutex<HashMap<(String, u32), u32>>> = std::sync::OnceLock::new();
+    FAILURES.get_or_init(Default::default)
+}
+
+/// Note a message's store failing (`failed`) or done. True when it has failed in [`STORE_TRIES`] sessions: it is
+/// skipped from now on, so one message the store cannot take is not downloaded again in every session.
+fn store_failed(folder_id: &str, uid: u32, failed: bool) -> bool {
+    let mut failures = moqui_lib::sync::lock(store_failures());
+    if !failed {
+        if !failures.is_empty() {
+            failures.remove(&(folder_id.to_string(), uid));
+        }
+        return false;
+    }
+    let key = (folder_id.to_string(), uid);
+    let tries = failures.entry(key.clone()).or_insert(0);
+    *tries += 1;
+    if *tries >= STORE_TRIES {
+        failures.remove(&key);
+        return true;
+    }
+    false
 }
 
 /// The Message-ID in a `HEADER.FIELDS (MESSAGE-ID)` fetch.
@@ -2707,6 +3008,7 @@ fn pop_sync(
     facade: &EntityFacade,
     account: &AccountInfo,
     server: &ServerInfo,
+    lease: &Lease,
     report: &mut SyncReport,
     progress: &mut Progress,
 ) -> Result<(), SyncFailure> {
@@ -2769,6 +3071,7 @@ fn pop_sync(
                 )))
             }
         };
+        lease.keep(facade)?;
         let parsed = match parse_message(&raw) {
             Ok(parsed) => parsed,
             Err(text) => {
@@ -2969,8 +3272,32 @@ pub(super) fn sync_due_accounts(
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_mutf7, encode_mutf7, expand_set, header_message_id, imap_date, label_keyword, remote_kind, uid_set,
+        decode_mutf7, encode_mutf7, expand_set, fetch_batches, header_message_id, imap_date, label_keyword,
+        remote_kind, uid_set, UNKNOWN_SIZE,
     };
+
+    /// Body fetches by count and by bytes; a message over the budget alone, one with no size counted as
+    /// [`UNKNOWN_SIZE`] (HL-038).
+    #[test]
+    fn body_fetches_are_batched_by_count_and_bytes() {
+        let sizes = |list: &[i64]| list.iter().map(|size| Some(*size)).collect::<Vec<_>>();
+        assert_eq!(fetch_batches(&sizes(&[10; 7]), 3, 1000), vec![0..3, 3..6, 6..7]);
+        assert_eq!(
+            fetch_batches(&sizes(&[400, 400, 400, 5000, 100, 900, 100]), 25, 1000),
+            vec![0..2, 2..3, 3..4, 4..6, 6..7]
+        );
+        assert_eq!(fetch_batches(&sizes(&[5000]), 25, 1000), vec![0..1]);
+        let unknown = i64::try_from(UNKNOWN_SIZE).unwrap();
+        assert_eq!(
+            fetch_batches(&[None, Some(1), None], 25, UNKNOWN_SIZE + 1),
+            vec![0..2, 2..3]
+        );
+        assert_eq!(
+            fetch_batches(&[Some(unknown), Some(-5)], 25, UNKNOWN_SIZE),
+            vec![0..1, 1..2]
+        );
+        assert!(fetch_batches(&[], 25, 1000).is_empty());
+    }
 
     #[test]
     fn uid_sets_compress_and_expand() {

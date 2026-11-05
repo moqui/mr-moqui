@@ -802,3 +802,156 @@ fn a_background_agent_writes_by_policy_and_a_read_capped_one_gets_no_approval() 
         result_text(&bed)
     );
 }
+
+fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+    let deadline = std::time::Instant::now() + WAIT;
+    while !done() {
+        assert!(std::time::Instant::now() < deadline, "timed out waiting for {what}");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn call_status(bed: &Bed, run_id: &str) -> String {
+    let rows = bed
+        .facade
+        .find(run::TOOL_CALL)
+        .unwrap()
+        .eq("runId", Value::string(run_id))
+        .list()
+        .unwrap();
+    text_of(&rows.values()[0], "statusId").unwrap()
+}
+
+fn open_messages(bed: &Bed, run_id: &str) -> Vec<String> {
+    run::step::open_inputs(&bed.facade, run_id)
+        .unwrap()
+        .into_iter()
+        .filter(|input| input.kind == "message")
+        .map(|input| input.text)
+        .collect()
+}
+
+/// HL-040: an approved write resumes and begins (the approval is Executing, the call Running from the transaction
+/// that took the decision), a message is queued, and the node stops inside the write: its lease goes to `gone-node`
+/// (the renewal finds it held elsewhere) and lapses, with the run's `attempt` and `cancelRequested` as given. The
+/// blocked write is then let go, and its result and the approval's are refused, as a stopped node's would never come.
+/// Out: the run and its approval.
+fn stopped_mid_write(bed: &Bed, key: &str, attempt: i64, cancel: bool) -> (String, String) {
+    let (run_id, approval_id) = paused_run(bed, "test_approve", json!({"key": key, "hold": true}));
+    decide(&bed.factory, &approval_id, &user(), &approve()).unwrap();
+    wait_until("the write to begin", || calls(key).len() == 1);
+    assert_eq!(view(bed, &approval_id).status, ApprovalStatus::Executing);
+    assert_eq!(
+        call_status(bed, &run_id),
+        "AgtcRunning",
+        "running from the decision's own transaction"
+    );
+    run::submit_input(&bed.factory, &run_id, USER, "message", "and one more thing", None).unwrap();
+
+    let mut row = bed
+        .facade
+        .find(run::RUN)
+        .unwrap()
+        .eq("runId", Value::string(&run_id))
+        .one()
+        .unwrap()
+        .unwrap();
+    let generation = crate::int_of(&row, "leaseGeneration").unwrap_or(0);
+    row.set("leaseOwner", Value::string("gone-node"));
+    row.set("leaseExpireDate", run::stamp(run::now_millis() - 1_000));
+    row.set("leaseGeneration", Value::I64(generation + 1));
+    row.set("attempt", Value::I64(attempt));
+    row.set("cancelRequested", Value::string(if cancel { "Y" } else { "N" }));
+    row.update(&bed.facade).unwrap();
+    let renewal = run::lease::renew(&bed.factory).unwrap();
+    assert_eq!(renewal.lost, std::slice::from_ref(&run_id));
+    crate::tools::tests::release(key);
+    wait_until("the stopped step to let go", || {
+        !run::engine(&bed.factory).is_local(&run_id)
+    });
+    assert_eq!(
+        view(bed, &approval_id).status,
+        ApprovalStatus::Executing,
+        "the stopped node recorded nothing"
+    );
+    assert_eq!(call_status(bed, &run_id), "AgtcRunning");
+    (run_id, approval_id)
+}
+
+/// After the takeover the write is an unknown outcome, never run again or reported as not run, and its approval is no
+/// longer Executing.
+fn assert_unknown_outcome(bed: &Bed, run_id: &str, approval_id: &str, key: &str) {
+    assert_eq!(calls(key).len(), 1, "the write never runs again");
+    assert_eq!(call_status(bed, run_id), "AgtcUnknownOutcome");
+    assert_eq!(view(bed, approval_id).status, ApprovalStatus::UnknownOutcome);
+    let conversation_id = run::load_run(&bed.facade, run_id).unwrap().unwrap().conversation_id;
+    let (history, _) = run::step::load_history(&bed.facade, &conversation_id).unwrap();
+    let results: Vec<&str> = history
+        .iter()
+        .filter(|message| message.role == crate::provider::Role::Tool)
+        .map(|message| message.text.as_str())
+        .collect();
+    assert_eq!(results.len(), 1, "{results:?}");
+    assert!(
+        results[0].contains("outcome of this test_approve call is unknown"),
+        "{results:?}"
+    );
+}
+
+#[test]
+fn a_resumed_write_whose_node_stopped_is_an_unknown_outcome_and_the_queued_message_is_folded_in() {
+    let bed = bed("stopped-write");
+    let _entered = bed.ctx.enter();
+    let (run_id, approval_id) = stopped_mid_write(&bed, "stopped-1", 1, false);
+    assert_eq!(run::lease::sweep(&bed.factory).unwrap(), 1);
+    assert_eq!(run::wait_for(&bed.factory, &run_id, WAIT).unwrap(), RunState::Completed);
+    assert_unknown_outcome(&bed, &run_id, &approval_id, "stopped-1");
+    // the message queued while the write ran reached the conversation, after the write's result
+    assert!(open_messages(&bed, &run_id).is_empty());
+    assert!(events(&bed, &run_id).contains(&"input.folded".to_string()));
+    let sent = fake::requests(&bed.endpoint);
+    assert!(sent.last().unwrap().to_string().contains("and one more thing"));
+}
+
+#[test]
+fn a_takeover_that_cancels_or_runs_out_of_attempts_closes_a_begun_write_as_unknown_outcome() {
+    let bed = bed("stopped-end");
+    let _entered = bed.ctx.enter();
+    let (run_id, approval_id) = stopped_mid_write(&bed, "stopped-cancel", 1, true);
+    assert_eq!(run::lease::sweep(&bed.factory).unwrap(), 1);
+    assert_eq!(
+        run::load_run(&bed.facade, &run_id).unwrap().unwrap().state,
+        RunState::Canceled
+    );
+    assert_unknown_outcome(&bed, &run_id, &approval_id, "stopped-cancel");
+    assert_eq!(
+        open_messages(&bed, &run_id),
+        ["and one more thing"],
+        "not used up as the write's input"
+    );
+
+    // the canceled run left its answer unread
+    fake::clear(&bed.endpoint);
+    let (run_id, approval_id) = stopped_mid_write(&bed, "stopped-attempts", run::MAX_ATTEMPTS, false);
+    assert_eq!(run::lease::sweep(&bed.factory).unwrap(), 1);
+    let run = run::load_run(&bed.facade, &run_id).unwrap().unwrap();
+    assert_eq!(run.state, RunState::Failed);
+    assert_unknown_outcome(&bed, &run_id, &approval_id, "stopped-attempts");
+    assert_eq!(open_messages(&bed, &run_id), ["and one more thing"]);
+}
+
+#[test]
+fn a_resumed_write_that_panics_after_it_began_is_an_unknown_outcome() {
+    let bed = bed("panicked-write");
+    let _entered = bed.ctx.enter();
+    let (run_id, approval_id) = paused_run(&bed, "test_approve", json!({"key": "panicked-1", "panic": true}));
+    decide(&bed.factory, &approval_id, &user(), &approve()).unwrap();
+    // the panic is caught at the tool: the run goes on, told the write may have taken effect
+    assert_eq!(run::wait_for(&bed.factory, &run_id, WAIT).unwrap(), RunState::Completed);
+    assert_unknown_outcome(&bed, &run_id, &approval_id, "panicked-1");
+    assert!(
+        result_text(&bed).contains("the tool failed before it finished"),
+        "{}",
+        result_text(&bed)
+    );
+}

@@ -39,7 +39,7 @@ pub mod step;
 mod tests;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -75,18 +75,92 @@ pub(crate) const QUESTION: &str = "moqui.agent.AgentQuestion";
 /// A run is taken over at most this many times in all (its first attempt included).
 pub const MAX_ATTEMPTS: i64 = 3;
 
-/// A run this node works: its cancel token, whether a step job of it runs now, and whether another node took its
-/// lease (a lost run writes nothing more and leaves its state alone).
-#[derive(Default)]
+/// A run this node works: its cancel token, whether a step job of it runs now, whether another node took its lease
+/// (a lost run writes nothing more and leaves its state alone), and the lease generation this node holds it at
+/// ([`lease::claim_generation`]; [`NO_GENERATION`] until a claim sets it).
 pub(crate) struct LocalRun {
     pub(crate) cancel: CancelToken,
     pub(crate) busy: AtomicBool,
     pub(crate) lost: AtomicBool,
+    generation: AtomicI64,
+}
+
+/// The generation of a local run no claim has set yet.
+const NO_GENERATION: i64 = -1;
+
+impl Default for LocalRun {
+    fn default() -> Self {
+        Self::at(NO_GENERATION)
+    }
 }
 
 impl LocalRun {
+    fn at(generation: i64) -> Self {
+        Self {
+            cancel: CancelToken::default(),
+            busy: AtomicBool::new(false),
+            lost: AtomicBool::new(false),
+            generation: AtomicI64::new(generation),
+        }
+    }
+
     pub(crate) fn is_lost(&self) -> bool {
         self.lost.load(Ordering::SeqCst)
+    }
+
+    /// The lease generation this node holds the run at, once a claim set it.
+    pub(crate) fn generation(&self) -> Option<i64> {
+        Some(self.generation.load(Ordering::SeqCst)).filter(|generation| *generation != NO_GENERATION)
+    }
+
+    pub(crate) fn set_generation(&self, generation: i64) {
+        self.generation.store(generation, Ordering::SeqCst);
+    }
+
+    /// Stop the step working this state: it lost the run, to another node or to a newer claim of this one.
+    pub(crate) fn mark_lost(&self) {
+        self.lost.store(true, Ordering::SeqCst);
+        self.cancel.cancel();
+    }
+}
+
+/// Who writes a run: this node, and the lease generation its claim got (plans/High-Level-Review.md HL-042). Every
+/// write of the engine checks both against the run's row ([`held`]), so a step of an older holding, on this node or
+/// another, writes nothing once the run was claimed again. A holder with no generation (code that claimed nothing: a
+/// decision, a cancel, the writes after a step gave the lease up) is checked by the owner alone.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Holder {
+    node: String,
+    generation: Option<i64>,
+}
+
+impl Holder {
+    /// `node`, checked by the owner alone.
+    pub fn node_only(node: &str) -> Self {
+        Self {
+            node: node.to_string(),
+            generation: None,
+        }
+    }
+
+    /// `node` at the lease generation its claim got.
+    pub fn at(node: &str, generation: i64) -> Self {
+        Self {
+            node: node.to_string(),
+            generation: Some(generation),
+        }
+    }
+
+    pub fn node(&self) -> &str {
+        &self.node
+    }
+
+    pub fn generation(&self) -> Option<i64> {
+        self.generation
+    }
+
+    pub(crate) fn set_generation(&mut self, generation: Option<i64>) {
+        self.generation = generation;
     }
 }
 
@@ -122,6 +196,22 @@ impl Engine {
         let entry = local.entry(run_id.to_string()).or_default();
         if entry.is_lost() {
             *entry = Arc::default();
+        }
+        Arc::clone(entry)
+    }
+
+    /// The run's local state after this node claimed it at `generation` (a resume, a takeover): a state of an older
+    /// holding is marked lost, so a step of it still running stops, and replaced, so that step does not refuse the
+    /// next step job as busy.
+    pub(crate) fn claimed(&self, run_id: &str, generation: i64) -> Arc<LocalRun> {
+        let mut local = lock(&self.local);
+        let entry = local.entry(run_id.to_string()).or_default();
+        let stale = entry.is_lost() || entry.generation().is_some_and(|known| known != generation);
+        if stale {
+            entry.mark_lost();
+            *entry = Arc::new(LocalRun::at(generation));
+        } else {
+            entry.set_generation(generation);
         }
         Arc::clone(entry)
     }
@@ -756,6 +846,7 @@ fn begin_run(
     } else {
         run.set("leaseOwner", Value::string(engine.node()));
         run.set("leaseExpireDate", stamp(now + lease));
+        run.set("leaseGeneration", Value::I64(1));
     }
     run.create(facade)?;
     if state == RunState::Submitted && !take_active(facade, &conversation_id, &run_id)? {
@@ -1087,9 +1178,12 @@ fn resume(factory: &Arc<ExecutionContextFactory>, facade: &EntityFacade, run_id:
         let base = RunLimits::of(&agent, &crate::facade(factory).conf().limits, &RunLimits::default());
         in_tx(facade, || raise_caps(facade, &run, &base))?;
     }
-    if !lease::claim(facade, run_id, engine.node(), lease::lease_millis(factory))? {
+    let Some(generation) = lease::claim_generation(facade, run_id, engine.node(), lease::lease_millis(factory))? else {
         return Err(Error::new(format!("agent run {run_id} is held by another node")));
-    }
+    };
+    // a step of this node's older holding that still runs stops, and writes nothing more (HL-042)
+    engine.claimed(run_id, generation);
+    sink.hold_at(Some(generation));
     transition(facade, &mut sink, run_id, RunState::Working, &Change::default())?;
     submit_when_committed(factory, facade, run_id)
 }
@@ -1234,7 +1328,8 @@ pub fn wait_for(factory: &ExecutionContextFactory, run_id: &str, timeout: Durati
 }
 
 /// How a write needs the run's lease. Every write of the engine reads the run row for update in its transaction and
-/// checks its `leaseOwner` first, so a node that lost the lease to another one writes nothing.
+/// checks its `leaseOwner` and `leaseGeneration` first, so a node that lost the lease to another one, or a step of an
+/// older holding of this node, writes nothing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Hold {
     /// This node holds it: a step's writes.
@@ -1253,12 +1348,14 @@ pub fn is_lease_lost(error: &Error) -> bool {
     error.message().contains(LEASE_LOST)
 }
 
-/// The run's row, read for update in the transaction in place, when `node` may write it as `hold` says.
+/// The run's row, read for update in the transaction in place, when `holder` may write it as `hold` says: a holder
+/// with a generation only while the run's lease generation is still that one, whoever holds it now.
 ///
 /// # Errors
 ///
-/// Returns an error when there is no such run, or another node holds its lease ([`LEASE_LOST`]).
-pub(crate) fn held(facade: &EntityFacade, run_id: &str, node: &str, hold: Hold) -> Result<EntityValue, Error> {
+/// Returns an error when there is no such run, another node holds its lease, or it was claimed again since the
+/// holder's claim ([`LEASE_LOST`]).
+pub(crate) fn held(facade: &EntityFacade, run_id: &str, holder: &Holder, hold: Hold) -> Result<EntityValue, Error> {
     let row = facade
         .find(RUN)?
         .eq("runId", Value::string(run_id))
@@ -1266,6 +1363,16 @@ pub(crate) fn held(facade: &EntityFacade, run_id: &str, node: &str, hold: Hold) 
         .disable_authz()
         .one()?
         .ok_or_else(|| Error::new(format!("there is no agent run {run_id}")))?;
+    let node = holder.node();
+    if let Some(mine) = holder.generation() {
+        let generation = int_of(&row, "leaseGeneration").unwrap_or(0);
+        if generation != mine {
+            return Err(Error::new(format!(
+                "{LEASE_LOST} agent run {run_id} was claimed again (lease generation {generation}) since {node} \
+                 claimed it (generation {mine})"
+            )));
+        }
+    }
     let owner = text_of(&row, "leaseOwner");
     match (owner.as_deref(), hold) {
         (Some(owner), _) if owner == node => Ok(row),
@@ -1328,7 +1435,7 @@ pub(crate) fn transition(
     change: &Change,
 ) -> Result<(), Error> {
     in_tx(facade, || {
-        let mut row = held(facade, run_id, sink.node(), change.hold)?;
+        let mut row = held(facade, run_id, sink.holder(), change.hold)?;
         let run = RunRow::of(&row);
         if run.state == to {
             return Ok(());
@@ -1410,6 +1517,12 @@ pub(crate) fn transition(
         if to != RunState::Working || run.state == RunState::Submitted {
             sink.signal(payload);
         }
-        sink.flush()
+        sink.flush()?;
+        // the lease is given up: what this sink writes after is checked by the owner alone, as for a writer that
+        // claimed nothing, so a resume that claims the run again at once does not refuse the step's last writes
+        if to.is_terminal() || to.is_paused() {
+            sink.hold_at(None);
+        }
+        Ok(())
     })
 }

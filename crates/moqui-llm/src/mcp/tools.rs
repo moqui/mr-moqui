@@ -950,11 +950,11 @@ impl CallRun {
     fn end(&self, ctx: &Ctx<'_>, text: &str, is_error: bool, answer: &Json) -> Result<(), McpError> {
         let facade = &ctx.facade;
         let mut sink = EventSink::new(ctx.factory, facade, &self.run.run_id, &ctx.user.user_id);
-        let node = sink.node().to_string();
+        let holder = sink.holder().clone();
         let status = if is_error { "AgtcFailed" } else { "AgtcDone" };
         let ended = quietly(|| {
             in_tx(facade, || {
-                run::held(facade, &self.run.run_id, &node, run::Hold::Lease)?;
+                run::held(facade, &self.run.run_id, &holder, run::Hold::Lease)?;
                 facade
                     .find(run::TOOL_CALL)?
                     .eq("toolCallId", Value::string(&self.tool_call_id))
@@ -1018,14 +1018,14 @@ impl CallRun {
     fn pause(&self, ctx: &Ctx<'_>, pause: tools::Pause) -> Result<(), McpError> {
         let facade = &ctx.facade;
         let mut sink = EventSink::new(ctx.factory, facade, &self.run.run_id, &ctx.user.user_id);
-        let node = sink.node().to_string();
+        let holder = sink.holder().clone();
         if let Some((event, payload)) = &pause.event {
             sink.emit(event, payload.clone());
         }
         let to = approval::pause_state(pause.kind, Surface::Mcp);
         let paused = quietly(|| {
             in_tx(facade, || {
-                run::held(facade, &self.run.run_id, &node, run::Hold::Lease)?;
+                run::held(facade, &self.run.run_id, &holder, run::Hold::Lease)?;
                 facade
                     .find(run::TOOL_CALL)?
                     .eq("toolCallId", Value::string(&self.tool_call_id))

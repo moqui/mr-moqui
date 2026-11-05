@@ -63,6 +63,8 @@ pub(super) struct FakeImapState {
     arrive_on: Option<(String, String)>,
     /// A command the server answers by closing the connection, as a server that drops a client does.
     pub(super) drop_on: Option<String>,
+    /// Commands answered late ([`FakeImap::stall_on`]).
+    stalls: Vec<(String, Duration)>,
     next_validity: u32,
 }
 
@@ -144,6 +146,7 @@ impl FakeImap {
             oauth_tokens: Vec::new(),
             arrive_on: None,
             drop_on: None,
+            stalls: Vec::new(),
             next_validity: 5000,
         }));
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -191,6 +194,12 @@ impl FakeImap {
     /// `* n EXISTS` sent before the `+` continuation, as a server may.
     pub(super) fn arrive_on(&self, command: &str, raw: &str) {
         lock(&self.state).arrive_on = Some((command.to_ascii_uppercase(), raw.to_string()));
+    }
+
+    /// The next command whose text has `text` (on any connection, once) is answered only after `delay`, as a slow
+    /// server's; several wait their turn in order.
+    pub(super) fn stall_on(&self, text: &str, delay: Duration) {
+        lock(&self.state).stalls.push((text.to_string(), delay));
     }
 
     pub(super) fn set_flags(&self, folder: &str, uid: u32, flags: &[&str]) {
@@ -438,6 +447,14 @@ fn serve_imap(stream: TcpStream, state: &Mutex<FakeImapState>) -> std::io::Resul
         });
         if lock(state).drop_on.as_deref() == Some(command.as_str()) {
             return Ok(());
+        }
+        let stall = {
+            let mut state = lock(state);
+            let position = state.stalls.iter().position(|(text, _)| rest.contains(text.as_str()));
+            position.map(|position| state.stalls.remove(position).1)
+        };
+        if let Some(delay) = stall {
+            std::thread::sleep(delay);
         }
         let arrived = {
             let mut state = lock(state);
