@@ -257,7 +257,7 @@ fn hold_slots(to: std::net::SocketAddr, from: &[&str], each: usize) -> Vec<std::
 #[cfg(feature = "grpc")]
 fn closed(stream: &std::net::TcpStream) -> bool {
     stream
-        .set_read_timeout(Some(std::time::Duration::from_secs(1)))
+        .set_read_timeout(Some(std::time::Duration::from_millis(300)))
         .unwrap();
     let mut byte = [0_u8; 1];
     match std::io::Read::read(&mut &*stream, &mut byte) {
