@@ -9056,7 +9056,7 @@
               ], 8, ["id"]))
             }
         } },
-        "m-subscreens-wizard": { hash: "b8c5e0fa", make: function (Vue) {
+        "m-subscreens-wizard": { hash: "e8f63d08", make: function (Vue) {
             const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, withCtx: _withCtx, createCommentVNode: _createCommentVNode, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode } = Vue
 
             return function render(_ctx, _cache) {
@@ -9085,7 +9085,7 @@
                       class: "m-wizard-stepper",
                       "active-color": "primary",
                       "done-color": "primary",
-                      contracted: _ctx.$q.screen.lt.sm,
+                      "alternative-labels": _ctx.$q.screen.lt.sm,
                       "onUpdate:modelValue": _ctx.headerTo
                     }, {
                       default: _withCtx(() => [
@@ -9103,7 +9103,7 @@
                         }), 128))
                       ]),
                       _: 1
-                    }, 8, ["model-value", "contracted", "onUpdate:modelValue"]))
+                    }, 8, ["model-value", "alternative-labels", "onUpdate:modelValue"]))
                   : _createCommentVNode("", true),
                 _createElementVNode("div", {
                   ref: "body",

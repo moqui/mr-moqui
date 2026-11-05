@@ -12,6 +12,12 @@ const galleryScreens = [
     ["Chatter", "qvt"], ["RecordFiles", "qvt"], ["Message", "qvt"], ["Views", "qvt"], ["Search", "qvt"], ["Handheld", "qvt"],
 ]
 
+const queryParameters = url => Object.fromEntries(String(url || "").replace(/&amp;/g, "&").split("?").slice(1).join("?")
+    .split("&").filter(Boolean).map(part => {
+        const at = part.indexOf("=")
+        return [decodeURIComponent(at < 0 ? part : part.slice(0, at)), decodeURIComponent(at < 0 ? "" : part.slice(at + 1))]
+    }))
+
 spec({
     setupSpec() {
         login("john.doe")
@@ -46,6 +52,21 @@ feature("gallery screen #name renders in #mode without errors", {
         str.output.length > 200
         !str.output.includes("is not written yet")
         !/Error rendering|Exception in render/.test(str.output)
+        if (name === "Dialog") {
+            const form = /<m-form\b[^>]*\bid="NewEnum"[^>]*>/.exec(str.output)
+            assert(form && form[0].includes("'enumTypeId':'ComparisonOperator'"), "New starts with the comparison operator type")
+        }
+        if (name === "Task") {
+            // The existing page render is enough; inspect these transition answers without rendering another page.
+            test.header("Accept", "application/json")
+            for (const [action, lineIndex] of [["short", 0], ["skip", 1]]) {
+                const answer = test.render("Task/" + action, {stepOnly: "Y", lineIndex, lineSeq: lineIndex + 1}, "post")
+                assert.equal(answer.errorMessages.length, 0)
+                const query = queryParameters(JSON.parse(answer.output).screenUrl)
+                assert.equal(query.lineIndex, String(lineIndex + 1))
+                assert.equal(Object.hasOwn(query, "stepOnly"), false, action + " returns to the whole page")
+            }
+        }
     },
 })
 
@@ -121,7 +142,7 @@ feature("the Landing counters are number cards in a dashboard that link to the f
         const cards = str.output.match(/<m-number-card /g) || []
         const linked = /<m-number-card title="[^"]+" value="[0-9,]+" href="\/[^"]*List\?enumTypeId=[A-Za-z]+"/.test(str.output)
         str.status == 200
-        str.output.includes('<div class="m-dashboard q-mx-sm" style="--m-dashboard-min:150px">')
+        str.output.includes('<div class="m-dashboard q-mx-sm" style="--m-dashboard-min:260px">')
         str.output.includes('m-dashboard-each')
         str.output.includes('<m-number-card title="All enumerations"')
         cards.length == 6
@@ -196,7 +217,8 @@ feature("the gallery's Chatter panel has the rich-text note form, its card and m
 feature("the Split is a container-split with the country in the URL", {
     expect() {
         const test = ec.screen.makeTest().rootScreen("component://example/screen/Gallery.xml").renderMode("qvt")
-        const str = test.render("Split", { lastStandalone: "-2", geoId: "CAN", geoName: "C", geoName_op: "begins" }, null)
+        const find = {geoName: "C", geoName_op: "begins", geoName_not: "N", geoName_ic: "Y", orderByField: "-geoName"}
+        const str = test.render("Split", Object.assign({lastStandalone: "-2", geoId: "CAN"}, find), null)
         str.status == 200
         str.errorMessages.length == 0
         str.output.includes('<m-container-split id="CountrySplit" side-width="320" min-main="480" select-parameter="geoId" back-text="Countries">')
@@ -206,6 +228,17 @@ feature("the Split is a container-split with the country in the URL", {
         // the find narrows the side list, the selection does not
         str.output.includes("Cameroon")
         !str.output.includes("Albania")
+        const selectedLink = Array.from(str.output.matchAll(/<m-link\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/m-link>/g))
+            .find(match => match[2].replace(/<[^>]*>/g, "").trim() === "Canada")
+        const selection = selectedLink && queryParameters(selectedLink[1])
+        assert(selection, "the country list links to Canada")
+        for (const name of Object.keys(find)) assert.equal(selection[name], find[name], "country link retains " + name)
+        const edited = test.header("Accept", "application/json")
+            .render("Split/editCountry", Object.assign({geoId: "CAN"}, find), "post")
+        assert.equal(edited.errorMessages.length, 0)
+        const returned = queryParameters(JSON.parse(edited.output).screenUrl)
+        assert.equal(returned.geoId, "CAN")
+        for (const name of Object.keys(find)) assert.equal(returned[name], find[name], "Edit retains " + name)
     },
 })
 
@@ -240,6 +273,7 @@ feature("the Wizard's steps check their entries, keep a draft and end on the fir
 // EXAMPLE (dbresource history) and EXGIT (a git repository in the database, made by the screen's createGitSpace).
 const editor = (path, parameters, method) => {
     const test = ec.screen.makeTest().rootScreen("component://example/screen/Gallery.xml").renderMode("qvt")
+    if (method === "post") test.header("Accept", "application/json")
     return test.render("Editor" + (path ? "/" + path : ""), Object.assign({ lastStandalone: "-2" }, parameters || {}), method || null)
 }
 const pageText = (space, path) => ec.resource.getLocationReference(
@@ -252,16 +286,21 @@ feature("the editor's #space space keeps versions, compares, views and restores 
         if (space === "EXGIT" && !ec.entity.find("moqui.resource.wiki.WikiSpace").condition("wikiSpaceId", "EXGIT").one())
             editor("createGitSpace", {}, "post")
         const page = pageText(space, "Welcome")
-        const before = page.getVersionHistory().length
-        const saved = editor("savePage", { wikiSpaceId: space, pagePath: "Welcome", pageText: "# Welcome\n\nSaved by the gallery spec.\n" }, "post")
+        const beforeHistory = page.getVersionHistory(), before = beforeHistory.length
+        const stale = {versionName:beforeHistory[0].versionName, versionNameLhs:beforeHistory[0].versionName,
+            versionNameRhs:beforeHistory[0].versionName}
+        const saved = editor("savePage", Object.assign({ wikiSpaceId: space, pagePath: "Welcome",
+            pageText: "# Welcome\n\nSaved by the gallery spec.\n" }, stale), "post")
         const history = page.getVersionHistory()
         const newest = history[0].versionName, previous = history[1].versionName
-        const compared = editor("", { wikiSpaceId: space, pagePath: "Welcome", versionNameLhs: previous, versionNameRhs: newest })
+        const compared = editor("", { wikiSpaceId: space, pagePath: "Welcome", versionName: newest,
+            versionNameLhs: previous, versionNameRhs: newest })
         const viewed = editor("", { wikiSpaceId: space, pagePath: "Welcome", versionName: previous })
         // a plain line only the old version has; the Edit dialog holds the current text, so look for the old one
         const oldLine = page.getText(previous).split("\n").map((line) => line.replace(/^[-#\s]+/, ""))
             .find((line) => line.length > 10 && !line.includes("*"))
-        editor("restoreVersion", { wikiSpaceId: space, pagePath: "Welcome", versionName: previous }, "post")
+        const restoredAnswer = editor("restoreVersion", { wikiSpaceId: space, pagePath: "Welcome", versionName: previous,
+            versionNameLhs: previous, versionNameRhs: newest }, "post")
         const restored = page.getVersionHistory()
         saved.errorMessages.length == 0
         history.length == before + 1
@@ -274,6 +313,45 @@ feature("the editor's #space space keeps versions, compares, views and restores 
         viewed.output.includes(oldLine)
         restored.length == before + 2
         page.getText() == page.getText(previous)
+        // Reuse the existing comparison and old-version renders: their links must leave stale history behind.
+        const links = output => Array.from(output.matchAll(/<m-link\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/m-link>/g),
+            match => ({query:queryParameters(match[1]), text:match[2].replace(/<[^>]*>/g, "").trim()}))
+        const currentPage = query => {
+            assert.equal(query.wikiSpaceId, space)
+            assert.equal(query.pagePath, "Welcome")
+            for (const name of ["versionName", "versionNameLhs", "versionNameRhs"])
+                assert.equal(Object.hasOwn(query, name), false, "current page clears " + name)
+        }
+        currentPage(queryParameters(JSON.parse(saved.output).screenUrl))
+        assert.equal(restoredAnswer.errorMessages.length, 0)
+        currentPage(queryParameters(JSON.parse(restoredAnswer.output).screenUrl))
+        const comparedLinks = links(compared.output), viewedLinks = links(viewed.output)
+        const close = comparedLinks.find(link => link.text === "Close")
+        assert(close, "the comparison has a Close link")
+        currentPage(close.query)
+        const back = viewedLinks.find(link => link.text === "Back to current")
+        assert(back, "an old version has a return to current link")
+        currentPage(back.query)
+        const version = comparedLinks.find(link => link.query.versionName === previous && !link.text.includes("Restore"))
+        assert(version, "history links to the previous version")
+        assert.equal(Object.hasOwn(version.query, "versionNameLhs"), false)
+        assert.equal(Object.hasOwn(version.query, "versionNameRhs"), false)
+        const withCurrent = viewedLinks.find(link => link.text === "Compare with current")
+        assert(withCurrent, "the old version can be compared with current")
+        assert.equal(withCurrent.query.versionNameLhs, previous)
+        assert.equal(Object.hasOwn(withCurrent.query, "versionNameRhs"), false)
+        const otherSpace = comparedLinks.find(link => link.text === "dbresource: EXAMPLE")
+        assert(otherSpace, "space navigation is available while comparing")
+        assert.equal(otherSpace.query.wikiSpaceId, "EXAMPLE")
+        for (const name of ["pagePath", "versionName", "versionNameLhs", "versionNameRhs"])
+            assert.equal(Object.hasOwn(otherSpace.query, name), false, "space selection clears " + name)
+        if (space === "EXAMPLE") {
+            const notes = comparedLinks.find(link => link.text === "Notes")
+            assert(notes, "the Notes page is available while comparing")
+            assert.equal(notes.query.pagePath, "Notes")
+            for (const name of ["versionName", "versionNameLhs", "versionNameRhs"])
+                assert.equal(Object.hasOwn(notes.query, name), false, "page selection clears " + name)
+        }
     },
 })
 

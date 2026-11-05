@@ -50,6 +50,23 @@ a { color:var(--m-link); text-decoration:none; }
 /* Brand fills and readable foregrounds have different jobs. Keep status hues, but give their text enough contrast
    on panels and tonal chips in either theme. Schemes can override the foreground tokens independently. */
 .text-negative, .text-danger { color:var(--m-negative-text) !important; }
+/* Quasar's helper bypasses text-negative. The automatic changed-field fill remains subtle enough for labels and errors;
+   an explicitly supplied bg-color still has its own class and color. */
+.q-field--error .q-field__bottom { color:var(--m-negative-text); }
+.bg-m-field-changed { background:color-mix(in srgb, var(--m-link) 10%, var(--m-panel-bg)) !important; }
+/* Built-in notification pairs use panel tones so their message, caption and inherited action text stay readable.
+   Authored color/text-color pairs (for example purple/white) retain Quasar's styling. */
+.q-notification.bg-positive.text-white { --m-notification-color:var(--m-positive-text); }
+.q-notification.bg-negative.text-white { --m-notification-color:var(--m-negative-text); }
+.q-notification.bg-info.text-white { --m-notification-color:var(--m-info-text); }
+.q-notification.bg-warning.text-dark { --m-notification-color:var(--m-warning-text); }
+.q-notification:is(.bg-positive.text-white, .bg-negative.text-white, .bg-info.text-white, .bg-warning.text-dark) {
+    color:var(--m-notification-color) !important;
+    background:color-mix(in srgb, var(--m-notification-color) 8%, var(--m-panel-bg)) !important;
+    border:1px solid color-mix(in srgb, var(--m-notification-color) 45%, var(--m-panel-bg));
+}
+.q-notification:is(.bg-positive.text-white, .bg-negative.text-white, .bg-info.text-white, .bg-warning.text-dark) .q-notification__caption { opacity:1; }
+.q-notification:is(.bg-positive.text-white, .bg-negative.text-white, .bg-info.text-white, .bg-warning.text-dark) .q-notification__actions { color:inherit; }
 .text-primary { color:var(--m-link) !important; }
 .text-positive, .text-success { color:var(--m-positive-text) !important; }
 .text-warning { color:var(--m-warning-text) !important; }
@@ -605,6 +622,13 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
 .m-wizard-body { position:relative; min-height:64px; }
 .m-wizard-stepper .q-stepper__content { display:none; }
 .m-wizard-stepper .q-stepper__header { border-bottom:none; }
+.m-wizard-stepper .q-stepper__tab--navigation:focus-visible { outline:2px solid var(--m-link); outline-offset:-3px; }
+@media (max-width:599px) {
+    .m-wizard-stepper .q-stepper__header { overflow-x:auto; }
+    .m-wizard-stepper .q-stepper__tab { flex:1 0 6rem; min-width:0; padding:12px 8px; }
+    .m-wizard-stepper .q-stepper__label { min-width:0; max-width:100%; }
+    .m-wizard-stepper .q-stepper__title { white-space:normal; overflow-wrap:anywhere; }
+}
 .m-wizard-nav { margin-top:12px; padding-top:8px; border-top:1px solid rgba(0,0,0,0.08); }
 .body--dark .m-wizard-nav { border-top-color:rgba(255,255,255,0.14); }
 .m-stack-crumbs { font-size:0.95rem; }

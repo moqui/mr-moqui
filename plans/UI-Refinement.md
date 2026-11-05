@@ -119,7 +119,7 @@ before/after evidence use the agreed 1920×1080 target.
 |---|---|---|---|
 | Shared shell and widgets | Navigation, lists, saved finds, columns, forms, preferences | In progress | Find/filter and save/update/default/reset observed; delete cancellation passed. Columns move/undo/hide/save/reset and keyboard move/hide/Display, 1280/390 Find, Escape focus return and appearance reload passed. Final deletion and real 200% browser zoom remain unverified. |
 | Gallery | Archetypes and shared widget reference | Automated journey passed | GallerySmoke 23/23 at 1280×900; 1920 visual activities remain in the inventory. |
-| Embedded TUI | Navigation, dialogs, themes and focus | Refined; partial retest | System and F1 help readable across live light/dark switches; fresh dark launch and F1 help after saved appearance reload also passed. |
+| Embedded TUI | Navigation, dialogs, themes and focus | Refined; partial retest | System and F1 help readable across live light/dark switches; fresh light and dark launches and F1 help after saved appearance reload also passed. |
 | System and Tools | Administration and data/service tools | Refined; partial activities | Overview both themes, Components, SQL success/error/recovery, service XML and echo output/validation/retry observed. Deep administration groups remain pending. |
 | Monitor and Dashboards | Diagnosis, reporting and authoring | Refined; partial activities | Monitoring 19/19 at 1440×1000; dashboard copy/edit/save/open, CSV export and filter/remove visually observed at 1920; saved log search restores query/range. See assertion limits and screen map below. |
 | Dev AIDE | Artifact discovery, editing, simulation, previews and Git | Refined; verification in progress | Home, creation-dialog cancellation, search empty states, source navigation and Search → References → Docs/copy/package/diagram navigation observed. All eight disposable-repository journeys passed; detailed limits are recorded below. |
@@ -179,13 +179,23 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-035 | T02 Tools entity browser and edit | P3 observed hierarchy/layout | Database maintenance actions precede discovery; two short edit fields span 1920px; Find return loses the prior filter | Create/find/edit and duplicate recovery work; layout and return-context refinement deferred. `tools-entity-edit-before.jpg` |
 | UI-036 | T02/T03 EntityDataFind CSV export | P2 fixed and browser retested | Headers and values share the same exportable field set; conditional empty cells retain their column | Existing CSV fixture/core tests pass; rebuilt debug browser export has two matching headers, quoted text and empty cell. `/tmp/ui-review-entity-export-after.csv` |
 | UI-037 | M02 Explore → Add filter without Label | P3 observed terminology / deferred | Filter pill exposes the full query JSON instead of a readable field/operator/value summary; expanded Add filter action aligns with labels instead of input baselines | Default light/dark, 1920/1280/390; functional create/search passed. Follow-up in shared reporting query controls; preserve stored query structure. |
-| UI-038 | G08 Wizard required-field recovery, default dark | P2 observed / next shared batch | Validation text #c10015 on #1d1d1d is too dark; selected-field error label is also difficult to read | Empty Customer name → Next; screenshot `gallery-wizard-error-dark-before-1920.jpg`; shared Quasar field error colors. |
-| UI-039 | G08 Wizard at 390px | P2 observed accessibility / next shared batch | Step labels disappear; completed step buttons have no accessible name | Options/Review after first step completed; source investigation pending; preserve step title for assistive tech and visible current-step context. |
-| UI-040 | G04 New container dialog → Escape | P2 observed focus / next shared batch | Closing returns focus to BODY instead of invoker, including keyboard Enter opening | Dialog hidden awaited before DOM focus inspection at 390; investigate shared dialog lifecycle. |
-| UI-041 | G07 Split filter → country detail → Countries | P2 observed lost context / next Gallery batch | Country=United gives four rows; selecting United States drops the filter and returning shows the full list | Light at 390; selection URL contains only geoId=USA, Country is blank after return. Gallery links/state ownership under investigation. |
-| UI-042 | G06 QVue Board and Calendar controls | P2 observed accessibility / next Gallery batch | Board cards are pointer-only draggable divs; calendar arrows and interactive dates/events lack accessible controls; Done event fill/text contrast needs correction | Light at 1920/390; pointer movement and month navigation pass. Add keyboard equivalents and clear demo feedback while retaining routes and transition contracts. |
-| UI-043 | G06 Calendar → another app screen | P2 observed stale request / next Gallery batch | Leaving Calendar requests destination/events and shows a screen-not-found toast | Next → Today → Gallery menu → Task; source confirms unguarded shell-parameter watcher and mutable endpoint. |
-| UI-044 | G05 Task Confirm → Short | P2 observed fragment leakage / next Gallery batch | Short opens a full route containing stepOnly=Y, hiding intro and Remaining lines | Confirm reloads line 1, then Short advances to line 2 with fragment-only output as the full page. |
+| UI-038 | G08 Wizard required-field recovery, default dark | P2 fixed and retested | Semantic validation text and subtle changed-field fill replace low-contrast defaults; default notifications use readable tonal pairs | Error helper 2.63→7.38:1; label on changed field 3.78→6.19:1. Default light/dark and Forest checked; notification message/caption/action regression passes. |
+| UI-039 | G08 Wizard at 390px | P2 fixed and retested | Alternative labels keep step names visible and accessible instead of contracting them away | Customer/Options/Review visible; previous-step Enter preserves the draft, completion resets it. No future-step header navigation. |
+| UI-040 | G04 New container dialog → Escape | P2 earlier observation; not reproduced in final check | Earlier closing returned focus to BODY | Fresh built-in browser at 390 dark and mounted Chromium both restore exact New opener after Escape and Close, including reopening. No speculative source fix. |
+| UI-041 | G07 Split filter → country detail → Countries | P2 fixed and retested | Preserve the incoming find before row context replaces field values | United → United States → Countries retains four rows and United input at 390; server acceptance covers selection/edit parameters. |
+| UI-042 | G06 QVue Board and Calendar controls | P2 fixed and retested | Keyboard Move menu/title links, named date controls and readable tonal event/count presentation | Board Enter move updates counts/sums and restores focus; Calendar Enter/Escape restores date focus, mobile events have full names, event text passes 4.5:1 in both themes. |
+| UI-043 | G06 Calendar → another app screen | P2 fixed and retested | Bind endpoints to the Calendar instance and guard watcher/completion/unmount | Next → Today → 390→1920 → Gallery Task produces no stale events request or error toast; browser acceptance confirms. |
+| UI-044 | G05 Task Confirm → Short | P2 fixed and retested | Full-page Short/Skip responses clear fragment-only stepOnly | Confirm retains demo line 1; Short opens line 2 with intro and Remaining lines (5), URL only lineIndex=1. |
+| UI-045 | G09 CodeField edit | P2 observed accessibility / follow-up | The code editor has role textbox but no accessible name despite its visible Description (JSON) label | John Doe, default light 1920; content saves/reloads, but the contenteditable DIV has neither aria-label nor aria-labelledby. Shared code editor ownership; fallback state still unverified. |
+| UI-046 | G09 Editor compare → Close → another page | P2 fixed normal navigation; invalid-bookmark recovery pending | Clear comparison/version state explicitly when changing context | Welcome compare 02/03 → Close → Notes now succeeds. A manually stale comparison bookmark still loses local controls to its error; local warning/recovery is a follow-up. |
+| UI-047 | G13 Message → Show images | P2 fixed and retested | Use actual request scheme/host for the local image fixture | HTTP review alias now loads the image (naturalWidth 114); Trust/Hide and keyboard trimmed-content expansion pass. |
+| UI-048 | G09 Editor → Home | P2 observed navigation / follow-up | Home omits empty pagePath, and the default selects Welcome instead of the root page | Notes → Home shows Welcome v03. Investigate existing null-parameter wire convention without adding a route. |
+| UI-049 | G09 Editor → save appended Markdown → compare | P3 observed noisy history / follow-up | Multipart submission changes LF to CRLF, so every old line appears changed | Read-only SQL through Tools confirms current03 has 11 LF/11 CRLF; history02 has 9 LF/0 CRLF. Normalize only the editor save boundary; retain resource byte-exact history. |
+| UI-050 | G05 Task guide text | P3 observed stale explanation / follow-up | Guide says handheld density is unimplemented although Gallery Handheld demonstrates it | Live Task intro at 1920; update the explanation and point to the current handheld example. |
+| UI-051 | S06 Audit Log / Visit Detail, shared list controls | P2 observed missing accessible names / follow-up | Sort arrows, filter operator buttons and active-filter removal buttons have no accessible name | Material default light 1920, DOM/AX inspection; investigate shared generator/widget ownership before correction. |
+| UI-052 | S06 Visit Detail request history | P2 observed misleading metadata / follow-up | Static requests show literal undefined Type; hostname and instance UUID are labeled Server IP Address / Server Host Name; timestamps mix local and raw UTC | Visit 100001, default light 1920; local screenshot and trace payload confirm the values. Screen/data mapping investigation pending. |
+| UI-053 | S06 → M02 Trace Detail selected error span | P2 measured contrast; P3 information hierarchy / follow-up | Duration text overlaps red timing bar at 3.28:1; selected span exposes full duplicated JSON without a concise diagnostic summary | POST validation failure, default light 1920. Separate duration from bars; summarize status/error/request context with raw data still available. |
+| UI-054 | S12 Models → Model default | P3 observed configuration hierarchy / follow-up | More than 30 override controls form one uninterrupted column; Save is far below the viewport while the capabilities column becomes empty | Default light 1920 screenshot. Group identity, context/pricing, execution and advanced limits; distinguish effective configuration from overrides and keep the save action easy to reach. |
 
 ## Running implementation notes
 
@@ -292,7 +302,7 @@ served framework 148/148. The five environmental host failures were rerun succes
 5435 expression sites, zero parse failures and 87 unchanged idiom flags. Generated clients/goldens and whitespace
 checks passed. UI-025 through UI-028 are next-batch findings, not claims that this batch fixed them.
 
-Local commits so far (unpushed): `67d3270f` establishes this plan and baseline; `883fffe8` contains the foundations, administration entry points, GroovyShell removal and guide; `da924d4b` contains retained-work, diagnostic and development flows with their verification notes. The evidence directory is retained locally and ignored by Git at the user’s request; the original foundations commit was rewritten to exclude it.
+Local commits so far (unpushed): `67d3270f` establishes this plan and baseline; `883fffe8` contains the foundations, administration entry points, GroovyShell removal and guide; `da924d4b` contains retained-work, diagnostic and development flows; `1e88b494` contains diagnostic controls, breadcrumb access, cache/thread status and aligned CSV exports. Each includes its verification notes. The evidence directory is retained locally and ignored by Git at the user’s request; the original foundations commit was rewritten to exclude it.
 
 ### Batch 2 — retained work, diagnostic recovery and workspace navigation
 
@@ -505,9 +515,10 @@ Read-only continuation during gate 8 — Gallery:
   route, hiding the surrounding sections (UI-044). Source investigation has identified local fixes for the next batch.
 - Local evidence: `gallery-wizard-error-dark-before-1920.jpg`. Full application/wave coverage remains open.
 
-### Next bounded batch — shared feedback and Gallery recovery (planned)
+### Batch 4 — shared feedback and Gallery recovery
 
-Source investigations are complete; no edits for this batch began while batch 3 was frozen.
+Implementation began after batch 3 committed. Shared styles/widgets, Gallery XML/server acceptance, and QVue/browser
+acceptance have separate owners; one owner integrates all existing GallerySmoke rows. No edits began while batch 3 was frozen.
 
 - Shared field errors: use the semantic negative foreground for helper text; keep automatically changed-field
   backgrounds subtle enough for error labels. Preserve explicit field background overrides. Scope notification
@@ -520,8 +531,108 @@ Source investigations are complete; no edits for this batch began while batch 3 
   demo-only movement accurately. Calendar: name month/date controls, expose mobile event descriptions, use readable
   status presentation and capture/guard its endpoint across SPA navigation. Remove its dialog on unmount.
 - Task: keep fragment-only request parameters out of full-page navigation and inspect the intended demo progression.
+- Editor: clear comparison/version parameters when closing a comparison or changing its page/space; preserve the
+  intended page and current-version return path. UI-046 was reproduced during this batch's additional activity work.
+- Message: derive its local image fixture's absolute URL from the actual request scheme/host instead of guessing
+  HTTPS for non-literal localhost names. Image blocking and trusted-sender behavior remain unchanged.
 - Extend existing fixtures and existing Gallery acceptance rows; no additional sweep or duplicate regression renders.
-  Run the changed cases and full example acceptance once all three owners' Gallery changes are integrated.
+  Changed cases and full example acceptance passed after integration.
+
+Additional live activity coverage on the isolated 8094 runtime, John Doe, default light at 1920:
+
+- G04 Contact (hidden fixture, opened directly): empty Name and invalid Email produce field-specific server errors,
+  retain values, and set `aria-invalid` plus `aria-describedby`. Correcting both produces an explicit simulated-save
+  message and restores demo defaults. The expected failed request is recorded as a console warning; no real contact is written.
+- G04 Search → New example: created `100000`, named `UI review code field`, Type Made Up, JSON description. Create
+  opens EditExample with the saved record. Size `not-a-number` is refused inline with the value retained; correction
+  to 12 saves successfully. This is a real write in the disposable database.
+- G09 CodeField (hidden fixture, opened with exampleId=100000): changed JSON content, saved, reloaded and observed
+  the exact persisted content. The editor lacks an accessible name (UI-045). No unavailable-library fallback was forced.
+- G09 Editor: the shipped EXAMPLE space is database-backed (`dbresource://ExampleWiki/EXAMPLE`), separate from source.
+  Added one review line to Welcome with a version note; current version advanced 02 → 03, History shows John Doe and
+  the note, and comparison shows the added line. Close and page-switch recovery initially failed as UI-046 and now pass.
+  The diff describes all old lines as removed and all new lines as added; a read-only SQL check through Tools confirms
+  CRLF normalization as UI-049. Restore/Publish/git-space creation
+  remain pending native confirmation handling. No filesystem source or external remote was edited.
+
+Integrated retests on a fresh browser hostname, same disposable 8094 database:
+
+- G08 dark 1920: error helper is #ff8a80 on #1d1d1d (7.38:1); changed-field label is 6.19:1. At 390, step titles
+  remain visible and named; Customer Enter from Options returns with the draft retained. Completion resets the draft.
+- G04 dark 390: New starts with Entity Comparison Operator and focuses ID. Escape and Close both return to the exact
+  New button after the dialog hides. This no longer reproduces UI-040; the mounted Chromium fixture agrees.
+- G07 dark 390: United → United States → Countries retains the four matching rows and all find operators.
+- G06 dark 1920: Enter Move → Propose moves Acme, updates Qualify to 2/$109,000 and Propose to 3/$368,500, and restores
+  focus to Acme's Move button. Feedback explicitly states temporary demo movement; its measured contrast is 6.12:1.
+  Light presentation also inspected. Calendar date Enter opens correct 09:00–10:00; Escape returns date focus.
+  Next/Today preserves the intended month, mobile event names remain available, and SPA exit to Task has no stale 404.
+- G05 light 1920: Confirm's actual background message is “Line confirmed; the step reloaded”; Short then keeps the
+  full page at line 2 with five remaining lines and no stepOnly parameter.
+- G09 compare Close removes comparison content and parameters; Notes opens its own single-version page.
+- G13 default light/dark, 1920/390: designed and plain messages readable; trimmed content opens by Enter; the actual
+  local image loads after Show images, Trust shows it, and Hide restores blocking. Unsafe fixture link/form remain
+  non-interactive text. No external message or external image request was used.
+- Forest light/dark: invalid Contact fields remain readable on both panel and changed-field backgrounds: light
+  5.62:1/4.86:1, dark 7.69:1/6.33:1. Corrected input produces tonal success feedback at 7.56:1 in dark mode.
+  Restored Default/light afterward. Actual 200% browser zoom remains
+  unverified; responsive checks are not represented as zoom checks.
+- Fresh light web TUI: Account → Terminal UI → System → F1, at 1920×1080. Runtime groups, headings and shortcut
+  help remain readable. This completes the fresh-launch color comparison; it does not close other TUI activities.
+
+Verification:
+
+- Existing QVT precheck 32/32, feature 9.9s/34s; `/tmp/ui-feedback-dialog-after3.log`. Existing layout fixture 6/6,
+  2.05s total; `/tmp/ui-wizard-layout-after2.log`. These checked real field/notification contrast and actual dialog focus.
+- Existing precompiled goldens regenerated with `UPDATE_GOLDEN=1 CARGO_BUILD_JOBS=4 cargo test -p moqui-core --all-features --lib are_precompiled -j 4`:
+  3/3 passed; only the wizard client template changed in tracked output. `/tmp/ui-gallery-batch4-precompiled.log`.
+- Focused Gallery server acceptance 59/59 in 4.74s; `/tmp/ui-gallery-navigation-acceptance-final.log`. Screen lint:
+  362 files, 5463 sites, zero parse failures, 87 unchanged flags; `/tmp/ui-gallery-navigation-screen-lint.txt`.
+- Focused GallerySmoke 23/23 in 29.40s after correcting four fixture assertions/selectors (not app source);
+  `/tmp/ui-gallery-batch4-browser-retest.log`. Expected validation 500 is consumed only after its specific field error is asserted.
+- Complete isolated `./moq accept --nobuild example`: server 59/59 in 5.40s, browser 23/23 in 30.66s; exit 0,
+  `/tmp/ui-gallery-batch4-full-acceptance.log`. The existing 23 browser rows are unchanged in number.
+- Required framework gate 9: `env -u MOQUI_RUNTIME MOQ_TEST_WORKERS=2 CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=1 ./moq test-framework --nobuild`;
+  `/tmp/moqui-ui-framework-gate9.log`, exit 1. Server 350/350 in 43.97s (all component targets met), demo 10/10,
+  offline webroot 388/388 assertions, offline Dev AIDE 48/48, served browser 148/148, shell 342/342. Core 1458 unit
+  plus browser/native tests and host 166 integration tests passed; Cargo again stops on the three previously recorded
+  SIP loopback-address failures. Later Cargo targets are not represented as passed. No addon suites or accept-all were invoked.
+- The full offline webroot run failed its timing gate: QVT spec 15.52s against 15s; aggregate feature time 49.3s/34s
+  is a warning below the 1.5× failure threshold. Removed the new, redundant UI-040 dialog-focus regression fixture:
+  there is no corresponding source fix, and the existing Gallery acceptance row plus manual keyboard review already
+  cover this behavior. Product source did not change after gate 9. Focused final
+  `env -u MOQUI_RUNTIME -u MOQUI_CONF ./moq test-client webroot --offline --spec WebrootVue.qvt --nobuild`
+  passes 31/31 in 8.80s, feature time 8.1s; `/tmp/ui-batch4-qvt-budget-retest.log`. No budget was raised. The aggregate
+  warning remains recorded; the complete gate was not repeated for deletion of a duplicate test.
+
+Local inspected evidence: `gallery-wizard-error-dark-after-1920.png`, `gallery-board-dark-after-1920.png`,
+`gallery-calendar-light-after-1920.png`, `terminal-help-light-after-1920.png`; compare the prior wizard baseline.
+Images remain ignored and uncommitted.
+
+Additional administration baseline while the batch-4 gate runs (John Doe, 8094, Default/light, 1920×1080):
+
+- S06 Audit Log: initial screen requires a filter. Entity `Example` gives an intelligible empty result; reopening
+  Find Options with `moqui.example.Example` yields 11 seeded status changes and preserves the filter. Their user/visit
+  values are absent seed context, so they do not prove a user-to-visit audit drill-down. Unnamed shared controls are UI-051.
+- S06 Visits: list shows the two local review sessions and retained-request counts. Visit 100001 opens its metadata
+  and request history. Error=Y narrows 230 retained requests to three, including the deliberately invalid Gallery
+  Customer and Contact submissions. No client-IP lookup was invoked. Metadata presentation defects are UI-052.
+- S06 → M02: the Customer validation request's trace link opens Monitor Trace Detail with its exact trace and time
+  window. Enter on the POST span exposes HTTP 500 and `Enter the customer name`, route, duration and visit context.
+  Timing-label foreground #000000 on #c10015 is 3.28:1 (UI-053); a panel-colored text shadow does not provide a reliable
+  readable background. Local evidence: `system-visit-detail-light-before-1920.png`,
+  `monitor-trace-detail-light-before-1920.png`. This does not close S06 or Monitor permission/isolation coverage.
+- M02 continuation: Logs for this trace returns the two correlated WARN/ERROR entries in the preserved range;
+  Surrounding entries opens the Monitor-owned context page with an anchor indicator and both entries. View entry
+  opens the selected JSON document; Escape closes it, and browser Back restores the original query/range. No new
+  console errors appeared; the two recorded 500 warnings belong to the intentionally invalid Gallery submissions.
+- S06 user context: the log's user link opens the correct nested User Account Detail route. Account Audit Log opens
+  its seeded username change; Escape closes it. Visits returns to the user-filtered list.
+- S11/S12 initial unavailable-provider inspection: LLM Dashboard shows zero runs/calls/usage and empty failure tables.
+  Models lists the conf-backed default endpoint/model and explains that the provider model name is missing, including
+  affected feature bindings. Model detail retains that reason and distinguishes conf values from database overrides.
+  Test and Probe were not invoked; no external request or model configuration change was made. The ungrouped long
+  override form is UI-054; evidence `system-model-detail-light-before-1920.png`. Successful local-provider activity,
+  validation/retry, limited actor and other LLM administration groups remain pending.
 
 ### Verification environment corrections
 
@@ -1642,7 +1753,7 @@ Paths are relative to `runtime/dev-component/example/screen/`. The Gallery root 
 
 ## Remaining coverage and next bounded review choices
 
-1. Finish the next shared/Gallery batch: semantic validation/notification contrast, named mobile wizard steps, dialog focus restoration, retained split filters, Board/Calendar keyboard controls and Calendar/Task navigation lifecycle (UI-038–044). UI-029/030 are corrected and retested in batch 3; retain UI-037 query-label polish as a reporting follow-up.
+1. UI-038/039/041–044 are corrected and retested in batch 4; UI-040 did not reproduce in fresh manual or mounted checks. Next address readable query labels (UI-037), code-editor names (UI-045), Editor Home/invalid-comparison/line-ending recovery (UI-046/048/049), and Material confirmation cancellation and focus. Then refine shared list-control names/sorting (UI-051), Visit Detail metadata (UI-052) and trace readability (UI-053).
 2. Complete **G02/G04/G09/G10** keyboard/responsive coverage, including hidden Contact/EditExample/CodeField. G05 scanning, G08 wizard and portions of G04/G06/G07/G10 have now been exercised; retest the identified fixes and complete the remaining recovery/input modes. Carry shared fixes back to actual System/Tools/Monitor pages.
 3. Give **D06 alerts**, **D07 reports/playlists/schedules**, **M08 replay**, **M09 release detail**, **M10 incident/recovery** and **M11 diagnostic settings** separate bounded fixtures and activity reviews. Their administrative lists currently have little or no functional acceptance coverage.
 4. Verify one **Monitor-only** actor can follow Monitor-local trace/context/compare/export paths, and one denied dataset yields useful refusal. The admin19-feature run is not permission-isolation proof.

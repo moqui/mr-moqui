@@ -47,7 +47,7 @@ along with this software (see the LICENSE.md file). If not, see
                     tooltip="Create a comparison operator in a dialog">
                 <form-single name="NewEnum" transition="createEnum" background-submit="true" background-hide-id="NewEnumDialog" focus-field="enumId">
                     <field name="enumTypeId"><default-field title="Type">
-                        <drop-down><list-options list="enumTypeList" key="${enumTypeId}" text="${description}"/></drop-down></default-field></field>
+                        <drop-down no-current-selected-key="ComparisonOperator"><list-options list="enumTypeList" key="${enumTypeId}" text="${description}"/></drop-down></default-field></field>
                     <field name="enumId"><default-field title="ID"><text-line size="30"/></default-field></field>
                     <field name="description"><default-field title="Description"><text-line size="40"/></default-field></field>
                     <field name="sequenceNum"><default-field title="Sequence"><text-line size="6"/></default-field></field>

@@ -16,7 +16,7 @@ along with this software (see the LICENSE.md file). If not, see
     layout classes, q-card and q-btn in their roles, and the shell's root for navigation (this.$root.setUrl). -->
 <template><div>
     <m-container-box type="info" title="Archetype 3.6 Board">
-        <p class="q-mb-xs">A list shown as columns by stage with cards: each column header has the stage, its count and its sum; a card shows the title, amount, owner initials and the next activity; a card opens the Detail archetype. Drag a card to another column: the stage change posts to the moveCard transition and its message shows as a notification. The search filters the cards on the client. Columns scroll horizontally at narrow widths.</p>
+        <p class="q-mb-xs">A list shown as columns by stage with cards: each column header has the stage, its count and its sum; a card shows the title, amount, owner initials and the next activity; its title opens the Detail archetype. Drag a card to another column or use its Move menu. Moves are temporary demonstrations: reloading restores the original cards and nothing is saved. The search filters the cards on the client. Columns scroll horizontally at narrow widths.</p>
         <p class="q-mb-none">The .qvue path of style-guide 4.8, for a board an XML form-list cannot be (a component file served as the screen, data from the boardRows transition); the list / board / calendar toggle is a q-btn-toggle that links to the List and Calendar screens. A form-list with <code>views</code> and <code>view-board</code> (section 8.2) is the Views screen.</p>
     </m-container-box>
 
@@ -35,28 +35,37 @@ along with this software (see the LICENSE.md file). If not, see
     </div>
 
     <div class="row no-wrap scroll q-px-sm q-pb-sm">
-        <q-card v-for="stage in stages" :key="stage.id" flat bordered class="col q-mr-sm column no-wrap" style="min-width:230px;max-width:320px;"
+        <q-card v-for="stage in stages" :key="stage.id" flat bordered class="col q-mr-sm column no-wrap" style="min-width:230px;max-width:320px;" :data-board-stage="stage.id"
                 :class="dropStage === stage.id ? ($q.dark.isActive ? 'bg-grey-9' : 'bg-grey-2') : ''"
                 @dragover.prevent="dropStage = stage.id" @dragleave="leaveStage(stage.id)" @drop.prevent="onDrop(stage.id)">
             <q-card-section class="q-py-xs q-px-sm row items-center no-wrap">
                 <div class="text-subtitle2 text-weight-medium ellipsis">{{stage.name}}</div>
-                <q-badge class="q-ml-xs" :color="stage.color" :text-color="stage.color === 'warning' ? 'dark' : 'white'">{{cardsIn(stage.id).length}}</q-badge>
+                <q-badge class="q-ml-xs m-tonal" :class="stage.color === 'grey-6' ? mutedClass : 'text-' + stage.color">{{cardsIn(stage.id).length}}</q-badge>
                 <q-space></q-space>
                 <div class="text-caption" :class="mutedClass">{{formatAmount(sumIn(stage.id))}}</div>
             </q-card-section>
             <q-separator></q-separator>
             <q-card-section class="q-pa-xs col">
-                <q-card v-for="row in cardsIn(stage.id)" :key="row.id" flat bordered class="q-mb-xs cursor-pointer" :class="dragId === row.id ? 'shadow-4' : ''"
+                <q-card v-for="row in cardsIn(stage.id)" :key="row.id" flat bordered class="q-mb-xs cursor-pointer" :class="dragId === row.id ? 'shadow-4' : ''" :data-board-card="row.id"
                         draggable="true" @dragstart="onDragStart(row, $event)" @dragend="dragId = null" @click="openCard(row)">
                     <q-card-section class="q-pa-sm">
                         <div class="row items-start no-wrap">
-                            <div class="col text-body2 text-weight-medium">{{row.title}}</div>
+                            <a class="col text-body2 text-weight-medium" :href="siblingUrl('Detail', 'opportunityId=' + encodeURIComponent(row.id))" @click.stop.prevent="openCard(row)">{{row.title}}</a>
                             <q-avatar size="22px" color="primary" text-color="white" class="text-caption q-ml-xs">{{row.owner}}<q-tooltip>Owner {{row.owner}}</q-tooltip></q-avatar>
                         </div>
                         <div class="text-body2 q-mt-xs">{{formatAmount(row.amount)}}</div>
                         <div class="text-caption row items-center no-wrap" :class="mutedClass">
                             <q-icon name="schedule" size="xs" class="q-mr-xs"></q-icon><span class="ellipsis">{{row.next}}</span>
                         </div>
+                        <q-btn-dropdown :id="'BoardMove-' + row.id" flat dense no-caps label="Move" :aria-label="'Move ' + row.title"
+                                :loading="!!moving[row.id]" class="q-mt-xs" @click.stop @mousedown.stop>
+                            <q-list>
+                                <q-item v-for="target in stages" :key="target.id" clickable v-close-popup :disable="target.id === row.stage"
+                                        @click.stop="moveCard(row, target.id, true)">
+                                    <q-item-section>Move to {{target.name}}</q-item-section>
+                                </q-item>
+                            </q-list>
+                        </q-btn-dropdown>
                     </q-card-section>
                 </q-card>
                 <div v-if="!cardsIn(stage.id).length" class="text-caption text-center q-pa-sm" :class="mutedClass">{{loading ? 'Loading' : 'No cards'}}</div>
@@ -69,7 +78,7 @@ along with this software (see the LICENSE.md file). If not, see
 module.exports = {
     data() {
         return {
-            view: 'board', search: '', stages: [], rows: [], dragId: null, dropStage: null, loading: false,
+            view: 'board', search: '', stages: [], rows: [], dragId: null, dropStage: null, loading: false, moving: {},
             viewOptions: [{ label: 'List', value: 'list', icon: 'view_list' }, { label: 'Board', value: 'board', icon: 'view_kanban' },
                 { label: 'Calendar', value: 'calendar', icon: 'calendar_month' }]
         };
@@ -117,13 +126,27 @@ module.exports = {
             this.dropStage = null;
             this.dragId = null;
             const row = this.rows.find((item) => item.id === id);
-            if (!row || row.stage === stageId) return;
+            this.moveCard(row, stageId, false);
+        },
+        moveCard(row, stageId, restoreFocus) {
+            if (!row || row.stage === stageId || this.moving[row.id]) return;
             const from = row.stage;
+            const id = row.id;
+            this.moving[id] = true;
             row.stage = stageId;
             moqui.request(this.screenPath + '/moveCard', { method: 'POST', params: { id, stage: stageId } }).then((result) => {
-                if (result.json) moqui.notifyMessages(result.json.messageInfos, result.json.errors);
+                if (result.json) {
+                    if (result.json.errors && result.json.errors.length) row.stage = from;
+                    moqui.notifyMessages(result.json.messageInfos, result.json.errors);
+                }
                 else if (result.text) moqui.notifyMessages(result.text);
-            }, (err) => { row.stage = from; moqui.handleAjaxError(err); });
+            }, (err) => { row.stage = from; moqui.handleAjaxError(err); }).finally(() => {
+                delete this.moving[id];
+                if (restoreFocus) this.$nextTick(() => {
+                    const button = this.$el && this.$el.querySelector && this.$el.querySelector('#BoardMove-' + id);
+                    if (button && button.isConnected) button.focus();
+                });
+            });
         }
     },
     mounted() { this.load(); }

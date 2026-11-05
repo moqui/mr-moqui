@@ -24,9 +24,18 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="editCountry"><actions>
         <message>Edit ${geoId}: a gallery demo, nothing is written</message>
-    </actions><default-response url="."><parameter name="geoId"/></default-response></transition>
+    </actions><default-response url=".">
+        <parameter name="geoId"/>
+        <parameter name="geoName"/>
+        <parameter name="geoName_op"/>
+        <parameter name="geoName_not"/>
+        <parameter name="geoName_ic"/>
+        <parameter name="orderByField"/>
+    </default-response></transition>
 
     <actions>
+        <!-- Keep the incoming find before list rows bind geoName to each country's name. -->
+        <set field="countryFindParameters" from="{geoName: geoName, geoName_op: geoName_op, geoName_not: geoName_not, geoName_ic: geoName_ic, orderByField: orderByField}"/>
         <entity-find entity-name="moqui.basic.Geo" list="countryList" limit="30">
             <search-form-inputs default-order-by="geoName" paginate="false" skip-fields="geoId"/>
             <econdition field-name="geoTypeEnumId" value="GEOT_COUNTRY"/>
@@ -54,7 +63,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <form-list name="CountryList" list="countryList" skip-form="true" paginate="false">
                     <field name="geoName">
                         <header-field title="Country" show-order-by="true"><text-find size="12" default-operator="begins"/></header-field>
-                        <default-field><link url="." text="${geoName}" style="${geoId == shownGeoId ? 'text-weight-bold' : ''}">
+                        <default-field><link url="." text="${geoName}" style="${geoId == shownGeoId ? 'text-weight-bold' : ''}" parameter-map="countryFindParameters">
                             <parameter name="geoId"/></link></default-field>
                     </field>
                     <field name="geoCodeAlpha2"><default-field title="Code"><display style="text-mono"/></default-field></field>
@@ -65,7 +74,9 @@ along with this software (see the LICENSE.md file). If not, see
             <split-main>
                 <section name="CountrySection" condition="country"><widgets>
                     <container-box><box-header title="${country.geoName}"/><box-toolbar>
-                        <link url="editCountry" text="Edit" icon="edit" parameter-map="{geoId: country.geoId}"/>
+                        <link url="editCountry" text="Edit" icon="edit" parameter-map="countryFindParameters">
+                            <parameter name="geoId" from="country.geoId"/>
+                        </link>
                     </box-toolbar><box-body>
                         <form-single name="CountryDetail" map="country">
                             <field name="geoId"><default-field title="Geo ID"><display style="text-mono"/></default-field></field>

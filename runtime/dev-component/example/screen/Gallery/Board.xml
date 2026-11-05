@@ -43,7 +43,7 @@ along with this software (see the LICENSE.md file). If not, see
     </transition>
     <!-- a card dragged to another column posts here; the message comes back as a notification -->
     <transition name="moveCard" method="post">
-        <actions><message>moved ${id} to ${stage}</message></actions>
+        <actions><message>Demo move: ${id} to ${stage}. Reloading restores the original cards; nothing is saved.</message></actions>
         <default-response url="."/>
     </transition>
 

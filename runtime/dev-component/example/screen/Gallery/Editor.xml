@@ -32,7 +32,8 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.impl.WikiServices.update#WikiPage"
                     in-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath, pageName:pageName, pageText:pageText, versionNote:versionNote}"/>
         </actions>
-        <default-response url="."><parameter name="wikiSpaceId"/><parameter name="pagePath"/></default-response>
+        <default-response url="."><parameter name="wikiSpaceId"/><parameter name="pagePath"/>
+            <parameter name="versionName" from="null"/><parameter name="versionNameLhs" from="null"/><parameter name="versionNameRhs" from="null"/></default-response>
     </transition>
     <!-- a restore writes the old text as a new version, so nothing in the history is lost -->
     <transition name="restoreVersion">
@@ -44,11 +45,13 @@ along with this software (see the LICENSE.md file). If not, see
                     in-map="{wikiPageId:restoreInfo.wikiPageId, versionName:versionName}"/>
             <message>Restored version ${versionName.substring(0, 10)} as the newest version</message>
         </actions>
-        <default-response url="."><parameter name="wikiSpaceId"/><parameter name="pagePath"/></default-response>
+        <default-response url="."><parameter name="wikiSpaceId"/><parameter name="pagePath"/>
+            <parameter name="versionName" from="null"/><parameter name="versionNameLhs" from="null"/><parameter name="versionNameRhs" from="null"/></default-response>
     </transition>
     <transition name="publishVersion">
         <service-call name="org.moqui.impl.WikiServices.set#PublishedVersion"/>
-        <default-response url="."><parameter name="wikiSpaceId"/><parameter name="pagePath"/><parameter name="versionName"/></default-response>
+        <default-response url="."><parameter name="wikiSpaceId"/><parameter name="pagePath"/><parameter name="versionName"/>
+            <parameter name="versionNameLhs" from="null"/><parameter name="versionNameRhs" from="null"/></default-response>
     </transition>
     <transition name="createGitSpace">
         <actions>
@@ -57,7 +60,8 @@ along with this software (see the LICENSE.md file). If not, see
             <service-call name="org.moqui.impl.WikiServices.update#WikiPage" in-map="{wikiSpaceId:'EXGIT', pageName:'Welcome',
                     pageText:'# Welcome\n\nThis space keeps its pages in the git repository example-wiki, in the database. Each save is a commit.\n'}"/>
         </actions>
-        <default-response url="."><parameter name="wikiSpaceId" value="EXGIT"/><parameter name="pagePath" value="Welcome"/></default-response>
+        <default-response url="."><parameter name="wikiSpaceId" value="EXGIT"/><parameter name="pagePath" value="Welcome"/>
+            <parameter name="versionName" from="null"/><parameter name="versionNameLhs" from="null"/><parameter name="versionNameRhs" from="null"/></default-response>
     </transition>
 
     <actions>
@@ -68,6 +72,8 @@ along with this software (see the LICENSE.md file). If not, see
             <econdition field-name="wikiSpaceId"/><order-by field-name="sequenceNum,pagePath"/></entity-find>
         <if condition="pagePath == null &amp;&amp; pageList.length">
             <set field="pagePath" from="(pageList.find((page) => page.pagePath) || pageList[0]).pagePath || ''"/></if>
+        <!-- Empty strings explicitly replace inherited URL parameters; null would leave them unchanged. -->
+        <set field="currentPageParameters" from="{wikiSpaceId:wikiSpaceId, pagePath:pagePath || '', versionName:'', versionNameLhs:'', versionNameRhs:''}"/>
         <service-call name="org.moqui.impl.WikiServices.get#WikiPageInfo" out-map="pageInfo"
                 in-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath || '', versionName:versionName}"/>
         <set field="pageReference" from="pageInfo.pageReference"/>
@@ -128,12 +134,12 @@ along with this software (see the LICENSE.md file). If not, see
                 <container-box><box-header title="${pageInfo.wikiSpace?.description || wikiSpaceId}"/><box-body>
                     <section-iterate name="PageLinks" list="pageList" entry="page"><widgets><container>
                         <link url="." text="${page.pagePath || 'Home'}" link-type="anchor" style="${(page.pagePath || '') == (pagePath || '') ? 'text-weight-bold' : ''}"
-                                parameter-map="{wikiSpaceId:wikiSpaceId, pagePath:page.pagePath || ''}"/>
+                                parameter-map="Object.assign({}, currentPageParameters, {pagePath:page.pagePath || ''})"/>
                     </container></widgets></section-iterate>
                 </box-body></container-box>
                 <container-box><box-header title="Spaces"/><box-body>
-                    <container><link url="." text="dbresource: EXAMPLE" link-type="anchor" parameter-map="{wikiSpaceId:'EXAMPLE'}"/></container>
-                    <container><link url="." text="git: EXGIT" link-type="anchor" parameter-map="{wikiSpaceId:'EXGIT'}" condition="gitSpace"/></container>
+                    <container><link url="." text="dbresource: EXAMPLE" link-type="anchor" parameter-map="Object.assign({}, currentPageParameters, {wikiSpaceId:'EXAMPLE', pagePath:''})"/></container>
+                    <container><link url="." text="git: EXGIT" link-type="anchor" parameter-map="Object.assign({}, currentPageParameters, {wikiSpaceId:'EXGIT', pagePath:''})" condition="gitSpace"/></container>
                     <link url="createGitSpace" text="Create the git space" condition="!gitSpace"
                             confirmation="Create the EXGIT space in the git repository example-wiki?"/>
                 </box-body></container-box>
@@ -161,7 +167,7 @@ along with this software (see the LICENSE.md file). If not, see
                             <form-list name="VersionList" list="versionList" skip-form="true">
                                 <field name="shortName"><default-field title="Version">
                                     <link url="." text="${shortName}" link-type="anchor"
-                                            parameter-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath, versionName:versionName}"/>
+                                            parameter-map="Object.assign({}, currentPageParameters, {versionName:versionName})"/>
                                 </default-field></field>
                                 <field name="versionDate"><default-field title="Date"><display/></default-field></field>
                                 <field name="userName"><default-field title="By"><display/></default-field></field>
@@ -172,16 +178,16 @@ along with this software (see the LICENSE.md file). If not, see
                                 </default-field></field>
                                 <field name="compare"><default-field title="Compare"><container style="row no-wrap q-gutter-x-md">
                                     <link url="." text="prev" link-type="anchor" condition="previousVersionName"
-                                            parameter-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath, versionNameLhs:previousVersionName, versionNameRhs:versionName}"/>
+                                            parameter-map="Object.assign({}, currentPageParameters, {versionNameLhs:previousVersionName, versionNameRhs:versionName})"/>
                                     <link url="." text="current" link-type="anchor" condition="!isCurrent"
-                                            parameter-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath, versionNameLhs:versionName}"/>
+                                            parameter-map="Object.assign({}, currentPageParameters, {versionNameLhs:versionName})"/>
                                 </container></default-field></field>
                                 <field name="actions"><default-field title="">
                                     <link url="restoreVersion" text="Restore" condition="!isCurrent" link-type="hidden-form-link"
                                             confirmation="Restore version ${shortName} as the newest version?"
-                                            parameter-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath, versionName:versionName}"/>
+                                            parameter-map="Object.assign({}, currentPageParameters, {versionName:versionName})"/>
                                     <link url="publishVersion" text="Publish" condition="!isPublished &amp;&amp; pageInfo.wikiPageId" link-type="hidden-form-link"
-                                            parameter-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath, wikiPageId:pageInfo.wikiPageId, publishedVersionName:versionName}"/>
+                                            parameter-map="Object.assign({}, currentPageParameters, {versionName:versionName, wikiPageId:pageInfo.wikiPageId, publishedVersionName:versionName})"/>
                                 </default-field></field>
                             </form-list>
                         </container-dialog>
@@ -191,18 +197,18 @@ along with this software (see the LICENSE.md file). If not, see
                 <section name="ViewingVersion" condition="viewVersion"><widgets>
                     <container-box type="warning"><box-header title="Version ${viewShort}, not the current text"/><box-body>
                         <container style="row items-center q-gutter-x-md">
-                        <link url="." text="Back to current" link-type="anchor" parameter-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath}"/>
+                        <link url="." text="Back to current" link-type="anchor" parameter-map="currentPageParameters"/>
                         <link url="." text="Compare with current" link-type="anchor"
-                                parameter-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath, versionNameLhs:viewVersion}"/>
+                                parameter-map="Object.assign({}, currentPageParameters, {versionName:viewVersion, versionNameLhs:viewVersion})"/>
                         <link url="restoreVersion" text="Restore this version" confirmation="Restore version ${viewShort} as the newest version?"
-                                parameter-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath, versionName:viewVersion}"/>
+                                parameter-map="Object.assign({}, currentPageParameters, {versionName:viewVersion})"/>
                         </container>
                     </box-body></container-box>
                 </widgets></section>
 
                 <section name="Compare" condition="diffHtml"><widgets>
                     <container-box><box-header title="${diffTitle}"/><box-toolbar>
-                        <link url="." text="Close" link-type="anchor" parameter-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath}"/>
+                        <link url="." text="Close" link-type="anchor" parameter-map="currentPageParameters"/>
                     </box-toolbar><box-body>
                         <render-mode><text type="html,qvt"><![CDATA[<div class="scroll">${diffHtml}</div>]]></text>
                             <!-- the same compare as a unified diff -->

@@ -2,6 +2,71 @@
 // WebrootVue.qvt.js starts the Vue app only when the page has #moqui-config plus Vue and Quasar. This page has none of those.
 spec({ server: false, timeout: 60 })
 
+feature("field validation and notification feedback retain readable text in both themes", {
+    expect() {
+        const page = browser.newPage({ viewport: { width: 1920, height: 1080 } })
+        page.allowProblems(/notification: warning negative feedback Supporting detail OPEN/)
+        page.setContent(`<!doctype html><html><head><link rel="stylesheet" href="/libs/quasar/quasar.prod.css">
+            <link rel="stylesheet" href="/css/WebrootVue.qvt.css"></head><body><div id="app">
+            <q-card><m-form ref="form" action="/unused" :fields-initial="{name:'Original', explicit:'Original'}" v-slot="form">
+                <m-text-line id="feedback-field" name="name" label="Customer name" v-model="form.fields.name"></m-text-line>
+                <m-text-line id="explicit-field" name="explicit" label="Explicit fill" bg-color="blue-10" v-model="form.fields.explicit"></m-text-line>
+            </m-form></q-card></div>
+            <script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
+            <script src="/js/MoquiLib.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
+            const app = Vue.createApp({}); app.use(Quasar, {config:{brand:{info:'#1e7b8e'}}});
+            ['m-form','m-text-line'].forEach(name=>app.component(name,moqui.qvt.components[name]));
+            window.vm=app.mount('#app');
+            window.measureContrast=(element,background)=>{
+                const ctx=document.createElement('canvas').getContext('2d'), style=getComputedStyle(element);
+                const luminance=()=>Array.from(ctx.getImageData(0,0,1,1).data).slice(0,3).map(v=>{
+                    const c=v/255;return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);
+                }).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
+                ctx.fillStyle=background;ctx.fillRect(0,0,1,1);const bg=luminance();
+                ctx.globalAlpha=Number(style.opacity);ctx.fillStyle=style.color;ctx.fillRect(0,0,1,1);const fg=luminance();
+                return (Math.max(bg,fg)+.05)/(Math.min(bg,fg)+.05);
+            };
+            window.actions=0;
+            ['positive','negative','warning','info'].forEach(type=>Quasar.Notify.create({type,message:type+' feedback',caption:'Supporting detail',
+                attrs:{'data-feedback':type},actions:[{label:'Open',handler:()=>actions++}],timeout:0,group:false}));
+            Quasar.Notify.create({type:'positive',color:'purple',textColor:'white',message:'Custom feedback',attrs:{'data-feedback':'custom'},timeout:0,group:false});
+            </script></body></html>`)
+        page.waitFor(() => window.vm && document.querySelectorAll("[data-feedback]").length === 5)
+        page.evaluate(async () => {
+            vm.$refs.form.fields.name = "Changed"; vm.$refs.form.fields.explicit = "Changed"; await Vue.nextTick()
+            vm.$refs.form.setFieldErrors([{ field: "name", message: "Enter the customer name" }]); await Vue.nextTick()
+            return true
+        })
+        for (const dark of [false, true, false]) {
+            const results = page.evaluate(async mode => {
+                Quasar.Dark.set(mode); await Vue.nextTick()
+                const input = document.getElementById('feedback-field'), field = input.closest('.q-field'), control = field.querySelector('.q-field__control')
+                const panel = getComputedStyle(document.querySelector('.q-card')).backgroundColor
+                const results = []
+                for (const focus of [false,true]) {
+                    if (focus) input.focus(); else input.blur()
+                    await Vue.nextTick()
+                    results.push({role:'error label '+focus,ratio:measureContrast(field.querySelector('.q-field__label'),getComputedStyle(control).backgroundColor)})
+                    results.push({role:'error helper '+focus,ratio:measureContrast(field.querySelector('.q-field__bottom'),panel)})
+                }
+                for (const notification of document.querySelectorAll('[data-feedback]:not([data-feedback="custom"])')) {
+                    const background = getComputedStyle(notification).backgroundColor
+                    for (const selector of ['.q-notification__message','.q-notification__caption','button']) {
+                        results.push({role:notification.dataset.feedback+' '+selector,ratio:measureContrast(notification.querySelector(selector),background)})
+                    }
+                }
+                return {results,explicit:getComputedStyle(document.getElementById('explicit-field').closest('.q-field').querySelector('.q-field__control')).backgroundColor,
+                    custom:getComputedStyle(document.querySelector('[data-feedback="custom"]')).backgroundColor}
+            }, dark)
+            for (const result of results.results) assert.ok(result.ratio >= 4.5, JSON.stringify({dark,...result}))
+            assert.equal(results.explicit, "rgb(13, 71, 161)", "the authored field background survives")
+            assert.equal(results.custom, "rgb(156, 39, 176)", "the authored notification color survives")
+        }
+        page.locator('[data-feedback="positive"] button').click()
+        assert.equal(page.evaluate(() => actions), 1)
+    },
+})
+
 browser.runInPage({
     scripts: ["/js/MoquiLib.js", "/js/MoquiL10n.js", "/libs/vue/compiler-dom.cjs.js", "/js/WebrootVue.qvt.js"],
     test: "/files/runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.page.js",

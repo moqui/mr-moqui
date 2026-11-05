@@ -26,14 +26,21 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="confirm"><actions>
         <message type="success">Confirmed ${scanInput || ''} of ${productId || ''} at ${locationId || ''} (gallery demo: nothing is written)</message>
     </actions><default-response type="none"/></transition>
+    <!-- Short and Skip return to the whole screen, without the dynamic container's fragment flag. -->
     <transition name="short"><actions>
         <set field="nextIndex" from="(Number(lineIndex) || 0) + 1"/>
         <message type="warning">Short: line ${lineSeq || ''} marked short (gallery demo: nothing is written)</message>
-    </actions><default-response url="."><parameter name="lineIndex" from="nextIndex"/></default-response></transition>
+    </actions><default-response url=".">
+        <parameter name="lineIndex" from="nextIndex"/>
+        <parameter name="stepOnly" from="null"/>
+    </default-response></transition>
     <transition name="skip"><actions>
         <set field="nextIndex" from="(Number(lineIndex) || 0) + 1"/>
         <message>Skipped line ${lineSeq || ''} (gallery demo: nothing is written)</message>
-    </actions><default-response url="."><parameter name="lineIndex" from="nextIndex"/></default-response></transition>
+    </actions><default-response url=".">
+        <parameter name="lineIndex" from="nextIndex"/>
+        <parameter name="stepOnly" from="null"/>
+    </default-response></transition>
 
     <actions>
         <set field="lines" from="[

@@ -165,3 +165,13 @@ Further patterns established during the review:
   focus return and text/focus contrast in both themes.
 - An export's headers and records use the same data columns. Omit action-only columns and preserve empty cells
   when a conditional field has no value; inspect the downloaded file, not just the download event.
+- Validate message text, captions and actions together on a notification's actual background. Semantic field-error
+  text also needs to contrast with changed-field fills; keep explicit author color choices separate from defaults.
+- Compact wizard headers retain visible step names and accessible previous-step controls. Test cancellation and
+  focus return in a real mounted dialog and the actual browser before adding custom focus restoration.
+- Preserve list filters before row context replaces their field values. Clear fragment-only and historical-version
+  parameters explicitly when returning to a whole page or switching records; omitted values can inherit stale state.
+- A screen's asynchronous work belongs to that screen instance. Capture its endpoint, ignore stale completions and
+  remove registered dialogs when it unmounts so navigation cannot send requests against the destination screen.
+- Drag interactions have a keyboard path using the same update operation, with focus restored after movement.
+  Demonstrations clearly distinguish temporary visual changes from stored data.

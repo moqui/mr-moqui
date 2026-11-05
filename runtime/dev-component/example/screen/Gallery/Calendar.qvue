@@ -17,15 +17,15 @@ along with this software (see the LICENSE.md file). If not, see
     columns with one-letter day names and event dots in place of titles. -->
 <template><div>
     <m-container-box type="info" title="Archetype 3.7 Calendar">
-        <p class="q-mb-xs">Events on a month grid: seven columns and five or six rows built in the template from the <code>month</code> URL parameter (Previous, Today and Next change the URL through the root's setUrl, so a month is bookmarkable); the kind of an event picks a semantic color; a click on a day opens the quick-create dialog with the time prefilled. On a phone the grid keeps seven columns with one-letter day names and event dots.</p>
+        <p class="q-mb-xs">Events on a month grid: seven columns and five or six rows built in the template from the <code>month</code> URL parameter (Previous, Today and Next change the URL through the root's setUrl, so a month is bookmarkable); the kind of an event picks a semantic color. Select a date to open the quick-create dialog with the time prefilled. Creating an event is a demonstration: nothing is saved. On a phone the grid keeps seven columns with one-letter day names and event dots.</p>
         <p class="q-mb-none">The .qvue path of style-guide 4.8, for a calendar an XML form-list cannot be (a component file served as the screen, data from the events transition); only the month view is built here, the day and week buttons show a banner. A form-list with <code>view-calendar</code> (section 8.2: month, week, day and list, drag to move and resize, quick create) is the Views screen.</p>
     </m-container-box>
 
     <div class="row items-center q-col-gutter-sm q-mb-sm q-px-sm">
         <div class="col-auto row items-center no-wrap">
-            <q-btn flat dense round icon="chevron_left" @click="go(-1)"><q-tooltip>Previous month</q-tooltip></q-btn>
+            <q-btn flat dense round icon="chevron_left" aria-label="Previous month" @click="go(-1)"><q-tooltip>Previous month</q-tooltip></q-btn>
             <q-btn flat dense no-caps label="Today" @click="goToday"></q-btn>
-            <q-btn flat dense round icon="chevron_right" @click="go(1)"><q-tooltip>Next month</q-tooltip></q-btn>
+            <q-btn flat dense round icon="chevron_right" aria-label="Next month" @click="go(1)"><q-tooltip>Next month</q-tooltip></q-btn>
         </div>
         <div class="col-auto text-h6">{{monthTitle}}</div>
         <div class="col-auto text-caption" :class="mutedClass">{{events.length}} events</div>
@@ -50,19 +50,21 @@ along with this software (see the LICENSE.md file). If not, see
             <div class="row no-wrap">
                 <template v-for="(day, dayIndex) in week" :key="day.date">
                     <q-separator v-if="dayIndex > 0" vertical></q-separator>
-                    <div class="col q-pa-xs cursor-pointer" :class="day.inMonth ? '' : ($q.dark.isActive ? 'bg-grey-10' : 'bg-grey-1')"
-                            :style="{minHeight: $q.screen.lt.sm ? '48px' : '92px'}" @click="openCreate(day)">
-                        <div class="row items-center no-wrap">
+                    <div class="col q-pa-xs" :class="day.inMonth ? '' : ($q.dark.isActive ? 'bg-grey-10' : 'bg-grey-1')"
+                            :style="{minHeight: $q.screen.lt.sm ? '48px' : '92px', minWidth: 0}">
+                        <q-btn flat dense no-caps align="left" class="full-width q-ma-none" :aria-label="'Create event on ' + day.date" @click="openCreate(day)">
                             <q-avatar v-if="day.isToday" size="20px" color="primary" text-color="white" class="text-caption">{{day.dayNum}}</q-avatar>
-                            <span v-else class="text-caption" :class="day.inMonth ? '' : 'text-grey-5'">{{day.dayNum}}</span>
-                        </div>
+                            <span v-else class="text-caption" :class="day.inMonth ? '' : mutedClass">{{day.dayNum}}</span>
+                        </q-btn>
                         <div v-if="$q.screen.lt.sm" class="row q-gutter-xs q-mt-xs">
-                            <q-badge v-for="ev in day.events" :key="ev.id" rounded :class="colorClass(ev.kind)" class="q-pa-none" style="width:8px;height:8px;"></q-badge>
+                            <q-badge v-for="ev in day.events" :key="ev.id" rounded :class="colorClass(ev.kind)" class="q-pa-none"
+                                    style="width:8px;height:8px;background:currentColor;" role="img" :aria-label="eventLabel(ev)"><q-tooltip>{{eventLabel(ev)}}</q-tooltip></q-badge>
                         </div>
                         <template v-else>
-                            <div v-for="ev in day.events" :key="ev.id" class="text-caption ellipsis q-px-xs q-mt-xs rounded-borders" :class="colorClass(ev.kind)">
-                                {{ev.start.slice(11)}} {{ev.title}}<q-tooltip>{{ev.title}}: {{ev.start}} to {{ev.end}}</q-tooltip>
-                            </div>
+                            <q-badge v-for="ev in day.events" :key="ev.id" class="m-tonal text-caption ellipsis q-px-xs q-mt-xs" style="display:block;"
+                                    :class="colorClass(ev.kind)" role="img" :aria-label="eventLabel(ev)">
+                                {{ev.start.slice(11)}} {{ev.title}}<q-tooltip>{{eventLabel(ev)}}</q-tooltip>
+                            </q-badge>
                         </template>
                     </div>
                 </template>
@@ -71,7 +73,7 @@ along with this software (see the LICENSE.md file). If not, see
         <q-separator></q-separator>
         <q-card-section class="q-py-xs row items-center q-gutter-sm">
             <span class="text-caption" :class="mutedClass">Kinds:</span>
-            <q-badge v-for="kind in kinds" :key="kind.id" :class="colorClass(kind.id)">{{kind.label}}</q-badge>
+            <q-badge v-for="kind in kinds" :key="kind.id" class="m-tonal" :class="colorClass(kind.id)">{{kind.label}}</q-badge>
         </q-card-section>
     </q-card>
 
@@ -97,13 +99,13 @@ module.exports = {
     data() {
         return {
             month: '', mode: 'month', events: [], createShown: false, newEvent: { title: '', start: '', end: '' },
+            screenPath: '', active: false, eventsRequest: 0,
             dayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
             modeOptions: [{ label: 'Day', value: 'day' }, { label: 'Week', value: 'week' }, { label: 'Month', value: 'month' }],
             kinds: [{ id: 'meeting', label: 'Meeting' }, { id: 'call', label: 'Call' }, { id: 'deadline', label: 'Deadline' }, { id: 'done', label: 'Done' }]
         };
     },
     computed: {
-        screenPath() { return this.$root.basePath + '/' + this.$root.currentPathList.join('/'); },
         mutedClass() { return this.$q.dark.isActive ? 'text-grey-5' : 'text-grey-7'; },
         monthTitle() {
             if (!this.month) return '';
@@ -139,14 +141,24 @@ module.exports = {
         pad(n) { return String(n).padStart(2, '0'); },
         dateText(d) { return d.getFullYear() + '-' + this.pad(d.getMonth() + 1) + '-' + this.pad(d.getDate()); },
         colorClass(kind) {
-            return { meeting: 'bg-primary text-white', call: 'bg-info text-white', deadline: 'bg-warning text-dark', done: 'bg-positive text-white' }[kind] || 'bg-grey-6 text-white';
+            return { meeting: 'text-primary', call: 'text-info', deadline: 'text-warning', done: 'text-positive' }[kind] || this.mutedClass;
+        },
+        eventLabel(ev) {
+            const kind = this.kinds.find((item) => item.id === ev.kind);
+            return (kind ? kind.label + ': ' : '') + ev.title + ', ' + ev.start + ' to ' + ev.end;
+        },
+        isCurrentScreen() {
+            return this.active && this.screenPath === this.$root.basePath + '/' + this.$root.currentPathList.join('/');
         },
         load() {
+            if (!this.isCurrentScreen()) return;
+            const request = ++this.eventsRequest;
             moqui.request(this.screenPath + '/events', { params: { month: this.month } }).then((result) => {
+                if (!this.isCurrentScreen() || request !== this.eventsRequest) return;
                 const json = result.json || {};
                 if (json.month) this.month = json.month;
                 this.events = json.events || [];
-            }, moqui.handleAjaxError);
+            }, (err) => { if (this.isCurrentScreen() && request === this.eventsRequest) moqui.handleAjaxError(err); });
         },
         // the month lives in the URL: Previous, Today and Next change it through the root, which reloads this screen
         go(delta) {
@@ -169,13 +181,23 @@ module.exports = {
     },
     watch: {
         // a query-only change of the URL (Previous, Today, Next) does not remount the screen: the month is re-read here
-        '$root.currentParameters': { handler() { this.readMonth(); this.load(); }, deep: true }
+        '$root.currentParameters': { handler() { if (this.isCurrentScreen()) { this.readMonth(); this.load(); } }, deep: true }
+    },
+    created() {
+        // The shell updates its route before unmounting this screen. Keep its endpoints bound to this instance.
+        this.screenPath = this.$root.basePath + '/' + this.$root.currentPathList.join('/');
     },
     mounted() {
+        this.active = true;
         // the m-form posts and notifies, then hides the container named by submit-hide-id: this dialog registers as one
         this.$root.addContainer('CalendarCreateDialog', this);
         this.readMonth();
         this.load();
+    },
+    beforeUnmount() {
+        this.active = false;
+        this.eventsRequest++;
+        this.$root.removeContainer('CalendarCreateDialog', this);
     }
 };
 </script>

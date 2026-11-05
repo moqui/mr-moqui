@@ -2430,7 +2430,7 @@
                 if (this.bgColor) return this.bgColor;
                 const form = this.mForm;
                 if (!form || !this.name || !form.fieldChanged(this.name)) return "";
-                return this.$q.dark.isActive ? "blue-10" : "blue-1";
+                return "m-field-changed";
             },
             // the server's validation error for this field, put on the Quasar field; none leaves the rules in charge
             errorAttrs() {
@@ -4923,7 +4923,7 @@
         template:
             '<div class="m-wizard" :id="id" :data-step="activeName" :data-step-form="hasForm ? \'true\' : \'false\'" :data-forms="forms.length">' +
                 '<q-stepper v-if="steps.length" :model-value="activeName" flat bordered header-nav class="m-wizard-stepper" active-color="primary" done-color="primary"' +
-                        ' :contracted="$q.screen.lt.sm" @update:model-value="headerTo">' +
+                        ' :alternative-labels="$q.screen.lt.sm" @update:model-value="headerTo">' +
                     '<q-step v-for="(step, index) in steps" :key="step.name" :name="step.name" :title="step.title" :done="index < activeIndex"' +
                         ' :header-nav="index < activeIndex" :prefix="step.imageType === \'icon\' && step.image ? undefined : String(index + 1)"' +
                         ' :icon="step.imageType === \'icon\' && step.image ? step.image : undefined" :data-step="step.name"></q-step>' +
