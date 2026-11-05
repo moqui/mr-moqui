@@ -33,7 +33,7 @@ along with this software (see the LICENSE.md file). If not, see
         <div v-if="newOpen" class="q-pb-sm">
             <m-drop-down v-model="newUserIds" name="panelDirectUserIds" multiple server-search :options-url="url('searchUsers')" :label="t('To: one person or several')"></m-drop-down>
             <div class="row q-gutter-x-sm q-mt-xs">
-                <q-btn dense unelevated no-caps color="primary" icon="sym_o_chat" :label="t('Start')" :disable="!newUserIds.length" :loading="busy" @click="startDirect"></q-btn>
+                <q-btn dense unelevated no-caps color="primary" icon="sym_o_chat" :label="t('Start')" :disable="!(newUserIds || []).length" :loading="busy" @click="startDirect"></q-btn>
                 <q-btn dense flat no-caps :label="t('Cancel')" @click="newOpen = false"></q-btn>
             </div>
         </div>
@@ -113,9 +113,11 @@ module.exports = {
     inject: { mScreen: { default: null } },
     data() {
         return { loaded: !!memo.rooms, rooms: memo.rooms || [], me: memo.me || {}, prefs: memo.prefs || {}, roomId: null, componentVersion: 0,
-            height: 520, newOpen: false, newUserIds: [], busy: false, inDialog: false };
+            height: 520, newOpen: false, newUserIds: [], busy: false };
     },
     computed: {
+        // Qvue screens have no container ID wrapper; the loader supplies its identity before mount or measurement.
+        inDialog() { return !!this.mScreen && this.mScreen.containerId === 'm-quick-create-body'; },
         // the Chat screen beside this panel's (.../Panel/Chat), under whichever app mounts it
         base() { const path = (this.mScreen && this.mScreen.path) || (this.$root.basePath + '/BasicComms/Panel/Chat'); return path.replace(/\/Panel\/Chat$/, '/Chat'); },
         linkBase() { const base = this.base; const root = this.$root; return base.indexOf(root.basePath + '/') === 0 ? root.linkBasePath + base.slice(root.basePath.length) : base; },
@@ -209,9 +211,10 @@ module.exports = {
         },
         toggleNew() { this.newOpen = !this.newOpen; this.newUserIds = []; },
         startDirect() {
-            if (!this.newUserIds.length) return;
+            const ids = this.newUserIds || [];
+            if (!ids.length) return;
             this.busy = true;
-            this.post('createDirect', { userIds: this.newUserIds.join(',') }).then((json) => {
+            this.post('createDirect', { userIds: ids.join(',') }).then((json) => {
                 this.busy = false;
                 this.newOpen = false;
                 this.newUserIds = [];
@@ -242,7 +245,6 @@ module.exports = {
         measure() {
             const parent = this.$el && this.$el.parentElement;
             if (!parent) return;
-            this.inDialog = !!(this.$el.closest && this.$el.closest('#m-quick-create-body'));
             if (this.inDialog) { this.height = Math.min(560, Math.max(360, window.innerHeight - 200)); return; }
             const style = window.getComputedStyle ? window.getComputedStyle(parent) : null;
             const padding = style ? (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0) : 16;

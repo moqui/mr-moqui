@@ -119,9 +119,24 @@ feature("remote choices retain a selection through form renders and search pages
     expect() {
         const page = mount(`<div><m-drop-down id="remote" name="remote" v-model="fields.one" allow-empty server-search :server-min-length="0"
             options-url="/choices" :options="[]" :fields="fields" :depends-on="{organization:'organization'}"></m-drop-down>
-            <input id="reason" v-model="fields.reason"><input id="organization" v-model="fields.organization"></div>`,
-            { fields: { one: null, reason: "", organization: "first" } },
-            `moqui.request = (url, init) => Promise.resolve({json: String(init.params.term || '').includes('Z') ? [{value:'Z',label:'Zebra'}] : [{value:'A',label:'Alpha'}]});`)
+            <input id="reason" v-model="fields.reason"><input id="organization" v-model="fields.organization">
+            <m-form ref="refusedForm" action="/ui099-refused" :fields-initial="{recipients:[]}" v-slot="form">
+                <m-drop-down id="multiple-remote" name="recipients" label="Recipients" v-model="form.fields.recipients" multiple server-search
+                    :server-min-length="0" options-url="/choices" :options="[]"></m-drop-down>
+                <q-btn id="submit-recipients" type="submit" label="Submit recipients"></q-btn>
+            </m-form></div>`,
+            { fields: { one: null, reason: "", organization: "first" }, loading: 0, appRootPath: "", moquiSessionToken: "fixture-token" },
+            `moqui.request = (url, init) => Promise.resolve({json: String(init.params.term || '').includes('Z') ? [{value:'Z',label:'Zebra'}] : [{value:'A',label:'Alpha'}]});
+            window.recipientPosts=[];window.recipientAnswer=null;
+            const originalFetch=window.fetch;
+            window.fetch=(url,init)=>{
+                if(String(url)!=='/ui099-refused')return originalFetch(url,init);
+                recipientPosts.push(init.body.getAll('recipients'));
+                return Promise.resolve(new Response(JSON.stringify({errors:['Fixture refused; selection must remain']}),{headers:{'Content-Type':'application/json'}}));
+            };
+            moqui.notifyMessages=()=>true;
+            moqui.formAnswered=(_form,answer)=>{window.recipientAnswer=answer;};`)
+        page.evaluate(()=>{window.vm.getCsrfToken=()=>{};return true})
         page.locator("#remote").fill("Zebra")
         page.getByRole("option", {name:"Zebra",exact:true}).click()
         page.locator("#reason").fill("Reviewed selection")
@@ -131,5 +146,27 @@ feature("remote choices retain a selection through form renders and search pages
         assert.equal(page.evaluate(()=>window.vm.fields.one),"Z")
         page.locator("#organization").fill("second")
         page.waitFor(()=>window.vm.fields.one === null)
+        page.keyboard.press("Escape")
+
+        // A multiple selection must be visible before submit, after a parent render, and after a refused save.
+        const chipLabel = () => page.evaluate(()=>{
+            const chip=document.querySelector('#multiple-remote').closest('.q-field').querySelector('.q-chip');
+            return chip && chip.getBoundingClientRect().width>0 ? chip.textContent : '';
+        })
+        page.locator("#multiple-remote").fill("Zebra")
+        page.getByRole("option", {name:"Zebra",exact:true}).click()
+        page.keyboard.press("Escape")
+        assert.ok(chipLabel().includes("Zebra"), "the selected label is visible before submission")
+        assert.deepEqual(page.evaluate(()=>Array.from(document.querySelector('select[name="recipients"]').selectedOptions,option=>option.value)),["Z"])
+        page.locator("#reason").fill("Reviewed both selections")
+        assert.ok(chipLabel().includes("Zebra"), "an empty seed options array from the parent does not hide the selected label")
+        page.locator("#submit-recipients").click()
+        page.waitFor(()=>window.recipientAnswer && window.recipientAnswer.ok === false)
+        assert.deepEqual(page.evaluate(()=>window.recipientPosts),[["Z"]], "the form posts the selected ID, not its label")
+        assert.deepEqual(page.evaluate(()=>Array.from(window.vm.$refs.refusedForm.fields.recipients)),["Z"])
+        assert.ok(chipLabel().includes("Zebra"), "a refused save retains the visible selected label")
+        page.getByRole("button", {name:"Clear",exact:true}).press("Enter")
+        page.waitFor(()=>!window.vm.$refs.refusedForm.fields.recipients || window.vm.$refs.refusedForm.fields.recipients.length === 0)
+        assert.equal(chipLabel(), "", "clearing removes the visible selection")
     },
 })

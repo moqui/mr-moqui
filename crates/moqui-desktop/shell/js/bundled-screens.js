@@ -33,9 +33,11 @@ module.exports = {
     inject: { mScreen: { default: null } },
     data() {
         return { loaded: !!memo.rooms, rooms: memo.rooms || [], me: memo.me || {}, prefs: memo.prefs || {}, roomId: null, componentVersion: 0,
-            height: 520, newOpen: false, newUserIds: [], busy: false, inDialog: false };
+            height: 520, newOpen: false, newUserIds: [], busy: false };
     },
     computed: {
+        // Qvue screens have no container ID wrapper; the loader supplies its identity before mount or measurement.
+        inDialog() { return !!this.mScreen && this.mScreen.containerId === 'm-quick-create-body'; },
         // the Chat screen beside this panel's (.../Panel/Chat), under whichever app mounts it
         base() { const path = (this.mScreen && this.mScreen.path) || (this.$root.basePath + '/BasicComms/Panel/Chat'); return path.replace(/\/Panel\/Chat$/, '/Chat'); },
         linkBase() { const base = this.base; const root = this.$root; return base.indexOf(root.basePath + '/') === 0 ? root.linkBasePath + base.slice(root.basePath.length) : base; },
@@ -129,9 +131,10 @@ module.exports = {
         },
         toggleNew() { this.newOpen = !this.newOpen; this.newUserIds = []; },
         startDirect() {
-            if (!this.newUserIds.length) return;
+            const ids = this.newUserIds || [];
+            if (!ids.length) return;
             this.busy = true;
-            this.post('createDirect', { userIds: this.newUserIds.join(',') }).then((json) => {
+            this.post('createDirect', { userIds: ids.join(',') }).then((json) => {
                 this.busy = false;
                 this.newOpen = false;
                 this.newUserIds = [];
@@ -162,7 +165,6 @@ module.exports = {
         measure() {
             const parent = this.$el && this.$el.parentElement;
             if (!parent) return;
-            this.inDialog = !!(this.$el.closest && this.$el.closest('#m-quick-create-body'));
             if (this.inDialog) { this.height = Math.min(560, Math.max(360, window.innerHeight - 200)); return; }
             const style = window.getComputedStyle ? window.getComputedStyle(parent) : null;
             const padding = style ? (parseFloat(style.paddingTop) || 0) + (parseFloat(style.paddingBottom) || 0) : 16;
@@ -301,7 +303,7 @@ module.exports = {
                                     color: "primary",
                                     icon: "sym_o_chat",
                                     label: _ctx.t('Start'),
-                                    disable: !_ctx.newUserIds.length,
+                                    disable: !(_ctx.newUserIds || []).length,
                                     loading: _ctx.busy,
                                     onClick: _ctx.startDirect
                                   }, null, 8, ["label", "disable", "loading", "onClick"]),
@@ -2187,7 +2189,9 @@ const chime = () => {
 // ---- a message of the timeline or of a thread (room is the chat-room component) ----
 const messageTemplate = `
 <div class="row no-wrap relative-position q-pl-xs q-pr-sm m-chat-msg" :class="item.grouped ? '' : 'q-mt-sm'" :id="room.domId(item.eventSeq, inThread)"
-        :data-seq="item.eventSeq" @mouseenter="room.hover(item, inThread)" @mouseleave="room.unhover(item, inThread)" @click="room.tap(item, inThread)">
+        :data-seq="item.eventSeq" role="article" :tabindex="actionsAvailable ? 0 : -1" :aria-label="messageLabel"
+        @focusin="actionFocus = true" @focusout="actionFocus = $event.currentTarget.contains($event.relatedTarget)"
+        @mouseenter="room.hover(item, inThread)" @mouseleave="room.unhover(item, inThread)" @click="room.tap(item, inThread)">
     <div class="self-stretch" :class="item.highlight ? 'bg-primary' : ''" style="width:3px;margin-right:3px;border-radius:2px"></div>
     <div style="width:40px;min-width:40px" class="q-pr-sm">
         <m-avatar v-if="!item.grouped" :name="item.senderName" :user-id="item.senderUserId || undefined" size="32px" class="q-mt-xs"></m-avatar>
@@ -2298,14 +2302,14 @@ const messageTemplate = `
             <span v-if="item.readers.length > 6" class="text-caption m-muted q-ml-xs">+{{item.readers.length - 6}}</span>
         </div>
     </div>
-    <div v-if="room.showActions(item, inThread)" class="absolute-top-right q-mr-sm" style="top:-14px;z-index:2" @click.stop>
+    <div v-if="actionsVisible" class="absolute-top-right q-mr-sm" style="top:-14px;z-index:2" @click.stop>
         <q-card flat bordered class="row no-wrap items-center shadow-2">
             <template v-if="room.canPost">
                 <template v-if="room.bridgeCaps.reaction">
                     <q-btn v-for="key in room.quickReactions.slice(0, room.compact ? 2 : 3)" :key="key" flat dense size="sm" class="q-px-xs" :label="key"
                             :aria-label="room.t('React with') + ' ' + key" @click="room.react(item, key)"></q-btn>
                     <q-btn flat round dense size="sm" icon="sym_o_add_reaction" :aria-label="room.t('React')"><q-tooltip>{{room.t('React')}}</q-tooltip>
-                        <q-menu anchor="bottom right" self="top right"><div class="q-pa-xs row" style="width:236px">
+                        <q-menu anchor="bottom right" self="top right" @before-show="reactionMenu = true" @hide="reactionMenu = false"><div class="q-pa-xs row" style="width:236px">
                             <q-btn v-for="key in room.emoji" :key="key" flat dense size="sm" class="q-px-xs" :label="key" v-close-popup @click="room.react(item, key)"></q-btn>
                         </div></q-menu>
                     </q-btn>
@@ -2315,7 +2319,7 @@ const messageTemplate = `
                     <q-tooltip>{{room.t('Reply in thread')}}</q-tooltip></q-btn>
             </template>
             <q-btn flat round dense size="sm" icon="sym_o_more_vert" :aria-label="room.t('More')"><q-tooltip>{{room.t('More')}}</q-tooltip>
-                <q-menu anchor="bottom right" self="top right"><q-list dense style="min-width:230px">
+                <q-menu anchor="bottom right" self="top right" @before-show="moreMenu = true" @hide="moreMenu = false"><q-list dense style="min-width:230px">
                     <q-item v-if="room.canEdit(item)" clickable v-close-popup @click="room.startEdit(item)">
                         <q-item-section avatar><q-icon name="sym_o_edit"></q-icon></q-item-section><q-item-section>{{room.t('Edit')}}</q-item-section></q-item>
                     <q-item v-if="room.canPost" clickable v-close-popup @click="room.pin(item, !item.pinned)">
@@ -2368,7 +2372,7 @@ const chatPending = { name: 'ChatPending', props: { item: Object, room: Object }
 // ---- a message being edited in place: Enter saves (as the composer sends), Esc cancels ----
 const editTemplate = `
 <div class="q-my-xs" @keydown.esc.stop="room.cancelEdit()">
-    <m-rich-text ref="editor" v-model="body" :name="'chatEdit' + item.eventSeq" light rows="1" autofocus :enter="room.prefs.enterSends === false ? 'newline' : 'submit'"
+    <m-rich-text ref="editor" v-model="body" :name="'chatEdit' + item.eventSeq" :label="room.t('Edit message')" light rows="1" autofocus :enter="room.prefs.enterSends === false ? 'newline' : 'submit'"
             :mention-url="room.url('mentionUsers')" :mention-parameters="{chatRoomId: room.roomId}" @submit="save"></m-rich-text>
     <div class="row items-center q-gutter-x-sm q-mt-xs">
         <q-btn dense unelevated no-caps color="primary" size="sm" :label="room.t('Save')" :loading="busy" @click="save"></q-btn>
@@ -2392,7 +2396,7 @@ const composerTemplate = `
             <span class="ellipsis" style="max-width:180px">{{file.fileName}}</span></q-chip>
     </div>
     <m-rich-text ref="editor" v-model="body" :name="'chatBody' + uid" light rows="1" :enter="room.prefs.enterSends === false ? 'newline' : 'submit'"
-            :placeholder="placeholder" :mention-url="room.url('mentionUsers')" :mention-parameters="{chatRoomId: room.roomId}" @submit="send"></m-rich-text>
+            :label="editorLabel" :placeholder="placeholder" :mention-url="room.url('mentionUsers')" :mention-parameters="{chatRoomId: room.roomId}" @submit="send"></m-rich-text>
     <div class="row items-center no-wrap q-mt-xs">
         <q-btn flat round dense size="sm" icon="sym_o_attach_file" :aria-label="room.t('Attach files')" :disable="room.offline" @click="pickFiles">
             <q-tooltip>{{room.offline ? room.t('Files go up when you are back online') : room.t('Attach files')}}</q-tooltip></q-btn>
@@ -2422,6 +2426,7 @@ const chatComposer = {
     },
     computed: {
         draftKey() { return draftPrefix() + this.room.roomId + (this.threadRoot ? ':' + this.threadRoot : ''); },
+        editorLabel() { return this.threadRoot ? t('Reply in the thread') : fill(t('Message {name}'), { name: this.room.displayName }); },
         uploading() { return this.files.some((file) => file.uploading); },
         canSend() { return !this.sending && !this.uploading && (!isEmptyHtml(this.body) || this.files.some((file) => file.chatAttachmentId)); },
         hint() {
@@ -2582,6 +2587,19 @@ const chatMessage = {
     name: 'ChatMessage',
     props: { item: Object, room: Object, inThread: Boolean },
     components: { 'chat-edit': chatEdit },
+    data: () => ({ actionFocus: false, reactionMenu: false, moreMenu: false }),
+    watch: {
+        actionsAvailable(value) {
+            // Editing or redaction removes the toolbar and can unmount a menu before it emits hide.
+            if (!value) { this.actionFocus = false; this.reactionMenu = false; this.moreMenu = false; }
+        }
+    },
+    computed: {
+        actionsAvailable() { return !this.item.redacted && !this.room.isEditing(this.item) && this.room.state === 'ready'; },
+        // Quasar menus are teleported outside the row; retain their toolbar until hide restores focus to its button.
+        actionsVisible() { return this.actionsAvailable && (this.actionFocus || this.reactionMenu || this.moreMenu || this.room.showActions(this.item, this.inThread)); },
+        messageLabel() { return fill(t('Message from {name}'), { name: this.item.senderName }) + (this.item.fullTime ? ', ' + this.item.fullTime : ''); }
+    },
     template: messageTemplate
 };
 
@@ -2828,7 +2846,7 @@ const roomTemplate = `
             <div v-else-if="side === 'members'" class="col scroll" style="min-height:0">
                 <div v-if="isMember && !isDirect && !access.isArchived" class="q-pa-sm row no-wrap items-end q-gutter-x-xs">
                     <div class="col"><m-drop-down v-model="addPeople.userIds" name="addUserIds" multiple server-search :options-url="url('searchUsers')" :label="t('Add people')"></m-drop-down></div>
-                    <q-btn dense unelevated no-caps color="primary" :label="t('Add')" :loading="addPeople.busy" :disable="!addPeople.userIds.length" @click="addMembers"></q-btn>
+                    <q-btn dense unelevated no-caps color="primary" :label="t('Add')" :loading="addPeople.busy" :disable="!(addPeople.userIds || []).length" @click="addMembers"></q-btn>
                 </div>
                 <q-list dense>
                     <q-item v-for="person in members" :key="person.userId || person.chatActorId">
@@ -4114,8 +4132,10 @@ const chatRoom = {
         },
 
         addMembers() {
+            const ids = this.addPeople.userIds || [];
+            if (!ids.length) return;
             this.addPeople.busy = true;
-            this.post('addMembers', { chatRoomId: this.roomId, userIds: this.addPeople.userIds.join(',') }).then(() => {
+            this.post('addMembers', { chatRoomId: this.roomId, userIds: ids.join(',') }).then(() => {
                 this.addPeople = { userIds: [], busy: false };
                 this.reloadMeta();
             }, () => { this.addPeople.busy = false; });
@@ -5136,7 +5156,7 @@ module.exports = {
                                                           _: 1
                                                         }))
                                                       : _createCommentVNode("", true),
-                                                    _createElementVNode("span", { class: "ellipsis col" }, _toDisplayString(_ctx.snippetOf(room)), 1),
+                                                    _createElementVNode("span", { class: "ellipsis col m-muted" }, _toDisplayString(_ctx.snippetOf(room)), 1),
                                                     (room.isMuted || room.notificationLevelEnumId === 'CnlNone')
                                                       ? (_openBlock(), _createBlock(_component_q_icon, {
                                                           key: 1,
@@ -5320,8 +5340,8 @@ module.exports = {
                             icon: "sym_o_chat",
                             label: _ctx.t('Start'),
                             loading: _ctx.newDirect.busy,
-                            disable: !_ctx.newDirect.userIds.length,
-                            onClick: _ctx.startDirect
+                            disable: !(_ctx.newDirect.userIds || []).length,
+                            onClick: $event => (_ctx.startDirect())
                           }, null, 8, ["label", "loading", "disable", "onClick"]),
                           _withDirectives(_createVNode(_component_q_btn, {
                             flat: "",
@@ -7115,7 +7135,7 @@ module.exports = {
                                                 color: "primary",
                                                 label: _ctx.t('Add'),
                                                 loading: _ctx.addPeople.busy,
-                                                disable: !_ctx.addPeople.userIds.length,
+                                                disable: !(_ctx.addPeople.userIds || []).length,
                                                 onClick: _ctx.addMembers
                                               }, null, 8, ["label", "loading", "disable", "onClick"])
                                             ]))
@@ -8000,11 +8020,12 @@ module.exports = {
                       light: "",
                       rows: "1",
                       enter: _ctx.room.prefs.enterSends === false ? 'newline' : 'submit',
+                      label: _ctx.editorLabel,
                       placeholder: _ctx.placeholder,
                       "mention-url": _ctx.room.url('mentionUsers'),
                       "mention-parameters": {chatRoomId: _ctx.room.roomId},
                       onSubmit: _ctx.send
-                    }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "enter", "placeholder", "mention-url", "mention-parameters", "onSubmit"]),
+                    }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "enter", "label", "placeholder", "mention-url", "mention-parameters", "onSubmit"]),
                     _createElementVNode("div", { class: "row items-center no-wrap q-mt-xs" }, [
                       _createVNode(_component_q_btn, {
                         flat: "",
@@ -8176,6 +8197,11 @@ module.exports = {
                     class: _normalizeClass(["row no-wrap relative-position q-pl-xs q-pr-sm m-chat-msg", _ctx.item.grouped ? '' : 'q-mt-sm']),
                     id: _ctx.room.domId(_ctx.item.eventSeq, _ctx.inThread),
                     "data-seq": _ctx.item.eventSeq,
+                    role: "article",
+                    tabindex: _ctx.actionsAvailable ? 0 : -1,
+                    "aria-label": _ctx.messageLabel,
+                    onFocusin: $event => (_ctx.actionFocus = true),
+                    onFocusout: $event => (_ctx.actionFocus = $event.currentTarget.contains($event.relatedTarget)),
                     onMouseenter: $event => (_ctx.room.hover(_ctx.item, _ctx.inThread)),
                     onMouseleave: $event => (_ctx.room.unhover(_ctx.item, _ctx.inThread)),
                     onClick: $event => (_ctx.room.tap(_ctx.item, _ctx.inThread))
@@ -8736,7 +8762,7 @@ module.exports = {
                           ]))
                         : _createCommentVNode("", true)
                     ]),
-                    (_ctx.room.showActions(_ctx.item, _ctx.inThread))
+                    (_ctx.actionsVisible)
                       ? (_openBlock(), _createElementBlock("div", {
                           key: 0,
                           class: "absolute-top-right q-mr-sm",
@@ -8782,7 +8808,9 @@ module.exports = {
                                               }),
                                               _createVNode(_component_q_menu, {
                                                 anchor: "bottom right",
-                                                self: "top right"
+                                                self: "top right",
+                                                onBeforeShow: $event => (_ctx.reactionMenu = true),
+                                                onHide: $event => (_ctx.reactionMenu = false)
                                               }, {
                                                 default: _withCtx(() => [
                                                   _createElementVNode("div", {
@@ -8805,7 +8833,7 @@ module.exports = {
                                                   ])
                                                 ]),
                                                 _: 1
-                                              })
+                                              }, 8, ["onBeforeShow", "onHide"])
                                             ]),
                                             _: 1
                                           }, 8, ["aria-label"])
@@ -8874,7 +8902,9 @@ module.exports = {
                                   }),
                                   _createVNode(_component_q_menu, {
                                     anchor: "bottom right",
-                                    self: "top right"
+                                    self: "top right",
+                                    onBeforeShow: $event => (_ctx.moreMenu = true),
+                                    onHide: $event => (_ctx.moreMenu = false)
                                   }, {
                                     default: _withCtx(() => [
                                       _createVNode(_component_q_list, {
@@ -9094,7 +9124,7 @@ module.exports = {
                                       })
                                     ]),
                                     _: 1
-                                  })
+                                  }, 8, ["onBeforeShow", "onHide"])
                                 ]),
                                 _: 1
                               }, 8, ["aria-label"])
@@ -9103,7 +9133,7 @@ module.exports = {
                           })
                         ], 8, ["onClick"]))
                       : _createCommentVNode("", true)
-                  ], 42, ["id", "data-seq", "onMouseenter", "onMouseleave", "onClick"]))
+                  ], 42, ["id", "data-seq", "tabindex", "aria-label", "onFocusin", "onFocusout", "onMouseenter", "onMouseleave", "onClick"]))
                 }
             })();
             delete target.template;
@@ -9126,6 +9156,7 @@ module.exports = {
                       modelValue: _ctx.body,
                       "onUpdate:modelValue": $event => ((_ctx.body) = $event),
                       name: 'chatEdit' + _ctx.item.eventSeq,
+                      label: _ctx.room.t('Edit message'),
                       light: "",
                       rows: "1",
                       autofocus: "",
@@ -9133,7 +9164,7 @@ module.exports = {
                       "mention-url": _ctx.room.url('mentionUsers'),
                       "mention-parameters": {chatRoomId: _ctx.room.roomId},
                       onSubmit: _ctx.save
-                    }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "enter", "mention-url", "mention-parameters", "onSubmit"]),
+                    }, null, 8, ["modelValue", "onUpdate:modelValue", "name", "label", "enter", "mention-url", "mention-parameters", "onSubmit"]),
                     _createElementVNode("div", { class: "row items-center q-gutter-x-sm q-mt-xs" }, [
                       _createVNode(_component_q_btn, {
                         dense: "",

@@ -139,6 +139,8 @@ body:not(.body--dark) .q-field--outlined .q-field__control { background:var(--m-
    stronger tint. The router's own active color is left out: the path is shown by the panel, the current row by its mark. */
 .m-drawer { padding:8px 0 4px; }
 .m-drawer > .q-item { min-height:30px; padding-right:8px; color:inherit; }
+/* Keep the keyboard ring inside the scroll area and clear of the selected row's 3px bar. */
+.m-drawer > .q-item:focus-visible { outline:2px solid var(--m-link) !important; outline-offset:-5px; }
 .m-drawer > .q-item.q-router-link--active, .m-drawer > .q-item.q-item--active { color:inherit; }
 .m-drawer .q-item__section--avatar { min-width:28px; padding-right:4px; }
 .m-drawer > .q-item.m-drawer-app { min-height:38px; font-weight:500; }
@@ -577,6 +579,9 @@ form.q-form.m-status-form, .m-status-form { display: inline-flex; width: auto; }
     color:#fff; font-size:0.75rem; font-style:normal; font-weight:500; line-height:normal; white-space:nowrap; user-select:none; pointer-events:none; }
 .m-rich-text-content .ProseMirror-yjs-selection { border-radius:2px; }
 .body--dark .m-rich-text-content .collaboration-carets__label { box-shadow:0 0 0 1px rgba(0,0,0,0.4); }
+
+/* Message actions are available from the keyboard as well as pointer hover. Keep the focus ring inside the timeline. */
+.m-chat-msg:focus-visible { outline:2px solid var(--m-link); outline-offset:-2px; }
 
 /* the record panels, avatars and record cards: an m-chatter or m-record-files fills its column; an avatar's presence dot
    sits on its lower right (Comms chat sets it, M10); a record card is one dense line or two */

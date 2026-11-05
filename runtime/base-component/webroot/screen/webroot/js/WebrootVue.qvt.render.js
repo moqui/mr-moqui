@@ -3587,7 +3587,7 @@
                   ], 8, ["id"]))
             }
         } },
-        "m-drop-down": { hash: "249d7a22", make: function (Vue) {
+        "m-drop-down": { hash: "3076a61d", make: function (Vue) {
             const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createVNode: _createVNode, renderSlot: _renderSlot, mergeProps: _mergeProps, createSlots: _createSlots } = Vue
 
             return function render(_ctx, _cache) {
@@ -3605,7 +3605,6 @@
                 "options-dense": "",
                 "use-input": "",
                 "use-chips": _ctx.multiple,
-                "hide-selected": _ctx.multiple,
                 name: _ctx.name,
                 for: _ctx.id,
                 form: _ctx.form,
@@ -3661,7 +3660,7 @@
                       key: "0"
                     }
                   : undefined
-              ]), 1040, ["model-value", "onUpdate:modelValue", "use-chips", "hide-selected", "name", "for", "form", "input-debounce", "onFilter", "clearable", "disable", "multiple", "emit-value", "new-value-mode", "rules", "label", "loading", "bg-color", "options"]))
+              ]), 1040, ["model-value", "onUpdate:modelValue", "use-chips", "name", "for", "form", "input-debounce", "onFilter", "clearable", "disable", "multiple", "emit-value", "new-value-mode", "rules", "label", "loading", "bg-color", "options"]))
             }
         } },
         "m-dynamic-container": { hash: "70ca5338", make: function (Vue) {

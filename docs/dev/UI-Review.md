@@ -237,3 +237,12 @@ Further patterns established during the review:
 - Selected navigation text uses a readable foreground independently of its brand-colored fill and selection bar.
   Measure translucent fills against their painted ancestor backgrounds. Preserve explicit theme overrides and
   retest the default light/dark cycle plus representative alternative schemes.
+- Multiple-choice fields show each selected label while submitting its ID. Inspect the settled field before saving,
+  after an unrelated render and after refusal; a hidden native select alone does not prove usable selection feedback.
+- Identify quick-create and tray context through the loader's supplied screen context. A loaded QVue component may
+  not have the wrapper element that a server-rendered fragment has. Exercise cancel, reopen and destination behavior.
+- Message actions need a keyboard entry point and visible focus. Keep their owning toolbar mounted while a menu
+  moves focus outside the message. Rich-editor accessible names follow metadata updates without replacing the editor
+  or losing the draft, selection or focus.
+- Reset links explicitly clear inherited filter parameters and pagination. Distinguish clearing all filters from
+  changing one dimension, such as switching voicemail folders while retaining heard/unheard.

@@ -449,12 +449,11 @@ fn relative_cluster_dir_starts_and_serves_its_socket() {
 fn adopt_live_postmaster_keeps_the_same_pid() {
     let dir = temp_cluster_dir();
     let _guard = DirGuard(dir.clone());
-    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
-    let data_dir = cluster.data_dir().to_path_buf();
+    // Keep the original owner for normal cleanup: SIGKILL would strand Postgres's SysV interlock segment.
+    let (mut owner, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let data_dir = owner.data_dir().to_path_buf();
     drop(driver);
     let pid = postmaster_pid(&data_dir);
-    let _kill = KillGuard(pid);
-    std::mem::forget(cluster);
     let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
     assert_eq!(postmaster_pid(&data_dir), pid);
     let mut conn = driver.connect_postgres().unwrap();
@@ -464,24 +463,31 @@ fn adopt_live_postmaster_keeps_the_same_pid() {
     drop(cluster);
     assert_eq!(postmaster_pid(&data_dir), pid, "adopted postmaster was stopped");
     assert!(process_live(pid), "adopted postmaster {pid} must keep running");
+    drop(driver);
+    owner.stop().unwrap();
+    assert!(!process_live(pid), "the original owner did not stop postmaster {pid}");
+    assert!(!data_dir.join("postmaster.pid").exists());
 }
 
 #[test]
 fn live_major_mismatch_refuses_with_the_pid() {
     let dir = temp_cluster_dir();
     let _guard = DirGuard(dir.clone());
-    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
-    let data_dir = cluster.data_dir().to_path_buf();
+    let (mut owner, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let data_dir = owner.data_dir().to_path_buf();
     drop(driver);
     let pid = postmaster_pid(&data_dir);
-    let _kill = KillGuard(pid);
-    std::mem::forget(cluster);
     std::fs::write(data_dir.join("PG_VERSION"), "17\n").unwrap();
     let err = start_error(&dir);
     assert!(err.message().contains(&pid.to_string()), "{err}");
     assert!(err.message().contains("17"), "{err}");
     assert!(err.message().contains(SHIPPED_VERSION), "{err}");
     assert!(process_live(pid), "refusing to adopt killed postmaster {pid}");
+    // The mismatch was synthetic; restore it and let the existing owner perform pg_ctl's fast, waited shutdown.
+    std::fs::write(data_dir.join("PG_VERSION"), format!("{SHIPPED_MAJOR}\n")).unwrap();
+    owner.stop().unwrap();
+    assert!(!process_live(pid), "the original owner did not stop postmaster {pid}");
+    assert!(!data_dir.join("postmaster.pid").exists());
 }
 
 #[test]

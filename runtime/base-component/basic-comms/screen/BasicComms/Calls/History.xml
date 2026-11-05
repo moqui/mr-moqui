@@ -323,27 +323,27 @@ along with this software (see the LICENSE.md file). If not, see
         </container-row>
         <container-box><box-header title="History"/><box-body>
             <container style="q-gutter-xs q-mb-sm">
-                <link url="." text="All" condition="shownOutcome" btn-type="default"/>
+                <link url="." text="All" condition="shownOutcome" btn-type="default" parameter-map="{outcome:'', folder:'', heard:'', pageIndex:''}"/>
                 <label text="All" type="span" style="text-weight-bold q-px-sm" condition="!shownOutcome"/>
-                <link url="." text="${missedText}" condition="shownOutcome != 'missed'" btn-type="default"><parameter name="outcome" value="missed"/></link>
+                <link url="." text="${missedText}" condition="shownOutcome != 'missed'" btn-type="default" parameter-map="{folder:'', heard:'', pageIndex:''}"><parameter name="outcome" value="missed"/></link>
                 <label text="${missedText}" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'missed'"/>
-                <link url="." text="Placed" condition="shownOutcome != 'placed'" btn-type="default"><parameter name="outcome" value="placed"/></link>
+                <link url="." text="Placed" condition="shownOutcome != 'placed'" btn-type="default" parameter-map="{folder:'', heard:'', pageIndex:''}"><parameter name="outcome" value="placed"/></link>
                 <label text="Placed" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'placed'"/>
-                <link url="." text="Answered" condition="shownOutcome != 'answered'" btn-type="default"><parameter name="outcome" value="answered"/></link>
+                <link url="." text="Answered" condition="shownOutcome != 'answered'" btn-type="default" parameter-map="{folder:'', heard:'', pageIndex:''}"><parameter name="outcome" value="answered"/></link>
                 <label text="Answered" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'answered'"/>
-                <link url="." text="${voicemailText}" icon="sym_o_voicemail" condition="shownOutcome != 'voicemail'" btn-type="default"><parameter name="outcome" value="voicemail"/></link>
+                <link url="." text="${voicemailText}" icon="sym_o_voicemail" condition="shownOutcome != 'voicemail'" btn-type="default" parameter-map="{folder:'', heard:'', pageIndex:''}"><parameter name="outcome" value="voicemail"/></link>
                 <label text="${voicemailText}" type="span" style="text-weight-bold q-px-sm" condition="shownOutcome == 'voicemail'"/>
                 <link url="../Recordings" text="Recordings" icon="sym_o_radio_button_checked" btn-type="default"/>
             </container>
             <section name="VoicemailTab" condition="shownOutcome == 'voicemail'"><widgets>
                 <container style="q-gutter-xs q-mb-sm">
-                    <link url="." text="Inbox" condition="shownFolder != 'inbox'" btn-type="default"><parameter name="outcome" value="voicemail"/></link>
+                    <link url="." text="Inbox" condition="shownFolder != 'inbox'" btn-type="default" parameter-map="{folder:'inbox', pageIndex:''}"><parameter name="outcome" value="voicemail"/></link>
                     <label text="Inbox" type="span" style="text-weight-bold q-px-sm" condition="shownFolder == 'inbox'"/>
-                    <link url="." text="Trash (${trashCount})" condition="shownFolder != 'trash'" btn-type="default"><parameter name="outcome" value="voicemail"/><parameter name="folder" value="trash"/></link>
+                    <link url="." text="Trash (${trashCount})" condition="shownFolder != 'trash'" btn-type="default" parameter-map="{pageIndex:''}"><parameter name="outcome" value="voicemail"/><parameter name="folder" value="trash"/></link>
                     <label text="Trash (${trashCount})" type="span" style="text-weight-bold q-px-sm" condition="shownFolder == 'trash'"/>
-                    <link url="." text="All" condition="shownHeard" btn-type="default"><parameter name="outcome" value="voicemail"/><parameter name="folder" from="shownFolder"/></link>
-                    <link url="." text="Unheard" condition="shownHeard != 'unheard'" btn-type="default"><parameter name="outcome" value="voicemail"/><parameter name="folder" from="shownFolder"/><parameter name="heard" value="unheard"/></link>
-                    <link url="." text="Heard" condition="shownHeard != 'heard'" btn-type="default"><parameter name="outcome" value="voicemail"/><parameter name="folder" from="shownFolder"/><parameter name="heard" value="heard"/></link>
+                    <link url="." text="All" condition="shownHeard" btn-type="default" parameter-map="{heard:'', pageIndex:''}"><parameter name="outcome" value="voicemail"/><parameter name="folder" from="shownFolder"/></link>
+                    <link url="." text="Unheard" condition="shownHeard != 'unheard'" btn-type="default" parameter-map="{pageIndex:''}"><parameter name="outcome" value="voicemail"/><parameter name="folder" from="shownFolder"/><parameter name="heard" value="unheard"/></link>
+                    <link url="." text="Heard" condition="shownHeard != 'heard'" btn-type="default" parameter-map="{pageIndex:''}"><parameter name="outcome" value="voicemail"/><parameter name="folder" from="shownFolder"/><parameter name="heard" value="heard"/></link>
                     <link url="emptyVoicemailTrash" text="Empty trash" icon="sym_o_delete_forever" condition="shownFolder == 'trash' &amp;&amp; trashCount" btn-type="danger"
                         confirmation="Delete everything in the voicemail trash for good?"/>
                     <link url="../../Settings/Phone" text="Voicemail settings" icon="sym_o_settings" btn-type="default"/>

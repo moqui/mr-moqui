@@ -124,7 +124,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- the rooms a message may be forwarded to (mine, not archived): [{value (chatRoomId), label}] -->
-    <transition name="forwardRooms" method="get" read-only="true">
+    <transition name="forwardRooms" read-only="true">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.impl.ChatServices.find#Rooms').parameters({searchText: term || null, limit: 30}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? [] : Array.from(out.roomList || []).filter((room) => room.isMember && !room.archivedDate)
@@ -150,7 +150,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- the people pickers (new direct message, new room, add members): [{value (userId), label}] -->
-    <transition name="searchUsers" method="get" read-only="true">
+    <transition name="searchUsers" read-only="true">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.comms.CommsServices.search#Users').parameters({term: term || '', limit: 12}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? [] : Array.from(out.userList || []).filter((user) => user.id !== ec.user.userId)
@@ -358,7 +358,7 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response type="none"/>
     </transition>
     <!-- the records to file a message on: [{value (entity|id), label}] -->
-    <transition name="searchRecords" method="get" read-only="true">
+    <transition name="searchRecords" read-only="true">
         <actions><script><![CDATA[
             const out = ec.service.sync().name('org.moqui.comms.ChatScreenServices.lookup#Records').parameters({operation: 'search', text: term || ''}).call()
             ec.web.sendJsonResponse(ec.message.hasError() ? [] : (out.optionList || []))

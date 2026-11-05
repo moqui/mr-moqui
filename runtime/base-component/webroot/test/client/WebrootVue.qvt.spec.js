@@ -109,28 +109,47 @@ feature("field feedback and selected navigation retain readable text in both the
         page.setContent(`<!doctype html><html><head><link rel="stylesheet" href="/libs/quasar/quasar.prod.css">
             <link rel="stylesheet" href="/css/WebrootVue.qvt.css">
             <!-- Theme-transition timing is inspected live; this rule measures the settled colors. -->
-            <style>.m-drawer > .q-item { transition:none; }</style></head><body><div id="app">
+            <style>.m-drawer > .q-item, .m-drawer .q-focus-helper, .m-drawer .q-focus-helper::before, .m-drawer .q-focus-helper::after { transition:none; }</style></head><body><div id="app">
             <q-card><m-form ref="form" action="/unused" :fields-initial="{name:'Original', explicit:'Original'}" v-slot="form">
                 <m-text-line id="feedback-field" name="name" label="Customer name" v-model="form.fields.name"></m-text-line>
                 <m-text-line id="explicit-field" name="explicit" label="Explicit fill" bg-color="blue-10" v-model="form.fields.explicit"></m-text-line>
             </m-form></q-card>
             <div class="q-layout"><aside class="q-drawer" :class="{'q-dark':$q.dark.isActive}" style="position:static;width:240px"><nav class="m-drawer">
-                <a id="drawer-app" class="q-item m-drawer-app m-drawer-in-app m-drawer-on-path" href="#">Comms</a>
-                <a id="drawer-current" class="q-item m-drawer-screen m-drawer-in-app m-drawer-current" href="#" aria-current="page">Accounts</a>
+                <span id="drawer-start" tabindex="-1"></span>
+                <q-item id="drawer-app" clickable tag="a" class="m-drawer-app m-drawer-in-app m-drawer-on-path" href="#">Comms</q-item>
+                <q-item id="drawer-current" clickable tag="a" class="m-drawer-screen m-drawer-in-app m-drawer-current" href="#" aria-current="page">Accounts</q-item>
             </nav></aside></div></div>
             <script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
             <script src="/js/MoquiLib.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
             const app = Vue.createApp({}); app.use(Quasar, {config:{brand:{info:'#1e7b8e'}}});
             ['m-form','m-text-line'].forEach(name=>app.component(name,moqui.qvt.components[name]));
             window.vm=app.mount('#app');
-            window.measureContrast=(element,background)=>{
+            window.measureContrast=(element,background,color)=>{
                 const ctx=document.createElement('canvas').getContext('2d'), style=getComputedStyle(element);
                 const luminance=()=>Array.from(ctx.getImageData(0,0,1,1).data).slice(0,3).map(v=>{
                     const c=v/255;return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);
                 }).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
                 ctx.fillStyle=background;ctx.fillRect(0,0,1,1);const bg=luminance();
-                ctx.globalAlpha=Number(style.opacity);ctx.fillStyle=style.color;ctx.fillRect(0,0,1,1);const fg=luminance();
+                ctx.globalAlpha=Number(style.opacity);ctx.fillStyle=color || style.color;ctx.fillRect(0,0,1,1);const fg=luminance();
                 return (Math.max(bg,fg)+.05)/(Math.min(bg,fg)+.05);
+            };
+            window.drawerBackground=(row,focused)=>{
+                const ctx=document.createElement('canvas').getContext('2d'), ancestors=[];
+                for (let node=row;node;node=node.parentElement) ancestors.unshift(node);
+                ctx.fillStyle='#fff';ctx.fillRect(0,0,1,1);
+                for (const node of ancestors) {ctx.fillStyle=getComputedStyle(node).backgroundColor;ctx.fillRect(0,0,1,1);}
+                const helper=row.querySelector('.q-focus-helper');
+                if (focused && helper) {
+                    // Its pseudo-elements paint inside the helper before its group opacity composites over the row.
+                    const layer=document.createElement('canvas'), fill=layer.getContext('2d');
+                    for (const pseudo of [null,'::before','::after']) {
+                        const style=getComputedStyle(helper,pseudo);
+                        fill.globalAlpha=pseudo ? Number(style.opacity) : 1;
+                        fill.fillStyle=style.backgroundColor;fill.fillRect(0,0,1,1);
+                    }
+                    ctx.globalAlpha=Number(getComputedStyle(helper).opacity);ctx.drawImage(layer,0,0);
+                }
+                return 'rgb('+Array.from(ctx.getImageData(0,0,1,1).data).slice(0,3).join(',')+')';
             };
             window.actions=0;
             ['positive','negative','warning','info'].forEach(type=>Quasar.Notify.create({type,message:type+' feedback',caption:'Supporting detail',
@@ -180,6 +199,25 @@ feature("field feedback and selected navigation retain readable text in both the
             assert.equal(results.explicit, "rgb(13, 71, 161)", "the authored field background survives")
             assert.equal(results.custom, "rgb(156, 39, 176)", "the authored notification color survives")
             assert.ok(results.selectedIndicator.includes("rgb(25, 118, 210)"), "the selection bar keeps its brand accent")
+            page.evaluate(() => { document.getElementById('drawer-start').focus(); return true })
+            for (const id of ['drawer-app','drawer-current']) {
+                page.keyboard.press("Tab")
+                const ring=page.evaluate(() => {
+                    const row=document.activeElement, style=getComputedStyle(row);
+                    return {id:row.id,visible:row.matches(':focus-visible'),width:style.outlineWidth,style:style.outlineStyle,
+                        offset:style.outlineOffset,ratio:measureContrast(row,drawerBackground(row,true),style.outlineColor),
+                        selectedIndicator:getComputedStyle(document.getElementById('drawer-current')).boxShadow};
+                })
+                assert.equal(ring.id,id)
+                assert.equal(ring.visible,true)
+                assert.equal(ring.width,"2px")
+                assert.equal(ring.style,"solid")
+                assert.equal(ring.offset,"-5px")
+                assert.ok(ring.ratio>=3,JSON.stringify({dark,...ring}))
+                assert.ok(ring.selectedIndicator.includes("rgb(25, 118, 210)"),"keyboard focus preserves the selection bar")
+            }
+            page.evaluate(() => { document.activeElement.blur(); return true })
+            assert.equal(page.evaluate(() => getComputedStyle(document.getElementById('drawer-current')).outlineStyle),"none")
         }
         assert.equal(page.evaluate(() => {
             const selected=document.getElementById('drawer-current');selected.style.setProperty('--m-drawer-current-fg','#123456');

@@ -71,6 +71,10 @@ spec({
 feature("a user with no party makes a room with john.doe and they talk in it", {
     when() {
         ec.user.internalLoginUser("basic.comms.chat")
+        // m-drop-down options use POST; direct/TUI readers retain GET. These are data requests, not screen renders.
+        const people = post("searchUsers", {term: "john.doe"})
+        const peopleGet = request(root, "Chat/searchUsers", {term: "john.doe"}, "get")
+        const selfSearch = post("searchUsers", {term: "basic.comms.chat"})
         const made = post("createRoom", {roomTypeEnumId: "private", roomName: "Basic chat", memberUserIds: "EX_JOHN_DOE"})
         roomId = made.json && made.json.chatRoomId
         const sent = post("send", {chatRoomId: roomId, body: "<p>Hello from the framework</p>", clientRef: "bc-1"})
@@ -78,9 +82,26 @@ feature("a user with no party makes a room with john.doe and they talk in it", {
         login("john.doe")
         const rail = get("chatData")
         const view = request(root, "Chat/roomView", {chatRoomId: roomId}, null)
-        return {made, sent, rail, view}
+        const forwardRooms = post("forwardRooms", {term: "Basic chat"})
+        const records = post("searchRecords", {term: "ui093-no-record-match"})
+        return {made, sent, rail, view, people, peopleGet, selfSearch, forwardRooms, records}
     },
-    then({made, sent, rail, view}) {
+    then({made, sent, rail, view, people, peopleGet, selfSearch, forwardRooms, records}) {
+        people.status == 200
+        people.errors == ""
+        Array.isArray(people.json) && people.json.some(person => person.value === "EX_JOHN_DOE" && person.label)
+        peopleGet.status == 200
+        peopleGet.errors == ""
+        JSON.stringify(peopleGet.json) == JSON.stringify(people.json)
+        selfSearch.status == 200
+        selfSearch.errors == ""
+        Array.isArray(selfSearch.json) && !selfSearch.json.some(person => person.value === USER)
+        forwardRooms.status == 200
+        forwardRooms.errors == ""
+        Array.isArray(forwardRooms.json) && forwardRooms.json.some(room => room.value === roomId)
+        records.status == 200
+        records.errors == ""
+        Array.isArray(records.json)
         made.errors == ""
         roomId != null
         sent.errors == ""

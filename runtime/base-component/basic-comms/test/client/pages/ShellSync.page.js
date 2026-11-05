@@ -16,7 +16,16 @@ const clone = (value) => JSON.parse(JSON.stringify(value));
 // the rows of the room's timeline that show a text
 const rows = (needle) => Array.from(document.querySelectorAll(".m-chat-msg")).filter((row) => row.textContent.includes(needle)).length;
 const button = (scope, label) => Array.from((scope || document).querySelectorAll("button")).find((el) => el.textContent.trim() === label);
-const dialogButton = (label) => until(() => button(document.querySelector(".q-dialog"), label), "the dialog's " + label);
+const answerDialog = async label => {
+    const control = await until(() => {
+        const dialog = document.querySelector(".q-dialog");
+        return dialog && button(dialog, label);
+    }, "the dialog's " + label);
+    const dialog = control.closest(".q-dialog");
+    control.click();
+    // Quasar keeps a closing dialog in the DOM for its leave transition. Do not answer that old dialog again.
+    await until(() => !dialog.isConnected, "the answered " + label + " dialog to unmount");
+};
 
 // ---- the server, as the host passes it on: online its answers, offline the store's (X-Moqui-Offline) and no POST ----
 const plainHeaders = { get: () => null };
@@ -180,6 +189,158 @@ const change = (kind, pending) => document.querySelector(".m-chat-change[data-ch
 
 test("a message's edit, reaction and deletion wait in the app's outbox where the server takes them once; one refused says why, with Retry and Discard", async () => {
     const vm = await openRoom();
+    // UI097: the real bundled Chat caller must give selected and unselected previews readable text.
+    const chat=root.$refs.view, previousDark=Quasar.Dark.isActive, previousDraft=chat.drafts.R1;
+    const previewContrast=element=>{
+        const context=document.createElement('canvas').getContext('2d',{willReadFrequently:true}), ancestors=[];
+        for (let node=element;node;node=node.parentElement) ancestors.unshift(node);
+        context.fillStyle='#fff';context.fillRect(0,0,1,1);
+        for (const node of ancestors) {context.fillStyle=getComputedStyle(node).backgroundColor;context.fillRect(0,0,1,1);}
+        const luminance=()=>Array.from(context.getImageData(0,0,1,1).data).slice(0,3).map(value=>{
+            const channel=value/255;return channel<=.04045?channel/12.92:Math.pow((channel+.055)/1.055,2.4);
+        }).reduce((sum,value,index)=>sum+value*[.2126,.7152,.0722][index],0);
+        const background=luminance(), style=getComputedStyle(element);
+        context.globalAlpha=Number(style.opacity);context.fillStyle=style.color;context.fillRect(0,0,1,1);
+        const foreground=luminance();return (Math.max(background,foreground)+.05)/(Math.min(background,foreground)+.05);
+    };
+    try {
+        chat.drafts.R1='UI097 draft marker';
+        for (const dark of [false,true,false]) {
+            Quasar.Dark.set(dark);await Vue.nextTick();
+            for (const [id,selected] of [['R1',true],['R3',false]]) {
+                const row=chat.$el.querySelector('[data-room="'+id+'"]');
+                assert.ok(row,'the existing room list is mounted');
+                assert.equal(row.classList.contains('q-item--active'),selected);
+                const preview=row.querySelector('.q-item__label--caption .ellipsis.col');
+                assert.ok(preview && preview.textContent.trim(),'the actual room preview has text');
+                const ratio=previewContrast(preview);
+                assert.ok(ratio>=4.5,JSON.stringify({dark,id,ratio,color:getComputedStyle(preview).color}));
+            }
+            const draft=chat.$el.querySelector('[data-room="R1"] .q-item__label--caption .text-negative');
+            assert.ok(draft,'the authored draft indicator remains beside the preview');
+            assert.equal(getComputedStyle(draft).color,dark?'rgb(255, 138, 128)':'rgb(193, 0, 21)',
+                'the preview does not replace its sibling draft status color');
+        }
+    } finally {
+        Quasar.Dark.set(previousDark);
+        if (previousDraft===undefined) delete chat.drafts.R1; else chat.drafts.R1=previousDraft;
+        await Vue.nextTick();
+    }
+    // UI101: shared multiple controls may emit null while searching or clearing. Keep the actual Chat actions usable.
+    const chatBefore={newDirect:chat.newDirect,post:chat.post,scheduleRooms:chat.scheduleRooms,openRoom:chat.openRoom};
+    const roomBefore={side:vm.side,addPeople:vm.addPeople,post:vm.post,reloadMeta:vm.reloadMeta};
+    const config=chat.$.appContext.config, errorHandler=config.errorHandler, pickerErrors=[], pickerPosts=[], openedRooms=[];
+    config.errorHandler=error=>{pickerErrors.push(String(error));};
+    try {
+        chat.post=(name,params)=>{pickerPosts.push({name,params});return Promise.resolve({chatRoomId:'UI101-direct'});};
+        chat.scheduleRooms=()=>{};chat.openRoom=id=>openedRooms.push(id);
+        chat.newDirect={open:true,userIds:null,busy:false};await Vue.nextTick();
+        const start=await until(()=>Array.from(document.querySelectorAll('.q-dialog button')).find(control=>
+            control.querySelector('.q-btn__content > .block')?.textContent === 'Start'),'the direct-message Start control');
+        assert.equal(start.disabled,true,'searching or clearing without a recipient keeps Start disabled');
+        chat.startDirect();assert.equal(pickerPosts.length,0,'an empty direct selection never posts');
+        chat.newDirect.userIds=['bob'];await Vue.nextTick();
+        assert.equal(start.disabled,false);
+        chat.newDirect.userIds=null;await Vue.nextTick();
+        assert.equal(start.disabled,true,'clearing a previously selected recipient keeps the dialog usable');
+        chat.newDirect.userIds=['bob'];await Vue.nextTick();start.click();
+        await until(()=>pickerPosts.length===1,'the mounted Start button to post');await Vue.nextTick();
+        assert.deepEqual(pickerPosts[0],{name:'createDirect',params:{userIds:'bob'}},'the click event is not a recipient list');
+        assert.deepEqual(openedRooms,['UI101-direct']);
+        await until(()=>!start.isConnected,'the started direct-message dialog to close');
+        vm.post=(name,params)=>{pickerPosts.push({name,params});return Promise.resolve({});};vm.reloadMeta=()=>{};
+        vm.side='members';vm.addPeople={userIds:null,busy:false};await Vue.nextTick();
+        const add=await until(()=>button(vm.$el,'Add'),'the room Add control');
+        assert.equal(add.disabled,true,'clearing members keeps Add disabled');
+        vm.addMembers();assert.equal(pickerPosts.length,1,'an empty member selection never posts');
+        vm.addPeople.userIds=['bob'];await Vue.nextTick();add.click();
+        await until(()=>pickerPosts.length===2,'the mounted Add button to post');await Vue.nextTick();
+        assert.deepEqual(pickerPosts[1],{name:'addMembers',params:{chatRoomId:'R1',userIds:'bob'}});
+        assert.deepEqual(pickerErrors,[],'null picker states and action clicks cause no Vue errors');
+    } finally {
+        Object.assign(chat,chatBefore);Object.assign(vm,roomBefore);await Vue.nextTick();config.errorHandler=errorHandler;
+    }
+    // UI098: exercise the bundled panel's lifecycle with the real loader context, without rendering it again.
+    const panel=moqui.bundledComponent('BasicComms/Panel/Chat'), panels=[], panelLinks=[];
+    const panelOf=id=>{
+        const context=moqui.qvt.components['m-dynamic-container'].provide.call({id,curUrl:'/apps/BasicComms/Panel/Chat'}).mScreen;
+        const instance=Object.assign(panel.data(),{mScreen:context,$el:document.createElement('div'),
+            $root:{basePath:'/apps',linkBasePath:'/qapps',setUrl:target=>panelLinks.push(target)}});
+        Object.entries(panel.methods).forEach(([name,method])=>{instance[name]=method.bind(instance);});
+        for (const name of ['inDialog','base','linkBase']) Object.defineProperty(instance,name,{get:()=>panel.computed[name].call(instance)});
+        instance.refresh=()=>Promise.resolve();instance.roomView=()=>Promise.resolve({});
+        panel.mounted.call(instance);panels.push(instance);return instance;
+    };
+    try {
+        const tray=panelOf('m-tray-chat');
+        assert.equal(tray.inDialog,false);assert.equal(tray.newOpen,false);
+        tray.openRoom('R1');await Promise.resolve();
+        const quick=panelOf('m-quick-create-body');
+        assert.equal(quick.inDialog,true);assert.equal(quick.newOpen,true);
+        assert.equal(quick.roomId,null,'quick create does not restore the tray room');
+        assert.equal(quick.$el.closest('#m-quick-create-body'),null,'no container ID DOM wrapper is needed');
+        const quickPosts=[],quickRooms=[],quickOpen=quick.openRoom;
+        quick.post=(name,params)=>{quickPosts.push({name,params});return Promise.resolve({chatRoomId:'UI101-panel'});};
+        quick.scheduleRooms=()=>{};quick.openRoom=id=>quickRooms.push(id);
+        quick.newUserIds=null;quick.startDirect();
+        assert.deepEqual(quickPosts,[],'the cleared quick picker does not post or become busy');assert.equal(quick.busy,false);
+        quick.newUserIds=['bob'];quick.startDirect();await Promise.resolve();
+        assert.deepEqual(quickPosts,[{name:'createDirect',params:{userIds:'bob'}}]);assert.deepEqual(quickRooms,['UI101-panel']);
+        quick.openRoom=quickOpen;quick.newUserIds=['bob'];
+        panel.beforeUnmount.call(quick);panels.splice(panels.indexOf(quick),1);
+        const reopened=panelOf('m-quick-create-body');
+        assert.equal(reopened.newOpen,true);assert.deepEqual(reopened.newUserIds,[],'a reopened picker has no previous recipients');
+        reopened.openRoom('R2');await Promise.resolve();
+        assert.deepEqual(panelLinks,['/qapps/BasicComms/Chat?chatRoomId=R2'],'quick create opens the chosen room through the shell');
+        const restoredTray=panelOf('m-tray-chat');await Promise.resolve();
+        assert.equal(restoredTray.newOpen,false);assert.equal(restoredTray.roomId,'R1','the quick-create choice does not replace the kept tray room');
+    } finally { panels.forEach(instance=>{if (!instance.inDialog) instance.closeRoom();panel.beforeUnmount.call(instance);}); }
+    const namedEditor = label => Array.from(document.querySelectorAll('.m-chat-composer [role="textbox"]'))
+        .find(element => element.getAttribute('aria-label') === label);
+    assert.ok(await until(() => namedEditor('Message Ops'), "the named room editor"));
+    // Metadata updates keep the mounted editor and unsent draft; its actual accessible name follows the caption.
+    const composer=vm.composers.main, richEditor=composer.$refs.editor, editor=richEditor.editor;
+    const editorNode=editor.view.dom, originalName=vm.room.displayName, originalBody=composer.body;
+    editor.commands.setContent('<p>Draft stays <strong>here</strong></p>');await Vue.nextTick();
+    editor.commands.setTextSelection({from:3,to:8});editor.view.focus();
+    const draft=composer.body, html=editor.getHTML(), selection=editor.state.selection.toJSON(), editorProps=editor.options.editorProps;
+    let labelUpdates=0;const countLabelUpdate=()=>{labelUpdates++;};editor.on('update',countLabelUpdate);
+    try {
+        vm.room.displayName='Renamed Ops';await Vue.nextTick();
+        assert.equal(namedEditor('Message Renamed Ops'),editorNode,'the mounted textbox takes the current room name');
+        assert.equal(editorNode.closest('.m-rich-text').querySelector('.m-rich-text-label').textContent,'Message Renamed Ops');
+        assert.equal(richEditor.editor,editor,'renaming does not recreate the editor');
+        assert.equal(composer.body,draft);assert.equal(editor.getHTML(),html);
+        assert.deepEqual(editor.state.selection.toJSON(),selection);
+        assert.equal(document.activeElement,editorNode,'renaming preserves focus');
+        assert.equal(labelUpdates,0,'a label change is not a content edit');
+        assert.equal(editor.options.editorProps.handlePaste,editorProps.handlePaste);
+        assert.equal(editor.options.editorProps.handleDrop,editorProps.handleDrop);
+        assert.equal(editorNode.getAttribute('role'),'textbox');assert.equal(editorNode.getAttribute('aria-multiline'),'true');
+    } finally {
+        editor.off('update',countLabelUpdate);vm.room.displayName=originalName;
+        editor.commands.setContent(originalBody || '');await Vue.nextTick();
+    }
+    // Open a thread in the same mounted room; both actual rich editors need distinct names, not just placeholders.
+    vm.openThread(6);
+    assert.ok(await until(() => namedEditor('Reply in the thread'), "the named thread editor"));
+    assert.ok(namedEditor('Message Ops'), "the room editor keeps its distinct name while the thread is open");
+    vm.closeSide();await Vue.nextTick();
+    vm.hoverKey=null;vm.tapKey=null;await Vue.nextTick();
+    const actionRow=vm.$el.querySelector('.m-chat-msg[data-seq="6"]');
+    assert.equal(actionRow.tabIndex,0);assert.equal(actionRow.getAttribute('role'),'article');
+    assert.ok(actionRow.getAttribute('aria-label').includes('Ann'));
+    assert.equal(actionRow.querySelector('button[aria-label="More"]'),null,'message actions start without pointer hover');
+    actionRow.focus();await Vue.nextTick();
+    const more=actionRow.querySelector('button[aria-label="More"]');
+    assert.ok(more);more.focus();more.click();
+    const editAction=await until(() => Array.from(document.querySelectorAll('.q-menu .q-item')).find(item => item.textContent.trim().endsWith('Edit')), "the focused message menu");
+    editAction.focus();await Vue.nextTick();
+    assert.ok(document.body.contains(more),'moving focus into the teleported menu retains its toolbar');
+    editAction.click();
+    assert.ok(await until(() => document.querySelector('.m-chat-msg [role="textbox"][aria-label="Edit message"]'), "the named edit editor"));
+    vm.cancelEdit();await Vue.nextTick();
+    await until(() => !actionRow.querySelector('button[aria-label="More"]'), "the toolbar hidden after focus leaves for the composer");
     // a server below clientApi 4: the edit is asked of the server now, as before
     await vm.saveEdit({ eventSeq: 6, event: eventOf(vm, 6) }, "<p>first fix</p>");
     assert.equal(asked("/apps/BasicComms/Chat/edit", "POST").length, 1);
@@ -234,7 +395,7 @@ test("a message's edit, reaction and deletion wait in the app's outbox where the
 
     // a deletion waits too, the message shown until the server has removed it
     vm.redact({ eventSeq: 6, event: eventOf(vm, 6) });
-    (await dialogButton("Delete")).click();
+    await answerDialog("Delete");
     const redact = await until(() => host.added.find((op) => op.kind === "chat-redact"), "the deletion queued");
     await until(() => change("chat-redact", "waiting"), "the deletion waiting");
     assert.ok(text().includes("second fix"));
@@ -317,8 +478,7 @@ test("the Inbox: a thread change that conflicted says it changed on the server a
     const later = host.added[host.added.length - 1];
     await until(() => document.querySelector(".m-inbox-outbox").textContent.includes("1 change waits to be made"), "the later change waiting");
     button(document.querySelector(".m-inbox-outbox-change[data-outbox='conflict']"), "Retry").click();
-    (await dialogButton("Keep the later change")).click();
-    await settle();
+    await answerDialog("Keep the later change");
     assert.ok(!host.retried.includes(state.id), "not retried over the later change");
     drop(later.id);
     tell();
@@ -327,14 +487,14 @@ test("the Inbox: a thread change that conflicted says it changed on the server a
     const inbox = root.$refs.view;
     await inbox.post("state", { targetsJson: JSON.stringify([{ store: "email", threadId: "T1", rowKey: "email:T1" }]), action: "flag" });
     button(document.querySelector(".m-inbox-outbox-change[data-outbox='conflict']"), "Retry").click();
-    (await dialogButton("Retry anyway")).click();
+    await answerDialog("Retry anyway");
     await until(() => host.retried.includes(state.id), "the change sent anyway");
     // refused: not made, with the reason; Discard leaves the thread as the server has it
     move(state.id, { state: "failed", error: "This thread is not yours", status: 403, rejected: true });
     const refused = await until(() => document.querySelector(".m-inbox-outbox-change[data-outbox='failed']"), "the refusal");
     assert.ok(refused.textContent.includes("Not made: This thread is not yours"));
     button(refused, "Discard").click();
-    (await dialogButton("Discard")).click();
+    await answerDialog("Discard");
     await until(() => host.discarded.includes(state.id) && !document.querySelector(".m-inbox-outbox-change"), "the change discarded");
 
     // The existing mounted Inbox also checks its message disclosures, using two local bodies and no send action.
@@ -441,7 +601,7 @@ test("the Inbox: a thread change that conflicted says it changed on the server a
     assert.ok(button(send, "Retry") && button(send, "Discard"));
     // Discard: not sent, and the copy stays, listed to open
     button(send, "Discard").click();
-    (await dialogButton("Discard")).click();
+    await answerDialog("Discard");
     const listed = await until(() => document.querySelector(".m-inbox-outbox-copy"), "the copy listed");
     assert.ok(listed.textContent.includes("Quarterly report (mine)"));
     assert.ok(host.discarded.includes("mc1"));
@@ -473,13 +633,28 @@ test("the Inbox: a thread change that conflicted says it changed on the server a
 });
 
 test("Compose: offline, an internal message waits in the outbox where the server takes its send once, and a server draft's send carries its stamp", async () => {
+    const readyCompose = async (matches, description) => {
+        const current = await until(() => {
+            const candidate = root.$refs.view;
+            return root.view === 'compose' && candidate && candidate.state === 'ready' && matches(candidate) && candidate;
+        }, description);
+        // The same Compose instance handles another URL; ready is set before its next recipient-control render.
+        await Vue.nextTick();
+        await until(() => ['to','cc','bcc'].every(field => {
+            const ref = current.$refs['add_' + field], control = Array.isArray(ref) ? ref[0] : ref;
+            if (!control) return !current.recipientFields.some(item => item.name === field);
+            return control.$el && control.$el.nodeType === 1 && control.$el.isConnected && control.$el.querySelector('input');
+        }), description + ' recipient controls');
+        return current;
+    };
     server.online = false;
     host.kinds = { clientApi: 4, kinds: MD5_KINDS, internalSend: true };
     server.compose = { identityList: [{ value: "internal", label: "Internal", isInternal: true }], fromValue: "internal", to: [{ value: "party:bob", label: "Bob", kind: "party" }],
         subject: "Lunch", kind: "new" };
     let compose = await open("/qapps/BasicComms/Inbox/Compose?subject=Lunch", "compose");
     await until(() => document.querySelector(".m-compose-offline") && text().includes("this message waits in the outbox"), "the internal message's banner");
-    compose = root.$refs.view;
+    compose = await readyCompose(current => current.query.subject === 'Lunch' && current.draft.subject === 'Lunch' &&
+        current.draft.fromValue === 'internal' && current.draft.to.some(item => item.value === 'party:bob'), 'the new internal draft');
     const before = host.added.length;
     compose.send();
     const internal = await until(() => host.added.length > before && host.added[host.added.length - 1], "the internal send queued");
@@ -491,7 +666,8 @@ test("Compose: offline, an internal message waits in the outbox where the server
     host.kinds = { clientApi: 4, kinds: MD5_KINDS.filter((kind) => kind !== "internal-send"), internalSend: false };
     compose = await open("/qapps/BasicComms/Inbox/Compose?subject=Lunch2", "compose");
     await until(() => text().includes("an internal message needs a connection to send"), "needs a connection");
-    compose = root.$refs.view;
+    compose = await readyCompose(current => current.query.subject === 'Lunch2' && current.draft.fromValue === 'internal' &&
+        current.draft.to.some(item => item.value === 'party:bob'), 'the next internal draft');
     const count = host.added.length;
     compose.send();
     await until(() => text().includes("An internal message needs a connection to send; it is kept as a draft"), "kept as a draft");
@@ -501,7 +677,8 @@ test("Compose: offline, an internal message waits in the outbox where the server
     server.compose = { identityList: [{ value: "acct1", label: "ann@example.com" }], fromValue: "acct1", to: [{ value: "cy@example.com", label: "Cy" }], subject: "Plan",
         kind: "draft", emailMessageId: "E5", clientRef: "mE5", draftStamp: 1234 };
     compose = await open("/qapps/BasicComms/Inbox/Compose?emailMessageId=E5", "compose");
-    compose = await until(() => root.$refs.view && root.$refs.view.state === "ready" && root.$refs.view.draft.emailMessageId === "E5" && root.$refs.view, "the draft");
+    compose = await readyCompose(current => current.query.emailMessageId === 'E5' && current.draft.emailMessageId === 'E5' &&
+        current.draftStamp === 1234, 'the server draft');
     compose.send();
     const mail = await until(() => host.added.find((op) => op.kind === "mail-send" && op.payload.fields.emailMessageId === "E5"), "the send queued");
     assert.equal(mail.payload.fields.baseStamp, "1234");

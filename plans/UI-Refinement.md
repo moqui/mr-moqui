@@ -123,7 +123,7 @@ before/after evidence use the agreed 1920×1080 target.
 | System and Tools | Administration and data/service tools | Refined; partial activities | Overview both themes, Components, SQL success/error/recovery, service XML and echo output/validation/retry observed. Deep administration groups remain pending. |
 | Monitor and Dashboards | Diagnosis, reporting and authoring | Refined; partial activities | Monitoring 19/19 at 1440×1000; dashboard copy/edit/save/open, CSV export and filter/remove visually observed at 1920; saved log search restores query/range. See assertion limits and screen map below. |
 | Dev AIDE | Artifact discovery, editing, simulation, previews and Git | Refined; verification in progress | Home, creation-dialog cancellation, search empty states, source navigation and Search → References → Docs/copy/package/diagram navigation observed. All eight disposable-repository journeys passed; detailed limits are recorded below. |
-| BasicComms | Mail, chat, calls and settings | Recovery fixes tested; partial visual | Local fake-media/encrypted-call/chat10/10; failed-save retention/retry passed. Hosted wizard Back/header/Finish/new-account recovery, mounted Inbox links, message keyboard controls, identity/text-block confirmation/focus and reply date clearing/validation/Standard roundtrip observed. Triage/sending/settings remain partial; TUI saving now preserves rich bodies and dates; narrow radio labels remain UI087. |
+| BasicComms | Mail, chat, calls and settings | Refined; partial activities | Local fake-media/encrypted-call/chat10/10; draft recovery, captured mail, wizard/settings/Standard flows recorded below. Live two-user DM, forward, private-room membership/leave, thread/edit/attachment, picker recovery, keyboard actions and call-history resets pass. TUI rich bodies/dates and narrow radio labels are corrected; remaining chat TUI/encryption/media/provider activities stay explicit. |
 | Integration | Cross-app patterns and remaining routes | In progress | Shared styles observed in System, Tools, Dashboards and Dev AIDE; full remaining inventory is explicit below. |
 
 ## Findings
@@ -242,14 +242,21 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-090 | Shared dark drawer current/on-path labels | P2 fixed and retested | Readable semantic text replaces the brand-fill color for current/on-path labels | Current row improves from2.77:1 to5.76:1 dark;4.97:1 light. Default/Warm, desktop/phone and selected-bar preservation checked. Focus fill remains separate UI096. |
 | UI-091 | D07 embedded playlist → Inspect panel | P2 fixed and retested | Keep the original server screenUrl for inspection/export transitions while navigation uses the Material mount | Reproduced JSON parse error, corrected, then live Inspect returns diagnostic data with no alert. Existing fixture clicks Inspect and asserts /apps endpoint plus definition/panel IDs;47/47 passes. |
 | UI-092 | Standard Dashboard tabular fallback | P3 observed readability / deferred | Time columns display epoch milliseconds instead of human-readable dates | Targeted /apps playlist link reaches Monitor overview and shows data, but time1793242800000 requires interpretation. Retain compatibility; refine shared fallback formatting later. |
-| UI-093 | B06 Chat → New room → Members search | P1 observed functional failure / investigation | Searching the disposable sec.view.only account returns Method POST is not supported instead of choices | John Doe/dark1920 on8094; Name/Topic retained, no participant added. Evidence comms-chat-member-search-dark-before-1920.png. Source review of request method/route is pending. |
-| UI-094 | B06 main/thread/edit message editors | P2 observed accessibility / prepared follow-up | Rich editor role=textbox has no accessible name; placeholder is only a paragraph data attribute | DOM inspection with two simultaneous editors confirms ambiguity. Shared rich text supports labels; caller bindings need names. |
-| UI-095 | B06 keyboard message actions | P2 observed keyboard gap / prepared follow-up | Toolbar is exposed only by pointer/tap; message row has no keyboard entry | Desktop after edit: Room→Tab reaches1reply, nextTab composerBold; reaction/edit/reply actions cannot be reached. Source confirms hover/tap-only condition. |
-| UI-096 | Shared drawer keyboard focus | P2 observed focus contrast / prepared follow-up | The focused row has no outline and only the translucent Quasar focus fill | Dark390, Menu Enter then seven Tabs reaches Comms. :focus-visible is true, outline0, helper opacity0.22; the fill remains faint despite readable text. Evidence shared-drawer-dark-after-390.png. |
-| UI-097 | B06 selected room preview in light mode | P2 measured contrast failure / prepared follow-up | The caption dilutes the selected semantic blue to54% alpha | Rendered preview2.32:1 on #f4f6f8, default light1920. Use the readable secondary foreground on the snippet while preserving draft/status colors. Evidence comms-chat-preview-light-before-1920.png. |
-| UI-098 | B06 shell Create → Chat message | P2 observed flow defect / prepared follow-up | Opens the compact room list instead of the intended new-message picker | John/light1920; rendered QVue has no quick-create-body wrapper, although loader context identifies its container. New message manually opens the picker; search then encounters UI093. |
-| UI-099 | B08 and shared multiple-choice inputs | P1 observed selection visibility / investigation | Choosing a recipient leaves the field visually empty while its submitted value is retained | Calls/History, John/light1920: sec.view.only option selected; before any submit, input empty, no chips, hidden selected value100000. Shared hide-selected suppresses Quasar's chip renderer. Evidence shared-multiple-choice-hidden-before-1920.png. |
-| UI-100 | B08/B09 History filter recovery | P2 observed reset failure / prepared follow-up | All retains the Voicemail outcome instead of returning to all calls | John/light1920: All href and resulting URL both retain outcome=voicemail; No voicemail here remains. Other folder/heard reset links need inspection. |
+| UI-093 | B06 Chat member/destination pickers | P1 fixed and retested | Read-only choice transitions accept the existing widget POST as well as GET | User search, room membership, quick/main direct-message creation and forwarding complete locally. Existing authorization assertions pass; record search has no configured live provider and remains fixture-only. |
+| UI-094 | B06 main/thread/edit message editors | P2 fixed and retested | Give each editor a distinct name and update it without replacing editor state | Main/thread/edit names verified; room rename and restoration update the composer name while retaining its unsent draft. Draft then cleared without posting. |
+| UI-095 | B06 keyboard message actions | P2 fixed and retested | Labelled message articles expose the toolbar on keyboard focus and retain it through teleported menus | Tab reaches reactions/reply/thread/More; Enter opens Edit and Escape preserves text/returns to composer. Forwarding also completes. |
+| UI-096 | Shared drawer keyboard focus | P2 fixed and retested | Inset semantic outline separates focus from the selected-row fill and bar | Selected Chat row shows a2px ring in default light/dark at390; existing fixture measures focus and selected states. Evidence shared-drawer-focus-{dark,light}-after-390.png. |
+| UI-097 | B06 selected room preview in light mode | P2 fixed and retested | Use readable secondary foreground without reducing its opacity | Selected snippet improves from2.32:1 to5.72:1 light and measures6.99:1 dark. Draft/status colors remain separate. Before/after evidence retained locally. |
+| UI-098 | B06 shell Create → Chat message | P2 fixed and retested | Use the supplied screen-container context to open the new-message picker immediately | Empty/no-match/clear/cancel/reopen and successful Start verified; a new local DM opens and a later main-screen Start returns to the same conversation. |
+| UI-099 | B08 and shared multiple-choice inputs | P1 fixed and retested | Keep selected chips visible while retaining submitted IDs and cleared-value behavior | Calls recipient chip and hidden ID agree before and after unavailable-media refusal. Quick-chat clearing disables Start; fixture verifies keyboard clear and submitted values. Evidence shared-multiple-choice-visible-after-1920.png. |
+| UI-100 | B08/B09 History filter recovery | P2 fixed and retested | Explicit empty parameters remove inherited outcome/folder/heard/page filters | Voicemail→Trash→Heard→Inbox preserves heard; heard All clears only heard; overall All clears voicemail context and returns to No calls here yet. |
+| UI-101 | B06 direct-message and member pickers | P1 fixed and retested | Chat callers tolerate null cleared selections and main Start invokes its method without a click-event argument | Search/no-result/clear/reopen and quick/main Start pass; add-member succeeds and peer leave restores membership. Shared selection serialization remains unchanged. |
+| UI-102 | M10 Incidents list | P3 observed layout/readability / prepared follow-up | Full-width filters precede empty table headers; populated Detected dates show epoch milliseconds | John/light1920 on8094, empty list and incident100000. Evidence monitor-incidents-light-before-1920.png. |
+| UI-103 | M10 IncidentDetail | P2 observed readability; P3 grouping / prepared follow-up | Header and timeline show epoch milliseconds; update/note forms span the workspace and empty evidence/recovery sections provide no explanation | Minor incident100000, source and history agree but human-readable time and coherent sections are missing. Evidence monitor-incident-detail-light-before-1920.png. |
+| UI-104 | M10 unknown IncidentDetail bookmark | P3 observed recovery presentation / prepared follow-up | Main content contains only raw no incident ui-review-missing without a recovery link | Sidebar Incidents still returns to the list; preserve authorization and real error handling in the correction. |
+| UI-105 | M10 Recovery edit flow | P2 observed edit friction / prepared follow-up | Policies/adapters offer only Add or change; entering an existing ID does not load its values and rows have no Edit action | Entered DEFAULT in the policy dialog; Description/Steps remained blank. Canceled without saving. Provide explicit loaded edit state and preserve submitted values on refusal. |
+| UI-106 | M10 Recovery page/dialog hierarchy | P3 observed layout / prepared follow-up | Tall single-column policy form lacks logical groups; adapter form mixes all type-specific fields; Newest actions has empty headers | Default light1920; evidence monitor-recovery-policy-light-before-1920.png. Save remains reachable, but editing requires too much scanning/reentry. |
+| UI-107 | M10 approved Manual recovery action | P2 observed missing task information / prepared follow-up | AwaitingOperator shows Mark done/failed/Cancel but omits the saved manual instructions and adapter context | Action100000 correctly waits without infrastructure work; instructions exist in its requestJson but are not rendered. Display only the manual instructions, never arbitrary request payloads. Evidence monitor-recovery-waiting-light-before-1920.png. |
 
 ## Running implementation notes
 
@@ -1163,6 +1170,101 @@ adjacent-field boundaries and unchanged keyboard selection. Focused checks, live
   debug tests/live server. Logs: /tmp/moqui-ui-framework-gate19.log, /tmp/ui-batch10-server-budget-retest.log and
   /tmp/ui-batch10-release-budget-retest.log. No budget raised and no claim of a fully passing gate.
 
+### Batch 11 — chat and shared input recovery
+
+Batch10 committed locally as `bf10126a`. This batch addresses UI093–101: picker request compatibility, editor names
+and metadata updates, keyboard message actions, readable room previews, an explicit drawer focus ring, quick-create
+context, visible multiple selections and call-history filter resets. Public routes, selected IDs and service contracts
+remain unchanged. Quick chat uses the existing loader context because a QVue screen does not retain the dynamic
+container's ID as a DOM wrapper. Multiple dropdowns keep their chips instead of suppressing all selected content.
+Empty reset values explicitly remove inherited URL filters; folder changes preserve the user's heard/unheard choice.
+
+Existing regression fixtures are extended without another app sweep: BasicComms/BasicCommsChat, ShellSync,
+QvtKeys and WebrootVue.qvt. A source review also caught editor names becoming stale after a room rename; the shared
+rich-text watcher changes only editor attributes while preserving content, selection, handlers and focus. Private
+cross-reviews found no remaining implementation blocker. Live keyboard/dialog and refused-save outcomes follow below.
+
+The recurring test-environment leak is corrected in the same batch: two successful embedded-Postgres driver tests
+retain their original owning handle and stop it normally after proving adoption/refusal. Their behavior assertions
+are unchanged; the intentional crash/restart test still uses a real crash. No production DB code, running database,
+OS limit or global cleanup mechanism is changed. Compare IPC inventory around the affected driver suite and retain
+the normal framework gate. This correction does not claim cleanup after every externally killed test process.
+
+- Focused server specs11/11 pass. Shared WebrootVue.qvt34/34 passes; QvtKeys3/3 passes in12.49s after serializing
+  its reactive-array assertion and using Enter on Clear. Screen lint362files/5537sites has zero parse failures,
+  with87 pre-existing idiom flags and202 compiled fancy bodies. Driver tests54/54 pass in64.16s; before/after IPC
+  inventories contain the same segment IDs, with only normal attachment/time changes on active servers. No IPC
+  objects were removed during that verification. Workspace Clippy passes in29.21s.
+- All three precompiled-template checks pass. The initial bundle-only regeneration omitted the shared dropdown
+  render artifact; correcting it resolves the runtime-only Vue Compose failure. With actual styles loaded, the
+  fixture also needs to await answered dialogs leaving the DOM and the requested draft's controls becoming ready.
+  Final ShellSync9/9, including UI101, passes in5.80s (4.8/6s component budget). Canvas contrast checks request frequent readback to
+  avoid test-generated console warnings. Existing sandboxed-message script refusal remains the expected allowance.
+- Live UI094/095: room/thread/edit textboxes have distinct names. Room→Tab enters a labelled message article with
+  a visible2px ring; subsequent Tabs reach reply count, reactions, Reply, thread Reply and More. Enter opens Edit;
+  Escape retains the text and returns focus to the composer. At390 the thread remains readable in both themes with
+  scrollWidth390; Back remains available. UI096's selected drawer row has an inset2px ring in both themes. Evidence
+  comms-chat-thread-{light,dark}-after-390.png, comms-chat-thread-light-after-1920.png,
+  comms-chat-dark-after-1920.png and shared-drawer-focus-{light,dark}-after-390.png.
+- Live UI097's selected room preview is opaque#616161 on#f4f6f8 (5.72:1) in light and#9e9e9e on#121212 (6.99:1) in dark.
+- UI101 is corrected at the Chat callers: null cleared selections are guarded; main Start explicitly calls its
+  optional-user-list method. The shared selection/serialization contract is unchanged. Quick Create opens the
+  picker immediately; no-match, select, clear, Cancel, Close and reopen pass without stale recipients or a crash.
+  Start creates DM100053; the main New direct message picker returns to that same DM rather than duplicating it.
+- B06 two-user flow: John and the existing limited sec.view.only actor use separate localhost origins. The peer
+  sees unread state and receives John's local fixture message, replies, and John receives it without reloading.
+  Adding the peer to room100000 exposes its history; Leave→Cancel retains membership and Leave→Confirm removes it
+  from the peer list. John's Members returns to one owner. No real mail/provider/media connection is involved.
+- Forward finds the local DM and posts the fixture with its optional comment, original sender and time. Room
+  rename and restoration update the composer accessible name while preserving an unsent draft; the draft is then
+  cleared by keyboard. Evidence comms-direct-local-after-1920.png and comms-forward-local-after-1920.png.
+- UI099: Calls shows the chosen recipient chip and hidden ID100000 before submission and after the expected
+  unavailable-media refusal. UI100: Voicemail→Trash→Heard→Inbox preserves heard; heard All clears only heard;
+  overall All removes voicemail context and returns to the empty all-calls result. No call was established.
+- Current-host console inspection found no new errors after the final fixes; earlier picker exceptions and the
+  expected unavailable-media500 remain historical evidence. Room/member fixtures are restored; DM100053 with its
+  local test conversation/forward remains disposable. Encryption, media success, record-provider search and the
+  Chat TUI still need their distinct activities. Actual200% browser zoom remains unverified.
+- The release/maximal build completes in3m43s. Gate20 runs the current release binary with
+  `env -u MOQUI_RUNTIME -u MOQUI_CONF MOQ_TEST_WORKERS=2 CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=1 ./moq test-framework --nobuild`.
+  Focused logs: /tmp/ui-batch11-{comms-server1,webroot-regression1,qvtkeys3,shellsync5,drivers,clippy,final-precompiled}.log;
+  screen lint: /tmp/ui-batch11-screen-lint.txt; full gate: /tmp/moqui-ui-framework-gate20.log.
+- Gate20 passes shell342, server352/352 (33.47s, all component budgets), demo10/10, offline webroot394/394,
+  offline Dev AIDE48/48 and served148/148. Webroot46.8/34s and served Comms6.8/6s produce budget warnings but remain
+  below the existing1.5× failure threshold; no budget is changed. The overall gate exits1 only because the same
+  three moqui-sip source-address tests fail with AddrNotAvailable at ua_tests.rs:46. No new Rust/feature failure is
+  present; the full gate is not represented as exit-zero. A final independent read-only diff review is clean.
+
+### Next activity baseline — M10 incident lifecycle
+
+While gate20 runs, John exercises incident100000 on8094 at1920 in default light. New incident Escape/reopen works;
+blank Title is locally refused while Minor/service/summary remain. Corrected Title creates exactly one incident,
+`UI review manual incident 32`, service `ui-review-m10-32`, severity Minor. Blank Note is refused with an inline error;
+the expected service-validation500 is recorded, then a corrected note persists. Open→Mitigating→Monitoring→Resolved
+updates persist with their timeline entries. Default Open excludes the resolved record; Resolved + service filters
+find it again and the same detail reopens. Unknown incident bookmark shows a raw missing-record message; sidebar
+navigation remains available. UI102–104 track the layout, timestamp and missing-record refinements. No recovery
+adapter/policy has been created and no infrastructure action executed in this baseline. The resolved fixture remains
+for light/dark/responsive retests.
+
+M10-B setup: emergency stop is off (Emergency stop action available), and remains unchanged. Saved Manual adapter
+`UI_M10_MANUAL_32`, with no URL/secret and private addresses No; instructions explicitly prohibit infrastructure work.
+Saved policy `UI_M10_32`, exact service pattern `^ui-review-m10-32b$`, Minor/Approval, order1, confidence0.99,
+cooldown0, max3/day, deadline10min, verify1min. Its only step is restart of fake target `ui-review-only-a` through
+that Manual adapter; notices go only to John's local ReportAlert topic. Invalid Steps JSON is refused and every
+entered field remains; corrected JSON saves. Existing DEFAULT is untouched. Incident100001, `UI review manual
+recovery 32`, starts Minor/Open with that service. Scheduled decision100000 for targetA becomes AwaitingApproval;
+Refuse changes it to Refused and adds a timeline entry without an action. Reentering the complete policy with targetB
+produces decision100001. Approve→Cancel retains the waiting state and returns keyboard focus to Approve; confirming
+then produces action100000 AwaitingOperator and incident Mitigating. No restart occurs. Cancel makes the action
+Cancelled and removes active controls; a note records the simulation and the incident is Resolved. Recovery's
+Newest actions links to the same incident. Finally the complete policy is saved with Enabled No; the original stop,
+DEFAULT policy and other adapters remain unchanged. The explicit manual instructions are missing from the action UI
+(UI107). UI105/106 record editing/grouping issues. Both resolved incidents and the inactive fixture configuration
+remain for retests. A separate sec.view.only session is refused IncidentDetail before data is shown and returns via
+All applications→Comms. Provider actions, quantitative verification, callback/retry/reversal and incident-only actor
+controls remain unverified by this local manual walk.
+
 ### Next activity baseline — B06 chat
 
 While batch9 gate18 runs, inspected Chat on8094 as John Doe. The empty split workspace offers direct message/room
@@ -1470,7 +1572,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `BasicComms/Calls/Voicemail.xml` | hidden menu; modes vue,qvue,tui; `BasicComms/Calls/Voicemail.qvue`; `BasicComms/Calls/Voicemail.tui.json` | B09 | P |
 | `BasicComms/Calls/VoicemailTui.xml` | hidden menu; explicit TUI screen | B09 | P |
 | `BasicComms/Calls.xml` | Container → History | B08 | S/P |
-| `BasicComms/Chat.xml` | modes vue,qvue,tui; `BasicComms/Chat.qvue`; `BasicComms/Chat.tui.json` | B06/B07 | V/P: single-user private room, thread, edit/cancel, reactions, search and attachment; UI093–095 pending; encryption/two-user/TUI remain |
+| `BasicComms/Chat.xml` | modes vue,qvue,tui; `BasicComms/Chat.qvue`; `BasicComms/Chat.tui.json` | B06/B07 | V/P: private room/thread/edit/reaction/search/attachment plus two-user DM, forward, membership/leave and picker recovery; UI093–095/101 fixed; encryption/TUI remain |
 | `BasicComms/ChatTui.xml` | hidden menu; explicit TUI screen | B06/B07 | P |
 | `BasicComms/Home.xml` | XML widgets | B01 | S/P |
 | `BasicComms/Inbox/Compose.xml` | hidden menu; modes vue,qvue,tui; `BasicComms/Inbox/Compose.qvue`; `BasicComms/Inbox/Compose.tui.json` | B03 | S/P |
@@ -1479,7 +1581,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `BasicComms/Inbox/MailTui.xml` | hidden menu; explicit TUI screen | B02 | P |
 | `BasicComms/Inbox/MessageDetail.xml` | hidden menu | B02 | P |
 | `BasicComms/Inbox.xml` | Container → Mail | B02 | S/P |
-| `BasicComms/Panel/Chat.xml` | hidden menu; modes vue,qvue,tui; `BasicComms/Panel/ChatPanel.qvue`; `BasicComms/Panel/Chat.tui.json` | B06 | P |
+| `BasicComms/Panel/Chat.xml` | hidden menu; modes vue,qvue,tui; `BasicComms/Panel/ChatPanel.qvue`; `BasicComms/Panel/Chat.tui.json` | B06 | V/P: quick-create picker/start/cancel/reopen; tray and TUI remain |
 | `BasicComms/Panel/Dialer.xml` | hidden menu; modes vue,qvue,tui; reuses `BasicComms/Calls/Dialer.qvue`; `BasicComms/Panel/Dialer.tui.json` | B10 | P |
 | `BasicComms/Panel.xml` | hidden menu | B06 | P |
 | `BasicComms/Settings/CallHandling.xml` | modes vue,qvue,tui; `BasicComms/Settings/CallHandling.qvue`; `BasicComms/Settings/CallHandling.tui.json` | B10 | S/P |
@@ -2017,7 +2119,7 @@ Use a disposable administrator for setup, then an operator granted the needed Mo
 - **Steps:** Incidents → create/filter/open → IncidentDetail update/add note → inspect causes/evidence → confirm/reject disposable hypothesis → review decision/action; Recovery → inspect stop/policies/adapters → approve/refuse/cancel the fixture action → inspect result/regression evidence; restore original policy/stop state.
 - **Expected:** action scope and approval requirement are explicit; state transitions and history agree; advisory/unavailable execution cannot look successful.
 - **Recovery:** missing incident, refused approval, failed adapter, already-completed action, stop enabled and failed reversal; retain diagnostic evidence and provide a safe return path.
-- **Current evidence:** A19 list/Recovery text R only. IncidentDetail, policies, approvals and all execution/recovery states pending. No real infrastructure action is implied.
+- **Current evidence:** A19 list/Recovery text R; live M10-A create/validation/note/status/filter/resolution and M10-B manual-policy/refusal/approval cancellation/approval/action cancellation/cleanup completed at1920 light. Limited actor denied and launcher recovery observed. UI102–107 need correction/retest; dark/responsive/TUI, cause disposition, quantitative verification and external adapters remain open. No real infrastructure action was performed.
 
 ### M11 — Temporarily adjust diagnostics and restore defaults
 
@@ -2129,9 +2231,9 @@ All paths below are relative to `runtime/base-component/tools/screen/`. Monitor 
 | `Monitor/Operations.xml` | Included business-operations dashboard | M09 | A19 R |
 | `Monitor/Releases.xml` | Release list/filter | M09 | A19 Standard R |
 | `Monitor/ReleaseDetail.xml` | Hidden release errors/regressions | M09 | P |
-| `Monitor/Incidents.xml` | Create/filter/list incidents | M10 | A19 Standard R |
-| `Monitor/IncidentDetail.xml` | Hidden incident evidence/decisions/actions | M10 | P |
-| `Monitor/Recovery.xml` | Stop/policies/adapters/recovery action status | M10 | A19 Standard R |
+| `Monitor/Incidents.xml` | Create/filter/list incidents | M10 | A19 Standard R; live create/invalid/filter/resolved recovery, UI102 pending |
+| `Monitor/IncidentDetail.xml` | Hidden incident evidence/decisions/actions | M10 | Live note/status/resolve, refuse/approve/cancel manual action, missing/denied bookmark; UI103/104/107 pending |
+| `Monitor/Recovery.xml` | Stop/policies/adapters/recovery action status | M10 | A19 Standard R; live Manual adapter/policy create/invalid/edit/disable and canceled-action link; UI105/106 pending |
 | `Monitor/Settings.xml` | Temporary diagnostic settings/overrides | M11 | A19 Standard R |
 | `Dashboards.xml` | `/qapps/dashboards` → Home; shell | D01–D08 | Root navigation itself P |
 | `Dashboards/Home.xml` | Dashboard library, stars/recent/folders/tags | D01 | A06 F |

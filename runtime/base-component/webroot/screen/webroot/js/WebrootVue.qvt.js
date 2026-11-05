@@ -2829,11 +2829,10 @@
             label: String, name: String, id: String, disable: Boolean, onSelectGoTo: String },
         emits: ["update:modelValue"],
         data() { return { curOptions: this.options, allOptions: this.options, lastSearch: null, loading: false }; },
-        // Selected text stays visible. fill-input hid a set value, so hide-selected is only for multiple
-        // (Java WebrootVue.qvt.js m-drop-down).
+        // Selected text stays visible: hide-selected suppresses the chips as well as a single value.
         template:
             '<q-select ref="qSelect" :model-value="modelValue" @update:model-value="handleInput"' +
-                    ' dense outlined options-dense use-input :use-chips="multiple" :hide-selected="multiple" :name="name" :for="id" :form="form"' +
+                    ' dense outlined options-dense use-input :use-chips="multiple" :name="name" :for="id" :form="form"' +
                     ' :input-debounce="serverSearch ? serverDelay : 100" @filter="filterFn" :clearable="allowEmpty||multiple" :disable="disable"' +
                     ' :multiple="multiple" :emit-value="!onSelectGoTo" map-options behavior="menu" :new-value-mode="combo ? \'add-unique\' : undefined"' +
                     ' :rules="[val => allowEmpty||multiple||combo||val===\'\'||(val&&val.length)||\'Please select an option\']"' +
@@ -4168,6 +4167,17 @@
                 if ((value || "") !== moqui.richText.value(editor.getHTML())) editor.commands.setContent(moqui.richText.toHtml(value), { emitUpdate: false });
             },
             plain(value) { if (value !== this.isPlain) this.togglePlain(); },
+            label(value) {
+                const editor = this.editor;
+                if (!editor || editor.isDestroyed) return;
+                // The visible label may change without remounting (for example, a chat room is renamed).
+                // Update its accessible name without replacing the editor, selection or event handlers.
+                const props = editor.options.editorProps;
+                const attributes = Object.assign({}, props.attributes);
+                if (value) attributes["aria-label"] = value;
+                else delete attributes["aria-label"];
+                editor.setOptions({ editorProps: Object.assign({}, props, { attributes }) });
+            },
             canEdit(value) { if (this.editor) this.editor.setEditable(value); }
         },
         methods: {

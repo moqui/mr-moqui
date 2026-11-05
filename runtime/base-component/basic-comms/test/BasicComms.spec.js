@@ -218,8 +218,40 @@ feature("the System Voice screens render in qvt and tui through the System app, 
                     problems.push(mode + " " + path + ": " + shown.status + " " + shown.errors + " " + shown.output.slice(0, 200))
             }
         }
-        const history = render(root, "Calls/History", "qvt", {})
-        const historyTui = render(root, "Calls/History", "tui", {})
+        // Reuse these renders with inherited filter context: reset links must really remove it in both modes.
+        const historyParameters = {outcome: "voicemail", folder: "trash", heard: "heard", pageIndex: "7"}
+        const history = render(root, "Calls/History", "qvt", historyParameters)
+        const historyTui = render(root, "Calls/History", "tui", historyParameters)
+        const queryOf = url => Object.fromEntries((String(url).split("?")[1] || "").replace(/&amp;/g, "&").split("&").filter(Boolean).map(part => {
+            const at = part.indexOf("=")
+            return [decodeURIComponent(at < 0 ? part : part.slice(0, at)), decodeURIComponent(at < 0 ? "" : part.slice(at + 1))]
+        }))
+        const qvtHistoryLinks = Array.from(history.output.matchAll(/<m-link\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/m-link>/g),
+            match => ({text: match[2].replace(/<[^>]*>/g, "").trim(), query: queryOf(match[1])}))
+        const tuiHistoryLinks = []
+        const collectLinks = node => {
+            if (!node || typeof node !== "object") return
+            if (node.t === "link") tuiHistoryLinks.push({text: node.text, query: queryOf(node.url)})
+            Object.values(node).forEach(collectLinks)
+        }
+        collectLinks(JSON.parse(historyTui.output))
+        const filterLinkProblems = []
+        for (const [mode, links] of [["qvt", qvtHistoryLinks], ["tui", tuiHistoryLinks]]) {
+            const all = links.filter(link => link.text === "All")
+            const overall = all.find(link => !Object.hasOwn(link.query, "outcome"))
+            const heardAll = all.find(link => link.query.outcome === "voicemail")
+            if (all.length !== 2 || !overall || !heardAll) filterLinkProblems.push(mode + ": both All controls need distinct reset destinations")
+            if (overall && ["folder", "heard", "pageIndex"].some(key => Object.hasOwn(overall.query, key))) filterLinkProblems.push(mode + ": overall All retains voicemail filters")
+            if (heardAll && (heardAll.query.folder !== "trash" || ["heard", "pageIndex"].some(key => Object.hasOwn(heardAll.query, key)))) filterLinkProblems.push(mode + ": heard All loses the folder or retains the filter/page")
+            const inbox = links.find(link => link.text === "Inbox")
+            if (!inbox || inbox.query.outcome !== "voicemail" || inbox.query.folder !== "inbox" || inbox.query.heard !== "heard" || Object.hasOwn(inbox.query, "pageIndex")) filterLinkProblems.push(mode + ": Inbox does not leave Trash while retaining the heard filter")
+            const unheard = links.find(link => link.text === "Unheard")
+            if (!unheard || unheard.query.outcome !== "voicemail" || unheard.query.folder !== "trash" || unheard.query.heard !== "unheard" || Object.hasOwn(unheard.query, "pageIndex")) filterLinkProblems.push(mode + ": Unheard does not reset the page within this folder")
+            for (const outcome of ["missed", "placed", "answered"]) {
+                const link = links.find(link => link.query.outcome === outcome)
+                if (!link || ["folder", "heard", "pageIndex"].some(key => Object.hasOwn(link.query, key))) filterLinkProblems.push(mode + ": " + outcome + " inherits voicemail filters/page")
+            }
+        }
         // V5: the user's queues (an agent of Render queue), in the browser and the terminal
         ec.user.internalLoginUser("basic.comms.spec")
         const queuesQvt = render(root, "Calls/Queues", "qvt", {})
@@ -234,10 +266,11 @@ feature("the System Voice screens render in qvt and tui through the System app, 
         // V3: the user's call handling and the dialer, in the terminal
         const handlingTui = render(root, "Settings/CallHandlingTui", "tui", {})
         const dialerTui = render(root, "Calls/DialerTui", "tui", {text: "Render"})
-        return {problems, history, historyTui, handlingTui, dialerTui, queuesQvt, queuesTui}
+        return {problems, history, historyTui, filterLinkProblems, handlingTui, dialerTui, queuesQvt, queuesTui}
     },
-    then({problems, history, historyTui, handlingTui, dialerTui, queuesQvt, queuesTui}) {
+    then({problems, history, historyTui, filterLinkProblems, handlingTui, dialerTui, queuesQvt, queuesTui}) {
         problems.join("\n") == ""
+        filterLinkProblems.join("\n") == ""
         queuesQvt.status == 200
         queuesQvt.output.includes("Render queue")
         queuesTui.output.includes("Render queue")
