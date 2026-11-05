@@ -665,29 +665,52 @@ mod driver {
     }
 
     impl ResultShape {
+        /// The names, and the origins with each database and table name made once and the column name shared with
+        /// the result name when they are the same (as they are in an entity find), so a result of many columns costs
+        /// few allocations more than its names.
         fn of(columns: &[mysql::Column]) -> Self {
-            Self {
-                names: columns
-                    .iter()
-                    .map(|column| Arc::from(column.name_str().as_ref()))
-                    .collect(),
-                origins: columns.iter().map(column_origin).collect(),
-            }
+            let names: Arc<[Arc<str>]> = columns
+                .iter()
+                .map(|column| Arc::from(column.name_str().as_ref()))
+                .collect();
+            let mut tables: Vec<(Arc<str>, Arc<str>)> = Vec::new();
+            let origins = columns
+                .iter()
+                .zip(names.iter())
+                .map(|(column, name)| {
+                    let table = column.org_table_str();
+                    let column_name = column.org_name_str();
+                    if table.is_empty() || column_name.is_empty() {
+                        return None;
+                    }
+                    let schema = column.schema_str();
+                    let at = tables
+                        .iter()
+                        .position(|(s, t)| **s == *schema && **t == *table)
+                        .unwrap_or_else(|| {
+                            tables.push((Arc::from(schema.as_ref()), Arc::from(table.as_ref())));
+                            tables.len() - 1
+                        });
+                    let (schema, table) = &tables[at];
+                    Some(ColumnOrigin::Mysql {
+                        schema: Arc::clone(schema),
+                        table: Arc::clone(table),
+                        column: if **name == *column_name {
+                            Arc::clone(name)
+                        } else {
+                            Arc::from(column_name.as_ref())
+                        },
+                    })
+                })
+                .collect();
+            Self { names, origins }
         }
     }
 
     /// The column definition's database, `org_table` and `org_name`; `None` for a column of no table (an expression).
+    #[cfg(test)]
     fn column_origin(column: &mysql::Column) -> Option<ColumnOrigin> {
-        let table = column.org_table_str();
-        let name = column.org_name_str();
-        if table.is_empty() || name.is_empty() {
-            return None;
-        }
-        Some(ColumnOrigin::Mysql {
-            schema: Arc::from(column.schema_str().as_ref()),
-            table: Arc::from(table.as_ref()),
-            column: Arc::from(name.as_ref()),
-        })
+        ResultShape::of(std::slice::from_ref(column)).origins[0].clone()
     }
 
     /// `shape` is the result's, made from its first row and shared by the rest.

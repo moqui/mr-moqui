@@ -17,12 +17,15 @@
 //! and dependents, the data source groups, the EECA rules, and the SQL runner's statement.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 
 use indexmap::IndexMap;
 use moqui_db::model::{EntityDefinition, EntityModel, Relationship};
 use moqui_lib::error::Error;
 use moqui_lib::object::Value;
+use moqui_lib::sync::lock;
 
+use super::exec::SqlSyntax;
 use super::facade::EntityFacade;
 use crate::driver::{ColumnOrigin, DbCancel, DbConnection};
 use crate::transaction::{TransactionAttribute, TransactionManager};
@@ -751,21 +754,30 @@ pub fn is_query(sql: &str) -> bool {
 }
 
 /// A query a cursor can read, Postgres `DECLARE ... CURSOR FOR` taking only these. `SHOW`, `EXPLAIN` and `DESCRIBE`
-/// give a few rows and are read whole, and so is a `WITH` that may change data (`WITH made AS (INSERT ... RETURNING
-/// ...) SELECT ...`), which Postgres refuses in a cursor: one with any of the words `INSERT`, `UPDATE`, `DELETE` or
-/// `MERGE` anywhere in it, a string or a name too, which at worst reads a plain query whole.
-fn is_streamable(sql: &str) -> bool {
+/// give a few rows and are read whole, and so is a `WITH` that changes data (`WITH made AS (INSERT ... RETURNING ...)
+/// SELECT ...`), which Postgres refuses in a cursor: one whose own words (not its text, quoted names or comments,
+/// [`super::exec::blank_sql`]) have `INSERT`, `DELETE`, `MERGE`, or an `UPDATE` that is not a `FOR [NO KEY] UPDATE`
+/// lock. Read whole, the rows past the limit are still dropped.
+fn is_streamable(sql: &str, syntax: SqlSyntax) -> bool {
     match first_word(sql).as_str() {
         "select" | "values" | "table" => true,
-        "with" => !sql
-            .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
-            .any(|word| {
-                ["insert", "update", "delete", "merge"]
-                    .iter()
-                    .any(|verb| word.eq_ignore_ascii_case(verb))
-            }),
+        "with" => !changes_data(sql, syntax),
         _ => false,
     }
+}
+
+/// Whether the words of `sql` outside its text and comments name a statement that changes data.
+fn changes_data(sql: &str, syntax: SqlSyntax) -> bool {
+    let blank = super::exec::blank_sql(sql, syntax).to_ascii_lowercase();
+    let words: Vec<&str> = blank
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .filter(|word| !word.is_empty())
+        .collect();
+    words.iter().enumerate().any(|(at, word)| match *word {
+        "insert" | "delete" | "merge" => true,
+        "update" => !(at > 0 && matches!(words[at - 1], "for" | "key")),
+        _ => false,
+    })
 }
 
 /// How long the transaction a query is read in may run: the screen begins none, so Java's statement has no timeout.
@@ -773,7 +785,8 @@ const QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
 
 /// Whether `sql` gives rows, as [`run_sql`] decides it: the database's description of the prepared statement (an
 /// `INSERT ... RETURNING` gives rows), else its first word ([`is_query`]). For a confirmation that lists the
-/// statements that may change data (plans/Tools-Database.md 8.2).
+/// statements that may change data (plans/Tools-Database.md 8.2). It is asked on a connection of its own, the
+/// caller's transaction suspended, so a statement that does not prepare cannot abort the caller's transaction.
 ///
 /// # Errors
 ///
@@ -785,10 +798,11 @@ pub fn sql_gives_rows(facade: &EntityFacade, group: &str, sql: &str) -> Result<b
         .get(group)
         .ok_or_else(|| Error::new(format!("no entity group named {group}")))?;
     let sql = sql.trim().trim_end_matches(';');
-    Ok(runtime
-        .transactions
-        .with_connection(|conn| conn.returns_rows(sql))?
-        .unwrap_or_else(|| is_query(sql)))
+    let tx = &runtime.transactions;
+    let described = tx.run(TransactionAttribute::IgnoreSuspend, None, || {
+        tx.with_connection(|conn| conn.returns_rows(sql))
+    })?;
+    Ok(described.unwrap_or_else(|| is_query(sql)))
 }
 
 /// Run one statement on the group's connection, as the SQL runner does with JDBC: in the caller's transaction when
@@ -814,6 +828,11 @@ pub fn run_sql(facade: &EntityFacade, group: &str, sql: &str, limit: usize) -> R
 
 /// [`run_sql`] with its [`SqlRunOptions`]: read only, and told when the statement starts.
 ///
+/// A read-only run is a transaction of its own on a connection that is closed after it, not returned to the pool:
+/// a statement may change its session (`SET search_path`, `set_config(…, false)`, a temporary table, a prepared
+/// statement, an advisory lock), and no later borrower gets that session. On MySQL and MariaDB only a query runs
+/// read only ([`is_query`]): DDL and a `CALL` that commits end the read-only transaction there before they run.
+///
 /// # Errors
 ///
 /// Returns an error for an unknown group, when the statement fails (a write under `read_only` among them: the
@@ -832,28 +851,76 @@ pub fn run_sql_with(
     let sql = sql.trim().trim_end_matches(';');
     // Raw SQL does not pass the write gate, so under the read fence only a plain query runs.
     super::fence::check_sql(sql)?;
+    let syntax = SqlSyntax::of(&runtime.dialect);
     let tx = &runtime.transactions;
     if !options.read_only {
-        return run_statement(tx, sql, &mut options);
+        return run_statement(tx, sql, syntax, &mut options);
+    }
+    if syntax == SqlSyntax::Mysql && !is_query(sql) {
+        return Err(Error::new(
+            "only a query runs read only on MySQL and MariaDB, where other statements can commit the transaction",
+        ));
     }
     // Read only is set before any statement of the transaction, so it is one of its own.
     tx.run(TransactionAttribute::ForceNew, Some(QUERY_TIMEOUT), || {
         tx.with_connection(|conn| conn.set_transaction_read_only())?;
-        run_statement(tx, sql, &mut options)
+        tx.discard_connection_at_end()?;
+        run_statement(tx, sql, syntax, &mut options)
     })
 }
 
-/// Tell [`SqlRunOptions::on_start`] of the connection the statement is about to run on.
-fn started(conn: &dyn DbConnection, on_start: &mut Option<&mut dyn FnMut(SqlStart)>) {
-    if let Some(on_start) = on_start {
-        on_start(SqlStart {
-            canceller: conn.canceller(),
-            backend_id: conn.backend_id(),
-        });
+/// A canceller that cancels only while its statement runs: one kept past the statement must not cancel the next
+/// statement on the pooled connection. [`Running`] disarms it, under the lock a cancel holds while it is sent.
+struct StatementCancel {
+    inner: Box<dyn DbCancel>,
+    armed: Arc<Mutex<bool>>,
+}
+
+impl DbCancel for StatementCancel {
+    fn cancel(&self) -> Result<(), Error> {
+        let armed = lock(&self.armed);
+        if !*armed {
+            return Ok(());
+        }
+        self.inner.cancel()
     }
 }
 
-fn run_statement(tx: &TransactionManager, sql: &str, options: &mut SqlRunOptions<'_>) -> Result<SqlResult, Error> {
+/// While a statement runs: dropped (before its connection is released) it disarms the [`StatementCancel`] handed out.
+struct Running(Option<Arc<Mutex<bool>>>);
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        if let Some(armed) = &self.0 {
+            *lock(armed) = false;
+        }
+    }
+}
+
+/// Tell [`SqlRunOptions::on_start`] of the connection the statement is about to run on. Keep the answer while the
+/// statement runs.
+#[must_use]
+fn started(conn: &dyn DbConnection, on_start: &mut Option<&mut dyn FnMut(SqlStart)>) -> Running {
+    let Some(on_start) = on_start else {
+        return Running(None);
+    };
+    let armed = Arc::new(Mutex::new(true));
+    on_start(SqlStart {
+        canceller: Box::new(StatementCancel {
+            inner: conn.canceller(),
+            armed: Arc::clone(&armed),
+        }),
+        backend_id: conn.backend_id(),
+    });
+    Running(Some(armed))
+}
+
+fn run_statement(
+    tx: &TransactionManager,
+    sql: &str,
+    syntax: SqlSyntax,
+    options: &mut SqlRunOptions<'_>,
+) -> Result<SqlResult, Error> {
     let limit = options.limit;
     let on_start = &mut options.on_start;
     // As JDBC's `execute`, the database says whether the statement gives rows; the first word when it cannot.
@@ -862,7 +929,7 @@ fn run_statement(tx: &TransactionManager, sql: &str, options: &mut SqlRunOptions
         .unwrap_or_else(|| is_query(sql));
     if !gives_rows {
         let count = tx.with_connection(|conn| {
-            started(conn, on_start);
+            let _running = started(conn, on_start);
             conn.execute(sql, &[])
         })?;
         return Ok(SqlResult {
@@ -885,9 +952,9 @@ fn run_statement(tx: &TransactionManager, sql: &str, options: &mut SqlRunOptions
             .push(row.columns.into_iter().map(|(_, value)| value).collect());
         true
     };
-    if !is_streamable(sql) {
+    if !is_streamable(sql, syntax) {
         let rows = tx.with_connection(|conn| {
-            started(conn, on_start);
+            let _running = started(conn, on_start);
             conn.query_once(sql, &[])
         })?;
         for row in rows {
@@ -899,7 +966,7 @@ fn run_statement(tx: &TransactionManager, sql: &str, options: &mut SqlRunOptions
     }
     tx.run(TransactionAttribute::UseOrBegin, Some(QUERY_TIMEOUT), || {
         tx.with_connection(|conn| {
-            started(conn, on_start);
+            let _running = started(conn, on_start);
             // A find's cursor already open on the caller's connection keeps it; this query is read whole.
             if conn.stream_open() {
                 for row in conn.query_once(sql, &[])? {

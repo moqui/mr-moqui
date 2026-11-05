@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::split_sql;
+use super::{blank_sql, split_sql, split_sql_as, SqlSyntax};
 
 #[test]
 fn splits_at_semicolons_outside_quotes() {
@@ -70,4 +70,43 @@ fn escape_strings_take_backslashes() {
     );
     // Text and quoted names keep other scripts' characters whole.
     assert_eq!(split_sql("select 'é;ü'; select 2"), vec!["select 'é;ü'", "select 2"]);
+}
+
+/// MySQL escapes with backslashes in both quotes, comments with `#` and `-- ` (a space after), and has no dollar quotes
+/// or nested comments.
+#[test]
+fn mysql_quoting_and_comments() {
+    let mysql = |sql| split_sql_as(sql, SqlSyntax::Mysql);
+    assert_eq!(
+        mysql(r#"select 'a\';b'; select "c\";d"; select `e;f`"#),
+        vec![r"select 'a\';b'", r#"select "c\";d""#, "select `e;f`"]
+    );
+    assert_eq!(
+        mysql("# a; comment\nselect 1; -- b; comment\nselect 2"),
+        vec!["# a; comment\nselect 1", "-- b; comment\nselect 2"]
+    );
+    // `--1` is an operator and a number, not a comment; `$` is part of a name.
+    assert_eq!(
+        mysql("select 5--1; select a$b from t"),
+        vec!["select 5--1", "select a$b from t"]
+    );
+    assert_eq!(
+        mysql("select /* a /* b */ 1; select 2"),
+        vec!["select /* a /* b */ 1", "select 2"]
+    );
+}
+
+/// The blanked text keeps the positions and the statement's own words, and hides the words of its text and comments.
+#[test]
+fn blanking_hides_text_names_and_comments() {
+    let sql = "with x as (select 'update' as \"delete\" -- insert\n) select * from x /* merge */";
+    let blank = blank_sql(sql, SqlSyntax::Postgres);
+    assert_eq!(blank.len(), sql.len());
+    assert!(
+        !blank.contains("update") && !blank.contains("delete") && !blank.contains("insert"),
+        "{blank}"
+    );
+    assert!(blank.starts_with("with x as (select '______' as \"______\""), "{blank}");
+    assert_eq!(blank_sql("select 'é'", SqlSyntax::Postgres), "select '__'");
+    assert_eq!(blank_sql("do $f$ update $f$", SqlSyntax::Postgres), "do $f$________$f$");
 }

@@ -518,4 +518,23 @@ fn on_a_server_the_schema_comparison_reads_what_the_check_made() {
     assert!(diff.errors.is_empty(), "{:?}", diff.errors);
     assert_eq!(diff.checked, entities.len());
     assert!(diff.tables.is_empty(), "{:#?}", diff.tables);
+
+    // Read only on MySQL runs only a query: DDL or a CALL would commit the read-only transaction first.
+    let read_only = |sql: &str| {
+        moqui_core::entity::info::run_sql_with(
+            &facade,
+            "transactional",
+            sql,
+            moqui_core::entity::info::SqlRunOptions {
+                read_only: true,
+                ..Default::default()
+            },
+        )
+    };
+    let rows = must(read_only("SELECT enum_id FROM ENUMERATION"));
+    assert!(rows.records.is_empty() || !rows.column_origins.is_empty());
+    for sql in ["CREATE TABLE moqui_ro_made (id INT)", "CALL nothing()", "SET autocommit = 0"] {
+        let err = read_only(sql).expect_err(sql);
+        assert!(err.to_string().contains("only a query"), "{sql}: {err}");
+    }
 }

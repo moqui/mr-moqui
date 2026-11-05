@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use moqui_core::driver::{ColumnOrigin, DbCancel, DbDriver};
 use moqui_core::entity::info::{self, SqlRunOptions, SqlStart};
 use moqui_core::entity::EntityFacade;
-use moqui_core::transaction::PoolConfig;
+use moqui_core::transaction::{PoolConfig, TransactionAttribute};
 use moqui_lib::object::Value;
 
 use super::super::embedded::EmbeddedCluster;
@@ -163,11 +163,9 @@ fn the_whole_framework_schema_compares_clean() {
 type Started = (Box<dyn DbCancel>, Option<i64>);
 
 /// A read-only run refuses a write, a data-modifying CTE among them, in the database; a cancel handed out when the
-/// statement starts stops a `pg_sleep(30)`; a result's columns name the table they come from; the sessions carry the
-/// process's application name, and a pooled one takes a new name on its next checkout.
+/// statement starts stops a `pg_sleep(30)`; a result's columns name the table they come from.
 #[test]
 fn read_only_runs_refuse_writes_and_a_cancel_stops_a_sleep() {
-    moqui_core::driver::set_application_name("moqui-tools-test-a");
     let dir = temp_cluster_dir();
     let _guard = DirGuard(dir.clone());
     let (_cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
@@ -261,17 +259,123 @@ fn read_only_runs_refuse_writes_and_a_cancel_stops_a_sleep() {
     assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
     let backend = cancelling.join().unwrap();
     assert!(backend.is_some_and(|pid| pid > 0), "{backend:?}");
+}
 
-    // The application name: given at connect, and changed on a pooled session's next checkout.
-    let name = |facade: &EntityFacade| {
-        run(
-            facade,
-            "select application_name from pg_stat_activity where pid = pg_backend_pid()",
-        )
-        .records[0][0]
-            .clone()
-    };
-    assert_eq!(name(&facade), Value::string("moqui-tools-test-a"));
+/// A statement that does not prepare reports its own error, read only (the failed describe once aborted the
+/// read-only transaction first) and when asked whether it gives rows in a caller's transaction, which goes on.
+#[test]
+fn a_statement_that_does_not_prepare_reports_its_own_error() {
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let (_cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let facade = facade_on(Arc::new(driver));
+    let err = info::run_sql_with(
+        &facade,
+        "transactional",
+        "select * from nosuch",
+        SqlRunOptions {
+            read_only: true,
+            ..SqlRunOptions::default()
+        },
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("\"nosuch\" does not exist"), "{err}");
+
+    let tx = facade.default_transactions().unwrap();
+    let answer = tx
+        .run(TransactionAttribute::UseOrBegin, None, || {
+            run(&facade, "select 1");
+            let gives = info::sql_gives_rows(&facade, "transactional", "select * from nosuch");
+            // The caller's transaction is not aborted by the describe.
+            run(&facade, "select 2");
+            gives
+        })
+        .unwrap();
+    assert!(answer, "a select by its first word");
+}
+
+/// A pool of one ordinary connection, so each run takes the same session unless one is discarded.
+fn facade_of_one(driver: Arc<dyn DbDriver>) -> EntityFacade {
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    open_entity_facade(
+        &framework,
+        driver,
+        PoolConfig {
+            min: 0,
+            max: 2,
+            reserve: 1,
+            acquire_timeout: Duration::from_secs(30),
+            ..Default::default()
+        },
+    )
+    .unwrap()
+}
+
+fn session(facade: &EntityFacade) -> (Value, Value) {
+    let row = run(
+        facade,
+        "select pg_backend_pid(), application_name from pg_stat_activity where pid = pg_backend_pid()",
+    );
+    (row.records[0][0].clone(), row.records[0][1].clone())
+}
+
+/// The sessions carry the process's application name, and the same pooled session takes a new one on its next
+/// checkout; a canceller kept past its statement cancels nothing on that session; a read-only run's session, which it
+/// may have changed, is closed rather than pooled.
+#[test]
+fn pooled_sessions_are_renamed_kept_from_late_cancels_and_read_only_ones_closed() {
+    moqui_core::driver::set_application_name("moqui-tools-test-a");
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let (_cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let facade = facade_of_one(Arc::new(driver));
+    let (pid, name) = session(&facade);
+    assert_eq!(name, Value::string("moqui-tools-test-a"));
     moqui_core::driver::set_application_name("moqui-tools-test-b");
-    assert_eq!(name(&facade), Value::string("moqui-tools-test-b"));
+    let (again, name) = session(&facade);
+    assert_eq!(again, pid, "the same pooled session");
+    assert_eq!(name, Value::string("moqui-tools-test-b"));
+
+    // A cancel after the statement ended does nothing, and the next statement on the session runs.
+    let mut kept: Option<Started> = None;
+    let mut on_start = |start: SqlStart| kept = Some((start.canceller, start.backend_id));
+    info::run_sql_with(
+        &facade,
+        "transactional",
+        "select 1",
+        SqlRunOptions {
+            on_start: Some(&mut on_start),
+            ..SqlRunOptions::default()
+        },
+    )
+    .unwrap();
+    let (canceller, backend) = kept.take().unwrap();
+    assert_eq!(backend, Some(pid_of(&pid)));
+    let next = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        canceller.cancel()
+    });
+    run(&facade, "select pg_sleep(0.4)");
+    next.join().unwrap().unwrap();
+    assert_eq!(session(&facade).0, pid);
+
+    // A read-only run that changes its session: the session is closed, the next run has a new one with the defaults.
+    info::run_sql_with(
+        &facade,
+        "transactional",
+        "select set_config('search_path', 'nosuch_schema', false)",
+        SqlRunOptions {
+            read_only: true,
+            ..SqlRunOptions::default()
+        },
+    )
+    .unwrap();
+    let (after, _) = session(&facade);
+    assert_ne!(after, pid, "the read-only session was closed");
+    let path = run(&facade, "show search_path");
+    assert_ne!(path.records[0][0], Value::string("nosuch_schema"));
+}
+
+fn pid_of(value: &Value) -> i64 {
+    moqui_lib::object::to_plain_string(value).parse().unwrap()
 }

@@ -625,9 +625,11 @@ mod driver {
             // A deferred failure is reported, not taken for this statement's.
             self.wire.finish()?;
             // Not kept in the statement cache: a statement typed in the SQL runner runs once. One that does not prepare
-            // is left to run, so its own error is the one reported.
+            // is left to run, so its own error is the one reported; in a transaction the failed Parse has aborted
+            // it, so the statement could only report that, and the Parse error is reported instead.
             match self.wire.prepare("", &rewrite_placeholders(sql)) {
                 Ok(described) => Ok(Some(!described.columns.list.is_empty())),
+                Err(err) if self.in_transaction => Err(err),
                 Err(_) => Ok(None),
             }
         }

@@ -705,6 +705,11 @@ impl PooledConn {
         }
     }
 
+    /// Close the client when it is given back instead of returning it to the pool; it stays usable until then.
+    pub(super) fn discard_on_return(&mut self) {
+        self.discard = true;
+    }
+
     /// False after [`Self::discard`] took the client.
     pub(super) fn live(&self) -> bool {
         self.tracked.is_some()

@@ -35,7 +35,7 @@ use super::exec::query_conn;
 use super::facade::EntityFacade;
 use super::info::cell_text;
 use crate::driver::{DbConnection, DbRow};
-use crate::transaction::TransactionManager;
+use crate::transaction::{TransactionAttribute, TransactionManager};
 
 /// What [`super::EntityDbMeta::compare`] found.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -579,9 +579,11 @@ pub(crate) fn compare(facade: &EntityFacade, names: &[&str]) -> Result<SchemaDif
         let at = match catalogs.iter().position(|(known, _)| known.shares_stack(&tx)) {
             Some(at) => at,
             None => {
-                let read = tx
-                    .with_reserve(|conn| read_catalog(conn, &dialect))
-                    .or_else(|_| tx.with_connection(|conn| read_catalog(conn, &dialect)));
+                // On a connection of its own, the caller's transaction suspended: a query that fails must not mark the
+                // caller's transaction rollback-only.
+                let read = tx.run(TransactionAttribute::IgnoreSuspend, None, || {
+                    tx.with_connection(|conn| read_catalog(conn, &dialect))
+                });
                 let catalog = match read {
                     Ok(catalog) => Some(catalog),
                     Err(err) => {
