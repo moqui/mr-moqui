@@ -26,7 +26,8 @@
 //! ([`handoff`]). The decision is input for the run, which resumes the paused call: the tool reads it ([`for_call`],
 //! [`resumed`]), checks for conflicts, moves the approval to Executing with the hash recomputed from the arguments it is
 //! about to run ([`begin`]), runs it and records the result ([`finish`]). Status moves are conditional, so an approval
-//! runs at most once. [`preview`] runs a write in the sim overlay on demand, or always for a tool configured so.
+//! runs at most once; one whose step stopped while it was Executing is UnknownOutcome, never run again and never
+//! reported as not run ([`close_for_call`], [`expire_for_run`]). [`preview`] runs a write in the sim overlay on demand, or always for a tool configured so.
 
 pub mod handoff;
 pub mod preview;
@@ -68,10 +69,13 @@ pub enum ApprovalStatus {
     Expired,
     Conflict,
     HandedOff,
+    /// It began (Executing) and the step running it stopped before it recorded what the write came to: it may have
+    /// taken effect, and it never runs again.
+    UnknownOutcome,
 }
 
 impl ApprovalStatus {
-    pub const ALL: [ApprovalStatus; 9] = [
+    pub const ALL: [ApprovalStatus; 10] = [
         ApprovalStatus::Pending,
         ApprovalStatus::Approved,
         ApprovalStatus::Executing,
@@ -81,6 +85,7 @@ impl ApprovalStatus {
         ApprovalStatus::Expired,
         ApprovalStatus::Conflict,
         ApprovalStatus::HandedOff,
+        ApprovalStatus::UnknownOutcome,
     ];
 
     pub fn status_id(self) -> &'static str {
@@ -94,6 +99,7 @@ impl ApprovalStatus {
             ApprovalStatus::Expired => "AgaExpired",
             ApprovalStatus::Conflict => "AgaConflict",
             ApprovalStatus::HandedOff => "AgaHandedOff",
+            ApprovalStatus::UnknownOutcome => "AgaUnknownOutcome",
         }
     }
 
@@ -109,6 +115,7 @@ impl ApprovalStatus {
             ApprovalStatus::Expired => "expired",
             ApprovalStatus::Conflict => "conflict",
             ApprovalStatus::HandedOff => "handed-off",
+            ApprovalStatus::UnknownOutcome => "unknown-outcome",
         }
     }
 
@@ -123,7 +130,7 @@ impl ApprovalStatus {
 
 /// Every allowed move, the `StatusFlowTransition` rows of `data/AgentTypeData.xml` (a test compares the two). Approved
 /// goes to Failed when the arguments about to run do not hash to the approved ones, and to Expired when its run ends
-/// before it runs.
+/// before it runs; Executing goes to UnknownOutcome when the step running it stopped before it recorded the result.
 pub const TRANSITIONS: &[(ApprovalStatus, ApprovalStatus)] = &[
     (ApprovalStatus::Pending, ApprovalStatus::Approved),
     (ApprovalStatus::Pending, ApprovalStatus::Rejected),
@@ -136,6 +143,7 @@ pub const TRANSITIONS: &[(ApprovalStatus, ApprovalStatus)] = &[
     (ApprovalStatus::Approved, ApprovalStatus::Expired),
     (ApprovalStatus::Executing, ApprovalStatus::Executed),
     (ApprovalStatus::Executing, ApprovalStatus::Failed),
+    (ApprovalStatus::Executing, ApprovalStatus::UnknownOutcome),
     (ApprovalStatus::HandedOff, ApprovalStatus::Executed),
     (ApprovalStatus::HandedOff, ApprovalStatus::Expired),
 ];
@@ -728,12 +736,14 @@ pub fn resumed(view: &ApprovalView) -> Result<Resumed, Error> {
              write anew."
                 .to_string(),
         ),
-        ApprovalStatus::Executing | ApprovalStatus::Executed | ApprovalStatus::Failed | ApprovalStatus::HandedOff => {
-            Resumed::Done(format!(
-                "This approval is {} already, so it was not run again.",
-                view.status.as_str()
-            ))
-        }
+        ApprovalStatus::Executing
+        | ApprovalStatus::Executed
+        | ApprovalStatus::Failed
+        | ApprovalStatus::HandedOff
+        | ApprovalStatus::UnknownOutcome => Resumed::Done(format!(
+            "This approval is {} already, so it was not run again.",
+            view.status.as_str()
+        )),
     })
 }
 
@@ -1345,47 +1355,121 @@ fn expire_one(factory: &Arc<ExecutionContextFactory>, facade: &EntityFacade, vie
     })
 }
 
-/// The run ended: its approvals that did not run expire, and its hand-off watches are abandoned, each with its event.
-/// In the transaction of the run's end, which gave its lease up.
+/// The run ended: its approvals that did not run expire, one that began (Executing) and never recorded what it came to
+/// is UnknownOutcome, and its hand-off watches are abandoned, each with its event. In the transaction of the run's
+/// end, which gave its lease up.
 ///
 /// # Errors
 ///
 /// Returns an error when the rows cannot be written.
 pub(crate) fn expire_for_run(facade: &EntityFacade, sink: &mut EventSink, run_id: &str) -> Result<(), Error> {
     let _lifted = fence::lift();
-    let open = facade
+    close_open(
+        facade,
+        sink,
+        run_id,
+        None,
+        &[
+            ApprovalStatus::Pending,
+            ApprovalStatus::Approved,
+            ApprovalStatus::HandedOff,
+            ApprovalStatus::Executing,
+        ],
+    )?;
+    handoff::abandon_for_run(facade, sink, run_id, "the run ended")
+}
+
+/// The newest approval of the run's tool call, if it has one.
+///
+/// # Errors
+///
+/// Returns an error when the rows cannot be read.
+pub(crate) fn of_call(facade: &EntityFacade, run_id: &str, tool_call_id: &str) -> Result<Option<ApprovalView>, Error> {
+    Ok(facade
+        .find(APPROVAL)?
+        .eq("runId", Value::string(run_id))
+        .eq("toolCallId", Value::string(tool_call_id))
+        .order_by("createdDate", true)
+        .limit(1)
+        .disable_authz()
+        .list()?
+        .values()
+        .first()
+        .map(ApprovalView::of))
+}
+
+/// A tool call the run goes on without (its step stopped while it ran, plans/High-Level-Review.md HL-040): its
+/// approval that began is UnknownOutcome, and one that never began (Pending, Approved) expires, each with its event.
+/// In the transaction in place.
+///
+/// # Errors
+///
+/// Returns an error when the rows cannot be written.
+pub(crate) fn close_for_call(
+    facade: &EntityFacade,
+    sink: &mut EventSink,
+    run_id: &str,
+    tool_call_id: &str,
+) -> Result<(), Error> {
+    let _lifted = fence::lift();
+    close_open(
+        facade,
+        sink,
+        run_id,
+        Some(tool_call_id),
+        &[
+            ApprovalStatus::Pending,
+            ApprovalStatus::Approved,
+            ApprovalStatus::Executing,
+        ],
+    )
+}
+
+/// Close the run's approvals (of one tool call, when given) in `statuses`: Executing to UnknownOutcome, the rest to
+/// Expired, conditionally, each with its `approval.decided` event.
+fn close_open(
+    facade: &EntityFacade,
+    sink: &mut EventSink,
+    run_id: &str,
+    tool_call_id: Option<&str>,
+    statuses: &[ApprovalStatus],
+) -> Result<(), Error> {
+    let mut find = facade
         .find(APPROVAL)?
         .eq("runId", Value::string(run_id))
         .condition(Condition::is_in(
             "statusId",
-            [
-                ApprovalStatus::Pending,
-                ApprovalStatus::Approved,
-                ApprovalStatus::HandedOff,
-            ]
-            .into_iter()
-            .map(|status| Value::string(status.status_id()))
-            .collect(),
-        ))
-        .disable_authz()
-        .list()?;
+            statuses
+                .iter()
+                .map(|status| Value::string(status.status_id()))
+                .collect(),
+        ));
+    if let Some(tool_call_id) = tool_call_id {
+        find = find.eq("toolCallId", Value::string(tool_call_id));
+    }
+    let open = find.disable_authz().list()?;
     for row in open.values() {
         let view = ApprovalView::of(row);
-        if move_status(
-            facade,
-            &view.approval_id,
-            &[view.status],
-            ApprovalStatus::Expired,
-            Vec::new(),
-        )?
-        .is_some()
-        {
+        // a write that began may have committed: it is never reported as not run, and never runs again
+        let (to, decision, fields) = if view.status == ApprovalStatus::Executing {
+            (
+                ApprovalStatus::UnknownOutcome,
+                "lost",
+                vec![(
+                    "resultJson",
+                    Value::string(json!({"error": "unknown_outcome"}).to_string()),
+                )],
+            )
+        } else {
+            (ApprovalStatus::Expired, "expire", Vec::new())
+        };
+        if move_status(facade, &view.approval_id, &[view.status], to, fields)?.is_some() {
             sink.emit(
                 "approval.decided",
-                json!({"approvalId": view.approval_id, "toolCallId": view.tool_call_id, "decision": "expire",
-                    "status": ApprovalStatus::Expired.as_str()}),
+                json!({"approvalId": view.approval_id, "toolCallId": view.tool_call_id, "decision": decision,
+                    "status": to.as_str()}),
             );
         }
     }
-    handoff::abandon_for_run(facade, sink, run_id, "the run ended")
+    Ok(())
 }

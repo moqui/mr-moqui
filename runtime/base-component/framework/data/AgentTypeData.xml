@@ -57,6 +57,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.StatusItem statusId="AgaExpired" statusTypeId="AgentApproval" statusCode="expired" sequenceNum="7" description="Expired"/>
     <moqui.basic.StatusItem statusId="AgaConflict" statusTypeId="AgentApproval" statusCode="conflict" sequenceNum="8" description="Conflict" statusColor="negative"/>
     <moqui.basic.StatusItem statusId="AgaHandedOff" statusTypeId="AgentApproval" statusCode="handed-off" sequenceNum="9" description="Handed Off"/>
+    <moqui.basic.StatusItem statusId="AgaUnknownOutcome" statusTypeId="AgentApproval" statusCode="unknown-outcome" sequenceNum="10" description="Outcome Unknown" statusColor="negative"/>
     <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaPending" toStatusId="AgaApproved" transitionName="Approve"/>
     <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaPending" toStatusId="AgaRejected" transitionName="Reject"/>
     <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaPending" toStatusId="AgaExpired" transitionName="Expire"/>
@@ -68,6 +69,7 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaApproved" toStatusId="AgaExpired" transitionName="Run Ended"/>
     <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaExecuting" toStatusId="AgaExecuted" transitionName="Done"/>
     <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaExecuting" toStatusId="AgaFailed" transitionName="Fail"/>
+    <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaExecuting" toStatusId="AgaUnknownOutcome" transitionName="Lost"/>
     <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaHandedOff" toStatusId="AgaExecuted" transitionName="Saved by User"/>
     <moqui.basic.StatusFlowTransition statusFlowId="Default" statusId="AgaHandedOff" toStatusId="AgaExpired" transitionName="Abandoned"/>
 

@@ -16,9 +16,10 @@
 //! the agent pool, logged in as the run's user (`internal_login_user`) with the loop-guard origin set.
 //!
 //! A step takes the run's lease, folds in the input that came meanwhile (steering), finishes what the last step left:
-//! a tool call still waiting runs, a paused one resumes with its input, and one left running by a node that stopped is
-//! `UnknownOutcome` (a READ runs again; a write, destructive or external call never does, and the model is told to check
-//! its outcome). Then the budget is checked (an interactive run pauses with a "continue?" question, a background one
+//! a tool call still waiting runs, a paused one resumes with its input (taken in the transaction that marks it running,
+//! the decision on its approval by the approval's id), and one left running by a node that stopped is `UnknownOutcome`
+//! (a READ runs again; a write, destructive or external call never does, its begun approval is `UnknownOutcome` too,
+//! and the model is told to check its outcome). Then the budget is checked (an interactive run pauses with a "continue?" question, a background one
 //! fails `budget_exhausted`), the request is built from the conversation's frozen prefix, its history and the newest
 //! message's tail, compacted first when it is over the model's high watermark ([`crate::window`]), and the model is
 //! called with no transaction open. A JSON tool mode reply is read as its protocol object, and a native reply's calls
@@ -502,18 +503,79 @@ fn last_calls(facade: &EntityFacade, run_id: &str) -> Result<Vec<StoredCall>, Er
         .collect())
 }
 
-/// Close the tool calls a run that ended left open: each gets a result saying it did not run, so the conversation's
-/// history has a result for every call.
+/// The failure of a tool that panicked ([`invoke`]).
+const TOOL_PANICKED: &str = "the tool failed unexpectedly";
+
+/// What the model reads of a call that may or may not have taken effect.
+fn unknown_outcome_text(name: &str, why: &str) -> String {
+    format!("The outcome of this {name} call is unknown: {why}. Check whether it took effect before you call it again.")
+}
+
+/// The input a paused call resumes with (HL-040): the decision on its approval, picked by the approval's id; else an
+/// answer or a remote agent's reply (a question, a remote task, a delegated call past its approval); else, for a call
+/// with no approval, a message, which answers a question. A call with an approval never takes a message, so a message
+/// queued meanwhile reaches the conversation.
+fn resume_input(inputs: &[OpenInput], approval: Option<&crate::approval::ApprovalView>) -> Option<usize> {
+    let decision_on = |input: &OpenInput, approval_id: &str| {
+        input.kind == "decision"
+            && input
+                .data
+                .as_ref()
+                .and_then(|data| data.get("approvalId"))
+                .and_then(Json::as_str)
+                == Some(approval_id)
+    };
+    approval
+        .and_then(|view| inputs.iter().position(|input| decision_on(input, &view.approval_id)))
+        .or_else(|| {
+            inputs
+                .iter()
+                .position(|input| input.kind == "answer" || input.kind == "remote")
+        })
+        .or_else(|| {
+            approval
+                .is_none()
+                .then(|| inputs.iter().position(|input| input.kind == "message"))
+                .flatten()
+        })
+}
+
+/// Close the tool calls a run that ended left open, so the conversation's history has a result for every call: one
+/// still pending or waiting did not run; one left running (a write resumed or begun when the step stopped, panicked
+/// or was canceled) may have taken effect and is an unknown outcome (HL-040). A call whose result is stored already is
+/// left as it is.
 pub(crate) fn close_open_calls(facade: &EntityFacade, run_id: &str, sink: &mut EventSink) -> Result<(), Error> {
     let Some(run) = load_run(facade, run_id)? else {
         return Ok(());
     };
     for call in last_calls(facade, run_id)?.into_iter().filter(StoredCall::is_open) {
-        let text = "Not run: the run ended before this call.";
+        let (text, status) = match call.status.as_str() {
+            "AgtcRunning" | "AgtcUnknownOutcome" => {
+                if has_result(facade, &call.tool_call_id)? {
+                    continue;
+                }
+                (
+                    unknown_outcome_text(&call.name, "the run ended while it ran"),
+                    "AgtcUnknownOutcome",
+                )
+            }
+            _ => ("Not run: the run ended before this call.".to_string(), "AgtcFailed"),
+        };
         // in the transition's own transaction, which gave the lease up
-        store_result(facade, &run, &call, text, true, "AgtcFailed", sink, Hold::LeaseOrNone)?;
+        store_result(facade, &run, &call, &text, true, status, sink, Hold::LeaseOrNone)?;
     }
     Ok(())
+}
+
+/// Whether the call's result is stored (a tool message names it).
+fn has_result(facade: &EntityFacade, tool_call_id: &str) -> Result<bool, Error> {
+    Ok(facade
+        .find(PART)?
+        .eq("toolCallId", Value::string(tool_call_id))
+        .eq("partKindEnumId", Value::string("AgpkToolResult"))
+        .disable_authz()
+        .count()?
+        > 0)
 }
 
 /// Store a tool call's result: its row's status and summary, and the tool message the model reads; only while `hold`
@@ -1976,9 +2038,21 @@ impl Turn {
                 .cloned();
             match call.status.as_str() {
                 "AgtcRunning" | "AgtcUnknownOutcome" => {
+                    // reported already, by a step that stopped before the model's next reply
+                    if call.status == "AgtcUnknownOutcome" && quietly(|| has_result(&facade, &call.tool_call_id))? {
+                        index += 1;
+                        continue;
+                    }
                     let read = offered
                         .as_ref()
                         .is_some_and(|offered| offered.tool.spec().classification.is_read());
+                    let approval = quietly(|| crate::approval::of_call(&facade, &self.run.run_id, &call.tool_call_id))?;
+                    // a READ runs again; a write, or a read that holds a write for approval, never does
+                    if !read || approval.is_some() {
+                        self.close_stopped(call, approval.as_ref(), "the server working on it stopped")?;
+                        index += 1;
+                        continue;
+                    }
                     quietly(|| {
                         set_call_status(
                             &facade,
@@ -1988,49 +2062,17 @@ impl Turn {
                             "AgtcUnknownOutcome",
                         )
                     })?;
-                    if !read {
-                        let text = format!(
-                            "The outcome of this {} call is unknown: the server working on it stopped before it finished. \
-                             Check whether it took effect before you call it again.",
-                            call.name
-                        );
-                        quietly(|| {
-                            store_result(
-                                &facade,
-                                &self.run,
-                                call,
-                                &text,
-                                true,
-                                "AgtcUnknownOutcome",
-                                &mut self.sink,
-                                Hold::Lease,
-                            )
-                        })?;
-                        index += 1;
-                        continue;
-                    }
-                    // a read runs again
                 }
                 "AgtcAwaiting" => {
-                    let at = inputs
-                        .iter()
-                        .position(|input| input.kind != "message")
-                        .or_else(|| (!inputs.is_empty()).then_some(0));
-                    let input = at.map(|at| inputs.remove(at));
+                    let approval = quietly(|| crate::approval::of_call(&facade, &self.run.run_id, &call.tool_call_id))?;
+                    let input = resume_input(inputs, approval.as_ref()).map(|at| inputs.remove(at));
                     let outcome = match (&offered, &input) {
-                        (Some(offered), Some(input)) => {
-                            let holder = self.sink.holder().clone();
-                            quietly(|| {
-                                in_tx(&facade, || {
-                                    held(&facade, &self.run.run_id, &holder, Hold::Lease)?;
-                                    consume_input(&facade, &input.input_id)
-                                })
-                            })?;
+                        (Some(offered), Some(input)) if self.take_input(call, input)? => {
                             let args = tools::repair::repair(&call.arguments, &offered.tool.spec().parameters).args;
                             self.invoke(call, offered, args, Some(&input.tool_input()))
                         }
                         (None, _) => ToolOutcome::Failed(format!("There is no tool named {} now.", call.name)),
-                        (_, None) => ToolOutcome::Failed("No answer came for this call.".to_string()),
+                        _ => ToolOutcome::Failed("No answer came for this call.".to_string()),
                     };
                     if let Some(pause) = self.finish_call(call, outcome)? {
                         return self.pause(pause);
@@ -2114,6 +2156,75 @@ impl Turn {
             quietly(|| self.sink.flush_logged());
         }
         Ok(ToolsEnd::Continue)
+    }
+
+    /// Take the input a paused call resumes with and mark the call running, in one transaction (HL-040): a step that
+    /// stops while the resumed call runs leaves it running, so the next holder reports its outcome as unknown and
+    /// never takes another input for it. False when the input was taken meanwhile.
+    fn take_input(&self, call: &StoredCall, input: &OpenInput) -> Result<bool, Error> {
+        let facade = &self.facade;
+        let holder = self.sink.holder();
+        quietly(|| {
+            in_tx(facade, || {
+                held(facade, &self.run.run_id, holder, Hold::Lease)?;
+                let taken = facade
+                    .find(INPUT)?
+                    .eq("inputId", Value::string(&input.input_id))
+                    .condition(Condition::is_null("consumedDate"))
+                    .for_update(true)
+                    .disable_authz()
+                    .update_all([("consumedDate".to_string(), stamp(now_millis()))])?;
+                if taken == 0 {
+                    return Ok(false);
+                }
+                facade
+                    .find(TOOL_CALL)?
+                    .eq("toolCallId", Value::string(&call.tool_call_id))
+                    .for_update(true)
+                    .disable_authz()
+                    .update_all([("statusId".to_string(), Value::string("AgtcRunning"))])?;
+                Ok(true)
+            })
+        })
+    }
+
+    /// Close a call that stopped while it ran (HL-040; `why`, as the model reads it: its step stopped, or the tool
+    /// panicked): a write whose approval never began (Pending, Approved) did not run; any other may have taken effect
+    /// and is an unknown outcome. Its approval closes with it ([`crate::approval::close_for_call`]), in the same
+    /// transaction.
+    fn close_stopped(
+        &mut self,
+        call: &StoredCall,
+        approval: Option<&crate::approval::ApprovalView>,
+        why: &str,
+    ) -> Result<(), Error> {
+        use crate::approval::ApprovalStatus;
+        let began =
+            approval.is_none_or(|view| !matches!(view.status, ApprovalStatus::Pending | ApprovalStatus::Approved));
+        let (text, status) = if began {
+            (
+                unknown_outcome_text(&call.name, &format!("{why} before it finished")),
+                "AgtcUnknownOutcome",
+            )
+        } else {
+            (
+                format!(
+                    "This {} call did not run: {why} before the approved write began. Propose it again if it is \
+                     still wanted.",
+                    call.name
+                ),
+                "AgtcFailed",
+            )
+        };
+        let facade = self.facade.clone();
+        let run = self.run.clone();
+        let sink = &mut self.sink;
+        quietly(|| {
+            in_tx(&facade, || {
+                store_result(&facade, &run, call, &text, true, status, sink, Hold::Lease)?;
+                crate::approval::close_for_call(&facade, sink, &run.run_id, &call.tool_call_id)
+            })
+        })
     }
 
     /// The checks before a call: the tool is offered, the run and the tool have calls left, the arguments fit.
@@ -2442,6 +2553,20 @@ impl Turn {
 
     /// Store what a call came to; a pause is given back for the caller to make.
     fn finish_call(&mut self, call: &StoredCall, outcome: ToolOutcome) -> Result<Option<tools::Pause>, Error> {
+        // a tool that panicked may have taken effect: a write, or a read whose held write has an approval, is closed
+        // as a step that stopped inside it is, never reported as failed (HL-040)
+        if matches!(&outcome, ToolOutcome::Failed(text) if text == TOOL_PANICKED) {
+            let read = self
+                .offered
+                .iter()
+                .find(|offered| offered.tool.spec().name == call.name)
+                .is_some_and(|offered| offered.tool.spec().classification.is_read());
+            let approval = quietly(|| crate::approval::of_call(&self.facade, &self.run.run_id, &call.tool_call_id))?;
+            if !read || approval.is_some() {
+                self.close_stopped(call, approval.as_ref(), "the tool failed")?;
+                return Ok(None);
+            }
+        }
         let facade = self.facade.clone();
         let run = self.run.clone();
         let spill = Spill {
@@ -2690,7 +2815,7 @@ pub(crate) fn invoke(
     }))
     .unwrap_or_else(|_| {
         tracing::error!("agent tool {name} panicked");
-        ToolOutcome::Failed("the tool failed unexpectedly".to_string())
+        ToolOutcome::Failed(TOOL_PANICKED.to_string())
     });
     if let Some(guard) = guard {
         let violations = guard.violations();
