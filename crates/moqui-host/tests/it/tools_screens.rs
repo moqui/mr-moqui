@@ -667,7 +667,7 @@ fn run_sql(address: SocketAddr, auth: &str, changes: bool, sql: &str, limit: &st
             .split_once("://")
             .and_then(|(_, rest)| rest.find('/').map(|at| rest[at..].to_string()))
             .unwrap_or(location);
-        let (base, query) = path.split_once('?').unwrap_or((path.as_str(), ""));
+        let (base, query) = path.split_once('?').map_or((path.as_str(), ""), |parts| parts);
         let target = if base.ends_with(".html") {
             path.clone()
         } else if query.is_empty() {
