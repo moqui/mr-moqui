@@ -15,7 +15,7 @@ const ATTRIBUTE = 'moqui.screen.form.DbFormFieldAttribute'
 const DEPENDENCY = 'moqui.screen.form.DbFormFieldDependency'
 const ANSWER = 'moqui.screen.form.FormResponseAnswer'
 
-/** The operators and effects of a dependency, as db_form.rs OPERATORS and EFFECTS. */
+/** The operators and effects of a dependency, as db_form.rs OPERATORS and EFFECTS (xml-form-3.xsd WhenAttributes). */
 const OPERATORS = ['equals', 'not-equals', 'empty', 'not-empty']
 const EFFECTS = ['show', 'require']
 
@@ -57,7 +57,10 @@ const isAnswered = (formId, fieldName, keyValue) => {
   return ec.entity.find(ANSWER).condition(fields).count() > 0
 }
 
-/** Whether a dependency holds for a field's value, as db_form.rs condition_holds. */
+/**
+ * Whether a dependency holds for a field's value (several values for a multiple select: equals when any one is in the
+ * list). The same rule as $mq.holds in WebrootVue.qvt.js, moqui-form-when.js and the tui client (VisibleWhen::holds).
+ */
 function holds(operator, expected, actual) {
   const parts = (Array.isArray(actual) ? actual : actual == null ? [] : String(actual).split(','))
     .map((part) => String(part).trim()).filter((part) => part !== '')

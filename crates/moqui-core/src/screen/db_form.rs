@@ -40,14 +40,6 @@ pub struct AsOf {
 }
 
 impl AsOf {
-    /// Now (the context's effective time), without drafts.
-    pub fn now() -> Self {
-        Self {
-            millis: crate::user::now_effective_millis(),
-            drafts: false,
-        }
-    }
-
     /// From a date value and a drafts flag; a missing or unreadable date is now.
     pub fn of(date: Option<&Value>, drafts: Option<&Value>) -> Self {
         let millis = date
@@ -146,29 +138,10 @@ fn db_number(value: &EntityValue, field: &str) -> i64 {
     db_text(value, field).parse().unwrap_or(0)
 }
 
-/// The operators of a `DbFormFieldDependency`, and of `visible-when` and `require-when` (docs/ui/Db-Forms.md).
-pub const OPERATORS: &[&str] = &["equals", "not-equals", "empty", "not-empty"];
+/// The operators of a `DbFormFieldDependency`, and of `visible-when` and `require-when` (xml-form-3.xsd WhenAttributes).
+const OPERATORS: &[&str] = &["equals", "not-equals", "empty", "not-empty"];
 /// The effects of a `DbFormFieldDependency` and the element each becomes on its target field.
 const EFFECTS: &[(&str, &str)] = &[("show", "visible-when"), ("require", "require-when")];
-
-/// Whether a condition holds for a field's value: `expected` is one value or a comma-separated list, and a value with
-/// several parts (a multiple select) meets equals when any part is in the list. The same rule as `$mq.holds` in
-/// WebrootVue.qvt.js, moqui-form-when.js, the tui client and `evaluate#DbFormDependencies`.
-pub fn condition_holds(operator: &str, expected: &str, actual: &[String]) -> bool {
-    let actual: Vec<&str> = actual
-        .iter()
-        .map(|part| part.as_str())
-        .filter(|part| !part.is_empty())
-        .collect();
-    let wanted: Vec<&str> = expected.split(',').map(str::trim).collect();
-    let any_equal = actual.iter().any(|part| wanted.contains(part));
-    match operator {
-        "empty" => actual.is_empty(),
-        "not-empty" => !actual.is_empty(),
-        "not-equals" => !any_equal,
-        _ => any_equal,
-    }
-}
 
 /// The `DbForm` ids that modify the form, each with the user groups it is for: `DbFormLookup`, read as its two entities.
 pub(super) fn db_form_groups(location: &str, name: &str) -> Result<Vec<(String, Vec<String>)>, Error> {
@@ -478,7 +451,3 @@ fn dependency_conditions(
     }
     out
 }
-
-#[cfg(test)]
-#[path = "db_form_tests.rs"]
-mod tests;
