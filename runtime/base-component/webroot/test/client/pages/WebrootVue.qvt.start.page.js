@@ -70,6 +70,18 @@ test("startup sets the session token before mounting and history preserves fragm
         assert.equal(visits[2].url, otherQuery);
         await move(() => history.forward());
         assert.equal(visits[3].url, otherPath);
+
+        // The menu shows /qapps/dev at its default subscreen, so the screen's link URL is not the address bar: history
+        // compares the bar with the bar as last pushed, and a fragment link there still keeps the form.
+        history.pushState(null, "", "/qapps/dev/");
+        vm.currentLinkUrl = "/qapps/dev/Home";
+        vm.historyUrl = "/qapps/dev";
+        fixture.querySelector("a").href = "#history-end";
+        await move(() => fixture.querySelector("a").click());
+        await move(() => history.back());
+        assert.equal(visits.length, 4, "a fragment link under a default subscreen does not reload the screen");
+        assert.equal(fixture.querySelector("input"), input);
+        assert.equal(input.value, "keep this unsaved draft");
     } finally {
         history.replaceState(null, "", originalUrl);
         fixture.remove();

@@ -33,6 +33,8 @@
 //    sri.getSavedFindFullLocation (the form location, plus #entity or #service when the form is dynamic). The column
 //    dialog posts the form's name; the server strips a '#' and keeps columns on the bare location.
 //  - lookup is a text line. The Java macros had it commented out.
+//  - Each order-by arrow of a form-list header asks for its own direction, named in its label; the active one is marked
+//    (aria-current). The FreeMarker macro made the active arrow reverse the sort instead.
 //  - A show-pdf-button is a link to the page as a PDF, under /fop as Java's MoquiFopServlet, with no page-layout dialog.
 (function (T, S) {
     "use strict";
@@ -93,7 +95,8 @@
 
     // The runtime. It is source text: the body of this function is run once for each script engine. It
     // reads sri, ec and the context by bare name, so nothing here belongs to one request.
-    const runtimeFunction = function () {
+    // parseOrder is ScreenSupport's, given to the runtime as source (the runtime is run from its own source).
+    const runtimeFunction = function (parseOrder) {
         "use strict";
 
         const ENT = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
@@ -1200,27 +1203,6 @@
                 out += "<div" + A({ class: cls("title", sub), "data-align": align }) + ">" + e(field.submit ? "" : field.title());
                 if (field.orderBy) {
                     const insensitive = field.orderBy === "case-insensitive";
-                    // Match OrderBy::parse: signs/case prefix, optional direction/null placement, then UPPER/LOWER.
-                    const parseOrder = (value) => {
-                        let name = String(value).trimStart(), descending = false;
-                        while (name && "-+^ ".includes(name.charAt(0))) {
-                            if (name.charAt(0) === "-") descending = true;
-                            else if (name.charAt(0) === "+") descending = false;
-                            name = name.slice(1);
-                        }
-                        name = name.trimEnd().replace(/ NULLS (FIRST|LAST)$/i, "");
-                        const direction = / (ASC|DESC)$/i.exec(name);
-                        if (direction) {
-                            descending = direction[1].toUpperCase() === "DESC";
-                            name = name.slice(0, -direction[0].length);
-                        }
-                        if (name.includes("(")) {
-                            if (/^(UPPER|LOWER)\(/i.test(name)) name = name.slice(6);
-                            if (name.endsWith(")")) name = name.slice(0, -1);
-                        }
-                        name = name.trim();
-                        return name ? {name, descending} : null;
-                    };
                     const current = String(ec.context.get("orderByField") || "").split(",").map(parseOrder)
                         .find((part) => part && part.name === field.name);
                     const asc = !!current && !current.descending;
@@ -1731,7 +1713,7 @@
         Object.defineProperty(globalThis, "$mqHtml", { value: h, configurable: true });
     };
 
-    const runtime = "(" + runtimeFunction.toString() + ")();";
+    const runtime = "(" + runtimeFunction.toString() + ")(" + S.parseOrder.toString() + ");";
     // a unit keeps the render state of the unit around it and gives it back when it ends, as ScreenQvt.js
     const prelude = "const $h = globalThis.$mqHtml;\n$h.enter($depth);\ntry {\n";
     const epilogue = "} finally {\n$h.leave($depth);\n}\n";

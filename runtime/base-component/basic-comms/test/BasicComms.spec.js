@@ -83,12 +83,17 @@ feature("a user with no party sees the mail settings, the wizard and no Internal
             const parameters = href.split("?")[1]?.replace(/&amp;/g, "&").split("&") || []
             if (!parameters.includes("account=" + encodeURIComponent(hostedAccountId))) inboxLinkProblems.push(label + ": account not retained")
         }
+        // the account is this run's own: its owner deletes it, so a later run starts with no mail account again
+        if (hostedAccountId) sys(() => call("org.moqui.impl.EmailClientServices.delete#EmailAccount", {emailAccountId: hostedAccountId, deleteLocalCopies: true}))
+        const deleteErrors = ec.message.hasError() ? ec.message.errorsString : ""
+        ec.message.clearErrors()
+        const accountLeft = sys(() => ec.entity.find("moqui.basic.email.EmailAccount").condition("emailAccountId", hostedAccountId).count())
         login("john.doe")
         const internalShown = Array.from(accounts.accountList || []).some(account => account.isInternal)
         const internalSource = Array.from(providers.providerList || []).length > 0
-        return {index, list, wizard, accounts, internalShown, internalSource, accountDetail, hostedAccountId, accountErrors, inboxLinkProblems}
+        return {index, list, wizard, accounts, internalShown, internalSource, accountDetail, hostedAccountId, accountErrors, inboxLinkProblems, deleteErrors, accountLeft}
     },
-    then({index, list, wizard, accounts, internalShown, internalSource, accountDetail, hostedAccountId, accountErrors, inboxLinkProblems}) {
+    then({index, list, wizard, accounts, internalShown, internalSource, accountDetail, hostedAccountId, accountErrors, inboxLinkProblems, deleteErrors, accountLeft}) {
         index.status == 200
         index.output.includes("Identities and signatures")
         list.status == 200
@@ -112,6 +117,8 @@ feature("a user with no party sees the mail settings, the wizard and no Internal
         !accountDetail.broken
         accountDetail.output.includes("Spec hosted mail")
         inboxLinkProblems.length == 0
+        deleteErrors == ""
+        accountLeft == 0
         // the Internal account is listed only when an app the user may open answers for it
         internalShown == internalSource
     }
@@ -357,12 +364,14 @@ feature("out of office retains user-zone date strings and supplies instants to t
         ec.user.internalLoginUser(username)
         ec.user.setTimeZone("America/Chicago")
         const settings = (name, params) => sys(() => call("org.moqui.comms.MailSettingsServices." + name, params || {})) || {}
+        let fixtureAccountId = null
         try {
             const account = sys(() => call("org.moqui.impl.EmailClientServices.create#EmailAccount", {
                 accountKindEnumId:"EakHosted", emailAddress:"ooo.spec@example.invalid", accountName:"Out of office date fixture", statusId:"EasActive"
             })) || {}
             assert.ok(account.emailAccountId)
             const emailAccountId = account.emailAccountId
+            fixtureAccountId = emailAccountId
             const save = (fromDate, thruDate) => settings("store#OutOfOffice", {emailAccountId, enabled:"N", fromDate, thruDate,
                 subject:"Date fixture", bodyHtml:"<p>Disabled review reply</p>", replyOncePerDays:"4"})
             assert.equal(save("2026-11-08 09:00", "2026-11-09 09:00").storedCount, 1)
@@ -451,6 +460,12 @@ feature("out of office retains user-zone date strings and supplies instants to t
             const bothCleared = prepareAndSave({bodyHtml:"",internalBodyHtml:""})
             assert.equal(bothCleared.reply.bodyHtml, "")
             assert.equal(bothCleared.reply.internalBodyHtml, "")
-        } finally { ec.message.clearErrors(); ec.user.internalLoginUser(previousUser) }
+        } finally {
+            ec.message.clearErrors()
+            // the fixture account goes with this run, deleted by its owner while still signed in
+            if (fixtureAccountId) sys(() => call("org.moqui.impl.EmailClientServices.delete#EmailAccount", {emailAccountId: fixtureAccountId, deleteLocalCopies: true}))
+            ec.message.clearErrors()
+            ec.user.internalLoginUser(previousUser)
+        }
     }
 })

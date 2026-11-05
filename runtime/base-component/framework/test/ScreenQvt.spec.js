@@ -8,11 +8,14 @@ function readModule(file) {
     return runInContext(ec.resource.getLocationText(location), {});
 }
 
+// The ScreenSupport helpers a runtime takes as source (parseOrder); the macro tables are not compiled here.
+function support() {
+    return { anyMacros: () => ({}), allElements: [], opaqueElements: [], parseOrder: readModule('ScreenSupport.js')({}).parseOrder };
+}
+
 function renderList({ saved = true, header = true, denied = false, hideNav = false, noSearch = false, finds = [], active = null, scheduled = null, fields = [], hidden = {}, headerColumns = null, headerFields = [] } = {}) {
     const factory = readModule('ScreenQvt.js');
-    const module = factory({ stmt: fn => fn, noops: () => ({}) }, {
-        anyMacros: () => ({}), allElements: [], opaqueElements: []
-    });
+    const module = factory({ stmt: fn => fn, noops: () => ({}) }, support());
     let html = '';
     const url = () => ({
         path: '/qapps/FindThing', getDisableLink: () => denied,
@@ -50,9 +53,7 @@ function renderList({ saved = true, header = true, denied = false, hideNav = fal
 
 feature('empty entity displays preserve a line in list cells, not single-form inputs', { expect() { (function () {
     const factory = readModule('ScreenQvt.js');
-    const module = factory({ stmt: fn => fn, noops: () => ({}) }, {
-        anyMacros: () => ({}), allElements: [], opaqueElements: []
-    });
+    const module = factory({ stmt: fn => fn, noops: () => ({}) }, support());
     for (const kind of ['form-list', 'form-single']) {
         for (const value of ['', 'Asset <Good>']) {
             let html = '';
@@ -253,7 +254,7 @@ feature('the active saved find can be scheduled, and a scheduled one shows its s
 
 feature('the filter summary shows a display header field by its value and a display-entity by its entity text', { expect() { (function () {
     const factory = readModule('ScreenQvt.js');
-    const module = factory({ stmt: fn => fn, noops: () => ({}) }, { anyMacros: () => ({}), allElements: [], opaqueElements: [] });
+    const module = factory({ stmt: fn => fn, noops: () => ({}) }, support());
     const calls = [];
     const context = {
         sri: {
@@ -275,7 +276,7 @@ feature('the filter summary shows a display header field by its value and a disp
 
 feature('dependent remote dropdowns load initial options with one dependency', { expect() { (function () {
     const factory = readModule('ScreenQvt.js');
-    const module = factory({ stmt: fn => fn, noops: () => ({}) }, { anyMacros: () => ({}), allElements: [], opaqueElements: [] });
+    const module = factory({ stmt: fn => fn, noops: () => ({}) }, support());
     let html = '';
     const context = {
         sri: {

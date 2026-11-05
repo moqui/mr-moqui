@@ -5,11 +5,14 @@ function readModule(file) {
     return runInContext(ec.resource.getLocationText("component://framework/template/screen/" + file), {});
 }
 
+// The ScreenSupport helpers a runtime takes as source (parseOrder); the macro tables are not compiled here.
+function support() {
+    return { anyMacros: () => ({}), allElements: [], opaqueElements: [], parseOrder: readModule('ScreenSupport.js')({}).parseOrder };
+}
+
 function datePeriodSummary(mode, values, expectedRangeArgs) {
     const factory = readModule(`Screen${mode}.js`);
-    const module = factory({ stmt: fn => fn, noops: () => ({}) }, {
-        anyMacros: () => ({}), allElements: [], opaqueElements: []
-    });
+    const module = factory({ stmt: fn => fn, noops: () => ({}) }, support());
     const context = { ec: {
         context: { get: key => values[key] ?? null },
         l10n: {

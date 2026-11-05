@@ -438,11 +438,35 @@
     // true when it holds. A condition that fails to evaluate is logged naming the part and does not hold, so the part is left out.
     const heldCode = (expr, what) => `(() => {\ntry {\nreturn !!(${raw(expr)});\n} catch ($err) {\nec.logger.error(${jsString(`Leaving the ${what} out, its condition failed: `)} + $err);\nreturn false;\n}\n})()`;
 
+    // One entry of an orderByField list as OrderBy::parse (moqui-db sql/condition.rs) reads it: signs and the case prefix,
+    // an optional direction and null placement, then UPPER/LOWER. The html and qvt runtimes mark the active sort with it,
+    // and take it as source, so it uses nothing outside itself.
+    const parseOrder = (value) => {
+        let name = String(value).trimStart(), descending = false;
+        while (name && "-+^ ".includes(name.charAt(0))) {
+            if (name.charAt(0) === "-") descending = true;
+            else if (name.charAt(0) === "+") descending = false;
+            name = name.slice(1);
+        }
+        name = name.trimEnd().replace(/ NULLS (FIRST|LAST)$/i, "");
+        const direction = / (ASC|DESC)$/i.exec(name);
+        if (direction) {
+            descending = direction[1].toUpperCase() === "DESC";
+            name = name.slice(0, -direction[0].length);
+        }
+        if (name.includes("(")) {
+            if (/^(UPPER|LOWER)\(/i.test(name)) name = name.slice(6);
+            if (name.endsWith(")")) name = name.slice(0, -1);
+        }
+        name = name.trim();
+        return name ? {name, descending} : null;
+    };
+
     const noops = (names) => T.noops(names);
 
     return {
         beginLits, endLits, hoist, allElements, opaqueElements, unknownElementCode, expandExpr, expandNoL10nExpr, reportPropsExpr, reportRenderExpr, htmlViewTextFn, htmlViewTextExpr, markdownTextExpr, statusTextExpr, nodeLit, bareLit, write, indent, widgetsSource,
         setCode, widgetless, fieldChain, hideGuard, titleText, localizedTitle, fieldLit, renderTextCode, renderModeHelpers, renderModeTypeMatches, chooseRenderModeText, anyMacros,
-        displayValueExpr, linkTextExpr, labelTextExpr, dateTimeFormat, listFieldHiddenWidget, formListColumns, headerSub, heldCode, noops
+        displayValueExpr, linkTextExpr, labelTextExpr, dateTimeFormat, listFieldHiddenWidget, formListColumns, headerSub, heldCode, parseOrder, noops
     };
 })

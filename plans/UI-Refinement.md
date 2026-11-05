@@ -1349,6 +1349,37 @@ Verification and observed outcomes:
   committed. Backup/restore logs are `/tmp/ui-final-{save-db,load-save}.log`. The restored runtime is stopped.
   Review browser tabs are closed. Purchasing's runtime/database/addons are untouched.
 
+### Batch 13 — post-merge review corrections
+
+The review resumed on Nov 5 after `02d6b325` merged 98 upstream commits (no textual conflicts). A three-part source
+review of the local commits (Rust and templates, shared client, application screens and tests) and of the merge found
+no P1 defect, authorization weakening or broken contract. Upstream's asynchronous `send#Compose` (ES_READY, "Sending…")
+fits the local Compose/Mail changes, `ScreenCsv.js` keeps both the formula guard and the column alignment,
+`ModelDetail.xml` keeps `begin-transaction="false"`, and `bundled-screens.js` is unchanged by the merge. This batch
+corrects what the review did find:
+
+- UI-023 follow-up: history compared the address bar with `currentLinkUrl`, which the menu data builds (`/qapps/dev`
+  shows `/qapps/dev/Home`), so a fragment link under a default subscreen still reloaded the screen. The shell now keeps
+  the bar as last pushed or replaced (`historyUrl`, `rememberHistory`) and popstate compares with that. The existing
+  start-page history case adds the default-subscreen path.
+- ServiceRun (UI-010 follow-up): the kept output is shown once and leaves the session; output that cannot become JSON
+  is a warning after the run rather than a failed request. AdminOverview checks the session is empty after the show.
+- ArtifactIndex: da924d4b had cut the index bounds to `> 0`. They are back to read/unchanged > 500, artifacts > 10000
+  and refs > 5000, which a framework-only runtime (about 900 indexed files) also meets; this checkout's addons give
+  read 3232, artifacts 109880, refs 40469.
+- BasicComms spec: the two hosted accounts it makes are deleted by their owner (with their local copies), and the
+  first feature checks no row is left, so its `mailAccountCount == 0` holds on a later run against the same database.
+- UI-082 follow-up: notification titles list states by severity (Error, Firing, No data, Pending, Recovering,
+  Normal, then Unknown), mapped through an exhaustive match on `State`, so a new state must be placed to compile.
+- UI-051 follow-up: the order-by parser was copied into ScreenHtml.js and ScreenQvt.js. It is ScreenSupport's
+  `parseOrder`, given to each runtime as source (as ScreenQvtStatic gives `renderModeHelpers`); the template specs
+  that stub ScreenSupport pass the real helper. Both templates record that each sort arrow requests its own direction,
+  where the FreeMarker macro reversed the active one.
+
+Verification: AdminOverview 11/11, BasicComms 8/8, ArtifactIndex 6/6, ScreenHtml/ScreenQvt 29/29, DatePeriod 6/6,
+FieldTitle 6/6, WebrootVue.qvt client 33/33, moqui-report crate, core screen tests 330, devkit template specs, screen
+lint (0 parse failures). The full gate ran with Batch 14 (next commit).
+
 ### Next activity baseline — M10 incident lifecycle
 
 While gate20 runs, John exercises incident100000 on8094 at1920 in default light. New incident Escape/reopen works;

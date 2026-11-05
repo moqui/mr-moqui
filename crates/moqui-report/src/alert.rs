@@ -531,29 +531,31 @@ fn notification_presentation(payload: &Json) -> (String, &'static str) {
         // Recovery-action escalations use the same contact sender without alert events.
         return (title.to_string(), "warning");
     };
-    let states: BTreeSet<&str> = events
+    // Most severe first; a state this build does not know is listed last, as Unknown. The match is exhaustive, so a
+    // new State has to be given its place and label here.
+    let presented = |state: Option<State>| match state {
+        Some(State::Error) => (0, "Error"),
+        Some(State::Firing) => (1, "Firing"),
+        Some(State::NoData) => (2, "No data"),
+        Some(State::Pending) => (3, "Pending"),
+        Some(State::Recovering) => (4, "Recovering"),
+        Some(State::Normal) => (5, "Normal"),
+        None => (6, "Unknown"),
+    };
+    let states: BTreeSet<(u8, &str)> = events
         .iter()
-        .map(|event| match event["state"].as_str() {
-            Some("Normal") => "Normal",
-            Some("Pending") => "Pending",
-            Some("Firing") => "Firing",
-            Some("Recovering") => "Recovering",
-            Some("NoData") => "No data",
-            Some("Error") => "Error",
-            _ => "Unknown",
-        })
+        .map(|event| presented(State::deserialize(&event["state"]).ok()))
         .collect();
-    let tone = if states.contains("Firing") || states.contains("Error") {
+    let has = |label: &str| states.iter().any(|(_, shown)| *shown == label);
+    let tone = if has("Firing") || has("Error") {
         "danger"
-    } else if states.len() == 1 && states.contains("Normal") {
+    } else if states.len() == 1 && has("Normal") {
         "success"
     } else {
         "warning"
     };
-    (
-        format!("{} — {title}", states.into_iter().collect::<Vec<_>>().join(", ")),
-        tone,
-    )
+    let labels: Vec<&str> = states.into_iter().map(|(_, label)| label).collect();
+    (format!("{} — {title}", labels.join(", ")), tone)
 }
 
 pub(crate) fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {

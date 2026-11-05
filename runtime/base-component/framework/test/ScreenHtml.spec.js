@@ -8,12 +8,15 @@ function readModule(file) {
     return runInContext(ec.resource.getLocationText(location), {});
 }
 
+// The ScreenSupport helpers a runtime takes as source (parseOrder); the macro tables are not compiled here.
+function support() {
+    return { anyMacros: () => ({}), allElements: [], opaqueElements: [], parseOrder: readModule('ScreenSupport.js')({}).parseOrder };
+}
+
 function renderDialog(label) {
     const factory = readModule('ScreenHtml.js');
     // Only runtime rendering is exercised; macro callbacks are registered, not compiled.
-    const module = factory({ stmt: fn => fn, noops: () => ({}) }, {
-        anyMacros: () => ({}), allElements: [], opaqueElements: []
-    });
+    const module = factory({ stmt: fn => fn, noops: () => ({}) }, support());
     let html = '';
     const context = {
         sri: { write: text => { html += text; } },
@@ -26,9 +29,7 @@ function renderDialog(label) {
 
 function renderList({ fields = [], columns = [], header = true, skipHeader = false, hideNav = false, orderBy = '', savedFinds = [], activeFind = '', withSavedFinds = false } = {}) {
     const factory = readModule('ScreenHtml.js');
-    const module = factory({ stmt: fn => fn, noops: () => ({}) }, {
-        anyMacros: () => ({}), allElements: [], opaqueElements: []
-    });
+    const module = factory({ stmt: fn => fn, noops: () => ({}) }, support());
     let html = '';
     const url = () => ({
         url: '/apps/FindOrder', path: '/apps/FindOrder',
@@ -187,9 +188,7 @@ feature('saved finds are directly selectable in list navigation, with an explici
 
 function dynamicFilter(mode) {
     const factory = readModule(`Screen${mode}.js`);
-    const module = factory({ stmt: fn => fn, noops: () => ({}) }, {
-        anyMacros: () => ({}), allElements: [], opaqueElements: []
-    });
+    const module = factory({ stmt: fn => fn, noops: () => ({}) }, support());
     let current = 'ORG_TEST,Missing';
     const calls = [];
     const dynamic = { name: 'dynamic-options', attrs: { transition: 'partyLookup', 'label-field': 'partyLabel' } };

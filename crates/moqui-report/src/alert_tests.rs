@@ -163,6 +163,13 @@ fn notification_titles_distinguish_mixed_and_unknown_health() {
             "danger",
         ),
         (json!(["Normal", "NoData"]), "No data, Normal — Latency", "warning"),
+        // by severity, not by name
+        (
+            json!(["Recovering", "Pending", "Error", "NoData"]),
+            "Error, No data, Pending, Recovering — Latency",
+            "danger",
+        ),
+        (json!(["Normal", "Recovering"]), "Recovering, Normal — Latency", "warning"),
         (json!(["Normal", null]), "Normal, Unknown — Latency", "warning"),
         (json!(["Normal", "FutureState"]), "Normal, Unknown — Latency", "warning"),
     ] {

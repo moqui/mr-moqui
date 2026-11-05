@@ -172,11 +172,13 @@ feature("a service run preserves its output separately from the input across the
         const page = render("Service/ServiceRun", "Tools", {serviceName, doingRun: "Y"})
         const textOut1 = /<label for="ServiceResults_textOut1">[\s\S]*?<span[^>]*>([\s\S]*?)<\/span>/.exec(page.output)
         const textOut2 = /<label for="ServiceResults_textOut2">[\s\S]*?<span[^>]*>([\s\S]*?)<\/span>/.exec(page.output)
+        // shown once: the screen took the output out of the session, so a Back or refresh does not show it again
+        const shownAfter = ec.web.sessionAttributes.toolsServiceRunResults
         const failed = test.render("Service/ServiceRun/run", {serviceName, numberIn: "not a number"}, "post")
         return {run, kept, page, textOut1: textOut1 && textOut1[1], textOut2: textOut2 && textOut2[1],
-            failedErrors: failed.errorMessages, staleResults: ec.web.sessionAttributes.toolsServiceRunResults}
+            shownAfter, failedErrors: failed.errorMessages, staleResults: ec.web.sessionAttributes.toolsServiceRunResults}
     },
-    then({run, kept, page, textOut1, textOut2, failedErrors, staleResults}) {
+    then({run, kept, page, textOut1, textOut2, shownAfter, failedErrors, staleResults}) {
         run.errorMessages.length == 0
         kept.serviceName == "org.moqui.impl.BasicServices.echo#Data"
         kept.results.textOut1 == "UI review echo"
@@ -185,6 +187,7 @@ feature("a service run preserves its output separately from the input across the
         page.errors == ""
         textOut1 == "UI review echo"
         textOut2 == "ping"
+        shownAfter == null
         failedErrors.length > 0
         staleResults == null
     },

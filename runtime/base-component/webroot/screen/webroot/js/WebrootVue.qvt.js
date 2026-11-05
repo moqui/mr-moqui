@@ -40,6 +40,14 @@
     moqui.isIconClass = (image) => /\s/.test(image || "") || String(image || "").startsWith("fa-");
 
     const rootVm = () => moqui.webrootVue;
+    // The address bar's path and query in the shell's canonical form (no trailing slash, encoded as objToSearch writes it).
+    // The menu data can show a screen at another path than the bar's (a default subscreen, an extra path), so history
+    // compares the bar with the bar as last pushed or replaced, not with the screen's own link URL.
+    const historyKey = () => {
+        const path = root.location.pathname.replace(/\/$/, "");
+        const search = moqui.objToSearch(moqui.searchToObj(root.location.search.slice(1)));
+        return path + (search ? "?" + search : "");
+    };
 
     // Material confirmations stay in the application's focus stack. Only the explicit Confirm choice approves an action;
     // Cancel, Escape and backdrop dismissal settle false after focus returns. Approval resolves from the Confirm gesture,
@@ -6557,6 +6565,7 @@
                 if (String(params.peekId || "") === String(rootVm.currentParameters.peekId || "")) return;
                 rootVm.currentParameters = params;
                 root.history.replaceState(root.history.state, "", rootVm.currentLinkUrl);
+                if (rootVm.rememberHistory) rootVm.rememberHistory();
             },
             // a click on a list row, not on a control of it, opens the row in the peek pane
             onPeekClick(event) {
@@ -7195,6 +7204,7 @@
                 if ((this.mScreen && this.mScreen.containerId) || !rootVm || !rootVm.currentParameters || !root.history || !root.history.replaceState) return;
                 rootVm.currentParameters = Object.assign({}, rootVm.currentParameters, { treeLevel: this.level });
                 root.history.replaceState(root.history.state, "", rootVm.currentLinkUrl);
+                if (rootVm.rememberHistory) rootVm.rememberHistory();
             },
             // ---- cells ----
             cellText(row, column) { return (column.fields || []).map((field) => moqui.listViews.text(row, field)).filter((text) => text).join(" "); },
@@ -9368,7 +9378,7 @@
             return {
                 basePath: config.basePath || "", linkBasePath: config.linkBasePath || "", currentPathList: [], extraPathList: [], currentParameters: {}, bodyParameters: null,
                 activeSubscreens: [], navMenuList: [], navHistoryList: [], navPlugins: [], accountPlugins: [], notifyHistoryList: [],
-                lastNavTime: Date.now(), loading: 0, currentLoadRequest: null, menuLoadGeneration: 0, activeContainers: {}, urlListeners: [],
+                lastNavTime: Date.now(), loading: 0, currentLoadRequest: null, menuLoadGeneration: 0, historyUrl: null, activeContainers: {}, urlListeners: [],
                 moquiSessionToken: config.sessionToken || "", appHost: config.appHost || "", appRootPath: config.appRootPath || "", userId: config.userId || "",
                 username: config.username || "", locale: config.locale || "en", userFullName: config.userFullName || "",
                 terminalUrl: config.terminalUrl || "", pushOn: !!(config.userId && moqui.push && !root.moquiDesktop),
@@ -9394,11 +9404,11 @@
             onPopState() {
                 // A native fragment link also fires popstate. Keep its DOM, unsaved fields and native scroll intact;
                 // setUrl intentionally reloads when called with the current screen URL.
-                const path = root.location.pathname.replace(/\/$/, "");
-                const search = moqui.objToSearch(moqui.searchToObj(root.location.search.slice(1)));
-                if (path + (search ? "?" + search : "") === this.currentLinkUrl) return;
+                if (historyKey() === (this.historyUrl == null ? this.currentLinkUrl : this.historyUrl)) return;
                 this.setUrl(root.location.pathname + root.location.search, null, null, false);
             },
+            // the address bar as it is now, after a push or replace of history or a load from it (see historyKey)
+            rememberHistory() { this.historyUrl = historyKey(); },
             setUrl(url, bodyParameters, onComplete, pushState = true) {
                 // cancel the load that is going on
                 if (this.currentLoadRequest) {
@@ -9415,6 +9425,7 @@
                     // the same URL again is a reload: a cached (server-static) target screen makes a new use with fresh data too
                     this.reloadTarget = true;
                     this.reloadSubscreens();
+                    this.rememberHistory();
                     if (onComplete) this.callOnComplete(onComplete, this.currentPath);
                     return;
                 }
@@ -9449,6 +9460,7 @@
                 });
 
                 if (pushState) root.history.pushState(null, this.ScreenTitle, url);
+                this.rememberHistory();
                 this.urlListeners.forEach((callback) => callback(url, this));
                 root.document.documentElement.scrollTop = 0;
                 root.document.body.scrollTop = 0;
@@ -9471,6 +9483,7 @@
                     const curHistoryItem = this.navHistoryList[0];
                     if (curHistoryItem) curHistoryItem.pathWithParams = curUrl;
                     root.history.pushState(null, (curHistoryItem && curHistoryItem.title) || "", curUrl);
+                    this.rememberHistory();
                 }
                 this.reloadSubscreens();
             },

@@ -20,9 +20,11 @@ feature("the index builds from the components' files", {
             .call().refs
         ec.logger.info("artifact index: " + JSON.stringify(report) + " in " + (Date.now() - started) + " ms")
         !ec.message.hasError()
-        report.read > 0
-        report.artifacts > 0
-        report.refs > 0
+        // Bounds a framework-only runtime (no addons under runtime/component) also meets: its base and dev components
+        // have about 900 indexed files. With the addons of this checkout: read 3232, artifacts 109880, refs 40469.
+        report.read > 500
+        report.artifacts > 10000
+        report.refs > 5000
         users.some((ref) => ref.refType == "entity-find-one" && ref.from.startsWith("screen:component://example/"))
         users.some((ref) => ref.refType == "data" && ref.other.kind == "data")
         uses.some((ref) => ref.toId == "entity:moqui.example.Example")
@@ -36,7 +38,7 @@ feature("an unchanged file is not read again", {
         svc("rebuild#ArtifactIndex").call()
         const report = svc("rebuild#ArtifactIndex").call().report
         report.read == 0
-        report.unchanged > 0
+        report.unchanged > 500
     },
 })
 
