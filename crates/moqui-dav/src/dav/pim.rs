@@ -527,6 +527,7 @@ fn object(context: &Context<'_>, adapter: &Adapter, method: &str, collection_id:
                     ("Content-Length".into(), data.len().to_string()),
                 ],
                 body: if method == "HEAD" { Vec::new() } else { data },
+                stream: None,
             }
         }
         "PROPFIND" => {

@@ -17,8 +17,16 @@
 //! Message-ID) is not imported again; one that does not parse or cannot be stored is logged and the rest go on. The
 //! read state comes from the mbox's own headers (`Status`, `X-Mozilla-Status`, Gmail's `X-Gmail-Labels`), read when
 //! they say nothing.
+//!
+//! The import is bounded by a window of messages, not by the size of the archive or of the folder
+//! (plans/High-Level-Review.md HL-011): each source is read as a stream (an upload from its spool file, a location
+//! through `ResourceFacade::open`), an mbox one message at a time, and the messages are taken [`BATCH`] at a time
+//! (or [`BATCH_BYTES`]), whose Message-IDs are looked for in the folder in one query. The Message-IDs taken in this
+//! import are kept, so a message twice in the archive is imported once; one with no Message-ID is never taken for a
+//! duplicate. Each message is stored in a transaction of its own.
 
 use std::collections::{BTreeMap, HashSet};
+use std::io::{BufRead, BufReader, Read};
 
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{to_plain_string, Value};
@@ -27,17 +35,35 @@ use super::implementation::{find_one, force_new, note_error};
 use super::store::{self, parse_message, Placement, MESSAGE};
 use super::sync::{value_number, FOLDER};
 use moqui_core::context::ExecutionContext;
-use moqui_core::entity::EntityFacade;
+use moqui_core::entity::{Condition, EntityFacade};
 use moqui_core::service::util::{field_text, has_error, now_millis, param_text};
 
 const SERVICES: &str = "org.moqui.impl.EmailClientServices";
 /// The most errors reported back; the rest are only logged.
 const ERRORS_SHOWN: usize = 20;
+/// Messages parsed and checked against the folder at a time.
+const BATCH: usize = 100;
+/// The parsed size past which a batch is taken before it has [`BATCH`] messages.
+const BATCH_BYTES: i64 = 16 * 1024 * 1024;
 
-/// A file to import: its name and bytes.
+#[cfg(test)]
+thread_local! {
+    /// A test's batch size, for the de-duplication across batches.
+    pub(crate) static TEST_BATCH: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
+}
+
+fn batch_size() -> usize {
+    #[cfg(test)]
+    if let Some(size) = TEST_BATCH.with(std::cell::Cell::get) {
+        return size.max(1);
+    }
+    BATCH
+}
+
+/// A file to import: its name and its content as a stream.
 struct Source {
     name: String,
-    bytes: Vec<u8>,
+    reader: Box<dyn Read + Send>,
 }
 
 fn uploaded(value: &Value, out: &mut Vec<Source>) {
@@ -49,10 +75,10 @@ fn uploaded(value: &Value, out: &mut Vec<Source>) {
         }
         Value::Object(object) => {
             if let Some(file) = object.downcast::<moqui_core::web::multipart::UploadedFile>() {
-                match file.read_bytes() {
-                    Ok(bytes) => out.push(Source {
+                match file.reader() {
+                    Ok(reader) => out.push(Source {
                         name: file.file_name.clone(),
-                        bytes,
+                        reader,
                     }),
                     // the others are still imported
                     Err(err) => tracing::error!("the uploaded file {} was not read: {}", file.file_name, err.message()),
@@ -61,34 +87,41 @@ fn uploaded(value: &Value, out: &mut Vec<Source>) {
         }
         Value::Bytes(bytes) => out.push(Source {
             name: "message.eml".to_string(),
-            bytes: bytes.clone(),
+            reader: Box::new(std::io::Cursor::new(bytes.clone())),
         }),
         _ => {}
     }
 }
 
-fn read_location(location: &str) -> Result<Vec<u8>, String> {
-    let found = ExecutionContext::with_current(|ctx| ctx.factory().resource().get(location))
-        .ok_or_else(|| "no execution context is entered".to_string())?;
-    let reference = found.map_err(|err| err.message().to_string())?;
-    if !reference.exists() {
-        return Err("nothing is there".to_string());
+/// The content at `location`, as a stream a window at a time.
+fn read_location(location: &str) -> Result<Box<dyn Read + Send>, String> {
+    let opened = ExecutionContext::with_current(|ctx| ctx.factory().resource().open(location))
+        .ok_or_else(|| "no execution context is entered".to_string())?
+        .map_err(|err| err.message().to_string())?
+        .ok_or_else(|| "nothing is there".to_string())?;
+    if !opened.stat.is_file {
+        return Err("it is not a file".to_string());
     }
-    reference.read_bytes().map_err(|err| err.message().to_string())
+    Ok(Box::new(moqui_core::resource::source::SourceReader::new(opened.source)))
 }
 
-/// An mbox: by name, else by its first line.
-fn is_mbox(source: &Source) -> bool {
+/// The messages of a source, one at a time: an mbox (by name, else by its first line) each without its `From ` line
+/// and with `>From ` unquoted, else the one message the source is.
+fn messages(source: Source) -> Box<dyn Iterator<Item = std::io::Result<Vec<u8>>>> {
     let name = source.name.to_ascii_lowercase();
-    name.ends_with(".mbox") || name.ends_with(".mbx") || source.bytes.starts_with(b"From ")
-}
-
-/// The messages of an mbox, each without its `From ` line and with `>From ` unquoted.
-fn split_mbox(bytes: &[u8]) -> Vec<Vec<u8>> {
-    mail_parser::mailbox::mbox::MessageIterator::new(bytes)
-        .filter_map(Result::ok)
-        .map(mail_parser::mailbox::mbox::Message::unwrap_contents)
-        .collect()
+    let mut reader = BufReader::with_capacity(64 * 1024, source.reader);
+    let mbox = name.ends_with(".mbox")
+        || name.ends_with(".mbx")
+        || reader.fill_buf().is_ok_and(|head| head.starts_with(b"From "));
+    if mbox {
+        Box::new(
+            mail_parser::mailbox::mbox::MessageIterator::new(reader)
+                .map(|message| message.map(mail_parser::mailbox::mbox::Message::unwrap_contents)),
+        )
+    } else {
+        let mut raw = Vec::new();
+        Box::new(std::iter::once(reader.read_to_end(&mut raw).map(|_| raw)))
+    }
 }
 
 /// Whether an imported message was read, by the headers mail programs write in an mbox.
@@ -108,6 +141,108 @@ fn read_state(parsed: &store::Parsed) -> bool {
         return status.contains('R');
     }
     true
+}
+
+/// One import's destination and what it did.
+struct Import<'a> {
+    facade: &'a EntityFacade,
+    account_id: &'a str,
+    folder_id: &'a str,
+    status: &'static str,
+    archived: bool,
+    /// The Message-IDs taken in this import, so one twice in the archive is imported once.
+    seen: HashSet<String>,
+    imported: i64,
+    duplicates: i64,
+    failed: i64,
+    ids: Vec<Value>,
+    errors: Vec<String>,
+}
+
+impl Import<'_> {
+    /// The Message-IDs of `wanted` already in the folder: one query by the account, folder and ids.
+    fn in_folder(&self, wanted: Vec<Value>) -> Result<HashSet<String>, LibError> {
+        if wanted.is_empty() {
+            return Ok(HashSet::new());
+        }
+        Ok(self
+            .facade
+            .find(MESSAGE)?
+            .eq("emailAccountId", Value::string(self.account_id))
+            .eq("emailFolderId", Value::string(self.folder_id))
+            .condition(Condition::is_in("messageId", wanted))
+            .select_field("messageId")
+            .list()?
+            .values()
+            .iter()
+            .map(|row| field_text(row, "messageId"))
+            .collect())
+    }
+
+    /// Store the messages of `batch` that are not duplicates, each in a transaction of its own, and empty it.
+    fn store_batch(&mut self, batch: &mut Vec<(String, store::Parsed)>) {
+        if batch.is_empty() {
+            return;
+        }
+        let wanted: Vec<Value> = batch
+            .iter()
+            .map(|(_, parsed)| parsed.message_id.as_str())
+            .filter(|id| !id.is_empty() && !self.seen.contains(*id))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .map(Value::string)
+            .collect();
+        let existing = match self.in_folder(wanted) {
+            Ok(existing) => existing,
+            // without the check a message could be imported twice: these are not imported
+            Err(err) => {
+                tracing::error!(
+                    "Could not check {} messages for email folder {} against those there: {err}",
+                    batch.len(),
+                    self.folder_id
+                );
+                for (label, _) in batch.drain(..) {
+                    self.errors.push(format!("{label}: {err}"));
+                    self.failed += 1;
+                }
+                return;
+            }
+        };
+        for (label, parsed) in batch.drain(..) {
+            if !parsed.message_id.is_empty()
+                && (existing.contains(&parsed.message_id) || !self.seen.insert(parsed.message_id.clone()))
+            {
+                self.duplicates += 1;
+                continue;
+            }
+            let place = Placement {
+                account_id: self.account_id,
+                folder_id: Some(self.folder_id),
+                remote_folder_id: None,
+                remote_uid: None,
+                remote_uidl: None,
+                status_id: self.status,
+                read: read_state(&parsed) || self.status != "ES_RECEIVED",
+                flagged: false,
+                answered: false,
+                received_millis: parsed.sent_millis.or(Some(now_millis())),
+                server_size: None,
+                archived: self.archived,
+            };
+            let facade = self.facade;
+            match force_new(facade, || store::store_message(facade, &parsed, &place)) {
+                Ok(id) => {
+                    self.imported += 1;
+                    self.ids.push(Value::string(id));
+                }
+                Err(err) => {
+                    tracing::error!("Could not import {label} into email folder {}: {err}", self.folder_id);
+                    self.errors.push(format!("{label}: {err}"));
+                    self.failed += 1;
+                }
+            }
+        }
+    }
 }
 
 /// `import#EmailMessages`.
@@ -156,9 +291,9 @@ pub(super) fn import_messages(
     }
     for location in locations.into_iter().filter(|location| !location.is_empty()) {
         match read_location(&location) {
-            Ok(bytes) => sources.push(Source {
+            Ok(reader) => sources.push(Source {
                 name: location.rsplit('/').next().unwrap_or_default().to_string(),
-                bytes,
+                reader,
             }),
             Err(text) => errors.push(format!("{location}: {text}")),
         }
@@ -167,7 +302,7 @@ pub(super) fn import_messages(
     if !text.is_empty() {
         sources.push(Source {
             name: "message.eml".to_string(),
-            bytes: text.into_bytes(),
+            reader: Box::new(std::io::Cursor::new(text.into_bytes())),
         });
     }
     if sources.is_empty() && errors.is_empty() {
@@ -175,73 +310,68 @@ pub(super) fn import_messages(
         return Ok(out);
     }
     let kind = field_text(&folder, "folderKindEnumId");
-    let status = match kind.as_str() {
-        "EfkSent" => "ES_SENT",
-        "EfkDrafts" => "ES_DRAFT",
-        _ => "ES_RECEIVED",
-    };
-    let mut known: HashSet<String> = facade
-        .find(MESSAGE)?
-        .eq("emailAccountId", Value::string(&account_id))
-        .eq("emailFolderId", Value::string(&folder_id))
-        .select_field("messageId")
-        .list()?
-        .values()
-        .iter()
-        .map(|row| field_text(row, "messageId"))
-        .filter(|id| !id.is_empty())
-        .collect();
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    let (mut imported, mut duplicates, mut failed) = (0i64, 0i64, 0i64);
-    let mut ids = Vec::new();
+    let mut import = Import {
+        facade,
+        account_id: &account_id,
+        folder_id: &folder_id,
+        status: match kind.as_str() {
+            "EfkSent" => "ES_SENT",
+            "EfkDrafts" => "ES_DRAFT",
+            _ => "ES_RECEIVED",
+        },
+        archived: kind == "EfkArchive",
+        seen: HashSet::new(),
+        imported: 0,
+        duplicates: 0,
+        failed: 0,
+        ids: Vec::new(),
+        errors,
+    };
+    let size = batch_size();
+    let mut batch: Vec<(String, store::Parsed)> = Vec::new();
+    let mut batch_bytes = 0_i64;
     for source in sources {
-        let messages = if is_mbox(&source) {
-            split_mbox(&source.bytes)
-        } else {
-            vec![source.bytes]
-        };
-        for (index, raw) in messages.into_iter().enumerate() {
-            let label = format!("{} message {}", source.name, index + 1);
-            let parsed = match parse_message(&raw) {
-                Ok(parsed) => parsed,
+        let name = source.name.clone();
+        for (index, raw) in messages(source).enumerate() {
+            let label = format!("{name} message {}", index + 1);
+            let raw = match raw {
+                Ok(raw) => raw,
+                // the reader is broken: the rest of this source cannot be read, the other sources go on
+                Err(err) => {
+                    tracing::error!("Could not read {label} for email folder {folder_id}: {err}");
+                    import.errors.push(format!("{label}: {err}"));
+                    import.failed += 1;
+                    break;
+                }
+            };
+            match parse_message(&raw) {
+                Ok(parsed) => {
+                    batch_bytes += parsed.size;
+                    batch.push((label, parsed));
+                }
                 Err(text) => {
                     tracing::warn!("Not importing {label} into email folder {folder_id}: {text}");
-                    errors.push(format!("{label}: {text}"));
-                    failed += 1;
-                    continue;
+                    import.errors.push(format!("{label}: {text}"));
+                    import.failed += 1;
                 }
-            };
-            if !parsed.message_id.is_empty() && !known.insert(parsed.message_id.clone()) {
-                duplicates += 1;
-                continue;
             }
-            let place = Placement {
-                account_id: &account_id,
-                folder_id: Some(&folder_id),
-                remote_folder_id: None,
-                remote_uid: None,
-                remote_uidl: None,
-                status_id: status,
-                read: read_state(&parsed) || status != "ES_RECEIVED",
-                flagged: false,
-                answered: false,
-                received_millis: parsed.sent_millis.or(Some(now_millis())),
-                server_size: None,
-                archived: kind == "EfkArchive",
-            };
-            match force_new(facade, || store::store_message(facade, &parsed, &place)) {
-                Ok(id) => {
-                    imported += 1;
-                    ids.push(Value::string(id));
-                }
-                Err(err) => {
-                    tracing::error!("Could not import {label} into email folder {folder_id}: {err}");
-                    errors.push(format!("{label}: {err}"));
-                    failed += 1;
-                }
+            drop(raw);
+            if batch.len() >= size || batch_bytes >= BATCH_BYTES {
+                import.store_batch(&mut batch);
+                batch_bytes = 0;
             }
         }
     }
+    import.store_batch(&mut batch);
+    let Import {
+        imported,
+        duplicates,
+        failed,
+        ids,
+        mut errors,
+        ..
+    } = import;
     if imported > 0 {
         let mut counts = BTreeMap::new();
         counts.insert(

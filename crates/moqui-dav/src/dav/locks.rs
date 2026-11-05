@@ -16,8 +16,10 @@
 //! folder of a drive, held by [`moqui_core::resource::locks`] under the resource's location, so a lock taken by one user's
 //! client holds another user's client (whose href names the drive's folder in their own home) and every other writer
 //! of the drive (the Files screens, SFTP, the drive services) as well. The answers here are the WebDAV ones: 423, the
-//! `lockdiscovery` property, LOCK, refresh and UNLOCK by token.
+//! `lockdiscovery` property, LOCK, refresh and UNLOCK by token. The locks are rows of the database, so a lock taken
+//! through one member of a cluster holds the writers on every member (plans/High-Level-Review.md HL-036).
 
+use moqui_core::entity::EntityFacade;
 use moqui_core::resource::locks::{self as table, Lock};
 
 use super::{href_element, xml, DavRequest, DavResponse};
@@ -25,15 +27,30 @@ use super::{href_element, xml, DavRequest, DavResponse};
 const MAX_SECONDS: u64 = 3600;
 const DEFAULT_SECONDS: u64 = 600;
 
+/// The entity facade of the current request's factory, where the locks are kept.
+fn facade() -> Option<EntityFacade> {
+    moqui_core::context::ExecutionContext::with_current(|ec| ec.factory().entity()).flatten()
+}
+
+/// The answer to a lock table that could not be read or written.
+fn unavailable(err: &dyn std::fmt::Display) -> DavResponse {
+    tracing::error!("WebDAV locks: {err}");
+    DavResponse::status(503)
+}
+
 /// 423 when another user holds a lock on `location`; with `tree` (a delete or move) on anything under it too.
 pub(crate) fn check_write(location: &str, user_id: &str, tree: bool) -> Result<(), DavResponse> {
-    table::check(location, Some(user_id), tree)
+    let Some(facade) = facade() else {
+        return Ok(());
+    };
+    table::check(&facade, location, Some(user_id), tree)
         .map_err(|_| DavResponse::condition(423, xml::DAV, "lock-token-submitted"))
 }
 
 /// The `lockdiscovery` property of the resource at `location`, answered at `href`.
 pub(crate) fn discovery(location: &str, href: &str) -> String {
-    table::holding(location)
+    facade()
+        .and_then(|facade| table::holding(&facade, location).ok().flatten())
         .map(|lock| active_lock(href, &lock))
         .unwrap_or_default()
 }
@@ -87,26 +104,34 @@ pub(crate) fn lock(
     body: Option<&xml::Element>,
 ) -> DavResponse {
     let seconds = timeout(request);
+    let Some(facade) = facade() else {
+        return DavResponse::status(503);
+    };
     if body.is_none() {
         let tokens = submitted_tokens(request);
-        let refreshed = table::update(location, |lock| {
-            if !tokens.contains(&lock.token) || lock.user_id != user_id {
-                return None;
+        let refreshed = match table::get(&facade, location) {
+            Ok(Some(mut lock)) if tokens.contains(&lock.token) && lock.user_id == user_id => {
+                lock.seconds = seconds;
+                lock.expires_millis = Lock::expiry(seconds);
+                match table::put(&facade, location, &lock) {
+                    Ok(()) => Some(lock),
+                    Err(err) => return unavailable(&err),
+                }
             }
-            lock.seconds = seconds;
-            lock.expires = std::time::Instant::now() + std::time::Duration::from_secs(seconds);
-            Some(lock.clone())
-        })
-        .flatten();
+            Ok(_) => None,
+            Err(err) => return unavailable(&err),
+        };
         return match refreshed {
             Some(lock) => lock_answer(200, href, &lock),
             None => DavResponse::condition(412, xml::DAV, "lock-token-matches-request-uri"),
         };
     }
-    if let Some(existing) = table::holding(location) {
-        if existing.user_id != user_id {
+    match table::holding(&facade, location) {
+        Ok(Some(existing)) if existing.user_id != user_id => {
             return DavResponse::condition(423, xml::DAV, "no-conflicting-lock");
         }
+        Ok(_) => {}
+        Err(err) => return unavailable(&err),
     }
     let owner = body
         .and_then(|body| body.child(xml::DAV, "owner"))
@@ -124,9 +149,11 @@ pub(crate) fn lock(
         owner,
         depth_infinity: !request.header("depth").is_some_and(|depth| depth.trim() == "0"),
         seconds,
-        expires: std::time::Instant::now() + std::time::Duration::from_secs(seconds),
+        expires_millis: Lock::expiry(seconds),
     };
-    table::put(location, lock.clone());
+    if let Err(err) = table::put(&facade, location, &lock) {
+        return unavailable(&err);
+    }
     lock_answer(200, href, &lock)
 }
 
@@ -148,13 +175,17 @@ pub(crate) fn unlock(request: &DavRequest, location: &str, user_id: &str) -> Dav
         .header("lock-token")
         .map(|text| text.trim().trim_start_matches('<').trim_end_matches('>').to_string())
         .unwrap_or_default();
-    match table::get(location) {
-        Some(lock) if lock.token == token && lock.user_id == user_id => {
-            table::remove(location);
-            DavResponse::status(204)
-        }
-        Some(_) => DavResponse::condition(403, xml::DAV, "lock-token-matches-request-uri"),
-        None => DavResponse::condition(409, xml::DAV, "lock-token-matches-request-uri"),
+    let Some(facade) = facade() else {
+        return DavResponse::status(503);
+    };
+    match table::get(&facade, location) {
+        Ok(Some(lock)) if lock.token == token && lock.user_id == user_id => match table::remove(&facade, location) {
+            Ok(()) => DavResponse::status(204),
+            Err(err) => unavailable(&err),
+        },
+        Ok(Some(_)) => DavResponse::condition(403, xml::DAV, "lock-token-matches-request-uri"),
+        Ok(None) => DavResponse::condition(409, xml::DAV, "lock-token-matches-request-uri"),
+        Err(err) => unavailable(&err),
     }
 }
 

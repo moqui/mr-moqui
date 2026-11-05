@@ -19,14 +19,17 @@
 //! removal goes to the trash). A client path is normalized against `/`; a `..` that would leave the root is refused.
 //! Each call runs on a request worker: on the root with authorization off, on the drives logged in as the user.
 //!
-//! A file opened for reading is read whole; one opened for writing is kept in memory and written on close, because a
-//! `dbresource` file is a row. `ssh-server` `sftp-max-file` bytes (default 256 MiB) bound either, and also the bytes all the
-//! open files of one channel hold together. A channel has at most [`MAX_HANDLES`] handles open.
+//! A file opened for reading is opened as a windowed source (`ResourceFacade::open`, through the drive adapter for the
+//! drives) and read a window at a time as the client asks (plans/High-Level-Review.md HL-010); one opened for writing
+//! is kept in memory and written on close, because a `dbresource` file is a row. `ssh-server` `sftp-max-file` bytes
+//! (default 256 MiB) bound either file, and the bytes all the open files of one channel hold together (a reader holds
+//! its window). A channel has at most [`MAX_HANDLES`] handles open.
 
 use std::collections::HashMap;
-use std::sync::Weak;
+use std::sync::{Arc, Weak};
 
-use moqui_core::context::{Error as CoreError, ExecutionContextFactory, ResourceStat};
+use moqui_core::context::{Error as CoreError, ExecutionContextFactory, Opened, ResourceStat};
+use moqui_core::resource::source::{ByteSource, READ_WINDOW};
 use moqui_dav::dav::files::tree;
 use russh_sftp::protocol::{Attrs, Data, File, FileAttributes, Handle, Name, OpenFlags, Status, StatusCode, Version};
 use russh_sftp::server::StatusReply;
@@ -38,9 +41,20 @@ const MAX_HANDLES: usize = 64;
 
 /// One open handle.
 enum Open {
-    Read { bytes: Vec<u8> },
-    Write { location: String, bytes: Vec<u8> },
-    Dir { entries: Option<Vec<File>> },
+    /// A file read from its source: `window` is its bytes from `window_at`.
+    Read {
+        source: Arc<dyn ByteSource>,
+        size: u64,
+        window_at: u64,
+        window: Vec<u8>,
+    },
+    Write {
+        location: String,
+        bytes: Vec<u8>,
+    },
+    Dir {
+        entries: Option<Vec<File>>,
+    },
 }
 
 /// What one channel serves.
@@ -92,6 +106,15 @@ impl Store<'_> {
         }
     }
 
+    /// A file opened to read a window at a time; `None` when nothing is there.
+    fn open(&self, target: &str) -> Result<Option<Opened>, CoreError> {
+        if self.drives {
+            tree::open(target).map(Some)
+        } else {
+            self.factory.resource().open(target)
+        }
+    }
+
     fn write(&self, target: &str, bytes: Vec<u8>) -> Result<(), CoreError> {
         if self.drives {
             tree::write(target, bytes)
@@ -137,6 +160,19 @@ impl Store<'_> {
             self.factory.resource().rename(from, to)
         }
     }
+}
+
+/// What [`SftpFs::open`] found at a path.
+enum Found {
+    Nothing,
+    /// Writing with truncate: nothing is read.
+    Truncated,
+    /// Writing: the bytes there, to change in memory.
+    Bytes(Vec<u8>),
+    /// Writing, but the bytes there would pass the channel's room.
+    NoRoom,
+    /// Reading: the source, read as the client asks.
+    Source(Opened),
 }
 
 /// The handler for one `sftp` channel.
@@ -229,6 +265,61 @@ impl SftpFs {
     async fn stat_of(&self, location: String) -> Result<Option<ResourceStat>, StatusReply> {
         self.run(move |store| store.stat(&location)).await.map_err(failure)
     }
+
+    /// `len` bytes from `offset` of a file open for reading: from its window, or a new window read from its source
+    /// (with authorization off: the access was checked when it was opened).
+    async fn read_window(&mut self, id: u32, handle: &str, offset: u64, len: u32) -> Result<Data, StatusReply> {
+        let (source, size) = match self.handles.get(handle) {
+            Some(Open::Read {
+                source,
+                size,
+                window_at,
+                window,
+            }) => {
+                if offset >= *size {
+                    return Err(StatusCode::Eof.into());
+                }
+                if offset >= *window_at && offset < window_at.saturating_add(window.len() as u64) {
+                    let start = usize::try_from(offset - window_at).unwrap_or(usize::MAX);
+                    let stop = start.saturating_add(len as usize).min(window.len());
+                    return Ok(Data {
+                        id,
+                        data: window[start..stop].to_vec(),
+                    });
+                }
+                (Arc::clone(source), *size)
+            }
+            _ => return Err(StatusCode::Failure.with_message("not a file handle")),
+        };
+        let want = usize::try_from(size - offset)
+            .unwrap_or(usize::MAX)
+            .min(READ_WINDOW.max(len as usize));
+        let fetched = self
+            .run(move |_store| {
+                let _authz = moqui_core::context::ExecutionContext::with_current(
+                    moqui_core::context::ExecutionContext::disable_authz,
+                );
+                source
+                    .read_at(offset, want)
+                    .map_err(|err| CoreError::new(err.message()))
+            })
+            .await
+            .map_err(failure)?;
+        if fetched.is_empty() {
+            return Err(StatusCode::Eof.into());
+        }
+        let Some(Open::Read { window_at, window, .. }) = self.handles.get_mut(handle) else {
+            return Err(StatusCode::Failure.with_message("not a file handle"));
+        };
+        self.held = self.held.saturating_sub(window.len()).saturating_add(fetched.len());
+        *window_at = offset;
+        *window = fetched;
+        let stop = (len as usize).min(window.len());
+        Ok(Data {
+            id,
+            data: window[..stop].to_vec(),
+        })
+    }
 }
 
 /// `/a/./b/../c` to `/a/c`; `None` when `..` passes the root.
@@ -315,7 +406,11 @@ impl russh_sftp::server::Handler for SftpFs {
     async fn fstat(&mut self, id: u32, handle: String) -> Result<Attrs, Self::Error> {
         let mut attrs = FileAttributes::empty();
         match self.handles.get(&handle) {
-            Some(Open::Read { bytes } | Open::Write { bytes, .. }) => {
+            Some(Open::Read { size, .. }) => {
+                attrs.size = Some(*size);
+                attrs.permissions = Some(0o100_644);
+            }
+            Some(Open::Write { bytes, .. }) => {
                 attrs.size = Some(bytes.len() as u64);
                 attrs.permissions = Some(0o100_644);
             }
@@ -377,7 +472,7 @@ impl russh_sftp::server::Handler for SftpFs {
         // A truncated file is not read, so it takes no room.
         let room = if writing && truncate { usize::MAX } else { self.room() };
         let read_location = location.clone();
-        let existing = self
+        let found = self
             .run(move |store| match store.stat(&read_location)? {
                 Some(stat) if !stat.is_file => {
                     Err(moqui_core::context::Error::new(format!("not a file: {read_location}")))
@@ -385,22 +480,38 @@ impl russh_sftp::server::Handler for SftpFs {
                 Some(stat) if usize::try_from(stat.size).unwrap_or(usize::MAX) > max => Err(
                     moqui_core::context::Error::new(format!("{read_location} is larger than ssh-server sftp-max-file")),
                 ),
-                Some(stat) if usize::try_from(stat.size).unwrap_or(usize::MAX) > room => Ok(Err(())),
-                Some(_) if writing && truncate => Ok(Ok(Some(Vec::new()))),
-                Some(_) => store.read(&read_location).map(|bytes| Ok(Some(bytes))),
-                None => Ok(Ok(None)),
+                Some(_) if writing && truncate => Ok(Found::Truncated),
+                Some(stat) if writing && usize::try_from(stat.size).unwrap_or(usize::MAX) > room => Ok(Found::NoRoom),
+                Some(_) if writing => store.read(&read_location).map(Found::Bytes),
+                Some(_) => Ok(store.open(&read_location)?.map_or(Found::Nothing, Found::Source)),
+                None => Ok(Found::Nothing),
             })
             .await
-            .map_err(failure)?
-            .map_err(|()| Self::too_much_held())?;
+            .map_err(failure)?;
+        let existing = match found {
+            Found::NoRoom => return Err(Self::too_much_held()),
+            Found::Source(opened) if !writing => {
+                let open = Open::Read {
+                    size: opened.stat.size,
+                    source: opened.source,
+                    window_at: 0,
+                    window: Vec::new(),
+                };
+                let handle = self.handle_id();
+                self.handles.insert(handle.clone(), open);
+                return Ok(Handle { id, handle });
+            }
+            Found::Source(_) | Found::Nothing => None,
+            Found::Truncated => Some(Vec::new()),
+            Found::Bytes(bytes) => Some(bytes),
+        };
         // The file may have grown between the stat and the read.
         let size = existing.as_ref().map_or(0, Vec::len);
         if size > self.room() {
             return Err(Self::too_much_held());
         }
         let open = match (writing, existing) {
-            (false, Some(bytes)) => Open::Read { bytes },
-            (false, None) => return Err(StatusCode::NoSuchFile.into()),
+            (false, _) => return Err(StatusCode::NoSuchFile.into()),
             (true, existing) => {
                 if existing.is_none() && !pflags.contains(OpenFlags::CREATE) {
                     return Err(StatusCode::NoSuchFile.into());
@@ -416,7 +527,7 @@ impl russh_sftp::server::Handler for SftpFs {
                 Open::Write { location, bytes }
             }
         };
-        if let Open::Read { bytes } | Open::Write { bytes, .. } = &open {
+        if let Open::Write { bytes, .. } = &open {
             self.held += bytes.len();
         }
         let handle = self.handle_id();
@@ -426,7 +537,8 @@ impl russh_sftp::server::Handler for SftpFs {
 
     async fn read(&mut self, id: u32, handle: String, offset: u64, len: u32) -> Result<Data, Self::Error> {
         let bytes = match self.handles.get(&handle) {
-            Some(Open::Read { bytes } | Open::Write { bytes, .. }) => bytes,
+            Some(Open::Read { .. }) => return self.read_window(id, &handle, offset, len).await,
+            Some(Open::Write { bytes, .. }) => bytes,
             _ => return Err(StatusCode::Failure.with_message("not a file handle")),
         };
         let start = usize::try_from(offset).unwrap_or(usize::MAX);
@@ -465,7 +577,7 @@ impl russh_sftp::server::Handler for SftpFs {
 
     async fn close(&mut self, id: u32, handle: String) -> Result<Status, Self::Error> {
         let open = self.handles.remove(&handle);
-        if let Some(Open::Read { bytes } | Open::Write { bytes, .. }) = &open {
+        if let Some(Open::Read { window: bytes, .. } | Open::Write { bytes, .. }) = &open {
             self.held = self.held.saturating_sub(bytes.len());
         }
         match open {
@@ -568,6 +680,48 @@ mod tests {
         assert!(message(&refused).contains("handles are open"), "{refused:?}");
         let refused = fs.opendir(6, "/".to_string()).await.unwrap_err();
         assert!(message(&refused).contains("handles are open"), "{refused:?}");
+    }
+
+    /// A file open for reading is read from its source a window at a time: the channel holds a window, never the
+    /// file, and the bytes come back whole and in order (HL-010).
+    #[tokio::test]
+    async fn a_read_handle_holds_a_window_of_its_source() {
+        use moqui_core::resource::source::{MemorySource, READ_WINDOW};
+        let context = moqui_core::context::ExecutionContextFactory::test_context();
+        let factory = std::sync::Arc::clone(context.factory());
+        factory.request_pool().start(1, 4).unwrap();
+        let mut fs = SftpFs::new(
+            std::sync::Arc::downgrade(&factory),
+            Backend::Root("runtime://sftp".to_string()),
+            usize::MAX,
+        );
+        let content: Vec<u8> = (0..READ_WINDOW * 5 / 2).map(|at| (at % 251) as u8).collect();
+        fs.handles.insert(
+            "r".to_string(),
+            Open::Read {
+                size: content.len() as u64,
+                source: std::sync::Arc::new(MemorySource::new(content.clone())),
+                window_at: 0,
+                window: Vec::new(),
+            },
+        );
+        let mut read = Vec::new();
+        loop {
+            match fs.read(1, "r".to_string(), read.len() as u64, 32 * 1024).await {
+                Ok(data) => {
+                    assert!(!data.data.is_empty());
+                    read.extend_from_slice(&data.data);
+                    assert!(fs.held <= READ_WINDOW, "{}", fs.held);
+                }
+                Err(reply) => {
+                    assert_eq!(reply.status_code, russh_sftp::protocol::StatusCode::Eof);
+                    break;
+                }
+            }
+        }
+        assert!(read == content, "the bytes read are the file's");
+        fs.close(2, "r".to_string()).await.unwrap();
+        assert_eq!(fs.held, 0);
     }
 
     #[test]

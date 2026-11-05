@@ -2032,6 +2032,132 @@ fn import_mbox_and_eml_into_a_folder() {
     assert!(errors().contains("may not change"));
 }
 
+/// An mbox of messages with these Message-IDs (an empty one has none).
+fn mbox_of(ids: &[&str]) -> String {
+    let mut mbox = String::new();
+    for (index, id) in ids.iter().enumerate() {
+        mbox.push_str("From x@example.com Mon Oct 19 10:00:00 2026\n");
+        if !id.is_empty() {
+            mbox.push_str(&format!("Message-ID: {id}\n"));
+        }
+        mbox.push_str(&format!(
+            "From: x@example.com\nTo: alice@example.com\nSubject: Message {index}\n\nBody {index}\n"
+        ));
+    }
+    mbox
+}
+
+/// Imported a few messages at a time (HL-011): those already in the folder and those twice in the archive, in other
+/// batches, are imported once; those with no Message-ID always are.
+#[test]
+fn an_import_in_small_batches_skips_what_the_folder_and_the_archive_have() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let account = out_text(
+        &ok(
+            "create#EmailAccount",
+            &[
+                ("emailAddress", text("alice@example.com")),
+                ("accountName", text("Local")),
+            ],
+        ),
+        "emailAccountId",
+    );
+    let folder = folder_id(&facade, &account, "EfkArchive");
+    super::import::TEST_BATCH.with(|batch| batch.set(Some(2)));
+    let import = |ids: &[&str]| {
+        ok(
+            "import#EmailMessages",
+            &[("emailFolderId", text(&folder)), ("messageText", text(&mbox_of(ids)))],
+        )
+    };
+    let first = import(&["<b1@x>", "<b2@x>", "", "<b3@x>"]);
+    assert_eq!(out_number(&first, "importedCount"), 4, "{first:?}");
+    let second = import(&["<b4@x>", "<b2@x>", "<b5@x>", "", "<b4@x>", "<b1@x>", "<b6@x>", "<b5@x>"]);
+    super::import::TEST_BATCH.with(|batch| batch.set(None));
+    assert_eq!(
+        out_number(&second, "importedCount"),
+        4,
+        "b4, b5, b6 and the one with no id: {second:?}"
+    );
+    assert_eq!(out_number(&second, "duplicateCount"), 4, "{second:?}");
+    assert_eq!(out_number(&second, "failedCount"), 0, "{second:?}");
+    let in_folder = rows(&facade, MESSAGE, &[("emailFolderId", &folder)]);
+    assert_eq!(in_folder.len(), 8);
+    for id in ["<b1@x>", "<b2@x>", "<b4@x>", "<b5@x>"] {
+        assert_eq!(
+            in_folder.iter().filter(|row| field(row, "messageId") == id).count(),
+            1,
+            "{id}"
+        );
+    }
+}
+
+/// Peak memory of an mbox import as the archive grows: the import holds a window of messages, so the peak stays near
+/// that of a small archive (HL-011). Opt-in: it imports thousands of messages and reads `/proc/self/status`.
+#[test]
+#[ignore = "slow: imports thousands of messages to measure peak memory; run with --ignored"]
+fn an_mbox_import_holds_a_window_of_messages_not_the_archive() {
+    fn peak_kib() -> u64 {
+        std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|status| {
+                status
+                    .lines()
+                    .find_map(|line| line.strip_prefix("VmHWM:"))
+                    .and_then(|value| value.trim().trim_end_matches("kB").trim().parse().ok())
+            })
+            .unwrap_or(0)
+    }
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let account = out_text(
+        &ok(
+            "create#EmailAccount",
+            &[
+                ("emailAddress", text("alice@example.com")),
+                ("accountName", text("Local")),
+            ],
+        ),
+        "emailAccountId",
+    );
+    let folder = folder_id(&facade, &account, "EfkArchive");
+    // 2,000 entries of 64 KiB (125 MiB), none of them mail, so nothing is stored in the in-memory database and the
+    // peak shows only what the import holds while it reads (all of it, twice, before HL-011)
+    // written to a file a line at a time, so making it does not raise the peak itself
+    let entry = format!("{}\n", "x".repeat(64 * 1024));
+    let dir = std::env::temp_dir().join(format!("moqui-import-peak-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("large.mbox");
+    {
+        use std::io::Write as _;
+        let mut file = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
+        for _ in 0..2000 {
+            file.write_all(b"From x@example.com Mon Oct 19 10:00:00 2026\n")
+                .unwrap();
+            file.write_all(entry.as_bytes()).unwrap();
+        }
+    }
+    let location = format!("file://{}", path.display());
+    let before = peak_kib();
+    let out = ok(
+        "import#EmailMessages",
+        &[("emailFolderId", text(&folder)), ("location", text(&location))],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = errors();
+    assert_eq!(out_number(&out, "failedCount"), 2000, "{out:?}");
+    let after = peak_kib();
+    eprintln!("peak KiB: before the import {before}, after it {after}");
+    assert!(after.saturating_sub(before) < 32 * 1024, "{before} -> {after}");
+}
+
 /// An IDLE worker: new mail in the Inbox is stored without a sync being asked for, and the worker stops on demand.
 #[test]
 fn an_idle_worker_syncs_new_inbox_mail_and_stops() {

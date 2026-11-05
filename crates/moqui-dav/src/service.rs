@@ -77,7 +77,7 @@ fn serve_request(
     out.insert("headers".to_string(), Value::Map(headers));
     out.insert(
         "body".to_string(),
-        Value::string(String::from_utf8_lossy(&response.body).into_owned()),
+        Value::string(String::from_utf8_lossy(&response.body_bytes().unwrap_or_default()).into_owned()),
     );
     Ok(out)
 }
