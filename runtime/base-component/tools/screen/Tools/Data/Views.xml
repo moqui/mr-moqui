@@ -12,11 +12,10 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Entity" default-menu-index="5" menu-image="sym_o_database" menu-image-type="icon">
-    <subscreens default-item="DataEdit"/>
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Views" default-menu-index="3">
+    <subscreens default-item="FindDbView"/>
     <widgets>
-        <subscreens-panel id="entity-panel" type="popup"/>
+        <subscreens-active/>
     </widgets>
 </screen>

@@ -21,12 +21,12 @@ const USER_SERVICES = "org.moqui.impl.UserServices."
 const JOHN = "EX_JOHN_DOE"
 
 const stubbed = [
-    ["component://tools/screen/Tools.xml", "Entity/DataImport"],
-    ["component://tools/screen/Tools.xml", "Entity/DataExport"],
-    ["component://tools/screen/Tools.xml", "Entity/DataSnapshot"],
-    ["component://tools/screen/Tools.xml", "Entity/SpeedTest"],
-    ["component://tools/screen/Tools.xml", "Entity/SqlRunner"],
-    ["component://tools/screen/Tools.xml", "Entity/SqlScriptRunner"],
+    ["component://tools/screen/Tools.xml", "Sql"],
+    ["component://tools/screen/Tools.xml", "Data/Load"],
+    ["component://tools/screen/Tools.xml", "Data/Export"],
+    ["component://tools/screen/Tools.xml", "Data/Snapshots"],
+    ["component://tools/screen/Tools.xml", "Database/SpeedTest"],
+    ["component://tools/screen/Tools.xml", "Database/Connections"],
     ["component://tools/screen/Tools.xml", "Service/ServiceRun"],
     ["component://tools/screen/Tools.xml", "Service/ServiceLoadRunner"],
 ]
@@ -70,7 +70,7 @@ spec({
 // again checks nothing more. Every stub is checked through the menus below.
 feature("a stubbed screen renders the disabled screen", {
     expect() {
-        const [root, path] = stubbed.find(([, path]) => path == "Entity/SqlRunner")
+        const [root, path] = stubbed.find(([, path]) => path == "Sql")
         // qvt sends the screens above as the shell and loads the last one on its own, as lastStandalone asks
         const str = ec.screen.makeTest().rootScreen(root).renderMode("qvt").render(path, { lastStandalone: "true" }, null)
         str.status == 200
@@ -79,17 +79,22 @@ feature("a stubbed screen renders the disabled screen", {
     },
 })
 
-feature("the Entity and Service menus leave the stubs out", {
+feature("the Tools, Data, Database and Service menus leave the stubs out", {
     expect() {
         // the menus the browser shell reads
         const menu = (path) => String(ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml")
             .render("menuData/apps/tools/" + path, {}, null).output)
-        const entity = menu("Entity")
+        const tools = menu("dashboard")
+        const data = menu("Data")
+        const database = menu("Database")
         const service = menu("Service")
-        entity.includes(`"Query Stats"`)
-        const stubTitles = ["Import", "Export", "Snapshots", "Speed Test", "SQL Runner", "SQL Script Runner"]
-        !stubTitles.some((title) => entity.includes(`"${title}"`))
-        !entity.includes(`"Disabled"`)
+        tools.includes(`"Schema"`)
+        !tools.includes(`"SQL"`)
+        data.includes(`"Grid"`)
+        !["Load", "Export", "Snapshots"].some((title) => data.includes(`"${title}"`))
+        database.includes(`"Queries"`)
+        !database.includes(`"Speed Test"`)
+        ![tools, data, database].some((text) => text.includes(`"Disabled"`))
         service.includes(`"Service Reference"`)
         !["Service Run", "Service Load Runner"].some((title) => service.includes(`"${title}"`))
     },

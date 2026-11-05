@@ -13,9 +13,9 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Table Stats">
+        default-menu-title="Tables" default-menu-index="2">
 
-    <transition name="entityDetail"><default-response url="../DataEdit/EntityDetail"/></transition>
+    <transition name="entityDetail"><default-response url="../../Schema/Entity"/></transition>
 
     <actions>
         <set field="orderByField" from="orderByField || ('empty' == viewOption ? 'tableName' : '-rowCount')"/>

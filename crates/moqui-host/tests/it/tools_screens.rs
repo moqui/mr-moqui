@@ -100,19 +100,21 @@ const DETAILS: &[&str] = &[
     "/System/Llm/Calls/CallDetail?callId=GATE_CALL",
     "/System/Llm/Triggers/TriggerDetail?triggerId=GATE_TRIGGER",
     "/System/Llm/Gateway/ClientDetail?clientId=GATE_CLIENT",
-    "/Tools/Entity/DataEdit/EntityDetail?selectedEntity=moqui.basic.Enumeration",
-    "/Tools/Entity/DataEdit/EntityDataFind?selectedEntity=moqui.basic.Enumeration",
-    "/Tools/Entity/DataEdit/EntityDataEdit?selectedEntity=moqui.basic.Enumeration&enumId=PtjNotSent",
-    "/Tools/Entity/DataEdit/EntityList?viewOption=master",
-    "/Tools/Entity/SpeedTest?baseCalls=10",
-    "/Tools/Entity/TableStats?viewOption=non-empty&filterRegexp=moqui.basic",
-    "/Tools/AutoScreen/AutoFind?aen=moqui.basic.Enumeration",
-    "/Tools/AutoScreen/AutoEdit/AutoEditMaster?aen=moqui.basic.StatusType&statusTypeId=PrintJob",
-    "/Tools/AutoScreen/AutoEdit/AutoEditDetail?aen=moqui.basic.StatusType&den=moqui.basic.StatusItem&statusTypeId=PrintJob",
-    "/Tools/DataView/ViewDbView?dbViewEntityName=GateView",
-    "/Tools/DataView/ViewDbView?dbViewEntityName=GateView&enumId=GATE_ENUM",
-    "/Tools/Entity/DataEdit/EntityDataFind?selectedEntity=DataDocument.GateDoc&enumId=GATE_ENUM",
-    "/Tools/DataView/EditDbView?dbViewEntityName=GateView",
+    "/Tools/Schema/Entity?selectedEntity=moqui.basic.Enumeration",
+    "/Tools/Data/Grid?selectedEntity=moqui.basic.Enumeration",
+    "/Tools/Data/Grid?entityName=moqui.basic.Enumeration",
+    "/Tools/Data/Grid",
+    "/Tools/Data/Record?selectedEntity=moqui.basic.Enumeration&enumId=PtjNotSent",
+    "/Tools/Schema/Entities?viewOption=master",
+    "/Tools/Database/SpeedTest?baseCalls=10",
+    "/Tools/Database/Tables?viewOption=non-empty&filterRegexp=moqui.basic",
+    "/Tools/Data/Browse/AutoFind?aen=moqui.basic.Enumeration",
+    "/Tools/Data/Browse/AutoEdit/AutoEditMaster?aen=moqui.basic.StatusType&statusTypeId=PrintJob",
+    "/Tools/Data/Browse/AutoEdit/AutoEditDetail?aen=moqui.basic.StatusType&den=moqui.basic.StatusItem&statusTypeId=PrintJob",
+    "/Tools/Data/Views/ViewDbView?dbViewEntityName=GateView",
+    "/Tools/Data/Views/ViewDbView?dbViewEntityName=GateView&enumId=GATE_ENUM",
+    "/Tools/Data/Grid?selectedEntity=DataDocument.GateDoc&enumId=GATE_ENUM",
+    "/Tools/Data/Views/EditDbView?dbViewEntityName=GateView",
     "/Tools/Service/ServiceDetail?serviceName=org.moqui.impl.BasicServices.convert%23Uom",
     "/Tools/Service/ServiceRun?serviceName=org.moqui.impl.BasicServices.echo%23Data",
     "/Tools/Service/ServiceReference?serviceName=PrintServices",
@@ -306,7 +308,7 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
     let (_, entity) = get(
         address,
         &john,
-        "/Tools/Entity/DataEdit/EntityDetail?selectedEntity=moqui.basic.Enumeration",
+        "/Tools/Schema/Entity?selectedEntity=moqui.basic.Enumeration",
     );
     assert!(
         entity.contains("Entity Detail for Enumeration (moqui.basic.Enumeration)"),
@@ -320,7 +322,7 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
     let (_, view) = get(
         address,
         &john,
-        "/Tools/DataView/ViewDbView?dbViewEntityName=GateView&enumId=GATE_ENUM",
+        "/Tools/Data/Views/ViewDbView?dbViewEntityName=GateView&enumId=GATE_ENUM",
     );
     assert!(
         view.contains("Gate enum type") && !view.contains("is not available"),
@@ -331,7 +333,7 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
     let (_, doc) = get(
         address,
         &john,
-        "/Tools/Entity/DataEdit/EntityDataFind?selectedEntity=DataDocument.GateDoc&enumId=GATE_ENUM",
+        "/Tools/Data/Grid?selectedEntity=DataDocument.GateDoc&enumId=GATE_ENUM",
     );
     assert!(
         doc.contains(r#"<span class="display String">Gate enum</span>"#) && doc.contains(r#"name="enumLabel""#),
@@ -437,7 +439,7 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         &["component://tools/screen/System.xml", "Administrators (full access)"],
     );
 
-    let create = "/Tools/AutoScreen/AutoFind/create";
+    let create = "/Tools/Data/Browse/AutoFind/create";
     let (status, page) = post(
         address,
         &john,
@@ -452,7 +454,7 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
     assert_page(
         address,
         &john,
-        "/Tools/AutoScreen/AutoEdit/AutoEditMaster?testId=TEST_SCR&aen=moqui.test.TestEntity",
+        "/Tools/Data/Browse/AutoEdit/AutoEditMaster?testId=TEST_SCR&aen=moqui.test.TestEntity",
         &["Screen Test Example"],
     );
     // The Groovy rows look for the seed phrase "Test Name A" in the browser download. This runtime has no such
@@ -467,7 +469,7 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
             file_type.to_ascii_lowercase()
         ));
         let _ = std::fs::remove_file(&export_path);
-        let path = "/Tools/Entity/DataExport/EntityExport";
+        let path = "/Tools/Data/Export/EntityExport";
         let (status, page) = post(
             address,
             &john,
@@ -505,7 +507,7 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         &["username", "org.moqui.impl.UserServices.create#UserAccount"],
     );
 
-    let create_view = "/Tools/DataView/FindDbView/create";
+    let create_view = "/Tools/Data/Views/FindDbView/create";
     let (status, page) = post(
         address,
         &john,
@@ -517,8 +519,8 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         ],
     );
     ran(create_view, status, &page);
-    assert_page(address, &john, "/Tools/DataView/FindDbView", &["UomDbView"]);
-    let set_master = "/Tools/DataView/EditDbView/setMasterEntity";
+    assert_page(address, &john, "/Tools/Data/Views/FindDbView", &["UomDbView"]);
+    let set_master = "/Tools/Data/Views/EditDbView/setMasterEntity";
     let (status, page) = post(
         address,
         &john,
@@ -530,7 +532,7 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
         ],
     );
     ran(set_master, status, &page);
-    let set_fields = "/Tools/DataView/EditDbView/setMasterFields";
+    let set_fields = "/Tools/Data/Views/EditDbView/setMasterFields";
     let (status, page) = post(
         address,
         &john,
@@ -549,13 +551,13 @@ fn the_groovy_specs_text_is_on_the_screens_and_the_rest_api(gate: &crate::common
     assert_page(
         address,
         &john,
-        "/Tools/DataView/ViewDbView?dbViewEntityName=UomDbView&orderByField=description",
+        "/Tools/Data/Views/ViewDbView?dbViewEntityName=UomDbView&orderByField=description",
         &["UomDbView", "Afghani", "Area"],
     );
 
     // The seed load runs in another process, whose metrics this server does not have. This create is the
     // `moqui.basic` entity the Monitor Artifacts data has to list, once the next one-second collection is indexed.
-    let create_status = "/Tools/AutoScreen/AutoFind/create";
+    let create_status = "/Tools/Data/Browse/AutoFind/create";
     let (status, page) = post(
         address,
         &john,
@@ -628,12 +630,14 @@ fn encode(text: &str) -> String {
         .collect()
 }
 
-/// Submit the SQL runner form of `screen` as the browser does, the statement in the body.
-fn run_sql(address: SocketAddr, auth: &str, screen: &str, sql: &str, limit: &str) -> (u16, String) {
-    let body = format!("groupName=transactional&sql={}&limit={limit}", encode(sql));
+/// Submit the SQL screen's form as the browser does, the statement in the body: one statement, or with `script` a
+/// script of statements whose result sets are not shown.
+fn run_sql(address: SocketAddr, auth: &str, script: bool, sql: &str, limit: &str) -> (u16, String) {
+    let run_script = if script { "&runScript=true" } else { "" };
+    let body = format!("db=group:transactional&sql={}&limit={limit}{run_script}", encode(sql));
     let request = http_request(
         "POST",
-        &format!("/Tools/Entity/{screen}.html"),
+        "/Tools/Sql.html",
         &[
             ("Authorization", auth),
             ("Content-Type", "application/x-www-form-urlencoded"),
@@ -654,7 +658,7 @@ fn the_sql_runners_run_for_an_admin_and_refuse_other_users(gate: &crate::common:
     let (status, page) = run_sql(
         address,
         &john,
-        "SqlRunner",
+        false,
         r#"select enum_id from enumeration order by enum_id"#,
         "3",
     );
@@ -662,13 +666,13 @@ fn the_sql_runners_run_for_an_admin_and_refuse_other_users(gate: &crate::common:
     assert!(!page.contains("Error rendering"), "{page}");
     assert_eq!(page.matches("<tr><td").count(), 3, "{page}");
     assert!(page.contains("Only showing first 3 rows."), "{page}");
-    let (_, page) = run_sql(address, &john, "SqlRunner", SELECT, "500");
+    let (_, page) = run_sql(address, &john, false, SELECT, "500");
     assert!(
         page.contains("untouched") && page.contains("Showing all 1 results."),
         "{page}"
     );
     // A failed statement shows its error.
-    let (_, page) = run_sql(address, &john, "SqlRunner", "select * from no_such_table", "500");
+    let (_, page) = run_sql(address, &john, false, "select * from no_such_table", "500");
     assert!(
         page.contains("no_such_table") && page.contains("does not exist"),
         "{page}"
@@ -677,26 +681,29 @@ fn the_sql_runners_run_for_an_admin_and_refuse_other_users(gate: &crate::common:
     // Without SQL_RUNNER_WEB, with or without the Tools app, neither runner runs a statement.
     for user in ["gate.tools", "gate.plain"] {
         let auth = basic(user, "moqui");
-        for screen in ["SqlRunner", "SqlScriptRunner"] {
-            let (status, page) = run_sql(address, &auth, screen, UPDATE, "500");
-            assert!(!page.contains("Query altered"), "{user} {screen}: {status}: {page}");
+        for script in [false, true] {
+            let (status, page) = run_sql(address, &auth, script, UPDATE, "500");
+            assert!(
+                !page.contains("Query altered"),
+                "{user} script {script}: {status}: {page}"
+            );
             if user == "gate.tools" {
                 assert!(
                     page.contains("User does not have permission to use the SQL Runner"),
-                    "{user} {screen}: {status}: {page}"
+                    "{user} script {script}: {status}: {page}"
                 );
             } else {
-                assert_eq!(status, 403, "{user} {screen}: {page}");
+                assert_eq!(status, 403, "{user} script {script}: {page}");
             }
         }
     }
-    let (_, page) = run_sql(address, &john, "SqlRunner", SELECT, "500");
+    let (_, page) = run_sql(address, &john, false, SELECT, "500");
     assert!(page.contains("untouched") && !page.contains("changed"), "{page}");
 
     // The script runner runs the admin's update.
-    let (_, page) = run_sql(address, &john, "SqlScriptRunner", UPDATE, "500");
+    let (_, page) = run_sql(address, &john, true, UPDATE, "500");
     assert!(!page.contains("Error rendering"), "{page}");
     assert!(page.contains("Query altered 1 rows."), "{page}");
-    let (_, page) = run_sql(address, &john, "SqlRunner", SELECT, "500");
+    let (_, page) = run_sql(address, &john, false, SELECT, "500");
     assert!(page.contains("changed"), "{page}");
 }

@@ -13,7 +13,7 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Import">
+        default-menu-title="Load" default-menu-index="4">
 
     <transition name="load" authz-action="all">
         <actions><script><![CDATA[
@@ -57,12 +57,12 @@ along with this software (see the LICENSE.md file). If not, see
                 const messages = []
                 const recordsLoaded = edl.load(messages)
                 ec.message.addMessage(`Loaded ${recordsLoaded} records from [${source}]`)
-                ec.web.sessionAttributes["DataImport.messages"] = messages
+                ec.web.sessionAttributes["DataLoad.messages"] = messages
             } else {
                 const messages = []
                 const recordsLoaded = edl.load(messages)
                 ec.message.addMessage(`Loaded ${recordsLoaded} records from [${source}]`)
-                ec.web.sessionAttributes["DataImport.messages"] = messages
+                ec.web.sessionAttributes["DataLoad.messages"] = messages
             }
         ]]></script></actions>
         <conditional-response url="." save-parameters="true">
@@ -113,8 +113,8 @@ along with this software (see the LICENSE.md file). If not, see
     <actions>
         <set field="pageSize" from="pageSize || '100'"/>
         <script><![CDATA[
-            messages = ec.web.sessionAttributes['DataImport.messages']
-            if (messages) ec.web.sessionAttributes.remove('DataImport.messages')
+            messages = ec.web.sessionAttributes['DataLoad.messages']
+            if (messages) ec.web.sessionAttributes.remove('DataLoad.messages')
         ]]></script>
     </actions>
     <widgets>

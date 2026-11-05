@@ -117,6 +117,13 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     ec.entity.getAllEntitiesInfo = host.getAllEntitiesInfo;
     ec.entity.getAllEntityInfo = host.getAllEntityInfo;
     ec.entity.getDatasourceGroupNames = host.getDatasourceGroupNames;
+    // The databases of the entity groups, each once, the default group's first: `[{db, groupNames, databaseConf}]`,
+    // `db` being `group:<name>` of its first group. Tools' database selector lists these.
+    ec.entity.getDatabaseList = host.getDatabaseList;
+    // The table check of the named entities (of the entity groups `groups` when given), whatever the groups'
+    // add-missing settings say, after forgetting what is known of the tables: `{ddl: [the statements run], errors,
+    // failed: [{entityName, error}]}`, a name that fails skipped. Tools' Check Tables.
+    ec.entity.checkTables = host.checkTables;
     ec.entity.getEecaRuleCount = host.getEecaRuleCount;
     // Query statistics are a conf flag, off by default in Java (entity-facade@query-stats); the port does not keep them.
     ec.entity.getQueryStatsList = () => [];
@@ -1195,6 +1202,123 @@ fn eeca_rule_texts<'js>(ctx: Ctx<'js>, entity_name: String) -> rquickjs::Result<
             })
             .collect();
         js_texts(&ctx, texts)
+    })
+}
+
+/// The databases of the entity groups, each once, the default group's first. Groups whose transaction managers share
+/// a stack are on one database, the test of `EntityFacade::same_database`.
+fn get_database_list<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        let facade = facade_of(&ctx)?;
+        let mut managers: std::collections::HashMap<String, (String, crate::transaction::TransactionManager)> = facade
+            .groups()
+            .map(|(name, dialect, transactions)| (name.to_string(), (dialect.name.clone(), transactions.clone())))
+            .collect();
+        let mut databases: Vec<(Vec<String>, String, crate::transaction::TransactionManager)> = Vec::new();
+        for name in facade.group_names() {
+            let Some((conf, transactions)) = managers.remove(&name) else {
+                continue;
+            };
+            match databases
+                .iter_mut()
+                .find(|(_, _, other)| other.shares_stack(&transactions))
+            {
+                Some((names, _, _)) => names.push(name),
+                None => databases.push((vec![name], conf, transactions)),
+            }
+        }
+        let rows = databases
+            .into_iter()
+            .map(|(names, conf, _)| {
+                let mut row = indexmap::IndexMap::new();
+                row.insert("db".to_string(), Value::string(format!("group:{}", names[0])));
+                row.insert(
+                    "groupNames".to_string(),
+                    Value::List(names.into_iter().map(Value::String).collect()),
+                );
+                row.insert("databaseConf".to_string(), Value::String(conf));
+                row
+            })
+            .collect();
+        js_list(&ctx, rows)
+    })
+}
+
+/// Check the tables of `names` (view entities by their members), first forgetting what is known of the tables, as
+/// Java's `forceCheckExistingTables`: `{ddl, errors, failed}`. With `groups`, only the entities of those entity groups
+/// are checked. The names are checked together; when that fails (a view with a member that is not defined), each is
+/// checked on its own, and a name that fails is logged and listed in `failed` (`{entityName, error}`) while the rest
+/// go on.
+fn check_tables<'js>(ctx: Ctx<'js>, names: Vec<String>, groups: Opt<Vec<String>>) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        let facade = facade_of(&ctx)?;
+        let default_group = facade.default_group().to_string();
+        let mut failed: Vec<(String, String)> = Vec::new();
+        let names: Vec<String> = match &groups.0 {
+            None => names,
+            Some(groups) => names
+                .into_iter()
+                .filter(|name| {
+                    match facade.with_entity(name, |entity, _, _| {
+                        Ok(entity.group.clone().unwrap_or_else(|| default_group.clone()))
+                    }) {
+                        Ok(group) => groups.contains(&group),
+                        Err(err) => {
+                            failed.push((name.clone(), err.message().to_string()));
+                            false
+                        }
+                    }
+                })
+                .collect(),
+        };
+        facade.forget_tables();
+        let mut ddl = Vec::new();
+        let mut errors = 0usize;
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        match facade.check_tables_ddl(&refs) {
+            Ok(check) => {
+                ddl = check.ddl;
+                errors = check.errors;
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "Checking the tables together failed, checking each entity: {}",
+                    err.message()
+                );
+                for name in &names {
+                    match facade.check_tables_ddl(&[name.as_str()]) {
+                        Ok(check) => {
+                            ddl.extend(check.ddl);
+                            errors += check.errors;
+                        }
+                        Err(err) => {
+                            tracing::error!("Table check of entity {name} failed: {}", err.message());
+                            failed.push((name.clone(), err.message().to_string()));
+                        }
+                    }
+                }
+            }
+        }
+        let mut map = indexmap::IndexMap::new();
+        map.insert(
+            "ddl".to_string(),
+            Value::List(ddl.into_iter().map(Value::String).collect()),
+        );
+        map.insert(
+            "errors".to_string(),
+            Value::I64(i64::try_from(errors).unwrap_or(i64::MAX)),
+        );
+        let failed = failed
+            .into_iter()
+            .map(|(name, error)| {
+                let mut row = indexmap::IndexMap::new();
+                row.insert("entityName".to_string(), Value::String(name));
+                row.insert("error".to_string(), Value::String(error));
+                Value::Map(row)
+            })
+            .collect();
+        map.insert("failed".to_string(), Value::List(failed));
+        host_to_js(&ctx, Value::Map(map))
     })
 }
 
@@ -2673,6 +2797,8 @@ pub(super) fn install<'js>(
     method!("entityDefinitionInfo", entity_definition_info);
     method!("prettyName", pretty_name);
     method!("getDatasourceGroupNames", get_datasource_group_names);
+    method!("getDatabaseList", get_database_list);
+    method!("checkTables", check_tables);
     method!("getEecaRuleCount", get_eeca_rule_count);
     method!("eecaRuleTexts", eeca_rule_texts);
     method!("runSqlStatement", run_sql_statement);

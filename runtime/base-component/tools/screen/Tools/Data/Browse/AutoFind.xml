@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <transition name="list"><default-response url="../MainEntityList"/></transition>
     <transition name="find"><default-response url="."/></transition>
-    <transition name="entityDetail"><default-response url="../../Entity/DataEdit/EntityDetail"/></transition>
+    <transition name="entityDetail"><default-response url="../../../Schema/Entity"/></transition>
 
     <transition name="create"><actions>
         <if condition="WebUtilities.isRestrictedGenericEntity(aen)"><message error="true">Entity ${aen} is not available through this tool</message><return/></if>

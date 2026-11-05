@@ -911,7 +911,7 @@ fn data_loader_check_compares_records_and_nested_records() {
     );
 }
 
-/// Java's `checkInfo(diffInfoList, messages)`, which the DataImport screen calls: a row for each field that did not
+/// Java's `checkInfo(diffInfoList, messages)`, which Tools' Data Load screen calls: a row for each field that did not
 /// match and each record not found, and no message for them.
 #[test]
 fn data_loader_check_info_gives_diff_rows() {

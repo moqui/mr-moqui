@@ -1,4 +1,4 @@
-// The Data View tools (screen/Tools/DataView): Edit DB View renders the master entity's fields and saves the checked ones
+// The data views (screen/Tools/Data/Views): Edit DB View renders the master entity's fields and saves the checked ones
 // as aliases, with a member and key map for a field of a related entity.
 // Run: ./moq test tools
 const viewName = "SpecDbView"
@@ -25,8 +25,8 @@ spec({
 
 feature("Edit DB View saves the checked fields of the master and of a related entity", {
     expect() {
-        const page = tools().render("DataView/EditDbView", { dbViewEntityName: viewName }, null)
-        const saved = tools().render("DataView/EditDbView/setMasterFields", {
+        const page = tools().render("Data/Views/EditDbView", { dbViewEntityName: viewName }, null)
+        const saved = tools().render("Data/Views/EditDbView/setMasterFields", {
             dbViewEntityName_0: viewName, field_0: "moqui.basic.Enumeration.enumId", functionName_0: "",
             dbViewEntityName_1: viewName, field_1: "moqui.basic.Enumeration.description", functionName_1: "upper",
             dbViewEntityName_2: viewName, field_2: "moqui.basic.EnumerationType.description", functionName_2: "",

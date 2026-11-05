@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Snapshots">
+        default-menu-title="Snapshots" default-menu-index="6">
 
     <transition name="exportSnapshot" begin-transaction="false" authz-action="update">
         <actions>
@@ -75,21 +75,6 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response url="."/>
     </transition>
-    <transition name="dropForeignKeys" begin-transaction="false" authz-action="all">
-        <actions>
-            <script>ec.entity.entityDbMeta.forceCheckExistingTables()</script>
-            <set field="dropped" from="ec.entity.getEntityDbMeta().dropAllForeignKeys()"/>
-            <message>Dropped ${dropped} foreign keys</message>
-        </actions>
-        <default-response url="."/>
-    </transition>
-    <transition name="createForeignKeys" begin-transaction="false" authz-action="all">
-        <actions>
-            <set field="created" from="ec.entity.getEntityDbMeta().createForeignKeysForExistingTables()"/>
-            <message>Created ${created} foreign keys</message>
-        </actions>
-        <default-response url="."/>
-    </transition>
 
     <actions>
         <script><![CDATA[
@@ -137,8 +122,6 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="submitButton"><default-field title="Upload Snapshot"><submit/></default-field></field>
             </form-single>
         </container-dialog>
-        <link url="dropForeignKeys" text="Drop FKs" confirmation="Really drop all known foreign keys?"/>
-        <link url="createForeignKeys" text="Create FKs" confirmation="Really create all missing foreign keys?"/>
 
         <label text="Current Snapshot Files" type="h4"/>
         <section-iterate name="SnapshotListSection" list="snapshotList" entry="sfile"><widgets>

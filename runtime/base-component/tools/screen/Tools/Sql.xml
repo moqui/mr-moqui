@@ -12,8 +12,20 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
+<!-- SQL on the chosen database: one statement with its result set, or a script of statements separated by semicolons
+    whose result sets are not shown. Needs SQL_RUNNER_WEB and authorization for all actions on this screen. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="SQL Runner" begin-transaction="false"><!-- NOTE: begin tx is false so table meta data changes, etc can be done -->
+        default-menu-title="SQL" default-menu-index="3" menu-image="sym_o_code" menu-image-type="icon"
+        begin-transaction="false"><!-- NOTE: begin tx is false so table meta data changes, etc can be done -->
+
+    <always-actions>
+        <!-- the database: db, else the last choice, else the default group's -->
+        <set field="databaseList" from="ec.entity.getDatabaseList()"/>
+        <set field="db" from="[db, ec.user.getPreference('database.selected')].find((name) =&gt; databaseList.some((database) =&gt; database.db == name)) || databaseList[0]?.db"/>
+        <set field="selectedDatabase" from="databaseList.find((database) =&gt; database.db == db)"/>
+    </always-actions>
+
+    <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
 
     <actions>
         <if condition="!ec.user.hasPermission('SQL_RUNNER_WEB')">
@@ -26,40 +38,57 @@ along with this software (see the LICENSE.md file). If not, see
             outerRecordsList = []
 
             const limitInt = parseInt(limit || "500", 10)
+            const groupName = selectedDatabase?.groupNames[0]
 
             // make sure SQL comes in secure parameter (body, etc no URL)
             sql = ec.web.secureRequestParameters.sql
             if (sql && groupName) {
                 messageList = []
-                // JDBC runs a script of several statements and returns each result; here each statement runs by itself
-                try {
-                    const result = ec.entity.runSqlStatement(String(groupName), String(sql), limitInt)
-                    if (result.rowsAffected != null) {
-                        messageList.push(ec.resource.expand('Query altered ${rowsAffected} rows.', '', {rowsAffected: result.rowsAffected}))
-                    } else {
-                        outerColumnsList.push(result.columns)
-                        outerRecordsList.push(result.records)
-                        if (result.limitReached) {
-                            messageList.push(ec.resource.expand('Only showing first ${limit} rows.', '', {limit: limitInt}))
-                        } else {
-                            messageList.push(ec.resource.expand('Showing all ${count} results.', '', {count: result.records.length}))
+                if (String(context.runScript) == 'true') {
+                    // as in Java, split on semicolons; a result set is read and not shown
+                    for (const statement of String(sql).split(';')) {
+                        if (!statement.trim()) continue
+                        try {
+                            const result = ec.entity.runSqlStatement(String(groupName), statement, 1)
+                            if (result.rowsAffected != null) messageList.push(ec.resource.expand('Query altered ${rowsAffected} rows.', '', {rowsAffected: result.rowsAffected}))
+                        } catch (e) {
+                            messageList.push(String(e))
+                            ec.logger.log(200, "Error running SQL script statement", e)
                         }
                     }
-                } catch (e) {
-                    messageList.push(String(e))
-                    ec.logger.log(200, "Error running SQL query in SqlRunner", e)
+                } else {
+                    // JDBC runs a script of several statements and returns each result; here each statement runs by itself
+                    try {
+                        const result = ec.entity.runSqlStatement(String(groupName), String(sql), limitInt)
+                        if (result.rowsAffected != null) {
+                            messageList.push(ec.resource.expand('Query altered ${rowsAffected} rows.', '', {rowsAffected: result.rowsAffected}))
+                        } else {
+                            outerColumnsList.push(result.columns)
+                            outerRecordsList.push(result.records)
+                            if (result.limitReached) {
+                                messageList.push(ec.resource.expand('Only showing first ${limit} rows.', '', {limit: limitInt}))
+                            } else {
+                                messageList.push(ec.resource.expand('Showing all ${count} results.', '', {count: result.records.length}))
+                            }
+                        }
+                    } catch (e) {
+                        messageList.push(String(e))
+                        ec.logger.log(200, "Error running SQL statement", e)
+                    }
                 }
             }
         ]]></script>
     </actions>
     <widgets>
+        <section-include name="DatabasePicker" location="component://tools/template/DatabaseParts.xml"/>
         <section-iterate name="Messages" list="messageList" entry="message"><widgets>
             <label text="${message}" type="p" style="text-info"/>
         </widgets></section-iterate>
         <form-single name="SqlOptions" transition="." body-parameters="sql">
-            <field name="groupName"><default-field><drop-down no-current-selected-key="transactional">
-                <list-options list="ec.entity.getDatasourceGroupNames()"/></drop-down></default-field></field>
-            <field name="sql"><default-field title="SQL Statement"><text-area cols="120" rows="8"/></default-field></field>
+            <field name="db"><default-field><hidden/></default-field></field>
+            <field name="sql"><default-field title="SQL" tooltip="One statement, or with Run as script, statements separated by semicolons">
+                <text-area cols="120" rows="10"/></default-field></field>
+            <field name="runScript"><default-field title=""><check><option key="true" text="Run as script: each statement in turn, no results shown"/></check></default-field></field>
             <field name="limit"><default-field><text-line size="5" default-value="500"/></default-field></field>
             <field name="submitButton"><default-field title="Run SQL"><submit/></default-field></field>
         </form-single>

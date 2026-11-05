@@ -859,7 +859,7 @@ The view of an entity file's tab, one entity at a time, chosen from the file's o
 - **Incoming**, one read-only list: the entities whose relationships point here (from the index), with their
   relationship, type and key fields, each linked to that entity's view, and Browse for the rest.
 - Indexes; master definitions; seed data; the EECA rules on the entity (edited in §10's view); Where used (a count with
-  Browse); Data (the row count and first rows, a link to Tools' Data Edit).
+  Browse); Data (the row count and first rows, a link to Tools' Data Grid).
 - **The table**: its columns against the fields (missing columns, columns no field names, type differences), from the
   database's metadata.
 
@@ -1575,7 +1575,7 @@ are independent of P4 and may run beside it.
 - **Since built** (Oct 28, 2026): the header's Attributes from the digest; a field's label in another language as a
   `LocalizedMessage` record in the site's seed data; a view entity's condition and order (econditions and order-bys of
   its own definition; an extension cannot change a view's condition); its Run with the SQL a find makes
-  (`entity::info::view_sql`) and its first rows; a link to Tools' Data Edit; and a data file's Check against the database
+  (`entity::info::view_sql`) and its first rows; a link to Tools' Data Grid; and a data file's Check against the database
   (the data check's messages), Load the changed records (those added or changed since the last commit, compared with
   `git show HEAD:`) and Export records (a find written as the file's elements, by full name, at most a thousand, into the
   buffer). The member diagram, with the pan-and-zoom layer, came with P9; the three-way data load is P10.

@@ -33,7 +33,7 @@
 //!
 //! Two modes:
 //!
-//! - **one transaction** matches `SpeedTest.xml` (`begin-transaction="true"`): the batch holds one
+//! - **one transaction** matches `Tools/Database/SpeedTest.xml` (`begin-transaction="true"`): the batch holds one
 //!   connection and commits once, after the timed rows. That commit is its own row, for the whole batch.
 //! - **autocommit** is the durable rate: each call checks out a connection, runs its statement, and commits.
 

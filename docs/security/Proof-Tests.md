@@ -54,7 +54,7 @@ Stop the server when the client exits (its standard input is the terminal). The 
 | `getPreferences` without a login is 401 and has no preferences | A01 | `SecurityAccess` |
 | A static path with `..` does not serve screen XML | A01 | `SecurityAccess` |
 | A user with no artifact authz cannot open Tools | A01 | `SecurityAccess` |
-| A VIEW-only user cannot open SQL Runner | A01 | `SecurityAccess` |
+| A VIEW-only user cannot open Tools' SQL | A01 | `SecurityAccess` |
 | Login `returnTo` off the site is refused; a path on the site is followed | A01 | `SecurityAccess` |
 | Login `Referer` off the site is refused | A01 | `SecurityHeaders` |
 | Login `returnTo` with `Host: evil.example` does not redirect to that host | A01 | `SecurityHeaders` |
@@ -75,7 +75,7 @@ Stop the server when the client exits (its standard input is the terminal). The 
 | `/notws` from a foreign origin is refused (logged-in session) | A01 | `SecurityAccess` |
 | An anonymous `/notws` upgrade is 401 | A01 | `SecurityAccess` |
 | The server's host on another port or scheme is refused for `/notws` | A01 | `SecurityAccess` |
-| Screen proofs: escaped extra path, FOP without login, login form action, VIEW-only service run, anonymous data import, `qzSign`, `GET` login with a password, `WEB-INF`, `GET /notws`, SQL Runner query string, menu data, FOP `filename`, DataSnapshot download and parent segments, `/resources` put, Tools CSV, remote data import | A01, A03, A05 | `SecurityScreens` |
+| Screen proofs: escaped extra path, FOP without login, login form action, VIEW-only service run, anonymous data import, `qzSign`, `GET` login with a password, `WEB-INF`, `GET /notws`, SQL query string, menu data, FOP `filename`, DataSnapshot download and parent segments, `/resources` put, Tools CSV, remote data import | A01, A03, A05 | `SecurityScreens` |
 | `/email/NOTAREALID.png` is HTTP 200, `image/png` with no charset, inline, and the 1x1 tracking PNG | A01 | `SecurityScreens` |
 | `/htmlr` and `/htmlr/...` are 404, not a PDF and not a stack trace | A10 | `SecurityScreens` (the renderer is not mounted) |
 | `/status` from loopback is public JSON (no heap, datasources, or VmVendor) | A01 | `SecurityAccess` |

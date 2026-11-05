@@ -1649,12 +1649,12 @@ Each definition includes a recovery path and local scope. For an individual run,
 | S15 — Remote agents and MCP | AgentAdmin; local stub only | Inspect remote connectivity and permissions | Remote agent/server lists → detail → inspect configuration and local error | Network target, available capability and failure reason clear | Unavailable server/invalid URL/refused permission; real remote execution unverified |
 | S16 — Edge pairing and clients | Administrator; separate disposable local edge node if prepared | Understand pairing wizard and connection status | Edge Status → Pair EdgeUrl → Connect → Discover → Apply → Test; inspect EdgeClients | Steps, trust confirmation, applied changes and verification outcomes explicit | Bad URL/code, unavailable peer, back/cancel/reopen; successful pairing unverified until local peer exists |
 | T01 — Tools entry and service/REST references | Developer administrator; framework-only instance | Find the right tool and inspect API contract | Tools overview → ServiceReference/ServiceDetail; open entity/REST reference and status-flow diagram | Task grouping, inputs/outputs and route labels accurately reflect available tools | Missing service/entity; obsolete GroovyShell removed by request, replaced by web console and SSH JS executor |
-| T02 — Entity find/edit and generated screens | Developer administrator; disposable enumeration/reference row | Create, find, edit and remove a safe entity record | Entity list/detail → find/filter → create/edit; repeat through AutoScreen detail/master relationship path | Field types, keys, relationships, validation and saved result understandable | Duplicate key, invalid type, missing record, cancel and limited role |
+| T02 — Entity find/edit and generated screens | Developer administrator; disposable enumeration/reference row | Create, find, edit and remove a safe entity record | Entity list/detail → find/filter → create/edit; repeat through the Data Browse detail/master relationship path | Field types, keys, relationships, validation and saved result understandable | Duplicate key, invalid type, missing record, cancel and limited role |
 | T03 — Data import/export and snapshot | Developer administrator; fixture-only DB and files | Transfer disposable data safely | Export fixture query → inspect artifact → import controlled row → find result; inspect snapshot controls | Scope/format/result/counts clear; downloads useful | Malformed import, unsupported upload and missing file; snapshot restore limited to fresh disposable runtime |
 | T04 — Database view authoring | Developer administrator; disposable view | Compose and inspect a local database view | Find view → edit aliases/members → save → view/filter → remove fixture | Source entities, aliases and returned columns clear | Invalid alias/join, empty view and cancelled edit |
 | T05 — SQL and script recovery | Developer administrator; disposable DB; read-only examples | Run a safe query and recover from error | SQL Runner SELECT 1 → invalid missing column → SELECT 2; SQL Script Runner controlled local query | Results/columns distinguish from input; error is readable and recovery works | Syntax/missing-column error and denied role; no nonfixture writes |
 | T06 — Service invocation | Developer administrator; BasicServices.echo#Data | Inspect and invoke a harmless service | ServiceDetail → Run Service → enter TextIn1 → submit → verify TextOut1; invalid parameter then correct | Service identity, input/output grouping and values remain visible after run | Validation/service error and retry; output must show echoed text; no external services |
-| T07 — Statistics and load tools | Developer administrator; isolated run with bounded settings | Inspect diagnostics and understand safe test controls | ArtifactStats, QueryStats, TableStats → inspect/filter; SpeedTest/ServiceLoadRunner inspect before running bounded fixture only | Units, metrics availability and test scope clear | Unsupported platform and empty stats; load execution pending coordinator budget |
+| T07 — Statistics and load tools | Developer administrator; isolated run with bounded settings | Inspect diagnostics and understand safe test controls | ArtifactStats, Database Queries and Tables → inspect/filter; Database Speed Test/ServiceLoadRunner inspect before running bounded fixture only | Units, metrics availability and test scope clear | Unsupported platform and empty stats; load execution pending coordinator budget |
 | B01 — Comms home and navigation | Signed-in local user with no external accounts | Find conversations and next useful action | Open BasicComms/Home → Inbox/Chat/Calls/Settings; inspect empty/new-user states and shortcuts | Counts and titles describe user-visible destinations; no dead primary action | Partial data failure, no account and empty rooms; return/back works |
 | B02 — Inbox triage | Local user; hosted account/folder/message fixtures | Read, find and organize local mail | Inbox → search/filter/saved search → thread → MessageDetail → mark/read/flag/archive/move/trash → return | Thread selection, unread state, content/source and feedback correct | No matches, inaccessible thread and unavailable request; retry preserves current view |
 | B03 — Compose, draft and attachments | Local user; hosted identity with capture enabled | Write, retain and recover a message without external send | Compose/reply → recipients/subject/body → attach local file → save/close/reopen → discard or captured send/undo | Saved status truthful; intended identity and recipients preserved; files readable | Invalid recipient, no identity, failed save/upload/send; retain text and retry; schedule only captured fixture |
@@ -1690,7 +1690,6 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/DataDocument/Edit/FindDataDocument.xml` | hidden menu | S08 | P |
 | `System/DataDocument/Edit/ViewDataDocument.xml` | XML widgets | S08 | P |
 | `System/DataDocument/Edit.xml` | Container → FindDataDocument | S08 | P |
-| `System/DataDocument/Export.xml` | XML widgets | S08 | P |
 | `System/DataDocument/Index.xml` | XML widgets | S08 | P |
 | `System/DataDocument/ViewDocument.xml` | hidden menu | S08 | P |
 | `System/DataDocument.xml` | Container → Search | S08 | P |
@@ -1804,36 +1803,38 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `System/dashboard.xml` | XML widgets | S01 | V/P; focused rule passed |
 | `System.xml` | Container → dashboard | S01 | P |
 | `Tools/ArtifactStats.xml` | XML widgets | T07 | P |
-| `Tools/AutoScreen/AutoEdit/AutoEditDetail.xml` | XML widgets | T02 | P |
-| `Tools/AutoScreen/AutoEdit/AutoEditMaster.xml` | XML widgets | T02 | P |
-| `Tools/AutoScreen/AutoEdit.xml` | XML widgets | T02 | P |
-| `Tools/AutoScreen/AutoFind.xml` | XML widgets | T02 | P |
-| `Tools/AutoScreen/MainEntityList.xml` | XML widgets | T02 | P |
-| `Tools/AutoScreen.xml` | Container → MainEntityList | T02 | P |
-| `Tools/DataView/EditDbView.xml` | XML widgets | T04 | P |
-| `Tools/DataView/FindDbView.xml` | XML widgets | T04 | P |
-| `Tools/DataView/ViewDbView.xml` | XML widgets | T04 | P |
-| `Tools/DataView.xml` | Container → FindDbView | T04 | P |
-| `Tools/Entity/DataEdit/EntityDataEdit.xml` | XML widgets | T02 | V/P: disposable EnumerationType update persisted; relationship navigation and narrow layout pending |
-| `Tools/Entity/DataEdit/EntityDataFind.xml` | XML widgets | T02 | V/P: create/filter/edit/duplicate correction passed; CSV mismatch found (UI-036), deletion unverified |
-| `Tools/Entity/DataEdit/EntityDetail.xml` | XML widgets | T02 | P |
-| `Tools/Entity/DataEdit/EntityList.xml` | XML widgets | T02 | V/P: exact entity filter and Find navigation passed; maintenance controls inspected only |
-| `Tools/Entity/DataEdit.xml` | Container → EntityList | T02 | P |
-| `Tools/Entity/DataExport.xml` | XML widgets | T03 | P |
-| `Tools/Entity/DataImport.xml` | XML widgets | T03 | P |
-| `Tools/Entity/DataSnapshot.xml` | XML widgets | T03 | P |
-| `Tools/Entity/QueryStats.xml` | XML widgets | T07 | P |
-| `Tools/Entity/SpeedTest.xml` | XML widgets | T07 | P |
-| `Tools/Entity/SqlRunner.xml` | XML widgets | T05 | V/P; parent observation |
-| `Tools/Entity/SqlScriptRunner.xml` | XML widgets | T05 | P |
-| `Tools/Entity/TableStats.xml` | XML widgets | T07 | P |
-| `Tools/Entity.xml` | Container → DataEdit | T02 | P |
+| `Tools/Data/Browse/AutoEdit/AutoEditDetail.xml` | XML widgets | T02 | P |
+| `Tools/Data/Browse/AutoEdit/AutoEditMaster.xml` | XML widgets | T02 | P |
+| `Tools/Data/Browse/AutoEdit.xml` | XML widgets | T02 | P |
+| `Tools/Data/Browse/AutoFind.xml` | XML widgets | T02 | P |
+| `Tools/Data/Browse/MainEntityList.xml` | XML widgets | T02 | P |
+| `Tools/Data/Browse.xml` | Container → MainEntityList | T02 | P |
+| `Tools/Data/Export.xml` | XML widgets | T03 | P |
+| `Tools/Data/Grid.xml` | XML widgets | T02 | V/P: create/filter/edit/duplicate correction passed; CSV mismatch found (UI-036), deletion unverified |
+| `Tools/Data/Load.xml` | XML widgets | T03 | P |
+| `Tools/Data/Record.xml` | XML widgets | T02 | V/P: disposable EnumerationType update persisted; relationship navigation and narrow layout pending |
+| `Tools/Data/Snapshots.xml` | XML widgets | T03 | P |
+| `Tools/Data/Views/EditDbView.xml` | XML widgets | T04 | P |
+| `Tools/Data/Views/FindDbView.xml` | XML widgets | T04 | P |
+| `Tools/Data/Views/ViewDbView.xml` | XML widgets | T04 | P |
+| `Tools/Data/Views.xml` | Container → FindDbView | T04 | P |
+| `Tools/Database/Overview.xml` | XML widgets | T07 | P |
+| `Tools/Database/Queries.xml` | XML widgets | T07 | P |
+| `Tools/Database/SpeedTest.xml` | XML widgets | T07 | P |
+| `Tools/Database/Tables.xml` | XML widgets | T07 | P |
+| `Tools/Database.xml` | Container → Overview | T07 | P |
+| `Tools/Data.xml` | Container → Grid | T02 | P |
+| `Tools/Etl.xml` | hidden menu | T03 | P |
 | `Tools/GroovyShell.xml` | removed | T01 | No longer applicable; web console/Terminal UI and SSH JS executor replace it. Old route returns 404. |
+| `Tools/Schema/Entities.xml` | XML widgets | T02 | V/P: exact entity filter and Find navigation passed; maintenance controls inspected only |
+| `Tools/Schema/Entity.xml` | XML widgets | T02 | P |
+| `Tools/Schema.xml` | Container → Entities | T02 | P |
 | `Tools/Service/ServiceDetail.xml` | hidden menu | T01 | V/P; focused rule passed |
 | `Tools/Service/ServiceLoadRunner.xml` | modes vue,qvue,tui | T07 | P |
 | `Tools/Service/ServiceReference.xml` | XML widgets | T01 | P |
 | `Tools/Service/ServiceRun.xml` | XML widgets | T06 | V/P; parent observation |
 | `Tools/Service.xml` | Container → ServiceReference | T01 | P |
+| `Tools/Sql.xml` | XML widgets | T05 | V/P; parent observation |
 | `Tools/StatusFlows.xml` | XML widgets | T01 | P |
 | `Tools/dashboard.xml` | XML widgets | T01 | S/P |
 | `Tools.xml` | Container → dashboard | T01 | P |
@@ -1913,7 +1914,7 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 
 ### Optional public-demo override (not enabled merely by loading demo data)
 
-`runtime/dev-component/demo/screen/Disabled.xml` replaces Tools Entity/{DataImport,DataExport,DataSnapshot,SpeedTest,SqlRunner,SqlScriptRunner} and Service/{ServiceRun,ServiceLoadRunner} only when the separate demo lock-down component is enabled. Map this single user-facing unavailable screen to T03/T05/T06/T07 permission-limited inspection; pending. The normal framework review must not confuse demo seed data with this optional lock-down mode.
+`runtime/dev-component/demo/screen/Disabled.xml` replaces Tools Sql, Data/{Load,Export,Snapshots}, Database/{SpeedTest,Connections} and Service/{ServiceRun,ServiceLoadRunner} only when the separate demo lock-down component is enabled. Map this single user-facing unavailable screen to T03/T05/T06/T07 permission-limited inspection; pending. The normal framework review must not confuse demo seed data with this optional lock-down mode.
 
 
 ### Dev AIDE screen mapping and activities

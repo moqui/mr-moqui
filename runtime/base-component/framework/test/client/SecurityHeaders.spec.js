@@ -217,7 +217,7 @@ feature("A01 an uploaded #kind is #verdict", {
         if (base64 != null) part.base64 = base64
         if (text != null) part.text = text
         return {
-            res: s.post("/apps/tools/Entity/DataSnapshot/uploadSnapshot", { multipart: { snapshotFile: part } }),
+            res: s.post("/apps/tools/Data/Snapshots/uploadSnapshot", { multipart: { snapshotFile: part } }),
         }
     },
     then({ res, verdict, fileName, magic }) {

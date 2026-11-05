@@ -9,15 +9,20 @@
     <default-property name="demo_shared_user_ids" value="EX_JOHN_DOE"/>
 
     <!-- The sharp tools, replaced and left out of the menus. VIEW-only authorization does not stop SpeedTest or the
-        Data Import check, which run as the screen renders; the others are stubbed as well so no one tries them. -->
+        Data Load check, which run as the screen renders; the others are stubbed as well so no one tries them.
+        Connections (external databases) is stubbed before it is built, as the other sharp tools are. -->
     <screen-facade>
-        <screen location="component://tools/screen/Tools/Entity.xml">
-            <subscreens-item name="DataImport" menu-include="false" location="component://demo/screen/Disabled.xml"/>
-            <subscreens-item name="DataExport" menu-include="false" location="component://demo/screen/Disabled.xml"/>
-            <subscreens-item name="DataSnapshot" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+        <screen location="component://tools/screen/Tools.xml">
+            <subscreens-item name="Sql" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+        </screen>
+        <screen location="component://tools/screen/Tools/Data.xml">
+            <subscreens-item name="Load" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+            <subscreens-item name="Export" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+            <subscreens-item name="Snapshots" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+        </screen>
+        <screen location="component://tools/screen/Tools/Database.xml">
             <subscreens-item name="SpeedTest" menu-include="false" location="component://demo/screen/Disabled.xml"/>
-            <subscreens-item name="SqlRunner" menu-include="false" location="component://demo/screen/Disabled.xml"/>
-            <subscreens-item name="SqlScriptRunner" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+            <subscreens-item name="Connections" menu-include="false" location="component://demo/screen/Disabled.xml"/>
         </screen>
         <screen location="component://tools/screen/Tools/Service.xml">
             <subscreens-item name="ServiceRun" menu-include="false" location="component://demo/screen/Disabled.xml"/>

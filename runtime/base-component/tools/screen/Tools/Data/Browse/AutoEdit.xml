@@ -30,9 +30,9 @@ along with this software (see the LICENSE.md file). If not, see
     <widgets>
         <!-- NOTE: this template will take care of the active subscreen, if needed; it's not needed for the dynamic menu -->
         <render-mode>
-            <text type="html" location="component://tools/template/AutoScreenMenu.html.fancy"/>
-            <text type="qvt" location="component://tools/template/AutoScreenMenu.qvt.fancy"/>
-            <!-- the same tabs as AutoScreenMenu.qvt.fancy; the terminal draws the active subscreen as the next level -->
+            <text type="html" location="component://tools/template/BrowseMenu.html.fancy"/>
+            <text type="qvt" location="component://tools/template/BrowseMenu.qvt.fancy"/>
+            <!-- the same tabs as BrowseMenu.qvt.fancy; the terminal draws the active subscreen as the next level -->
             <text type="tui"><![CDATA[${JSON.stringify((() => {
                 const masterUrl = sri.buildUrl('AutoEditMaster').addParameter('aen', aen).addParameters(masterPrimaryKeyMap || {}).removeParameter('den')
                 const items = [{title: String(aen), url: masterUrl.getUrlWithParams(), active: !den}]

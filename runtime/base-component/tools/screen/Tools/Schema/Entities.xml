@@ -14,43 +14,23 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Entity List" default-menu-index="1">
+        default-menu-title="Entities" default-menu-index="1">
 
-    <transition name="find"><default-response url="../EntityDataFind"/></transition>
-    <transition name="detail"><default-response url="../EntityDetail"/></transition>
-    <transition name="autoScreen"><default-response url="../../../AutoScreen/AutoFind"/></transition>
-    <transition name="checkTables">
-        <actions><script>ec.entity.entityDbMeta.forceCheckExistingTables()</script></actions>
-        <default-response url="."/>
-    </transition>
-
-    <transition name="getLiquibaseInitXml" read-only="true">
+    <transition name="find"><default-response url="../../Data/Grid"/></transition>
+    <transition name="detail"><default-response url="../Entity"/></transition>
+    <transition name="autoScreen"><default-response url="../../Data/Browse/AutoFind"/></transition>
+    <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
+    <transition name="checkTables" begin-transaction="false" authz-action="all">
         <actions><script><![CDATA[
-            const lbRootNode = ec.entity.getEntityDbMeta().liquibaseInitChangelog(filterRegexp)
-            ec.web.sendTextResponse(lbRootNode.toString(), "text/xml", `LiquibaseInit-${new Date().toISOString().substring(0, 10)}.xml`)
+            // the entities of the chosen database's groups (Schema.xml's always-actions)
+            const groupNames = selectedDatabase?.groupNames || []
+            const check = ec.entity.checkTables(ec.entity.getAllEntityNames(), groupNames)
+            ec.message.addMessage(`Checked the tables of ${groupNames.join(', ')}: ${check.ddl.length} statements ran, ${check.errors} failed`,
+                check.errors || check.failed.length ? 'warning' : 'info')
+            for (const failure of check.failed) ec.message.addMessage(`${failure.entityName} not checked: ${failure.error}`, 'warning')
+            for (const ddl of check.ddl.slice(0, 100)) ec.message.addMessage(ddl, 'info')
+            if (check.ddl.length > 100) ec.message.addMessage(`and ${check.ddl.length - 100} more; the server log has them all`, 'info')
         ]]></script></actions>
-        <default-response type="none"/>
-    </transition>
-    <transition name="dropForeignKeys" begin-transaction="false">
-        <actions>
-            <script>ec.entity.entityDbMeta.forceCheckExistingTables()</script>
-            <set field="dropped" from="ec.entity.getEntityDbMeta().dropAllForeignKeys()"/>
-            <message>Dropped ${dropped} foreign keys</message>
-        </actions>
-        <default-response url="."/>
-    </transition>
-    <transition name="createForeignKeys" begin-transaction="false">
-        <actions>
-            <set field="created" from="ec.entity.getEntityDbMeta().createForeignKeysForExistingTables()"/>
-            <message>Created ${created} foreign keys</message>
-        </actions>
-        <default-response url="."/>
-    </transition>
-    <transition name="createIndexes" begin-transaction="false">
-        <actions>
-            <set field="created" from="ec.entity.getEntityDbMeta().createIndexesForExistingTables()"/>
-            <message>Created ${created} indexes</message>
-        </actions>
         <default-response url="."/>
     </transition>
 
@@ -101,18 +81,9 @@ along with this software (see the LICENSE.md file). If not, see
             </form-list>
         </box-body></container-box>
         <container-box><box-header title="Database maintenance"/><box-body>
-            <label text="The table, foreign key and index actions change the database schema for every entity and ask before they run. Liquibase Init XML only downloads a changelog." type="p" style="m-muted"/>
-            <link url="checkTables" text="Check/Update All Tables" confirmation="Check and update all tables? NOTE: this will only create missing tables and columns if runtime-add-missing is true"/>
-            <link url="dropForeignKeys" text="Drop FKs" confirmation="Really drop all known foreign keys?"/>
-            <link url="createForeignKeys" text="Create FKs" confirmation="Really create all missing foreign keys?"/>
-            <link url="createIndexes" text="Create Indexes" confirmation="Really create all missing indexes? WARNING: on large tables adding an index can take a long time!"/>
-            <container-dialog id="LiquibaseInitDialog" button-text="Liquibase Init XML">
-                <form-single name="LiquibaseInit" transition="getLiquibaseInitXml">
-                    <field name="filterRegexp"><default-field><text-line size="40"/></default-field></field>
-                    <field name="submitButton"><default-field title="Download"><submit/></default-field></field>
-                </form-single>
-            </container-dialog>
-
+            <section-include name="DatabasePicker" location="component://tools/template/DatabaseParts.xml"/>
+            <label text="Check Tables creates the missing tables, columns, indexes and foreign keys of the entities on this database, and lists the statements it ran. It does not change or drop anything." type="p" style="m-muted"/>
+            <link url="checkTables" text="Check tables" confirmation="Check the tables on this database and create what is missing?"/>
         </box-body></container-box>
     </widgets>
 </screen>

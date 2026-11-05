@@ -131,7 +131,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <label text="Define document data, maintain indexes and explore results." type="p" style="m-muted"/>
                     <link url="//apps/dashboards/Explore" text="Explore documents" parameter-map="documentDatasetId ? {datasetId:documentDatasetId,from:'now-10y',thru:'now'} : {}"/>
                     <link url="../DataDocument/Edit" text="Document definitions"/>
-                    <link url="../DataDocument/Export" text="Export documents"/>
+                    <link url="//apps/tools/Data/Export" text="Export documents"/>
                     <link url="../DataDocument/Index" text="Feed indexes"/>
                 </box-body></container-box>
                 <container-box id="DataAdmin"><box-header title="Resources and localization"/><box-body>

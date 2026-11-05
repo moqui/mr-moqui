@@ -276,7 +276,8 @@ test = false
 name = "entity_speed"
 test = false
 
-# Opt-in service facade timings, the service calls of SpeedTest.xml. Not linked by a default `cargo test`.
+# Opt-in service facade timings, the service calls of Tools/Database/SpeedTest.xml. Not linked by a default
+# `cargo test`.
 # CARGO_PROFILE_RELEASE_DEBUG=1 cargo test --release -p moqui-host --test service_speed -- --ignored --nocapture
 [[test]]
 name = "service_speed"

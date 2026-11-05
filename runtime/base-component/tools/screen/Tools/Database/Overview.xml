@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The chosen database: its kind and server version, and the entity groups on it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Overview" default-menu-index="1">
+
+    <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
+
+    <actions>
+        <script><![CDATA[
+            serverVersion = null
+            const groupName = selectedDatabase?.groupNames[0]
+            if (groupName) {
+                try {
+                    const result = ec.entity.runSqlStatement(String(groupName), 'SELECT VERSION()', 1)
+                    serverVersion = result.records?.[0]?.[0] != null ? String(result.records[0][0]) : null
+                } catch (e) {
+                    ec.logger.warn(`No server version for database ${db}: ${e}`)
+                }
+            }
+            databaseRows = databaseList.map((database) => ({db: database.db, groups: database.groupNames.join(', '),
+                databaseConf: database.databaseConf}))
+        ]]></script>
+    </actions>
+    <widgets>
+        <section-include name="DatabasePicker" location="component://tools/template/DatabaseParts.xml"/>
+        <container-box><box-header title="${selectedDatabase?.groupNames.join(', ') || 'Database'}"/><box-body>
+            <label text="Kind: ${selectedDatabase?.databaseConf || ''}" type="p"/>
+            <label text="Server version: ${serverVersion || 'not known'}" type="p"/>
+        </box-body></container-box>
+        <container-box><box-header title="Databases of the entity groups"/><box-body>
+            <form-list name="DatabaseList" list="databaseRows" skip-form="true" paginate="false">
+                <field name="groups"><default-field title="Entity groups"><display/></default-field></field>
+                <field name="databaseConf"><default-field title="Kind"><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+    </widgets>
+</screen>

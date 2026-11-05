@@ -9,7 +9,7 @@ Seven opt-in speed tests in `crates/moqui-host/tests/` (each `test = false` and 
 | Test | What it times | Needs |
 |---|---|---|
 | `entity_speed` | entity facade finds (cache, PK, list, count, iterate 100 rows) and writes (create, update, delete, `create_or_update`), in one transaction and in autocommit; then a cached find, a PK find and writes on 1, 2, 4 and 8 threads at once (`ENTITY_SPEED_THREADS`; `ENTITY_SPEED_THREADS_ONLY` runs that section alone) | embedded Postgres |
-| `service_speed` | the `SpeedTest.xml` calls: entity-auto create/update/delete of `moqui.test.TestEntity` and `echo#Data`, plus the same entity calls direct, in one transaction and each in its own | embedded Postgres |
+| `service_speed` | the `Tools/Database/SpeedTest.xml` calls: entity-auto create/update/delete of `moqui.test.TestEntity` and `echo#Data`, plus the same entity calls direct, in one transaction and each in its own | embedded Postgres |
 | `data_load_speed` | XML create and reload, CSV, JSON, nested records, and the framework seed data in `moqui load` order (first load and reload) | embedded Postgres |
 | `xml_speed` | `MNode` parse, keep, read, lookup and drop over the 784 runtime XML files, and loader-style record elements | nothing |
 | `definition_speed` | the framework entity model, the service definitions, and the base components' screen definitions | nothing |
@@ -390,6 +390,6 @@ What is left of a row: the interpreter running the macro closures (a fifth of th
 7. **Reads before write** for entities that cannot upsert (audit-logged, status flows, data-feed entities) still cost one waited round trip each in a load.
 8. **QuickJS for trivial actions.** About half of `echo#Data` is QuickJS running four `<set>` actions through bare names; a native path for trivial actions would change value types, so it needs a decision. [Round 11](#round-11-javascript-bindings) took `echo#Data` from 10.8 to 8.9 us; what is left of the script engine's own list is at its end.
 9. ~~Transaction bookkeeping~~: done (round 7) for entities with no cached find and no feed document. A data-feed touch still keeps two `String`s per write; an entity with cached finds keeps the values written.
-10. **A Java comparison.** Run the same `SpeedTest.xml` calls and a seed load on Moqui Java against the same Postgres, so the numbers above have a reference.
+10. **A Java comparison.** Run the same `Tools/Database/SpeedTest.xml` calls and a seed load on Moqui Java against the same Postgres, so the numbers above have a reference.
 
 Known flaky test, not from this work: `service::coverage::tests::calls_are_counted_only_between_enable_and_finish` counts into a process-wide recorder and can race with tests running in parallel.

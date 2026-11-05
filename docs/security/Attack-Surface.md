@@ -246,11 +246,11 @@ Other root screens that do not require a user: `Login` (`false`), `ChangePasswor
 
 `runtime/base-component/tools/MoquiConf.xml` mounts `system` and `tools` under `apps`. The URLs are `/apps/system` and `/apps/tools`, and the same names through the qapps extra path. There is no `/vapps` mount. `Tools.xml` and `System.xml` omit `require-authentication`, so both are required. `ADMIN` has inheritable always-all on each root, from the seed table above.
 
-SQL Runner, Service Run, Data Import, Data Snapshot, and `qzSign` are designed privileged tools. The elFinder screen was removed (Dev-AIDE replaces it); its commands are `/resources` on webroot. A screen-by-screen re-check of write refusals (the rest of the Java tool table) was not done. The extra permission checks that were read, on top of screen artifact authorization:
+Tools' SQL, Service Run, Data Load, Data Snapshots, and `qzSign` are designed privileged tools. The elFinder screen was removed (Dev-AIDE replaces it); its commands are `/resources` on webroot. A screen-by-screen re-check of write refusals (the rest of the Java tool table) was not done. The extra permission checks that were read, on top of screen artifact authorization:
 
 | Screen | Check |
 | --- | --- |
-| `Tools/Entity/SqlRunner.xml`, `SqlScriptRunner.xml` | `SQL_RUNNER_WEB` |
+| `Tools/Sql.xml` (a statement, or a script) | `SQL_RUNNER_WEB` |
 | `Tools/Service/ServiceLoadRunner.xml` | `SERVICE_LOAD_RUNNER` |
 | `Tools/dashboard.xml` | shows SQL and service load runner links only with their respective permissions |
 | `System/Llm.xml` | `AgentAdmin`, or the screen returns an error. The comment says every screen under it needs `AgentAdmin`. |
@@ -807,8 +807,8 @@ A public demo breaks one rule above on purpose: it loads the demo users, and any
 `ADMIN`. The demo component (`runtime/dev-component/demo`, loaded by `runtime/conf/MoquiDemoConf.xml`) narrows what
 that login reaches:
 
-- Data Import, Data Export, Data Snapshot, Speed Test, SQL Runner, SQL Script Runner, Service Run and Service Load Runner
-  are replaced by a screen that says they are disabled.
+- Tools' SQL, Data Load, Export and Snapshots, Database Speed Test and Connections, Service Run and Service Load
+  Runner are replaced by a screen that says they are disabled.
 - `ADMIN` is VIEW-only on Tools, System, Monitor, `/moqui`, EntitySync and SystemMessage receive, `/resources` (so refused: `run` is not a view verb), git repositories,
   report git sync and report webhooks. It loses `SearchRemote`, `DashboardRemote`, `ADMIN_PASSWORD`, `SSH_SFTP`,
   `SSH_GIT`, `MONITOR_INGEST` and `REPORT_SAVE_LOCATION`. `john.doe` leaves `ADMIN_ADV`.

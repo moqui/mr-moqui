@@ -211,7 +211,7 @@ fn tools_services_run_on_postgres() {
         exported.contains("\"recordsWritten\"") && !exported.contains("\"recordsWritten\" : 0"),
         "{exported}"
     );
-    let snapshots = page(address, &john, "/Tools/Entity/DataSnapshot.html");
+    let snapshots = page(address, &john, "/Tools/Data/Snapshots.html");
     assert!(snapshots.contains("GateSnapshot.zip"), "{snapshots}");
     let (status, imported) = run(
         address,

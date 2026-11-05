@@ -14,16 +14,22 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
-        default-menu-title="Detail">
+        default-menu-title="Entity" default-menu-include="false">
 
     <parameter name="selectedEntity" required="true"/>
     <parameter name="refresh" required="false"/>
 
-    <transition name="list"><default-response url="../EntityList"/></transition>
-    <transition name="find"><default-response url="../EntityDataFind"/></transition>
-    <transition name="autoFind"><default-response url="../../../AutoScreen/AutoFind"/></transition>
-    <transition name="checkTable">
-        <actions><script>ec.entity.entityDbMeta.forceCheckTableRuntime(ec.entity.getEntityDefinition(selectedEntity))</script></actions>
+    <transition name="list"><default-response url="../Entities"/></transition>
+    <transition name="find"><default-response url="../../Data/Grid"/></transition>
+    <transition name="autoFind"><default-response url="../../Data/Browse/AutoFind"/></transition>
+    <transition name="checkTable" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const check = ec.entity.checkTables([String(selectedEntity)])
+            ec.message.addMessage(`Checked the table: ${check.ddl.length} statements ran, ${check.errors} failed`,
+                check.errors || check.failed.length ? 'warning' : 'info')
+            for (const failure of check.failed) ec.message.addMessage(`${failure.entityName} not checked: ${failure.error}`, 'warning')
+            for (const ddl of check.ddl) ec.message.addMessage(ddl, 'info')
+        ]]></script></actions>
         <default-response url="."/>
     </transition>
 
@@ -49,7 +55,7 @@ along with this software (see the LICENSE.md file). If not, see
             <link url="list" text="Entity List"/>
             <link url="find" text="Entity Find"/>
             <link url="autoFind" text="Auto Screen Find" parameter-map="{aen:selectedEntity}"/>
-            <link url="checkTable" text="Check/Update Table" tooltip="Check and update DB table from entity definition"/>
+            <link url="checkTable" text="Check table" tooltip="Create the missing table, columns, indexes and foreign keys of this entity"/>
         </container>
         <container><label text="Entity Detail for ${entityDefinition.getPrettyName(null, null)} (${entityDefinition.fullEntityName})" type="h3"/></container>
         <container-row>

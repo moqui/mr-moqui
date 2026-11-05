@@ -1,0 +1,222 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Export" default-menu-index="5">
+
+    <transition name="EntityExport" begin-transaction="false" read-only="true" authz-action="update">
+        <actions>
+            <script><![CDATA[
+                const edw = ec.entity.makeDataWriter()
+
+                // handle entityNames
+                if (!context.entityNames) {
+                    ec.message.addError(ec.l10n.localize("No entity names specified, not exporting anything."))
+                    return
+                }
+
+                if (typeof entityNames === 'string' && entityNames.includes(",")) {
+                    if (entityNames.startsWith("[")) entityNames = entityNames.substring(1)
+                    if (entityNames.endsWith("]")) entityNames = entityNames.substring(0, entityNames.length - 1)
+                    entityNames = entityNames.split(",")
+                }
+
+                if (Array.isArray(entityNames)) {
+                    for (const entityName of entityNames) {
+                        const entDef = ec.entity.getEntityDefinition(entityName)
+                        if (entDef == null) ec.message.addError(ec.resource.expand('Could not find entity with name ${entityName}',''))
+                    }
+                    edw.entityNames(entityNames)
+                } else {
+                    const entDef = ec.entity.getEntityDefinition(entityNames)
+                    if (entDef == null) ec.message.addError(ec.resource.expand('Could not find entity with name ${entityNames}',''))
+                    edw.entityName(String(entityNames))
+                }
+
+                if (ec.message.hasError()) return
+
+                if (dependentLevels) edw.dependentLevels(parseInt(dependentLevels, 10))
+                if (masterName) edw.master(masterName)
+                if (fromDate) edw.fromDate(ec.l10n.parseTimestamp(fromDate, null))
+                if (thruDate) edw.thruDate(ec.l10n.parseTimestamp(thruDate, null))
+                if (filterMap) edw.filterMap(ec.resource.expression(filterMap, null))
+                if (orderBy) edw.orderBy([String(orderBy)])
+                edw.fileType(String(fileType))
+                if(fileType == 'CSV') edw.tableColumnNames(useTableColumnNames == 'Yes' ? true : false)
+
+                noResponse = false
+                if (context.output == "file") {
+                    edw.file(path)
+                } else if (context.output == "dir") {
+                    edw.directory(path)
+                } else if (context.output == "browser") {
+                    // stream to ec.web.response
+                    const response = ec.web.response
+                    response.setCharacterEncoding("UTF-8")
+                    response.setHeader("Cache-Control", "no-cache, must-revalidate, private")
+
+                    if (fileType == 'CSV' && Array.isArray(entityNames) && entityNames.length > 1) {
+                        // if trying to export more than one entity as CSV, send a .zip file instead
+                        response.setContentType('application/zip')
+                        response.setHeader("Content-Disposition", `attachment; filename="EntityExport_${ec.l10n.format(ec.user.nowTimestamp, 'yyyyMMdd_HHmm')}.zip";`)
+                        edw.zipDirectory('', response.getOutputStream())
+
+                    } else {
+                        if (fileType == 'JSON') response.setContentType('application/json')
+                        else if (fileType == 'CSV') response.setContentType('text/csv')
+                        else response.setContentType('text/xml')
+
+                        response.setHeader("Content-Disposition", `attachment; filename="EntityExport_${ec.l10n.format(ec.user.nowTimestamp, 'yyyyMMdd_HHmm')}.${fileType == 'JSON' ? 'json' : fileType == 'CSV' ? 'csv' : 'xml'}";`)
+                        edw.writer(response.getWriter())
+                    }
+                    noResponse = true
+                }
+            ]]></script>
+        </actions>
+        <conditional-response url="."><condition><expression>!noResponse</expression></condition></conditional-response>
+        <default-response type="none"/>
+    </transition>
+
+    <!-- The one home of DocumentExport.json, which report screens of other components transition-include: the records
+        of one data document, `dataDocumentId`, as a JSON download, and nothing else. -->
+    <transition name="DocumentExport.json" read-only="true" authz-action="update">
+        <actions><script><![CDATA[
+            if (!context.dataDocumentId) {
+                ec.message.addError(ec.l10n.localize("No Data Document specified, not exporting anything."))
+                return
+            }
+            const edd = ec.entity.getEntityDataDocument()
+            const prettyPrint = String(context.prettyPrint) == 'true'
+            fromUpdateStamp = fromUpdateStamp ? ec.l10n.parseTimestamp(fromUpdateStamp, null) : null
+            thruUpdateStamp = thruUpdateStamp ? ec.l10n.parseTimestamp(thruUpdateStamp, null) : null
+
+            const filename = String(dataDocumentId) + ".json"
+            const response = ec.web.response
+            response.setContentType("application/json")
+            response.setCharacterEncoding("UTF-8")
+            response.setHeader("Content-Disposition", `attachment; filename="${filename}"; filename*=utf-8''${StringUtilities.encodeAsciiFilename(filename)}`)
+            response.setHeader("Cache-Control", "no-cache, must-revalidate, private")
+            response.getWriter().write("[\n")
+            edd.writeDocumentsToWriter(response.getWriter(), [String(dataDocumentId)], null, fromUpdateStamp, thruUpdateStamp, prettyPrint)
+            response.getWriter().write("]\n")
+            noResponse = true
+        ]]></script></actions>
+        <conditional-response url="."><condition><expression>!noResponse</expression></condition></conditional-response>
+        <default-response type="none"/>
+    </transition>
+    <!-- Several data documents to a file or a directory on the server, or to the browser. Not for transition-include:
+        it is a Tools action, under Tools' own authorization. -->
+    <transition name="exportDocuments" read-only="true" authz-action="all">
+        <actions><script><![CDATA[
+            if (!context.dataDocumentIds) {
+                ec.message.addError(ec.l10n.localize("No Data Documents specified, not exporting anything."))
+                return
+            }
+            const edd = ec.entity.getEntityDataDocument()
+            const prettyPrint = String(context.prettyPrint) == 'true'
+            fromUpdateStamp = fromUpdateStamp ? ec.l10n.parseTimestamp(fromUpdateStamp, null) : null
+            thruUpdateStamp = thruUpdateStamp ? ec.l10n.parseTimestamp(thruUpdateStamp, null) : null
+
+            const dataDocumentIdList = (typeof dataDocumentIds === 'string') ? [dataDocumentIds] : dataDocumentIds
+            noResponse = false
+            if (context.output == "file") {
+                edd.writeDocumentsToFile(String(path), dataDocumentIdList, null,
+                        fromUpdateStamp, thruUpdateStamp, prettyPrint)
+            } else if (context.output == "dir") {
+                edd.writeDocumentsToDirectory(String(path), dataDocumentIdList, null,
+                        fromUpdateStamp, thruUpdateStamp, prettyPrint)
+            } else {
+                const response = ec.web.response
+                response.setContentType("application/json")
+                response.setCharacterEncoding("UTF-8")
+                response.setHeader("Cache-Control", "no-cache, must-revalidate, private")
+                response.getWriter().write("[\n")
+                edd.writeDocumentsToWriter(response.getWriter(), dataDocumentIdList, null,
+                        fromUpdateStamp, thruUpdateStamp, prettyPrint)
+                response.getWriter().write("]\n")
+                noResponse = true
+            }
+        ]]></script></actions>
+        <conditional-response url="."><condition><expression>!noResponse</expression></condition></conditional-response>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <container-box><box-header title="Entity data"/><box-body>
+            <form-single name="ExportData" transition="EntityExport">
+                <field name="entityNames">
+                    <default-field><drop-down allow-multiple="true" size="80">
+                        <list-options list="ec.entity.getAllEntitiesInfo('fullEntityName', null, false, true)" key="${fullEntityName}"/>
+                    </drop-down></default-field>
+                </field>
+                <field name="dependentLevels"><default-field><text-line size="2" default-value="0"/></default-field></field>
+                <field name="masterName"><default-field tooltip="Use master definition for each entity that has one with this name; try 'default'">
+                    <text-line size="15"/></default-field></field>
+
+                <field name="fromDate"><default-field><date-time/></default-field></field>
+                <field name="thruDate"><default-field><date-time/></default-field></field>
+
+                <field name="filterMap"><default-field><text-line size="80" default-value="[:]"/></default-field></field>
+                <field name="orderBy"><default-field><text-line size="80"/></default-field></field>
+                <field name="fileType"><default-field>
+                    <radio no-current-selected-key="XML"><option key="XML"/><option key="JSON"/><option key="CSV"/></radio>
+                </default-field></field>
+                <field name="useTableColumnNames">
+                    <default-field title="Use Table Column Names (CSV Only)">
+                        <radio no-current-selected-key="No"><option key="No"/><option key="Yes"/></radio>
+                    </default-field>
+                </field>
+                <field name="output">
+                    <default-field><radio no-current-selected-key="browser">
+                        <option key="file" text="Single File"/>
+                        <option key="dir" text="Directory (one file per entity)"/>
+                        <option key="browser" text="Out to Browser"/>
+                    </radio></default-field>
+                </field>
+                <field name="path"><default-field><text-line size="80"/></default-field></field>
+
+                <field name="submitButton"><default-field title="Export"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+        <container-box><box-header title="Data documents"/><box-body>
+            <form-single name="ExportDocuments" transition="exportDocuments">
+                <field name="dataDocumentIds">
+                    <default-field><drop-down allow-multiple="true" size="10">
+                        <entity-options key="${dataDocumentId}" text="${dataDocumentId} - ${documentName}">
+                            <entity-find entity-name="moqui.entity.document.DataDocument">
+                                <order-by field-name="dataDocumentId"/>
+                            </entity-find>
+                        </entity-options>
+                    </drop-down></default-field>
+                </field>
+
+                <field name="fromUpdateStamp"><default-field><date-time/></default-field></field>
+                <field name="thruUpdateStamp"><default-field><date-time/></default-field></field>
+
+                <field name="prettyPrint"><default-field title=""><check><option key="true" text="Pretty Print JSON?"/></check></default-field></field>
+
+                <field name="path"><default-field><text-line size="80"/></default-field></field>
+                <field name="output">
+                    <default-field><radio no-current-selected-key="file">
+                        <option key="file" text="Single File"/>
+                        <option key="dir" text="Directory (one file per document)"/>
+                        <option key="browser" text="Out to Browser"/>
+                    </radio></default-field>
+                </field>
+
+                <field name="submitButton"><default-field title="Export"><submit/></default-field></field>
+            </form-single>
+        </box-body></container-box>
+    </widgets>
+</screen>

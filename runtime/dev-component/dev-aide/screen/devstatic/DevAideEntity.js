@@ -393,7 +393,7 @@
                 const holder = this.viewElement ? children(this.viewElement, ["entity-condition"])[0] : null;
                 return holder ? children(holder, ["econdition", "order-by", "date-filter", "econditions"]) : [];
             },
-            dataEditUrl() { return this.entity ? "/qapps/tools/Entity/DataEdit/EntityDataFind?selectedEntity=" + encodeURIComponent(this.entity.fullEntityName) : ""; }
+            dataEditUrl() { return this.entity ? "/qapps/tools/Data/Grid?entityName=" + encodeURIComponent(this.entity.fullEntityName) : ""; }
         },
         watch: {
             outline() { if (!this.entityName && !this.isData) this.pickEntity(); }
@@ -916,7 +916,7 @@
         </template>
         <pre v-if="isView && viewSql" class="m-dev-mono q-pa-sm m-dev-sql" id="DevViewSql">{{viewSql}}</pre>
         <div class="text-subtitle2 q-mt-md">Data <span class="m-muted text-caption" v-if="view.data.count !== undefined">{{view.data.count}} rows</span>
-          <a class="text-caption q-ml-sm" :href="dataEditUrl" id="DevDataEdit">Open in Data Edit</a></div>
+          <a class="text-caption q-ml-sm" :href="dataEditUrl" id="DevDataEdit">Open in Data Grid</a></div>
         <div v-if="view.data.error" class="text-caption text-negative">{{view.data.error}}</div>
         <div class="m-dev-grid-wrap" v-if="(view.data.rows || []).length"><table class="m-dev-grid"><thead><tr><th v-for="name in Object.keys(view.data.rows[0])" :key="name">{{name}}</th></tr></thead>
           <tbody><tr v-for="(row, i) in view.data.rows" :key="i"><td v-for="name in Object.keys(view.data.rows[0])" :key="name" class="ellipsis" style="max-width: 14rem">{{row[name]}}</td></tr></tbody></table></div>
