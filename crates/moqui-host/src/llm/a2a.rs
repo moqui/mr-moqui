@@ -231,11 +231,14 @@ pub(crate) async fn handle(
                 Err(full) => return busy(&full),
             };
             let (done, reply) = tokio::sync::oneshot::channel::<Reply>();
+            let shutdown = state.shutdown.clone();
             let spawned = std::thread::Builder::new()
                 .name("moqui-a2a-wait".to_string())
                 .spawn(move || {
                     let _open = open;
-                    let _ = done.send(finish());
+                    // the wait stops when the server does or the client closed the request (its receiver dropped)
+                    let answered = finish(&|| *shutdown.borrow() || done.is_closed());
+                    let _ = done.send(answered);
                 });
             if let Err(error) = spawned {
                 return crate::http::internal_error(&format!("the A2A wait did not start: {error}"));
@@ -256,14 +259,16 @@ pub(crate) async fn handle(
                 .name("moqui-a2a-sse".to_string())
                 .spawn(move || {
                     let _open = open;
+                    let stop = || *shutdown.borrow() || tx.is_closed();
                     let mut sink = |frame: Option<&str>| -> bool {
-                        if *shutdown.borrow() || tx.is_closed() {
+                        if stop() {
                             return false;
                         }
                         let text = frame.map_or_else(|| ": ping\n\n".to_string(), str::to_string);
                         tx.blocking_send(Ok(Bytes::from(text))).is_ok()
                     };
-                    write(&mut sink);
+                    // checked at least every second while nothing comes, as the Assist stream does
+                    write(&mut sink, &stop);
                 });
             if let Err(error) = spawned {
                 return crate::http::internal_error(&format!("the A2A stream did not start: {error}"));

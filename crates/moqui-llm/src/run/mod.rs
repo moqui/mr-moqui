@@ -34,6 +34,7 @@ pub mod observe;
 pub mod pool;
 pub mod state;
 pub mod step;
+pub mod stream;
 
 #[cfg(test)]
 mod tests;

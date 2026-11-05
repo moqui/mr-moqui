@@ -42,6 +42,9 @@ pub mod rest;
 pub mod types;
 
 #[cfg(test)]
+#[path = "follow_tests.rs"]
+mod follow_tests;
+#[cfg(test)]
 mod tests;
 
 use std::sync::Arc;
@@ -135,19 +138,25 @@ impl Reply {
 /// gone.
 pub type Sink<'a> = &'a mut dyn FnMut(Option<&str>) -> bool;
 
+/// The host's check of whether a wait or a stream should stop: the server stops, or the client closed the request. A
+/// wait or stream calls it at least every second while nothing comes ([`crate::run::stream::POLL`]), as the Assist
+/// stream does, rather than noticing a closed client only when it next writes.
+pub type Stop<'a> = &'a dyn Fn() -> bool;
+
 /// What the host does with a request.
 pub enum Answer {
     Reply(Reply),
-    /// The response comes from `finish`, on a thread of the host's own (a blocking send's or a cancel's wait). The
-    /// host counts it against `user_id`'s waits and streams.
+    /// The response comes from `finish`, on a thread of the host's own (a blocking send's or a cancel's wait), given
+    /// the host's [`Stop`]. The host counts it against `user_id`'s waits and streams.
     Later {
         user_id: String,
-        finish: Box<dyn FnOnce() -> Reply + Send>,
+        finish: Box<dyn FnOnce(Stop<'_>) -> Reply + Send>,
     },
-    /// A `text/event-stream` written by `write` on a thread of the host's own, until it returns; counted as a wait.
+    /// A `text/event-stream` written by `write` on a thread of the host's own, until it returns, given the host's
+    /// [`Stop`]; counted as a wait.
     Stream {
         user_id: String,
-        write: Box<dyn FnOnce(Sink<'_>) + Send>,
+        write: Box<dyn FnOnce(Sink<'_>, Stop<'_>) + Send>,
     },
 }
 
@@ -380,11 +389,11 @@ pub(crate) fn send_answer(
     let user_id = caller.user_id.clone();
     Answer::Later {
         user_id,
-        finish: Box::new(move || {
+        finish: Box::new(move |stop: Stop<'_>| {
             let context = factory.new_context();
             let _entered = context.enter();
             let _authz = context.disable_authz();
-            let task = ops::wait_settled(&factory, &sent.task, &base_url, wait, &|| false).and_then(|task| {
+            let task = ops::wait_settled(&factory, &sent.task, &base_url, wait, stop).and_then(|task| {
                 let facade = crate::run::facade_of(&factory)?;
                 match task {
                     Some(task) => ops::task_json(&facade, &base_url, &task, history),
@@ -419,7 +428,8 @@ pub(crate) fn cancel_answer(
     let base_url = caller.base_url.clone();
     Answer::Later {
         user_id: caller.user_id.clone(),
-        finish: Box::new(move || {
+        // a cancel's wait is short (at most five seconds) and needs no stop check
+        finish: Box::new(move |_stop: Stop<'_>| {
             let context = factory.new_context();
             let _entered = context.enter();
             let _authz = context.disable_authz();
@@ -447,7 +457,7 @@ pub(crate) fn stream_answer(
     let base_url = caller.base_url.clone();
     Ok(Answer::Stream {
         user_id: caller.user_id.clone(),
-        write: Box::new(move |sink: Sink<'_>| {
+        write: Box::new(move |sink: Sink<'_>, stop: Stop<'_>| {
             let context = factory.new_context();
             let _entered = context.enter();
             let _authz = context.disable_authz();
@@ -466,7 +476,7 @@ pub(crate) fn stream_answer(
                 Some(response) => sink(Some(&frame(&response))),
                 None => sink(None),
             };
-            if let Err(error) = ops::follow(&factory, &follow, None, &|| false, &mut emit) {
+            if let Err(error) = ops::follow(&factory, &follow, None, stop, &mut emit) {
                 tracing::error!("the A2A stream of task {} ended on an error: {error}", task.id());
             }
         }),

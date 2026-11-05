@@ -27,6 +27,9 @@
 //! Delivery is proportional to the streams interested in a run (plans/High-Level-Review.md HL-021): an event wakes
 //! only its own run's waiters, each run having its own signal, which they wait on outside the hub's lock, and a waiter
 //! reads only the ring's suffix past its cursor, found by arithmetic since the ring's indices have no holes.
+//!
+//! The replay before a follow, the keep-alive, the stop checks and the settled check around it are
+//! [`super::stream`]'s, shared by every reader of a run's events.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};

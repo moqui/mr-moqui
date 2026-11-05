@@ -188,7 +188,7 @@ fn request(key: &str, body: &Json, headers: &[(&str, &str)]) -> HttpRequest {
 fn serve(bed: &Bed, request: &HttpRequest) -> (u16, Json) {
     let reply = match super::serve(&bed.factory, request) {
         Answer::Reply(reply) => reply,
-        Answer::Later { finish, .. } => finish(),
+        Answer::Later { finish, .. } => finish(&|| false),
         Answer::Stream { .. } => panic!("the MCP server does not stream"),
     };
     let body = if reply.body.is_empty() {

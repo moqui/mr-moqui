@@ -29,7 +29,6 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
 
 use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
@@ -37,6 +36,7 @@ use axum::response::Response;
 use bytes::Bytes;
 use hyper::body::Frame;
 use moqui_core::context::{ErrorKind, ExecutionContextFactory};
+use moqui_core::entity::EntityFacade;
 use moqui_core::user::verify_session_cookie;
 use moqui_llm::run::{self, events};
 use serde_json::{json, Value as Json};
@@ -47,12 +47,6 @@ use crate::notws::{key_user, origin_allowed, session_cookie, session_user, Reque
 
 type Chunk = std::io::Result<Bytes>;
 
-/// A comment line this often keeps proxies and the browser from closing an idle stream.
-const PING_EVERY: Duration = Duration::from_secs(15);
-/// How often the stream reads the run's state, so it ends even when it missed the last event.
-const CHECK_EVERY: Duration = Duration::from_secs(5);
-/// Stored events replayed per read.
-const PAGE: i64 = 500;
 /// Event streams open at once on this node; one more is answered 503, and the client tries again.
 const MAX_STREAMS: usize = 256;
 /// How long the stream's thread waits for a client that takes nothing before it ends the stream.
@@ -228,8 +222,53 @@ fn frame(seq: Option<i64>, event_type: &str, payload: &Json) -> String {
     }
 }
 
+/// The Assist reader of a run's events ([`run::stream::Reader`]): each stored and live event as an SSE frame, a stored
+/// end or pause ending the stream; it stops when the server stops or the client closed, and a pause ends it.
+struct AssistReader<'a> {
+    send: &'a dyn Fn(String) -> bool,
+    tx: &'a mpsc::Sender<Chunk>,
+    shutdown: &'a tokio::sync::watch::Receiver<bool>,
+}
+
+impl run::stream::Reader for AssistReader<'_> {
+    fn event(
+        &mut self,
+        _facade: &EntityFacade,
+        seq: Option<i64>,
+        event_type: &str,
+        payload: &Json,
+    ) -> Result<run::stream::Flow, moqui_lib::error::Error> {
+        use run::stream::Flow;
+        if !(self.send)(frame(seq, event_type, payload)) {
+            return Ok(Flow::Gone);
+        }
+        Ok(if seq.is_some() && events::ends_stream(event_type, payload) {
+            Flow::End
+        } else {
+            Flow::Wrote
+        })
+    }
+
+    fn keep_alive(&mut self) -> bool {
+        (self.send)(": ping\n\n".to_string())
+    }
+
+    fn stopped(&mut self) -> bool {
+        *self.shutdown.borrow() || self.tx.is_closed()
+    }
+
+    fn settled(&mut self, facade: &EntityFacade, run_id: &str) -> Result<bool, moqui_lib::error::Error> {
+        // a run that cannot be read ends the stream too; the client reconnects with its last id
+        Ok(run::load_run(facade, run_id)
+            .ok()
+            .flatten()
+            .is_none_or(|run| run.state.is_terminal() || run.state.is_paused()))
+    }
+}
+
 /// The stream's thread: replay, then follow the hub until the run ends or pauses, the client goes away or the server
-/// stops. A read that fails ends the stream; the client reconnects with its last id.
+/// stops, on the run layer's replay-then-follow ([`run::stream::replay_then_follow`]). A read that fails ends the
+/// stream; the client reconnects with its last id.
 fn stream(
     factory: &Arc<ExecutionContextFactory>,
     run_id: &str,
@@ -239,87 +278,19 @@ fn stream(
 ) {
     // a client that takes nothing for SEND_STALL ends the stream and gives back its slot (HL-027)
     let send = |text: String| crate::stall::send_within(tx, Ok(Bytes::from(text)), SEND_STALL).is_ok();
-    let Some(facade) = factory.entity() else {
-        return;
-    };
     let context = factory.new_context();
     let _entered = context.enter();
     let _authz = context.disable_authz();
     if !send("retry: 2000\n\n".to_string()) {
         return;
     }
-    let mut last = after;
-    // the stored events after the client's, page by page; false when the stream is over
-    let replay = |last: &mut i64| -> bool {
-        loop {
-            let page = match events::stored_after(&facade, run_id, *last, PAGE) {
-                Ok(page) => page,
-                Err(error) => {
-                    tracing::error!("the events of agent run {run_id} could not be read: {error}");
-                    return false;
-                }
-            };
-            for event in &page {
-                *last = event.seq;
-                if !send(frame(Some(event.seq), &event.event_type, &event.payload)) {
-                    return false;
-                }
-                if events::ends_stream(&event.event_type, &event.payload) {
-                    return false;
-                }
-            }
-            if i64::try_from(page.len()).unwrap_or(0) < PAGE {
-                return true;
-            }
-        }
+    let mut reader = AssistReader {
+        send: &send,
+        tx,
+        shutdown,
     };
-    if !replay(&mut last) {
-        return;
-    }
-    let hub = run::engine(factory).hub();
-    let _watch = hub.watch(factory, run_id, last);
-    let mut follower = run::hub::Follower::new(&hub, run_id, last);
-    let mut wrote = Instant::now();
-    let mut checked = Instant::now();
-    loop {
-        if *shutdown.borrow() || tx.is_closed() {
-            return;
-        }
-        let next = match follower.next(&hub, &facade, Duration::from_secs(1)) {
-            Ok(next) => next,
-            Err(error) => {
-                tracing::error!("the events of agent run {run_id} could not be read: {error}");
-                return;
-            }
-        };
-        last = follower.last();
-        for event in next {
-            if !send(frame(event.seq, &event.event_type, &event.payload)) {
-                return;
-            }
-            wrote = Instant::now();
-            if event.seq.is_some() && events::ends_stream(&event.event_type, &event.payload) {
-                return;
-            }
-        }
-        if wrote.elapsed() >= PING_EVERY {
-            if !send(": ping\n\n".to_string()) {
-                return;
-            }
-            wrote = Instant::now();
-        }
-        if checked.elapsed() >= CHECK_EVERY {
-            checked = Instant::now();
-            let settled = run::load_run(&facade, run_id)
-                .ok()
-                .flatten()
-                .is_none_or(|run| run.state.is_terminal() || run.state.is_paused());
-            if settled && !run::engine(factory).is_local(run_id) {
-                // the last events may have come after the hub was read: send what is stored, then end
-                replay(&mut last);
-                return;
-            }
-        }
+    if let Err(error) = run::stream::replay_then_follow(factory, run_id, after, &mut reader) {
+        tracing::error!("the events of agent run {run_id} could not be read: {error}");
     }
 }
 
