@@ -59,7 +59,7 @@ fn none() -> Out {
 
 /// SQL needs `SQL_RUNNER_WEB` and authorization for all actions on the Tools app (§14.1), as the SQL screen checks:
 /// asked here whatever calls the service.
-fn may_run_sql() -> bool {
+pub(crate) fn may_run_sql() -> bool {
     if !moqui_core::user::has_permission("SQL_RUNNER_WEB").unwrap_or(false) {
         add_error("SQL needs the SQL_RUNNER_WEB permission");
         return false;
@@ -93,7 +93,7 @@ fn group_of(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Opti
     }
 }
 
-fn number(parameters: &BTreeMap<String, Value>, key: &str) -> usize {
+pub(crate) fn number(parameters: &BTreeMap<String, Value>, key: &str) -> usize {
     parameters
         .get(key)
         .filter(|value| !is_empty(value))
@@ -110,7 +110,7 @@ fn params_map(parameters: &BTreeMap<String, Value>) -> BTreeMap<String, Value> {
     }
 }
 
-fn current_user() -> Option<String> {
+pub(crate) fn current_user() -> Option<String> {
     moqui_core::user::current_user_id().ok().flatten()
 }
 

@@ -5108,9 +5108,11 @@ dependencies = [
 name = "moqui-tools"
 version = "0.1.0"
 dependencies = [
+ "csv",
  "indexmap",
  "jiff",
  "moqui-core",
+ "moqui-db",
  "moqui-drivers",
  "moqui-lib",
  "serde_json",

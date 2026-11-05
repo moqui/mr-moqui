@@ -226,4 +226,147 @@ along with this software (see the LICENSE.md file). If not, see
             signed-in caller needs DATABASE_ADMIN.</description>
         <out-parameters><parameter name="deleted" type="Long"/></out-parameters>
     </service>
+
+    <!-- ========== The data grid (plans/Tools-Database.md §9; crates/moqui-tools/src/grid.rs and grid_service.rs) ==========
+        No state per grid: each call takes the source spec, source = {type: entity, entityName, conditions} (conditions
+        are search-form inputs: field, field_op, field_not, field_ic, field_from, field_thru, field_period) or {type: sql,
+        db, sql} (one SELECT, WITH, VALUES or TABLE, wrapped as SELECT * FROM (sql) q and run read only, audited), and
+        columns, the names to show (all when empty). sort is Tabulator's [{field, dir}], filter its [{field, type,
+        value}] with type =, !=, like, starts, ends, <, <=, >, >=, in, keywords. An entity source needs the Tools app, a
+        SQL source SQL (SQL_RUNNER_WEB and all actions on the Tools app). The identity and secret entities the generic
+        tools refuse are refused. A refusal is a message error with no out-parameters. -->
+    <service verb="get" noun="DataGridColumns" type="rust" location="moqui_tools::grid_service::get_data_grid_columns"
+            transaction="ignore">
+        <description>The grid's columns, each: name, title, type (text, long-text, number, date, time, date-time,
+            indicator, boolean, binary), editable, editor (input, textarea, number, date, time, datetime, tickCross, list;
+            null when not editable), pk, encrypted (shown masked, never edited), notNull, createOnly, maxLength,
+            relatedEntity and relatedField (the lookup's), and field (an editable SQL result's entity field). entityName is
+            the entity the grid saves to: the source's, or a SQL result's whose columns are all of one table with its
+            entity's whole primary key (§9.5); null when read only, with readOnlyReason. hasStamp: each row has _stamp,
+            which save sends back.</description>
+        <in-parameters>
+            <parameter name="source" type="Map" required="true"/>
+            <parameter name="columns" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="columns" type="List"/>
+            <parameter name="entityName"/>
+            <parameter name="readOnlyReason"/>
+            <parameter name="hasStamp" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="DataGridRows" type="rust" location="moqui_tools::grid_service::get_data_grid_rows"
+            transaction="ignore">
+        <description>One page for Tabulator's progressive load: page from 1, size (100, at most 1,000). last_page is page
+            plus one while pages come back full, and the page itself once one is short, with last_row the row count then;
+            no count is run. For an unfiltered entity source last_row is the catalog's estimate while more pages come
+            (estimated true). Each row of data is a map of the columns; an entity row has its primary key and _stamp (its
+            lastUpdatedStamp) too; encrypted fields are masked.</description>
+        <in-parameters>
+            <parameter name="source" type="Map" required="true"/>
+            <parameter name="columns" type="List"/>
+            <parameter name="page" type="Integer"/>
+            <parameter name="size" type="Integer"/>
+            <parameter name="sort" type="List"/>
+            <parameter name="filter" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="last_page" type="Long"/>
+            <parameter name="last_row" type="Long"/>
+            <parameter name="estimated" type="Boolean"/>
+            <parameter name="data" type="List"/>
+        </out-parameters>
+    </service>
+    <service verb="count" noun="DataGridRows" type="rust" location="moqui_tools::grid_service::count_data_grid_rows"
+            transaction="ignore">
+        <description>Count rows: an entity find count, or count(*) over the wrapped SQL, with the source's conditions and
+            filter.</description>
+        <in-parameters>
+            <parameter name="source" type="Map" required="true"/>
+            <parameter name="filter" type="List"/>
+        </in-parameters>
+        <out-parameters><parameter name="count" type="Long"/></out-parameters>
+    </service>
+    <service verb="export" noun="DataGrid" type="rust" location="moqui_tools::grid_service::export_data_grid"
+            transaction="ignore">
+        <description>The whole source (conditions, filter, sort, columns) as format csv (default) or xlsx, written to
+            location (a dbresource:// location, or under runtime://tmp/ or runtime://export/), or when empty to a new
+            location under runtime://tmp/grid-export/ that the screen sends as a download. An entity source is read through
+            the find's cursor and CSV written row by row; XLSX is built in memory and stops at 100,000 rows; a SQL source
+            stops at 200,000 rows; truncated says so. Encrypted fields are masked.</description>
+        <in-parameters>
+            <parameter name="source" type="Map" required="true"/>
+            <parameter name="columns" type="List"/>
+            <parameter name="sort" type="List"/>
+            <parameter name="filter" type="List"/>
+            <parameter name="format"/>
+            <parameter name="location"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="location"/>
+            <parameter name="fileName"/>
+            <parameter name="contentType"/>
+            <parameter name="rowCount" type="Long"/>
+            <parameter name="truncated" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="DataGridLookup" type="rust" location="moqui_tools::grid_service::get_data_grid_lookup"
+            transaction="ignore">
+        <description>The options of a related-entity column (field of entityName, whose one relationship has it as the
+            single key): the related rows whose key or label holds term, ignoring case, 20 at a time from offset. Each
+            option has value and label (the related entity's description, else a ...Name field, with the key).</description>
+        <in-parameters>
+            <parameter name="entityName" required="true"/>
+            <parameter name="field" required="true"/>
+            <parameter name="term"/>
+            <parameter name="offset" type="Integer"/>
+        </in-parameters>
+        <out-parameters><parameter name="options" type="List"/></out-parameters>
+    </service>
+    <service verb="save" noun="DataGridChanges" type="rust" location="moqui_tools::grid_service::save_data_grid_changes"
+            transaction="ignore">
+        <description>Save the grid's changes to entityName in one transaction: updates [{pk, stamp, fields}] (only the
+            edited fields), creates [{fields}], deletes [{pk, stamp}], each through the entity's update#, create# or
+            delete# (its authorization, validation, ECA rules and audit log apply). stamp is the row's _stamp; a row
+            changed since is refused (conflict, "changed by someone else since you loaded it"). Every row is checked before
+            any is written; a refused row rolls back every other. saved is true only when everything was saved; refused
+            lists each refused row: kind (update, create, delete), index (in its list), pk, message, fieldErrors (field to
+            message) and conflict. Views, the identity and secret entities, UserAccount's secret fields, encrypted fields,
+            key fields of an update and lastUpdatedStamp are refused. Writes a DbaGridSave audit row with the entity and
+            the counts, not the values.</description>
+        <in-parameters>
+            <parameter name="entityName" required="true"/>
+            <parameter name="updates" type="List"/>
+            <parameter name="creates" type="List"/>
+            <parameter name="deletes" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="saved" type="Boolean"/>
+            <parameter name="refused" type="List"/>
+            <parameter name="updated" type="Long"/>
+            <parameter name="created" type="Long"/>
+            <parameter name="deleted" type="Long"/>
+        </out-parameters>
+    </service>
+    <service verb="find" noun="GridViews" type="rust" location="moqui_tools::grid_service::find_grid_views" transaction="ignore">
+        <description>The user's own grid views and the shared ones, by description: viewId, description, ownerUserId,
+            isShared, sourceJson, layoutJson.</description>
+        <out-parameters><parameter name="gridViews" type="List"/></out-parameters>
+    </service>
+    <service verb="store" noun="GridView" type="rust" location="moqui_tools::grid_service::store_grid_view" transaction="ignore">
+        <description>Create a grid view (no viewId), owned by the current user, or update one the user owns. sourceJson
+            (required) and layoutJson (columns, widths, order, frozen, filters, sort) are JSON.</description>
+        <in-parameters>
+            <parameter name="viewId"/>
+            <parameter name="description"/>
+            <parameter name="isShared" type="Boolean" default-value="false"/>
+            <parameter name="sourceJson" required="true" allow-html="any"/>
+            <parameter name="layoutJson" allow-html="any"/>
+        </in-parameters>
+        <out-parameters><parameter name="viewId"/></out-parameters>
+    </service>
+    <service verb="delete" noun="GridView" type="rust" location="moqui_tools::grid_service::delete_grid_view" transaction="ignore">
+        <description>Delete a grid view the current user owns.</description>
+        <in-parameters><parameter name="viewId" required="true"/></in-parameters>
+    </service>
 </services>

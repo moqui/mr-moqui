@@ -29,6 +29,8 @@
 pub mod audit;
 pub mod capabilities;
 pub mod catalog;
+pub mod grid;
+pub mod grid_service;
 pub mod service;
 pub mod sql;
 pub mod sql_service;

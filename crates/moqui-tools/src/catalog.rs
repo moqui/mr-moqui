@@ -60,6 +60,9 @@ pub mod postgres {
          WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) \
          ORDER BY total_exec_time DESC LIMIT ?";
     pub const STATEMENT_STATS_RESET: &str = "SELECT pg_stat_statements_reset() AS reset";
+    /// The planner's estimate of a table's rows (`?` is the table name); -1 when it was never analyzed.
+    pub const TABLE_ESTIMATE: &str =
+        "SELECT CAST(reltuples AS BIGINT) AS estimate FROM pg_class WHERE oid = to_regclass(?)";
     /// Cancel the statement of a session: the caller appends its backend pid, a number, and `)`.
     pub const CANCEL_BACKEND: &str = "SELECT pg_cancel_backend(";
     /// When a session started: the caller appends its backend pid, a number. With the pid it names one session, so a
@@ -97,6 +100,9 @@ pub mod mysql {
          SUM_NO_INDEX_USED AS sum_no_index_used FROM performance_schema.events_statements_summary_by_digest \
          WHERE SCHEMA_NAME = DATABASE() ORDER BY SUM_TIMER_WAIT DESC LIMIT ?";
     pub const STATEMENT_STATS_RESET: &str = "TRUNCATE TABLE performance_schema.events_statements_summary_by_digest";
+    /// InnoDB's estimate of a table's rows (`?` is the table name).
+    pub const TABLE_ESTIMATE: &str =
+        "SELECT TABLE_ROWS AS estimate FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?";
     /// `KILL QUERY` takes no placeholder: the caller appends the connection id, a number.
     pub const KILL_QUERY: &str = "KILL QUERY ";
     /// When the server started, in epoch seconds: with it a connection id names one connection, since the ids start

@@ -1242,6 +1242,93 @@ impl Statement {
     }
 }
 
+// ---- the data grid's queries (§9.1) ----
+
+/// Run `sql` (one query the grid wrapped, with its `?` values) read only for `actor`: under the run timeout, registered
+/// for [`cancel`] under a new run id, and audited with `purpose` (`rows`, `count`, `columns`, `export`). `limit` 0 reads
+/// every row.
+///
+/// # Errors
+///
+/// Returns the database's error as the refusal.
+pub fn grid_query(
+    facade: &EntityFacade,
+    group: &str,
+    sql: &str,
+    params: &[Value],
+    limit: usize,
+    actor: &Actor,
+    purpose: &str,
+) -> Result<SqlResult, Refusal> {
+    let registered = start_run(facade, "", actor, group, DEFAULT_TIMEOUT)?;
+    let state = Arc::clone(&registered.state);
+    let mut on_start = |start: SqlStart| {
+        *lock(&state.backend_id) = start.backend_id;
+        *lock(&state.canceller) = Some(start.canceller);
+        if state.stopped() {
+            let _ = state.cancel();
+        }
+    };
+    let started = Instant::now();
+    let start_time = jiff::Timestamp::now();
+    let result = info::run_sql_with(
+        facade,
+        group,
+        sql,
+        SqlRunOptions {
+            limit,
+            read_only: true,
+            on_start: Some(&mut on_start),
+            params,
+            ..SqlRunOptions::default()
+        },
+    );
+    *lock(&registered.state.canceller) = None;
+    audit::record_as(
+        facade,
+        &AuditEntry {
+            action: "DbaSql",
+            db: Some(format!("group:{group}")),
+            run_id: Some(registered.run_id.clone()),
+            statement_seq: Some(1),
+            statement_text: Some(sql.to_string()),
+            rows_returned: result
+                .as_ref()
+                .ok()
+                .filter(|result| result.rows_affected.is_none())
+                .map(|result| i64::try_from(result.records.len()).unwrap_or(i64::MAX)),
+            duration_ms: Some(i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX)),
+            error_text: result.as_ref().err().map(ToString::to_string),
+            start_time: Some(start_time),
+            detail_json: Some(serde_json::json!({"grid": purpose, "readOnly": true}).to_string()),
+            ..AuditEntry::default()
+        },
+        actor,
+    );
+    drop(registered);
+    result.map_err(|err| Refusal::new(err.to_string()))
+}
+
+/// Whether `sql` is one plain query a grid may wrap: `SELECT`, `WITH` (that writes nothing), `VALUES` or `TABLE`.
+#[must_use]
+pub fn grid_source_query(sql: &str, syntax: SqlSyntax) -> bool {
+    let statements = split_sql_as(sql, syntax);
+    let [statement] = statements.as_slice() else {
+        return false;
+    };
+    matches!(
+        words(statement, syntax).first().map(String::as_str),
+        Some("select" | "with" | "values" | "table")
+    ) && plain_read(statement, syntax)
+        && !transaction_control(statement, syntax)
+}
+
+/// The SQL syntax of `group`.
+#[must_use]
+pub fn group_syntax(facade: &EntityFacade, group: &str) -> SqlSyntax {
+    syntax_of(facade, group)
+}
+
 // ---- explain (§7.5) ----
 
 /// One explain of [`explain`].
