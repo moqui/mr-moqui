@@ -95,11 +95,13 @@ feature('a dated form leaves a draft out until it is published, and logs its key
         const preview = fieldNames(FORM, null, true)
         const published = invoke('publish#DbForm', { formId: FORM, fieldNames: ['extra'] })
         const after = fieldNames(FORM)
-        const edited = invoke('update#DbFormField', { formId: FORM, fieldName: 'serial', title: 'Serial number', isRequired: 'Y' })
-        return { dated, before, preview, published, after, edited, titleLog: audit('serial', 'title'), fromLog: audit('extra', 'fromDate'),
+        // a blank fromDate a form posts leaves the date as it is; a new one is publish's
+        const edited = invoke('update#DbFormField', { formId: FORM, fieldName: 'serial', title: 'Serial number', isRequired: 'Y', fromDate: '' })
+        const moved = invoke('update#DbFormField', { formId: FORM, fieldName: 'serial', fromDate: new Date() })
+        return { dated, before, preview, published, after, edited, moved, titleLog: audit('serial', 'title'), fromLog: audit('extra', 'fromDate'),
             names: fieldNames(FORM) }
     },
-    then({ dated, before, preview, published, after, edited, titleLog, fromLog, names }) {
+    then({ dated, before, preview, published, after, edited, moved, titleLog, fromLog, names }) {
         dated.errors == ''
         !before.includes('extra')
         preview.includes('extra')
@@ -107,6 +109,7 @@ feature('a dated form leaves a draft out until it is published, and logs its key
         published.publishedFieldNames.includes('extra')
         after.includes('extra')
         edited.errors == ''
+        moved.errors.includes('changes its dates')
         names.includes('serial')
         titleLog.some((row) => row.oldValueText == 'Serial' && row.newValueText == 'Serial number')
         fromLog.length >= 1

@@ -424,9 +424,10 @@ function evaluate({ formId, values, asOfDate, includeDrafts }) {
 
 /**
  * The checks of update#DbFormField and delete#DbFormField on a dated form: a published field keeps its type (a
- * successor field takes a new one) and an answered field is ended, not deleted. Returns whether to go on.
+ * successor field takes a new one), its dates and the field it replaces change only through publish#DbForm,
+ * end#DbFormField and create#DbFormFieldSuccessor, and an answered field is ended, not deleted. Returns whether to go on.
  */
-function checkFieldChange({ formId, fieldName, fieldTypeEnumId, deleting }) {
+function checkFieldChange({ formId, fieldName, fieldTypeEnumId, deleting, fromDate, thruDate, replacesFieldName }) {
   const form = formOf(formId)
   if (!form || form.isDated !== 'Y') return { dated: false }
   const field = ec.entity.find(FIELD).condition({ formId, fieldName }).one()
@@ -438,6 +439,9 @@ function checkFieldChange({ formId, fieldName, fieldTypeEnumId, deleting }) {
     if (isAnswered(formId, fieldName)) refuse(`Field ${fieldName} has answers: end it (end#DbFormField) rather than delete it`)
   } else if (fieldTypeEnumId && fieldTypeEnumId !== field.fieldTypeEnumId && field.fromDate != null) {
     refuse(`Field ${fieldName} is published: a new type is a successor field (create#DbFormFieldSuccessor)`)
+  } else if ((ms(fromDate) != null && ms(fromDate) !== ms(field.fromDate)) || (ms(thruDate) != null && ms(thruDate) !== ms(field.thruDate))
+    || (replacesFieldName && replacesFieldName !== field.replacesFieldName)) {
+    refuse(`Field ${fieldName} of a dated form changes its dates through publish#DbForm, end#DbFormField and create#DbFormFieldSuccessor`)
   }
   return { dated: true }
 }

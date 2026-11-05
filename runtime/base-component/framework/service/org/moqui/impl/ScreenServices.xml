@@ -325,16 +325,20 @@ along with this software (see the LICENSE.md file). If not, see
         <description>On a form that is not dated, deletes the field and creates it again named from its title, with its
             options. On a dated form (DbForm.isDated) the field is updated in place, keeping its name and answers (the
             key fields are audit-logged); a published field keeps its type, which a successor field changes
-            (create#DbFormFieldSuccessor).</description>
+            (create#DbFormFieldSuccessor), and its dates and replacesFieldName change only through publish#DbForm,
+            end#DbFormField and create#DbFormFieldSuccessor.</description>
         <in-parameters>
             <auto-parameters entity-name="moqui.screen.form.DbFormField" include="nonpk"/>
             <auto-parameters entity-name="moqui.screen.form.DbFormField" include="pk" required="true"/>
         </in-parameters>
         <actions>
-            <set field="dated" from="ec.resource.script('component://framework/service/org/moqui/impl/DbForms.js').execute('checkFieldChange', {formId, fieldName, fieldTypeEnumId}).dated"/>
+            <set field="dated" from="ec.resource.script('component://framework/service/org/moqui/impl/DbForms.js').execute('checkFieldChange',
+                    {formId, fieldName, fieldTypeEnumId, fromDate, thruDate, replacesFieldName}).dated"/>
             <if condition="ec.message.hasError()"><return/></if>
             <if condition="dated">
-                <service-call name="update#moqui.screen.form.DbFormField" in-map="context"/>
+                <!-- the dates and the field replaced change only through publish, end and successor -->
+                <service-call name="update#moqui.screen.form.DbFormField" in-map="Object.fromEntries(Object.entries(Object.assign({}, context))
+                        .filter((entry) => !['fromDate', 'thruDate', 'replacesFieldName'].includes(entry[0])))"/>
                 <return/>
             </if>
             <entity-find entity-name="moqui.screen.form.DbFormFieldOption" list="dbFormFieldOptionList">
