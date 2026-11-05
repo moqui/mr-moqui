@@ -174,20 +174,27 @@ async fn run_socket(mut socket: WebSocket, opened: Opened, mut shutdown: tokio::
     } = opened;
     let label = format!("browser terminal of {username}");
     // The session starts at the page's first size.
-    let first = tokio::time::timeout(FIRST_SIZE_WAIT, async {
-        loop {
-            match socket.recv().await {
-                Some(Ok(Message::Text(text))) => {
-                    if let Some(size) = parse_resize(&text) {
-                        return Some(size);
+    // A stop does not wait for the page's size either: the HTTP listener's drain waits for this socket (HL-027).
+    let first = tokio::select! {
+        first = tokio::time::timeout(FIRST_SIZE_WAIT, async {
+            loop {
+                match socket.recv().await {
+                    Some(Ok(Message::Text(text))) => {
+                        if let Some(size) = parse_resize(&text) {
+                            return Some(size);
+                        }
                     }
+                    Some(Ok(Message::Close(_)) | Err(_)) | None => return None,
+                    Some(Ok(_)) => {}
                 }
-                Some(Ok(Message::Close(_)) | Err(_)) | None => return None,
-                Some(Ok(_)) => {}
             }
-        }
-    })
-    .await;
+        }) => Some(first),
+        _ = shutdown.wait_for(|stopped| *stopped) => None,
+    };
+    let Some(first) = first else {
+        close(&mut socket, "the server is stopping").await;
+        return;
+    };
     let Ok(Some(first)) = first else {
         tracing::debug!("{label}: the page sent no size");
         return;
