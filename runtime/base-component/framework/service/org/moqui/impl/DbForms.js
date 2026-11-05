@@ -69,17 +69,17 @@ function holds(operator, expected, actual) {
 }
 
 /**
- * The refusal of the form's dependency rows, or null: at now and at each later date a row starts or ends (drafts count
- * as started now), no field depends on itself through a chain (a cycle), and no field has two rules of one effect.
+ * The refusal of the form's dependency rows, or null: at now and at each date a row starts or ends, earlier ones too
+ * since a response reads the form as of its date (drafts count as started now), no field depends on itself through a
+ * chain (a cycle), and no field has two rules of one effect.
  */
 function dependencyProblem(formId) {
   const rows = dependenciesOf(formId)
-  const now = nowMs()
-  const dates = new Set([now])
+  const dates = new Set([nowMs()])
   for (const row of rows) {
     for (const value of [row.fromDate, row.thruDate]) {
       const at = ms(value)
-      if (at != null && at > now) dates.add(at)
+      if (at != null) dates.add(at)
     }
   }
   // the fields a draft replaces: with the drafts counted, their rows are ended by the publish
