@@ -662,6 +662,12 @@ impl Drop for PooledConn {
                 }
             }
         }
+        // A connection back with a stream open would hand its cursor, or its buffered rows, to the next borrower
+        // (plans/High-Level-Review.md HL-003).
+        if !self.discard && self.stream_open() {
+            tracing::warn!("a connection came back to the pool with a stream open; discarding it");
+            self.discard();
+        }
         let Some(tracked) = self.tracked.take() else {
             if self.discard {
                 self.pool_discard();

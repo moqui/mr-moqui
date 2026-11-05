@@ -70,6 +70,9 @@ pub struct EntityFind {
     query_texts: Arc<Mutex<Vec<String>>>,
     /// Rows a bulk write reads in one query ([`Self::bulk_chunk`]); `None` is [`BULK_CHUNK`].
     bulk_chunk: Option<i64>,
+    /// The fields whose equality (or `IS NULL`) came from a map ([`Self::condition_from_map`]), which a find one with
+    /// the whole primary key leaves out.
+    map_fields: Vec<String>,
 }
 
 impl EntityFind {
@@ -95,6 +98,7 @@ impl EntityFind {
             use_clone: false,
             query_texts: Arc::new(Mutex::new(Vec::new())),
             bulk_chunk: None,
+            map_fields: Vec::new(),
         }
     }
 
@@ -157,6 +161,7 @@ impl EntityFind {
 
     /// Java's `condition(field, value)`: a second value for the same field replaces the first.
     pub fn eq(mut self, field: &str, value: Value) -> Self {
+        self.map_fields.retain(|name| name != field);
         add_condition(&mut self.conditions, Condition::equals(field, value));
         self
     }
@@ -169,6 +174,28 @@ impl EntityFind {
     /// As Java's `condition(EntityCondition)`: an equality (or `IS NULL`) on a plain field replaces the one the find
     /// already has for that field, and an `AND` is unrolled so its equalities do the same.
     pub fn condition(mut self, condition: Condition) -> Self {
+        if !self.map_fields.is_empty() {
+            let named: Vec<&str> = match &condition {
+                Condition::And(list) => list.iter().filter_map(plain_equality_field).collect(),
+                other => plain_equality_field(other).into_iter().collect(),
+            };
+            self.map_fields.retain(|name| !named.contains(&name.as_str()));
+        }
+        add_condition(&mut self.conditions, condition);
+        self
+    }
+
+    /// [`Self::condition`] for one entry of a map such as the context (`condition(context)`, an `entity-find-one` with
+    /// `auto-field-map`), which carries whatever the context holds: a find one with the whole primary key leaves such
+    /// an equality out, as Java's `oneInternal` leaves out every field of its simple map. An equality set on its own
+    /// ([`Self::eq`], [`Self::condition`]) stays and filters the row (plans/High-Level-Review.md, lane C note on
+    /// `one()`).
+    pub fn condition_from_map(mut self, condition: Condition) -> Self {
+        if let Some(name) = plain_equality_field(&condition) {
+            if !self.map_fields.iter().any(|known| known == name) {
+                self.map_fields.push(name.to_string());
+            }
+        }
         add_condition(&mut self.conditions, condition);
         self
     }
@@ -410,8 +437,10 @@ impl EntityFind {
     }
 
     /// Java `oneInternal`: a find one whose field equalities hold the full primary key, with more besides (a
-    /// `condition(context)` puts every field of the context in, nulls as `IS NULL`), finds by the primary key alone.
-    /// Other kinds of condition stay.
+    /// `condition(context)` puts every field of the context in, nulls as `IS NULL`), finds by the primary key and
+    /// leaves out the equalities that came from a map ([`Self::condition_from_map`]). Unlike Java, an equality set on
+    /// its own stays: a caller that names `reportPending = Y` or an owner beside the key means it. Other kinds of
+    /// condition stay.
     fn narrow_to_full_pk(&mut self) {
         let equals_on = |condition: &Condition, name: &str| match condition {
             Condition::Equals(field, value) => {
@@ -441,10 +470,12 @@ impl EntityFind {
             Ok(names) => names,
             Err(_) => return,
         };
+        let map_fields = std::mem::take(&mut self.map_fields);
+        let from_map = |name: &str| map_fields.iter().any(|known| known == name);
         let mut kept: Vec<Condition> = Vec::new();
         for condition in std::mem::take(&mut self.conditions) {
             if let Condition::IsNull(field) = &condition {
-                if field.entity_alias.is_none() {
+                if field.entity_alias.is_none() && from_map(&field.name) {
                     continue;
                 }
             }
@@ -452,11 +483,12 @@ impl EntityFind {
                 kept.push(condition);
                 continue;
             };
-            let first_for_pk = pk_names.contains(&field.name)
+            let is_pk = pk_names.contains(&field.name);
+            let first_for_pk = is_pk
                 && !kept
                     .iter()
                     .any(|known| matches!(known, Condition::Equals(other, _) if other.name == field.name));
-            if first_for_pk && equals_on(&condition, &field.name) {
+            if (first_for_pk && equals_on(&condition, &field.name)) || (!is_pk && !from_map(&field.name)) {
                 kept.push(condition);
             }
         }
@@ -529,8 +561,15 @@ impl EntityFind {
     /// Open a cursor when this find has no transaction hold and no sim schema.
     ///
     /// A hold or a sim schema is merged in memory. The cursor stays closed, so an open stream is
-    /// not asked to mix in rows that are not in the database yet. The cursor path needs an active
-    /// transaction: the open stream is that transaction's enlisted connection. Drop closes it.
+    /// not asked to mix in rows that are not in the database yet. The cursor lives on the active
+    /// transaction's enlisted connection: with no transaction in place the iterator begins one and
+    /// commits it when it closes (plans/High-Level-Review.md HL-003). Drop closes it. The iterator
+    /// reads only in the transaction it opened in; once that one has ended, or while another is in
+    /// place, it fails rather than read or close another transaction's cursor.
+    ///
+    /// Bounded memory depends on the driver ([`crate::driver::DbConnection::open_stream`]): Postgres
+    /// fetches through a cursor and MySQL reads an active result, but the browser's SQLite reads the
+    /// whole result when the stream opens, so there an early stop still pays for every row.
     pub fn iterator(self) -> Result<EntityListIterator, Error> {
         if self.require_search_parameters && !self.has_search_parameters {
             return Ok(EntityListIterator::memory(
@@ -564,15 +603,27 @@ impl EntityFind {
         }
         self.require_transaction_for_lock()?;
         let plan = self.plan(false, condition)?;
+        // A stream opened on a connection borrowed for one call would go back to the pool open, and the next read
+        // would borrow another: begin a transaction that holds the connection until the iterator closes.
+        let scope = if plan.tx.in_transaction() {
+            None
+        } else {
+            Some(plan.tx.scope(None)?)
+        };
         plan.tx
             .with_connection(|conn| conn.open_stream(&plan.sql, &plan.params))?;
         self.record_query(&plan.sql);
         after_statement(&self.facade, &plan.tx, false);
+        let token = plan.tx.frame_token();
         Ok(EntityListIterator::stream(
             self.facade,
             self.entity_name,
             plan.columns,
-            plan.tx,
+            StreamTx {
+                tx: plan.tx,
+                token,
+                scope,
+            },
             self.scrollable,
         ))
     }
@@ -773,6 +824,18 @@ impl EntityFind {
     }
 }
 
+/// The field of an equality or `IS NULL` on a plain field (no member alias or expression).
+fn plain_equality_field(condition: &Condition) -> Option<&str> {
+    match condition {
+        Condition::Equals(field, _) | Condition::IsNull(field)
+            if field.entity_alias.is_none() && field.expr.is_none() =>
+        {
+            Some(field.name.as_str())
+        }
+        _ => None,
+    }
+}
+
 /// Java keeps one value per field in `simpleAndMap`: `condition(field, value)`, and an `EQUALS` condition routed to it,
 /// replace the field's earlier value in place. Other conditions are ANDed in order; an `AND` list is unrolled.
 pub(super) fn add_condition(conditions: &mut Vec<Condition>, condition: Condition) {
@@ -926,11 +989,18 @@ struct ReadPlan {
 /// forward. With [`EntityFind::scrollable`] (Java's scroll-insensitive result set) it keeps the rows read, so
 /// `previous_value`, `absolute`, `relative` and `get_partial_list` can go anywhere; otherwise it only moves forward and
 /// holds no more than two rows, so a large export streams. Rows from the cache or the overlay are in memory and scroll.
+/// The transaction a stream reads in: the frame it opened in, and the scope it began when none was in place.
+struct StreamTx {
+    tx: TransactionManager,
+    token: Option<u64>,
+    scope: Option<crate::transaction::TxScope>,
+}
+
 pub struct EntityListIterator {
     facade: EntityFacade,
     entity_name: String,
     columns: Arc<[(Arc<str>, String)]>,
-    tx: Option<TransactionManager>,
+    tx: Option<StreamTx>,
     open: bool,
     /// In memory: every row.
     memory: Option<Vec<EntityValue>>,
@@ -953,7 +1023,7 @@ impl EntityListIterator {
         facade: EntityFacade,
         entity_name: String,
         columns: Arc<[(Arc<str>, String)]>,
-        tx: TransactionManager,
+        tx: StreamTx,
         scrollable: bool,
     ) -> Self {
         let l10n = find_l10n(&facade, &entity_name);
@@ -1158,9 +1228,17 @@ impl EntityListIterator {
         if !self.open {
             return Ok(None);
         }
-        let Some(tx) = self.tx.clone() else {
+        let Some(stream) = self.tx.as_ref() else {
             return Ok(None);
         };
+        let tx = stream.tx.clone();
+        if tx.frame_token() != stream.token {
+            self.close()?;
+            return Err(Error::new(format!(
+                "the iterator of {} was opened in a transaction that has ended or is not the one in place",
+                self.entity_name
+            )));
+        }
         let row = tx.with_connection(|conn| conn.next_row())?;
         match row {
             Some(row) => {
@@ -1188,23 +1266,40 @@ impl EntityListIterator {
         Ok(row.with_l10n(self.l10n.as_ref()))
     }
 
+    /// Close the stream, and commit the transaction the iterator began. A stream whose transaction has ended or is not
+    /// the one in place is not closed here: its cursor went with its connection, and the one in place belongs to another
+    /// iterator.
     pub fn close(&mut self) -> Result<(), Error> {
         if !self.open {
             return Ok(());
         }
-        let Some(tx) = self.tx.clone() else {
-            self.open = false;
+        self.open = false;
+        let Some(stream) = self.tx.as_mut() else {
             return Ok(());
         };
-        tx.with_connection(|conn| conn.close_stream())?;
-        self.open = false;
-        Ok(())
+        let closed = if stream.tx.frame_token() == stream.token {
+            stream.tx.with_connection(|conn| conn.close_stream())
+        } else {
+            Ok(())
+        };
+        match stream.scope.take() {
+            Some(scope) if closed.is_ok() => scope.commit(),
+            // Dropped, the scope rolls back.
+            _ => closed,
+        }
     }
 }
 
 impl Drop for EntityListIterator {
     fn drop(&mut self) {
-        let _ = self.close();
+        if std::thread::panicking() {
+            // The scope's own drop rolls back the transaction the iterator began.
+            self.open = false;
+            return;
+        }
+        if let Err(err) = self.close() {
+            tracing::warn!(error = %err, entity = %self.entity_name, "could not close an entity iterator");
+        }
     }
 }
 

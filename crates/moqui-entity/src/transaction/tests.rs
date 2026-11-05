@@ -1560,3 +1560,19 @@ fn finish_deferred_waits_on_each_linked_connection() {
     assert!(events.contains(&format!("finish:{default_id}")), "{events:?}");
     default.commit().expect("commit");
 }
+
+/// plans/High-Level-Review.md HL-003: a connection that comes back with a stream open is not handed to the next
+/// borrower, who would read the old cursor's rows.
+#[test]
+fn a_connection_returned_with_an_open_stream_is_discarded() {
+    let (mgr, driver) = harness(small());
+    let _clean = Clean(&mgr);
+    mgr.with_connection(|conn| conn.open_stream("stream", &[]))
+        .expect("open");
+    mgr.with_connection(|conn| {
+        assert!(!conn.stream_open(), "the next borrower gets a fresh connection");
+        Ok(())
+    })
+    .expect("borrow");
+    assert_eq!(driver.connects(), 2);
+}

@@ -773,16 +773,30 @@ fn list_affected(cached: &CachedList, operation: &str, values: &FieldMap, pk: Op
     };
     let held = || {
         cached.rows.iter().any(|row| {
-            pk.iter().all(|(name, value)| {
-                row.get(name)
-                    .is_some_and(|stored| stored == *value || to_plain_string(stored) == to_plain_string(value))
-            })
+            pk.iter()
+                .all(|(name, value)| row.get(name).is_some_and(|stored| same_key(stored, value)))
         })
     };
     match operation {
         "delete" => held(),
         "create" => may_match(cached.condition.as_ref(), values),
         _ => held() || may_match(cached.condition.as_ref(), values),
+    }
+}
+
+/// Whether a cached row's key field holds the written value: equal values, or the same text when the types differ (a
+/// key written as text and read as a number). Two values of one type compare as values, with no strings made: the
+/// eviction sweep runs this for every cached row that is not the written one (plans/High-Level-Review.md HL-002).
+fn same_key(stored: &Value, value: &Value) -> bool {
+    if stored == value {
+        return true;
+    }
+    if std::mem::discriminant(stored) == std::mem::discriminant(value) {
+        return false;
+    }
+    match (stored, value) {
+        (Value::String(text), other) | (other, Value::String(text)) => *text == to_plain_string(other),
+        _ => to_plain_string(stored) == to_plain_string(value),
     }
 }
 

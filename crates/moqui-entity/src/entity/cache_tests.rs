@@ -1261,3 +1261,134 @@ fn held_rows_collapse_a_create_and_delete_and_stay_deleted() {
     assert!(!found(&facade, ENUM, "enumId", "KEPT"));
     assert!(found(&facade, ENUM, "enumId", "LATER"));
 }
+
+/// plans/High-Level-Review.md HL-002: a key of one type compares as a value, and only text against another type
+/// compares as text.
+#[test]
+fn a_cached_rows_key_matches_the_written_one_across_types_only_as_text() {
+    assert!(super::same_key(&Value::string("E1"), &Value::string("E1")));
+    assert!(!super::same_key(&Value::string("E1"), &Value::string("E2")));
+    assert!(super::same_key(&Value::I64(7), &Value::string("7")));
+    assert!(super::same_key(&Value::string("7"), &Value::I32(7)));
+    assert!(!super::same_key(&Value::I64(7), &Value::I64(8)));
+}
+
+/// plans/High-Level-Review.md HL-002, opt-in: the cost of the current eviction (one sweep of every cached list per
+/// write, immediately and again at frame end) beside one sweep per entity that checks each cached row against a set of
+/// the changed keys. The writes match no cached list, the case where selective eviction scans everything and removes
+/// nothing. Run: `cargo test -p moqui-entity --lib eviction_sweep_cost -- --ignored --nocapture`.
+#[test]
+#[ignore = "measurement; run with --ignored --nocapture"]
+fn eviction_sweep_cost_per_write_and_per_entity() {
+    use std::collections::HashSet;
+    use std::time::Instant;
+
+    println!("lists rows/list writes | commit-no-cache(ms) commit-cached(ms) | per-write: inspected  lock(ms) | per-entity: inspected  lock(ms)");
+    for (lists, rows, writes) in [(20, 20, 10), (100, 20, 50), (200, 20, 200), (200, 50, 200)] {
+        let facade = testing::open();
+        for list in 0..lists {
+            for row in 0..rows {
+                put_enum(
+                    &facade,
+                    &format!("L{list:03}R{row:03}"),
+                    &format!("T{list:03}"),
+                    "stored",
+                );
+            }
+        }
+        for write in 0..writes {
+            put_enum(&facade, &format!("W{write:04}"), "W", "stored");
+        }
+        let fill = |facade: &EntityFacade| {
+            for list in 0..lists {
+                let found = facade
+                    .find(ENUM)
+                    .unwrap()
+                    .eq("enumTypeId", Value::string(format!("T{list:03}")))
+                    .use_cache(true)
+                    .list()
+                    .unwrap();
+                assert_eq!(found.len(), rows);
+            }
+        };
+        let tx = facade.transactions_for(ENUM).unwrap();
+        let update_all = |facade: &EntityFacade, text: &str| {
+            let started = Instant::now();
+            tx.run(TransactionAttribute::UseOrBegin, None, || {
+                for write in 0..writes {
+                    let mut row = facade.make_value(ENUM)?;
+                    row.set("enumId", Value::string(format!("W{write:04}")));
+                    row.set("enumTypeId", Value::string("W"));
+                    row.set("description", Value::string(text));
+                    row.update(facade)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+            started.elapsed()
+        };
+        let no_cache = update_all(&facade, "first");
+        fill(&facade);
+        let cached = update_all(&facade, "second");
+        let lists_cache = facade
+            .with_slot_read(super::OneCaches::default, |caches| caches.lists.get(ENUM).cloned())
+            .unwrap();
+        assert_eq!(lists_cache.len(), lists, "the writes matched no cached list");
+
+        let values: Vec<crate::entity::FieldMap> = (0..writes)
+            .map(|write| {
+                row(&[
+                    ("enumId", Value::string(format!("W{write:04}"))),
+                    ("enumTypeId", Value::string("W")),
+                    ("description", Value::string("third")),
+                ])
+            })
+            .collect();
+        let meta = super::read_meta(&facade, ENUM).unwrap();
+        // Now: each write sweeps every cached list.
+        let mut inspected = 0_usize;
+        let mut per_write = std::time::Duration::ZERO;
+        for values in &values {
+            let pk = [("enumId", values.get("enumId").unwrap())];
+            let started = Instant::now();
+            lists_cache
+                .remove_where(|_, cached| {
+                    inspected += cached.rows.len();
+                    super::list_affected(cached, "update", values, Some(&pk))
+                })
+                .unwrap();
+            per_write += started.elapsed();
+        }
+        // One sweep: each cached row's key against the set, each list's condition against each write.
+        let keys: HashSet<String> = values
+            .iter()
+            .filter_map(|values| super::pk_of(values, &meta.pk_fields))
+            .collect();
+        let mut keyed_inspected = 0_usize;
+        let started = Instant::now();
+        let mut buffer = String::new();
+        lists_cache
+            .remove_where(|_, cached| {
+                keyed_inspected += cached.rows.len();
+                let held = cached.rows.iter().any(|row| {
+                    buffer.clear();
+                    super::write_pk(row.fields(), &meta.pk_fields, &mut buffer) && keys.contains(buffer.as_str())
+                });
+                held || values
+                    .iter()
+                    .any(|values| super::may_match(cached.condition.as_ref(), values))
+            })
+            .unwrap();
+        let per_entity = started.elapsed();
+        let ms = |duration: std::time::Duration| duration.as_secs_f64() * 1000.0;
+        println!(
+            "{lists:>5} {rows:>9} {writes:>6} | {:>19.2} {:>17.2} | {:>20} {:>9.2} | {:>21} {:>9.2}",
+            ms(no_cache),
+            ms(cached),
+            inspected,
+            ms(per_write),
+            keyed_inspected,
+            ms(per_entity),
+        );
+    }
+}
