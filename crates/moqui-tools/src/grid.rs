@@ -21,16 +21,21 @@
 //! - **Calls:** [`columns`], [`rows`] (Tabulator's progressive load, never counting), [`count`], [`export`] (CSV
 //!   streamed, XLSX capped at [`MAX_XLSX_ROWS`]), [`lookup`] (a related entity's options) and [`save`] (one
 //!   transaction of entity-auto calls, with the stamp checked).
-//! - **Editing a SQL result** (§9.5): every column of one table with its entity's whole primary key, decided from the
-//!   result's column origins.
+//! - **Secrets:** `UserAccount`'s password fields ([`sensitive::USER_ACCOUNT_SECRET_FIELDS`]) are left out by field
+//!   name on every entity, so a view that aliases them (`UserAccountAndGroup`) shows none; they and encrypted fields
+//!   take no sort, filter or condition, so a count is no oracle of their values.
+//! - **Editing a SQL result** (§9.5): every column of one table, in the group's schema, with its entity's whole primary
+//!   key and its `lastUpdatedStamp`, decided from the result's column origins, and only for a statement that names the
+//!   table once with no join, set operation, `DISTINCT`, `GROUP BY` or subquery in its `FROM`.
 
 use std::collections::BTreeMap;
 
 use indexmap::IndexMap;
 use moqui_lib::error::Error;
-use moqui_lib::object::{basic_convert, is_empty, to_plain_string, Value};
+use moqui_lib::object::{basic_convert_text, is_empty, to_plain_string, Value};
 
 use moqui_core::context::ExecutionContext;
+use moqui_core::entity::exec::{blank_sql, SqlSyntax};
 use moqui_core::entity::sensitive;
 use moqui_core::entity::{Condition, EntityFacade, EntityFind, EntityValue};
 use moqui_core::service::call::{sync_checked, CallOptions};
@@ -52,9 +57,42 @@ pub const MAX_SQL_EXPORT_ROWS: usize = 200_000;
 pub const LOOKUP_SIZE: i64 = 20;
 const MASK: &str = "********";
 const STAMP: &str = "lastUpdatedStamp";
+/// The rows a SQL source's columns are read from: the kind of each is that of its first value that is not null.
+const COLUMN_PROBE_ROWS: usize = 50;
 
 fn refusal(message: impl Into<String>) -> Refusal {
     Refusal(message.into())
+}
+
+/// The short message of a database error, the whole of it to the log: the text after the last `ERROR:` (Postgres) or
+/// the driver's last clause, with MySQL's duplicate column named.
+fn db_refusal(err: &Refusal) -> Refusal {
+    let text = err.0.as_str();
+    tracing::info!(error = text, "A data grid query failed");
+    if let Some(at) = text.find("Duplicate column name '") {
+        let rest = &text[at + "Duplicate column name '".len()..];
+        let name = rest.split('\'').next().unwrap_or(rest);
+        return refusal(format!("The query has two columns named {name}; give one an alias"));
+    }
+    let short = text
+        .rsplit_once("ERROR: ")
+        .map(|(_, tail)| tail)
+        .or_else(|| text.rsplit_once("): ").map(|(_, tail)| tail))
+        .unwrap_or(text)
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .trim();
+    refusal(if short.is_empty() { "The query failed" } else { short }.to_string())
+}
+
+/// The short message of an entity find's error, its detail to the log.
+fn find_refusal(err: &Error) -> Refusal {
+    tracing::info!(error = %err, "A data grid find failed");
+    refusal(format!(
+        "The rows could not be read: {}",
+        err.message().lines().next().unwrap_or_default()
+    ))
 }
 
 /// The source of a grid, from its spec's `source`.
@@ -66,12 +104,30 @@ pub enum Source {
         entity_name: String,
         conditions: BTreeMap<String, Value>,
     },
-    /// A query on an entity group's database.
-    Sql { group: String, sql: String },
+    /// A query on an entity group's database. `key_columns` and `stamp_column` come back from [`columns`] for an
+    /// editable result: the order of its pages ends with the key, and each row gets `_stamp`.
+    Sql {
+        group: String,
+        sql: String,
+        key_columns: Vec<String>,
+        stamp_column: Option<String>,
+    },
+}
+
+fn list_of(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::List(items)) => items
+            .iter()
+            .map(to_plain_string)
+            .filter(|name| !name.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 impl Source {
-    /// Read the spec's `source` map: `{type: entity, entityName, conditions}` or `{type: sql, db, sql}`.
+    /// Read the spec's `source` map: `{type: entity, entityName, conditions}` or `{type: sql, db, sql, keyColumns,
+    /// stampColumn}`.
     ///
     /// # Errors
     ///
@@ -100,6 +156,8 @@ impl Source {
                 Ok(crate::DbRef::Group(group)) if facade.group_names().contains(&group) => Ok(Self::Sql {
                     group,
                     sql: text("sql").trim().trim_end_matches(';').to_string(),
+                    key_columns: list_of(map.get("keyColumns")),
+                    stamp_column: Some(text("stampColumn")).filter(|name| !name.is_empty()),
                 }),
                 Ok(crate::DbRef::Group(group)) => Err(refusal(format!("no entity group named {group}"))),
                 Ok(crate::DbRef::External(_)) => Err(refusal(crate::NOT_AVAILABLE)),
@@ -174,6 +232,10 @@ pub struct ColumnsOutcome {
     pub read_only_reason: Option<String>,
     /// The entity has `lastUpdatedStamp`: each row has `_stamp`, which a save sends back.
     pub has_stamp: bool,
+    /// An editable SQL result's key columns (labels) and stamp column, for the source spec's `keyColumns` and
+    /// `stampColumn`.
+    pub key_columns: Vec<String>,
+    pub stamp_column: Option<String>,
 }
 
 /// The kind and editor of a field type.
@@ -224,8 +286,15 @@ fn read_only_reason(entity: &EntityDefinition) -> Option<String> {
     }
 }
 
-fn is_secret(entity: &EntityDefinition, field: &str) -> bool {
-    sensitive::is_user_account_entity(&entity.full_name) && sensitive::USER_ACCOUNT_SECRET_FIELDS.contains(&field)
+/// `UserAccount`'s password fields, by name on any entity: a view that aliases them (`UserAccountAndGroup`,
+/// `PersonAndUserAccount`) names them so too, as generic entity REST strips them by name.
+fn is_secret(field: &str) -> bool {
+    sensitive::USER_ACCOUNT_SECRET_FIELDS.contains(&field)
+}
+
+/// A field the grid never sorts, filters or puts a condition on: a secret or an encrypted one.
+fn hidden_value(entity: &EntityDefinition, field: &str) -> bool {
+    is_secret(field) || entity.field(field).is_some_and(|field| field.encrypt)
 }
 
 /// The related entity a field is the single key of: a `one` relationship whose one key pair is this field.
@@ -270,11 +339,32 @@ fn field_column(entity: &EntityDefinition, field: &FieldDefinition, editable_ent
     }
 }
 
-/// The definition of `entity_name` (a view, `DbViewEntity` or `DataDocument.<id>` included).
+/// The definition of `entity_name` (a view, `DbViewEntity` or `DataDocument.<id>` included). A view's aliases are
+/// made its fields here, so the grid reads a view as it reads an entity.
 fn definition(facade: &EntityFacade, entity_name: &str) -> Result<EntityDefinition, Refusal> {
-    facade
+    let mut entity = facade
         .with_entity(entity_name, |entity, _, _| Ok(entity.clone()))
-        .map_err(|err| refusal(err.to_string()))
+        .map_err(|_| refusal(format!("No entity named {entity_name}")))?;
+    if entity.is_view && entity.fields.is_empty() {
+        entity.fields = entity
+            .aliases
+            .iter()
+            .map(|alias| FieldDefinition {
+                name: alias.name.clone(),
+                column_name: String::new(),
+                field_type: alias.field_type.clone().unwrap_or_else(|| "text-medium".to_string()),
+                java_type: alias.java_type.clone(),
+                is_pk: alias.is_pk,
+                encrypt: alias.encrypt,
+                enable_audit_log: None,
+                enable_localization: alias.enable_localization,
+                create_only: false,
+                default_value: None,
+                not_null: false,
+            })
+            .collect();
+    }
+    Ok(entity)
 }
 
 /// The columns of the grid: the source's fields or result columns, of `requested` (all when empty), in that order.
@@ -302,15 +392,16 @@ pub fn columns(
             Ok(ColumnsOutcome {
                 columns: fields
                     .into_iter()
-                    .filter(|field| !is_secret(&entity, &field.name))
+                    .filter(|field| !is_secret(&field.name))
                     .map(|field| field_column(&entity, field, reason.is_none()))
                     .collect(),
                 entity_name: reason.is_none().then(|| entity.full_name.clone()),
-                has_stamp: entity.field(STAMP).is_some(),
+                has_stamp: entity.field(STAMP).is_some() && !entity.is_view,
                 read_only_reason: reason,
+                ..ColumnsOutcome::default()
             })
         }
-        Source::Sql { group, sql } => sql_columns(facade, group, sql, requested, actor),
+        Source::Sql { group, sql, .. } => sql_columns(facade, group, sql, requested, actor),
     }
 }
 
@@ -321,17 +412,22 @@ struct Wrapped {
     params: Vec<Value>,
 }
 
+/// A column label quoted as the database writes a name: any label (spaces included), the quote character doubled.
 fn quote(name: &str, mysql: bool) -> Result<String, Refusal> {
-    if name.is_empty() || !name.chars().all(|ch| ch.is_alphanumeric() || ch == '_') {
-        return Err(refusal(format!(
-            "{name:?} is not a column name the grid sorts or filters on"
-        )));
+    if name.is_empty() || name.contains('\0') {
+        return Err(refusal("A column name to sort or filter on is empty"));
     }
-    Ok(if mysql {
-        format!("`{name}`")
-    } else {
-        format!("\"{name}\"")
-    })
+    let quote = if mysql { '`' } else { '"' };
+    let mut out = String::with_capacity(name.len() + 2);
+    out.push(quote);
+    for ch in name.chars() {
+        if ch == quote {
+            out.push(quote);
+        }
+        out.push(ch);
+    }
+    out.push(quote);
+    Ok(out)
 }
 
 /// A sort of Tabulator's: `{field, dir}`.
@@ -387,13 +483,38 @@ pub fn parse_filter(value: Option<&Value>) -> Vec<Filter> {
         .collect()
 }
 
+/// `%`, `_` and `\` of a LIKE input escaped with `\`, the escape character of both Postgres and MySQL.
+fn escape_like(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if matches!(ch, '%' | '_' | '\\') {
+            out.push('\\');
+        }
+        out.push(ch);
+    }
+    out
+}
+
 fn like_pattern(filter: &Filter) -> Option<String> {
-    let text = to_plain_string(&filter.value);
+    let text = escape_like(&to_plain_string(&filter.value));
     match filter.kind.as_str() {
         "like" | "keywords" => Some(format!("%{text}%")),
         "starts" => Some(format!("{text}%")),
         "ends" => Some(format!("%{text}")),
         _ => None,
+    }
+}
+
+fn in_values(value: &Value) -> Vec<Value> {
+    match value {
+        Value::List(items) => items.clone(),
+        Value::Null => Vec::new(),
+        other => to_plain_string(other)
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(Value::string)
+            .collect(),
     }
 }
 
@@ -403,6 +524,7 @@ fn wrap(sql: &str, mysql: bool, sort: &[Sort], filter: &[Filter], tail: &str) ->
     for filter in filter {
         let column = quote(&filter.field, mysql)?;
         if let Some(pattern) = like_pattern(filter) {
+            // a number or date column is compared as its text
             clauses.push(format!(
                 "LOWER(CAST({column} AS {})) LIKE LOWER(?)",
                 if mysql { "CHAR" } else { "TEXT" }
@@ -418,18 +540,14 @@ fn wrap(sql: &str, mysql: bool, sort: &[Sort], filter: &[Filter], tail: &str) ->
             ">" => ">",
             ">=" => ">=",
             "in" => {
-                let values: Vec<Value> = match &filter.value {
-                    Value::List(items) => items.clone(),
-                    other => to_plain_string(other)
-                        .split(',')
-                        .map(|part| Value::string(part.trim()))
-                        .collect(),
-                };
+                let values = in_values(&filter.value);
                 if values.is_empty() {
-                    continue;
+                    // as the entity source: an empty list matches no row
+                    clauses.push("1 = 0".to_string());
+                } else {
+                    clauses.push(format!("{column} IN ({})", vec!["?"; values.len()].join(", ")));
+                    params.extend(values);
                 }
-                clauses.push(format!("{column} IN ({})", vec!["?"; values.len()].join(", ")));
-                params.extend(values);
                 continue;
             }
             other => return Err(refusal(format!("filter type {other:?} is not one the grid takes"))),
@@ -457,17 +575,32 @@ fn wrap(sql: &str, mysql: bool, sort: &[Sort], filter: &[Filter], tail: &str) ->
         out.push_str(&order?.join(", "));
     }
     out.push_str(tail);
-    if !params.is_empty() && moqui_core::entity::exec::blank_sql(sql, syntax(mysql)).contains('?') {
+    if !params.is_empty() && blank_sql(sql, syntax(mysql)).contains('?') {
         return Err(refusal("A grid query with a ? of its own cannot be filtered"));
     }
     Ok(Wrapped { sql: out, params })
 }
 
-fn syntax(mysql: bool) -> moqui_core::entity::exec::SqlSyntax {
+/// The user's sort, then the key columns not in it: a stable order for paging. Without key columns (a read-only SQL
+/// result) the order is the user's sort alone, and rows that sort equal may move between pages.
+fn with_key_order(sort: &[Sort], keys: &[String]) -> Vec<Sort> {
+    let mut out = sort.to_vec();
+    for key in keys {
+        if !out.iter().any(|sort| &sort.field == key) {
+            out.push(Sort {
+                field: key.clone(),
+                descending: false,
+            });
+        }
+    }
+    out
+}
+
+fn syntax(mysql: bool) -> SqlSyntax {
     if mysql {
-        moqui_core::entity::exec::SqlSyntax::Mysql
+        SqlSyntax::Mysql
     } else {
-        moqui_core::entity::exec::SqlSyntax::Postgres
+        SqlSyntax::Postgres
     }
 }
 
@@ -493,7 +626,52 @@ fn value_kind(value: &Value) -> &'static str {
     }
 }
 
-/// The columns of a SQL source, from one row of it, and whether it is editable (§9.5).
+/// Why a statement is not one the grid saves the result of, though its columns' origins name one table: origins do not
+/// tell an alias of a table from another, so a statement that names the table twice, joins, combines results,
+/// collapses rows or reads from a subquery is read only.
+fn statement_shape_refusal(sql: &str, mysql: bool, table: &str) -> Option<String> {
+    let blank = blank_sql(sql, syntax(mysql)).to_ascii_lowercase();
+    let words: Vec<&str> = blank
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$')
+        .filter(|word| !word.is_empty())
+        .collect();
+    for word in ["join", "union", "intersect", "except", "distinct", "group"] {
+        if words.contains(&word) {
+            return Some(format!(
+                "The query has {}: its rows are not rows of one table",
+                word.to_uppercase()
+            ));
+        }
+    }
+    let table = table.to_ascii_lowercase();
+    if words.iter().filter(|word| **word == table).count() != 1 {
+        return Some(format!("The query names {table} more than once"));
+    }
+    if words.iter().filter(|word| **word == "select").count() != 1 {
+        return Some("The query has a subquery".to_string());
+    }
+    // the FROM clause: up to the next clause keyword
+    if let Some(at) = blank.find(" from ").or_else(|| blank.find("\nfrom ")) {
+        let rest = &blank[at + 6..];
+        let end = [
+            " where ", " order ", " limit ", " having ", " window ", " for ", " offset ", " fetch ",
+        ]
+        .iter()
+        .filter_map(|keyword| rest.find(keyword))
+        .min()
+        .unwrap_or(rest.len());
+        let from = &rest[..end];
+        if from.contains(',') {
+            return Some("The query reads from more than one table".to_string());
+        }
+        if from.contains('(') {
+            return Some("The query reads from a subquery".to_string());
+        }
+    }
+    None
+}
+
+/// The columns of a SQL source, from its first rows, and whether it is editable (§9.5).
 fn sql_columns(
     facade: &EntityFacade,
     group: &str,
@@ -502,17 +680,36 @@ fn sql_columns(
     actor: &Actor,
 ) -> Result<ColumnsOutcome, Refusal> {
     let mysql = check_sql_source(facade, group, sql)?;
-    let wrapped = wrap(sql, mysql, &[], &[], " LIMIT 1")?;
-    let result = sql::grid_query(facade, group, &wrapped.sql, &wrapped.params, 1, actor, "columns")?;
-    let first = result.records.first();
-    let editable = editable_table(facade, group, &result);
+    let wrapped = wrap(sql, mysql, &[], &[], &format!(" LIMIT {COLUMN_PROBE_ROWS}"))?;
+    let result = sql::grid_query(
+        facade,
+        group,
+        &wrapped.sql,
+        &wrapped.params,
+        COLUMN_PROBE_ROWS,
+        actor,
+        "columns",
+    )
+    .map_err(|err| db_refusal(&err))?;
+    if result.columns.is_empty() {
+        return Ok(ColumnsOutcome {
+            read_only_reason: Some("The query gave no rows, so its columns are not known".to_string()),
+            ..ColumnsOutcome::default()
+        });
+    }
     let mut columns: Vec<Column> = result
         .columns
         .iter()
         .enumerate()
         .filter(|(_, name)| requested.is_empty() || requested.contains(name))
         .map(|(index, name)| {
-            let kind = first.and_then(|row| row.get(index)).map_or("text", value_kind);
+            // the driver gives no column types; the first value that is not null tells the kind
+            let kind = result
+                .records
+                .iter()
+                .filter_map(|row| row.get(index))
+                .find(|value| !matches!(value, Value::Null))
+                .map_or("text", value_kind);
             Column {
                 name: name.clone(),
                 title: name.clone(),
@@ -521,7 +718,14 @@ fn sql_columns(
             }
         })
         .collect();
-    let (entity_name, reason) = match editable {
+    let editable = editable_table(facade, group, &result).and_then(|(entity, fields)| {
+        match statement_shape_refusal(sql, mysql, &entity.table_name) {
+            Some(reason) => Err(reason),
+            None => Ok((entity, fields)),
+        }
+    });
+    let mut outcome = ColumnsOutcome::default();
+    match editable {
         Ok((entity, fields)) => {
             for column in &mut columns {
                 let Some(field_name) = fields.get(&column.name) else {
@@ -535,26 +739,38 @@ fn sql_columns(
                     *column = from_field;
                 }
             }
-            (Some(entity.full_name.clone()), None)
+            let label_of = |field: &str| {
+                fields
+                    .iter()
+                    .find(|(_, name)| name.as_str() == field)
+                    .map(|(label, _)| label.clone())
+            };
+            outcome.key_columns = entity.pk_field_names().into_iter().filter_map(label_of).collect();
+            outcome.stamp_column = label_of(STAMP);
+            outcome.has_stamp = outcome.stamp_column.is_some();
+            outcome.entity_name = Some(entity.full_name.clone());
         }
-        Err(reason) => (None, Some(reason)),
-    };
-    if result.columns.is_empty() {
-        return Ok(ColumnsOutcome {
-            read_only_reason: Some("The query gave no rows, so its columns are not known".to_string()),
-            ..ColumnsOutcome::default()
-        });
+        Err(reason) => outcome.read_only_reason = Some(reason),
     }
-    Ok(ColumnsOutcome {
-        columns,
-        has_stamp: false,
-        entity_name,
-        read_only_reason: reason,
-    })
+    columns.retain(|column| !is_secret(&column.name) && column.field.as_deref().is_none_or(|field| !is_secret(field)));
+    outcome.columns = columns;
+    Ok(outcome)
 }
 
-/// The entity a SQL result can be saved to (§9.5): every column of one table (not a view), an entity of `group` on
-/// that table, and the result has the entity's whole primary key. With the column label to field name of each column.
+/// The schema (Postgres) or database (MySQL) the group's connection uses.
+fn group_schema(facade: &EntityFacade, group: &str) -> Option<String> {
+    let sql = if catalog::group_is_mysql(facade, group) {
+        catalog::mysql::CURRENT_DATABASE
+    } else {
+        catalog::postgres::CURRENT_SCHEMA
+    };
+    let rows = catalog::query(facade, group, sql).ok()?;
+    rows.first()?.values().next().map(to_plain_string)
+}
+
+/// The entity a SQL result can be saved to (§9.5): every column of one table (not a view) in the group's schema, an
+/// entity of `group` on that table, and the result has the entity's whole primary key and, when the entity has one,
+/// its `lastUpdatedStamp`. With the column label to field name of each column.
 fn editable_table(
     facade: &EntityFacade,
     group: &str,
@@ -563,8 +779,11 @@ fn editable_table(
     if result.column_origins.is_empty() || result.column_origins.len() != result.columns.len() {
         return Err("The database did not say which table each column comes from".to_string());
     }
-    let sources = moqui_core::entity::info::resolve_column_origins(facade, group, &result.column_origins)
-        .map_err(|err| format!("The columns' tables could not be read: {err}"))?;
+    let sources =
+        moqui_core::entity::info::resolve_column_origins(facade, group, &result.column_origins).map_err(|err| {
+            tracing::info!(error = %err, "Could not read the tables of a data grid query's columns");
+            "The columns' tables could not be read".to_string()
+        })?;
     let mut table: Option<(String, String)> = None;
     for source in &sources {
         let Some(source) = source else {
@@ -579,9 +798,13 @@ fn editable_table(
         }
         table = Some(this);
     }
-    let Some((_, table)) = table else {
+    let Some((schema, table)) = table else {
         return Err("The query has no columns".to_string());
     };
+    match group_schema(facade, group) {
+        Some(own) if own.eq_ignore_ascii_case(&schema) => {}
+        _ => return Err(format!("{schema}.{table} is not in the schema the entities use")),
+    }
     let groups = facade.group_names();
     let default = facade.default_group().to_string();
     let found = facade.with_model(|model| {
@@ -613,23 +836,41 @@ fn editable_table(
             .iter()
             .find(|field| field.column_name.eq_ignore_ascii_case(&source.column))
             .ok_or_else(|| format!("Column {} is no field of {}", source.column, entity.full_name))?;
+        if fields.values().any(|name: &String| name == &field.name) {
+            return Err(format!("The query has {} twice", field.name));
+        }
         fields.insert(label.clone(), field.name.clone());
     }
     let named: Vec<&String> = fields.values().collect();
-    if let Some(missing) = entity
-        .pk_field_names()
+    let mut needed: Vec<&str> = entity.pk_field_names();
+    if entity.field(STAMP).is_some() {
+        needed.push(STAMP);
+    }
+    if let Some(missing) = needed
         .into_iter()
-        .find(|pk| !named.iter().any(|name| name.as_str() == *pk))
+        .find(|field| !named.iter().any(|name| name.as_str() == *field))
     {
         return Err(format!(
-            "The result lacks {missing}, part of the primary key of {}",
+            "The result lacks {missing} of {}, which a save needs",
             entity.full_name
         ));
     }
     Ok((entity, fields))
 }
 
-/// The entity find of an entity source with its conditions and the grid's filters and sort.
+/// The field name a search-form input key is about: the key without its `_op`, `_not`, `_ic`, `_from`, `_thru`,
+/// `_period`, `_poffset` or `_pdate`.
+fn condition_field(key: &str) -> &str {
+    for suffix in ["_op", "_not", "_ic", "_from", "_thru", "_period", "_poffset", "_pdate"] {
+        if let Some(field) = key.strip_suffix(suffix) {
+            return field;
+        }
+    }
+    key
+}
+
+/// The entity find of an entity source with its conditions and the grid's filters and sort, the primary key last in
+/// the order so pages are stable.
 fn entity_find(
     facade: &EntityFacade,
     entity: &EntityDefinition,
@@ -637,22 +878,32 @@ fn entity_find(
     sort: &[Sort],
     filter: &[Filter],
 ) -> Result<EntityFind, Refusal> {
-    let find = facade.find(&entity.full_name).map_err(|err| refusal(err.to_string()))?;
+    for key in conditions.keys() {
+        let field = condition_field(key);
+        if hidden_value(entity, field) {
+            return Err(refusal(format!("{field} takes no condition in the data grid")));
+        }
+    }
+    let find = facade.find(&entity.full_name).map_err(|err| find_refusal(&err))?;
     let mut find = find
         .search_form_map(conditions, &BTreeMap::new(), "", "", false)
-        .map_err(|err| refusal(err.to_string()))?
+        .map_err(|err| refusal(err.message().to_string()))?
         .find;
     let field_of = |name: &str| {
         entity
             .field(name)
-            .filter(|field| !field.encrypt && !is_secret(entity, name))
+            .filter(|_| !hidden_value(entity, name))
             .ok_or_else(|| refusal(format!("{name} is not a field the grid sorts or filters on")))
     };
     for filter in filter {
         let field = field_of(&filter.field)?;
         let name = field.name.as_str();
-        let convert = |value: &Value| basic_convert(value, &field.java_type).value;
+        // text a person typed: a date-time without an offset is in the session's time zone
+        let convert = |value: &Value| basic_convert_text(value, &field.java_type).value;
         let condition = if let Some(pattern) = like_pattern(filter) {
+            if !field.is_text() {
+                return Err(refusal(format!("{name} is not text: filter it with =, <, >, or in")));
+            }
             Condition::ignore_case(Condition::Like(name.into(), Value::String(pattern)))
         } else {
             match filter.kind.as_str() {
@@ -663,29 +914,26 @@ fn entity_find(
                 ">" => Condition::greater(name, convert(&filter.value)),
                 ">=" => Condition::greater_equal(name, convert(&filter.value)),
                 "in" => {
-                    let values: Vec<Value> = match &filter.value {
-                        Value::List(items) => items.iter().map(convert).collect(),
-                        other => to_plain_string(other)
-                            .split(',')
-                            .map(|part| convert(&Value::string(part.trim())))
-                            .collect(),
-                    };
-                    Condition::In(name.into(), values)
+                    let values: Vec<Value> = in_values(&filter.value).iter().map(convert).collect();
+                    if values.is_empty() {
+                        Condition::where_sql("1 = 0")
+                    } else {
+                        Condition::In(name.into(), values)
+                    }
                 }
                 other => return Err(refusal(format!("filter type {other:?} is not one the grid takes"))),
             }
         };
         find = find.condition(condition);
     }
-    for sort in sort {
+    let keys: Vec<String> = if entity.is_view {
+        Vec::new()
+    } else {
+        entity.pk_field_names().into_iter().map(str::to_string).collect()
+    };
+    for sort in with_key_order(sort, &keys) {
         let field = field_of(&sort.field)?;
         find = find.order_by(&field.name, sort.descending);
-    }
-    if sort.is_empty() {
-        // a stable order for paging
-        for pk in entity.pk_field_names() {
-            find = find.order_by(pk, false);
-        }
     }
     Ok(find)
 }
@@ -699,7 +947,7 @@ fn row_value(entity: &EntityDefinition, value: &EntityValue, columns: &[String])
     };
     for name in names {
         let Some(field) = entity.field(name) else { continue };
-        if is_secret(entity, name) {
+        if is_secret(name) {
             continue;
         }
         let shown = match value.get(name) {
@@ -762,6 +1010,28 @@ fn estimate(facade: &EntityFacade, entity: &EntityDefinition) -> Option<i64> {
     (estimate >= 0.0).then_some(estimate as i64)
 }
 
+/// The rows of a SQL source's result as maps of its columns; with the stamp column, `_stamp` as text.
+fn sql_rows(result: moqui_core::entity::info::SqlResult, columns: &[String], stamp_column: Option<&str>) -> Vec<Value> {
+    result
+        .records
+        .into_iter()
+        .map(|record| {
+            let mut map: IndexMap<String, Value> = IndexMap::new();
+            for (name, value) in result.columns.iter().zip(record) {
+                if Some(name.as_str()) == stamp_column {
+                    if let Value::Timestamp(stamp) = &value {
+                        map.insert("_stamp".to_string(), Value::String(stamp.to_string()));
+                    }
+                }
+                if (columns.is_empty() || columns.contains(name)) && !is_secret(name) {
+                    map.insert(name.clone(), value);
+                }
+            }
+            Value::Map(map)
+        })
+        .collect()
+}
+
 /// One page of the grid: `page` from 1, `size` rows (at most [`MAX_PAGE_SIZE`]).
 ///
 /// # Errors
@@ -794,39 +1064,31 @@ pub fn rows(
                 .offset(i64::try_from(offset).unwrap_or(i64::MAX))
                 .limit(i64::try_from(size + 1).unwrap_or(i64::MAX))
                 .list()
-                .map_err(|err| refusal(err.to_string()))?;
+                .map_err(|err| find_refusal(&err))?;
             let data: Vec<Value> = list.iter().map(|value| row_value(&entity, value, columns)).collect();
             let estimate = (conditions.is_empty() && filter.is_empty() && !entity.is_view)
                 .then(|| estimate(facade, &entity))
                 .flatten();
             (data, estimate)
         }
-        Source::Sql { group, sql } => {
+        Source::Sql {
+            group,
+            sql,
+            key_columns,
+            stamp_column,
+        } => {
             let mysql = check_sql_source(facade, group, sql)?;
+            let order = with_key_order(sort, key_columns);
             let wrapped = wrap(
                 sql,
                 mysql,
-                sort,
+                &order,
                 filter,
                 &format!(" LIMIT {} OFFSET {offset}", size + 1),
             )?;
-            let result = sql::grid_query(facade, group, &wrapped.sql, &wrapped.params, size + 1, actor, "rows")?;
-            let data = result
-                .records
-                .into_iter()
-                .map(|record| {
-                    Value::Map(
-                        result
-                            .columns
-                            .iter()
-                            .cloned()
-                            .zip(record)
-                            .filter(|(name, _)| columns.is_empty() || columns.contains(name))
-                            .collect(),
-                    )
-                })
-                .collect();
-            (data, None)
+            let result = sql::grid_query(facade, group, &wrapped.sql, &wrapped.params, size + 1, actor, "rows")
+                .map_err(|err| db_refusal(&err))?;
+            (sql_rows(result, columns, stamp_column.as_deref()), None)
         }
     };
     let more = data.len() > size;
@@ -864,13 +1126,14 @@ pub fn count(facade: &EntityFacade, source: &Source, filter: &[Filter], actor: &
             let entity = definition(facade, entity_name)?;
             entity_find(facade, &entity, conditions, &[], filter)?
                 .count()
-                .map_err(|err| refusal(err.to_string()))
+                .map_err(|err| find_refusal(&err))
         }
-        Source::Sql { group, sql } => {
+        Source::Sql { group, sql, .. } => {
             let mysql = check_sql_source(facade, group, sql)?;
             let wrapped = wrap(sql, mysql, &[], filter, "")?;
             let counted = format!("SELECT count(*) AS row_count FROM ({}) c", wrapped.sql);
-            let result = sql::grid_query(facade, group, &counted, &wrapped.params, 1, actor, "count")?;
+            let result = sql::grid_query(facade, group, &counted, &wrapped.params, 1, actor, "count")
+                .map_err(|err| db_refusal(&err))?;
             result
                 .records
                 .first()
@@ -908,10 +1171,41 @@ fn cell_text(value: &Value) -> String {
     }
 }
 
+/// The default export directory of `user_id`: `runtime://tmp/grid-export/<userId>/`, which `clean#GridUploads` empties
+/// of files older than a day. A download of a file there checks that the user is the one its path names.
+#[must_use]
+pub fn export_dir(user_id: &str) -> String {
+    format!("runtime://tmp/grid-export/{user_id}/")
+}
+
+/// Whether `actor` may write an export to `location`: under its own [`export_dir`], or its own
+/// `dbresource://moqui/database/export/<userId>/`; anywhere else needs `admin` (`DATABASE_ADMIN`).
+#[must_use]
+pub fn export_location_allowed(location: &str, actor: &Actor, admin: bool) -> bool {
+    let location = location.trim();
+    if location.is_empty() || location.split('/').any(|part| part == ".." || part == ".") || location.contains('\\') {
+        return false;
+    }
+    if admin {
+        return true;
+    }
+    let Some(user) = actor
+        .user_id
+        .as_deref()
+        .filter(|user| !user.is_empty() && !user.contains('/'))
+    else {
+        return false;
+    };
+    [export_dir(user), format!("dbresource://moqui/database/export/{user}/")]
+        .iter()
+        .any(|prefix| location.starts_with(prefix.as_str()) && location.len() > prefix.len())
+}
+
 /// Write the whole source (its conditions, filters and sort) as CSV or XLSX to `location`, or to a new location under
-/// `runtime://tmp/grid-export/<user>/` when empty. An entity source is read through the find's cursor and CSV is
-/// written row by row; XLSX is built in memory and capped at [`MAX_XLSX_ROWS`]; a SQL source is capped at
-/// [`MAX_SQL_EXPORT_ROWS`]. Encrypted fields are masked as in the grid.
+/// the user's [`export_dir`] when empty. The caller checked the location ([`export_location_allowed`]). An entity
+/// source is read through the find's cursor and CSV is written row by row to an owner-only temporary file, removed
+/// whatever happens; XLSX is built in memory and capped at [`MAX_XLSX_ROWS`]; a SQL source is capped at
+/// [`MAX_SQL_EXPORT_ROWS`]. Encrypted fields are masked and secrets left out, as in the grid.
 ///
 /// # Errors
 ///
@@ -944,11 +1238,10 @@ pub fn export(
             .map_err(|err| refusal(err.to_string()))?
             .replace('-', "");
         let user = actor.user_id.clone().unwrap_or_else(|| "_NA_".to_string());
-        format!("runtime://tmp/grid-export/{user}/{id}/{file_name}")
+        format!("{}{id}/{file_name}", export_dir(&user))
     } else {
         location.trim().to_string()
     };
-    let mut writer = TableWriter::new(format).map_err(|err| refusal(err.to_string()))?;
     let cap = match source {
         Source::Sql { .. } => MAX_SQL_EXPORT_ROWS,
         Source::Entity { .. } => usize::MAX,
@@ -959,7 +1252,7 @@ pub fn export(
         cap
     };
     let mut truncated = false;
-    match source {
+    let writer = match source {
         Source::Entity {
             entity_name,
             conditions,
@@ -975,12 +1268,14 @@ pub fn export(
                     .cloned()
                     .collect()
             };
-            let names: Vec<String> = names.into_iter().filter(|name| !is_secret(&entity, name)).collect();
-            writer.header(&names).map_err(|err| refusal(err.to_string()))?;
+            let names: Vec<String> = names.into_iter().filter(|name| !is_secret(name)).collect();
             let mut iterator = entity_find(facade, &entity, conditions, sort, filter)?
                 .iterator()
-                .map_err(|err| refusal(err.to_string()))?;
-            while let Some(value) = iterator.next_value().map_err(|err| refusal(err.to_string()))? {
+                .map_err(|err| find_refusal(&err))?;
+            // the checks are done: only now the temporary file
+            let mut writer = TableWriter::new(format).map_err(|err| refusal(err.to_string()))?;
+            writer.header(&names).map_err(|err| refusal(err.to_string()))?;
+            while let Some(value) = iterator.next_value().map_err(|err| find_refusal(&err))? {
                 if writer.rows >= cap {
                     truncated = true;
                     break;
@@ -994,20 +1289,28 @@ pub fn export(
                     .collect();
                 writer.row(&cells).map_err(|err| refusal(err.to_string()))?;
             }
+            writer
         }
-        Source::Sql { group, sql } => {
+        Source::Sql {
+            group,
+            sql,
+            key_columns,
+            ..
+        } => {
             let mysql = check_sql_source(facade, group, sql)?;
-            let wrapped = wrap(sql, mysql, sort, filter, "")?;
-            let result = sql::grid_query(facade, group, &wrapped.sql, &wrapped.params, cap, actor, "export")?;
+            let wrapped = wrap(sql, mysql, &with_key_order(sort, key_columns), filter, "")?;
+            let result = sql::grid_query(facade, group, &wrapped.sql, &wrapped.params, cap, actor, "export")
+                .map_err(|err| db_refusal(&err))?;
             truncated = result.limit_reached;
             let keep: Vec<usize> = result
                 .columns
                 .iter()
                 .enumerate()
-                .filter(|(_, name)| columns.is_empty() || columns.contains(name))
+                .filter(|(_, name)| (columns.is_empty() || columns.contains(name)) && !is_secret(name))
                 .map(|(index, _)| index)
                 .collect();
             let names: Vec<String> = keep.iter().map(|index| result.columns[*index].clone()).collect();
+            let mut writer = TableWriter::new(format).map_err(|err| refusal(err.to_string()))?;
             writer.header(&names).map_err(|err| refusal(err.to_string()))?;
             for record in &result.records {
                 let cells: Vec<Value> = keep
@@ -1016,8 +1319,9 @@ pub fn export(
                     .collect();
                 writer.row(&cells).map_err(|err| refusal(err.to_string()))?;
             }
+            writer
         }
-    }
+    };
     let row_count = writer.rows;
     writer.finish(&location).map_err(|err| {
         tracing::warn!(error = %err, "Could not write the grid export to {location}");
@@ -1032,12 +1336,32 @@ pub fn export(
     })
 }
 
-/// CSV into a temporary file, written to the location at the end as a stream; XLSX into an `XlsxBook`.
+/// CSV into an owner-only temporary file, written to the location at the end as a stream and removed whatever
+/// happens (also when the writer is dropped on a failure); XLSX into an `XlsxBook`.
 struct TableWriter {
     csv: Option<csv::Writer<std::fs::File>>,
     path: Option<std::path::PathBuf>,
     book: Option<moqui_core::screen::XlsxBook>,
     rows: usize,
+}
+
+impl Drop for TableWriter {
+    fn drop(&mut self) {
+        if let Some(path) = self.path.take() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+fn private_file(path: &std::path::Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    options.open(path)
 }
 
 impl TableWriter {
@@ -1048,7 +1372,7 @@ impl TableWriter {
                     "moqui-grid-{}.csv",
                     moqui_core::entity::uuid_v4()?.replace('-', "")
                 ));
-                let file = std::fs::File::create(&path).map_err(|err| Error::new(format!("export file: {err}")))?;
+                let file = private_file(&path).map_err(|err| Error::new(format!("export file: {err}")))?;
                 Self {
                     csv: Some(csv::Writer::from_writer(file)),
                     path: Some(path),
@@ -1100,26 +1424,23 @@ impl TableWriter {
         Ok(())
     }
 
-    fn finish(self, location: &str) -> Result<(), Error> {
+    fn finish(mut self, location: &str) -> Result<(), Error> {
         let write = |input: &mut dyn std::io::Read, size: Option<u64>| {
             ExecutionContext::with_current(|ec| ec.factory().resource().write_from(location, input, size))
                 .ok_or_else(|| Error::new("no execution context to write the export"))?
                 .map_err(|err| Error::new(err.to_string()))
         };
-        if let Some(mut csv) = self.csv {
+        if let Some(mut csv) = self.csv.take() {
             csv.flush().map_err(|err| Error::new(err.to_string()))?;
             drop(csv);
-            let path = self.path.unwrap_or_default();
-            let written = (|| {
-                let mut file = std::fs::File::open(&path).map_err(|err| Error::new(err.to_string()))?;
-                let size = file.metadata().ok().map(|meta| meta.len());
-                write(&mut file, size)
-            })();
-            let _ = std::fs::remove_file(&path);
-            return written;
+            let path = self.path.clone().unwrap_or_default();
+            let mut file = std::fs::File::open(&path).map_err(|err| Error::new(err.to_string()))?;
+            let size = file.metadata().ok().map(|meta| meta.len());
+            return write(&mut file, size);
         }
         let bytes = self
             .book
+            .take()
             .map(|book| book.to_bytes())
             .transpose()
             .map_err(|err| Error::new(err.to_string()))?
@@ -1165,14 +1486,12 @@ pub fn lookup(
                 .iter()
                 .find(|field| field.name.ends_with("Name") && field.is_text())
         })
-        .filter(|field| !field.encrypt)
+        .filter(|field| !field.encrypt && !is_secret(&field.name))
         .map(|field| field.name.clone());
-    let mut find = facade
-        .find(&related.full_name)
-        .map_err(|err| refusal(err.to_string()))?;
+    let mut find = facade.find(&related.full_name).map_err(|err| find_refusal(&err))?;
     let text = text.trim();
     if !text.is_empty() {
-        let pattern = Value::String(format!("%{}%", text.to_lowercase()));
+        let pattern = Value::String(format!("%{}%", escape_like(&text.to_lowercase())));
         let mut any = vec![Condition::ignore_case(Condition::Like(
             related_field.as_str().into(),
             pattern.clone(),
@@ -1185,10 +1504,11 @@ pub fn lookup(
     let order = label_field.clone().unwrap_or_else(|| related_field.clone());
     let list = find
         .order_by(&order, false)
+        .order_by(&related_field, false)
         .offset(offset.max(0))
         .limit(LOOKUP_SIZE)
         .list()
-        .map_err(|err| refusal(err.to_string()))?;
+        .map_err(|err| find_refusal(&err))?;
     Ok(list
         .iter()
         .map(|row| {
@@ -1271,7 +1591,7 @@ pub struct RefusedRow {
     pub message: String,
     /// Field name to message.
     pub field_errors: BTreeMap<String, String>,
-    /// The row changed since the grid read it.
+    /// The row changed, or is gone, since the grid read it.
     pub conflict: bool,
 }
 
@@ -1309,17 +1629,20 @@ pub struct SaveOutcome {
     pub updated: usize,
     pub created: usize,
     pub deleted: usize,
+    /// The primary key of each created row, in the order of `creates` (a sequenced key the service made included).
+    pub created_keys: Vec<BTreeMap<String, Value>>,
 }
 
-const CONFLICT: &str = "changed by someone else since you loaded it";
+/// The one answer to a row changed or gone since the grid read it, so it does not tell rows the user's filters hide.
+const CONFLICT: &str = "The row was changed or removed by someone else since you loaded it: reload it";
 
 /// Save the grid's changes to `entity_name` in one transaction: each through the entity's `update#`, `create#` or
-/// `delete#` (its authorization, validation, ECA rules and audit log apply). An update or delete whose row has a
-/// `lastUpdatedStamp` other than the one the grid read is refused as a conflict (the row is read `for update`). A
-/// refused row rolls back every other: the answer lists the refused rows with their field errors. Every row is checked
-/// before any is written, so all the conflicts and field refusals show at once; a refusal of the entity-auto service
-/// stops the rest. Restricted entities, views, `UserAccount` secrets and encrypted fields are refused. Writes a
-/// `DbaGridSave` audit row with the entity and the counts.
+/// `delete#` (its authorization, validation, ECA rules and audit log apply). For an entity with `lastUpdatedStamp` an
+/// update or delete must send the stamp the grid read, and a row whose stamp differs (read `for update`), or that is
+/// gone, is refused as a conflict. A refused row rolls back every other: the answer lists the refused rows with their
+/// field errors. Every row is checked before any is written, so all the conflicts and field refusals show at once; a
+/// refusal of the entity-auto service stops the rest. Restricted entities, views, `UserAccount` secrets and encrypted
+/// fields are refused. Writes a `DbaGridSave` audit row with the entity and the counts.
 ///
 /// # Errors
 ///
@@ -1366,14 +1689,19 @@ pub fn save(
             ("delete", &changes.deletes),
         ] {
             for (index, change) in list.iter().enumerate() {
-                if let Err(refused) = apply_change(&entity, &pk_names, kind, index, change) {
-                    outcome.refused.push(refused);
-                    return Err(Error::new("refused row"));
-                }
-                match kind {
-                    "update" => outcome.updated += 1,
-                    "create" => outcome.created += 1,
-                    _ => outcome.deleted += 1,
+                match apply_change(&entity, &pk_names, kind, index, change) {
+                    Err(refused) => {
+                        outcome.refused.push(refused);
+                        return Err(Error::new("refused row"));
+                    }
+                    Ok(key) => match kind {
+                        "update" => outcome.updated += 1,
+                        "create" => {
+                            outcome.created += 1;
+                            outcome.created_keys.push(key);
+                        }
+                        _ => outcome.deleted += 1,
+                    },
                 }
             }
         }
@@ -1383,15 +1711,17 @@ pub fn save(
     if let Err(err) = &ran {
         if outcome.refused.is_empty() {
             // the commit, or a check, failed
+            tracing::warn!(error = %err, "A data grid save of {} failed", entity.full_name);
             outcome.refused.push(RefusedRow {
                 kind: "save",
-                message: err.to_string(),
+                message: "The changes could not be saved (the server log has the detail)".to_string(),
                 ..RefusedRow::default()
             });
         }
         outcome.updated = 0;
         outcome.created = 0;
         outcome.deleted = 0;
+        outcome.created_keys.clear();
     }
     audit::record_as(
         facade,
@@ -1428,7 +1758,9 @@ fn stamp_matches(stored: Option<&Value>, given: &str) -> bool {
     }
 }
 
-/// The refusal of a change found before any is written: a missing key, a field the grid may not write, a conflict.
+/// The refusal of a change found before any is written: a missing key or stamp, a field the grid may not write, a
+/// conflict. The row is read with the user's authorization, so a row the user may not see is a conflict as one that
+/// is gone.
 fn check_change(
     facade: &EntityFacade,
     entity: &EntityDefinition,
@@ -1456,7 +1788,7 @@ fn check_change(
                 .insert(name.clone(), format!("{name} is not a field of {}", entity.full_name));
             continue;
         };
-        if is_secret(entity, name) {
+        if is_secret(name) {
             refused
                 .field_errors
                 .insert(name.clone(), format!("{name} is not written through the data grid"));
@@ -1475,21 +1807,30 @@ fn check_change(
                 .insert(name.clone(), format!("{STAMP} is the database's"));
         }
     }
+    let stamped = entity.field(STAMP).is_some();
     if refused.field_errors.is_empty() && kind != "create" {
-        let mut find = facade.find(&entity.full_name)?.for_update(true);
-        for pk in pk_names {
-            find = find.eq(pk, change.pk.get(pk).cloned().unwrap_or(Value::Null));
-        }
-        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-        match find.one()? {
-            None => refused.message = "The row is gone: deleted by someone else since you loaded it".to_string(),
-            Some(row) => {
-                if let Some(given) = &change.stamp {
-                    if entity.field(STAMP).is_some() && !stamp_matches(row.get(STAMP), given) {
-                        refused.message = format!("The row was {CONFLICT}");
-                        refused.conflict = true;
-                    }
-                }
+        if stamped && change.stamp.is_none() {
+            refused.message = "Reload the row: a change of it needs the stamp it was loaded with".to_string();
+        } else {
+            let mut find = facade.find(&entity.full_name)?.for_update(true);
+            for pk in pk_names {
+                find = find.eq(pk, change.pk.get(pk).cloned().unwrap_or(Value::Null));
+            }
+            let current = find.one();
+            let current = match current {
+                Ok(current) => current,
+                // a row the user's authorization does not let them read is answered as a gone one
+                Err(err) if err.message().contains("not authorized") => None,
+                Err(err) => return Err(err),
+            };
+            let conflict = match (&current, &change.stamp) {
+                (None, _) => true,
+                (Some(row), Some(given)) if stamped => !stamp_matches(row.get(STAMP), given),
+                _ => false,
+            };
+            if conflict {
+                refused.message = CONFLICT.to_string();
+                refused.conflict = true;
             }
         }
     }
@@ -1502,14 +1843,15 @@ fn check_change(
     Ok(Some(refused))
 }
 
-/// Run one change through the entity-auto service. The errors it adds are the refusal's, taken off the messages.
+/// Run one change through the entity-auto service. The errors it adds are the refusal's, taken off the messages. The
+/// key of the row: for a create, the given key with what the service made.
 fn apply_change(
     entity: &EntityDefinition,
     pk_names: &[String],
     kind: &'static str,
     index: usize,
     change: &Change,
-) -> Result<(), RefusedRow> {
+) -> Result<BTreeMap<String, Value>, RefusedRow> {
     let mut parameters: BTreeMap<String, Value> = change.fields.clone();
     if kind != "create" {
         for pk in pk_names {
@@ -1526,9 +1868,21 @@ fn apply_change(
         (message.error_mark(), message.validation_errors().len())
     });
     let result = sync_checked(&service, &parameters, &CallOptions::default());
-    let Err(err) = result else {
-        return Ok(());
+    let err = match result {
+        Ok(out) => {
+            return Ok(pk_names
+                .iter()
+                .filter_map(|pk| {
+                    out.get(pk)
+                        .filter(|value| !is_empty(value))
+                        .or_else(|| parameters.get(pk))
+                        .map(|value| (pk.clone(), value.clone()))
+                })
+                .collect())
+        }
+        Err(err) => err,
     };
+    tracing::info!(error = %err, "The data grid's {service} refused a row");
     let mut refused = RefusedRow {
         kind,
         index,
@@ -1540,7 +1894,7 @@ fn apply_change(
         } else {
             change.pk.clone()
         },
-        message: err.message().to_string(),
+        message: err.message().lines().next().unwrap_or_default().to_string(),
         ..RefusedRow::default()
     };
     if let Some((mark, validations)) = marks {
@@ -1561,7 +1915,11 @@ fn apply_change(
 mod tests {
     use moqui_lib::object::Value;
 
-    use super::{parse_filter, parse_sort, stamp_matches, wrap, Filter, Sort};
+    use super::{
+        escape_like, export_location_allowed, parse_filter, parse_sort, stamp_matches, statement_shape_refusal, wrap,
+        Filter, Sort,
+    };
+    use crate::audit::Actor;
 
     fn filter(field: &str, kind: &str, value: Value) -> Filter {
         Filter {
@@ -1574,26 +1932,87 @@ mod tests {
     #[test]
     fn a_sql_source_is_wrapped_with_bound_filters_and_quoted_names() {
         let filters = vec![
-            filter("description", "like", Value::string("x'; DROP")),
+            filter("description", "like", Value::string("50%_x")),
             filter("n", ">=", Value::I64(3)),
             filter("id", "in", Value::string("a, b")),
+            filter("none", "in", Value::List(Vec::new())),
         ];
         let sort = vec![Sort {
-            field: "n".to_string(),
+            field: "Total \"Due\"".to_string(),
             descending: true,
         }];
         let wrapped = wrap("SELECT * FROM t", false, &sort, &filters, " LIMIT 11 OFFSET 0").unwrap();
         assert_eq!(
             wrapped.sql,
             "SELECT * FROM (SELECT * FROM t) q WHERE LOWER(CAST(\"description\" AS TEXT)) LIKE LOWER(?) AND \"n\" >= ? \
-             AND \"id\" IN (?, ?) ORDER BY \"n\" DESC LIMIT 11 OFFSET 0"
+             AND \"id\" IN (?, ?) AND 1 = 0 ORDER BY \"Total \"\"Due\"\"\" DESC LIMIT 11 OFFSET 0"
         );
-        assert_eq!(wrapped.params[0], Value::string("%x'; DROP%"));
-        assert!(wrap("SELECT 1", true, &[], &[filter("a\" OR 1=1", "=", Value::Null)], "").is_err());
+        assert_eq!(wrapped.params[0], Value::string("%50\\%\\_x%"));
         assert!(
             wrap("SELECT ? AS a", false, &[], &filters, "").is_err(),
             "a ? of its own beside filters"
         );
+        assert_eq!(escape_like("a\\b"), "a\\\\b");
+    }
+
+    #[test]
+    fn a_result_of_one_table_named_once_is_the_only_shape_saved() {
+        let sql = "SELECT enum_id, description FROM enumeration WHERE enum_type_id = 'x'";
+        assert_eq!(statement_shape_refusal(sql, false, "ENUMERATION"), None);
+        for sql in [
+            "SELECT a.enum_id FROM enumeration a JOIN enumeration b ON b.enum_id = a.enum_id",
+            "SELECT a.enum_id FROM enumeration a, enumeration_type t",
+            "SELECT DISTINCT enum_id FROM enumeration",
+            "SELECT enum_id FROM enumeration GROUP BY enum_id",
+            "SELECT enum_id FROM enumeration UNION SELECT enum_id FROM enumeration",
+            "SELECT enum_id FROM enumeration WHERE enum_id IN (SELECT enum_id FROM enumeration)",
+        ] {
+            assert!(statement_shape_refusal(sql, false, "enumeration").is_some(), "{sql}");
+        }
+        // a table name in a quoted string does not count
+        assert_eq!(
+            statement_shape_refusal(
+                "SELECT enum_id FROM enumeration WHERE description = 'enumeration'",
+                false,
+                "enumeration"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn exports_go_to_the_users_own_places_unless_an_admin_says_otherwise() {
+        let ana = Actor {
+            user_id: Some("ANA".to_string()),
+            ..Actor::default()
+        };
+        assert!(export_location_allowed(
+            "runtime://tmp/grid-export/ANA/x/a.csv",
+            &ana,
+            false
+        ));
+        assert!(export_location_allowed(
+            "dbresource://moqui/database/export/ANA/a.csv",
+            &ana,
+            false
+        ));
+        assert!(!export_location_allowed(
+            "runtime://tmp/grid-export/BO/x/a.csv",
+            &ana,
+            false
+        ));
+        assert!(!export_location_allowed(
+            "runtime://tmp/grid-export/ANA/../BO/a.csv",
+            &ana,
+            false
+        ));
+        assert!(!export_location_allowed("dbresource://other/a.csv", &ana, false));
+        assert!(!export_location_allowed(
+            "component://framework/data/a.csv",
+            &ana,
+            false
+        ));
+        assert!(export_location_allowed("dbresource://other/a.csv", &ana, true));
     }
 
     #[test]

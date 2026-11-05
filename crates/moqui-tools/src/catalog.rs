@@ -47,6 +47,8 @@ pub mod postgres {
     // ---- SQL (plans/Tools-Database.md §8) ----
     /// The database the connection is on: what a production confirmation asks to be typed.
     pub const CURRENT_DATABASE: &str = "SELECT current_database() AS database_name";
+    /// The schema the connection resolves unqualified names in: where the entity group's tables are.
+    pub const CURRENT_SCHEMA: &str = "SELECT current_schema() AS schema_name";
     /// Every column of the tables and views outside the system schemas, for the editor's completion.
     pub const COLUMNS: &str = "SELECT table_schema AS table_schema, table_name AS table_name, \
          column_name AS column_name, current_schema() AS current_schema FROM information_schema.columns \

@@ -495,9 +495,13 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- ========== The data grid (plans/Tools-Database.md §9; crates/moqui-tools/src/grid.rs and grid_service.rs) ==========
         No state per grid: each call takes the source spec, source = {type: entity, entityName, conditions} (conditions
-        are search-form inputs: field, field_op, field_not, field_ic, field_from, field_thru, field_period) or {type: sql,
-        db, sql} (one SELECT, WITH, VALUES or TABLE, wrapped as SELECT * FROM (sql) q and run read only, audited), and
-        columns, the names to show (all when empty). sort is Tabulator's [{field, dir}], filter its [{field, type,
+        are search-form inputs: field, field_op, field_not, field_ic, field_from, field_thru, field_period; none on a
+        secret or encrypted field) or {type: sql, db, sql, keyColumns, stampColumn} (one SELECT, WITH, VALUES or TABLE,
+        wrapped as SELECT * FROM (sql) q and run read only, audited; keyColumns and stampColumn as get#DataGridColumns
+        gave them for an editable result: its pages are ordered by the key last, and its rows get _stamp), and columns,
+        the names to show (all when empty). UserAccount's password fields are left out by name on every entity (a view
+        that aliases them too), and take no sort, filter or condition, nor do encrypted fields. An entity source's order
+        ends with its primary key, so pages are stable; a read-only SQL source's order is the user's sort alone. sort is Tabulator's [{field, dir}], filter its [{field, type,
         value}] with type =, !=, like, starts, ends, <, <=, >, >=, in, keywords. An entity source needs the Tools app, a
         SQL source SQL (SQL_RUNNER_WEB and all actions on the Tools app). The identity and secret entities the generic
         tools refuse are refused. A refusal is a message error with no out-parameters. -->
@@ -508,8 +512,11 @@ along with this software (see the LICENSE.md file). If not, see
             null when not editable), pk, encrypted (shown masked, never edited), notNull, createOnly, maxLength,
             relatedEntity and relatedField (the lookup's), and field (an editable SQL result's entity field). entityName is
             the entity the grid saves to: the source's, or a SQL result's whose columns are all of one table with its
-            entity's whole primary key (§9.5); null when read only, with readOnlyReason. hasStamp: each row has _stamp,
-            which save sends back.</description>
+            entity's whole primary key and its lastUpdatedStamp, in the group's schema, from a statement that names the
+            table once with no JOIN, set operation, DISTINCT, GROUP BY or subquery (§9.5); null when read only, with
+            readOnlyReason. hasStamp: each row has _stamp, which save sends back. keyColumns and stampColumn: an editable
+            SQL result's key and stamp columns, for the source spec. A SQL column's type is that of its first value that is
+            not null.</description>
         <in-parameters>
             <parameter name="source" type="Map" required="true"/>
             <parameter name="columns" type="List"/>
@@ -519,6 +526,8 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="entityName"/>
             <parameter name="readOnlyReason"/>
             <parameter name="hasStamp" type="Boolean"/>
+            <parameter name="keyColumns" type="List"/>
+            <parameter name="stampColumn"/>
         </out-parameters>
     </service>
     <service verb="get" noun="DataGridRows" type="rust" location="moqui_tools::grid_service::get_data_grid_rows"
@@ -556,8 +565,10 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="export" noun="DataGrid" type="rust" location="moqui_tools::grid_service::export_data_grid"
             transaction="ignore">
         <description>The whole source (conditions, filter, sort, columns) as format csv (default) or xlsx, written to
-            location (a dbresource:// location, or under runtime://tmp/ or runtime://export/), or when empty to a new
-            location under runtime://tmp/grid-export/ that the screen sends as a download. An entity source is read through
+            location: under the user's own runtime://tmp/grid-export/(userId)/ or dbresource://moqui/database/export/(userId)/,
+            anywhere else only with DATABASE_ADMIN; when empty a new location under runtime://tmp/grid-export/(userId)/,
+            which the screen sends as a download after checking that the userId of its path is the current user's (the
+            cleanup job removes those files after a day). An entity source is read through
             the find's cursor and CSV written row by row; XLSX is built in memory and stops at 100,000 rows; a SQL source
             stops at 200,000 rows; truncated says so. Encrypted fields are masked.</description>
         <in-parameters>
@@ -593,8 +604,10 @@ along with this software (see the LICENSE.md file). If not, see
             transaction="ignore">
         <description>Save the grid's changes to entityName in one transaction: updates [{pk, stamp, fields}] (only the
             edited fields), creates [{fields}], deletes [{pk, stamp}], each through the entity's update#, create# or
-            delete# (its authorization, validation, ECA rules and audit log apply). stamp is the row's _stamp; a row
-            changed since is refused (conflict, "changed by someone else since you loaded it"). Every row is checked before
+            delete# (its authorization, validation, ECA rules and audit log apply). stamp is the row's _stamp, required
+            for an update or delete of an entity with lastUpdatedStamp; a row changed since, gone, or not visible to the
+            user is refused alike (conflict, "The row was changed or removed by someone else since you loaded it: reload
+            it"). createdKeys: the primary key of each created row, in the order of creates. Every row is checked before
             any is written; a refused row rolls back every other. saved is true only when everything was saved; refused
             lists each refused row: kind (update, create, delete), index (in its list), pk, message, fieldErrors (field to
             message) and conflict. Views, the identity and secret entities, UserAccount's secret fields, encrypted fields,
@@ -612,6 +625,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="updated" type="Long"/>
             <parameter name="created" type="Long"/>
             <parameter name="deleted" type="Long"/>
+            <parameter name="createdKeys" type="List"/>
         </out-parameters>
     </service>
     <service verb="find" noun="GridViews" type="rust" location="moqui_tools::grid_service::find_grid_views" transaction="ignore">

@@ -112,6 +112,14 @@ fn get_data_grid_columns(parameters: &BTreeMap<String, Value>, facade: &EntityFa
                 outcome.read_only_reason.map_or(Value::Null, Value::String),
             );
             out.insert("hasStamp".to_string(), Value::Bool(outcome.has_stamp));
+            out.insert(
+                "keyColumns".to_string(),
+                Value::List(outcome.key_columns.into_iter().map(Value::String).collect()),
+            );
+            out.insert(
+                "stampColumn".to_string(),
+                outcome.stamp_column.map_or(Value::Null, Value::String),
+            );
             Ok(out)
         }
         Err(refusal) => {
@@ -178,16 +186,6 @@ fn count_data_grid_rows(parameters: &BTreeMap<String, Value>, facade: &EntityFac
     }
 }
 
-/// Where an export may be written: a database resource, or the runtime's `tmp` and `export` directories; never a
-/// component's files.
-fn export_location_allowed(location: &str) -> bool {
-    let location = location.trim();
-    !location.contains("..")
-        && ["dbresource://", "runtime://tmp/", "runtime://export/"]
-            .iter()
-            .any(|prefix| location.starts_with(prefix))
-}
-
 /// `export#DataGrid`.
 fn export_data_grid(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
     let Some(source) = source_of(parameters, facade) else {
@@ -202,8 +200,13 @@ fn export_data_grid(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
         }
     };
     let location = text(parameters, "location");
-    if !location.is_empty() && !export_location_allowed(&location) {
-        add_error("An export is written to a dbresource:// location, or under runtime://tmp/ or runtime://export/");
+    let actor = Actor::current();
+    let admin = moqui_core::user::has_permission("DATABASE_ADMIN").unwrap_or(false);
+    if !location.is_empty() && !grid::export_location_allowed(&location, &actor, admin) {
+        add_error(
+            "An export is written under your own runtime://tmp/grid-export/<userId>/ or \
+             dbresource://moqui/database/export/<userId>/; another place needs DATABASE_ADMIN",
+        );
         return none();
     }
     match grid::export(
@@ -214,7 +217,7 @@ fn export_data_grid(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
         &grid::parse_filter(parameters.get("filter")),
         format,
         &location,
-        &Actor::current(),
+        &actor,
     ) {
         Ok(outcome) => {
             let mut out = BTreeMap::new();
@@ -295,6 +298,16 @@ fn save_data_grid_changes(parameters: &BTreeMap<String, Value>, facade: &EntityF
             out.insert("updated".to_string(), int(outcome.updated));
             out.insert("created".to_string(), int(outcome.created));
             out.insert("deleted".to_string(), int(outcome.deleted));
+            out.insert(
+                "createdKeys".to_string(),
+                Value::List(
+                    outcome
+                        .created_keys
+                        .into_iter()
+                        .map(|key| Value::Map(key.into_iter().collect()))
+                        .collect(),
+                ),
+            );
             Ok(out)
         }
         Err(refusal) => {
