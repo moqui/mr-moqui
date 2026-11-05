@@ -25,8 +25,11 @@ along with this software (see the LICENSE.md file). If not, see
         mapping's owner or a DATABASE_ADMIN holder may change, copy over or delete it. A file is read only from the
         user's own uploads (dbresource://moqui/database/upload/(userId)/), dbresource://moqui/etl/ and
         runtime://import/, or any dbresource:// location with DATABASE_ADMIN; anything else is "Not available". An
-        identity-admin, secret-config or audit entity is no source, target or lookup, and a UserAccount password field
-        no target or lookup field. No Java counterpart. -->
+        identity-admin, secret-config or audit entity (the moqui.etl entities among them), or a view over one, is no
+        source, target or lookup, nor the noun of an entity-auto service target; no delete# service is a target. A
+        UserAccount password field, by name or as a view's alias of one, is no target or lookup field and is left out
+        of an entity source's rows. load#SpreadsheetEntity reads a location from the same places. No Java
+        counterpart. -->
 
     <service verb="run" noun="EtlMapping" type="rust" location="moqui_tools::etl::service::run_etl_mapping"
             transaction="ignore">
@@ -145,7 +148,8 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="store" noun="EtlValueMap" type="rust" location="moqui_tools::etl::service::store_etl_value_map"
             transaction="ignore">
         <description>Create or update value map valueMapId (a new id when empty) with its description and entries (a map
-            from value to value, or a list of fromValue and toValue maps), the entries replaced.</description>
+            from value to value, or a list of fromValue and toValue maps), the entries replaced. Updating needs the value
+            map's owner (ownerUserId, the user who made it) or DATABASE_ADMIN.</description>
         <in-parameters>
             <parameter name="valueMapId"/>
             <parameter name="description"/>
@@ -155,12 +159,13 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="delete" noun="EtlValueMap" type="rust" location="moqui_tools::etl::service::delete_etl_value_map"
             transaction="ignore">
-        <description>Delete value map valueMapId and its entries.</description>
+        <description>Delete value map valueMapId and its entries: its owner or a DATABASE_ADMIN holder.</description>
         <in-parameters><parameter name="valueMapId" required="true"/></in-parameters>
     </service>
     <service verb="get" noun="EtlRuns" type="rust" location="moqui_tools::etl::service::get_etl_runs"
             transaction="ignore">
-        <description>The latest runs, newest first, of mappingId when given.</description>
+        <description>The latest runs, newest first, of mappingId when given: the user's own, or every user's with
+            DATABASE_ADMIN.</description>
         <in-parameters>
             <parameter name="mappingId"/>
             <parameter name="limit" type="Integer" default-value="50"/>
@@ -169,11 +174,17 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="get" noun="EtlRun" type="rust" location="moqui_tools::etl::service::get_etl_run"
             transaction="ignore">
-        <description>Run runId (its EtlRun fields) and its EtlRunError rows.</description>
-        <in-parameters><parameter name="runId" required="true"/></in-parameters>
+        <description>Run runId (its EtlRun fields) and its EtlRunError rows, for the run's user or a DATABASE_ADMIN
+            holder (to anyone else there is no such run). With includeErrorFile, errorFile is the text of the error file
+            (dbresource://moqui/etl-run/(userId)/(runId)/errors.csv, every failed row): the way to download it.</description>
+        <in-parameters>
+            <parameter name="runId" required="true"/>
+            <parameter name="includeErrorFile" type="Boolean" default-value="false"/>
+        </in-parameters>
         <out-parameters>
             <parameter name="run" type="Map"/>
             <parameter name="errors" type="List"><parameter name="error" type="Map"/></parameter>
+            <parameter name="errorFile"/>
         </out-parameters>
     </service>
 

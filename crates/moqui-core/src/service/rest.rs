@@ -687,7 +687,12 @@ fn run_entity(
             "Entity operation {other} not supported, must be one of: one, list, count, create, update, store, delete"
         ))),
     }?;
-    Ok(sensitive::strip_user_account_secrets(result))
+    // a view's alias may rename a password field: its origin decides, not its name
+    let renamed = sensitive::secret_fields(&facade, name);
+    Ok(sensitive::strip_fields(
+        sensitive::strip_user_account_secrets(result),
+        &renamed,
+    ))
 }
 
 /// Java's `MethodEntity` one and list: the search form conditions of the parameters. `one` is the first row found,

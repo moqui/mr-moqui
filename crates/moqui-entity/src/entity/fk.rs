@@ -107,6 +107,14 @@ pub(crate) fn enforce(
         if row_exists(facade, &job.related, &job.keys)? {
             continue;
         }
+        // no dummy in an entity the generic tools and loads keep away from a request (group membership, permissions,
+        // secret config, the audit): a load naming a missing one fails as its foreign key would
+        if super::sensitive::is_restricted_generic_entity(&related_name) {
+            return Err(Error::new(format!(
+                "No {related_name} for foreign key {} on {entity_name}, and no dummy is made in a restricted entity",
+                job.relationship
+            )));
+        }
         tracing::warn!(
             "Creating dummy {} for foreign key {} on {entity_name}, keys {:?}",
             job.related,

@@ -45,7 +45,9 @@ pub const RUN: &str = "moqui.etl.EtlRun";
 pub const RUN_ERROR: &str = "moqui.etl.EtlRunError";
 const RUN_SERVICE: &str = "org.moqui.impl.EtlServices.run#EtlMapping";
 /// Where a run's error file goes.
-pub const ERROR_ROOT: &str = "dbresource://moqui/etl/run";
+/// Where a run's error file goes: `<root>/<userId>/<runId>/errors.csv`, outside the import root, read through
+/// `get#EtlRun` by the run's user or a `DATABASE_ADMIN` holder.
+pub const ERROR_ROOT: &str = "dbresource://moqui/etl-run";
 /// The rows the sample check reads by default.
 pub const SAMPLE_ROWS: usize = 200;
 
@@ -89,8 +91,8 @@ fn may_change(what: &str) -> bool {
 
 /// What every use of a mapping checks first: what it reaches ([`Mapping::validate`]), `SQL_RUNNER_WEB` for a SQL
 /// source and `GROOVY_SHELL_WEB` for an expression. False with an error added.
-fn mapping_allowed(mapping: &Mapping) -> bool {
-    if let Err(err) = mapping.validate() {
+fn mapping_allowed(facade: &EntityFacade, mapping: &Mapping) -> bool {
+    if let Err(err) = mapping.validate_with(facade) {
         add_error(err.to_string());
         return false;
     }
@@ -105,34 +107,54 @@ fn mapping_allowed(mapping: &Mapping) -> bool {
     true
 }
 
-/// Whether the current user may change, copy over or delete the saved mapping `mapping_id`: its owner, or a
-/// `DATABASE_ADMIN` holder. True for a mapping not saved yet. False with an error added.
-fn may_change_mapping(facade: &EntityFacade, mapping_id: Option<&str>, what: &str) -> bool {
-    let Some(mapping_id) = mapping_id.filter(|id| !id.is_empty()) else {
+fn current_user() -> String {
+    moqui_core::user::current_user_id().ok().flatten().unwrap_or_default()
+}
+
+fn is_database_admin() -> bool {
+    moqui_core::user::has_permission("DATABASE_ADMIN").unwrap_or(false)
+}
+
+/// Whether the current user may change the row of `entity` whose `id_field` is `id`, its owner named by
+/// `owner_field`: the owner, or a `DATABASE_ADMIN` holder. True for a row not saved yet. False with an error added.
+fn may_change_owned(
+    facade: &EntityFacade,
+    entity: &str,
+    id_field: &str,
+    owner_field: &str,
+    id: Option<&str>,
+    what: &str,
+) -> bool {
+    let Some(id) = id.filter(|id| !id.is_empty()) else {
         return true;
     };
     let owner = {
         let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
         facade
-            .find(MAPPING)
-            .and_then(|find| find.eq("mappingId", Value::string(mapping_id)).one())
+            .find(entity)
+            .and_then(|find| find.eq(id_field, Value::string(id)).one())
     };
     let owner = match owner {
-        Ok(Some(row)) => row.get("ownerUserId").map(to_plain_string).unwrap_or_default(),
+        Ok(Some(row)) => row.get(owner_field).map(to_plain_string).unwrap_or_default(),
         Ok(None) => return true,
         Err(err) => {
             add_error(err.to_string());
             return false;
         }
     };
-    let me = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
-    if (!me.is_empty() && owner == me) || moqui_core::user::has_permission("DATABASE_ADMIN").unwrap_or(false) {
+    let me = current_user();
+    if (!me.is_empty() && owner == me) || is_database_admin() {
         return true;
     }
     add_error(format!(
         "{what} needs to be its owner or to have the DATABASE_ADMIN permission"
     ));
     false
+}
+
+/// [`may_change_owned`] of a saved mapping.
+fn may_change_mapping(facade: &EntityFacade, mapping_id: Option<&str>, what: &str) -> bool {
+    may_change_owned(facade, MAPPING, "mappingId", "ownerUserId", mapping_id, what)
 }
 
 fn now() -> Value {
@@ -248,8 +270,13 @@ fn record_errors(facade: &EntityFacade, run_id: &str, outcome: &RunOutcome) -> O
         tracing::error!(error = %err, run = %run_id, "Could not write the ETL run's error rows");
     }
     let csv = outcome.error_csv.as_ref()?;
-    let location = format!("{ERROR_ROOT}/{run_id}/errors.csv");
-    let saved = ExecutionContext::with_current(|ec| ec.factory().resource().write_bytes(&location, csv.as_bytes()));
+    let user = Some(current_user()).filter(|user| !user.is_empty() && !user.contains('/'));
+    let location = format!("{ERROR_ROOT}/{}/{run_id}/errors.csv", user.as_deref().unwrap_or("_NA_"));
+    // as the framework: the place is the run's own
+    let saved = ExecutionContext::with_current(|ec| {
+        let _authz = ec.disable_authz();
+        ec.factory().resource().write_bytes(&location, csv.as_bytes())
+    });
     match saved {
         Some(Ok(())) => Some(location),
         Some(Err(err)) => {
@@ -323,7 +350,7 @@ pub(crate) fn run_etl_mapping(
     let Some(mapping) = mapping_of(parameters, facade) else {
         return Ok(Out::new());
     };
-    if !mapping_allowed(&mapping) {
+    if !mapping_allowed(facade, &mapping) {
         return Ok(Out::new());
     }
     let check = flag(parameters, "check");
@@ -381,6 +408,20 @@ fn run_waiting(
             }
         };
     } else {
+        // a queued run: only its own user's, and only while it waits
+        let row = {
+            let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+            facade
+                .find(RUN)
+                .and_then(|find| find.eq("runId", Value::string(&run_id)).one())
+        };
+        let mine = matches!(&row, Ok(Some(row))
+            if row.get("userId").map(to_plain_string).unwrap_or_default() == current_user()
+                && row.get("statusId").map(to_plain_string).as_deref() == Some(PENDING));
+        if !mine {
+            add_error(format!("ETL run {run_id} is not a queued run of yours"));
+            return out;
+        }
         write_run(
             facade,
             &run_id,
@@ -536,7 +577,7 @@ pub(crate) fn check_etl_sample(
     let Some(mapping) = mapping_of(parameters, facade) else {
         return Ok(Out::new());
     };
-    if !mapping_allowed(&mapping) {
+    if !mapping_allowed(facade, &mapping) {
         return Ok(Out::new());
     }
     let mut options = source_options(parameters);
@@ -832,6 +873,7 @@ fn save_mapping(facade: &EntityFacade, mapping: &Mapping) -> Result<String, LibE
                     "description",
                     Value::string(format!("{} {}", mapping.description, field.target_field).trim()),
                 );
+                value_map.set("ownerUserId", user_id.clone().map_or(Value::Null, Value::String));
                 value_map.create(facade)?;
                 let value_map_id = value_map.get("valueMapId").map(to_plain_string).unwrap_or_default();
                 for (from, to) in entries {
@@ -878,7 +920,7 @@ pub(crate) fn store_etl_mapping(
         }
     };
     if !may_change_mapping(facade, mapping.mapping_id.as_deref(), "Changing that ETL mapping")
-        || !mapping_allowed(&mapping)
+        || !mapping_allowed(facade, &mapping)
     {
         return Ok(Out::new());
     }
@@ -912,7 +954,7 @@ pub(crate) fn copy_etl_mapping(
             return Ok(Out::new());
         }
     };
-    if !mapping_allowed(&mapping) {
+    if !mapping_allowed(facade, &mapping) {
         return Ok(Out::new());
     }
     let mut out = Out::new();
@@ -966,7 +1008,7 @@ pub(crate) fn delete_etl_mapping(
 
 /// `store#EtlValueMap`: create or update value map `valueMapId` (a new id when empty) with `description` and its
 /// `entries` (a map from value to value, or a list of `fromValue`/`toValue` maps), the entries replaced. Out:
-/// `valueMapId`.
+/// `valueMapId`. Updating needs the value map's owner or `DATABASE_ADMIN`.
 pub(crate) fn store_etl_value_map(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -974,6 +1016,17 @@ pub(crate) fn store_etl_value_map(
     if !may_change("Saving an ETL value map") {
         return Ok(Out::new());
     }
+    if !may_change_owned(
+        facade,
+        VALUE_MAP,
+        "valueMapId",
+        "ownerUserId",
+        Some(&text(parameters, "valueMapId")),
+        "Changing that ETL value map",
+    ) {
+        return Ok(Out::new());
+    }
+    let owner = current_user();
     let entries: Vec<(String, String)> = match parameters.get("entries") {
         Some(Value::Map(map)) => map
             .iter()
@@ -1019,6 +1072,12 @@ pub(crate) fn store_etl_value_map(
                         row.set("valueMapId", Value::string(&value_map_id));
                     }
                     row.set("description", Value::string(&description));
+                    row.set(
+                        "ownerUserId",
+                        Some(owner.clone())
+                            .filter(|owner| !owner.is_empty())
+                            .map_or(Value::Null, Value::String),
+                    );
                     row.create(facade)?;
                     row.get("valueMapId").map(to_plain_string).unwrap_or_default()
                 }
@@ -1047,7 +1106,7 @@ pub(crate) fn store_etl_value_map(
     Ok(out)
 }
 
-/// `delete#EtlValueMap`: delete value map `valueMapId` and its entries.
+/// `delete#EtlValueMap`: delete value map `valueMapId` and its entries. Needs its owner or `DATABASE_ADMIN`.
 pub(crate) fn delete_etl_value_map(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -1056,6 +1115,16 @@ pub(crate) fn delete_etl_value_map(
         return Ok(Out::new());
     }
     let value_map_id = text(parameters, "valueMapId");
+    if !may_change_owned(
+        facade,
+        VALUE_MAP,
+        "valueMapId",
+        "ownerUserId",
+        Some(&value_map_id),
+        "Deleting that ETL value map",
+    ) {
+        return Ok(Out::new());
+    }
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let deleted = facade.transactions_for(VALUE_MAP).and_then(|tx| {
         tx.run(TransactionAttribute::UseOrBegin, None, || {
@@ -1084,7 +1153,8 @@ fn row_value(row: &moqui_core::entity::EntityValue) -> Value {
     )
 }
 
-/// `get#EtlRuns`: the latest runs, newest first, of `mappingId` when given. In: `limit` (default 50). Out: `runs`.
+/// `get#EtlRuns`: the latest runs, newest first, of `mappingId` when given: the user's own, or every user's for a
+/// `DATABASE_ADMIN` holder. In: `limit` (default 50). Out: `runs`.
 pub(crate) fn get_etl_runs(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -1098,6 +1168,9 @@ pub(crate) fn get_etl_runs(
     if !mapping_id.is_empty() {
         find = find.eq("mappingId", Value::string(mapping_id));
     }
+    if !is_database_admin() {
+        find = find.eq("userId", Value::string(current_user()));
+    }
     let limit = number(parameters, "limit").unwrap_or(50).clamp(1, 1000);
     let runs = find.limit(limit).list()?;
     let mut out = Out::new();
@@ -1105,7 +1178,9 @@ pub(crate) fn get_etl_runs(
     Ok(out)
 }
 
-/// `get#EtlRun`: run `runId` and its error rows (the first `MAX_ERROR_ROWS`). Out: `run`, `errors`.
+/// `get#EtlRun`: run `runId` and its error rows (the first `MAX_ERROR_ROWS`), for the run's user or a
+/// `DATABASE_ADMIN` holder. With `includeErrorFile`, `errorFile` is the error file's text (every failed row). Out:
+/// `run`, `errors`, `errorFile`.
 pub(crate) fn get_etl_run(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -1115,7 +1190,10 @@ pub(crate) fn get_etl_run(
     }
     let run_id = text(parameters, "runId");
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    let Some(run) = facade.find(RUN)?.eq("runId", Value::string(&run_id)).one()? else {
+    let run = facade.find(RUN)?.eq("runId", Value::string(&run_id)).one()?;
+    let Some(run) = run.filter(|run| {
+        is_database_admin() || run.get("userId").map(to_plain_string).unwrap_or_default() == current_user()
+    }) else {
         add_error(format!("no ETL run {run_id}"));
         return Ok(Out::new());
     };
@@ -1125,6 +1203,20 @@ pub(crate) fn get_etl_run(
         .order_by("errorSeqId", false)
         .list()?;
     let mut out = Out::new();
+    if flag(parameters, "includeErrorFile") {
+        let location = run.get("errorLocation").map(to_plain_string).unwrap_or_default();
+        if location.starts_with(ERROR_ROOT) {
+            match source::read_location(&location) {
+                Ok(bytes) => {
+                    out.insert(
+                        "errorFile".to_string(),
+                        Value::String(String::from_utf8_lossy(&bytes).into_owned()),
+                    );
+                }
+                Err(err) => tracing::warn!(error = %err, run = %run_id, "Could not read the ETL run's error file"),
+            }
+        }
+    }
     out.insert("run".to_string(), row_value(&run));
     out.insert(
         "errors".to_string(),
@@ -1161,7 +1253,9 @@ fn inline_spreadsheet_load(parameters: &BTreeMap<String, Value>) -> Result<BTree
             if location.is_empty() {
                 return Err(LibError::new("A spreadsheet needs contentBytes or a location"));
             }
-            source::read_location(&location)
+            // the same places an ETL run reads (the caller's uploads, the import roots)
+            access::readable(&location)?;
+            access::read_bytes(&location)
                 .map_err(|_| LibError::new(format!("Could not find spreadsheet at [{location}]")))?
         }
     };

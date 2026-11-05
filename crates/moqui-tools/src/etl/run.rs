@@ -444,7 +444,7 @@ pub fn run(facade: &EntityFacade, mapping: &Mapping, options: &RunOptions) -> Ru
         next_start_row: options.source.start_row as i64,
         ..RunOutcome::default()
     };
-    if let Err(err) = mapping.validate() {
+    if let Err(err) = mapping.validate_with(facade) {
         outcome.failure = Some(err.to_string());
         return outcome;
     }

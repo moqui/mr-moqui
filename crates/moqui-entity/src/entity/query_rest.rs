@@ -189,7 +189,8 @@ pub fn rest(
         .with_entity(&target.entity_name, |entity, _, _| Ok(entity.full_name.clone()))
         .unwrap_or_else(|_| target.entity_name.clone());
     if verb == Verb::Find {
-        if sensitive::is_restricted_generic_entity(&full_name) {
+        // a view over a restricted entity (`UserGroupMemberUser`) reads what the entity refuses
+        if sensitive::is_restricted_entity_or_view(facade, &full_name) {
             return Err(kinded(
                 ErrorKind::Unauthorized,
                 format!("Entity {full_name} is not available through generic entity REST"),
@@ -208,7 +209,12 @@ pub fn rest(
     // Java's generic entity REST never reads without a limit: with `pageNoLimit` it still takes 100.
     parameters.remove("pageNoLimit");
     let result = rest_target(facade, verb, &target, &parameters)?;
-    Ok(sensitive::strip_user_account_secrets(result))
+    // a view's alias may rename a password field: its origin decides, not its name
+    let renamed = sensitive::secret_fields(facade, &full_name);
+    Ok(sensitive::strip_fields(
+        sensitive::strip_user_account_secrets(result),
+        &renamed,
+    ))
 }
 
 fn rest_target(

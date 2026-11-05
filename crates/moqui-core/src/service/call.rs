@@ -1428,6 +1428,13 @@ fn run_entity(
     if depth > 8 {
         return Err(LibError::new("nested entity-auto is too deep"));
     }
+    // the entities only their own services write (the database audit, SQL run tokens, external connections, ETL
+    // mappings and runs): never through an entity-auto service, whoever calls it
+    if crate::entity::sensitive::is_audit_entity(noun) {
+        return Err(LibError::new(format!(
+            "Entity {noun} is written only by its own services, not by {verb}#{noun}"
+        )));
+    }
     // As Java's `setFields`, only the entity's fields are set: an implicit call passes its parameters as they came.
     let settable = |entity: &moqui_db::model::EntityDefinition, key: &str, value: &Value| {
         !reserved(key) && entity.has_field(key) && !matches!(value, Value::Map(_) | Value::List(_))

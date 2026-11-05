@@ -227,6 +227,8 @@ struct EntityExtractor {
     conditions: BTreeMap<String, Value>,
     start_row: usize,
     max_rows: Option<usize>,
+    /// The `UserAccount` password fields by name or by origin (a view's renamed alias), left out of each row.
+    secrets: Vec<String>,
 }
 
 impl Extractor for EntityExtractor {
@@ -257,7 +259,9 @@ impl Extractor for EntityExtractor {
                 let mut values: BTreeMap<String, Value> = value
                     .fields()
                     .iter()
-                    .filter(|(name, _)| !super::access::is_secret_field(name))
+                    .filter(|(name, _)| {
+                        !super::access::is_secret_field(name) && !self.secrets.iter().any(|secret| **secret == ***name)
+                    })
                     .map(|(name, field)| (name.to_string(), field.clone()))
                     .collect();
                 values.insert(ROW_NUMBER_KEY.to_string(), Value::I64(offset));
@@ -337,7 +341,7 @@ pub fn open(facade: &EntityFacade, mapping: &Mapping, options: &SourceOptions) -
             })
         }
         SourceKind::Entity => {
-            super::access::refuse_restricted(&mapping.source_entity_name, "source")?;
+            super::access::refuse_restricted_view(facade, &mapping.source_entity_name, "source")?;
             Ok(Source {
                 extractor: Box::new(EntityExtractor {
                     facade: facade.clone(),
@@ -345,6 +349,7 @@ pub fn open(facade: &EntityFacade, mapping: &Mapping, options: &SourceOptions) -
                     conditions: mapping.source_conditions.clone(),
                     start_row: options.start_row,
                     max_rows: options.max_rows,
+                    secrets: super::access::secret_fields_of(facade, &mapping.source_entity_name),
                 }),
                 headers,
                 resolved: format!("entity {}", mapping.source_entity_name),

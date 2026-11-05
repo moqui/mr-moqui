@@ -141,25 +141,42 @@ feature('an export writes the whole source; a lookup lists the related entity; g
         removed.error == ''
     },
 })
-feature('secrets stay out through a view, take no condition, and a self-join reads but does not save', {
+feature('secrets stay out through a view, renamed or not, take no condition, and a self-join reads but does not save', {
     when() {
-        const view = { type: 'entity', entityName: 'moqui.security.UserAccountAndGroup', conditions: { userId: 'EX_JOHN_DOE' } }
+        // a DbViewEntity of UserAccount: currentPassword by its name, passwordSalt renamed pw
+        asAdmin(() => {
+            call('create#moqui.entity.view.DbViewEntity', { dbViewEntityName: 'GridSpecUserPw', packageName: 'test.grid' })
+            call('create#moqui.entity.view.DbViewEntityMember', { dbViewEntityName: 'GridSpecUserPw', entityAlias: 'UA',
+                entityName: 'moqui.security.UserAccount' })
+            for (const [fieldAlias, fieldName] of [['userId', 'userId'], ['username', 'username'],
+                    ['currentPassword', 'currentPassword'], ['pw', 'passwordSalt']])
+                call('create#moqui.entity.view.DbViewEntityAlias', { dbViewEntityName: 'GridSpecUserPw', fieldAlias,
+                    entityAlias: 'UA', fieldName })
+        })
+        const view = { type: 'entity', entityName: 'GridSpecUserPw', conditions: { userId: 'EX_JOHN_DOE' } }
         const columns = invoke(D + 'get#DataGridColumns', { source: view })
         const rows = invoke(D + 'get#DataGridRows', { source: view, page: 1, size: 5 })
         const oracle = invoke(D + 'count#DataGridRows', { source: { type: 'entity', entityName: 'moqui.security.UserAccount',
             conditions: { currentPassword: '1', currentPassword_op: 'begins' } } })
-        const sorted = invoke(D + 'get#DataGridRows', { source: view, page: 1, size: 5, sort: [{ field: 'passwordSalt', dir: 'asc' }] })
+        const renamedOracle = invoke(D + 'count#DataGridRows', { source: { type: 'entity', entityName: 'GridSpecUserPw',
+            conditions: { pw: '1', pw_op: 'begins' } } })
+        const sorted = invoke(D + 'get#DataGridRows', { source: view, page: 1, size: 5, sort: [{ field: 'pw', dir: 'asc' }] })
+        // a view with a restricted member (UserGroupMember) is refused like the member
+        const grouped = invoke(D + 'get#DataGridRows', { source: { type: 'entity',
+            entityName: 'moqui.security.UserAccountAndGroup', conditions: { userId: 'EX_JOHN_DOE' } }, page: 1, size: 5 })
         const join = invoke(D + 'get#DataGridColumns', { source: { type: 'sql', sql: "SELECT a.enum_id, a.description, a.last_updated_stamp " +
             "FROM enumeration a JOIN enumeration b ON b.enum_id = a.enum_id WHERE a.enum_type_id = 'GridSpec'" } })
-        return { columns, rows, oracle, sorted, join }
+        return { columns, rows, oracle, renamedOracle, sorted, grouped, join }
     },
-    then({ columns, rows, oracle, sorted, join }) {
+    then({ columns, rows, oracle, renamedOracle, sorted, grouped, join }) {
         columns.columns.length > 0
-        !columns.columns.some(c => ['currentPassword', 'passwordSalt', 'resetPassword', 'passwordHashType'].includes(c.name))
+        !columns.columns.some(c => ['currentPassword', 'pw', 'passwordSalt'].includes(c.name))
         rows.data.length >= 1
-        rows.data.every(r => r.currentPassword === undefined && r.passwordSalt === undefined && r.resetPassword === undefined)
+        rows.data.every(r => r.userId == 'EX_JOHN_DOE' && r.currentPassword === undefined && r.pw === undefined)
         oracle.error.includes('takes no condition')
+        renamedOracle.error.includes('takes no condition')
         sorted.error.includes('not a field the grid sorts or filters on')
+        grouped.error.includes('not available in the data grid')
         join.entityName == null
         join.readOnlyReason.includes('JOIN')
     },

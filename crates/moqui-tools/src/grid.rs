@@ -281,9 +281,10 @@ fn max_length(field_type: &str) -> Option<i64> {
     }
 }
 
-/// Why `entity` cannot be read or saved in the grid at all: the identity and secret entities the generic tools refuse.
-fn refuse_restricted(entity_name: &str) -> Result<(), Refusal> {
-    if sensitive::is_restricted_generic_entity(entity_name) {
+/// Why `entity` cannot be read or saved in the grid at all: the identity and secret entities the generic tools refuse,
+/// and a view over one (`UserGroupMemberUser`).
+fn refuse_restricted(facade: &EntityFacade, entity_name: &str) -> Result<(), Refusal> {
+    if sensitive::is_restricted_entity_or_view(facade, entity_name) {
         Err(refusal(format!("{entity_name} is not available in the data grid")))
     } else {
         Ok(())
@@ -305,7 +306,8 @@ fn read_only_reason(entity: &EntityDefinition) -> Option<String> {
 }
 
 /// `UserAccount`'s password fields, by name on any entity: a view that aliases them (`UserAccountAndGroup`,
-/// `PersonAndUserAccount`) names them so too, as generic entity REST strips them by name.
+/// `PersonAndUserAccount`) names them so too. A view's alias that renames one is left out of its definition
+/// ([`definition`]) and takes no condition ([`entity_find`]).
 fn is_secret(field: &str) -> bool {
     sensitive::USER_ACCOUNT_SECRET_FIELDS.contains(&field)
 }
@@ -382,6 +384,15 @@ fn definition(facade: &EntityFacade, entity_name: &str) -> Result<EntityDefiniti
             })
             .collect();
     }
+    // a view's alias that reads a password field under another name: not a field of the grid at all
+    let renamed: Vec<String> = sensitive::secret_fields(facade, entity_name)
+        .into_iter()
+        .filter(|name| !is_secret(name))
+        .collect();
+    if !renamed.is_empty() {
+        entity.fields.retain(|field| !renamed.contains(&field.name));
+        entity.aliases.retain(|alias| !renamed.contains(&alias.name));
+    }
     Ok(entity)
 }
 
@@ -399,7 +410,7 @@ pub fn columns(
 ) -> Result<ColumnsOutcome, Refusal> {
     match source {
         Source::Entity { entity_name, .. } => {
-            refuse_restricted(entity_name)?;
+            refuse_restricted(facade, entity_name)?;
             let entity = definition(facade, entity_name)?;
             let reason = read_only_reason(&entity);
             let fields: Vec<&FieldDefinition> = if requested.is_empty() {
@@ -942,9 +953,10 @@ fn entity_find(
     sort: &[Sort],
     filter: &[Filter],
 ) -> Result<EntityFind, Refusal> {
+    let renamed = sensitive::secret_fields(facade, &entity.full_name);
     for key in conditions.keys() {
         let field = condition_field(key);
-        if hidden_value(entity, field) {
+        if hidden_value(entity, field) || renamed.iter().any(|name| name == field) {
             return Err(refusal(format!("{field} takes no condition in the data grid")));
         }
     }
@@ -1121,7 +1133,7 @@ pub fn rows(
             entity_name,
             conditions,
         } => {
-            refuse_restricted(entity_name)?;
+            refuse_restricted(facade, entity_name)?;
             let entity = definition(facade, entity_name)?;
             let find = entity_find(facade, &entity, conditions, sort, filter)?;
             let list = find
@@ -1195,7 +1207,7 @@ pub fn count(facade: &EntityFacade, source: &Source, filter: &[Filter], actor: &
             entity_name,
             conditions,
         } => {
-            refuse_restricted(entity_name)?;
+            refuse_restricted(facade, entity_name)?;
             let entity = definition(facade, entity_name)?;
             entity_find(facade, &entity, conditions, &[], filter)?
                 .count()
@@ -1355,7 +1367,7 @@ pub fn export(
             entity_name,
             conditions,
         } => {
-            refuse_restricted(entity_name)?;
+            refuse_restricted(facade, entity_name)?;
             let entity = definition(facade, entity_name)?;
             let names: Vec<String> = if columns.is_empty() {
                 entity.fields.iter().map(|field| field.name.clone()).collect()
@@ -1589,12 +1601,12 @@ pub fn lookup(
     text: &str,
     offset: i64,
 ) -> Result<Vec<LookupOption>, Refusal> {
-    refuse_restricted(entity_name)?;
+    refuse_restricted(facade, entity_name)?;
     let entity = definition(facade, entity_name)?;
     let Some((related_name, related_field)) = related_of(&entity, field) else {
         return Err(refusal(format!("{field} of {entity_name} names no related entity")));
     };
-    refuse_restricted(&related_name)?;
+    refuse_restricted(facade, &related_name)?;
     let related = definition(facade, &related_name)?;
     let label_field = related
         .field("description")
@@ -1771,7 +1783,7 @@ pub fn save(
     changes: &Changes,
     actor: &Actor,
 ) -> Result<SaveOutcome, Refusal> {
-    refuse_restricted(entity_name)?;
+    refuse_restricted(facade, entity_name)?;
     let entity = definition(facade, entity_name)?;
     if let Some(reason) = read_only_reason(&entity) {
         return Err(refusal(reason));

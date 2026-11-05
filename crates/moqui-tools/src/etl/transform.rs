@@ -332,6 +332,8 @@ impl MappingTransformer {
                 .clone()
                 .ok_or_else(|| format!("no {entity} with {match_field} {text}"));
         }
+        // by name here; views (a restricted member, a renamed password alias) are refused before the run, by
+        // `Mapping::validate_with`
         super::access::refuse_restricted(entity, "lookup").map_err(|err| err.to_string())?;
         if super::access::is_secret_field(match_field)
             || field

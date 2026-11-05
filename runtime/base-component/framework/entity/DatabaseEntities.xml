@@ -237,9 +237,12 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
     <entity entity-name="EtlValueMap" package="moqui.etl" use="configuration" cache="never">
         <description>A map of source values to target values ("Active" to ACTIVE_STATUS), matched
-            case-insensitively.</description>
+            case-insensitively. Only its owner, or a DATABASE_ADMIN holder, changes or deletes it.</description>
         <field name="valueMapId" type="id" is-pk="true"/>
         <field name="description" type="text-medium"/>
+        <field name="ownerUserId" type="id"/>
+        <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
         <relationship type="many" related="moqui.etl.EtlValueMapEntry" short-alias="entries">
             <key-map field-name="valueMapId"/></relationship>
     </entity>

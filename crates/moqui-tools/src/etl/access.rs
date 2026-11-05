@@ -182,10 +182,43 @@ pub fn refuse_restricted(entity_name: &str, what: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// [`refuse_restricted`], and a view any of whose members is restricted (`UserGroupMemberUser`).
+///
+/// # Errors
+///
+/// An error naming the entity's use.
+pub fn refuse_restricted_view(
+    facade: &moqui_core::entity::EntityFacade,
+    entity_name: &str,
+    what: &str,
+) -> Result<(), Error> {
+    if moqui_core::entity::sensitive::is_restricted_entity_or_view(facade, entity_name) {
+        return Err(Error::new(format!("{entity_name} is not available as an ETL {what}")));
+    }
+    Ok(())
+}
+
 /// A `UserAccount` password field, by name, on any entity.
 #[must_use]
 pub fn is_secret_field(name: &str) -> bool {
     moqui_core::entity::sensitive::USER_ACCOUNT_SECRET_FIELDS.contains(&name)
+}
+
+/// The fields of `entity_name` that are a `UserAccount` password field by name or by origin: a view's alias that
+/// renames one.
+#[must_use]
+pub fn secret_fields_of(facade: &moqui_core::entity::EntityFacade, entity_name: &str) -> Vec<String> {
+    moqui_core::entity::sensitive::secret_fields(facade, entity_name)
+}
+
+/// The service target's verb and noun, and whether it is an entity-auto service (`verb#Entity`, no path).
+#[must_use]
+pub fn service_target_parts(name: &str) -> (String, String, bool) {
+    let Some((path_verb, noun)) = name.split_once('#') else {
+        return (String::new(), name.to_string(), false);
+    };
+    let verb = path_verb.rsplit('.').next().unwrap_or(path_verb).to_string();
+    (verb, noun.to_string(), !path_verb.contains('.'))
 }
 
 /// While alive, the run is the user's: authorization required, and the Tools app's frame (all actions) on the stack.

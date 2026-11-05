@@ -443,3 +443,33 @@ fn a_check_reports_a_missing_foreign_key_and_the_diff() {
         .collect();
     assert_eq!(new_ids, ["EtlC1", "EtlC2", "EtlC3"], "{:?}", outcome.diff);
 }
+
+/// A service target that deletes, or an entity-auto service of a restricted entity, is refused, as an entity target
+/// of one is; a plain service and an entity-auto service of an open entity pass.
+#[test]
+fn service_targets_that_delete_or_reach_restricted_entities_are_refused() {
+    let target = |kind: &str, name: &str| {
+        Mapping::from_map(&map(&[("targetTypeEnumId", text(kind)), ("targetName", text(name))]))
+            .unwrap()
+            .validate()
+    };
+    for refused in [
+        ("EtltService", "update#moqui.database.DatabaseConnection"),
+        ("EtltService", "create#moqui.database.SqlRunToken"),
+        ("EtltService", "update#moqui.etl.EtlMappingField"),
+        ("EtltService", "create#moqui.security.UserGroupMember"),
+        ("EtltService", "delete#moqui.basic.Enumeration"),
+        ("EtltService", "org.example.Things.delete#Thing"),
+        ("EtltEntity", "moqui.etl.EtlMappingField"),
+        ("EtltEntity", "moqui.database.DatabaseAudit"),
+    ] {
+        assert!(target(refused.0, refused.1).is_err(), "{refused:?}");
+    }
+    for allowed in [
+        ("EtltService", "store#moqui.basic.Enumeration"),
+        ("EtltService", "org.example.Things.create#Thing"),
+        ("EtltEntity", "moqui.basic.Enumeration"),
+    ] {
+        assert!(target(allowed.0, allowed.1).is_ok(), "{allowed:?}");
+    }
+}

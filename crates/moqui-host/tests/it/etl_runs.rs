@@ -188,7 +188,11 @@ fn a_saved_mapping_is_checked_run_as_a_job_and_rolled_back_on_a_bad_file() {
     );
     assert_eq!(text(&bad, "statusId"), "EtlrFailed", "{bad:?}");
     assert_eq!(text(&bad, "lastCommittedRow"), "0", "{bad:?}");
-    assert!(!text(&bad, "errorLocation").is_empty(), "{bad:?}");
+    // the error file is the run user's, outside the import root, and read through get#EtlRun
+    assert!(
+        text(&bad, "errorLocation").starts_with("dbresource://moqui/etl-run/EX_JOHN_DOE/"),
+        "{bad:?}"
+    );
     {
         let _authz = context.disable_authz();
         assert!(facade
@@ -199,11 +203,29 @@ fn a_saved_mapping_is_checked_run_as_a_job_and_rolled_back_on_a_bad_file() {
             .unwrap()
             .is_none());
     }
-    let detail = call("get#EtlRun", &[("runId", Value::string(text(&bad, "runId")))]);
+    let detail = call(
+        "get#EtlRun",
+        &[
+            ("runId", Value::string(text(&bad, "runId"))),
+            ("includeErrorFile", Value::Bool(true)),
+        ],
+    );
     assert!(
         matches!(detail.get("errors"), Some(Value::List(rows)) if !rows.is_empty()),
         "{detail:?}"
     );
+    assert!(text(&detail, "errorFile").contains("NoSuchType"), "{detail:?}");
+    let mut entries = IndexMap::new();
+    entries.insert("Active".to_string(), Value::string("ACTIVE"));
+    let stored_map = call(
+        "store#EtlValueMap",
+        &[
+            ("description", Value::string("john's")),
+            ("entries", Value::Map(entries)),
+        ],
+    );
+    let value_map_id = text(&stored_map, "valueMapId");
+    assert!(!value_map_id.is_empty(), "{stored_map:?}");
 
     let matched = call(
         "match#EtlFields",
@@ -235,7 +257,7 @@ fn a_saved_mapping_is_checked_run_as_a_job_and_rolled_back_on_a_bad_file() {
     let cleaned = call("clean#GridUploads", &[]);
     assert_eq!(text(&cleaned, "deleted"), "0", "{cleaned:?}");
 
-    authorization_is_on(&context, &facade);
+    authorization_is_on(&context, &facade, &text(&bad, "runId"), &value_map_id);
 }
 
 /// Call with authorization on: the results and the errors the call added, taken out of the message facade.
@@ -269,7 +291,12 @@ fn csv_mapping(location: &str, target_type: &str, target: &str, fields: Vec<Valu
 
 /// As an ADMIN who is not in ADMIN_ADV, with authorization on and the Tools screen as the caller (as the app calls the
 /// services): what a mapping may not reach is refused, and a run on the worker is the user's own.
-fn authorization_is_on(context: &moqui_core::context::ExecutionContext, facade: &moqui_core::entity::EntityFacade) {
+fn authorization_is_on(
+    context: &moqui_core::context::ExecutionContext,
+    facade: &moqui_core::entity::EntityFacade,
+    other_run: &str,
+    other_value_map: &str,
+) {
     {
         let _authz = context.disable_authz();
         let mut user = facade.make_value("moqui.security.UserAccount").unwrap();
@@ -440,8 +467,8 @@ fn authorization_is_on(context: &moqui_core::context::ExecutionContext, facade: 
     );
     assert_eq!(errors, "Not available", "{refused:?}");
 
-    // group membership: as an entity target it is refused at once; as a service target the run on the worker is the
-    // user's own, and the security rules refuse ADMIN_ADV to a user not in it
+    // group membership and the ETL's own rows: refused at once as an entity target, as an entity-auto service target,
+    // and through the entity-auto service itself
     let membership = |target_type: &str, target: &str| {
         csv_mapping(
             "dbresource://moqui/etl/test/admin-adv.csv",
@@ -453,17 +480,266 @@ fn authorization_is_on(context: &moqui_core::context::ExecutionContext, facade: 
             ],
         )
     };
-    let (queued, errors) = call_as_user(
-        "run#EtlMapping",
-        &[("mapping", membership("EtltEntity", "moqui.security.UserGroupMember"))],
+    for (target_type, target) in [
+        ("EtltEntity", "moqui.security.UserGroupMember"),
+        ("EtltService", "create#moqui.security.UserGroupMember"),
+        ("EtltEntity", "moqui.etl.EtlMappingField"),
+        ("EtltService", "update#moqui.etl.EtlMappingField"),
+        ("EtltService", "update#moqui.database.DatabaseConnection"),
+        ("EtltService", "delete#moqui.basic.Enumeration"),
+    ] {
+        let (queued, errors) = call_as_user("run#EtlMapping", &[("mapping", membership(target_type, target))]);
+        assert!(!errors.is_empty(), "{target}: {queued:?}");
+        assert!(!queued.contains_key("runId"), "{target}: {queued:?}");
+    }
+    let mark = moqui_core::context::ExecutionContext::with_current(|ec| ec.message().error_mark()).unwrap();
+    let planted = moqui_core::service::call::sync_with(
+        "update#moqui.etl.EtlMappingField",
+        &[
+            ("mappingId".to_string(), Value::string("X")),
+            ("fieldSeqId".to_string(), Value::string("000001")),
+            ("expression".to_string(), Value::string("1")),
+        ]
+        .into_iter()
+        .collect(),
+        &moqui_core::service::call::CallOptions::default(),
     );
-    assert!(errors.contains("not available"), "{errors} {queued:?}");
-    assert!(!queued.contains_key("runId"));
+    let messages = moqui_core::context::ExecutionContext::with_current(|ec| ec.message().take_errors_since(mark))
+        .unwrap_or_default()
+        .join("; ");
+    assert!(
+        planted.is_err() || messages.contains("written only by its own services"),
+        "{planted:?} {messages}"
+    );
+
+    // another user's run, its error file and value map are not this user's
+    let (other, errors) = call_as_user("get#EtlRun", &[("runId", Value::string(other_run))]);
+    assert!(errors.contains("no ETL run"), "{errors} {other:?}");
+    let (taken, errors) = call_as_user(
+        "run#EtlMapping",
+        &[
+            (
+                "mapping",
+                csv_mapping(
+                    "dbresource://moqui/etl/test/good.csv",
+                    "EtltEntity",
+                    "moqui.basic.Enumeration",
+                    vec![field(&[("targetField", "enumId"), ("sourceColumn", "Id")])],
+                ),
+            ),
+            ("wait", Value::Bool(true)),
+            ("runId", Value::string(other_run)),
+        ],
+    );
+    assert!(errors.contains("not a queued run of yours"), "{errors} {taken:?}");
+    let (map, errors) = call_as_user(
+        "store#EtlValueMap",
+        &[
+            ("valueMapId", Value::string(other_value_map)),
+            ("description", Value::string("taken")),
+        ],
+    );
+    assert!(errors.contains("owner"), "{errors} {map:?}");
+
+    // a view: a renamed password alias is left out of the grid and an ETL source, and refused in a lookup; a view
+    // over a restricted entity is refused
+    {
+        let _authz = context.disable_authz();
+        for (entity, fields) in [
+            (
+                "moqui.entity.view.DbViewEntity",
+                vec![("dbViewEntityName", "EtlUserPw"), ("packageName", "test.etl")],
+            ),
+            (
+                "moqui.entity.view.DbViewEntityMember",
+                vec![
+                    ("dbViewEntityName", "EtlUserPw"),
+                    ("entityAlias", "UA"),
+                    ("entityName", "moqui.security.UserAccount"),
+                ],
+            ),
+            (
+                "moqui.entity.view.DbViewEntityAlias",
+                vec![
+                    ("dbViewEntityName", "EtlUserPw"),
+                    ("fieldAlias", "userId"),
+                    ("entityAlias", "UA"),
+                    ("fieldName", "userId"),
+                ],
+            ),
+            (
+                "moqui.entity.view.DbViewEntityAlias",
+                vec![
+                    ("dbViewEntityName", "EtlUserPw"),
+                    ("fieldAlias", "pw"),
+                    ("entityAlias", "UA"),
+                    ("fieldName", "currentPassword"),
+                ],
+            ),
+        ] {
+            let mut row = facade.make_value(entity).unwrap();
+            for (name, value) in fields {
+                row.set(name, Value::string(value));
+            }
+            row.create(facade).unwrap();
+        }
+    }
+    let entity_source = |name: &str| {
+        let mut source = IndexMap::new();
+        source.insert("type".to_string(), Value::string("entity"));
+        source.insert("entityName".to_string(), Value::string(name));
+        Value::Map(source)
+    };
+    let (rows, errors) = grid("get#DataGridRows", &[("source", entity_source("EtlUserPw"))]);
+    assert!(errors.is_empty(), "{errors}");
+    let Some(Value::List(data)) = rows.get("data") else {
+        panic!("{rows:?}")
+    };
+    assert!(!data.is_empty(), "{rows:?}");
+    assert!(
+        data.iter()
+            .all(|row| matches!(row, Value::Map(row) if !row.contains_key("pw") && row.contains_key("userId"))),
+        "{rows:?}"
+    );
+    let mut conditions = IndexMap::new();
+    conditions.insert("pw".to_string(), Value::string("x"));
+    let mut conditioned = IndexMap::new();
+    conditioned.insert("type".to_string(), Value::string("entity"));
+    conditioned.insert("entityName".to_string(), Value::string("EtlUserPw"));
+    conditioned.insert("conditions".to_string(), Value::Map(conditions));
+    let (_, errors) = grid("count#DataGridRows", &[("source", Value::Map(conditioned))]);
+    assert!(errors.contains("takes no condition"), "{errors}");
+    let (_, errors) = grid(
+        "get#DataGridRows",
+        &[("source", entity_source("moqui.security.UserGroupMemberUser"))],
+    );
+    assert!(errors.contains("not available"), "{errors}");
+    let mut view_source = IndexMap::new();
+    view_source.insert("sourceTypeEnumId".to_string(), Value::string("EtlsEntity"));
+    view_source.insert("sourceEntityName".to_string(), Value::string("EtlUserPw"));
+    view_source.insert("targetTypeEnumId".to_string(), Value::string("EtltEntity"));
+    view_source.insert("targetName".to_string(), Value::string("moqui.basic.Enumeration"));
+    view_source.insert(
+        "fields".to_string(),
+        Value::List(vec![field(&[("targetField", "enumId"), ("sourceColumn", "userId")])]),
+    );
+    let (sample, errors) = call_as_user("check#EtlSample", &[("mapping", Value::Map(view_source.clone()))]);
+    assert!(errors.is_empty(), "{errors}");
+    let Some(Value::List(sampled)) = sample.get("rows") else {
+        panic!("{sample:?}")
+    };
+    assert!(!sampled.is_empty(), "{sample:?}");
+    assert!(
+        sampled.iter().all(|row| matches!(row, Value::Map(row)
+            if matches!(row.get("source"), Some(Value::Map(cells)) if !cells.contains_key("pw")))),
+        "{sample:?}"
+    );
+    view_source.insert(
+        "sourceEntityName".to_string(),
+        Value::string("moqui.security.UserGroupMemberUser"),
+    );
+    let (_, errors) = call_as_user("check#EtlSample", &[("mapping", Value::Map(view_source))]);
+    assert!(errors.contains("not available"), "{errors}");
+    let (_, errors) = call_as_user(
+        "check#EtlSample",
+        &[(
+            "mapping",
+            csv_mapping(
+                "dbresource://moqui/etl/test/good.csv",
+                "EtltEntity",
+                "moqui.basic.Enumeration",
+                vec![
+                    field(&[("targetField", "enumId"), ("sourceColumn", "Id")]),
+                    field(&[
+                        ("targetField", "description"),
+                        ("sourceColumn", "Name"),
+                        ("lookupEntityName", "EtlUserPw"),
+                        ("lookupMatchField", "userId"),
+                        ("lookupResultField", "pw"),
+                    ]),
+                ],
+            ),
+        )],
+    );
+    assert!(errors.contains("pw is not available"), "{errors}");
+
+    // a run on the worker is the user's own with authorization on: a user the Tools app allows, but whom an
+    // authorization denies the target entity, loads nothing there
+    {
+        let _authz = context.disable_authz();
+        let rows: Vec<(&str, Vec<(&str, &str)>)> = vec![
+            (
+                "moqui.security.UserAccount",
+                vec![("userId", "ETL_TOOLS_U"), ("username", "etl.tools"), ("disabled", "N")],
+            ),
+            ("moqui.security.UserGroup", vec![("userGroupId", "ETL_TOOLS_ONLY")]),
+            (
+                "moqui.security.UserGroupMember",
+                vec![("userGroupId", "ETL_TOOLS_ONLY"), ("userId", "ETL_TOOLS_U")],
+            ),
+            (
+                "moqui.security.ArtifactAuthz",
+                vec![
+                    ("artifactAuthzId", "ETL_TOOLS_ONLY_APP"),
+                    ("userGroupId", "ETL_TOOLS_ONLY"),
+                    ("artifactGroupId", "TOOLS_APP"),
+                    ("authzTypeEnumId", "AUTHZT_ALLOW"),
+                    ("authzActionEnumId", "AUTHZA_ALL"),
+                ],
+            ),
+            (
+                "moqui.security.ArtifactGroup",
+                vec![("artifactGroupId", "ETL_DENY_ENUM")],
+            ),
+            (
+                "moqui.security.ArtifactGroupMember",
+                vec![
+                    ("artifactGroupId", "ETL_DENY_ENUM"),
+                    ("artifactName", "moqui.basic.Enumeration"),
+                    ("artifactTypeEnumId", "AT_ENTITY"),
+                    ("inheritAuthz", "N"),
+                ],
+            ),
+            (
+                "moqui.security.ArtifactAuthz",
+                vec![
+                    ("artifactAuthzId", "ETL_DENY_ENUM_T"),
+                    ("userGroupId", "ETL_TOOLS_ONLY"),
+                    ("artifactGroupId", "ETL_DENY_ENUM"),
+                    ("authzTypeEnumId", "AUTHZT_DENY"),
+                    ("authzActionEnumId", "AUTHZA_ALL"),
+                ],
+            ),
+        ];
+        for (entity, fields) in rows {
+            let mut row = facade.make_value(entity).unwrap();
+            for (name, value) in fields {
+                row.set(name, Value::string(value));
+            }
+            if entity.ends_with("UserGroupMember") {
+                row.set("fromDate", Value::Timestamp(jiff::Timestamp::UNIX_EPOCH));
+            }
+            row.create(facade).unwrap();
+        }
+    }
+    write(
+        "dbresource://moqui/etl/test/denied.csv",
+        "Id,Type,Name\nEtlHost7,EtlHostType,Seven\n",
+    );
+    moqui_core::user::internal_login_user("etl.tools").unwrap();
     let (queued, errors) = call_as_user(
         "run#EtlMapping",
         &[(
             "mapping",
-            membership("EtltService", "create#moqui.security.UserGroupMember"),
+            csv_mapping(
+                "dbresource://moqui/etl/test/denied.csv",
+                "EtltEntity",
+                "moqui.basic.Enumeration",
+                vec![
+                    field(&[("targetField", "enumId"), ("sourceColumn", "Id")]),
+                    field(&[("targetField", "enumTypeId"), ("sourceColumn", "Type")]),
+                ],
+            ),
         )],
     );
     assert!(errors.is_empty(), "{errors}");
@@ -485,22 +761,24 @@ fn authorization_is_on(context: &moqui_core::context::ExecutionContext, facade: 
         );
         std::thread::sleep(Duration::from_millis(50));
     };
-    assert_eq!(to_plain_string(&run["statusId"]), "EtlrFailed", "{run:?}");
-    assert_eq!(to_plain_string(&run["loadCount"]), "0", "{run:?}");
-    // refused by the security rule, which runs only with authorization on
     let (detail, _) = call_as_user("get#EtlRun", &[("runId", Value::string(&run_id))]);
+    assert_eq!(to_plain_string(&run["statusId"]), "EtlrFailed", "{detail:?}");
+    assert_eq!(to_plain_string(&run["loadCount"]), "0", "{detail:?}");
+    // refused by the authorization, which the worker's call had disabled
     assert!(
         matches!(detail.get("errors"), Some(Value::List(rows)) if rows.iter().any(|row| matches!(row,
-            Value::Map(row) if to_plain_string(&row["message"]).contains("change membership of group ADMIN_ADV")))),
+            Value::Map(row) if to_plain_string(&row["message"]).contains("not authorized")))),
         "{detail:?}"
     );
     let _authz = context.disable_authz();
-    let added = facade
-        .find("moqui.security.UserGroupMember")
-        .unwrap()
-        .eq("userGroupId", Value::string("ADMIN_ADV"))
-        .eq("userId", Value::string("ETL_ADMIN_U"))
-        .list()
-        .unwrap();
-    assert!(added.is_empty(), "the run added the user to ADMIN_ADV: {run:?}");
+    assert!(
+        facade
+            .find("moqui.basic.Enumeration")
+            .unwrap()
+            .eq("enumId", Value::string("EtlHost7"))
+            .one()
+            .unwrap()
+            .is_none(),
+        "the run wrote what its user may not: {detail:?}"
+    );
 }

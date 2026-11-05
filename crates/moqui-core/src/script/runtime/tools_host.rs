@@ -2785,10 +2785,12 @@ fn get_available_time_zones<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>
 
 fn is_restricted_generic_entity(ctx: Ctx<'_>, name: Opt<JsValue<'_>>) -> rquickjs::Result<bool> {
     host_guard(&ctx, || {
-        Ok(crate::entity::sensitive::is_restricted_generic_entity(&text_or_empty(
-            &ctx,
-            name.0.as_ref(),
-        )?))
+        let name = text_or_empty(&ctx, name.0.as_ref())?;
+        // a view over a restricted entity is restricted too
+        Ok(match with_ec(&ctx, |ec| ec.factory().entity())? {
+            Some(facade) => crate::entity::sensitive::is_restricted_entity_or_view(&facade, &name),
+            None => crate::entity::sensitive::is_restricted_generic_entity(&name),
+        })
     })
 }
 

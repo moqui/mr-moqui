@@ -342,19 +342,33 @@ impl Mapping {
         self.fields.iter().any(|field| field.expression.is_some())
     }
 
-    /// Refuse what no mapping may reach ([`super::access`]): a restricted entity as the source, the target or a
-    /// lookup, and a `UserAccount` password field as a target field or a lookup's match or result field.
+    /// Refuse what no mapping may reach ([`super::access`]), by name: a restricted entity as the source, the target or
+    /// a lookup; a service target that deletes (`delete#`), or an entity-auto service (`verb#Entity`) of a restricted
+    /// entity; and a `UserAccount` password field as a target field or a lookup's match or result field. See
+    /// [`Self::validate_with`] for views.
     ///
     /// # Errors
     ///
     /// An error naming what is refused.
     pub fn validate(&self) -> Result<(), Error> {
-        use super::access::{is_secret_field, refuse_restricted};
+        use super::access::{is_secret_field, refuse_restricted, service_target_parts};
         if self.source_kind == SourceKind::Entity {
             refuse_restricted(&self.source_entity_name, "source")?;
         }
-        if self.target_kind == TargetKind::Entity {
-            refuse_restricted(&self.target_name, "target")?;
+        match self.target_kind {
+            TargetKind::Entity => refuse_restricted(&self.target_name, "target")?,
+            TargetKind::Service => {
+                let (verb, noun, entity_auto) = service_target_parts(&self.target_name);
+                if verb == "delete" {
+                    return Err(Error::new(format!(
+                        "{} deletes: no delete# service is an ETL target",
+                        self.target_name
+                    )));
+                }
+                if entity_auto {
+                    refuse_restricted(&noun, "target")?;
+                }
+            }
         }
         for field in &self.fields {
             if is_secret_field(&field.target_field) {
@@ -368,6 +382,42 @@ impl Mapping {
             }
             let lookup_fields = [&field.lookup_match_field, &field.lookup_result_field];
             if let Some(name) = lookup_fields.into_iter().flatten().find(|name| is_secret_field(name)) {
+                return Err(Error::new(format!("{name} is not available in an ETL lookup")));
+            }
+        }
+        Ok(())
+    }
+
+    /// [`Self::validate`], and what only the entity definitions tell: a view over a restricted entity as the source,
+    /// the target (also an entity-auto service's) or a lookup, and a lookup's match or result field that is a view's
+    /// alias of a `UserAccount` password field under another name.
+    ///
+    /// # Errors
+    ///
+    /// An error naming what is refused.
+    pub fn validate_with(&self, facade: &EntityFacade) -> Result<(), Error> {
+        use super::access::{refuse_restricted_view, secret_fields_of, service_target_parts};
+        self.validate()?;
+        if self.source_kind == SourceKind::Entity {
+            refuse_restricted_view(facade, &self.source_entity_name, "source")?;
+        }
+        match self.target_kind {
+            TargetKind::Entity => refuse_restricted_view(facade, &self.target_name, "target")?,
+            TargetKind::Service => {
+                let (_, noun, entity_auto) = service_target_parts(&self.target_name);
+                if entity_auto {
+                    refuse_restricted_view(facade, &noun, "target")?;
+                }
+            }
+        }
+        for field in &self.fields {
+            let Some(entity) = &field.lookup_entity_name else {
+                continue;
+            };
+            refuse_restricted_view(facade, entity, "lookup")?;
+            let secrets = secret_fields_of(facade, entity);
+            let lookup_fields = [&field.lookup_match_field, &field.lookup_result_field];
+            if let Some(name) = lookup_fields.into_iter().flatten().find(|name| secrets.contains(name)) {
                 return Err(Error::new(format!("{name} is not available in an ETL lookup")));
             }
         }
