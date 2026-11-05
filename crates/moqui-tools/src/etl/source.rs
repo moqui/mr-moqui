@@ -17,7 +17,8 @@
 //! find read a page at a time, a SQL query on an entity group's database run read only, and a flat record XML file.
 //! Each entry carries its row number under `ROW_NUMBER_KEY`. A file is read only from the places
 //! [`super::access`] allows; an entity source is not a restricted entity and its rows leave out the `UserAccount`
-//! password fields; a SQL source writes a `DbaSql` audit row.
+//! password fields; a SQL source reads an entity group's database or an external connection (`ext:<id>`, through
+//! [`crate::ext::gate`] and its pool, the one vague error on any refusal), read only, and writes a `DbaSql` audit row.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -356,28 +357,34 @@ pub fn open(facade: &EntityFacade, mapping: &Mapping, options: &SourceOptions) -
             })
         }
         SourceKind::Sql => {
-            let group = match DbRef::parse(&mapping.source_db, facade.default_group()) {
-                Ok(DbRef::Group(group)) => group,
-                Ok(DbRef::External(_)) => return Err(Error::new(crate::NOT_AVAILABLE)),
+            let limit = options.max_rows.unwrap_or(MAX_SQL_ROWS).min(MAX_SQL_ROWS);
+            let run_options = || moqui_core::entity::info::SqlRunOptions {
+                limit,
+                read_only: true,
+                ..Default::default()
+            };
+            let started = std::time::Instant::now();
+            // an entity group's database, or an external connection's through its gate (not a production instance,
+            // DATABASE_EXTERNAL, every refusal the one vague error) and its pool, read only either way
+            let (db_text, ran) = match DbRef::parse(&mapping.source_db, facade.default_group()) {
+                Ok(DbRef::Group(group)) => (
+                    DbRef::Group(group.clone()).text(),
+                    moqui_core::entity::info::run_sql_with(facade, &group, &mapping.source_sql, run_options()),
+                ),
+                Ok(DbRef::External(_)) => {
+                    let db = crate::group_db::GroupDb::resolve(facade, &mapping.source_db).map_err(Error::new)?;
+                    (
+                        db.db_text(),
+                        moqui_core::entity::info::run_sql_on(&db.tx, &db.dialect, &mapping.source_sql, run_options()),
+                    )
+                }
                 Err(message) => return Err(Error::new(message)),
             };
-            let limit = options.max_rows.unwrap_or(MAX_SQL_ROWS).min(MAX_SQL_ROWS);
-            let started = std::time::Instant::now();
-            let ran = moqui_core::entity::info::run_sql_with(
-                facade,
-                &group,
-                &mapping.source_sql,
-                moqui_core::entity::info::SqlRunOptions {
-                    limit,
-                    read_only: true,
-                    ..Default::default()
-                },
-            );
             crate::audit::record(
                 facade,
                 &crate::audit::AuditEntry {
                     action: "DbaSql",
-                    db: Some(DbRef::Group(group.clone()).text()),
+                    db: Some(db_text.clone()),
                     statement_text: Some(mapping.source_sql.clone()),
                     is_change: false,
                     rows_returned: ran.as_ref().ok().map(|result| result.records.len() as i64),
@@ -414,7 +421,7 @@ pub fn open(facade: &EntityFacade, mapping: &Mapping, options: &SourceOptions) -
                     start_row: options.start_row,
                 }),
                 headers,
-                resolved: format!("{} SQL", DbRef::Group(group).text()),
+                resolved: format!("{db_text} SQL"),
             })
         }
     }
