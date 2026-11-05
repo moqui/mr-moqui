@@ -152,44 +152,68 @@ fn may_change_owned(
     false
 }
 
-/// Sign in as the owner of the saved mapping `mapping_id`, for a run with no user (a cron ServiceJob): then the owner's
-/// own checks apply as for a run of theirs.
+/// The identity before an owner sign-in ([`sign_in_owner`]), put back when dropped: a later `run#EtlMapping` in the
+/// same job context signs in as its own mapping's owner.
+#[must_use = "dropping the guard signs the owner out"]
+struct OwnerSignIn(moqui_core::user::session::Identity);
+
+impl Drop for OwnerSignIn {
+    fn drop(&mut self) {
+        moqui_core::user::session::restore_identity(&self.0);
+    }
+}
+
+/// Sign in as the owner of the saved mapping `mapping_id`, for a ServiceJob's run with no user (a cron run of
+/// `job_name`): then the owner's own checks apply as for a run of theirs. The owner must be a `ServiceJobUser` of the
+/// job, so whoever writes a ServiceJob cannot run another user's mapping as that user. The account's own gate
+/// (disabled until a time, terminated, a password that must change or has expired) is the login's.
 ///
 /// # Errors
 ///
-/// The mapping is not there or has no owner, or the owner is not there or is disabled.
-fn sign_in_owner(facade: &EntityFacade, mapping_id: &str) -> Result<(), LibError> {
-    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    let Some(mapping) = facade.find(MAPPING)?.eq("mappingId", Value::string(mapping_id)).one()? else {
-        return Err(LibError::new(format!("no ETL mapping {mapping_id}")));
+/// The mapping is not there or has no owner, the owner is not a user of the job, or the owner may not sign in.
+fn sign_in_owner(facade: &EntityFacade, mapping_id: &str, job_name: &str) -> Result<OwnerSignIn, LibError> {
+    let username = {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let Some(mapping) = facade.find(MAPPING)?.eq("mappingId", Value::string(mapping_id)).one()? else {
+            return Err(LibError::new(format!("no ETL mapping {mapping_id}")));
+        };
+        let owner = mapping.get("ownerUserId").map(to_plain_string).unwrap_or_default();
+        if owner.is_empty() {
+            return Err(LibError::new(format!(
+                "ETL mapping {mapping_id} has no owner to run as"
+            )));
+        }
+        let job_user = facade
+            .find("moqui.service.job.ServiceJobUser")?
+            .eq("jobName", Value::string(job_name))
+            .eq("userId", Value::string(&owner))
+            .one()?;
+        if job_user.is_none() {
+            return Err(LibError::new(format!(
+                "The owner of ETL mapping {mapping_id} is not a user of ServiceJob {job_name}"
+            )));
+        }
+        let account = facade
+            .find("moqui.security.UserAccount")?
+            .eq("userId", Value::string(&owner))
+            .one()?;
+        let username = account
+            .and_then(|account| account.get("username").map(to_plain_string))
+            .unwrap_or_default();
+        if username.is_empty() {
+            return Err(LibError::new(format!(
+                "The owner of ETL mapping {mapping_id} is not a user"
+            )));
+        }
+        username
     };
-    let owner = mapping.get("ownerUserId").map(to_plain_string).unwrap_or_default();
-    if owner.is_empty() {
-        return Err(LibError::new(format!(
-            "ETL mapping {mapping_id} has no owner to run as"
-        )));
-    }
-    let account = facade
-        .find("moqui.security.UserAccount")?
-        .eq("userId", Value::string(&owner))
-        .one()?;
-    let Some(account) = account else {
-        return Err(LibError::new(format!(
-            "The owner of ETL mapping {mapping_id} is not a user"
-        )));
-    };
-    if account.get("disabled").map(to_plain_string).as_deref() == Some("Y") {
-        return Err(LibError::new(format!(
-            "The owner of ETL mapping {mapping_id} is disabled"
-        )));
-    }
-    let username = account.get("username").map(to_plain_string).unwrap_or_default();
-    if username.is_empty() {
-        return Err(LibError::new(format!(
-            "The owner of ETL mapping {mapping_id} has no username"
-        )));
-    }
-    moqui_core::user::internal_login_user(&username).map_err(|err| LibError::new(err.to_string()))
+    let restore = OwnerSignIn(moqui_core::user::session::identity());
+    moqui_core::user::internal_login_user(&username).map_err(|err| {
+        LibError::new(format!(
+            "The owner of ETL mapping {mapping_id} could not sign in: {err}"
+        ))
+    })?;
+    Ok(restore)
 }
 
 /// [`may_change_owned`] of a saved mapping.
@@ -375,28 +399,36 @@ fn end_status(outcome: &RunOutcome, check: bool) -> &'static str {
 /// `fieldName`, `message`, `row`), `errorLocation` (the error file), `failure`, and for a check `diff`.
 ///
 /// The run is the user's (also on the worker): authorization on for the run, its writes and its service calls, the
-/// Tools app's authorization for all actions checked again as the user. Called with no user signed in (a cron
-/// ServiceJob) and a `mappingId`, it runs as the mapping's owner ([`sign_in_owner`]); an inline mapping with no user is
-/// refused. Called from a job it runs here, as with `wait`, and the `EtlRun` names the job's run (`jobRunId`). With
-/// `wait` the caller's transaction is suspended, so batches commit.
+/// Tools app's authorization for all actions checked again as the user. Called from a ServiceJob with no user signed
+/// in (a cron run) and a `mappingId`, it runs as the mapping's owner ([`sign_in_owner`]) from the mapping's own source:
+/// `location` and `contentBytes` are ignored. An inline mapping there is refused. Called from a job it runs here, as
+/// with `wait`, and the `EtlRun` names the job's run (`jobRunId`). With `wait` the caller's transaction is suspended,
+/// so batches commit.
 pub(crate) fn run_etl_mapping(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
-    if current_user().is_empty() {
-        let mapping_id = text(parameters, "mappingId");
+    let mut parameters = parameters.clone();
+    let mut _owner = None;
+    if let Some(job_name) = moqui_core::service::current_job_name().filter(|_| current_user().is_empty()) {
+        let mapping_id = text(&parameters, "mappingId");
         if mapping_id.is_empty() {
-            tracing::error!("Refused an ETL run of an inline mapping with no user signed in");
+            tracing::error!(job = %job_name, "Refused an ETL run of an inline mapping with no user signed in");
             add_error("An ETL run of an inline mapping needs a signed-in user");
             return Ok(Out::new());
         }
-        if let Err(err) = sign_in_owner(facade, &mapping_id) {
-            tracing::error!(mapping = %mapping_id, error = %err, "Refused an ETL run with no user signed in");
-            add_error(err.to_string());
-            return Ok(Out::new());
+        match sign_in_owner(facade, &mapping_id, &job_name) {
+            Ok(signed_in) => _owner = Some(signed_in),
+            Err(err) => {
+                tracing::error!(job = %job_name, mapping = %mapping_id, error = %err, "Refused an ETL run with no user signed in");
+                add_error(err.to_string());
+                return Ok(Out::new());
+            }
         }
+        // the mapping's own source only: the job's writer does not pick what the owner's run reads
+        parameters.remove("location");
+        parameters.remove("contentBytes");
     }
-    let mut parameters = parameters.clone();
     if moqui_core::service::current_job_run_id().is_some() {
         // a job's run is already on a worker: run here, so the job's run ends with it
         parameters.insert("wait".to_string(), Value::Bool(true));
@@ -547,8 +579,9 @@ fn run_waiting(
             duration_ms: Some(i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX)),
             error_text: outcome.failure.clone(),
             detail_json: Some(format!(
-                r#"{{"runId":"{run_id}","mappingId":"{}","target":"{}","check":{check},"loaded":{},"errors":{}}}"#,
+                r#"{{"runId":"{run_id}","mappingId":"{}","target":"{}","jobName":{},"check":{check},"loaded":{},"errors":{}}}"#,
                 mapping.mapping_id.clone().unwrap_or_default(),
+                serde_json::to_string(&moqui_core::service::current_job_name()).unwrap_or_else(|_| "null".to_string()),
                 mapping.target_name,
                 outcome.load_count,
                 outcome.error_count

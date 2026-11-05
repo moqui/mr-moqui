@@ -99,7 +99,7 @@ pub use email_eca::{email_rule_count, run_email_rule, run_email_rules};
 pub use jobs::job_time_zone;
 #[cfg(test)]
 pub(crate) use jobs::send_job_error_notification;
-pub use jobs::{current_job_run_id, run_job_now, PassReport};
+pub use jobs::{current_job_name, current_job_run_id, in_job_run, run_job_now, PassReport};
 pub use pool::{start_pools, PoolStatus, RunnerStats, ServicePools};
 #[cfg(feature = "http")]
 pub use remote::shared_http_client;

@@ -49,8 +49,9 @@ along with this software (see the LICENSE.md file). If not, see
             EtlRun row has the counts (written every 1,000 rows), the status, the first 1,000 errors as EtlRunError rows
             and an error file of every failed row (errorLocation). A DbaEtlRun DatabaseAudit row is written, and a DbaSql
             row for a SQL source. A ServiceJob that calls this with a mappingId runs a mapping on a schedule: with no
-            user signed in (a cron run) as the mapping's owner, refused for a missing or disabled owner or an inline
-            mapping; from a job the run is done here, as with wait, and EtlRun.jobRunId names the job's run.</description>
+            user signed in (a cron run) as the mapping's owner, who must be a ServiceJobUser of the job, from the
+            mapping's own source (location and contentBytes ignored); refused for an owner who may not sign in or an
+            inline mapping. From a job the run is done here, as with wait, and EtlRun.jobRunId names the job's run.</description>
         <in-parameters>
             <parameter name="mappingId"/>
             <parameter name="mapping" type="Map"/>

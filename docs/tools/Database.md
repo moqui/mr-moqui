@@ -257,10 +257,17 @@ Mappings load files, SQL results and entity data into entities or services. The 
   - A cron run has no user signed in (see [Attack-Surface, Jobs](../security/Attack-Surface.md#jobs)), so the run signs
     in as the mapping's `ownerUserId` and then runs as that user. All of the owner's own checks apply: the Tools app,
     `GROOVY_SHELL_WEB`, `SQL_RUNNER_WEB`, the locations and the `ext:` gate.
-  - An owner that is missing or disabled is refused, with a logged error. An inline mapping with no user is refused.
+  - The owner must be a `ServiceJobUser` of the job. Whoever writes a `ServiceJob` otherwise could run another user's
+    mapping as that user.
+  - The run reads the mapping's own source: the job's `location` and `contentBytes` parameters are ignored.
+  - The owner signs in as any login does. A missing owner, an account that is disabled or terminated, and a password
+    that must change or has expired refuse the run, with a logged error. So an expired password fails the owner's
+    scheduled runs until it is changed. An inline mapping is refused.
+  - The sign-in lasts for the one run: the previous identity (none) comes back after it, so the next `run#EtlMapping`
+    in the same job signs in as its own mapping's owner.
   - A run-now of the job runs as its caller.
-  - A job's run is done on the job's own worker, as with `wait`, and its `EtlRun.jobRunId` names the `ServiceJobRun`
-    (`moqui_core::service::current_job_run_id`).
+  - A job's run is done on the job's own worker, as with `wait`. Its `EtlRun.jobRunId` names the `ServiceJobRun`
+    (`moqui_core::service::current_job_run_id`), and its `DbaEtlRun` audit row's detail names the `jobName`.
 - **`load#SpreadsheetEntity`** keeps its parameters and runs as an inline mapping in the caller's transaction, stopping
   at the first error.
 
@@ -349,7 +356,7 @@ cancel, table maintenance or entity sources.
 
 | Action | Needs |
 | --- | --- |
-| Open the Tools app and view activity, queries, tables, schema, settings and jobs | `TOOLS_APP` (`ADMIN`), checked by every service whatever calls it |
+| Open the Tools app and view activity, queries, tables, schema, settings and jobs | The Tools app's artifact authorization `TOOLS_APP` (`ADMIN`), checked by every service whatever calls it |
 | Grid reads and saves, Browse, Export | The app, plus the entity's own authorization through the entity-auto services. Restricted entities and views over them are refused |
 | ETL runs and checks, saving mappings, Data › Load, Snapshots | The app, authorized for all actions |
 | ETL expressions | `GROOVY_SHELL_WEB` (sealed; seeded on no group) |
