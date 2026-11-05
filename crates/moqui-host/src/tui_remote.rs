@@ -14,8 +14,10 @@
 
 //! `moqui tui --server <url>` (plans/archive/Screen-TUI-Impl.md 4.3): the terminal client of a running server, over HTTP. A
 //! level is `GET <path>?renderMode=tui`, a transition asks for JSON, and every request carries the `login_key` header.
-//! The login posts the password once to the REST `login` with `createLoginKey=true` and keeps only the key, in
-//! `~/.config/moqui/tui/<host>.toml` (mode 0600); a 401 later, an expired key above all, opens the login dialog again.
+//! The login posts the password once to the REST `login` with `createLoginKey=true` and a `deviceName`, so the key is in
+//! the user's device list where it can be revoked (`moqui_lib::remote_login`, shared with the desktop client), and
+//! keeps only the key, in `~/.config/moqui/tui/<host>.toml` (mode 0600); a 401 later, an expired key above all, opens
+//! the login dialog again.
 //! Plain `http://` is refused except to this machine.
 
 use std::path::PathBuf;
@@ -26,8 +28,10 @@ use std::time::Duration;
 
 use moqui_core::screen::RenderOutput;
 use moqui_lib::error::Error;
+use moqui_lib::reconnect::Backoff;
+use moqui_lib::remote_login::{form_body, SignIn};
 use moqui_lib::sync::lock;
-use moqui_tui::{CodeAsk, LinkError, PushSink, Sendable, Subscription};
+use moqui_tui::{LinkError, PushSink, Subscription};
 
 use crate::tui::{Ask, Link, Transport};
 
@@ -62,7 +66,13 @@ impl HttpLink {
     ///
     /// Returns an error for a url that does not parse, a scheme other than http(s), or `http://` to another machine.
     pub fn connect(server: &str, store: Option<PathBuf>) -> Result<Self, Error> {
-        let base = base_url(server)?;
+        Ok(Link::over(Http::new(base_url(server)?, store)?))
+    }
+}
+
+impl Http {
+    /// Requests to `base` (checked by [`base_url`]), with the key in `store` when there is one.
+    fn new(base: String, store: Option<PathBuf>) -> Result<Self, Error> {
         let client = reqwest::blocking::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(std::time::Duration::from_secs(TIMEOUT_SECONDS))
@@ -70,16 +80,14 @@ impl HttpLink {
             .build()
             .map_err(|err| Error::new(format!("HTTP client: {err}")))?;
         let login = store.as_deref().and_then(read_stored);
-        Ok(Link::over(Http {
+        Ok(Http {
             base,
             client,
             login: Arc::new(Mutex::new(login)),
             store,
-        }))
+        })
     }
-}
 
-impl Http {
     fn stored(&self) -> Option<Stored> {
         lock(&self.login).clone()
     }
@@ -229,100 +237,31 @@ impl Transport for Http {
     }
 
     fn login(&self, username: &str, password: &str, code: &str) -> Result<(), LinkError> {
-        let mut form = vec![
-            ("username", username),
-            ("password", password),
-            ("createLoginKey", "true"),
-        ];
-        if !code.is_empty() {
-            form.push(("code", code));
-        }
-        let url = format!("{}/rest/login", self.base);
-        let response = self
-            .client
-            .post(&url)
-            .header("Accept", "application/json")
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(form_body(&form))
-            .send()
-            .map_err(|err| LinkError::Remote(format!("{url}: {err}")))?;
-        let status = response.status().as_u16();
-        let text = response.text().unwrap_or_default();
-        let value: serde_json::Value = serde_json::from_str(&text).unwrap_or(serde_json::Value::Null);
-        let key = value.get("loginKey").and_then(serde_json::Value::as_str).unwrap_or("");
-        if status < 400 && value.get("loggedIn").and_then(serde_json::Value::as_bool) == Some(true) && !key.is_empty() {
-            let stored = Stored {
-                user: username.to_string(),
-                key: key.to_string(),
-            };
-            if let Some(path) = &self.store {
-                write_stored(path, &stored);
+        let device = device_name();
+        let signed =
+            moqui_lib::remote_login::sign_in(&self.client, &self.base, username, password, code, Some(&device))
+                .map_err(|err| LinkError::Remote(err.message().to_string()))?;
+        match signed {
+            SignIn::Key(key) => {
+                let stored = Stored {
+                    user: username.to_string(),
+                    key,
+                };
+                if let Some(path) = &self.store {
+                    write_stored(path, &stored);
+                }
+                *lock(&self.login) = Some(stored);
+                Ok(())
             }
-            *lock(&self.login) = Some(stored);
-            return Ok(());
+            SignIn::Code(ask) => Err(LinkError::Code(ask)),
         }
-        if status < 400 && value.get("secondFactorRequired").and_then(serde_json::Value::as_bool) == Some(true) {
-            return Err(LinkError::Code(code_ask(&value, !code.is_empty())));
-        }
-        let reason = ["errors", "error", "message"]
-            .iter()
-            .find_map(|name| value.get(*name).and_then(serde_json::Value::as_str))
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("HTTP {status}"));
-        Err(LinkError::Remote(reason))
     }
 
     /// `/rest/login` to pre-authenticate, then `sendOtp` in that session: its cookie and its CSRF token.
     fn send_code(&self, username: &str, password: &str, factor: &str) -> Result<String, LinkError> {
-        let url = format!("{}/rest/login", self.base);
-        let response = self
-            .client
-            .post(&url)
-            .header("Accept", "application/json")
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .body(form_body(&[("username", username), ("password", password)]))
-            .send()
-            .map_err(|err| LinkError::Remote(format!("{url}: {err}")))?;
-        if response.status().as_u16() >= 400 {
-            return Err(LinkError::Remote(format!("HTTP {}", response.status().as_u16())));
-        }
-        let cookies: Vec<String> = response
-            .headers()
-            .get_all("set-cookie")
-            .iter()
-            .filter_map(|value| value.to_str().ok())
-            .filter_map(|cookie| cookie.split(';').next())
-            .map(str::to_string)
-            .collect();
-        let token = response
-            .headers()
-            .get("x-csrf-token")
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or("")
-            .to_string();
-        let url = format!("{}/rest/sendOtp", self.base);
-        let response = self
-            .client
-            .post(&url)
-            .header("Accept", "application/json")
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .header("Cookie", cookies.join("; "))
-            .header("X-CSRF-Token", token)
-            .body(form_body(&[("factorId", factor)]))
-            .send()
-            .map_err(|err| LinkError::Remote(format!("{url}: {err}")))?;
-        let status = response.status().as_u16();
-        let value: serde_json::Value =
-            serde_json::from_str(&response.text().unwrap_or_default()).unwrap_or(serde_json::Value::Null);
-        let errors = ["errors", "error"]
-            .iter()
-            .find_map(|name| value.get(*name).and_then(serde_json::Value::as_str))
-            .filter(|text| !text.is_empty());
-        match errors {
-            Some(text) => Err(LinkError::Remote(text.to_string())),
-            None if status >= 400 => Err(LinkError::Remote(format!("HTTP {status}"))),
-            None => Ok(factor.to_string()),
-        }
+        moqui_lib::remote_login::send_code(&self.client, &self.base, username, password, factor)
+            .map_err(|err| LinkError::Remote(err.message().to_string()))?;
+        Ok(factor.to_string())
     }
 
     fn user(&self) -> Option<String> {
@@ -330,7 +269,7 @@ impl Transport for Http {
     }
 
     /// `/notws` with the login key, on a thread of its own that connects again after a drop, waiting longer each time
-    /// up to a minute. Before a login it only waits.
+    /// up to a minute, with jitter (`moqui_lib::reconnect`). Before a login it only waits.
     fn subscribe(&self, sink: PushSink) -> Option<Subscription> {
         let stop = Arc::new(AtomicBool::new(false));
         let http = self.clone();
@@ -363,19 +302,18 @@ impl<T: std::io::Read + std::io::Write> Duplex for T {}
 
 impl Http {
     fn push_loop(&self, sink: &PushSink, stop: &AtomicBool) {
-        let mut wait = Duration::from_secs(2);
+        let mut backoff = Backoff::new();
         while !stop.load(Ordering::Relaxed) {
             if self.stored().is_some() {
                 match self.listen(sink, stop) {
-                    Ok(()) => wait = Duration::from_secs(2),
+                    Ok(()) => backoff.reset(),
                     Err(err) => tracing::debug!("TUI notification socket: {err}"),
                 }
             }
-            let until = std::time::Instant::now() + wait;
+            let until = std::time::Instant::now() + backoff.next_wait(moqui_lib::reconnect::jitter());
             while !stop.load(Ordering::Relaxed) && std::time::Instant::now() < until {
                 std::thread::sleep(Duration::from_millis(200));
             }
-            wait = (wait * 2).min(Duration::from_secs(60));
         }
     }
 
@@ -437,49 +375,9 @@ impl Http {
     }
 }
 
-/// `a=1&b=x%20y`, as a form posts it.
-/// The factor info `/rest/login` answers for an account that needs a code, as the dialog's [`CodeAsk`].
-fn code_ask(value: &serde_json::Value, code_given: bool) -> CodeAsk {
-    let kinds: Vec<&str> = value
-        .get("factorTypeDescriptions")
-        .and_then(serde_json::Value::as_array)
-        .map(|list| list.iter().filter_map(serde_json::Value::as_str).collect())
-        .unwrap_or_default();
-    let sendable = value
-        .get("sendableFactors")
-        .and_then(serde_json::Value::as_array)
-        .map(|list| {
-            list.iter()
-                .filter_map(|factor| {
-                    let id = factor.get("factorId").and_then(serde_json::Value::as_str)?;
-                    let label = factor
-                        .get("factorOption")
-                        .and_then(serde_json::Value::as_str)
-                        .filter(|text| !text.is_empty())
-                        .unwrap_or(id);
-                    Some(Sendable {
-                        id: id.to_string(),
-                        label: label.to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let text = if code_given {
-        "Authentication code is not valid".to_string()
-    } else if kinds.is_empty() {
-        "Enter the authentication code".to_string()
-    } else {
-        format!("Enter the authentication code ({})", kinds.join(", "))
-    };
-    CodeAsk { text, sendable }
-}
-
-fn form_body<K: AsRef<str>, V: AsRef<str>>(pairs: &[(K, V)]) -> String {
-    let mut url = reqwest::Url::parse("http://form/").unwrap_or_else(|_| unreachable!("a fixed url parses"));
-    url.query_pairs_mut()
-        .extend_pairs(pairs.iter().map(|(key, value)| (key.as_ref(), value.as_ref())));
-    url.query().unwrap_or("").to_string()
+/// The name of this terminal's key in the user's device list.
+fn device_name() -> String {
+    format!("moqui tui on {}", crate::logging::host_name())
 }
 
 /// Remove the stored key of `server`, for `--forget`. Answers whether there was one.
@@ -497,41 +395,5 @@ pub fn forget(server: &str) -> Result<bool, Error> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn plain_http_is_for_this_machine_only() {
-        assert_eq!(base_url("http://localhost:8080/").unwrap(), "http://localhost:8080");
-        assert_eq!(base_url("https://erp.example.com").unwrap(), "https://erp.example.com");
-        assert_eq!(
-            base_url("https://erp.example.com/moqui/").unwrap(),
-            "https://erp.example.com/moqui"
-        );
-        assert!(base_url("http://127.0.0.1:8080").is_ok());
-        assert!(base_url("http://erp.example.com").is_err());
-        assert!(base_url("ftp://localhost").is_err());
-    }
-
-    #[test]
-    fn the_key_file_is_the_owners_alone() {
-        let dir = std::env::temp_dir().join(format!("moqui-tui-key-{}", std::process::id()));
-        let path = dir.join("moqui/tui/localhost_8080.toml");
-        let stored = Stored {
-            user: "john.doe".to_string(),
-            key: "abc123".to_string(),
-        };
-        write_stored(&path, &stored);
-        assert_eq!(read_stored(&path), Some(stored));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
-            assert_eq!(mode & 0o777, 0o600);
-        }
-        let _ = std::fs::remove_dir_all(&dir);
-        assert!(key_file("http://localhost:8080")
-            .unwrap()
-            .ends_with("moqui/tui/localhost_8080.toml"));
-    }
-}
+#[path = "tui_remote_tests.rs"]
+mod tests;
