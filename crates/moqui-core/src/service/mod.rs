@@ -81,7 +81,10 @@ pub use call::{
     ServiceFuture,
 };
 pub use define::load_definitions;
-pub use define::{check, configured_service_files, lint, reload as reload_definitions, ServiceReload};
+pub use define::{
+    check, configured_service_files, lint, reload as reload_definitions, reload_parsed as reload_parsed_definitions,
+    ReloadPhases, ServiceReload,
+};
 pub use define::{input_hints, input_rules, merge_param, ClientRule};
 pub use eca::{run_data_file_service, run_matched_eca, schedule_feed_receive, search_not_up};
 #[cfg(any(test, feature = "test-support"))]
