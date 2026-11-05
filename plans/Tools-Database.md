@@ -1,7 +1,9 @@
 # Tools: Database, Data and ETL
 
-November 5, 2026 — design and implementation plan; not implemented. Database administration, the data grid and ETL
-become the main part of the existing **Tools** app (`component://tools/screen/Tools.xml`, mounted as `tools`,
+November 5, 2026 — design and implementation plan. Steps 1–8 are built on the server side, with the Data, SQL,
+Schema and Database screens; the ETL, Settings and Connections screens and the grid's file source on the screen remain
+(the guide, [docs/tools/Database.md](../docs/tools/Database.md), says what was built). Database administration, the
+data grid and ETL become the main part of the existing **Tools** app (`component://tools/screen/Tools.xml`, mounted as `tools`,
 menu-index 99), whose screens are reorganized around them. They cover:
 
 - the database administration tasks MR Moqui can do on the embedded Postgres, an external Postgres, MySQL 8 and

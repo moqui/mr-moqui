@@ -91,6 +91,27 @@ Stop the server when the client exits (its standard input is the terminal). The 
 | Multipart upload: `MZ` and a `#!` script are rejected; a ZIP is accepted | A02 | `SecurityHeaders` |
 | Screen tarpit and the `sec.tap.user` transition tarpit are 429 | A01 | `SecurityTarpit` (production conf; skips under `--serve`) |
 
+### Tools database rules
+
+These are server-side proofs, not client specs: framework specs (`./moq test framework --spec Name`, `./moq test tools
+--spec Name`), crate tests (`cargo test -p moqui-tools`) and embedded-cluster host tests (`cargo test -p moqui-host
+--test it -- name`). The rules are in [Attack-Surface, Tools and System](Attack-Surface.md#tools-and-system) and
+[Database](../tools/Database.md).
+
+| Control | Test |
+| --- | --- |
+| SQL is read only by default; a write is refused by the database; a write with Allow Changes needs the one-time token, for the same user, once; on production the database name is typed; every statement is audited, a failed one too; Explain Analyze of a write needs the token and is rolled back; cancel stops a running statement, and another user may not cancel it | `sql_runs_are_read_only_by_default_confirmed_audited_and_cancelled` (`crates/moqui-tools/src/sql_tests.rs`); `SqlServices` "a read-only run returns rows … a write needs the confirmation" |
+| SQL needs `SQL_RUNNER_WEB`, and with authorization on the service asks for all actions on the Tools app | `SqlServices` "a user without SQL_RUNNER_WEB …", "with authorization on, the service itself asks …" |
+| Transaction control is refused, and statements that cannot run in a transaction are known | `statements_that_cannot_run_in_a_transaction_or_control_one_are_known_by_their_first_words` (`sql_tests.rs`) |
+| An external database is refused on a production instance with the vague error, and used on a dev instance through a connection row | `sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses_it` (`crates/moqui-host/tests/it/database_external.rs`) |
+| Grid secrets: password fields stay out through a view, also renamed (`pw`), and take no condition or sort; a view with a restricted member (`UserAccountAndGroup`) is refused; restricted entities are refused for reading and saving | `DataGrid` (framework) "secrets stay out through a view, renamed or not …", "a restricted entity is refused …" |
+| Grid exports go only to the user's own places unless `DATABASE_ADMIN`; a SQL grid view needs SQL rights; a download of another user's export is refused | `DataGrid` (framework) "an export goes to the user's own place …", "a grid view of SQL is stored only by a user who may run SQL …"; `DataGrid` (tools) "an export download is refused …" |
+| A view alias that renames a password field is secret, and `UserGroupMemberUser` is restricted | `a_view_that_renames_a_password_or_reads_a_restricted_entity_is_caught` (`crates/moqui-entity/src/entity/tests.rs`) |
+| ETL runs as the user: a worker run denied the target entity loads nothing; the ETL rows, `DatabaseConnection`, group membership and `delete#` targets are refused, also through `update#moqui.etl.EtlMappingField`; another user's run, run id and value map are refused | `a_saved_mapping_is_checked_run_as_a_job_and_rolled_back_on_a_bad_file` (`crates/moqui-host/tests/it/etl_runs.rs`), and `service_targets_that_delete_or_reach_restricted_entities_are_refused` (`crates/moqui-tools/src/etl/run_tests.rs`) |
+| ETL expressions need `GROOVY_SHELL_WEB` to save, run and evaluate; locations outside the allowed places are "Not available"; `${}` takes only the date tokens; a password lookup is refused | `etl_runs.rs` (above); `the_transformer_maps_looks_up_formats_and_evaluates` (`run_tests.rs`); `a_location_expands_only_its_date_tokens`, `only_the_import_places_are_readable_without_a_user` (`crates/moqui-tools/src/etl/access.rs`) |
+| A load-wrap on a worker runs as the user: an ADMIN not in `ADMIN_ADV` cannot load an `ADMIN_ADV` membership, and `runAsUser` restores the caller's authorization state | `LoadWrap` (tools) |
+| A database job is cancelled through its recorded backend, leaves an invalid index, and its rerun drops and builds it again | `a_concurrent_index_job_runs_is_cancelled_through_the_backend_and_runs_again` (`crates/moqui-host/tests/it/database_jobs.rs`) |
+
 HMAC signing in the client is `hmac.sha256Base64` and `hmac.sha256Timestamp` ([Client-Testing](../dev/Client-Testing.md)). They match `SmatHmacSha256` and `SmatHmacSha256Timestamp`.
 
 ### Not applicable

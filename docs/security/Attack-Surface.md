@@ -51,7 +51,7 @@ A report query is authorized on its dataset (`org.moqui.report.dataset.<id>`, pl
 
 The proxy permissions are `SearchRemote` and `DashboardRemote`. Both are seeded on `ADMIN`.
 
-`AgentTypeData.xml` defines `AgentUse`, `AgentAdmin`, `AgentAudit`, `LlmGatewayUse`, `A2aServerUse`, `McpServerUse`, and `AgentSkillAuthor`. The `ADMIN` grant rows in that file are `AgentUse`, `AgentAdmin`, and `AgentSkillAuthor`. `A2aServerUse`, `McpServerUse`, and `LlmGatewayUse` are not among those rows. `AgentAudit` is not among them either. `SecurityTypeData.xml` grants `SQL_RUNNER_WEB`, `SSH_SHELL`, `SERVICE_LOAD_RUNNER`, and `ADMIN_LOGIN_AS` to `ADMIN_ADV`, and `ADMIN_PASSWORD` to `ADMIN`. The obsolete `GROOVY_SHELL_WEB` permission is no longer seeded or used by a screen; its name remains sealed for pre-existing database rows.
+`AgentTypeData.xml` defines `AgentUse`, `AgentAdmin`, `AgentAudit`, `LlmGatewayUse`, `A2aServerUse`, `McpServerUse`, and `AgentSkillAuthor`. The `ADMIN` grant rows in that file are `AgentUse`, `AgentAdmin`, and `AgentSkillAuthor`. `A2aServerUse`, `McpServerUse`, and `LlmGatewayUse` are not among those rows. `AgentAudit` is not among them either. `SecurityTypeData.xml` grants `SQL_RUNNER_WEB`, `SSH_SHELL`, `SERVICE_LOAD_RUNNER`, and `ADMIN_LOGIN_AS` to `ADMIN_ADV`, and `ADMIN_PASSWORD` to `ADMIN`. `GROOVY_SHELL_WEB` is seeded on no group. No screen uses it; it is the "may run scripts" grant that an ETL mapping's `expression` fields need ([Database](../tools/Database.md#etl)).
 
 ## Cross-cutting controls
 
@@ -250,11 +250,30 @@ Tools' SQL, Service Run, Data Load, Data Snapshots, and `qzSign` are designed pr
 
 | Screen | Check |
 | --- | --- |
-| `Tools/Sql.xml` (a statement, or a script) | `SQL_RUNNER_WEB` |
+| `Tools/Sql.xml` (a statement, or a script) | `SQL_RUNNER_WEB`, and all actions on the Tools app; the SQL services check both whatever calls them. Read only unless Allow Changes and a one-time token from `classify#Sql`; on production the database name is typed too |
+| `Tools/Data/Grid.xml` | The entity's own authorization through the entity-auto services. A SQL source, and a saved view of one, need what SQL needs |
+| `Tools/Database/*`, `Tools/Schema/*` (cancel or end a session, DDL and maintenance jobs, stats resets) | `DATABASE_ADMIN` (`ADMIN_ADV`). A job is only a plan the server made; no service takes job statement text |
+| `db=ext:…` on any database service, and the connection services | `DATABASE_EXTERNAL` (`ADMIN_ADV`), and not a production instance; the refusal is one vague "Not available" |
+| ETL (`org.moqui.impl.EtlServices`) | All actions on the Tools app, checked again as the user on the worker; `GROOVY_SHELL_WEB` for a mapping with an `expression`; `SQL_RUNNER_WEB` for a SQL source; files only from the user's uploads, `dbresource://moqui/etl/` and `runtime://import/` (any `dbresource://` with `DATABASE_ADMIN`) |
 | `Tools/Service/ServiceLoadRunner.xml` | `SERVICE_LOAD_RUNNER` |
 | `Tools/dashboard.xml` | shows SQL and service load runner links only with their respective permissions |
 | `System/Llm.xml` | `AgentAdmin`, or the screen returns an error. The comment says every screen under it needs `AgentAdmin`. |
 | `System/Security/UserAccount/UserAccountDetail.xml` | `ADMIN_LOGIN_AS` for login-as, and a different username |
+
+The Tools database sections ([Database](../tools/Database.md), `crates/moqui-tools/`) add these rules:
+
+- **Audit entities.** `DatabaseAudit`, `SqlRunToken`, `DatabaseConnection` and the `moqui.etl` mapping, value map and
+  run entities are read and written only by their own services. The generic tools, entity REST and Service REST,
+  request loads, ETL targets and every entity-auto service refuse them (`AUDIT_ENTITY_KEYS` and `run_entity`'s check,
+  `crates/moqui-entity/src/entity/sensitive.rs`, `crates/moqui-core/src/service/call.rs`). An ETL `expression` runs as
+  the mapping's user, so a generic write to a mapping would plant a script.
+- **Views by origin.** `sensitive::is_restricted_entity_or_view` treats a view as restricted when any member is
+  (`UserAccountAndGroup`, `UserGroupMemberUser`). `sensitive::secret_fields` follows each view alias to its member
+  field, so an alias that renames a `UserAccount` password field is a secret too. The grid, ETL sources and lookups,
+  entity REST finds and results, Service REST entity results and the JS `isRestrictedGenericEntity` use both.
+- **No dummy parents in restricted entities.** A load with dummy foreign keys fails rather than create one.
+- **External databases** keep the password encrypted, never return it, and clear it when the host, port, user, type or
+  TLS settings change. An empty `sslMode` is `verify-full` for a host that is not loopback.
 
 ### Component deploy and conf reload
 
@@ -758,6 +777,8 @@ The scheduler is a thread in this process. `scheduled_job_check_time` is 60 seco
 
 Scheduled cron jobs do not log in a user and do not run with artifact authorization. That is the scheduler's default. `dispatch` leaves `user_name` empty unless the row is an overflow queue (`ASYNC_QUEUE_`). `run_job` calls `internal_login_user` only when that name is set, then calls the service with authorization disabled. `ServiceJobUser` is who gets the completion or error notification. It is not the identity the job runs as. An explicit run-now logs in as the caller, and a queued fire-and-forget call logs in as the original caller, and both still disable authorization for the call. One job's error is logged and recorded. It does not stop the scheduler.
 
+Two worker paths turn authorization back on as the user. `run#EtlMapping` calls `etl::access::run_as_user` (`crates/moqui-tools/src/etl/access.rs`): it requires authorization again and pushes the Tools screen, checked for all actions as the user, so the run's writes and service calls run the entity ECAs and the privileged-group and sealed-permission rules. The `DatabaseLoadWrap` job does the same from script with `ec.artifactExecution.runAsUser(location, body)` (`tools_host.rs`). A cron run has no user, so both refuse it. `run#DatabaseJob` on a worker re-checks `DATABASE_ADMIN` and runs only server-made plans as raw SQL, with authorization off.
+
 | Job | Seed state | Service |
 | --- | --- | --- |
 | `poll_EmailServer_frequent` | paused | `poll#EmailServer` |
@@ -807,8 +828,10 @@ A public demo breaks one rule above on purpose: it loads the demo users, and any
 `ADMIN`. The demo component (`runtime/dev-component/demo`, loaded by `runtime/conf/MoquiDemoConf.xml`) narrows what
 that login reaches:
 
-- Tools' SQL, Data Load, Export and Snapshots, Database Speed Test and Connections, Service Run and Service Load
-  Runner are replaced by a screen that says they are disabled.
+- Tools' SQL, Data Load, Export and Snapshots, Database Speed Test, Activity, Queries and Connections, Service Run
+  and Service Load Runner are replaced by a screen that says they are disabled. Activity and Queries show every
+  session's statements. Plans, jobs, maintenance and resets are refused by the VIEW-only authorization and the missing
+  `DATABASE_ADMIN`.
 - `ADMIN` is VIEW-only on Tools, System, Monitor, `/moqui`, EntitySync and SystemMessage receive, `/resources` (so refused: `run` is not a view verb), git repositories,
   report git sync and report webhooks. It loses `SearchRemote`, `DashboardRemote`, `ADMIN_PASSWORD`, `SSH_SFTP`,
   `SSH_GIT`, `MONITOR_INGEST` and `REPORT_SAVE_LOCATION`. `john.doe` leaves `ADMIN_ADV`.
@@ -844,6 +867,12 @@ This file maps the surface. It does not prove the controls. The proof catalog is
 ## Open questions
 
 These are gaps in this pass. A line that was read is stated above and is not repeated here.
+
+- **Known open risk: data document expressions.** Anyone who can write `moqui.entity.document.DataDocumentField` can
+  store an expression. That expression is JavaScript, run as whoever reads the document (the grid, exports, feeds,
+  reports). Its context no longer holds the view's encrypted fields or `UserAccount` password material
+  (`expression_hidden`, `crates/moqui-entity/src/entity/field_rw.rs`), but it can still call `ec`. Whether to gate
+  these writes, as ETL expressions are gated on `GROOVY_SHELL_WEB`, is not decided.
 
 - `emailOAuth.xml` `callback` and `sso.xml` `login`, `callback`, and `logout` were not fully read. The screens are `require-authentication="false"`, and those transitions are `require-session-token="false"` and read-only.
 - `ScreenTreeNested.xml` is `require-authentication="false"` under `ScreenTree.xml`, which is required. `check_authentication` uses every screen in `render_defs()`. Whether a direct URL always includes the parent was not traced.

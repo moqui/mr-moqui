@@ -54,6 +54,19 @@ Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md
 | Pull | Scrape targets have no relabeling, extra labels, basic auth or service discovery, and OpenMetrics exemplars are ignored; checks are single HTTP requests (no TCP, DNS, certificate expiry or multi-step flows) from this server only; a check that calls an unsampled page of this same server loses its CLIENT child (the page's SERVER span decides the trace first) | `telemetry/scrape.rs`, `telemetry/mod.rs` |
 | Patterns, AI | Log patterns group the newest 1,000 matching lines (the documents page cap), and a pattern narrows the search by its constant words as phrases, which can match a little more than the pattern; Monitor › AI groups the newest 1,000 LLM calls, and spans carry no cost (System › LLM › Usage has it) | `report/patterns.rs`, `Monitor/AgentTraces.xml` |
 
+## Tools: database, data and ETL
+
+Plan [Tools-Database](Tools-Database.md); guide [Database](../docs/tools/Database.md).
+
+| Area | Item | Source |
+|---|---|---|
+| Screens | The ETL screens (mappings, a mapping's fields, runs, value maps, "Load into…" from the grid), Database › Settings and Connections, and the grid's file source and upload on the screen; their services are built | Tools-Database §10.4, §4.3, §4.4, §9.1 |
+| Spreadsheet features | IronCalc (after its spike), column and footer formulas, free cells, formulas kept from imported files | Tools-Database §12 |
+| Deferred | Saving grid edits to an external database's tables; SQL on the embedded cluster as a role of its own without superuser, so the read-only path is also a sandbox; query stats from every cluster member in one list; a "skip failed rows" load with a savepoint per row | Tools-Database §12 |
+| Scheduled ETL | A cron `ServiceJob` runs with no user, and `run#EtlMapping` refuses a run with no user; scheduled mappings need a run-as user for jobs | `crates/moqui-tools/src/etl/access.rs`, `service/jobs.rs` |
+| MySQL jobs | The MySQL and MariaDB job runner paths (lock wait timeout and retries, stage progress, `sys.innodb_lock_waits` and `INNODB_LOCK_WAITS`, `KILL QUERY` cancel by connection id) have never run against a server; the host tests run on Postgres only | `crates/moqui-tools/src/jobs.rs`, `crates/moqui-host/tests/it/database_jobs.rs` |
+| DataDocument expressions | Anyone who can write `moqui.entity.document.DataDocumentField` can store an expression, which is JavaScript run as whoever reads the document; its context holds no encrypted or password fields but can call `ec`. Gating these writes (as ETL expressions are on `GROOVY_SHELL_WEB`) is undecided | [Attack-Surface, Open questions](../docs/security/Attack-Surface.md#open-questions), `crates/moqui-entity/src/entity/field_rw.rs` |
+
 ## Maps
 
 Initial design, not built: [Maps](Maps.md) owns the OpenLayers Tools app, shared full-screen and local-map interface,
