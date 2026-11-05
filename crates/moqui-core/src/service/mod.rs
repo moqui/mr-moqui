@@ -98,7 +98,7 @@ pub use jobs::{run_job_now, PassReport};
 pub use pool::{start_pools, PoolStatus, RunnerStats, ServicePools};
 #[cfg(feature = "http")]
 pub use remote::shared_http_client;
-pub use request_pool::{caps, check_serve_caps, spare_connections, RequestPool};
+pub use request_pool::{caps, check_serve_caps, spare_connections, transfer_readers, transfer_workers, RequestPool};
 #[cfg(test)]
 pub(crate) use rest::install;
 #[cfg(any(test, feature = "test-support"))]

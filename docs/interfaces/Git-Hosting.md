@@ -380,7 +380,7 @@ and `gc#ContentBlobs` (`org.moqui.impl.ResourceServices`, the `gc_ContentBlobs_d
 row refers to and that were not written or referenced again in the last `resource-facade` `blob-gc-prune-days` (14) days.
 
 File responses stream (`sendResourceResponse`, a screen's static files): a file over 256 KiB is read a window at a time
-as the client takes it, on a thread of its own (at most `webapp` `transfer-workers`, 16, reading the database at once), so
+as the client takes it, on a thread of its own (at most `webapp` `transfer-workers`, 16, reading the database at once, fewer when the content pool cannot hold them), so
 a slow download holds no request worker. One `Range` is answered from the bytes it names, with `ETag` (a git file's
 blob id, a content blob's SHA-256) and `If-Range`. Only text types are compressed. An upload is read as it arrives: a
 file part over 256 KiB goes to a file in `runtime/tmp/upload`, and from there to its storage (a content blob, a git

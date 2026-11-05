@@ -84,6 +84,24 @@ pub struct PoolStats {
     pub checkouts: u64,
 }
 
+/// Running totals of how checkouts waited, for measuring admission under load (`plans/High-Level-Review.md` HL-022).
+/// Every return or loss of a connection wakes all waiters; `woken` adds up how many each time.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PoolCounters {
+    /// Wakeups sent: a connection returned, discarded, or a connect or test that failed.
+    pub notifies: u64,
+    /// Waiters those wakeups reached, the waiters at each one added up.
+    pub woken: u64,
+    /// Times a checkout began to wait, a waiter woken with nothing to take counted again.
+    pub waits: u64,
+    /// Checkouts that waited at least once before they got a connection.
+    pub waited_checkouts: u64,
+    /// The most ordinary connections checked out or parked at once.
+    pub ordinary_high: u32,
+    /// The most reserve connections checked out at once.
+    pub reserve_high: u32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Class {
     Ordinary,
@@ -102,6 +120,7 @@ struct State {
     testing_ordinary: u32,
     testing_reserve: u32,
     checkouts: u64,
+    counters: PoolCounters,
     /// When a connection was last found dead (its server restarted, or a proxy or NAT dropped it). Every connection
     /// that went idle before then is tested before it is handed out, however recently: the others are likely dead too.
     lost_at: Option<Instant>,
@@ -134,6 +153,12 @@ impl State {
 
     fn checked_out(&self) -> u32 {
         self.ordinary_out + self.reserve_out
+    }
+
+    /// Counts a wakeup of every waiter, sent once the lock is released.
+    fn note_wake(&mut self) {
+        self.counters.notifies += 1;
+        self.counters.woken += u64::from(self.waiting);
     }
 }
 
@@ -314,6 +339,7 @@ impl Pool {
                     testing_ordinary: 0,
                     testing_reserve: 0,
                     checkouts: 0,
+                    counters: PoolCounters::default(),
                     lost_at: None,
                 }),
                 available: Condvar::new(),
@@ -367,6 +393,11 @@ impl Pool {
         }
     }
 
+    /// The wait and wakeup totals since the pool was made.
+    pub fn counters(&self) -> PoolCounters {
+        lock(&self.inner.state).counters
+    }
+
     pub(super) fn checkout_ordinary(&self) -> Result<PooledConn, Error> {
         self.acquire(Class::Ordinary)
     }
@@ -385,7 +416,8 @@ impl Pool {
         let mut budget: Option<usize> = None;
         let mut failed_test: Option<Error> = None;
         let started = Instant::now();
-        loop {
+        let mut waited = false;
+        let result = loop {
             let (step, expired) = {
                 let mut state = lock(&self.inner.state);
                 let mut expired = self.take_expired(&mut state);
@@ -399,11 +431,11 @@ impl Pool {
             };
             drop(expired);
             match step {
-                Step::Ready(tracked) => return Ok(self.wrap(tracked, class)),
+                Step::Ready(tracked) => break Ok(self.wrap(tracked, class)),
                 Step::Test(tracked) => match test_connection(tracked, self.inner.config.test_sql()) {
                     Ok(tracked) => {
                         self.finish_test(class, true);
-                        return Ok(self.wrap(tracked, class));
+                        break Ok(self.wrap(tracked, class));
                     }
                     Err((tracked, err)) => {
                         self.finish_test(class, false);
@@ -419,22 +451,27 @@ impl Pool {
                         Err(err) => {
                             self.mark_creating(class, false);
                             self.inner.available.notify_all();
-                            return Err(unavailable(err));
+                            break Err(unavailable(err));
                         }
                     };
                     // A successful connect already established a live session. Let the caller's
                     // metadata query or application work be its first SQL, as on Java startup.
                     self.finish_create(class);
-                    return Ok(self.wrap(tracked, class));
+                    break Ok(self.wrap(tracked, class));
                 }
                 Step::Wait => {
+                    waited = true;
                     if !self.wait_for_return(started)? {
-                        return Err(unavailable(Error::new("timed out waiting for a connection")));
+                        break Err(unavailable(Error::new("timed out waiting for a connection")));
                     }
                 }
-                Step::Fail(err) => return Err(unavailable(failed_test.take().unwrap_or(err))),
+                Step::Fail(err) => break Err(unavailable(failed_test.take().unwrap_or(err))),
             }
+        };
+        if waited && result.is_ok() {
+            lock(&self.inner.state).counters.waited_checkouts += 1;
         }
+        result
     }
 
     fn wait_for_return(&self, started: Instant) -> Result<bool, Error> {
@@ -456,6 +493,7 @@ impl Pool {
         {
             let mut state = lock(&self.inner.state);
             state.waiting += 1;
+            state.counters.waits += 1;
             publish(&state, Duration::ZERO);
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -517,6 +555,7 @@ impl Pool {
                 hand_out(&mut state, class);
             } else {
                 state.lost_at = Some(Instant::now());
+                state.note_wake();
             }
             publish(&state, Duration::ZERO);
         }
@@ -528,6 +567,9 @@ impl Pool {
     fn mark_creating(&self, class: Class, starting: bool) {
         let mut state = lock(&self.inner.state);
         adjust_creating(&mut state, class, starting);
+        if !starting {
+            state.note_wake();
+        }
         publish(&state, Duration::ZERO);
     }
 
@@ -544,7 +586,9 @@ impl Pool {
                 tracing::debug!(error = %err, "rollback before returning a connection failed");
                 let mut state = lock(&self.inner.state);
                 release_hold(&mut state, class, parked);
+                state.note_wake();
                 publish(&state, Duration::ZERO);
+                drop(state);
                 self.inner.available.notify_all();
                 return;
             }
@@ -557,6 +601,7 @@ impl Pool {
             Class::Reserve => state.reserve_idle.push(tracked),
         }
         let expired = self.take_expired(&mut state);
+        state.note_wake();
         publish(&state, Duration::ZERO);
         drop(state);
         self.inner.available.notify_all();
@@ -591,6 +636,7 @@ impl Pool {
         if lost {
             state.lost_at = Some(Instant::now());
         }
+        state.note_wake();
         publish(&state, Duration::ZERO);
         drop(state);
         self.inner.available.notify_all();
@@ -809,8 +855,15 @@ fn adjust_creating(state: &mut State, class: Class, starting: bool) {
 
 fn hand_out(state: &mut State, class: Class) {
     match class {
-        Class::Ordinary => state.ordinary_out += 1,
-        Class::Reserve => state.reserve_out += 1,
+        Class::Ordinary => {
+            state.ordinary_out += 1;
+            let held = state.ordinary_out + state.parked;
+            state.counters.ordinary_high = state.counters.ordinary_high.max(held);
+        }
+        Class::Reserve => {
+            state.reserve_out += 1;
+            state.counters.reserve_high = state.counters.reserve_high.max(state.reserve_out);
+        }
     }
     state.checkouts += 1;
 }

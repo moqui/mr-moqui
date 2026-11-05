@@ -30,6 +30,9 @@ use crate::context::{Error, ErrorKind, ExecutionContextFactory};
 const DEFAULT_REQUEST_WORKERS: u32 = 8;
 const DEFAULT_REQUEST_QUEUE: u32 = 64;
 const DEFAULT_SERVICE_WORKERS: u32 = 32;
+const DEFAULT_TRANSFER_WORKERS: u32 = 16;
+/// An entity of the `content` group: its manager is the pool streamed database downloads read from.
+const CONTENT_ENTITY: &str = "moqui.resource.ContentBlobChunk";
 
 /// Factory-owned request workers. [`RequestPool::idle`] starts no threads.
 ///
@@ -194,16 +197,81 @@ pub fn caps(conf_text: &str) -> (u32, u32) {
 /// to it (a database of its own that each transaction spans, such as `content`), with room for one agent worker more
 /// in a binary that links the agent runtime (crate::llm_hooks): the agent pool takes as many of its
 /// `max-concurrent-runs` as the rest of the pool leaves ([`spare_connections`]), at least one.
+///
+/// The pool the `content` group reads from also holds a connection for each streamed database download reading a
+/// window ([`transfer_readers`]). When the webapp's `transfer-workers` do not fit beside the workers and the agent
+/// worker, this warns and the downloads read fewer at once, at least one (`plans/High-Level-Review.md` HL-022).
 pub fn check_serve_caps(factory: &ExecutionContextFactory) -> Result<(), Error> {
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
     let (request_cap, service_cap) = caps(&factory.conf_text());
-    let agent_workers = u32::from(crate::llm_hooks::linked());
+    let agent_workers = agent_workers();
     for (group, manager) in linked_managers(&facade)? {
         manager
             .check_caps_with(request_cap, service_cap, agent_workers)
             .map_err(|err| Error::new(format!("datasource {group}: {err}")))?;
     }
+    let asked = transfer_workers(factory);
+    let fits = transfer_readers(factory);
+    if fits < asked {
+        let (group, manager) = content_manager(&facade)?;
+        let left = manager.spare_connections(request_cap, service_cap);
+        tracing::warn!(
+            "datasource {group}: the {asked} transfer-workers of webapp webroot do not fit: max - reserve less \
+             ({request_cap} + {service_cap}) * 2 leaves {left}, {agent_workers} of them for an agent worker; streamed \
+             database downloads read {fits} at a time (raise pool-maxsize to fit them)"
+        );
+    }
     Ok(())
+}
+
+/// One agent worker in a binary that links the agent runtime, else none.
+fn agent_workers() -> u32 {
+    u32::from(crate::llm_hooks::linked())
+}
+
+/// The `webroot` webapp's `transfer-workers`: how many reads of database sources streamed responses may run at once,
+/// each holding a connection of the `content` group's pool for one window. 16 when missing or not a positive number.
+pub fn transfer_workers(factory: &ExecutionContextFactory) -> u32 {
+    factory
+        .webapp_setting("webroot", "transfer-workers")
+        .parse::<u32>()
+        .ok()
+        .filter(|workers| *workers > 0)
+        .unwrap_or(DEFAULT_TRANSFER_WORKERS)
+}
+
+/// The streamed database reads that may run at once: [`transfer_workers`], or as many as the `content` group's pool
+/// leaves beside the request and service workers and an agent worker when that is fewer, at least one. Reserve
+/// connections are never counted. All of them with no entity facade.
+pub fn transfer_readers(factory: &ExecutionContextFactory) -> u32 {
+    let asked = transfer_workers(factory);
+    let Some(facade) = factory.entity() else {
+        return asked;
+    };
+    let Ok((_, manager)) = content_manager(&facade) else {
+        return asked;
+    };
+    let (request_cap, service_cap) = caps(&factory.conf_text());
+    let left = manager
+        .spare_connections(request_cap, service_cap)
+        .saturating_sub(agent_workers());
+    asked.min(left.max(1))
+}
+
+/// The manager the `content` group reads from, with the name of a group it serves: the group's own, or the default
+/// group's when the content shares the transactional database.
+fn content_manager(
+    facade: &crate::entity::EntityFacade,
+) -> Result<(String, crate::transaction::TransactionManager), Error> {
+    let manager = match facade.transactions_for(CONTENT_ENTITY) {
+        Ok(manager) => manager,
+        Err(_) => default_manager(facade)?,
+    };
+    let group = facade
+        .groups()
+        .find(|(_, _, transactions)| transactions.shares_stack(&manager))
+        .map_or_else(String::new, |(name, _, _)| name.to_string());
+    Ok((group, manager))
 }
 
 /// The default group's manager and the managers linked to it, each with the name of a group it serves.
@@ -232,14 +300,24 @@ fn default_manager(facade: &crate::entity::EntityFacade) -> Result<crate::transa
 }
 
 /// The connections of the default group's pool that the request and service workers leave (`max - reserve` less
-/// `(request cap + service cap) * 2`), the fewest of it and the pools linked to it; `None` with no entity facade.
+/// `(request cap + service cap) * 2`), and of the `content` group's pool the streamed downloads' reads leave too
+/// ([`transfer_readers`]): the fewest of it and the pools linked to it; `None` with no entity facade.
 pub fn spare_connections(factory: &ExecutionContextFactory) -> Option<u32> {
     let facade = factory.entity()?;
     let (request_cap, service_cap) = caps(&factory.conf_text());
+    let content = content_manager(&facade).ok().map(|(_, manager)| manager);
+    let transfers = transfer_readers(factory);
     linked_managers(&facade).ok().and_then(|managers| {
         managers
             .iter()
-            .map(|(_, manager)| manager.spare_connections(request_cap, service_cap))
+            .map(|(_, manager)| {
+                let spare = manager.spare_connections(request_cap, service_cap);
+                if content.as_ref().is_some_and(|content| content.shares_stack(manager)) {
+                    spare.saturating_sub(transfers)
+                } else {
+                    spare
+                }
+            })
             .min()
     })
 }

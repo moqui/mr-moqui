@@ -636,7 +636,9 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="transfer-workers" type="non-neg-int-expandable" default="16"><xs:annotation><xs:documentation>
                 A file response over 256 KiB streams, read a window at a time as the client takes it; at most this many
-                reads of files in the database run at once. No Java counterpart.
+                reads of files in the database run at once, each holding a connection of the content pool for one
+                window. Fewer run when that pool cannot hold this many beside the request and service workers (a
+                warning at startup says so). No Java counterpart.
             </xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>

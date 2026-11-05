@@ -188,16 +188,88 @@ fn serve_caps_reject_a_small_pool_and_accept_8_and_32() {
     let err = check_serve_caps(factory).unwrap_err();
     assert!(err.to_string().contains("(8 + 32) * 2"), "{err}");
 
-    // 80 for the request and service workers, and one agent worker with the llm feature, within 90 less 8 reserve
-    factory.set_entity(facade(PoolConfig {
+    // 80 for the request and service workers, one agent worker with the llm feature, and the 16 transfer reads (the
+    // content shares this pool) within 106 less 8 reserve
+    factory.set_entity(facade(sized(106)));
+    check_serve_caps(factory).unwrap();
+    assert_eq!(super::transfer_readers(factory), 16);
+    assert_eq!(super::spare_connections(factory), Some(2));
+}
+
+/// Streamed database downloads hold a connection of the content group's pool for each window they read: the startup
+/// check counts them there, and a pool that cannot hold them beside the workers warns and admits fewer, never a reserve
+/// connection (plans/High-Level-Review.md HL-022).
+#[test]
+fn transfer_reads_count_in_the_content_pool() {
+    let ctx = ExecutionContextFactory::test_context();
+    let factory = ctx.factory();
+    assert_eq!(super::transfer_workers(factory), 16);
+    let agent = u32::from(crate::llm_hooks::linked());
+
+    // a content database of its own, sized as the transactional one was before: 2 left beside the workers
+    factory.set_entity(two_groups(sized(90), sized(90)));
+    check_serve_caps(factory).unwrap();
+    let readers = super::transfer_readers(factory);
+    assert_eq!(readers, (2 - agent).max(1));
+    assert_eq!(super::spare_connections(factory), Some(2u32.saturating_sub(readers)));
+
+    // the shipped size: 90 plus the 16 transfer-workers
+    factory.set_entity(two_groups(sized(90), sized(106)));
+    check_serve_caps(factory).unwrap();
+    assert_eq!(super::transfer_readers(factory), 16);
+    assert_eq!(super::spare_connections(factory), Some(2));
+    let conf = std::fs::read_to_string(framework_dir().join("conf/MoquiDefaultConf.xml")).unwrap();
+    let root = MNode::parse_text("moqui-conf", &conf).unwrap();
+    let content = root
+        .first_named("entity-facade")
+        .unwrap()
+        .children_named("datasource")
+        .into_iter()
+        .find(|node| node.attribute("group-name").as_deref() == Some("content"))
+        .unwrap();
+    let jdbc = content.first_named("inline-jdbc").unwrap();
+    assert_eq!(jdbc.attribute("pool-maxsize").as_deref(), Some("106"));
+
+    // the transactional pool is not the content's: transfers leave it alone
+    factory.set_entity(two_groups(sized(82 + agent + 8), sized(106)));
+    check_serve_caps(factory).unwrap();
+    assert_eq!(super::transfer_readers(factory), 16);
+
+    // a content pool that has no room past the workers and the agent worker still reads one at a time
+    factory.set_entity(two_groups(sized(90), sized(88 + agent)));
+    check_serve_caps(factory).unwrap();
+    assert_eq!(super::transfer_readers(factory), 1);
+}
+
+fn sized(max: u32) -> PoolConfig {
+    PoolConfig {
         min: 0,
-        max: 90,
+        max,
         reserve: 8,
         acquire_timeout: Duration::from_secs(1),
         ..Default::default()
-    }));
-    check_serve_caps(factory).unwrap();
-    assert_eq!(super::spare_connections(factory), Some(2));
+    }
+}
+
+/// `transactional` and a `content` group with a pool of its own, the content group's entities in it.
+fn two_groups(transactional: PoolConfig, content: PoolConfig) -> EntityFacade {
+    EntityFacade::open(
+        &framework_dir(),
+        "transactional",
+        vec![
+            EntityGroup::new(
+                "transactional",
+                "postgres",
+                TransactionManager::new(Arc::new(StubDriver), transactional).unwrap(),
+            ),
+            EntityGroup::new(
+                "content",
+                "postgres",
+                TransactionManager::new(Arc::new(StubDriver), content).unwrap(),
+            ),
+        ],
+    )
+    .unwrap()
 }
 
 #[test]

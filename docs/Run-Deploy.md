@@ -459,8 +459,10 @@ One transaction spans both databases, as Moqui Java's transaction spans every da
 - **Rollback**: a rollback, or an error in either database, rolls back both.
 - **The edge case**: a file deleted in a transaction whose transactional commit then fails stays deleted.
 
-Each transaction can hold a connection to each database, so the content pool is the size of the transactional one (90).
-The embedded cluster makes room for both. A cluster of servers shares the content database as it shares the
+Each transaction can hold a connection to each database, so the content pool is the size of the transactional one (90),
+plus one for each streamed download reading a window at once (the `webroot` webapp's `transfer-workers`, 16): 106. The
+embedded cluster makes room for both. When the content shares an external transactional database, its pool must hold
+the downloads' reads too; startup warns when it cannot, and the downloads then read fewer at once. A cluster of servers shares the content database as it shares the
 transactional one, so it needs both external.
 
 ### Search
