@@ -882,6 +882,10 @@ fn register_tx_commit(
 /// rules run on a service worker, in a context and transaction of their own. A sim session never really commits, so
 /// its rules do not run.
 ///
+/// They run under the authorization the call has here, with its frame on the stack, as its other rules run inline:
+/// by the commit the frames that authorized the call (a screen transition's, say) are gone, and the rules' service
+/// calls would be decided against an empty stack. They can do no more than the call's own rules could.
+///
 /// A pattern rule runs here as at any other `when`. Java's `registerTx` compares the rule's service name, the pattern
 /// text, to the called name, so its pattern tx rules never run (an accepted difference, P7a-15).
 fn register_tx_rules(
@@ -905,6 +909,7 @@ fn register_tx_rules(
             &format!("the {when} rules of {service}"),
         )?;
     }
+    let authz = ExecutionContext::with_current(ExecutionContext::registered_authz).unwrap_or_default();
     let service = service.to_string();
     let parameters = parameters.clone();
     let results = results.cloned();
@@ -921,6 +926,7 @@ fn register_tx_rules(
                 when: when.to_string(),
                 parameters,
                 results,
+                authz,
             },
         );
     };
@@ -946,7 +952,11 @@ pub(crate) fn run_tx_rules(
         when,
         parameters,
         results,
+        authz,
     } = rules;
+    // Under the service's frame with the authorization it had when it registered them, as its other rules run.
+    let action = resolve(service, Some(&facade)).map_or("all", |def| verb_action(&def.verb));
+    let _restored = ExecutionContext::with_current(|ctx| ctx.restore_authz(authz, "AT_SERVICE", service, action));
     tx.run(TransactionAttribute::UseOrBegin, None, || {
         super::seca::run_seca_rules(service, when, parameters, results.as_mut()).map_err(Into::into)
     })
@@ -956,9 +966,17 @@ pub(crate) fn run_tx_rules(
 /// Java's `ServiceCallSpecial.registerOnCommit` and `registerOnRollback`: run `name` asynchronously once the
 /// transaction in place commits (`on_commit`) or rolls back.
 ///
+/// The call is checked now, as an async call made here is ([`prepare_async`]): its input is validated and the caller
+/// must be authorized for it, against the artifact stack in place, whose screen or service may authorize it by
+/// inheritance. When the transaction ends those frames are gone (a screen transition commits after its screens are
+/// popped), so the call is queued then as the user who registered it without a second check, and runs with
+/// authorization disabled, as every checked async call does. A call refused here is an error and nothing is
+/// registered; in a sim session nothing is registered either, since its transaction never really commits.
+///
 /// # Errors
 ///
-/// Returns an error for an unknown service or when no transaction is in place.
+/// Returns an error for an unknown service, when no transaction is in place, or when the caller may not run the
+/// service.
 pub fn register_on_end(name: &str, parameters: &BTreeMap<String, Value>, on_commit: bool) -> Result<(), Error> {
     let name = canonical(name);
     let facade = current_facade().ok_or_else(|| Error::new("no entity facade is installed"))?;
@@ -969,9 +987,16 @@ pub fn register_on_end(name: &str, parameters: &BTreeMap<String, Value>, on_comm
             "Cannot register service {name} to run at the end of a transaction: no transaction is in place"
         )));
     }
-    let parameters = parameters.clone();
+    let factory = super::pool::capture_factory()?;
+    let parameters = match prepare_async(&name, parameters)? {
+        AsyncCall::Run(parameters) => parameters,
+        // A sim session, or input that failed validation, whose errors are in the message facade.
+        AsyncCall::Skip(_) => return Ok(()),
+    };
+    let call = super::pool::CheckedCall::new(name, parameters);
     let hook = move || {
-        if let Err(err) = async_call(&name, &parameters) {
+        let name = call.name.clone();
+        if let Err(err) = factory.service_pools().submit_checked(&factory, call) {
             tracing::error!(error = %err, "Could not run service {name} registered for the end of the transaction");
         }
     };

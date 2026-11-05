@@ -919,6 +919,8 @@ fn tx_commit_rules_that_find_the_queue_full_run_later_as_a_job_with_their_maps()
     assert_eq!(call["parameters"]["items"]["color"], "blue");
     assert_eq!(call["parameters"]["tags"][1], "b");
     assert_eq!(call["results"]["note"], "done");
+    // Registered with authorization disabled, the rules run so.
+    assert_eq!(call["authz"]["disabled"], true);
     assert_eq!(text(&stored[0], "serviceName"), "commit#Map");
     assert!(rule_row(&world.facade).is_none());
     wait_for("the queued rules to run", || {

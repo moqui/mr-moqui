@@ -286,13 +286,15 @@ pub(crate) struct ClosureJob {
 }
 
 /// The tx-commit or tx-rollback rules of a service call, run after its transaction ends: the service, the phase
-/// (`when`), and the call's parameters and results.
+/// (`when`), the call's parameters and results, and the authorization the call had when it registered them, which the
+/// rules run under.
 #[derive(Clone, Debug)]
 pub(crate) struct TxRules {
     pub(crate) service: String,
     pub(crate) when: String,
     pub(crate) parameters: BTreeMap<String, Value>,
     pub(crate) results: Option<BTreeMap<String, Value>>,
+    pub(crate) authz: crate::user::RegisteredAuthz,
 }
 
 /// [`TxRules`] waiting for a service worker, with the caller they run as.
@@ -324,19 +326,34 @@ pub(crate) fn current_origin() -> Option<crate::context::AgentOrigin> {
     ExecutionContext::with_current(|ec| ec.agent_origin()).flatten()
 }
 
-impl Work {
-    pub(crate) fn service(
-        name: String,
-        parameters: BTreeMap<String, Value>,
-        factory: Arc<ExecutionContextFactory>,
-        user_name: Option<String>,
-    ) -> Self {
-        Work::Call(CallJob {
+/// A fire-and-forget call already checked as its caller (`call::prepare_async`), with the caller it runs as.
+pub(crate) struct CheckedCall {
+    pub(crate) name: String,
+    parameters: BTreeMap<String, Value>,
+    user_name: Option<String>,
+    origin: Option<crate::context::AgentOrigin>,
+}
+
+impl CheckedCall {
+    /// A call checked just now, by the current user and agent run.
+    pub(crate) fn new(name: String, parameters: BTreeMap<String, Value>) -> Self {
+        Self {
             name,
             parameters,
-            factory,
-            user_name,
+            user_name: crate::user::current_username().ok().flatten(),
             origin: current_origin(),
+        }
+    }
+}
+
+impl Work {
+    fn service(call: CheckedCall, factory: Arc<ExecutionContextFactory>) -> Self {
+        Work::Call(CallJob {
+            name: call.name,
+            parameters: call.parameters,
+            factory,
+            user_name: call.user_name,
+            origin: call.origin,
             trace_context: crate::telemetry::capture(),
             reply: None,
         })
@@ -607,43 +624,49 @@ impl ServicePools {
     /// The call is checked first, as Java's `validateCall` (see `call::prepare_async`): parameters that fail
     /// validation leave their errors in the message facade and queue nothing, and nothing is queued in a sim session.
     pub fn submit(&self, name: &str, parameters: &BTreeMap<String, Value>) -> Result<(), Error> {
-        if let Some(inline) = &self.inline {
-            let factory = capture_factory()?;
-            let AsyncCall::Run(parameters) = super::call::prepare_async(name, parameters)? else {
-                return Ok(());
-            };
-            super::call::note_pending(name);
-            let user_name = crate::user::current_username().ok().flatten();
-            lock(&inline.queue).push_back(Work::service(name.to_string(), parameters, factory, user_name));
-            return Ok(());
+        if self.inline.is_none() {
+            self.running()?;
         }
-        let shared = self.running()?;
         let factory = capture_factory()?;
         let AsyncCall::Run(parameters) = super::call::prepare_async(name, parameters)? else {
             return Ok(());
         };
-        super::call::note_pending(name);
-        let user_name = crate::user::current_username().ok().flatten();
-        {
+        self.submit_checked(&factory, CheckedCall::new(name.to_string(), parameters))
+    }
+
+    /// Queue a call [`Self::submit`] checked, now or later (a call registered for the end of a transaction), with no
+    /// second check. A full or stopping queue stores it as a one-shot service job, as `submit` does.
+    pub(crate) fn submit_checked(
+        &self,
+        factory: &Arc<ExecutionContextFactory>,
+        call: CheckedCall,
+    ) -> Result<(), Error> {
+        super::call::note_pending(&call.name);
+        if let Some(inline) = &self.inline {
+            lock(&inline.queue).push_back(Work::service(call, Arc::clone(factory)));
+            return Ok(());
+        }
+        let shared = self.running()?;
+        let call = {
             let mut state = lock(&shared.state);
             // A stopping pool stores the call too: the database is still up while the queue drains (HL-025).
             if !state.stop && state.queue.len() < shared.queue_cap {
-                state
-                    .queue
-                    .push_back(Work::service(name.to_string(), parameters, factory, user_name));
+                state.queue.push_back(Work::service(call, Arc::clone(factory)));
                 drop(state);
                 shared.wake.notify_all();
                 return Ok(());
             }
-        }
+            call
+        };
         // stored with its caller, as a queued call carries them
+        let name = call.name;
         super::jobs::persist_queued(
-            &factory,
+            factory,
             &super::jobs::QueuedCall {
-                service: name.to_string(),
-                parameters,
-                user_name,
-                origin: current_origin(),
+                service: name.clone(),
+                parameters: call.parameters,
+                user_name: call.user_name,
+                origin: call.origin,
                 rules: None,
             },
         )
@@ -1466,6 +1489,7 @@ fn spill_rules(job: RulesJob, why: &str) {
         rules: Some(super::jobs::QueuedRules {
             when: rules.when,
             results: rules.results,
+            authz: rules.authz,
         }),
     };
     match super::jobs::persist_queued(&factory, &call) {

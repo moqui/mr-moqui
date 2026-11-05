@@ -44,7 +44,7 @@ use super::message::MessageFacade;
 use super::resource::ResourceFacade;
 use super::Error;
 use crate::entity::EntityFacade;
-use crate::user::{AuthInfo, StackAuthz};
+use crate::user::{AuthInfo, RegisteredAuthz, StackAuthz};
 
 /// The `response-header` entries of the shipped `MoquiDefaultConf.xml` webapp, `(type, name, value, add)`, for a conf
 /// whose webapp declares none (a test conf, or one that leaves the defaults out).
@@ -1287,6 +1287,62 @@ impl ExecutionContext {
         self.state.artifacts.borrow().require_authz()
     }
 
+    /// The authorization in place here, for work registered to run after the transaction ends. See
+    /// [`RegisteredAuthz`].
+    pub(crate) fn registered_authz(&self) -> RegisteredAuthz {
+        let StackAuthz {
+            last,
+            ancestor_deny,
+            authz_disabled,
+        } = self.stack_authz_state();
+        RegisteredAuthz {
+            top: last,
+            ancestor_deny,
+            disabled: authz_disabled,
+        }
+    }
+
+    /// Put `registered` back on this context until the guard drops: a frame for the artifact that registered the work
+    /// (`artifact_type`, `name`, `action`) carrying the authorization it had, over a frame carrying a deny when one was
+    /// on that stack, and authorization disabled only when it was disabled there (checked otherwise, even when this
+    /// context disabled it). The frames record no artifact hit.
+    pub(crate) fn restore_authz(
+        &self,
+        registered: &RegisteredAuthz,
+        artifact_type: &str,
+        name: &str,
+        action: &str,
+    ) -> RestoredAuthz {
+        let (disabled, required) = if registered.disabled {
+            (Some(self.disable_authz()), None)
+        } else {
+            (None, Some(self.require_authz()))
+        };
+        let mut frames = Vec::with_capacity(2);
+        if registered.ancestor_deny {
+            frames.push(AuthInfo {
+                authz_type: Some("AUTHZT_DENY".to_string()),
+                ..AuthInfo::default()
+            });
+        }
+        frames.push(registered.top.clone().unwrap_or_default());
+        let count = frames.len();
+        for info in frames {
+            let errors = self.errors_at_push();
+            self.state
+                .artifacts
+                .borrow_mut()
+                .push_with(artifact_type, name, action, info, errors);
+            self.untrack_hit();
+        }
+        RestoredAuthz {
+            ctx: self.handle(),
+            frames: count,
+            _disabled: disabled,
+            _required: required,
+        }
+    }
+
     /// Java's `ArtifactExecutionFacade.disableAuthz()` for a script, which has no guard to hold: authorization stays
     /// disabled until [`Self::script_enable_authz`] or the context ends. Returns whether it was already disabled.
     ///
@@ -1391,6 +1447,27 @@ impl ExecutionContext {
     fn handle(&self) -> ExecutionContext {
         ExecutionContext {
             state: Rc::clone(&self.state),
+        }
+    }
+}
+
+/// Authorization put back by [`ExecutionContext::restore_authz`]. Dropping it pops its frames, then brings back the
+/// context's own authorization state.
+#[must_use = "dropping the guard takes the authorization away"]
+pub(crate) struct RestoredAuthz {
+    ctx: ExecutionContext,
+    frames: usize,
+    _disabled: Option<AuthzGuard>,
+    _required: Option<AuthzRequired>,
+}
+
+impl Drop for RestoredAuthz {
+    fn drop(&mut self) {
+        for _ in 0..self.frames {
+            if let Err(err) = self.ctx.pop() {
+                tracing::warn!(error = %err, "a restored authorization frame was not on the artifact stack");
+                break;
+            }
         }
     }
 }

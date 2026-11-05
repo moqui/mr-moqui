@@ -145,6 +145,67 @@ impl StackAuthz {
     };
 }
 
+/// The authorization in place where after-commit work was registered (the tx-commit and tx-rollback rules of a service
+/// call): the top frame's [`AuthInfo`], whether a frame on the stack carried a deny, and whether authorization was
+/// disabled. The work runs on a context of its own under it (`ExecutionContext::restore_authz`), so it may do what it
+/// could have done where it was registered, and no more. The default is the strictest: nothing to inherit, checked.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RegisteredAuthz {
+    pub(crate) top: Option<AuthInfo>,
+    pub(crate) ancestor_deny: bool,
+    pub(crate) disabled: bool,
+}
+
+impl RegisteredAuthz {
+    /// As kept in a queued job's `queuedCall`. The authorization record a frame matched is not kept: a decision reads
+    /// only its type, action, user and whether it is inheritable.
+    pub(crate) fn to_json(&self) -> serde_json::Value {
+        let mut root = serde_json::Map::new();
+        if let Some(top) = &self.top {
+            let mut frame = serde_json::Map::new();
+            frame.insert("userId".into(), top.user_id.clone().into());
+            if let Some(authz_type) = &top.authz_type {
+                frame.insert("authzType".into(), authz_type.clone().into());
+            }
+            if let Some(action) = &top.action {
+                frame.insert("action".into(), action.clone().into());
+            }
+            frame.insert("inheritable".into(), top.inheritable.into());
+            if let Some(granted) = top.granted {
+                frame.insert("granted".into(), granted.into());
+            }
+            root.insert("top".into(), serde_json::Value::Object(frame));
+        }
+        root.insert("ancestorDeny".into(), self.ancestor_deny.into());
+        root.insert("disabled".into(), self.disabled.into());
+        serde_json::Value::Object(root)
+    }
+
+    /// The authorization [`Self::to_json`] wrote. Anything missing is the strict default.
+    pub(crate) fn from_json(json: Option<&serde_json::Value>) -> Self {
+        let Some(json) = json else {
+            return Self::default();
+        };
+        let flag = |value: Option<&serde_json::Value>| value.and_then(serde_json::Value::as_bool).unwrap_or(false);
+        let top = json.get("top").map(|frame| {
+            let text = |name: &str| frame.get(name).and_then(serde_json::Value::as_str).map(str::to_string);
+            AuthInfo {
+                user_id: text("userId").unwrap_or_default(),
+                authz_type: text("authzType"),
+                action: text("action"),
+                inheritable: flag(frame.get("inheritable")),
+                granted: frame.get("granted").and_then(serde_json::Value::as_bool),
+                aacv: None,
+            }
+        });
+        Self {
+            top,
+            ancestor_deny: flag(json.get("ancestorDeny")),
+            disabled: flag(json.get("disabled")),
+        }
+    }
+}
+
 impl AuthInfo {
     fn from_check(check: &Arc<AuthzCheck>, user_id: &str, granted: bool) -> Self {
         Self {

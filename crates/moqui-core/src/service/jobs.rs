@@ -492,11 +492,12 @@ pub(crate) struct QueuedCall {
     pub(crate) rules: Option<QueuedRules>,
 }
 
-/// The phase and results of queued tx rules.
+/// The phase and results of queued tx rules, and the authorization they run under.
 #[derive(Clone, Debug)]
 pub(crate) struct QueuedRules {
     pub(crate) when: String,
     pub(crate) results: Option<BTreeMap<String, Value>>,
+    pub(crate) authz: crate::user::RegisteredAuthz,
 }
 
 fn json_map(map: &BTreeMap<String, Value>) -> serde_json::Value {
@@ -533,6 +534,7 @@ impl QueuedCall {
             if let Some(results) = &rules.results {
                 root.insert("results".into(), json_map(results));
             }
+            root.insert("authz".into(), rules.authz.to_json());
         }
         serde_json::Value::Object(root).to_string()
     }
@@ -553,6 +555,7 @@ impl QueuedCall {
             rules: field("when").map(|when| QueuedRules {
                 when,
                 results: map_json(json.get("results")),
+                authz: crate::user::RegisteredAuthz::from_json(json.get("authz")),
             }),
         })
     }
@@ -759,6 +762,8 @@ pub(crate) fn run_job(job: JobRun) {
                 when: rules.when.clone(),
                 parameters: job.parameters.clone(),
                 results: rules.results.clone(),
+                // Under the authorization of the call that registered them, not the job's disabled authorization.
+                authz: rules.authz.clone(),
             };
             super::call::run_tx_rules(&factory, &mut rules).map(|()| BTreeMap::new())
         }
