@@ -1906,3 +1906,141 @@ fn external_harness_runs_are_never_claimed_or_recovered_by_the_native_engine() {
     assert_eq!(lease::sweep(&bed.factory).unwrap(), 0);
     assert!(fake::requests(&bed.endpoint).is_empty());
 }
+
+/// A conversation of `old` compacted turns (each a user message and an answer with a large replay, summarized through
+/// the last of them) and then the same three active turns. Every fifth old message is left unflagged, as a row the
+/// range alone must keep out. Out: its id.
+fn lifetime(bed: &Bed, key: &str, old: usize) -> String {
+    let facade = &bed.facade;
+    let conversation_id = format!("conv-{key}");
+    row(
+        facade,
+        CONVERSATION,
+        &[
+            ("conversationId", &conversation_id),
+            ("userId", USER),
+            ("agentId", "assist"),
+            ("statusId", "AgcActive"),
+            ("lastMessageSeq", "0"),
+        ],
+    );
+    let mut through = None;
+    for turn in 0..old {
+        for (role, text) in [
+            ("user", format!("old question {turn}")),
+            ("assistant", format!("old answer {turn}")),
+        ] {
+            let id = step::append_message(
+                facade,
+                &conversation_id,
+                None,
+                role,
+                (role == "user").then_some(USER),
+                None,
+                &[step::Part::text(&text)],
+                None,
+                None,
+            )
+            .unwrap();
+            let mut message = facade
+                .find(MESSAGE)
+                .unwrap()
+                .eq("messageId", Value::string(&id))
+                .one()
+                .unwrap()
+                .unwrap();
+            through = int_of(&message, "messageSeq");
+            if role == "assistant" {
+                message.set("replayJson", Value::string("x".repeat(4000)));
+            }
+            if through.unwrap_or(0) % 5 != 0 {
+                message.set("compacted", Value::string("Y"));
+            }
+            message.update(facade).unwrap();
+        }
+    }
+    if let Some(through) = through {
+        let mut conversation = facade
+            .find(CONVERSATION)
+            .unwrap()
+            .eq("conversationId", Value::string(&conversation_id))
+            .one()
+            .unwrap()
+            .unwrap();
+        conversation.set("compactedThroughSeq", Value::I64(through));
+        conversation.set("compactionSummary", Value::string("The user asked old questions."));
+        conversation.update(facade).unwrap();
+    }
+    for turn in 0..3 {
+        for (role, text) in [
+            ("user", format!("question {turn}")),
+            ("assistant", format!("answer {turn}")),
+        ] {
+            step::append_message(
+                facade,
+                &conversation_id,
+                None,
+                role,
+                (role == "user").then_some(USER),
+                None,
+                &[step::Part::text(&text)],
+                None,
+                None,
+            )
+            .unwrap();
+        }
+    }
+    conversation_id
+}
+
+/// The message rows a step reads for the conversation, and their bytes (every field as text).
+fn active_read(bed: &Bed, conversation_id: &str) -> (usize, usize) {
+    let through = bed
+        .facade
+        .find(CONVERSATION)
+        .unwrap()
+        .eq("conversationId", Value::string(conversation_id))
+        .one()
+        .unwrap()
+        .and_then(|row| int_of(&row, "compactedThroughSeq"));
+    let rows = bed
+        .facade
+        .find(MESSAGE)
+        .unwrap()
+        .condition(crate::window::active_messages(conversation_id, through))
+        .list()
+        .unwrap();
+    let bytes = rows
+        .values()
+        .iter()
+        .map(|row| {
+            ["role", "replayJson", "metadataJson", "compacted", "tokenCount"]
+                .iter()
+                .map(|field| text_of(row, field).map_or(0, |text| text.len()))
+                .sum::<usize>()
+        })
+        .sum();
+    (rows.values().len(), bytes)
+}
+
+/// HL-013: the history a step builds reads the active window only, by the message sequence: the same rows and bytes,
+/// and the same messages sent, for a conversation one turn long and one of hundreds of compacted turns.
+#[test]
+fn a_step_reads_only_the_active_window_whatever_the_conversations_lifetime() {
+    let bed = bed("lifetime");
+    let _entered = bed.ctx.enter();
+    let short = lifetime(&bed, "short", 1);
+    let long = lifetime(&bed, "long", 200);
+    assert_eq!(active_read(&bed, &short), active_read(&bed, &long));
+    assert_eq!(active_read(&bed, &long).0, 6);
+    let (short_history, long_history) = (
+        crate::window::load(&bed.facade, &short).unwrap(),
+        crate::window::load(&bed.facade, &long).unwrap(),
+    );
+    assert_eq!(short_history.messages(), long_history.messages());
+    assert_eq!(long_history.entries.len(), 6);
+    assert_eq!(long_history.summary.as_deref(), Some("The user asked old questions."));
+    // the reference check reads the same window, and the summary for what it covers
+    let seen = |conversation_id: &str| step::seen_references(&bed.facade, conversation_id).unwrap();
+    assert_eq!(seen(&short), seen(&long));
+}
