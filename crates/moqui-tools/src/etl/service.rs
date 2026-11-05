@@ -68,6 +68,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     rust_service!(map, store_etl_value_map)?;
     rust_service!(map, delete_etl_value_map)?;
     rust_service!(map, get_etl_runs)?;
+    rust_service!(map, rerun_etl_run)?;
     rust_service!(map, get_etl_run)?;
     // load#SpreadsheetEntity maps its rows as a run does
     moqui_core::service::spreadsheet::install_inline_load(inline_spreadsheet_load);
@@ -284,9 +285,52 @@ fn write_run(facade: &EntityFacade, run_id: &str, fields: Vec<(&str, Value)>) {
     }
 }
 
-/// A new `EtlRun` row: its id.
-fn create_run(facade: &EntityFacade, mapping: &Mapping, check: bool, status: &str) -> Result<String, LibError> {
+/// A file source read from a location (not `contentBytes`): true for a file or flat XML mapping with no content.
+fn reads_location(parameters: &BTreeMap<String, Value>, mapping: &Mapping) -> bool {
+    matches!(mapping.source_kind, SourceKind::File | SourceKind::FlatXml)
+        && !matches!(parameters.get("contentBytes"), Some(Value::Bytes(bytes)) if !bytes.is_empty())
+}
+
+/// For a file read from a location, `parameters` with `location` expanded once (`${yesterday}` and the rest): the run,
+/// also a queued one, and a rerun of it read that same file. None when there is nothing to expand.
+///
+/// # Errors
+///
+/// The location does not expand (a `${` not closed, a name not known).
+fn with_expanded_location(
+    parameters: &BTreeMap<String, Value>,
+    mapping: &Mapping,
+) -> Result<Option<BTreeMap<String, Value>>, LibError> {
+    if !reads_location(parameters, mapping) {
+        return Ok(None);
+    }
+    let location = Some(text(parameters, "location"))
+        .filter(|location| !location.is_empty())
+        .unwrap_or_else(|| mapping.source_location.clone());
+    if location.is_empty() {
+        return Ok(None);
+    }
+    let mut expanded = parameters.clone();
+    expanded.insert(
+        "location".to_string(),
+        Value::string(source::expand_location(&location)?),
+    );
+    Ok(Some(expanded))
+}
+
+/// A new `EtlRun` row: its id. `startRow` and, for a file read from a location, the location as expanded
+/// (`sourceLocation`) come from `parameters`.
+fn create_run(
+    facade: &EntityFacade,
+    parameters: &BTreeMap<String, Value>,
+    mapping: &Mapping,
+    check: bool,
+    status: &str,
+) -> Result<String, LibError> {
     let user_id = moqui_core::user::current_user_id().ok().flatten();
+    let start_row = number(parameters, "startRow").unwrap_or(0).max(0);
+    let source_location = Some(text(parameters, "location"))
+        .filter(|location| !location.is_empty() && reads_location(parameters, mapping));
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let tx = facade.transactions_for(RUN)?;
     tx.run(TransactionAttribute::ForceNew, None, || {
@@ -304,6 +348,12 @@ fn create_run(facade: &EntityFacade, mapping: &Mapping, check: bool, status: &st
         row.set("instanceId", Value::string(instance_id()));
         row.set("isCheck", Value::string(if check { "Y" } else { "N" }));
         row.set("statusId", Value::string(status));
+        row.set("startRow", Value::I64(start_row));
+        row.set("nextStartRow", Value::I64(start_row));
+        row.set(
+            "sourceLocation",
+            source_location.clone().map_or(Value::Null, Value::String),
+        );
         row.set("startTime", now());
         row.set("extractCount", Value::I64(0));
         row.set("loadCount", Value::I64(0));
@@ -450,10 +500,13 @@ pub(crate) fn run_etl_mapping(
     if !mapping_allowed(facade, &mapping) {
         return Ok(Out::new());
     }
+    // a location that does not expand is left as it is: opening the source fails the run with that error
+    let expanded = with_expanded_location(parameters, &mapping).ok().flatten();
+    let parameters = expanded.as_ref().unwrap_or(parameters);
     let check = flag(parameters, "check");
     let mut out = Out::new();
     if !flag(parameters, "wait") {
-        let created = match create_run(facade, &mapping, check, PENDING) {
+        let created = match create_run(facade, parameters, &mapping, check, PENDING) {
             Ok(run_id) => run_id,
             Err(err) => {
                 add_error(format!("Could not create the ETL run: {err}"));
@@ -497,7 +550,7 @@ fn run_waiting(
     let mut out = Out::new();
     let mut run_id = text(parameters, "runId");
     if run_id.is_empty() {
-        run_id = match create_run(facade, mapping, check, RUNNING) {
+        run_id = match create_run(facade, parameters, mapping, check, RUNNING) {
             Ok(run_id) => run_id,
             Err(err) => {
                 add_error(format!("Could not create the ETL run: {err}"));
@@ -560,6 +613,7 @@ fn run_waiting(
             ("loadCount", Value::I64(outcome.load_count as i64)),
             ("errorCount", Value::I64(outcome.error_count as i64)),
             ("lastCommittedRow", Value::I64(outcome.last_committed_row)),
+            ("nextStartRow", Value::I64(outcome.next_start_row)),
             (
                 "errorLocation",
                 error_location.clone().map_or(Value::Null, Value::String),
@@ -1320,7 +1374,93 @@ pub(crate) fn get_etl_run(
         "errors".to_string(),
         Value::List(errors.iter().map(row_value).collect()),
     );
+    out.insert(
+        "canRerun".to_string(),
+        Value::Bool(rerun_refusal(facade, &run).is_none()),
+    );
     Ok(out)
+}
+
+/// Why run `run` may not be rerun ([`rerun_etl_run`]), or None when it may: it is still pending or running, it is a
+/// check, it is done with no row left (no errors), its mapping was inline or is gone, or it read uploaded content
+/// (no `sourceLocation` for a file mapping).
+fn rerun_refusal(facade: &EntityFacade, run: &moqui_core::entity::EntityValue) -> Option<String> {
+    let field = |name: &str| run.get(name).map(to_plain_string).unwrap_or_default();
+    let run_id = field("runId");
+    let status = field("statusId");
+    if status == PENDING || status == RUNNING {
+        return Some(format!("ETL run {run_id} is still running"));
+    }
+    if field("isCheck") == "Y" {
+        return Some(format!("ETL run {run_id} is a check; run the mapping instead"));
+    }
+    if status == DONE && matches!(field("errorCount").as_str(), "" | "0") {
+        return Some(format!("ETL run {run_id} is done with nothing left to load"));
+    }
+    let mapping_id = field("mappingId");
+    if mapping_id.is_empty() {
+        return Some(format!("ETL run {run_id} is of an inline mapping"));
+    }
+    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+    let source_type = match facade
+        .find(MAPPING)
+        .and_then(|find| find.eq("mappingId", Value::string(&mapping_id)).one())
+    {
+        Ok(Some(mapping)) => mapping.get("sourceTypeEnumId").map(to_plain_string).unwrap_or_default(),
+        Ok(None) => return Some(format!("The mapping {mapping_id} of ETL run {run_id} is gone")),
+        Err(err) => return Some(err.to_string()),
+    };
+    // SourceKind's own reading of sourceTypeEnumId: empty is a file
+    let reads_file = matches!(source_type.as_str(), "EtlsFile" | "EtlsFlatXml" | "");
+    if reads_file && field("sourceLocation").is_empty() {
+        return Some(format!(
+            "ETL run {run_id} read uploaded content, which is not kept; run the mapping with the file instead"
+        ));
+    }
+    None
+}
+
+/// `rerun#EtlRun`: run `runId`'s saved mapping again from where it stopped: its `nextStartRow` as `startRow`, and for a
+/// file the location the run read (`sourceLocation`, already expanded, so `${yesterday}` is still that run's day). For
+/// the run's user or a `DATABASE_ADMIN` holder (to anyone else there is no such run); refused for a run that is still
+/// running, a check, a run done with nothing left, an inline mapping or uploaded content ([`rerun_refusal`]). In:
+/// `wait`. Out: those of `run#EtlMapping`, for the new run.
+pub(crate) fn rerun_etl_run(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    if !crate::service::may_view_tools() {
+        return Ok(Out::new());
+    }
+    let run_id = text(parameters, "runId");
+    let run = {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        facade.find(RUN)?.eq("runId", Value::string(&run_id)).one()?
+    };
+    let Some(run) = run.filter(|run| {
+        is_database_admin() || run.get("userId").map(to_plain_string).unwrap_or_default() == current_user()
+    }) else {
+        add_error(format!("no ETL run {run_id}"));
+        return Ok(Out::new());
+    };
+    if let Some(refusal) = rerun_refusal(facade, &run) {
+        add_error(refusal);
+        return Ok(Out::new());
+    }
+    let field = |name: &str| run.get(name).map(to_plain_string).unwrap_or_default();
+    let mut rerun = BTreeMap::new();
+    rerun.insert("mappingId".to_string(), Value::string(field("mappingId")));
+    let next_start_row = field("nextStartRow").parse::<i64>().unwrap_or(0);
+    rerun.insert("startRow".to_string(), Value::I64(next_start_row));
+    let location = field("sourceLocation");
+    if !location.is_empty() {
+        rerun.insert("location".to_string(), Value::string(location));
+    }
+    if flag(parameters, "wait") {
+        rerun.insert("wait".to_string(), Value::Bool(true));
+    }
+    tracing::info!(run = %run_id, start_row = next_start_row, "Rerunning ETL run {run_id}");
+    run_etl_mapping(&rerun, facade)
 }
 
 /// `load#SpreadsheetEntity` as an inline mapping (§10.3): its sheet's header as the fields (`fieldMap` renaming a

@@ -255,10 +255,13 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="EtlRun" package="moqui.etl" use="nontransactional" cache="never">
         <description>One run (or check) of a mapping, saved or inline (mappingId empty). Its counts are written every
             1,000 rows in a transaction of their own, so the Run screen shows progress: extractCount the rows read,
-            loadCount the rows committed, errorCount the rows with an error. lastCommittedRow is the last row of the last
-            batch committed before any batch failed; a rerun starts after it (startRow = lastCommittedRow + 1, the run's
-            nextStartRow). errorLocation is a CSV of every failed row with its error; the first 1,000 errors are also
-            EtlRunError rows. mappingId has no foreign key, so the runs of a deleted mapping stay.</description>
+            loadCount the rows committed, errorCount the rows with an error. startRow is the first row the run read (0 for
+            the first). lastCommittedRow is the last row of the last batch committed before any batch failed;
+            nextStartRow is where a rerun starts: lastCommittedRow + 1, or the run's own startRow when it committed
+            nothing. sourceLocation is a file source's location as the run expanded it (${yesterday} and the rest), so
+            rerun#EtlRun reads the same file; it is empty for uploaded content and for entity and SQL sources.
+            errorLocation is a CSV of every failed row with its error; the first 1,000 errors are also EtlRunError
+            rows. mappingId has no foreign key, so the runs of a deleted mapping stay.</description>
         <field name="runId" type="id" is-pk="true"/>
         <field name="mappingId" type="id"/>
         <field name="userId" type="id"/>
@@ -269,6 +272,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="startTime" type="date-time"/>
         <field name="endTime" type="date-time"/>
         <field name="sourceDescription" type="text-medium"/>
+        <field name="sourceLocation" type="text-medium"/>
+        <field name="startRow" type="number-integer"/>
+        <field name="nextStartRow" type="number-integer"/>
         <field name="extractCount" type="number-integer"/>
         <field name="skipCount" type="number-integer"/>
         <field name="loadCount" type="number-integer"/>

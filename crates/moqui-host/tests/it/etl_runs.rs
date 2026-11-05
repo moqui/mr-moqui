@@ -227,6 +227,8 @@ fn a_saved_mapping_is_checked_run_as_a_job_and_rolled_back_on_a_bad_file() {
     let value_map_id = text(&stored_map, "valueMapId");
     assert!(!value_map_id.is_empty(), "{stored_map:?}");
 
+    reruns(&context, &facade, &mapping_id, &text(&check, "runId"), &run_id);
+
     let matched = call(
         "match#EtlFields",
         &[
@@ -259,6 +261,113 @@ fn a_saved_mapping_is_checked_run_as_a_job_and_rolled_back_on_a_bad_file() {
 
     scheduled_runs_run_as_the_owner(factory, &facade, &mapping_id);
     authorization_is_on(&context, &facade, &text(&bad, "runId"), &value_map_id);
+}
+
+/// The errors `call` left in the message facade, cleared.
+fn take_errors() -> String {
+    moqui_core::context::ExecutionContext::with_current(|ec| {
+        let errors = ec.message().errors().join("; ");
+        ec.message().clear_errors();
+        errors
+    })
+    .unwrap_or_default()
+}
+
+/// rerun#EtlRun: a run that read nothing (its file was not there yet) has nextStartRow 0, not 1, and keeps the location
+/// it expanded; its rerun reads that file from row 0 though the mapping's own location is another file. A check, and a
+/// run done with no errors, are not rerun.
+fn reruns(
+    context: &moqui_core::context::ExecutionContext,
+    facade: &moqui_core::entity::EntityFacade,
+    mapping_id: &str,
+    check_run: &str,
+    done_run: &str,
+) {
+    let missing = call(
+        "run#EtlMapping",
+        &[
+            ("mappingId", Value::string(mapping_id)),
+            ("wait", Value::Bool(true)),
+            (
+                "location",
+                Value::string("dbresource://moqui/etl/test/rerun-${date}.csv"),
+            ),
+        ],
+    );
+    assert_eq!(text(&missing, "statusId"), "EtlrFailed", "{missing:?}");
+    take_errors();
+    let detail = call("get#EtlRun", &[("runId", Value::string(text(&missing, "runId")))]);
+    let Some(Value::Map(run)) = detail.get("run") else {
+        panic!("{detail:?}")
+    };
+    let location = to_plain_string(&run["sourceLocation"]);
+    assert!(
+        location.starts_with("dbresource://moqui/etl/test/rerun-") && !location.contains("${"),
+        "{run:?}"
+    );
+    assert_eq!(to_plain_string(&run["startRow"]), "0", "{run:?}");
+    assert_eq!(to_plain_string(&run["nextStartRow"]), "0", "{run:?}");
+    assert_eq!(detail.get("canRerun"), Some(&Value::Bool(true)), "{detail:?}");
+
+    // the file arrives: the rerun reads it, not the mapping's good.csv
+    write(&location, "Id,Type,Name\nEtlHostRerun,EtlHostType,Again\n");
+    let rerun = call(
+        "rerun#EtlRun",
+        &[
+            ("runId", Value::string(text(&missing, "runId"))),
+            ("wait", Value::Bool(true)),
+        ],
+    );
+    assert_eq!(text(&rerun, "statusId"), "EtlrDone", "{rerun:?} {}", take_errors());
+    assert_eq!(text(&rerun, "loadCount"), "1", "{rerun:?}");
+    {
+        let _authz = context.disable_authz();
+        assert!(facade
+            .find("moqui.basic.Enumeration")
+            .unwrap()
+            .eq("enumId", Value::string("EtlHostRerun"))
+            .one()
+            .unwrap()
+            .is_some());
+        let again = facade
+            .find("moqui.etl.EtlRun")
+            .unwrap()
+            .eq("runId", Value::string(text(&rerun, "runId")))
+            .one()
+            .unwrap()
+            .expect("the rerun's EtlRun");
+        assert_eq!(again.get("sourceLocation").map(to_plain_string), Some(location.clone()));
+        assert_eq!(again.get("nextStartRow").map(to_plain_string).as_deref(), Some("3"));
+    }
+
+    let run_count = || {
+        let _authz = context.disable_authz();
+        facade.find("moqui.etl.EtlRun").unwrap().list().unwrap().len()
+    };
+    let runs_before = run_count();
+    for (run_id, refusal) in [
+        (check_run, "is a check"),
+        (done_run, "nothing left"),
+        (text(&rerun, "runId").as_str(), "nothing left"),
+    ] {
+        let detail = call("get#EtlRun", &[("runId", Value::string(run_id))]);
+        assert_eq!(detail.get("canRerun"), Some(&Value::Bool(false)), "{detail:?}");
+        let refused = moqui_core::service::call::sync_checked(
+            &format!("{SERVICES}.rerun#EtlRun"),
+            &BTreeMap::from([("runId".to_string(), Value::string(run_id))]),
+            &moqui_core::service::call::CallOptions {
+                disable_authz: true,
+                ..moqui_core::service::call::CallOptions::default()
+            },
+        );
+        let errors = take_errors();
+        let message = refused.expect_err("a refused rerun").message().to_string();
+        assert!(
+            message.contains(refusal) || errors.contains(refusal),
+            "{run_id}: {message} {errors}"
+        );
+    }
+    assert_eq!(run_count(), runs_before, "a refused rerun made a run");
 }
 
 /// Call with authorization on: the results and the errors the call added, taken out of the message facade.
@@ -516,6 +625,8 @@ fn authorization_is_on(
     // another user's run, its error file and value map are not this user's
     let (other, errors) = call_as_user("get#EtlRun", &[("runId", Value::string(other_run))]);
     assert!(errors.contains("no ETL run"), "{errors} {other:?}");
+    let (rerun, errors) = call_as_user("rerun#EtlRun", &[("runId", Value::string(other_run))]);
+    assert!(errors.contains("no ETL run"), "{errors} {rerun:?}");
     let (taken, errors) = call_as_user(
         "run#EtlMapping",
         &[

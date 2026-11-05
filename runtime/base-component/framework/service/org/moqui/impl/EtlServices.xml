@@ -180,7 +180,8 @@ along with this software (see the LICENSE.md file). If not, see
             transaction="ignore">
         <description>Run runId (its EtlRun fields) and its EtlRunError rows, for the run's user or a DATABASE_ADMIN
             holder (to anyone else there is no such run). With includeErrorFile, errorFile is the text of the error file
-            (dbresource://moqui/etl-run/(userId)/(runId)/errors.csv, every failed row): the way to download it.</description>
+            (dbresource://moqui/etl-run/(userId)/(runId)/errors.csv, every failed row): the way to download it.
+            canRerun is true when rerun#EtlRun would take the run.</description>
         <in-parameters>
             <parameter name="runId" required="true"/>
             <parameter name="includeErrorFile" type="Boolean" default-value="false"/>
@@ -189,6 +190,38 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="run" type="Map"/>
             <parameter name="errors" type="List"><parameter name="error" type="Map"/></parameter>
             <parameter name="errorFile"/>
+            <parameter name="canRerun" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="rerun" noun="EtlRun" type="rust" location="moqui_tools::etl::service::rerun_etl_run"
+            transaction="ignore">
+        <description>Run runId's saved mapping again from where it stopped: startRow is the run's nextStartRow, and a
+            file source reads the run's sourceLocation, the location as that run expanded it (so ${yesterday} is still
+            that run's day). For the run's user or a DATABASE_ADMIN holder (to anyone else there is no such run); the
+            new run is the caller's, with run#EtlMapping's checks. Refused for a run still pending or running, a check, a
+            run done with no errors (nothing left), an inline mapping or a deleted one, and a run of uploaded content
+            (contentBytes is not kept). With wait it runs here; otherwise it is queued. Out: as run#EtlMapping, for the
+            new run.</description>
+        <in-parameters>
+            <parameter name="runId" required="true"/>
+            <parameter name="wait" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="runId"/>
+            <parameter name="statusId"/>
+            <parameter name="extractCount" type="Long"/>
+            <parameter name="skipCount" type="Long"/>
+            <parameter name="loadCount" type="Long"/>
+            <parameter name="errorCount" type="Long"/>
+            <parameter name="fieldErrorCount" type="Long"/>
+            <parameter name="lastCommittedRow" type="Long"/>
+            <parameter name="nextStartRow" type="Long"/>
+            <parameter name="committedBatches" type="Long"/>
+            <parameter name="failedBatches" type="Long"/>
+            <parameter name="failedRanges" type="List"><parameter name="range" type="Map"/></parameter>
+            <parameter name="errors" type="List"><parameter name="error" type="Map"/></parameter>
+            <parameter name="errorLocation"/>
+            <parameter name="failure"/>
         </out-parameters>
     </service>
 

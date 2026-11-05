@@ -229,6 +229,14 @@ Mappings load files, SQL results and entity data into entities or services. The 
     ends the run as Failed, and the batch it was in is rolled back too.
   - `lastCommittedRow` is the last row of the last batch committed before any batch failed. `startRow` is the first row
     read, so a rerun from `nextStartRow` (`lastCommittedRow + 1`) loads no committed row again and every failed one.
+    A run that committed nothing has its own `startRow` as `nextStartRow`. The `EtlRun` row keeps both.
+  - **`rerun#EtlRun(runId)`** runs the run's saved mapping again from its `nextStartRow`. A file source reads the run's
+    `sourceLocation`: the location as that run expanded it, so `${yesterday}` is still that run's day.
+    - It is for the run's user or a `DATABASE_ADMIN` holder, and the new run is the caller's, with all of
+      `run#EtlMapping`'s checks.
+    - It refuses a run still pending or running, a check, a run done with no errors (nothing left), an inline or
+      deleted mapping, and a run of uploaded content (`contentBytes` is not kept).
+    - `get#EtlRun`'s `canRerun` says whether it would take the run.
 - **Check** (`check=true`, or `check#EtlSample` for the first 200 rows) extracts and transforms only and never stops
   at an error. It reports:
   - each row's errors;
