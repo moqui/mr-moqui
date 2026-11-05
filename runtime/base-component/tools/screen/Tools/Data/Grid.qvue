@@ -1,0 +1,635 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The data grid (plans/Tools-Database.md §9.3), served by Grid.xml in the qvue render mode: Tabulator (libs/tabulator,
+    themed by css/DataGrid.css) with its rows loaded a page at a time as it scrolls, sorted and filtered on the server, every
+    request through moqui.request (the session token, the shell's errors). Edits are marked until saved; undo and redo, range
+    copy and paste, new and deleted rows; Save sends only the edited fields of each row with its stamp, in one transaction,
+    and a refused row keeps its edits with the field errors on its cells. The source is an entity (entityName or
+    selectedEntity, the other URL parameters its conditions), a saved view (viewId), or a SQL result the SQL screen hands
+    over (sqlKey); DataDocument.<id> and DbViewEntity sources are read only, with Related opening Data › Browse. -->
+<template><div class="q-pa-sm">
+    <div class="row items-center q-col-gutter-sm q-mb-sm">
+        <div class="col-12 col-sm-5 col-md-4">
+            <q-select dense outlined use-input fill-input hide-selected input-debounce="250" v-model="chosenEntity" :options="entityOptions"
+                    label="Entity" @filter="filterEntities" @update:model-value="openEntity" :hint="sourceLabel"></q-select>
+        </div>
+        <q-space></q-space>
+        <div class="col-auto row items-center q-gutter-xs">
+            <q-btn flat dense no-caps icon="undo" label="Undo" :disable="!ready" @click="undo"></q-btn>
+            <q-btn flat dense no-caps icon="redo" label="Redo" :disable="!ready" @click="redo"></q-btn>
+            <q-btn v-if="editable" flat dense no-caps icon="add" label="Add row" @click="addRow"></q-btn>
+            <q-btn v-if="editable" flat dense no-caps icon="delete" label="Delete rows" @click="deleteRows"></q-btn>
+            <q-btn flat dense no-caps icon="filter_list" :label="filtersShown ? 'Hide filters' : 'Filters'" @click="filtersShown = !filtersShown"></q-btn>
+            <q-btn-dropdown flat dense no-caps icon="view_column" label="Columns">
+                <q-list dense style="max-height:60vh;overflow:auto">
+                    <q-item v-for="column in columnMeta" :key="column.name" tag="label">
+                        <q-item-section side><q-checkbox dense :model-value="!hiddenColumns.includes(column.name)" @update:model-value="toggleColumn(column.name, $event)"></q-checkbox></q-item-section>
+                        <q-item-section>{{column.title || column.name}}</q-item-section>
+                    </q-item>
+                </q-list>
+            </q-btn-dropdown>
+            <q-btn flat dense no-caps icon="numbers" label="Count rows" :disable="!ready" :loading="counting" @click="countRows"></q-btn>
+            <q-btn-dropdown flat dense no-caps icon="download" label="Export" :disable="!ready">
+                <q-list dense>
+                    <q-item clickable v-close-popup @click="exportRows('csv')"><q-item-section>CSV download</q-item-section></q-item>
+                    <q-item clickable v-close-popup @click="exportRows('xlsx')"><q-item-section>XLSX download</q-item-section></q-item>
+                    <q-item clickable v-close-popup @click="exportOpen = true"><q-item-section>To a location…</q-item-section></q-item>
+                </q-list>
+            </q-btn-dropdown>
+            <q-btn-dropdown flat dense no-caps icon="bookmarks" label="Views" @show="loadViews">
+                <q-list dense style="min-width:240px">
+                    <q-item clickable v-close-popup :disable="!source" @click="viewOpen = true"><q-item-section avatar><q-icon name="bookmark_add"></q-icon></q-item-section>
+                        <q-item-section>Save this view</q-item-section></q-item>
+                    <q-separator></q-separator>
+                    <q-item v-for="view in gridViews" :key="view.viewId" clickable v-close-popup @click="openView(view)">
+                        <q-item-section>{{view.description || view.viewId}}</q-item-section>
+                        <q-item-section side><q-btn flat round dense size="sm" icon="delete" :aria-label="'Delete ' + (view.description || view.viewId)" @click.stop="deleteView(view)"></q-btn></q-item-section>
+                    </q-item>
+                    <q-item v-if="!gridViews.length"><q-item-section class="text-caption">No saved views</q-item-section></q-item>
+                </q-list>
+            </q-btn-dropdown>
+            <q-btn v-if="editable" flat dense no-caps label="Discard" :disable="!changeCount" @click="discard"></q-btn>
+            <q-btn v-if="editable" unelevated no-caps color="primary" icon="save" :label="'Save' + (changeCount ? ' (' + changeCount + ')' : '')"
+                    :disable="!changeCount || saving" :loading="saving" @click="save"></q-btn>
+        </div>
+    </div>
+    <div v-if="readOnlyReason && source" class="text-caption q-mb-xs" :class="mutedClass">Read only: {{readOnlyReason}}</div>
+    <div v-if="countText" class="text-caption q-mb-xs" :class="mutedClass">{{countText}}</div>
+    <div v-if="!source" class="text-body2 q-pa-md" :class="mutedClass">Choose an entity to see its rows, or open a saved view.</div>
+    <div ref="grid" class="m-data-grid" :class="{'m-grid-filters-hidden': !filtersShown}"></div>
+
+    <q-dialog v-model="viewOpen">
+        <q-card style="min-width:340px">
+            <q-card-section><div class="text-h6">Save this view</div></q-card-section>
+            <q-card-section class="q-pt-none">
+                <q-input dense outlined v-model="viewDescription" label="Description"></q-input>
+                <q-toggle v-model="viewShared" label="Share with the other users of the grid" class="q-mt-sm"></q-toggle>
+            </q-card-section>
+            <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn>
+                <q-btn unelevated no-caps color="primary" label="Save" @click="storeView"></q-btn></q-card-actions>
+        </q-card>
+    </q-dialog>
+    <q-dialog v-model="exportOpen">
+        <q-card style="min-width:380px">
+            <q-card-section><div class="text-h6">Export to a location</div></q-card-section>
+            <q-card-section class="q-pt-none">
+                <q-input dense outlined v-model="exportLocation" label="Location" hint="Under your own dbresource://moqui/database/export/ or runtime://tmp/grid-export/ place"></q-input>
+                <q-option-group v-model="exportFormat" inline dense :options="[{label: 'CSV', value: 'csv'}, {label: 'XLSX', value: 'xlsx'}]" class="q-mt-sm"></q-option-group>
+            </q-card-section>
+            <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn>
+                <q-btn unelevated no-caps color="primary" label="Export" :disable="!exportLocation" @click="exportRows(exportFormat, exportLocation)"></q-btn></q-card-actions>
+        </q-card>
+    </q-dialog>
+</div></template>
+
+<script>
+module.exports = {
+    data() {
+        return {
+            source: null, sourceLabel: '', columnMeta: [], saveEntity: null, readOnlyReason: '', hasStamp: false, keyColumns: null, stampColumn: null,
+            related: null, ready: false, saving: false, counting: false, countText: '', changeCount: 0, filtersShown: true, hiddenColumns: [],
+            chosenEntity: null, entityOptions: [], userId: '', gridViews: [], viewOpen: false, viewDescription: '', viewShared: false, viewId: null,
+            exportOpen: false, exportLocation: '', exportFormat: 'csv', pendingLayout: null
+        };
+    },
+    computed: {
+        screenPath() { return this.$root.basePath + '/' + this.$root.currentPathList.join('/'); },
+        mutedClass() { return this.$q.dark.isActive ? 'text-grey-5' : 'text-grey-7'; },
+        parameters() { return this.$root.currentParameters || {}; },
+        editable() { return !!this.saveEntity && this.ready; },
+        keyFields() { return this.columnMeta.filter((column) => column.pk).map((column) => column.name); },
+        // a column's name in the grid (a SQL result's label, enum_id) to the entity field it saves to (enumId)
+        saveFields() { const map = {}; for (const column of this.columnMeta) map[column.name] = column.field || column.name; return map; }
+    },
+    methods: {
+        url(name) { return this.screenPath + '/' + name; },
+        siblingUrl(path, search) { return this.$root.linkBasePath + '/' + this.$root.currentPathList.slice(0, -1).concat([path]).join('/') + (search ? '?' + search : ''); },
+        // a transition's answer; a SQL source goes in a POST body, never a URL
+        call(name, params, method) {
+            const sql = this.source && this.source.type === 'sql';
+            const verb = method || (sql ? 'POST' : 'GET');
+            return moqui.request(this.url(name), { method: verb, params }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) { moqui.notifyMessages(null, json.errors); return null; }
+                return json;
+            }, (err) => { moqui.handleAjaxError(err); return null; });
+        },
+        sourceParams(extra) {
+            return Object.assign({ sourceJson: JSON.stringify(this.sourceSpec()) }, extra || {});
+        },
+        // the source as the services take it: an editable SQL result with its key and stamp columns
+        sourceSpec() {
+            if (!this.source) return null;
+            if (this.source.type !== 'sql') return this.source;
+            return Object.assign({}, this.source, this.keyColumns ? { keyColumns: this.keyColumns } : {}, this.stampColumn ? { stampColumn: this.stampColumn } : {});
+        },
+        filterEntities(term, update) {
+            if (!term || term.length < 2) { update(() => { this.entityOptions = []; }); return; }
+            moqui.request(this.url('gridInfo'), { params: { term } }).then((result) => {
+                update(() => { this.entityOptions = (result.json && result.json.entityNames) || []; });
+            }, () => update(() => { this.entityOptions = []; }));
+        },
+        openEntity(name) {
+            if (!name) return;
+            if (!this.mayLeave('Open ' + name)) return;
+            this.viewId = null;
+            this.open({ type: 'entity', entityName: String(name) });
+        },
+        // the source of the page's parameters: a saved view, a SQL result handed over, or an entity and its conditions
+        initialSource() {
+            const p = this.parameters;
+            if (p.sqlKey) {
+                try {
+                    const key = 'moqui.grid.source.' + p.sqlKey;
+                    const handed = JSON.parse(window.sessionStorage.getItem(key) || 'null');
+                    window.sessionStorage.removeItem(key);
+                    if (handed && handed.type === 'sql') return handed;
+                } catch (_) { /* gone */ }
+            }
+            const name = p.entityName || p.selectedEntity;
+            if (!name) return null;
+            const conditions = {};
+            for (const [key, value] of Object.entries(p)) {
+                if (['entityName', 'selectedEntity', 'viewId', 'sqlKey', 'moquiSessionToken', 'lastStandalone', 'pageIndex'].includes(key)) continue;
+                if (value != null && value !== '') conditions[key] = value;
+            }
+            return Object.keys(conditions).length ? { type: 'entity', entityName: String(name), conditions } : { type: 'entity', entityName: String(name) };
+        },
+        open(source, layout) {
+            this.source = source;
+            this.pendingLayout = layout || null;
+            this.keyColumns = null; this.stampColumn = null; this.countText = '';
+            this.sourceLabel = source.type === 'sql' ? 'SQL result on ' + (source.db || 'the default database') : source.entityName;
+            this.chosenEntity = source.type === 'entity' ? source.entityName : null;
+            const entityName = source.type === 'entity' ? source.entityName : '';
+            return Promise.all([this.call('gridColumns', this.sourceParams()),
+                entityName ? moqui.request(this.url('gridInfo'), { params: { entityName } }).then((result) => result.json || {}, () => ({})) : Promise.resolve({})])
+                .then(([out, info]) => {
+                    this.related = info && info.related ? info.related : null;
+                    if (!out) { this.columnMeta = []; this.saveEntity = null; this.build(); return; }
+                    this.columnMeta = out.columns || [];
+                    this.saveEntity = out.entityName || null;
+                    this.readOnlyReason = out.entityName ? '' : (out.readOnlyReason || 'this source cannot be saved');
+                    this.hasStamp = !!out.hasStamp;
+                    this.keyColumns = out.keyColumns || null;
+                    this.stampColumn = out.stampColumn || null;
+                    this.hiddenColumns = [];
+                    this.build();
+                });
+        },
+        // ---- the grid ----
+        tabulatorColumn(column) {
+            const vm = this;
+            const def = { title: column.title || column.name, field: column.name, headerSort: !column.encrypted, headerFilter: column.encrypted || column.type === 'binary' ? false : 'input',
+                headerMenu: () => vm.headerMenu(column), resizable: true };
+            if (column.type === 'number') { def.hozAlign = 'right'; def.cssClass = 'm-grid-numeric'; }
+            def.formatter = (cell) => vm.formatCell(cell, column);
+            if (this.saveEntity && column.editable && !column.encrypted && column.editor) {
+                // a date-time comes as epoch milliseconds: its own editor over datetime-local, which commits nothing unchanged
+                def.editor = column.editor === 'datetime' ? vm.dateTimeEditor : column.editor;
+                if (column.editor === 'list') {
+                    def.editorParams = { autocomplete: true, filterRemote: true, allowEmpty: !column.notNull, listOnEmpty: true,
+                        valuesLookup: (cell, term) => moqui.request(vm.url('gridLookup'), { params: { entityName: vm.saveEntity, field: column.field || column.name,
+                            term: term || '' } }).then((result) => ((result.json && result.json.options) || []).map((option) => ({ label: option.label, value: option.value })),
+                            () => []) };
+                }
+                // an indicator is Y or N, a boolean true or false
+                if (column.editor === 'tickCross') def.editorParams = column.type === 'indicator'
+                    ? { trueValue: 'Y', falseValue: 'N', tristate: !column.notNull } : { tristate: !column.notNull };
+                // a key or a create-only field is set on a new row only
+                def.editable = (cell) => !cell.getRow().getData()._deleted && (!(column.pk || column.createOnly) || !!cell.getRow().getData()._new);
+                const validators = [];
+                if (column.notNull) validators.push('required');
+                if (column.maxLength) validators.push('maxLength:' + column.maxLength);
+                if (column.type === 'number') validators.push('numeric');
+                if (validators.length) def.validator = validators;
+            }
+            return def;
+        },
+        // Tabulator's editor of a date-time column: the value as epoch milliseconds in, a datetime-local input in the
+        // browser's time, the milliseconds back out; Escape, or leaving it as it was, cancels
+        dateTimeEditor(cell, onRendered, success, cancel) {
+            const value = cell.getValue();
+            const pad = (n) => String(n).padStart(2, '0');
+            const local = (millis) => {
+                if (millis == null || millis === '' || isNaN(Number(millis))) return '';
+                const d = new Date(Number(millis));
+                return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+            };
+            const input = document.createElement('input');
+            input.type = 'datetime-local';
+            input.step = '1';
+            input.style.width = '100%';
+            const start = local(value);
+            input.value = start;
+            onRendered(() => { input.focus(); });
+            const done = () => {
+                if (input.value === start) { cancel(); return; }
+                if (input.value === '') { success(null); return; }
+                const millis = new Date(input.value).getTime();
+                if (isNaN(millis)) cancel(); else success(millis);
+            };
+            input.addEventListener('blur', done);
+            input.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') done();
+                else if (event.key === 'Escape') cancel();
+            });
+            return input;
+        },
+        formatCell(cell, column) {
+            const value = cell.getValue();
+            const element = cell.getElement();
+            if (column.encrypted) { element.classList.add('m-grid-masked'); return value == null ? '' : '••••••'; }
+            if (value == null || value === '') { if (value == null) { element.classList.add('m-grid-null'); return 'null'; } return ''; }
+            const l10n = moqui.l10n;
+            try {
+                if (column.type === 'date-time' && l10n) return l10n.formatTimestamp(value);
+                if (column.type === 'date' && l10n && /^\d{4}-\d\d-\d\d/.test(String(value))) return l10n.formatDate(value);
+                if (column.type === 'number' && l10n && typeof value === 'number') return l10n.formatNumber(value);
+            } catch (_) { /* shown as it is */ }
+            if (column.type === 'boolean' || column.type === 'indicator') return value === true || value === 'Y' ? '✓' : value === false || value === 'N' ? '✗' : String(value);
+            return typeof value === 'object' ? JSON.stringify(value) : String(value);
+        },
+        headerMenu(column) {
+            const vm = this;
+            return [
+                { label: 'Freeze', action: (e, col) => { col.updateDefinition({ frozen: true }); } },
+                { label: 'Unfreeze', action: (e, col) => { col.updateDefinition({ frozen: false }); } },
+                { label: 'Hide', action: () => vm.toggleColumn(column.name, false) }
+            ];
+        },
+        toggleColumn(name, shown) {
+            if (!this.grid) return;
+            if (shown) { this.grid.showColumn(name); this.hiddenColumns = this.hiddenColumns.filter((item) => item !== name); }
+            else { this.grid.hideColumn(name); if (!this.hiddenColumns.includes(name)) this.hiddenColumns = this.hiddenColumns.concat([name]); }
+        },
+        build() {
+            const element = this.$refs.grid;
+            if (this.grid) { try { this.grid.destroy(); } catch (_) { /* gone */ } this.grid = null; }
+            this.ready = false; this.changeCount = 0; this.undoGroups = []; this.redoGroups = [];
+            if (!element || !window.Tabulator || !this.source || !this.columnMeta.length) return;
+            const vm = this;
+            let rowId = 0;
+            const columns = this.columnMeta.map((column) => this.tabulatorColumn(column));
+            if (this.related) columns.push({ title: '', field: '_related', headerSort: false, width: 90, formatter: () => 'Related', cellClick: (e, cell) => vm.openRelated(cell.getRow().getData()) });
+            const layout = this.pendingLayout;
+            this.grid = new window.Tabulator(element, {
+                index: '_rid', layout: 'fitDataStretch', height: '65vh', placeholder: 'No rows',
+                columns: layout && layout.columns ? this.layoutColumns(columns, layout.columns) : columns,
+                movableColumns: true, history: true,
+                selectableRange: 1, selectableRangeColumns: true, selectableRangeRows: true, selectableRangeClearCells: true,
+                editTriggerEvent: 'dblclick', clipboard: true, clipboardCopyStyled: false, clipboardCopyConfig: { rowHeaders: false, columnHeaders: false },
+                clipboardCopyRowRange: 'range', clipboardPasteParser: 'range',
+                // Tabulator's range paste updates whole rows, which undo does not see: each pasted cell is set on its own, so a paste
+                // is edits that undo, redo and the save follow (from the range's first row, repeating the clipboard's rows to fill it)
+                clipboardPasteAction: function (rowsData) {
+                    const range = this.table.modules.selectRange.activeRange;
+                    if (!range || !rowsData.length) return [];
+                    const bounds = range.getBounds();
+                    const rows = this.table.rowManager.activeRows.slice();
+                    const start = rows.indexOf(bounds.start.row);
+                    if (start < 0) return [];
+                    const count = bounds.start === bounds.end ? rowsData.length : rows.indexOf(bounds.end.row) - start + 1;
+                    const changed = rows.slice(start, start + count);
+                    const before = this.table.getHistoryUndoSize();
+                    changed.forEach((row, index) => {
+                        const values = rowsData[index % rowsData.length];
+                        for (const [field, value] of Object.entries(values)) {
+                            const cell = row.getCell(field);
+                            const component = cell && cell.getComponent();
+                            const editable = component && cell.column.definition.editor && (typeof cell.column.definition.editable !== 'function' || cell.column.definition.editable(component));
+                            if (editable) component.setValue(value);
+                        }
+                    });
+                    // the paste is one step of Undo and Redo, however many cells it set
+                    const after = this.table.getHistoryUndoSize();
+                    if (after - before > 1) { vm.undoGroups.push({ from: before, to: after }); vm.redoGroups = []; }
+                    return changed;
+                },
+                ajaxURL: this.url('gridRows'), progressiveLoad: 'scroll', paginationSize: 100, sortMode: 'remote', filterMode: 'remote',
+                initialSort: layout && layout.sort ? layout.sort.map((item) => ({ column: item.column || item.field, dir: item.dir })) : undefined, initialHeaderFilter: layout && layout.filters ? layout.filters : undefined,
+                ajaxRequestFunc: (url, config, params) => {
+                    // a first page replaces every row: what was followed of the old rows goes with them
+                    if (Number(params.page || 1) <= 1) vm.forgetChanges();
+                    return vm.call('gridRows', vm.sourceParams({ columnsJson: JSON.stringify([]), page: params.page,
+                    size: params.size, sortJson: JSON.stringify(params.sort || []), filterJson: JSON.stringify(params.filter || []) }))
+                    .then((out) => {
+                        if (!out) return { last_page: 1, data: [] };
+                        for (const row of out.data || []) row._rid = 'r' + (++rowId);
+                        if (out.last_row != null) vm.countText = (out.estimated ? 'About ' : '') + Number(out.last_row).toLocaleString() + ' rows';
+                        return { last_page: out.last_page || 1, data: out.data || [] };
+                    });
+                },
+                rowFormatter: (row) => {
+                    const data = row.getData();
+                    const element = row.getElement();
+                    element.classList.toggle('m-grid-created', !!data._new);
+                    element.classList.toggle('m-grid-deleted', !!data._deleted);
+                    element.classList.toggle('m-grid-refused', !!data._refused);
+                }
+            });
+            this.grid.on('tableBuilt', () => { vm.ready = true; vm.pendingLayout = null; });
+            // every way a value changes (an editor, a paste, undo and redo, the API) comes here: the cell is followed until saved
+            this.edits = new Map();
+            this.grid.on('cellEdited', (cell) => {
+                // an editor closed with the value it opened with changes nothing (an empty text over a null included)
+                const old = cell.getOldValue(), now = cell.getValue();
+                if (old == null && now === '') { cell.restoreOldValue(); return; }
+                if (old === now) return;
+                const data = cell.getRow().getData();
+                if (!data._new) vm.edits.set(data._rid + '\u0000' + cell.getField(), cell);
+                vm.countChanges();
+            });
+            this.grid.on('historyUndo', () => vm.countChanges());
+            this.grid.on('historyRedo', () => vm.countChanges());
+            // a range paste updates the rows without a cell edit: its cells are followed from the range they were pasted into
+            this.grid.on('clipboardPasted', () => {
+                for (const range of vm.grid.getRanges()) for (const cell of range.getCells().flat()) {
+                    const data = cell.getRow().getData();
+                    if (!data._new) vm.edits.set(data._rid + '\u0000' + cell.getField(), cell);
+                }
+                vm.countChanges();
+            });
+        },
+        layoutColumns(columns, saved) {
+            const byField = new Map(columns.map((column) => [column.field, column]));
+            const ordered = [];
+            for (const item of saved) {
+                const column = byField.get(item.field);
+                if (!column) continue;
+                byField.delete(item.field);
+                ordered.push(Object.assign({}, column, { width: item.width || column.width, visible: item.visible !== false, frozen: !!item.frozen }));
+                if (item.visible === false) this.hiddenColumns.push(item.field);
+            }
+            return ordered.concat(Array.from(byField.values()));
+        },
+        // the rows the save would change
+        pending() {
+            if (!this.grid) return { updates: [], creates: [], deletes: [], rows: [] };
+            const edited = new Map();
+            for (const cell of (this.edits || new Map()).values()) {
+                const row = cell.getRow();
+                const data = row.getData();
+                const field = cell.getField();
+                // an undo back to the loaded value is no change, and the cell is no longer marked
+                const changed = cell.getValue() !== cell.getInitialValue() && !(cell.getValue() === '' && cell.getInitialValue() == null);
+                const element = cell.getElement();
+                if (element) element.classList.toggle('m-grid-edited', changed);
+                if (!changed || data._new || data._deleted) continue;
+                if (!edited.has(data._rid)) edited.set(data._rid, { row, fields: {} });
+                edited.get(data._rid).fields[this.saveFields[field] || field] = cell.getValue() === '' ? null : cell.getValue();
+            }
+            const pk = (data) => { const key = {}; for (const name of this.keyFields) key[this.saveFields[name] || name] = data[name]; return key; };
+            const updates = [], creates = [], deletes = [], rows = { update: [], create: [], delete: [] };
+            for (const { row, fields } of edited.values()) {
+                updates.push({ pk: pk(row.getData()), stamp: row.getData()._stamp || null, fields });
+                rows.update.push(row);
+            }
+            for (const row of this.grid.getRows()) {
+                const data = row.getData();
+                if (data._new && !data._deleted) {
+                    const fields = {};
+                    for (const column of this.columnMeta) if (data[column.name] != null && data[column.name] !== '') fields[column.field || column.name] = data[column.name];
+                    creates.push({ fields });
+                    rows.create.push(row);
+                } else if (data._deleted && !data._new) {
+                    deletes.push({ pk: pk(data), stamp: data._stamp || null });
+                    rows.delete.push(row);
+                }
+            }
+            return { updates, creates, deletes, rows };
+        },
+        countChanges() {
+            const pending = this.pending();
+            this.changeCount = pending.updates.length + pending.creates.length + pending.deletes.length;
+            this.lockSorting(this.changeCount > 0);
+        },
+        // while there are unsaved changes the rows are not read again: a sort or a filter would replace them, so the header's
+        // sorting and filters wait for Save or Discard
+        lockSorting(locked) {
+            const element = this.$refs.grid;
+            if (!element) return;
+            element.classList.toggle('m-grid-locked', locked);
+            for (const input of element.querySelectorAll('.tabulator-header-filter input, .tabulator-header-filter select')) input.disabled = locked;
+        },
+        forgetChanges() {
+            this.edits = new Map(); this.undoGroups = []; this.redoGroups = [];
+            if (this.grid) this.grid.clearHistory();
+            this.changeCount = 0;
+            this.lockSorting(false);
+        },
+        // whether the page may move on from these rows: none unsaved, or the user lets them go
+        mayLeave(what) {
+            return !this.changeCount || window.confirm(this.changeCount + ' changes are not saved. ' + (what || 'Leave') + ' and lose them?');
+        },
+        // one step: a cell's edit, or a whole paste
+        undo() {
+            if (!this.grid) return;
+            const size = this.grid.getHistoryUndoSize();
+            const group = this.undoGroups[this.undoGroups.length - 1];
+            if (group && group.to === size) {
+                for (let i = group.from; i < group.to; i++) this.grid.undo();
+                this.redoGroups.push(this.undoGroups.pop());
+            } else this.grid.undo();
+            this.countChanges();
+        },
+        redo() {
+            if (!this.grid) return;
+            const group = this.redoGroups[this.redoGroups.length - 1];
+            if (group && group.from === this.grid.getHistoryUndoSize()) {
+                for (let i = group.from; i < group.to; i++) this.grid.redo();
+                this.undoGroups.push(this.redoGroups.pop());
+            } else this.grid.redo();
+            this.countChanges();
+        },
+        addRow() {
+            if (!this.grid) return;
+            this.grid.addRow({ _rid: 'n' + Date.now() + Math.floor(Math.random() * 1000), _new: true }, true).then(() => this.countChanges());
+        },
+        selectedRows() {
+            const ranges = this.grid ? this.grid.getRanges() : [];
+            const rows = [];
+            for (const range of ranges) for (const row of range.getRows()) if (!rows.includes(row)) rows.push(row);
+            return rows;
+        },
+        deleteRows() {
+            const rows = this.selectedRows();
+            if (!rows.length) { moqui.notifyMessages('Select the rows to delete: a range of their cells'); return; }
+            for (const row of rows) {
+                const data = row.getData();
+                if (data._new) row.delete();
+                else row.update({ _deleted: !data._deleted }).then(() => row.reformat());
+            }
+            setTimeout(() => this.countChanges(), 0);
+        },
+        discard() {
+            if (!window.confirm('Discard ' + this.changeCount + ' changes?')) return;
+            // the rows again, in the layout they are shown in now
+            this.pendingLayout = this.layoutNow();
+            this.forgetChanges();
+            this.build();
+        },
+        save() {
+            const pending = this.pending();
+            if (!pending.updates.length && !pending.creates.length && !pending.deletes.length) return;
+            // cells that fail their validators are not sent
+            const invalid = this.grid.validate();
+            if (invalid !== true) { moqui.notifyMessages(null, (invalid.length || 0) + ' cells are not valid'); return; }
+            this.saving = true;
+            for (const row of this.grid.getRows()) if (row.getData()._refused) row.update({ _refused: false }).then(() => row.reformat());
+            this.call('gridSave', { saveEntityName: this.saveEntity, updatesJson: JSON.stringify(pending.updates), createsJson: JSON.stringify(pending.creates),
+                deletesJson: JSON.stringify(pending.deletes) }, 'POST').then((out) => {
+                if (!out) return;
+                if (!out.saved) { this.markRefused(out.refused || [], pending.rows); return; }
+                // the keys of the new rows, then every row again with its new stamp
+                const byField = {};
+                for (const [name, field] of Object.entries(this.saveFields)) byField[field] = name;
+                (out.createdKeys || []).forEach((key, index) => {
+                    const row = pending.rows.create[index];
+                    const values = { _new: false };
+                    for (const [field, value] of Object.entries(key || {})) values[byField[field] || field] = value;
+                    if (row) row.update(values);
+                });
+                for (const row of pending.rows.delete) row.delete();
+                moqui.notifyMessages('Saved: ' + (out.updated || 0) + ' updated, ' + (out.created || 0) + ' created, ' + (out.deleted || 0) + ' deleted');
+                this.forgetChanges();
+                this.grid.replaceData();
+            }).finally(() => { this.saving = false; });
+        },
+        // a refused row keeps its edits: the row is marked, each field error is on its cell, a conflict offers Reload
+        markRefused(refused, rows) {
+            const lines = [];
+            for (const item of refused) {
+                const row = (rows[item.kind] || [])[item.index];
+                if (row) {
+                    row.update({ _refused: true }).then(() => {
+                        row.reformat();
+                        for (const [field, message] of Object.entries(item.fieldErrors || {})) {
+                            const cell = row.getCell(field);
+                            if (cell) { cell.getElement().classList.add('tabulator-validation-fail'); cell.getElement().title = String(message); }
+                        }
+                    });
+                }
+                lines.push((item.kind || 'row') + ' ' + ((item.index || 0) + 1) + ': ' + (item.message || 'refused'));
+                if (item.conflict && row) this.offerReload(row, item.message);
+            }
+            moqui.notifyMessages(null, 'Nothing was saved. ' + lines.join('; '));
+        },
+        offerReload(row, message) {
+            this.$q.dialog({ title: 'Changed by someone else', message: (message || 'The row was changed since you loaded it') + '. Reload it, losing your edits of it?',
+                cancel: true, ok: { label: 'Reload the row', noCaps: true } }).onOk(() => this.reloadRow(row));
+        },
+        reloadRow(row) {
+            const data = row.getData();
+            const filter = this.keyFields.map((field) => ({ field, type: '=', value: data[field] }));
+            this.call('gridRows', this.sourceParams({ columnsJson: '[]', page: 1, size: 1, filterJson: JSON.stringify(filter) })).then((out) => {
+                const fresh = out && (out.data || [])[0];
+                if (!fresh) { row.delete(); this.countChanges(); return; }
+                for (const cell of row.getCells()) { this.edits.delete(row.getData()._rid + '\u0000' + cell.getField()); cell.getElement().classList.remove('m-grid-edited', 'tabulator-validation-fail'); }
+                row.update(Object.assign({}, fresh, { _refused: false })).then(() => { row.reformat(); this.countChanges(); });
+            });
+        },
+        openRelated(data) {
+            const related = this.related;
+            if (!related) return;
+            const keys = (related.pkFieldNames || []).filter((name) => data[name] != null);
+            const search = 'aen=' + encodeURIComponent(related.entityName) + keys.map((name) => '&' + encodeURIComponent(name) + '=' + encodeURIComponent(data[name])).join('');
+            this.$root.setUrl(this.siblingUrl(keys.length === (related.pkFieldNames || []).length && keys.length ? 'Browse/AutoEdit/AutoEditMaster' : 'Browse/AutoFind', search));
+        },
+        currentFilters() { return this.grid ? this.grid.getHeaderFilters().map((item) => ({ field: item.field, type: 'like', value: item.value })) : []; },
+        currentSort() { return this.grid ? this.grid.getSorters().map((item) => ({ field: item.field, dir: item.dir })) : []; },
+        countRows() {
+            this.counting = true;
+            this.call('gridCount', this.sourceParams({ filterJson: JSON.stringify(this.currentFilters()) })).then((out) => {
+                if (out) this.countText = Number(out.count || 0).toLocaleString() + ' rows';
+            }).finally(() => { this.counting = false; });
+        },
+        exportRows(format, location) {
+            this.exportOpen = false;
+            const visible = this.grid ? this.grid.getColumns().filter((column) => column.isVisible() && column.getField() && column.getField() !== '_related').map((column) => column.getField()) : [];
+            this.call('gridExport', this.sourceParams({ columnsJson: JSON.stringify(visible), sortJson: JSON.stringify(this.currentSort()),
+                filterJson: JSON.stringify(this.currentFilters()), format, location: location || '' }), 'POST').then((out) => {
+                if (!out) return;
+                const note = (out.rowCount || 0) + ' rows' + (out.truncated ? ' (cut short at the export limit)' : '');
+                if (location) { moqui.notifyMessages('Exported ' + note + ' to ' + out.location); return; }
+                const link = document.createElement('a');
+                link.href = this.url('gridDownload') + '?location=' + encodeURIComponent(out.location) + '&fileName=' + encodeURIComponent(out.fileName || '')
+                    + '&contentType=' + encodeURIComponent(out.contentType || '');
+                link.download = out.fileName || '';
+                document.body.appendChild(link); link.click(); link.remove();
+                moqui.notifyMessages('Exported ' + note);
+            });
+        },
+        // ---- saved views ----
+        loadViews() { this.call('gridViews', {}, 'GET').then((out) => { this.gridViews = (out && out.gridViews) || []; }); },
+        layoutNow() {
+            if (!this.grid) return null;
+            return { columns: this.grid.getColumns().filter((column) => column.getField() && column.getField() !== '_related').map((column) => ({
+                field: column.getField(), width: column.getWidth(), visible: column.isVisible(), frozen: !!column.getDefinition().frozen })),
+                sort: this.currentSort(), filters: this.grid.getHeaderFilters().map((item) => ({ field: item.field, value: item.value })) };
+        },
+        storeView() {
+            this.call('storeView', { viewId: this.viewId || '', description: this.viewDescription, isShared: this.viewShared,
+                viewSourceJson: JSON.stringify(this.sourceSpec()), layoutJson: JSON.stringify(this.layoutNow()) }, 'POST').then((out) => {
+                if (!out) return;
+                this.viewId = out.viewId || this.viewId;
+                this.viewOpen = false;
+                moqui.notifyMessages('View saved');
+            });
+        },
+        openView(view) {
+            if (!this.mayLeave('Open the view')) return;
+            let source = null, layout = null;
+            try { source = JSON.parse(view.sourceJson || 'null'); layout = JSON.parse(view.layoutJson || 'null'); } catch (_) { /* not JSON */ }
+            if (!source) { moqui.notifyMessages(null, 'This view has no source'); return; }
+            this.viewId = view.viewId; this.viewDescription = view.description || ''; this.viewShared = view.isShared === 'Y' || view.isShared === true;
+            this.open(source, layout);
+        },
+        deleteView(view) {
+            this.$q.dialog({ title: 'Delete view', message: 'Delete "' + (view.description || view.viewId) + '"?', cancel: true, persistent: true })
+                .onOk(() => this.call('deleteView', { viewId: view.viewId }, 'POST').then((out) => { if (out) this.loadViews(); }));
+        }
+    },
+    mounted() {
+        this.unloadGuard = (event) => { if (this.changeCount) { event.preventDefault(); event.returnValue = ''; } };
+        window.addEventListener('beforeunload', this.unloadGuard);
+        moqui.loadStylesheet('/libs/tabulator/tabulator.min.css');
+        moqui.loadStylesheet('/css/DataGrid.css');
+        moqui.loadScript('/libs/tabulator/tabulator.min.js', null, () => !!window.Tabulator).then(() => {
+            const viewId = this.parameters.viewId;
+            if (viewId) {
+                this.call('gridViews', {}, 'GET').then((out) => {
+                    this.gridViews = (out && out.gridViews) || [];
+                    const view = this.gridViews.find((item) => String(item.viewId) === String(viewId));
+                    if (view) this.openView(view);
+                    else { const source = this.initialSource(); if (source) this.open(source); }
+                });
+                return;
+            }
+            const source = this.initialSource();
+            if (source) this.open(source);
+        }, (err) => console.error('The data grid could not load Tabulator', err));
+    },
+    beforeUnmount() {
+        window.removeEventListener('beforeunload', this.unloadGuard);
+        if (this.grid) { try { this.grid.destroy(); } catch (_) { /* gone */ } }
+    }
+};
+</script>
+
+<style>
+.m-data-grid.m-grid-filters-hidden .tabulator-header-filter { display: none; }
+.m-data-grid.m-grid-locked .tabulator-col-sorter, .m-data-grid.m-grid-locked .tabulator-header-filter { opacity: .4; }
+.m-data-grid.m-grid-locked .tabulator-col.tabulator-sortable .tabulator-col-title-holder { pointer-events: none; }
+</style>

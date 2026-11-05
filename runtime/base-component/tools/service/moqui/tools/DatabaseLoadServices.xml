@@ -56,6 +56,9 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="!ec.user.hasPermission('DATABASE_ADMIN')">
                 <return error="true" message="A load with the foreign keys dropped needs the DATABASE_ADMIN permission"/></if>
             <script><![CDATA[
+            // a ServiceJob runs with authorization off: the load is the user's, authorized as from the Tools app for all
+            // actions (the Data › Load transition), so entity authorization and the security checks of what it writes apply
+            ec.artifactExecution.runAsUser('component://tools/screen/Tools.xml', () => {
             const runJob = (jobId) => {
                 const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.run#DatabaseJob').parameters({jobId, wait: true})
                     .ignorePreviousError(true).call() || {}
@@ -113,6 +116,7 @@ along with this software (see the LICENSE.md file). If not, see
             // the outcome is the job run's results; the load's error is not the run's, as the restore did run
             ec.message.clearErrors()
             if (!loaded || restoreStatusId != 'DbjsDone') ec.message.addError(outcome)
+            })
         ]]></script>
         </actions>
     </service>

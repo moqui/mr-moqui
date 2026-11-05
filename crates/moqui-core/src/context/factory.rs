@@ -1369,6 +1369,18 @@ impl ExecutionContext {
         drop(guard);
     }
 
+    /// The guard of [`Self::script_disable_authz`], taken out: a scope that must leave the script's authorization state
+    /// as it found it (`ec.artifactExecution.runAsUser`) takes it before and puts it back with
+    /// [`Self::put_script_authz`] after.
+    pub fn take_script_authz(&self) -> Option<AuthzGuard> {
+        self.state.script_authz.borrow_mut().take()
+    }
+
+    /// Put back a guard [`Self::take_script_authz`] took.
+    pub fn put_script_authz(&self, guard: Option<AuthzGuard>) {
+        *self.state.script_authz.borrow_mut() = guard;
+    }
+
     /// Java's `disableEntityEca`: entity ECA rules do not run for writes of this context until
     /// [`Self::enable_entity_eca`]. Returns whether they were already disabled; a caller that found them disabled
     /// leaves them so.

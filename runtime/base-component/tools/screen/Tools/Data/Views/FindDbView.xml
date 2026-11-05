@@ -16,7 +16,8 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Data View Entity List" default-menu-index="1">
 
     <transition name="edit"><default-response url="../EditDbView"/></transition>
-    <transition name="view"><default-response url="../ViewDbView"/></transition>
+    <!-- View opens the data grid on the DbViewEntity (plans/Tools-Database.md §2.1) -->
+    <transition name="view"><default-response url="../../Grid"><parameter name="entityName" from="dbViewEntityName"/></default-response></transition>
     <transition name="create"><service-call name="org.moqui.impl.EntityServices.create#DbViewEntity"/>
         <default-response url="."/></transition>
 

@@ -95,6 +95,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <q-btn v-if="current.limitReached" flat dense no-caps icon="expand_more" label="Fetch more" :disable="!current.rerunnable || running"
                         :loading="fetching" @click="fetchMore(current)">
                     <q-tooltip v-if="!current.rerunnable">Only a plain query run read only can be run again to fetch more</q-tooltip></q-btn>
+                <q-btn v-if="current.rerunnable" flat dense no-caps icon="grid_on" label="Open in grid" @click="openInGrid(current)">
+                    <q-tooltip>The whole result in the data grid, where a result of one table with its key can be edited</q-tooltip></q-btn>
                 <q-btn-dropdown flat dense no-caps icon="content_copy" label="Copy">
                     <q-list dense>
                         <q-item clickable v-close-popup @click="copy('tsv')"><q-item-section>As TSV (spreadsheet)</q-item-section></q-item>
@@ -342,10 +344,11 @@ module.exports = {
             this.running = true;
             this.runId = this.newRunId();
             const params = Object.assign({ sqlText: text, limit: this.limit || 500, runId: this.runId, parametersJson: this.parametersFor(text) }, extra);
+            const ranOn = this.db;
             this.call('run', 'POST', params).then((out) => {
                 // a refused or failed run leaves no results of the run before it on the page
                 if (!out) { this.results = []; return; }
-                this.results = (out.results || []).map((result) => Object.assign({ records: [], columns: [] }, result, { runText: result.sql || text }));
+                this.results = (out.results || []).map((result) => Object.assign({ records: [], columns: [] }, result, { runText: result.sql || text, db: ranOn }));
                 this.tab = 0;
                 if (out.cancelled) moqui.notifyMessages('The run was cancelled');
                 else if (out.timedOut) moqui.notifyMessages(null, 'The run timed out');
@@ -427,6 +430,20 @@ module.exports = {
             link.download = 'result-' + (this.tab + 1) + '.csv';
             document.body.appendChild(link); link.click(); link.remove();
             setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+        },
+        // the statement as a data grid source, handed over in this tab's session storage: no SQL in a URL
+        openInGrid(result) {
+            const sql = result.runText || result.sql;
+            // the grid runs the statement again, a page at a time, with no :name values to bind
+            if (moqui.sql.parameterNames(sql, this.backend).length) {
+                moqui.notifyMessages(null, 'A statement with :name parameters cannot open in the grid: put the values in the statement');
+                return;
+            }
+            const key = this.newRunId();
+            try {
+                window.sessionStorage.setItem('moqui.grid.source.' + key, JSON.stringify({ type: 'sql', db: result.db || this.db, sql }));
+            } catch (_) { moqui.notifyMessages(null, 'The browser keeps no session storage for this'); return; }
+            this.$root.setUrl(this.siblingUrl('Data/Grid') + '?sqlKey=' + encodeURIComponent(key));
         },
         // the rows the page holds, made a workbook by SqlDownload.xml: nothing is run again, and the page and its editor stay
         downloadXlsx() {
