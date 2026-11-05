@@ -222,12 +222,8 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
     let now_stamp = timestamp_value(now.as_millisecond());
     let plan = LockPlan::new(&facade)?;
 
-    let jobs = facade
-        .find(SERVICE_JOB)?
-        .order_by("priority", false)
-        .order_by("jobName", false)
-        .list()?;
-    for job in jobs.values() {
+    let jobs = discover(&facade, slots)?;
+    for job in &jobs {
         let job_name = field_text(job, "jobName");
         let queued = job_name.starts_with(QUEUE_PREFIX);
         let cron_text = field_text(job, "cronExpression");
@@ -287,6 +283,58 @@ fn pass(shared: &Shared, factory: &Arc<ExecutionContextFactory>) -> Result<PassR
         }
     }
     Ok(report)
+}
+
+/// The jobs a pass looks at, in priority order: every scheduled job (one with a cron expression), and the queued calls
+/// the free slots can take, read a bounded number at a time (plans/High-Level-Review.md HL-026): a full queue can leave
+/// many `ASYNC_QUEUE_` rows, which a later pass reads when slots are free. Priority is lower first, a job with none after
+/// every job with one, then by name: the same on every database (an `ORDER BY` puts nulls first on some and last on
+/// others).
+pub(crate) fn discover(facade: &EntityFacade, slots: i64) -> Result<Vec<EntityValue>, Error> {
+    let mut jobs: Vec<EntityValue> = facade
+        .find(SERVICE_JOB)?
+        .condition(Condition::is_not_null("cronExpression"))
+        .list()?
+        .into_values();
+    jobs.retain(|job| !field_text(job, "jobName").starts_with(QUEUE_PREFIX));
+    let mut wanted = usize::try_from(slots).unwrap_or(0);
+    let pattern = Value::string(format!("{QUEUE_PREFIX}%"));
+    // Those with a priority first, then those with none.
+    for (with_priority, field) in [(true, "priority"), (false, "jobName")] {
+        if wanted == 0 {
+            break;
+        }
+        let priority = if with_priority {
+            Condition::is_not_null("priority")
+        } else {
+            Condition::is_null("priority")
+        };
+        let queued = facade
+            .find(SERVICE_JOB)?
+            .condition(Condition::like("jobName", pattern.clone()))
+            .condition(priority)
+            .order_by(field, false)
+            .order_by("jobName", false)
+            .limit(i64::try_from(wanted).unwrap_or(i64::MAX))
+            .list()?
+            .into_values();
+        wanted = wanted.saturating_sub(queued.len());
+        jobs.extend(
+            queued
+                .into_iter()
+                .filter(|job| field_text(job, "jobName").starts_with(QUEUE_PREFIX)),
+        );
+    }
+    jobs.sort_by(|left, right| {
+        let key = |job: &EntityValue| {
+            (
+                number(job, "priority").map_or((1, 0), |priority| (0, priority)),
+                field_text(job, "jobName"),
+            )
+        };
+        key(left).cmp(&key(right))
+    });
+    Ok(jobs)
 }
 
 /// What the lock row allows this pass to do for a job that is otherwise due.

@@ -1153,3 +1153,57 @@ fn a_job_says_no_time_limit_to_run_its_scripts_without_one() {
     );
     assert_eq!(limit(&job(&[("transactionTimeout", "5"), ("noTimeLimit", "Y")])), None);
 }
+
+/// plans/High-Level-Review.md HL-026: a pass reads every scheduled job but only as many queued calls as it has free
+/// slots, in priority order; a job with no priority comes after every job with one, on every database.
+#[test]
+fn a_pass_reads_only_the_queued_calls_its_free_slots_can_take() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = crate::testing::open_with_tape(Arc::clone(&tape));
+    let job = |name: &str, fields: &[(&str, &str)]| {
+        let mut row = facade.make_value("moqui.service.job.ServiceJob").unwrap();
+        row.set("jobName", Value::string(name));
+        row.set("serviceName", Value::string("echo#Note"));
+        for (field, text) in fields {
+            row.set(*field, Value::string(*text));
+        }
+        row.create(&facade).unwrap();
+    };
+    job("S_NONE", &[("cronExpression", "* * * * * *")]);
+    job("S_FIRST", &[("cronExpression", "* * * * * *"), ("priority", "1")]);
+    job("ADHOC", &[]);
+    for index in 0..40 {
+        job(&format!("ASYNC_QUEUE_{index:03}"), &[("priority", "9")]);
+    }
+    job("ASYNC_QUEUE_NULL", &[]);
+    let names = |slots: i64| -> Vec<String> {
+        super::super::jobs::discover(&facade, slots)
+            .unwrap()
+            .iter()
+            .map(|job| text(job, "jobName"))
+            .collect()
+    };
+    let before = tape.lock().unwrap().len();
+    assert_eq!(
+        names(3),
+        [
+            "S_FIRST",
+            "ASYNC_QUEUE_000",
+            "ASYNC_QUEUE_001",
+            "ASYNC_QUEUE_002",
+            "S_NONE"
+        ]
+    );
+    let reads: Vec<String> = tape.lock().unwrap()[before..]
+        .iter()
+        .filter(|sql| sql.starts_with("SELECT") && sql.contains("\"service_job\""))
+        .cloned()
+        .collect();
+    assert_eq!(reads.len(), 2, "the scheduled jobs, then three queued calls: {reads:?}");
+    assert!(reads[1].contains("LIMIT"), "{reads:?}");
+    assert_eq!(names(0), ["S_FIRST", "S_NONE"], "no free slot reads no queued call");
+    let all = names(100);
+    assert_eq!(all.len(), 43);
+    assert_eq!(all[..2], ["S_FIRST".to_string(), "ASYNC_QUEUE_000".to_string()]);
+    assert_eq!(all[41..], ["ASYNC_QUEUE_NULL".to_string(), "S_NONE".to_string()]);
+}
