@@ -1063,19 +1063,32 @@ fn draw_value(paint: &mut Painter, session: &Session, field: &LaidField, widget:
         Widget::Radio { options, .. } => {
             let value = session.buffer(id);
             let focused = focus_key == id.as_str();
+            let layout = crate::layout::radio_layout(options, width);
             let mut col = x;
-            for choice in options {
+            let mut row = y;
+            for (choice, lines) in options.iter().zip(layout.labels) {
                 let on = choice.value == value;
                 let dot = if paint.theme.ascii { "*" } else { "•" };
-                let text = format!("({}) {}", if on { dot } else { " " }, choice.label);
-                let used = paint.text(
-                    col,
-                    y,
-                    &text,
-                    Look::role(Role::Field).focused(focused && on),
-                    usize::from(paint.right.saturating_sub(col)),
-                );
-                col += u16::try_from(used + 2).unwrap_or(0);
+                for (at, line) in lines.iter().enumerate() {
+                    let text = if at == 0 {
+                        format!("({}) {line}", if on { dot } else { " " })
+                    } else {
+                        format!("    {line}")
+                    };
+                    let used = paint.text(
+                        col,
+                        row + at,
+                        &text,
+                        Look::role(Role::Field).focused(focused && on),
+                        width.saturating_sub(usize::from(col - x)),
+                    );
+                    if !layout.stacked {
+                        col += u16::try_from(used + 2).unwrap_or(0);
+                    }
+                }
+                if layout.stacked {
+                    row += lines.len();
+                }
             }
         }
         Widget::Display { text, .. } => {

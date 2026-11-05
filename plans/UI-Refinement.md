@@ -235,16 +235,21 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-084 | M08 Replays search | P3 observed layout/empty state / prepared review | User/Visit inputs span1920px and both initial empty and no-match result show only table headers | Dark1920, no recording fixture yet; filter ui-review-no-recording and clear both complete. Evidence monitor-replays-dark-before-1920.png. Playback and masking remain unverified. |
 | UI-085 | M09 Releases → Release Detail | P3 observed hierarchy/readability / prepared review | Empty regression list has no explanation or heading; revision/times are compressed into prose and error fingerprints dominate row labels | Dark1920, moqui0.1.0. Error link reaches the corresponding known schedule-validation error; Back retains release context. Evidence monitor-release-detail-dark-before-1920.png. Synthetic comparative regression/disposition remains pending. |
 
-| UI-086 | TUI Ctrl+K → Apps → Comms | P2 observed routing failure / prepared follow-up | Shell supplies /qapps target to the terminal and opens a browser-only placeholder | F3 then numbered AppList recovers. Normalize shell navigation to /apps while preserving query and unrelated URLs. |
-| UI-087 | B05 TUI Reply to at390/1280 | P2 observed clipping / prepared follow-up | Long radio audience options run beyond their field width | Read-only HTML hints wrap and Save is visible; radio layout needs shared height/wrapping without changing keyboard selection. |
+| UI-086 | TUI Ctrl+K → Apps → Comms | P2 fixed and retested | Normalize local shell navigation to /apps while preserving query and unrelated URLs | Comms/Gallery open, F3 returns, Gallery quick-note opens/cancels, and Contrived search opens EXT_CONTRIVED detail. Synthetic route fixtures also pass. |
+| UI-087 | B05 TUI Reply to at390/1280 | P2 fixed and retested | Shared radio layout wraps labels and reserves their rows within the field width | All three audience choices remain readable at1920/1280/390; arrows select each, Tab moves to frequency, restored Everyone saves and agrees with Material. |
 | UI-088 | M08 enable recording → Gallery interaction → Replays | P1 observed capture failure / design pending | Initial replay exceeds256KiB receiver body limit and capture stops without user feedback | Confirmed server log03:14:31 and Monitor error; no recording stored. All temporary settings restored. Preserve masking and bounded ingestion in the correction. |
 | UI-089 | M08 replay player data request | P2 source-confirmed route mismatch / prepared follow-up | report.appPath changes the /apps JSON transition into a /qapps HTML wrapper | Same distinction as playlist loading; focused private patch prepared. Live playback awaits a successful recording fixture. |
-| UI-090 | Shared dark drawer current/on-path labels | P2 measured contrast failure / prepared follow-up | Accent #1976d2 is reused for small selected text over its own26% fill on #1d1d1d | Current Reports link2.77:1; measured DOM foreground and composited background. Use the readable semantic text color and retain accent indicators. |
+| UI-090 | Shared dark drawer current/on-path labels | P2 fixed and retested | Readable semantic text replaces the brand-fill color for current/on-path labels | Current row improves from2.77:1 to5.76:1 dark;4.97:1 light. Default/Warm, desktop/phone and selected-bar preservation checked. Focus fill remains separate UI096. |
 | UI-091 | D07 embedded playlist → Inspect panel | P2 fixed and retested | Keep the original server screenUrl for inspection/export transitions while navigation uses the Material mount | Reproduced JSON parse error, corrected, then live Inspect returns diagnostic data with no alert. Existing fixture clicks Inspect and asserts /apps endpoint plus definition/panel IDs;47/47 passes. |
 | UI-092 | Standard Dashboard tabular fallback | P3 observed readability / deferred | Time columns display epoch milliseconds instead of human-readable dates | Targeted /apps playlist link reaches Monitor overview and shows data, but time1793242800000 requires interpretation. Retain compatibility; refine shared fallback formatting later. |
 | UI-093 | B06 Chat → New room → Members search | P1 observed functional failure / investigation | Searching the disposable sec.view.only account returns Method POST is not supported instead of choices | John Doe/dark1920 on8094; Name/Topic retained, no participant added. Evidence comms-chat-member-search-dark-before-1920.png. Source review of request method/route is pending. |
 | UI-094 | B06 main/thread/edit message editors | P2 observed accessibility / prepared follow-up | Rich editor role=textbox has no accessible name; placeholder is only a paragraph data attribute | DOM inspection with two simultaneous editors confirms ambiguity. Shared rich text supports labels; caller bindings need names. |
 | UI-095 | B06 keyboard message actions | P2 observed keyboard gap / prepared follow-up | Toolbar is exposed only by pointer/tap; message row has no keyboard entry | Desktop after edit: Room→Tab reaches1reply, nextTab composerBold; reaction/edit/reply actions cannot be reached. Source confirms hover/tap-only condition. |
+| UI-096 | Shared drawer keyboard focus | P2 observed focus contrast / prepared follow-up | The focused row has no outline and only the translucent Quasar focus fill | Dark390, Menu Enter then seven Tabs reaches Comms. :focus-visible is true, outline0, helper opacity0.22; the fill remains faint despite readable text. Evidence shared-drawer-dark-after-390.png. |
+| UI-097 | B06 selected room preview in light mode | P2 measured contrast failure / prepared follow-up | The caption dilutes the selected semantic blue to54% alpha | Rendered preview2.32:1 on #f4f6f8, default light1920. Use the readable secondary foreground on the snippet while preserving draft/status colors. Evidence comms-chat-preview-light-before-1920.png. |
+| UI-098 | B06 shell Create → Chat message | P2 observed flow defect / prepared follow-up | Opens the compact room list instead of the intended new-message picker | John/light1920; rendered QVue has no quick-create-body wrapper, although loader context identifies its container. New message manually opens the picker; search then encounters UI093. |
+| UI-099 | B08 and shared multiple-choice inputs | P1 observed selection visibility / investigation | Choosing a recipient leaves the field visually empty while its submitted value is retained | Calls/History, John/light1920: sec.view.only option selected; before any submit, input empty, no chips, hidden selected value100000. Shared hide-selected suppresses Quasar's chip renderer. Evidence shared-multiple-choice-hidden-before-1920.png. |
+| UI-100 | B08/B09 History filter recovery | P2 observed reset failure / prepared follow-up | All retains the Voicemail outcome instead of returning to all calls | John/light1920: All href and resulting URL both retain outcome=voicemail; No voicemail here remains. Other folder/heard reset links need inspection. |
 
 ## Running implementation notes
 
@@ -1115,6 +1120,49 @@ displayed absolute time. Ordinary Monitor routes remain unchanged. No framing/se
 - Reusable guide now covers authorized embedded rendering, owning-dashboard context, latest-response identity and
   preserving omitted read-only HTML without preventing explicit clears. Screenshots stay ignored and untracked.
 
+### Batch 10 — shared navigation and terminal layout
+
+Batch9 committed locally as `cc99c4ce`. This batch addresses UI-086/087/090 before continuing app-specific fixes.
+The terminal shell converts only local /qapps navigation to /apps, preserving suffixes, unrelated mounts and external
+addresses. Radio choices stay inline when they fit and otherwise wrap within their own field width; layout and
+drawing share the row calculation. Drawer current/on-path text uses the existing theme-aware link foreground while
+retaining brand fills, the selection bar and authored overrides. Independent source review found no blocker.
+Existing shell and contrast fixtures are extended; one synthetic terminal draw regression covers label wrapping,
+adjacent-field boundaries and unchanged keyboard selection. Focused checks, live retest and the framework gate follow.
+
+- TUI203 tests pass, one documentation example remains ignored; workspace Clippy passes; debug build completes
+  in1m33s. The contrast fixture initially measured Quasar's in-progress color transition. It now disables animation
+  for that rule check and follows the real drawer dark class; no production timing changed. WebrootVue.qvt34/34
+  passes in13.14s after the build, within the15s spec limit. An earlier run during builds exceeded15s; no budget raised.
+- Live UI090: default current-row contrast is4.97:1 light and5.76:1 dark; active app5.53:1/6.79:1. Warm current-row
+  contrast is5.68:1 light/6.33:1 dark and active app6.34:1/7.55:1. Default scheme restored. At390 the drawer opens by
+  Enter and normal Tab reaches its links; selected text and the brand bar remain visible. Focus fill itself is a
+  separate follow-up (UI096). Evidence shared-drawer-{light,dark}-after-1920.png,
+  shared-drawer-warm-dark-after-1920.png and shared-drawer-dark-after-390.png.
+- Live UI086: Ctrl+K→Comms reaches the real Inbox, F3 returns to App List; Gallery opens its Landing. F6→Gallery
+  note opens the authorized form and Escape cancels. Search Contrived returns the enumeration and opens Detail with
+  EXT_CONTRIVED retained. Evidence tui-launcher-comms-dark-after-1920.png. Tray destinations have focused fixture
+  coverage only; no full tray workflow is claimed.
+- Live UI087: the audience choices are inline at1920, stacked at1280 and word-wrapped at390. Right selects Contacts
+  then Internal; two Left presses restore Everyone; Tab advances once to frequency. Light/dark changes preserve the
+  choices. Save succeeds with reply off; Material confirms Everyone,4days, unchanged09:00 dates, subject, original
+  external body and empty internal body. Evidence comms-away-radio-{dark,light}-after-{1920,390}.png plus
+  comms-away-radio-dark-after-1280.png. Default dark and1920×1080 restored. No new browser errors; historical405
+  from UI093 remains in the browser log. No XML screen changed in this batch; previous screen lint remains applicable.
+- Gate19 uses the current debug binary. Before its overlay tests,22 verified stale56-byte segments plus3 active
+  segments again occupied most macOS slots. Removed eight stale segments only after rechecking zero attachments
+  and dead creator/last-user PIDs; all active segments were retained. A separate test-lifecycle investigation found
+  two successful driver fixtures that always SIGKILL their owned Postgres process. A graceful-cleanup proposal is
+  queued; exact PID-to-test attribution is inferred from run order, not asserted as logged fact.
+- Gate19 finishes with all352 server,10 demo,394 webroot client,48 Dev AIDE client and148 served-client features
+  passing. Cargo fails only the same three SIP tests with AddrNotAvailable; the server section fails timing limits
+  in Tools and Dev AIDE (including ArtifactDocs23.21s and ArtifactIndex25.18s). The full gate is not exit-zero.
+  Serial debug rerun passes44/44 assertions but again exceeds timings. The unchanged Tools/Dev AIDE server code
+  passes44/44 with the existing batch9 release binary in39.69s, within both component budgets (Tools1.9/3s,
+  Dev AIDE20.3/30s). This isolates debug-build overhead; the changed terminal code remains covered by its current
+  debug tests/live server. Logs: /tmp/moqui-ui-framework-gate19.log, /tmp/ui-batch10-server-budget-retest.log and
+  /tmp/ui-batch10-release-budget-retest.log. No budget raised and no claim of a fully passing gate.
+
 ### Next activity baseline — B06 chat
 
 While batch9 gate18 runs, inspected Chat on8094 as John Doe. The empty split workspace offers direct message/room
@@ -1133,6 +1181,22 @@ button; downloaded bytes equal the fixture. Members shows only John Doe, Active/
 comms-chat-attachment-dark-before-1920.png. This is one-user partial coverage, not two-user/encrypted success.
 An attempted browser zoom shortcut left viewport1920×1080, devicePixelRatio1 and visual scale1 unchanged;
 actual200% zoom remains unverified and is not substituted with a narrow viewport.
+Further light1920 checks: Pin to the room adds the root to Pinned messages; Unpin removes it, shows Unpinned and the
+useful empty instruction. Both events appear in the room history. Threads→Mine lists the existing root/reply with its
+last-reply metadata. Files shows the48-byte attachment, author and time; Pictures shows No pictures yet; All restores
+the file. The selected room's preview is visibly faint and measures2.32:1 (UI097). No pin remains.
+Quick-create Chat message opens the compact room list (UI098); New message opens the picker, whose sec.view.only
+search returns the same405 as UI093. Cancel and Close return to the room without creating a conversation.
+
+### Next activity baseline — B08/B09/B10 unavailable calls
+
+John/default light1920 on8094: Calls explains that no media server is running and phone calls are unavailable.
+Empty New call reports Choose someone to call; selecting sec.view.only and submitting reports the no-media-server
+refusal. Number invalid reports That is not a phone number. No call/history record appears and no PSTN call is made.
+The selected recipient is already visually absent before submission despite hidden value100000 (UI099), so this is
+not attributed solely to error recovery. Voicemail presents useful empty Inbox and Trash links; All fails to clear
+the voicemail filter (UI100). Successful media, guest admission, recorded playback and phone routing remain pending.
+Evidence comms-calls-unavailable-light-before-1920.png and shared-multiple-choice-hidden-before-1920.png.
 
 ### Verification environment corrections
 

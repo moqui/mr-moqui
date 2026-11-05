@@ -228,3 +228,12 @@ Further patterns established during the review:
   transition by reading the selected record through its authorized service; do not write if that read fails. An
   explicitly posted empty value still clears the field. Keep this handling scoped to the unsupported fields and
   preserve the normal semantics of dates, audience choices and apply-to-all actions.
+- Shared shell destinations use the browser mount. The terminal adapts only that local mount at its navigation
+  boundary, retaining query values and leaving other mounts and external addresses intact. Exercise launcher,
+  search, quick-create and tray destinations with the same shell data the browser receives.
+- Radio labels fit within their assigned field width. When an inline group will not fit, wrap each choice with a
+  hanging indent and reserve the same rows in layout and drawing. Preserve one focus target and the option values;
+  check a neighboring field as well as the next row.
+- Selected navigation text uses a readable foreground independently of its brand-colored fill and selection bar.
+  Measure translucent fills against their painted ancestor backgrounds. Preserve explicit theme overrides and
+  retest the default light/dark cycle plus representative alternative schemes.

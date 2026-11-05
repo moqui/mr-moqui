@@ -148,6 +148,17 @@ pub enum PromptThen {
     AssistAnswer { run_id: String, question_id: String },
 }
 
+/// The shared shell publishes browser links; terminal screens live under the matching apps mount.
+/// Only the local Material root changes, leaving other mounts, relative links and outside addresses intact.
+fn terminal_url(url: &str) -> String {
+    match url.strip_prefix("/qapps") {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') || rest.starts_with('?') || rest.starts_with('#') => {
+            format!("/apps{rest}")
+        }
+        _ => url.to_string(),
+    }
+}
+
 impl Session {
     // ---- what the view reads ----
 
@@ -250,7 +261,8 @@ impl Session {
         }
         for app in &self.shell.apps {
             if hit(&app.title) {
-                rows.push(row("Apps", &app.title, &app.url, MenuAct::Url(app.url.clone())));
+                let url = terminal_url(&app.url);
+                rows.push(row("Apps", &app.title, &url, MenuAct::Url(url.clone())));
             }
         }
         let mut seen = BTreeSet::new();
@@ -386,7 +398,7 @@ impl Session {
                     group: label.clone(),
                     title: json_text(found, "title"),
                     subtitle: json_text(found, "subtitle"),
-                    act: MenuAct::Url(url),
+                    act: MenuAct::Url(terminal_url(&url)),
                 });
             }
         }
@@ -446,7 +458,7 @@ impl Session {
     pub(super) fn run_menu(&mut self, act: MenuAct) {
         match act {
             MenuAct::Link(id) => self.follow_link(&id),
-            MenuAct::Url(url) => self.follow_url(&url),
+            MenuAct::Url(url) => self.follow_url(&terminal_url(&url)),
             MenuAct::Dialog(id) => self.open_dialog(&id),
             MenuAct::Load { title, url } => self.open_extra(QUICK, &title, &url),
             MenuAct::Export { list, at } => self.export(&list, at),
@@ -634,7 +646,7 @@ impl Session {
         self.lanes.push(
             Purpose::Fragment(id.to_string()),
             LinkCall::Fragment {
-                url: url.to_string(),
+                url: terminal_url(url),
                 parameters: BTreeMap::new(),
             },
         );

@@ -459,3 +459,84 @@ fn a_long_text_area_scrolls_with_its_cursor() {
     );
     assert_eq!(view.session().buffer("Note.html"), "<p>Keep this HTML</p>");
 }
+
+#[test]
+fn radio_labels_wrap_without_covering_the_next_field_or_changing_keyboard_selection() {
+    let json = r#"{ "v": 1, "screen": { "path": "/radio", "title": "Radio labels" }, "c": [
+      { "t": "form", "id": "R", "name": "R", "c": [
+        { "t": "field", "id": "R.audience", "name": "audience", "title": "Reply to",
+          "w": { "kind": "radio", "value": "everyone", "options": [
+            { "value": "everyone", "label": "Everyone who writes" },
+            { "value": "contacts", "label": "My contacts and people inside the organization" },
+            { "value": "internal", "label": "Only people inside the organization" }
+          ] } },
+        { "t": "field", "id": "R.after", "name": "after", "title": "Next field",
+          "w": { "kind": "textLine", "value": "AFTER_RADIO" } }
+      ] }
+    ] }"#;
+    let mut beside: serde_json::Value = serde_json::from_str(json).unwrap();
+    let fields = beside["c"][0]["c"].as_array_mut().unwrap();
+    let audience = fields.remove(0);
+    fields.insert(
+        0,
+        serde_json::json!({ "t": "row", "id": "R.row", "c": [
+        audience,
+        { "t": "field", "id": "R.neighbor", "name": "neighbor", "title": "Beside radio",
+          "w": { "kind": "textLine", "value": "ADJACENT_CELL" } }
+    ] }),
+    );
+    let beside = beside.to_string();
+    for (width, alongside) in [(40, false), (100, false), (220, false), (220, true)] {
+        let fixture = if alongside { beside.as_str() } else { json };
+        let model = ScreenModel::from_json(fixture).unwrap();
+        let mut view = view_of(model, FakeLink::from_json(&[fixture]).unwrap());
+        assert!(view.session_mut().focus_key("R.audience"));
+        let text = view.screen_text(width, 30);
+        let words = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        for label in [
+            "Everyone who writes",
+            "My contacts and people inside the organization",
+            "Only people inside the organization",
+        ] {
+            assert!(words.contains(label), "{width}: {text}");
+        }
+        assert_eq!(text.matches("(•)").count(), 1, "{text}");
+        let rows: Vec<&str> = text.lines().collect();
+        let first = rows
+            .iter()
+            .position(|line| line.contains("Everyone who writes"))
+            .unwrap();
+        let last = rows.iter().rposition(|line| line.contains("organization")).unwrap();
+        let after = rows.iter().position(|line| line.contains("AFTER_RADIO")).unwrap();
+        assert!(after > last, "wrapped rows must be reserved: {text}");
+        assert_eq!(
+            first == last,
+            width == 220 && !alongside,
+            "inline when the full group fits: {text}"
+        );
+        if alongside {
+            let neighbor = rows.iter().position(|line| line.contains("ADJACENT_CELL")).unwrap();
+            assert_eq!(neighbor, first, "the adjacent field remains on the same row: {text}");
+        }
+        assert_eq!(
+            view.session()
+                .focus_order()
+                .iter()
+                .filter(|item| item.key == "R.audience")
+                .count(),
+            1
+        );
+        if width == 40 {
+            press(&mut view, Key::Right);
+            assert_eq!(view.session().buffer("R.audience"), "contacts");
+            assert_eq!(view.session().focus_id(), "R.audience");
+            let selected = view.screen_text(width, 30);
+            assert!(selected.contains("(•) My contacts"), "{selected}");
+            assert_eq!(selected.matches("(•)").count(), 1, "{selected}");
+            press(&mut view, Key::Left);
+            assert_eq!(view.session().buffer("R.audience"), "everyone");
+            press(&mut view, Key::Tab);
+            assert_eq!(view.session().focus_id(), "R.after");
+        }
+    }
+}

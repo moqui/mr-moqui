@@ -86,7 +86,7 @@ fn shell() -> ShellInfo {
         apps: vec![
             MenuItem {
                 title: "Sales".to_string(),
-                url: "/apps/sales".to_string(),
+                url: "/qapps/sales?from=palette&note=A%20B".to_string(),
                 children: Vec::new(),
             },
             MenuItem {
@@ -94,14 +94,24 @@ fn shell() -> ShellInfo {
                 url: "/apps/tools".to_string(),
                 children: Vec::new(),
             },
+            MenuItem {
+                title: "Archive".to_string(),
+                url: "/qapps-archive/tools".to_string(),
+                children: Vec::new(),
+            },
+            MenuItem {
+                title: "Outside".to_string(),
+                url: "https://example.invalid/qapps/help".to_string(),
+                children: Vec::new(),
+            },
         ],
         quick_create: vec![ShellAction {
             label: "New task".to_string(),
-            url: "/apps/app/QuickTask".to_string(),
+            url: "/qapps/app/QuickTask".to_string(),
             app: "App".to_string(),
         }],
         tray: vec![
-            ("Today".to_string(), "/apps/hub/Today".to_string()),
+            ("Today".to_string(), "/qapps/hub/Today".to_string()),
             ("Chat".to_string(), "/apps/hub/Chat".to_string()),
         ],
         counts: BTreeMap::from([("chat".to_string(), 1), ("today".to_string(), 3)]),
@@ -111,7 +121,9 @@ fn shell() -> ShellInfo {
 }
 
 fn started() -> (Session, FakeLink) {
-    let link = FakeLink::from_json(&[MAIN_JSON, QUICK_JSON, TODAY_JSON, CHAT_JSON]).unwrap();
+    let sales =
+        r#"{ "v": 1, "screen": { "path": "/apps/sales", "pathList": ["apps", "sales"], "title": "Sales" }, "c": [] }"#;
+    let link = FakeLink::from_json(&[MAIN_JSON, QUICK_JSON, TODAY_JSON, CHAT_JSON, sales]).unwrap();
     link.answer_shell(shell());
     link.answer_json(
         "/menuData/apps/app/Main",
@@ -155,13 +167,41 @@ fn the_palette_finds_apps_then_asks_the_server_once_the_typing_stops() {
     link.answer_json(
         "/shellSearch",
         map(&[("text", "sa"), ("limit", "5")]),
-        serde_json::json!({ "groups": [{ "label": "Orders", "rows": [{ "title": "SO-10023", "url": "/apps/sales/Order?orderId=SO-10023" }] }] }),
+        serde_json::json!({ "groups": [{ "label": "Orders", "rows": [{ "title": "SO-10023", "url": "/qapps/sales/Order?orderId=SO-10023" }] }] }),
     );
     session.press(&KeyPress::with_ctrl(Key::Char('k')), &link);
+    let app_urls: Vec<String> = session
+        .palette_rows()
+        .into_iter()
+        .filter(|row| row.group == "Apps")
+        .map(|row| row.subtitle)
+        .collect();
+    assert_eq!(
+        app_urls,
+        [
+            "/apps/sales?from=palette&note=A%20B",
+            "/apps/tools",
+            "/qapps-archive/tools",
+            "https://example.invalid/qapps/help"
+        ]
+    );
     typed(&mut session, &link, "sa");
     let titles =
         |session: &Session| -> Vec<String> { session.palette_rows().into_iter().map(|row| row.title).collect() };
     assert_eq!(titles(&session), ["Sales"]);
+    press(&mut session, &link, Key::Enter);
+    assert_eq!(
+        session.path(),
+        "/apps/sales",
+        "the browser mount is never rendered as a terminal screen"
+    );
+    assert!(calls(&link).iter().any(|call| matches!(call,
+        LinkCall::Level { path, parameters } if path == "/apps/sales" && parameters.get("note").map(String::as_str) == Some("A B")
+    )));
+    press(&mut session, &link, Key::F(3));
+    assert_eq!(session.path(), "/apps/app/Main");
+    session.press(&KeyPress::with_ctrl(Key::Char('k')), &link);
+    typed(&mut session, &link, "sa");
     assert!(session.timer(&Timer::Palette).is_some());
     session.on_time(Instant::now() + Duration::from_secs(1));
     session.run_now(&link);
@@ -178,7 +218,7 @@ fn the_palette_finds_apps_then_asks_the_server_once_the_typing_stops() {
 fn go_to_takes_a_path_or_a_menu_title() {
     let (mut session, link) = started();
     press(&mut session, &link, Key::Char('g'));
-    typed(&mut session, &link, "apps/tools");
+    typed(&mut session, &link, "qapps/tools");
     press(&mut session, &link, Key::Enter);
     assert!(calls(&link)
         .iter()

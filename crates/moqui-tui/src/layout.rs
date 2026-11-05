@@ -19,7 +19,7 @@
 use std::collections::BTreeMap;
 
 use crate::components::Line;
-use crate::model::{Cell, FormList, HtmlBlock, HtmlLink, Node, ScreenModel, StatusStage, Widget};
+use crate::model::{Cell, Choice, FormList, HtmlBlock, HtmlLink, Node, ScreenModel, StatusStage, Widget};
 
 /// Rows of a list page when the document has no page size.
 pub const PAGE_ROWS: usize = 10;
@@ -1478,6 +1478,7 @@ fn lay_field(id: &str, title: &str, widget: &Widget, mode: LabelMode, label_widt
     };
     let rows = match widget {
         Widget::TextArea { .. } => text_area_rows(widget),
+        Widget::Radio { options, .. } => radio_layout(options, natural.min(room)).height(),
         Widget::Display { text, .. } => wrap(text, room).len().max(1),
         _ => 1,
     };
@@ -1502,6 +1503,42 @@ fn lay_field(id: &str, title: &str, widget: &Widget, mode: LabelMode, label_widt
             _ => Vec::new(),
         },
     }
+}
+
+/// Options stay inline when they fit; otherwise each gets its own wrapped label and a hanging indent.
+pub(crate) struct RadioLayout {
+    pub stacked: bool,
+    pub labels: Vec<Vec<String>>,
+}
+
+impl RadioLayout {
+    pub fn height(&self) -> usize {
+        if self.stacked {
+            self.labels.iter().map(Vec::len).sum::<usize>().max(1)
+        } else {
+            1
+        }
+    }
+}
+
+pub(crate) fn radio_layout(options: &[Choice], width: usize) -> RadioLayout {
+    let inline = options
+        .iter()
+        .map(|choice| display_width(&choice.label) + 4)
+        .sum::<usize>()
+        + options.len().saturating_sub(1) * 2;
+    let stacked = inline > width;
+    let labels = options
+        .iter()
+        .map(|choice| {
+            if stacked {
+                wrap(&choice.label, width.saturating_sub(4).max(1))
+            } else {
+                vec![choice.label.clone()]
+            }
+        })
+        .collect();
+    RadioLayout { stacked, labels }
 }
 
 // ---- lists ----

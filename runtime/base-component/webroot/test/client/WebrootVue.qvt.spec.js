@@ -102,16 +102,22 @@ feature("find controls name their field and keyboard actions retain the other fi
     },
 })
 
-feature("field validation and notification feedback retain readable text in both themes", {
+feature("field feedback and selected navigation retain readable text in both themes", {
     expect() {
         const page = browser.newPage({ viewport: { width: 1920, height: 1080 } })
         page.allowProblems(/notification: warning negative feedback Supporting detail OPEN/)
         page.setContent(`<!doctype html><html><head><link rel="stylesheet" href="/libs/quasar/quasar.prod.css">
-            <link rel="stylesheet" href="/css/WebrootVue.qvt.css"></head><body><div id="app">
+            <link rel="stylesheet" href="/css/WebrootVue.qvt.css">
+            <!-- Theme-transition timing is inspected live; this rule measures the settled colors. -->
+            <style>.m-drawer > .q-item { transition:none; }</style></head><body><div id="app">
             <q-card><m-form ref="form" action="/unused" :fields-initial="{name:'Original', explicit:'Original'}" v-slot="form">
                 <m-text-line id="feedback-field" name="name" label="Customer name" v-model="form.fields.name"></m-text-line>
                 <m-text-line id="explicit-field" name="explicit" label="Explicit fill" bg-color="blue-10" v-model="form.fields.explicit"></m-text-line>
-            </m-form></q-card></div>
+            </m-form></q-card>
+            <div class="q-layout"><aside class="q-drawer" :class="{'q-dark':$q.dark.isActive}" style="position:static;width:240px"><nav class="m-drawer">
+                <a id="drawer-app" class="q-item m-drawer-app m-drawer-in-app m-drawer-on-path" href="#">Comms</a>
+                <a id="drawer-current" class="q-item m-drawer-screen m-drawer-in-app m-drawer-current" href="#" aria-current="page">Accounts</a>
+            </nav></aside></div></div>
             <script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
             <script src="/js/MoquiLib.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
             const app = Vue.createApp({}); app.use(Quasar, {config:{brand:{info:'#1e7b8e'}}});
@@ -155,13 +161,30 @@ feature("field validation and notification feedback retain readable text in both
                         results.push({role:notification.dataset.feedback+' '+selector,ratio:measureContrast(notification.querySelector(selector),background)})
                     }
                 }
+                for (const row of document.querySelectorAll('.m-drawer > .q-item')) {
+                    // color-mix tints are translucent: measure against the painted ancestor stack, not transparent black.
+                    const ctx=document.createElement('canvas').getContext('2d'), ancestors=[];
+                    for (let node=row;node;node=node.parentElement) ancestors.unshift(node);
+                    ctx.fillStyle='#fff';ctx.fillRect(0,0,1,1);
+                    for (const node of ancestors) {ctx.fillStyle=getComputedStyle(node).backgroundColor;ctx.fillRect(0,0,1,1);}
+                    const rgb=Array.from(ctx.getImageData(0,0,1,1).data).slice(0,3);
+                    results.push({role:row.id,ratio:measureContrast(row,'rgb('+rgb.join(',')+')'),
+                        foreground:getComputedStyle(row).color,background:rgb,
+                        surfaces:ancestors.map(node=>[node.tagName,node.className,getComputedStyle(node).backgroundColor])});
+                }
                 return {results,explicit:getComputedStyle(document.getElementById('explicit-field').closest('.q-field').querySelector('.q-field__control')).backgroundColor,
-                    custom:getComputedStyle(document.querySelector('[data-feedback="custom"]')).backgroundColor}
+                    custom:getComputedStyle(document.querySelector('[data-feedback="custom"]')).backgroundColor,
+                    selectedIndicator:getComputedStyle(document.getElementById('drawer-current')).boxShadow}
             }, dark)
             for (const result of results.results) assert.ok(result.ratio >= 4.5, JSON.stringify({dark,...result}))
             assert.equal(results.explicit, "rgb(13, 71, 161)", "the authored field background survives")
             assert.equal(results.custom, "rgb(156, 39, 176)", "the authored notification color survives")
+            assert.ok(results.selectedIndicator.includes("rgb(25, 118, 210)"), "the selection bar keeps its brand accent")
         }
+        assert.equal(page.evaluate(() => {
+            const selected=document.getElementById('drawer-current');selected.style.setProperty('--m-drawer-current-fg','#123456');
+            return getComputedStyle(selected).color;
+        }), "rgb(18, 52, 86)", "an authored selected-text override remains supported")
         page.locator('[data-feedback="positive"] button').click()
         assert.equal(page.evaluate(() => actions), 1)
     },
