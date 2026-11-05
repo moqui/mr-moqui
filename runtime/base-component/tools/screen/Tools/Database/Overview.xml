@@ -69,6 +69,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script>
     </actions>
     <widgets>
+        <section-include name="DroppedKeys" location="component://tools/template/DatabaseParts.xml"/>
         <section-include name="DatabasePicker" location="component://tools/template/DatabaseParts.xml"/>
         <container-box><box-header title="${selectedDatabase?.groupNames.join(', ') || 'Database'}"/>
             <box-toolbar>

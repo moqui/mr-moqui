@@ -1,0 +1,170 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The terminal and plain-page twin of the SQL screen (Sql.xml, Sql.qvue; style-guide §4.8): a form for the statements
+    and their result sets, through org.moqui.impl.DatabaseServices.run#Sql, read only unless Allow changes, which first
+    lists the statements that may change data (classify#Sql) and runs them with that confirmation. Needs SQL_RUNNER_WEB
+    and authorization for all actions on this screen. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="SQL" default-menu-include="false" begin-transaction="false">
+
+    <always-actions>
+        <!-- the database: db, else the last choice, else the default group's -->
+        <set field="databaseList" from="ec.entity.getDatabaseList()"/>
+        <set field="db" from="[db, ec.user.getPreference('database.selected')].find((name) =&gt; databaseList.some((database) =&gt; database.db == name)) || databaseList[0]?.db"/>
+        <set field="selectedDatabase" from="databaseList.find((database) =&gt; database.db == db)"/>
+    </always-actions>
+
+    <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
+
+    <!-- The run is a POST (with the session token): read only, or with Allow changes first the statements to confirm
+        (classify#Sql) and then, with that token, the run. What it gave is kept in the session for the page it returns to. -->
+    <transition name="run" method="post" begin-transaction="false" authz-action="all">
+        <actions>
+            <if condition="!ec.user.hasPermission('SQL_RUNNER_WEB')">
+                <return error="true" message="User does not have permission to use the SQL Runner"/></if>
+            <script><![CDATA[
+                const result = {sql: null, columnsList: [], recordsList: [], messages: [], confirmation: null, allowChanges: false}
+                const sqlText = ec.web.secureRequestParameters.sql
+                const changes = String(context.allowChanges) == 'true'
+                if (sqlText) {
+                    result.sql = String(sqlText)
+                    result.allowChanges = changes
+                    const call = (name, parameters) => {
+                        const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.' + name).parameters(parameters).call() || {}
+                        if (ec.message.hasError()) { result.messages.push(ec.message.errorsString); ec.message.clearErrors(); return null }
+                        return out
+                    }
+                    if (changes && !context.token) {
+                        const classified = call('classify#Sql', {db, sqlText: result.sql})
+                        const changing = classified ? (classified.statements || []).filter((statement) => statement.changes) : []
+                        if (classified && changing.length) result.confirmation = {token: classified.token, changeCount: classified.changeCount || changing.length,
+                            confirmDatabaseName: classified.confirmDatabaseName || '', implicitCommit: !!classified.implicitCommit,
+                            ownTransactionCount: changing.filter((statement) => statement.ownTransaction).length, statements: changing}
+                    }
+                    if (!result.confirmation && !(changes && !context.token && result.messages.length)) {
+                        // nothing to confirm (no statement changes data), or confirmed: run
+                        const confirmed = changes && !!context.token
+                        const out = call('run#Sql', {db, sqlText: result.sql, allowChanges: confirmed, token: confirmed ? context.token : null,
+                            confirmDatabaseName: confirmed ? (context.confirmDatabaseName || null) : null, limit: parseInt(context.limit || '500', 10)})
+                        for (const one of (out && out.results) || []) {
+                            if (one.error) result.messages.push(one.error)
+                            else if (one.skipped) result.messages.push(ec.resource.expand('Statement ${seq} not run.', '', {seq: one.seq}))
+                            else if (!one.givesRows) result.messages.push(ec.resource.expand('Query altered ${rowsAffected} rows.', '', {rowsAffected: one.rowsAffected || 0}))
+                            else {
+                                result.columnsList.push(one.columns || [])
+                                result.recordsList.push(one.records || [])
+                                const count = (one.records || []).length
+                                result.messages.push(one.limitReached ? ec.resource.expand('Only showing first ${limit} rows.', '', {limit: count})
+                                    : ec.resource.expand('Showing all ${count} results.', '', {count}))
+                            }
+                        }
+                        if (out && out.rolledBack) result.messages.push(ec.l10n.localize('The changes were rolled back.'))
+                        if (out && out.cancelled) result.messages.push(ec.l10n.localize('The run was cancelled.'))
+                        if (out && out.timedOut) result.messages.push(ec.l10n.localize('The run timed out.'))
+                    }
+                }
+                ec.web.sessionAttributes['SqlTui.result'] = JSON.stringify(result)
+            ]]></script>
+        </actions>
+        <default-response url="."><parameter name="db"/><parameter name="limit"/></default-response>
+        <error-response url="."><parameter name="db"/></error-response>
+    </transition>
+
+    <actions>
+        <if condition="!ec.user.hasPermission('SQL_RUNNER_WEB')">
+            <return error="true" message="User does not have permission to use the SQL Runner"/></if>
+        <if condition="!ec.artifactExecution.isPermitted(sri.getActiveScreenDef().getLocation(), 'AT_XML_SCREEN', 'all')">
+            <return error="true" message="User must be authorized for all actions on this screen"/></if>
+
+        <script><![CDATA[
+            // what the run transition gave, once
+            let result = null
+            try { result = JSON.parse(ec.web.sessionAttributes['SqlTui.result'] || 'null') } catch (e) { result = null }
+            if (result) ec.web.sessionAttributes.remove('SqlTui.result')
+            outerColumnsList = (result && result.columnsList) || []
+            outerRecordsList = (result && result.recordsList) || []
+            messageList = (result && result.messages) || []
+            confirmation = (result && result.confirmation) || null
+            sql = (result && result.sql) || ''
+            allowChanges = result && result.allowChanges ? 'true' : null
+        ]]></script>
+    </actions>
+    <widgets>
+        <section-include name="DatabasePicker" location="component://tools/template/DatabaseParts.xml"/>
+        <section-iterate name="Messages" list="messageList" entry="message"><widgets>
+            <label text="${message}" type="p" style="text-info"/>
+        </widgets></section-iterate>
+        <section name="ConfirmChanges" condition="confirmation"><widgets>
+            <container-box type="warning"><box-header title="Run with changes?"/><box-body>
+                <label text="${confirmation.changeCount} statements may change data. With changes the script is one transaction and stops at the first failure." type="p"/>
+                <label text="${confirmation.ownTransactionCount} of them (such as VACUUM or CREATE INDEX CONCURRENTLY) run on their own outside any transaction, so they are not rolled back." type="p" condition="confirmation.ownTransactionCount"/>
+                <label text="On MySQL and MariaDB a schema statement commits what ran before it, so those changes are not rolled back." type="p" condition="confirmation.implicitCommit"/>
+                <section-iterate name="ChangeStatements" list="confirmation.statements" entry="statement"><widgets>
+                    <label text="${statement.sql || statement.text || ''}" type="pre" encode="true"/>
+                </widgets></section-iterate>
+                <form-single name="ConfirmForm" transition="run" body-parameters="sql,token,confirmDatabaseName">
+                    <field name="db"><default-field><hidden/></default-field></field>
+                    <field name="sql" from="sql"><default-field><hidden/></default-field></field>
+                    <field name="allowChanges" from="'true'"><default-field><hidden/></default-field></field>
+                    <field name="token" from="confirmation.token"><default-field><hidden/></default-field></field>
+                    <field name="limit"><default-field><hidden/></default-field></field>
+                    <field name="confirmDatabaseName" from="''"><conditional-field condition="confirmation.confirmDatabaseName"
+                            title="Type the database name (${confirmation.confirmDatabaseName}) to run on this production server"><text-line size="30"/></conditional-field>
+                        <default-field><hidden/></default-field></field>
+                    <field name="submitButton"><default-field title="Run with changes"><submit type="danger"/></default-field></field>
+                </form-single>
+            </box-body></container-box>
+        </widgets></section>
+        <form-single name="SqlOptions" transition="run" body-parameters="sql">
+            <field name="db"><default-field><hidden/></default-field></field>
+            <field name="sql"><default-field title="SQL" tooltip="Statements separated by semicolons; each query's rows are shown below">
+                <text-area cols="120" rows="10"/></default-field></field>
+            <field name="allowChanges"><default-field title=""><check><option key="true" text="Allow changes: list the statements that may change data, then run them on confirmation"/></check></default-field></field>
+            <field name="limit"><default-field><text-line size="5" default-value="500"/></default-field></field>
+            <field name="submitButton"><default-field title="Run SQL"><submit/></default-field></field>
+        </form-single>
+
+        <label text="Query Results" type="h4"/>
+        <render-mode><text type="html,vuet,qvt"><![CDATA[
+            <#if outerColumnsList && outerColumnsList.length>
+                <#list outerColumnsList as columns>
+                    <#assign columnsIndex = outerColumnsList.indexOf(columns)>
+                    <#assign records = outerRecordsList[columnsIndex]>
+                    <div style="margin-bottom: 2em;">
+                    <h3>Result Set ${columnsIndex + 1}</h3>
+                    <#if columns.length || records.length>
+                        <table class="table table-striped table-hover">
+                            <tr class="header-row"><#list columns as column><td style="padding-right: 1em;">${html(column)}</td></#list></tr>
+                            <#list records as record>
+                                <tr><#list record as curField><td style="padding-right: 1em;">${curField == null ? "&nbsp;" : html(ec.l10n.format(curField, ''))}</td></#list></tr>
+                            </#list>
+                        </table>
+                    </#if>
+                    </div>
+                </#list>
+            </#if>
+        ]]></text>
+        <!-- each result set as a list, a null as an empty cell -->
+        <text type="tui"><![CDATA[${JSON.stringify((outerColumnsList || []).flatMap((columns, columnsIndex) => {
+            const records = outerRecordsList[columnsIndex] || []
+            return [{t: 'text', id: 'SqlResultTitle' + columnsIndex, style: 'h5', text: 'Result Set ' + (columnsIndex + 1)},
+                {t: 'formList', id: 'SqlResult' + columnsIndex, name: 'SqlResult' + columnsIndex,
+                    columns: columns.map((column) => ({title: String(column)})),
+                    rows: records.map((record, recordIndex) => ({id: String(recordIndex),
+                        cells: record.map((curField) => curField == null ? '' : String(ec.l10n.format(curField, '')))})),
+                    paging: {index: 0, size: records.length, count: records.length}}]
+        }))}]]></text></render-mode>
+    </widgets>
+</screen>

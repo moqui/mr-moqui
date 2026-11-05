@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The terminal twin of JobDetail (style-guide §4.8): the job, its statements and the running one's progress and
+    blockers, as they are when the page is shown (show it again to follow a running job); Run and Cancel as JobDetail. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Job" default-menu-include="false">
+
+    <parameter name="jobId" required="true"/>
+
+    <transition name="runJob" method="post" authz-action="all">
+        <actions><script><![CDATA[
+            ec.service.sync().name('org.moqui.impl.DatabaseServices.run#DatabaseJob').parameters({jobId: String(jobId || ''), wait: false}).call()
+        ]]></script></actions>
+        <default-response url="."><parameter name="jobId"/></default-response>
+        <error-response url="."><parameter name="jobId"/></error-response>
+    </transition>
+    <transition name="cancelJob" method="post" authz-action="all">
+        <actions><service-call name="org.moqui.impl.DatabaseServices.cancel#DatabaseJob" in-map="{jobId: jobId}"/></actions>
+        <default-response url="."><parameter name="jobId"/></default-response>
+        <error-response url="."><parameter name="jobId"/></error-response>
+    </transition>
+
+    <actions>
+        <script><![CDATA[
+            let found = null
+            jobError = null
+            try { found = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DatabaseJobStatus').parameters({jobId: String(jobId || '')}).call() }
+            catch (e) { jobError = String(e.message || e) }
+            if (ec.message.hasError()) { jobError = ec.message.errorsString; ec.message.clearErrors() }
+            job = (found && found.job) || {}
+            const statuses = {DbjsPending: 'Pending', DbjsRunning: 'Running', DbjsDone: 'Done', DbjsFailed: 'Failed', DbjsCancelled: 'Cancelled', DbjsSkipped: 'Skipped'}
+            jobStatus = statuses[job.statusId] || job.statusId || ''
+            const progress = (found && found.progress) || []
+            const blocking = (found && found.blocking) || []
+            statementList = ((found && found.statements) || []).map((statement) => {
+                const running = statement.statusId == 'DbjsRunning' && statement.backendPid
+                const rows = running ? progress.filter((row) => String(row.pid) == String(statement.backendPid)) : []
+                const blockers = running ? blocking.filter((session) => session.blocked_pid == null || String(session.blocked_pid) == String(statement.backendPid)) : []
+                return {statementSeqId: statement.statementSeqId, status: statuses[statement.statusId] || statement.statusId || '',
+                    statementText: statement.statementText || '', errorText: statement.errorText || '',
+                    progress: rows.map((row) => [row.command, row.phase, row.progress != null ? row.progress + '%'
+                        : row.blocks_total ? Math.round(100 * Number(row.blocks_done || 0) / Number(row.blocks_total)) + '%' : ''].filter(Boolean).join(' ')).join('; '),
+                    blockedBy: blockers.map((session) => session.pid + ' (' + (session.user_name || '') + ')').join(', ')}
+            })
+            canAdmin = ec.user.hasPermission('DATABASE_ADMIN')
+        ]]></script>
+    </actions>
+    <widgets>
+        <label text="${jobError}" type="p" style="text-negative" condition="jobError"/>
+        <label text="${job.description || ('Database job ' + jobId)}: ${jobStatus}" type="h5"/>
+        <label text="${job.db || ''} · planned ${job.createdDate ? ec.l10n.format(basicConvert(job.createdDate, 'java.sql.Timestamp'), null) : ''}" type="p" style="m-muted"/>
+        <link url="runJob" text="Run ${statementList.length} statements" link-type="hidden-form" btn-type="primary"
+                condition="canAdmin &amp;&amp; job.statusId == 'DbjsPending' &amp;&amp; statementList.length"
+                confirmation="Run these ${statementList.length} statements on ${job.db || 'the database'}?"/>
+        <link url="cancelJob" text="Cancel" link-type="hidden-form" btn-type="danger"
+                condition="canAdmin &amp;&amp; job.statusId == 'DbjsRunning'" confirmation="Stop the running statement and start no more?"/>
+        <link url="." text="Refresh" parameter-map="{jobId: jobId}" condition="job.statusId == 'DbjsRunning'"/>
+        <form-list name="StatementList" list="statementList" skip-form="true" paginate="false">
+            <field name="statementSeqId"><default-field title="#"><display/></default-field></field>
+            <field name="status"><default-field><display/></default-field></field>
+            <field name="statementText"><default-field title="Statement"><display/></default-field></field>
+            <field name="progress"><default-field><display/></default-field></field>
+            <field name="blockedBy"><default-field title="Blocked by"><display/></default-field></field>
+            <field name="errorText"><default-field title="Error"><display/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

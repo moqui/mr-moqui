@@ -19,6 +19,15 @@ along with this software (see the LICENSE.md file). If not, see
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Queries" default-menu-index="3">
 
+    <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
+    <transition name="resetDatabaseStatements" method="post" authz-action="all">
+        <actions>
+            <service-call name="org.moqui.impl.DatabaseServices.reset#DatabaseStatements" in-map="{db: db}"/>
+            <message>The database's statement statistics were reset</message>
+        </actions>
+        <default-response url="."><parameter name="db"/></default-response>
+        <error-response url="."><parameter name="db"/></error-response>
+    </transition>
     <transition name="resetStats" method="post" authz-action="all">
         <actions>
             <service-call name="org.moqui.impl.DatabaseServices.reset#QueryStats"/>
@@ -48,6 +57,29 @@ along with this software (see the LICENSE.md file). If not, see
         <!-- read here, so a server-static template reads them from the screen package -->
         <set field="instanceId" from="ec.factory.getInstanceId()"/>
         <set field="canReset" from="ec.user.hasPermission('DATABASE_ADMIN')"/>
+        <!-- the database's own statement statistics (pg_stat_statements, performance_schema), read the same way on each kind -->
+        <script><![CDATA[
+            databaseStatements = []
+            databaseStatementsReason = null
+            let found = null
+            try {
+                found = ec.service.sync().name('org.moqui.impl.DatabaseServices.list#DatabaseStatements').parameters({db, limit: 100}).call()
+            } catch (e) { databaseStatementsReason = String(e.message || e) }
+            if (ec.message.hasError()) { databaseStatementsReason = ec.message.errorsString; ec.message.clearErrors() }
+            else if (found && found.available === false) databaseStatementsReason = found.reason || 'Not available on this database'
+            const number = (value) => value == null || value === '' ? null : Number(value)
+            for (const row of (found && found.statements) || []) {
+                const mysql = row.sum_timer_wait != null
+                const calls = number(row.calls)
+                const totalMs = mysql ? number(row.sum_timer_wait) / 1e9 : number(row.total_exec_time)
+                databaseStatements.push({queryId: row.query_id == null ? '' : String(row.query_id), query: row.query || '', calls,
+                    totalMs, meanMs: mysql ? (calls ? totalMs / calls : null) : number(row.mean_exec_time),
+                    rows: mysql ? number(row.sum_rows_examined) : number(row.rows),
+                    blocksRead: mysql ? null : number(row.shared_blks_read), blocksHit: mysql ? null : number(row.shared_blks_hit),
+                    tempBlocks: mysql ? null : number(row.temp_blks_written), noIndexUsed: mysql ? number(row.sum_no_index_used) : null})
+            }
+            databaseStatementsMysql = databaseStatements.some((row) => row.noIndexUsed != null)
+        ]]></script>
     </actions>
     <widgets>
         <container-box><box-header title="Statements on instance ${instanceId}"/>
@@ -111,6 +143,42 @@ along with this software (see the LICENSE.md file). If not, see
                     <columns type="mobile">
                         <column><field-ref name="entityName"/><field-ref name="sql"/></column>
                         <column><field-ref name="hitCount"/><field-ref name="totalTime"/></column>
+                    </columns>
+                </form-list>
+            </box-body>
+        </container-box>
+        <container-box><box-header title="Statements in the database"/>
+            <box-toolbar>
+                <section name="ResetDatabaseSection" condition="canReset &amp;&amp; !databaseStatementsReason"><widgets>
+                    <link url="resetDatabaseStatements" text="Reset" icon="restart_alt" btn-type="danger" link-type="hidden-form"
+                            parameter-map="{db: db}" confirmation="Reset the database's own statement statistics, for every user of the database?"/>
+                </widgets></section>
+            </box-toolbar>
+            <box-body>
+                <section-include name="DatabasePicker" location="component://tools/template/DatabaseParts.xml"/>
+                <label text="What the database itself counted for each statement, from every instance and every client, the most costly first. Times are in milliseconds." type="p" style="m-muted"/>
+                <section name="DatabaseStatementsNot" condition="databaseStatementsReason"><widgets>
+                    <label text="Not available: ${databaseStatementsReason}" type="p"/>
+                </widgets></section>
+                <form-list name="DatabaseStatementList" list="databaseStatements" skip-form="true" paginate="false">
+                    <field name="query">
+                        <conditional-field condition="query.length &gt; 500">
+                            <display text="${query.substring(0, 500)} "/>
+                            <container-dialog id="ViewQuery_${queryId}" button-text="All" width="800"><label text="${query}"/></container-dialog>
+                        </conditional-field>
+                        <default-field title="Statement"><display/></default-field>
+                    </field>
+                    <field name="calls" align="right"><default-field><display format="#,##0"/></default-field></field>
+                    <field name="totalMs" align="right"><default-field title="Total"><display format="#,##0.0"/></default-field></field>
+                    <field name="meanMs" align="right"><default-field title="Mean"><display format="#,##0.00"/></default-field></field>
+                    <field name="rows" align="right"><default-field title="Rows"><display format="#,##0"/></default-field></field>
+                    <field name="blocksRead" align="right" hide="databaseStatementsMysql"><default-field title="Blocks read"><display format="#,##0"/></default-field></field>
+                    <field name="blocksHit" align="right" hide="databaseStatementsMysql"><default-field title="Blocks hit"><display format="#,##0"/></default-field></field>
+                    <field name="tempBlocks" align="right" hide="databaseStatementsMysql"><default-field title="Temp blocks"><display format="#,##0"/></default-field></field>
+                    <field name="noIndexUsed" align="right" hide="!databaseStatementsMysql"><default-field title="No index used"><display format="#,##0"/></default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="query"/></column>
+                        <column><field-ref name="calls"/><field-ref name="totalMs"/></column>
                     </columns>
                 </form-list>
             </box-body>

@@ -630,22 +630,87 @@ fn encode(text: &str) -> String {
         .collect()
 }
 
-/// Submit the SQL screen's form as the browser does, the statement in the body: one statement, or with `script` a
-/// script of statements whose result sets are not shown.
-fn run_sql(address: SocketAddr, auth: &str, script: bool, sql: &str, limit: &str) -> (u16, String) {
-    let run_script = if script { "&runScript=true" } else { "" };
-    let body = format!("db=group:transactional&sql={}&limit={limit}{run_script}", encode(sql));
-    let request = http_request(
-        "POST",
-        "/Tools/Sql.html",
-        &[
-            ("Authorization", auth),
-            ("Content-Type", "application/x-www-form-urlencoded"),
-        ],
-        &body,
-    );
-    let (status, _, page) = exchange(address, &request);
-    (status, page)
+/// Submit the SQL screen's terminal and plain-page form (`Tools/SqlTui`) as the browser does, the statement in the body:
+/// read only, or with `changes` as Allow changes does it: a first submit lists the statements that may change data with
+/// the confirmation token (`classify#Sql`), and a second with that token runs them.
+fn run_sql(address: SocketAddr, auth: &str, changes: bool, sql: &str, limit: &str) -> (u16, String) {
+    // the run is a POST to the screen's run transition, which keeps what it gave in the session and redirects to the
+    // page: the page is read with the session the POST was given
+    let post = |extra: &str| {
+        let body = format!("db=group:transactional&sql={}&limit={limit}{extra}", encode(sql));
+        let request = http_request(
+            "POST",
+            "/Tools/SqlTui/run.html",
+            &[
+                ("Authorization", auth),
+                ("Content-Type", "application/x-www-form-urlencoded"),
+            ],
+            &body,
+        );
+        let (status, headers, page) = exchange(address, &request);
+        let header = |name: &str| {
+            headers
+                .iter()
+                .filter(|(key, _)| key.eq_ignore_ascii_case(name))
+                .map(|(_, value)| value.clone())
+                .collect::<Vec<_>>()
+        };
+        let Some(location) = header("location").into_iter().next() else {
+            return (status, page);
+        };
+        let cookie = header("set-cookie")
+            .iter()
+            .filter_map(|value| value.split(';').next())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let path = location
+            .split_once("://")
+            .and_then(|(_, rest)| rest.find('/').map(|at| rest[at..].to_string()))
+            .unwrap_or(location);
+        let (base, query) = path.split_once('?').map_or((path.as_str(), ""), |parts| parts);
+        let target = if base.ends_with(".html") {
+            path.clone()
+        } else if query.is_empty() {
+            format!("{base}.html")
+        } else {
+            format!("{base}.html?{query}")
+        };
+        let get = http_request(
+            "GET",
+            &target,
+            &[("Authorization", auth), ("Cookie", cookie.as_str())],
+            "",
+        );
+        let (status, _, page) = exchange(address, &get);
+        (status, page)
+    };
+    if !changes {
+        return post("");
+    }
+    let (status, page) = post("&allowChanges=true");
+    let token = page.split_once(r#"name="token""#).and_then(|(before, after)| {
+        // the value is an attribute of the same input, before or after its name
+        let tag_start = before.rfind('<').map_or("", |at| &before[at..]);
+        let tag_end = after.split('>').next().unwrap_or("");
+        [tag_start, tag_end]
+            .iter()
+            .find_map(|part| {
+                part.split_once(r#"value=""#)
+                    .and_then(|(_, rest)| rest.split('"').next())
+            })
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    });
+    // on a production instance the confirmation also asks for the database name, as "Type the database name (moqui) ..."
+    let name = page
+        .split_once("Type the database name (")
+        .and_then(|(_, rest)| rest.split(')').next())
+        .map(|name| format!("&confirmDatabaseName={}", encode(name)))
+        .unwrap_or_default();
+    match token {
+        Some(token) => post(&format!("&allowChanges=true&token={}{name}", encode(&token))),
+        None => (status, page),
+    }
 }
 
 fn the_sql_runners_run_for_an_admin_and_refuse_other_users(gate: &crate::common::Gate) {
@@ -681,26 +746,31 @@ fn the_sql_runners_run_for_an_admin_and_refuse_other_users(gate: &crate::common:
     // Without SQL_RUNNER_WEB, with or without the Tools app, neither runner runs a statement.
     for user in ["gate.tools", "gate.plain"] {
         let auth = basic(user, "moqui");
-        for script in [false, true] {
-            let (status, page) = run_sql(address, &auth, script, UPDATE, "500");
+        for changes in [false, true] {
+            let (status, page) = run_sql(address, &auth, changes, UPDATE, "500");
             assert!(
                 !page.contains("Query altered"),
-                "{user} script {script}: {status}: {page}"
+                "{user} changes {changes}: {status}: {page}"
             );
             if user == "gate.tools" {
                 assert!(
                     page.contains("User does not have permission to use the SQL Runner"),
-                    "{user} script {script}: {status}: {page}"
+                    "{user} changes {changes}: {status}: {page}"
                 );
             } else {
-                assert_eq!(status, 403, "{user} script {script}: {page}");
+                assert_eq!(status, 403, "{user} changes {changes}: {page}");
             }
         }
     }
     let (_, page) = run_sql(address, &john, false, SELECT, "500");
     assert!(page.contains("untouched") && !page.contains("changed"), "{page}");
+    // Read only, the admin's update is refused by the database.
+    let (_, page) = run_sql(address, &john, false, UPDATE, "500");
+    assert!(!page.contains("Query altered"), "{page}");
+    let (_, page) = run_sql(address, &john, false, SELECT, "500");
+    assert!(page.contains("untouched"), "{page}");
 
-    // The script runner runs the admin's update.
+    // With Allow changes and its confirmation the admin's update runs.
     let (_, page) = run_sql(address, &john, true, UPDATE, "500");
     assert!(!page.contains("Error rendering"), "{page}");
     assert!(page.contains("Query altered 1 rows."), "{page}");

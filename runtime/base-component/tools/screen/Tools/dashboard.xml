@@ -50,11 +50,14 @@ along with this software (see the LICENSE.md file). If not, see
             </row-col>
             <row-col md="4">
                 <container-box><box-header title="Schema and database"/><box-body>
-                    <label text="Entity definitions and their tables, the database server, its tables and statements." type="p" style="m-muted"/>
+                    <label text="Entity definitions and their tables, indexes and keys; the database server, its sessions, statements, tables and jobs." type="p" style="m-muted"/>
                     <link url="../Schema/Entities" text="Entities"/>
+                    <link url="../Schema/IndexesKeys" text="Indexes and keys"/>
                     <link url="../Database/Overview" text="Database"/>
-                    <link url="../Database/Tables" text="Table statistics"/>
-                    <link url="../Database/Queries" text="Query statistics"/>
+                    <link url="../Database/Activity" text="Sessions and activity"/>
+                    <link url="../Database/Queries" text="Statement statistics"/>
+                    <link url="../Database/Tables" text="Tables"/>
+                    <link url="../Database/Jobs" text="Database jobs"/>
                     <link url="../Database/SpeedTest" text="Entity speed test"/>
                 </box-body></container-box>
                 <container-box><box-header title="Services and diagnostics"/><box-body>
