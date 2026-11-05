@@ -927,6 +927,9 @@ fn entity_find(
         if hidden_value(entity, field) {
             return Err(refusal(format!("{field} takes no condition in the data grid")));
         }
+        if is_expression(entity, field) {
+            return Err(refusal(format!("{field} is computed on read and takes no condition")));
+        }
     }
     let find = facade.find(&entity.full_name).map_err(|err| find_refusal(&err))?;
     let mut find = find
@@ -1714,6 +1717,11 @@ pub fn save(
 ) -> Result<SaveOutcome, Refusal> {
     refuse_restricted(entity_name)?;
     let entity = definition(facade, entity_name)?;
+    // a data document's definition holds expressions that run as whoever reads the document: changed on its own
+    // screens, not by any Tools viewer through the grid
+    if entity.full_name.starts_with("moqui.entity.document.DataDocument") {
+        return Err(refusal(format!("{} is not saved in the data grid", entity.full_name)));
+    }
     if let Some(reason) = read_only_reason(&entity) {
         return Err(refusal(reason));
     }

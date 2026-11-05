@@ -630,12 +630,15 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="find" noun="GridViews" type="rust" location="moqui_tools::grid_service::find_grid_views" transaction="ignore">
         <description>The user's own grid views and the shared ones, by description: viewId, description, ownerUserId,
-            isShared, sourceJson, layoutJson.</description>
+            isShared, sourceJson, layoutJson, and sqlSource (true for a SQL source, which the screen shows before it
+            runs another user's).</description>
         <out-parameters><parameter name="gridViews" type="List"/></out-parameters>
     </service>
     <service verb="store" noun="GridView" type="rust" location="moqui_tools::grid_service::store_grid_view" transaction="ignore">
         <description>Create a grid view (no viewId), owned by the current user, or update one the user owns. sourceJson
-            (required) and layoutJson (columns, widths, order, frozen, filters, sort) are JSON.</description>
+            (required) and layoutJson (columns, widths, order, frozen, filters, sort) are JSON. A SQL source needs what
+            running SQL needs (SQL_RUNNER_WEB and all actions on the Tools app), since a shared view runs as its
+            viewer.</description>
         <in-parameters>
             <parameter name="viewId"/>
             <parameter name="description"/>
