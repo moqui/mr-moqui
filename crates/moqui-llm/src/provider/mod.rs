@@ -867,6 +867,10 @@ pub struct CallOptions<'a> {
     /// attempt (a retry, the larger-output re-ask, a nudge) is checked with what it may use at most and reserves that
     /// until its `LlmCall` row is written ([`usage::admit`]); one refused ends the call with a `quota` error.
     pub quota: Option<&'static str>,
+    /// Make the call though a transaction is open on this thread (the caller's explicit choice, `allowInTransaction`):
+    /// it is suspended for the call and the call's deadline is cut to the time the transaction has left. Without it a
+    /// call with a transaction open is refused ([`call`]).
+    pub allow_in_transaction: bool,
 }
 
 impl<'a> CallOptions<'a> {
@@ -886,6 +890,7 @@ impl<'a> CallOptions<'a> {
             idle: None,
             max_attempts: classify::MAX_ATTEMPTS,
             quota: None,
+            allow_in_transaction: false,
         }
     }
 
@@ -902,8 +907,15 @@ pub const EMPTY_NUDGE: &str = "Your last reply was empty. Answer the request, or
 /// Send `request` to `target` and assemble the reply, with the retries, the re-ask, the nudge and the compaction the
 /// options allow. The reply's finish says how it ended; an error is never returned.
 ///
-/// With a recorder, a transaction in place on the call log's group is suspended for the call and resumed after it:
-/// no transaction stays open while a model answers, and the `LlmCall` rows are written in transactions of their own.
+/// A call is refused (a `bad-request` error, nothing sent) while a transaction is open on this thread, active or
+/// suspended (plans/High-Level-Review.md HL-041): suspending one does not free it, since its connection stays out of
+/// the pool (parked, counted against the pool's maximum) and its locks stay held, and its deadline keeps running, so a
+/// call that outlasts it is paid for and then rolled back with the caller's work. Make the call outside the
+/// transaction (a service with `transaction="ignore"` called with none open, a screen transition with
+/// `begin-transaction="false"`, an async task), or opt in with [`CallOptions::allow_in_transaction`]: the transaction
+/// in place on the call log's group is then suspended for the call and resumed after it, and the call's deadline is
+/// cut to the time that transaction has left. The `LlmCall` rows are always written in transactions of their own, so
+/// the usage survives a rollback of the caller's work.
 pub fn call(target: &Target, request: &ModelRequest, options: &mut CallOptions<'_>) -> Reply {
     use moqui_lib::object::Value;
     let telemetry = moqui_core::telemetry::current();
@@ -962,7 +974,26 @@ pub fn call(target: &Target, request: &ModelRequest, options: &mut CallOptions<'
     reply
 }
 
+/// The refusal of a call made with a transaction open and no opt-in.
+pub const IN_TRANSACTION: &str = "a model call is not made while a transaction is open";
+
 fn call_with_transaction(target: &Target, request: &ModelRequest, options: &mut CallOptions<'_>) -> Reply {
+    if !options.allow_in_transaction && moqui_core::transaction::thread_in_transaction() {
+        tracing::warn!(
+            "a call to model {} was refused: a transaction is open on this thread and the caller did not opt in",
+            target.model.id
+        );
+        let mut reply = Reply::empty();
+        reply.finish = Finish::Error(ProviderError::new(
+            ErrorClass::BadRequest,
+            format!(
+                "{IN_TRANSACTION}: make it outside the transaction (a screen transition with begin-transaction=\"false\", \
+                 a service with transaction=\"ignore\" called with none open, an async task), or opt in with \
+                 allowInTransaction"
+            ),
+        ));
+        return reply;
+    }
     let in_place = options
         .recorder
         .as_ref()
@@ -971,6 +1002,11 @@ fn call_with_transaction(target: &Target, request: &ModelRequest, options: &mut 
     let Some(transactions) = in_place else {
         return call_unsuspended(target, request, options);
     };
+    // an opted-in call ends when the transaction it suspends would: past that the caller's work rolls back anyway
+    if let Some(remaining) = transactions.time_remaining() {
+        let cut = Instant::now() + remaining;
+        options.deadline = Some(options.deadline.map_or(cut, |deadline| deadline.min(cut)));
+    }
     let mut reply = None;
     let suspended = transactions.run(
         moqui_core::transaction::TransactionAttribute::IgnoreSuspend,

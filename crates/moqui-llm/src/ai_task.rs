@@ -341,7 +341,8 @@ pub struct TaskOutput {
 }
 
 /// Run task `task_type` with `input` now, as the current user (its `api` quota): one structured completion on the
-/// task's feature (else `assist`), or `model` when given. The output fits the task's schema.
+/// task's feature (else `assist`), or `model` when given. The output fits the task's schema. With a transaction open
+/// on this thread the completion is refused unless `allow_in_transaction` (HL-041, [`crate::provider::call`]).
 ///
 /// # Errors
 ///
@@ -352,6 +353,7 @@ pub fn run_task(
     task_type: &str,
     input: &Json,
     model: Option<&str>,
+    allow_in_transaction: bool,
 ) -> Result<TaskOutput, Error> {
     let task = task_types(factory)
         .into_iter()
@@ -374,6 +376,7 @@ pub fn run_task(
             prompt: Some(prepared.prompt),
             schema: Some(prepared.schema),
             schema_name: Some(task.name.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_")),
+            allow_in_transaction,
             ..CompleteRequest::default()
         },
     )?;
@@ -401,7 +404,7 @@ pub fn summarize(
     if let Some(words) = max_words {
         input["maxWords"] = json!(words);
     }
-    let done = run_task(factory, facade, "summarize", &input, None)?;
+    let done = run_task(factory, facade, "summarize", &input, None, false)?;
     Ok(done
         .output
         .get("summary")
@@ -427,6 +430,7 @@ pub fn classify(
         "classify",
         &json!({"text": text, "labels": labels}),
         None,
+        false,
     )?;
     Ok(done
         .output
@@ -453,6 +457,7 @@ pub fn extract(
         "extract",
         &json!({"text": text, "fields": fields}),
         None,
+        false,
     )?;
     Ok(done.output.get("values").cloned().unwrap_or(Json::Null))
 }
@@ -498,6 +503,14 @@ fn input_of(parameters: &Parameters) -> Json {
     }
 }
 
+/// The caller's `allowInTransaction`: a synchronous task's model call may be made with the caller's transaction open
+/// (suspended, the call cut to its remaining time); without it the call is refused in one (HL-041). The services take
+/// no transaction of their own (`transaction="ignore"`): a model call is never made inside one, theirs included; their
+/// records are written in short transactions of their own, an async task's job runs with none open.
+fn allows_transaction(parameters: &Parameters) -> bool {
+    matches!(param(parameters, "allowInTransaction").as_deref(), Some("true" | "Y"))
+}
+
 /// Run or queue a task for a service; the out parameters of a synchronous one are `output` and `modelId`.
 fn task_service(parameters: &Parameters, facade: &EntityFacade, task_type: &str, input: &Json) -> Out {
     let Some(factory) = factory() else {
@@ -524,6 +537,7 @@ fn task_service(parameters: &Parameters, facade: &EntityFacade, task_type: &str,
         task_type,
         input,
         param(parameters, "modelId").as_deref(),
+        allows_transaction(parameters),
     ) {
         Ok(done) => Ok(out([
             ("output", moqui_lib::json::from_json(&done.output)),
@@ -762,7 +776,7 @@ fn execute_ai_task(parameters: &Parameters, facade: &EntityFacade) -> Out {
         return Ok(BTreeMap::new());
     }
     let input = input_of(parameters);
-    let ran = run_task(&factory, facade, &task_type, &input, None);
+    let ran = run_task(&factory, facade, &task_type, &input, None, false);
     let (state, payload) = match &ran {
         Ok(done) => {
             settle_task(facade, &task_id, Ok(done))?;
@@ -992,6 +1006,7 @@ fn propose_ai_field_value(parameters: &Parameters, facade: &EntityFacade) -> Out
             schema: Some(json!({"type": "object", "required": ["value", "reason"],
                 "properties": {"value": {"type": "string"}, "reason": {"type": "string"}}})),
             schema_name: Some("field_value".to_string()),
+            allow_in_transaction: allows_transaction(parameters),
             ..CompleteRequest::default()
         },
     );
