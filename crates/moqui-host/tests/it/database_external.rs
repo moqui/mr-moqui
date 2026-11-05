@@ -52,8 +52,11 @@ fn call(verb_noun: &str, parameters: &[(&str, Value)]) -> Result<BTreeMap<String
     result
 }
 
-/// `run#EtlMapping` with `wait` of a mapping from `ext:EXTSPEC`'s `ext_note` into an `EnumerationType`.
-fn etl_from_external(check: bool) -> Result<BTreeMap<String, Value>, String> {
+/// The ETL source query of the spec: the first note of `ext_note` as an `EnumerationType`.
+const ETL_READ: &str = "SELECT 'ExtEtlType' AS type_id, note FROM ext_note ORDER BY note LIMIT 1";
+
+/// `run#EtlMapping` with `wait` of a mapping from `sql` on `db` (`type_id`, `note`) into an `EnumerationType`.
+fn etl_from_external(db: &str, sql: &str, check: bool) -> Result<BTreeMap<String, Value>, String> {
     let text = |pairs: &[(&str, &str)]| {
         Value::Map(
             pairs
@@ -65,11 +68,8 @@ fn etl_from_external(check: bool) -> Result<BTreeMap<String, Value>, String> {
     let Value::Map(mut mapping) = text(&[
         ("description", "from the second database"),
         ("sourceTypeEnumId", "EtlsSql"),
-        ("sourceDb", "ext:EXTSPEC"),
-        (
-            "sourceSql",
-            "SELECT 'ExtEtlType' AS type_id, note FROM ext_note ORDER BY note LIMIT 1",
-        ),
+        ("sourceDb", db),
+        ("sourceSql", sql),
         ("targetTypeEnumId", "EtltEntity"),
         ("targetName", "moqui.basic.EnumerationType"),
     ]) else {
@@ -507,40 +507,111 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
 
     // an ETL from a SQL source reads ext: (its first note, "changed" by EXTRW) through the same gate and pool,
     // read only, audited as DbaSql
-    let checked = etl_from_external(true).unwrap();
+    let checked = etl_from_external("ext:EXTSPEC", ETL_READ, true).unwrap();
     assert_eq!(checked.get("extractCount"), Some(&Value::I64(1)), "{checked:?}");
-    let ran = etl_from_external(false).unwrap();
+    let ran = etl_from_external("ext:EXTSPEC", ETL_READ, false).unwrap();
     assert_eq!(ran.get("loadCount"), Some(&Value::I64(1)), "{ran:?}");
-    let authz_off = context.disable_authz();
-    let loaded = facade
-        .find("moqui.basic.EnumerationType")
-        .unwrap()
-        .eq("enumTypeId", Value::string("ExtEtlType"))
-        .use_cache(false)
-        .one()
-        .unwrap()
-        .expect("the row the ETL loaded");
-    let etl_audited = facade
-        .find("moqui.database.DatabaseAudit")
-        .unwrap()
-        .eq("db", Value::string("ext:EXTSPEC"))
-        .eq("actionEnumId", Value::string("DbaSql"))
-        .list()
-        .unwrap()
-        .iter()
-        .filter(|row| {
-            row.get("detailJson")
-                .map(to_plain_string)
-                .is_some_and(|detail| detail.contains("\"etl\""))
-        })
-        .count();
-    drop(authz_off);
-    assert_eq!(to_plain_string(loaded.get("description").unwrap_or(&Value::Null)), "changed");
-    assert_eq!(etl_audited, 2);
+    // the ETL's DbaSql rows on `db`, and the EnumerationType `id`
+    let etl_audits = |db: &str| {
+        let _authz_off = context.disable_authz();
+        facade
+            .find("moqui.database.DatabaseAudit")
+            .unwrap()
+            .eq("db", Value::string(db))
+            .eq("actionEnumId", Value::string("DbaSql"))
+            .list()
+            .unwrap()
+            .iter()
+            .filter(|row| {
+                row.get("detailJson")
+                    .map(to_plain_string)
+                    .is_some_and(|detail| detail.contains("\"etl\""))
+            })
+            .count()
+    };
+    let enum_type = |id: &str| {
+        let _authz_off = context.disable_authz();
+        facade
+            .find("moqui.basic.EnumerationType")
+            .unwrap()
+            .eq("enumTypeId", Value::string(id))
+            .use_cache(false)
+            .one()
+            .unwrap()
+    };
+    let loaded = enum_type("ExtEtlType").expect("the row the ETL loaded");
+    assert_eq!(
+        to_plain_string(loaded.get("description").unwrap_or(&Value::Null)),
+        "changed"
+    );
+    assert_eq!(etl_audits("ext:EXTSPEC"), 2);
+    // a write as the source, on the read-write connection, is refused by the ETL's own read-only transaction
+    let written = etl_from_external(
+        "ext:EXTRW",
+        "INSERT INTO ext_note VALUES ('etl write') RETURNING 'ExtEtlWrite' AS type_id, note",
+        false,
+    )
+    .unwrap();
+    let write_failure = to_plain_string(written.get("failure").unwrap_or(&Value::Null));
+    assert!(write_failure.contains("read-only"), "{written:?}");
+    assert!(enum_type("ExtEtlWrite").is_none());
+    let notes = run_sql(
+        "ext:EXTRW",
+        "SELECT count(*) AS n FROM ext_note WHERE note = 'etl write'",
+        &[],
+    )
+    .unwrap();
+    assert_eq!(
+        to_plain_string(&field(&rows(&notes, "results")[0], "records")),
+        to_plain_string(&Value::List(vec![Value::List(vec![Value::I64(0)])]))
+    );
+    // a user with SQL_RUNNER_WEB and the Tools app but not DATABASE_EXTERNAL gets the vague error from a check
+    entity_auto(
+        "create#moqui.security.UserGroup",
+        &[
+            ("userGroupId", Value::string("EXT_SQL_ONLY")),
+            ("description", Value::string("SQL only")),
+        ],
+    );
+    entity_auto(
+        "create#moqui.security.UserGroupPermission",
+        &[
+            ("userGroupId", Value::string("EXT_SQL_ONLY")),
+            ("userPermissionId", Value::string("SQL_RUNNER_WEB")),
+            ("fromDate", Value::string("2000-01-01T00:00:00Z")),
+        ],
+    );
+    entity_auto(
+        "create#moqui.security.UserGroupMember",
+        &[
+            ("userGroupId", Value::string("EXT_SQL_ONLY")),
+            ("userId", Value::string("EXT_PLAIN")),
+            ("fromDate", Value::string("2000-01-01T00:00:00Z")),
+        ],
+    );
+    entity_auto(
+        "create#moqui.security.ArtifactAuthz",
+        &[
+            ("artifactAuthzId", Value::string("EXT_SQL_ONLY_TOOLS")),
+            ("userGroupId", Value::string("EXT_SQL_ONLY")),
+            ("artifactGroupId", Value::string("TOOLS_APP")),
+            ("authzTypeEnumId", Value::string("AUTHZT_ALLOW")),
+            ("authzActionEnumId", Value::string("AUTHZA_ALL")),
+        ],
+    );
+    login("ext.plain");
+    let sql_only = etl_from_external("ext:EXTSPEC", ETL_READ, true);
+    login("john.doe");
+    let sql_only = sql_only.map_or_else(
+        |err| err,
+        |out| to_plain_string(out.get("failure").unwrap_or(&Value::Null)),
+    );
+    assert_eq!(sql_only, "Not available");
+    let audits_before_production = etl_audits("ext:EXTSPEC");
 
     // a production instance refuses ext: and the connection services with the one vague error
     let production = Purpose::set("production");
-    let etl_refused = etl_from_external(false);
+    let etl_refused = etl_from_external("ext:EXTSPEC", ETL_READ, false);
     let refused = run_sql("ext:EXTSPEC", "SELECT note FROM ext_note", &[]).unwrap_err();
     let listed = call("find#DatabaseConnections", &[]).unwrap_err();
     let databases = call("get#DatabaseList", &[]).unwrap();
@@ -548,11 +619,13 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     drop(purpose);
     assert_eq!(refused, "Not available");
     assert_eq!(listed, "Not available");
-    let etl_refused = match etl_refused {
-        Ok(out) => to_plain_string(&Value::Map(out.into_iter().collect())),
-        Err(message) => message,
-    };
-    assert!(etl_refused.contains("Not available"), "{etl_refused}");
+    let etl_refused = etl_refused.unwrap();
+    assert_eq!(
+        etl_refused.get("failure"),
+        Some(&Value::string("Not available")),
+        "{etl_refused:?}"
+    );
+    assert_eq!(etl_audits("ext:EXTSPEC"), audits_before_production);
     assert!(!rows(&databases, "databases")
         .iter()
         .any(|db| field(db, "db") == Value::string("ext:EXTSPEC")));
