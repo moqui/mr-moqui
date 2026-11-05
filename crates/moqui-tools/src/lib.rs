@@ -25,6 +25,7 @@
 //! [`moqui_core::extension`] entry below. moqui-host links it in every build; the browser build leaves it out, and its
 //! services report that `tools` is not built in.
 
+pub mod audit;
 pub mod capabilities;
 pub mod catalog;
 pub mod service;

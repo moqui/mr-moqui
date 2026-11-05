@@ -29,7 +29,24 @@ use crate::{capabilities, DbRef, NOT_AVAILABLE};
 
 pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
     rust_service!(map, get_capabilities)?;
+    rust_service!(map, reset_query_stats)?;
     Ok(())
+}
+
+/// The Tools app's root screen: its own authorization (`TOOLS_APP`) decides who may use these services, whatever
+/// screen or service calls them.
+const TOOLS_SCREEN: &str = "component://tools/screen/Tools.xml";
+
+/// Whether the current user may view the Tools app; when not, an error is added.
+fn may_view_tools() -> bool {
+    match moqui_core::user::authorize_own("AT_XML_SCREEN", TOOLS_SCREEN, "view") {
+        Ok(()) => true,
+        Err(err) => {
+            tracing::info!(error = %err, "Refused a Tools database service");
+            add_error("Not authorized for the Tools app");
+            false
+        }
+    }
 }
 
 fn text(parameters: &BTreeMap<String, Value>, key: &str) -> String {
@@ -77,6 +94,9 @@ fn get_capabilities(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
+    if !may_view_tools() {
+        return Ok(BTreeMap::new());
+    }
     let db = match DbRef::parse(&text(parameters, "db"), facade.default_group()) {
         Ok(db) => db,
         Err(message) => {
@@ -98,10 +118,36 @@ fn get_capabilities(
             let caps = capabilities::group_capabilities(
                 facade,
                 &group,
-                group_is_embedded(&group),
+                || group_is_embedded(&group),
                 flag(parameters, "refresh"),
             );
             Ok(caps.to_out())
         }
     }
+}
+
+/// `reset#QueryStats`: forget the entity facade's statement stats of this instance (`ec.entity.clearQueryStats()`),
+/// with the `DATABASE_ADMIN` permission, and write a `DbaStatsReset` audit row.
+fn reset_query_stats(
+    _parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    if !may_view_tools() {
+        return Ok(BTreeMap::new());
+    }
+    if !moqui_core::user::has_permission("DATABASE_ADMIN").unwrap_or(false) {
+        add_error("Resetting statement stats needs the DATABASE_ADMIN permission");
+        return Ok(BTreeMap::new());
+    }
+    moqui_core::entity::query_stats::clear();
+    crate::audit::record(
+        facade,
+        &crate::audit::AuditEntry {
+            action: "DbaStatsReset",
+            is_change: true,
+            detail_json: Some(r#"{"stats":"entity-facade"}"#.to_string()),
+            ..crate::audit::AuditEntry::default()
+        },
+    );
+    Ok(BTreeMap::new())
 }

@@ -63,8 +63,12 @@ pub mod mysql {
     pub const GRANTS: &str = "SHOW GRANTS";
 }
 
-/// Run one catalog query on `group`'s connection, outside any transaction of the caller (suspended while it runs), so a
-/// failed probe cannot abort the caller's transaction. Rows are maps of the column names as the server gives them.
+/// The most one catalog query may take: past it the transaction's deadline cancels the statement.
+pub const QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Run one catalog query on `group`'s connection, in a transaction of its own (the caller's is suspended while it
+/// runs), so a failed probe cannot abort the caller's transaction, with a deadline of [`QUERY_TIMEOUT`] that cancels a
+/// hung statement. Rows are maps of the column names as the server gives them.
 ///
 /// # Errors
 ///
@@ -75,7 +79,7 @@ pub fn query(facade: &EntityFacade, group: &str, sql: &str) -> Result<Vec<IndexM
         .find(|(name, _, _)| *name == group)
         .map(|(_, _, tx)| tx.clone())
         .ok_or_else(|| Error::new(format!("no entity group named {group}")))?;
-    let rows = tx.run(TransactionAttribute::IgnoreSuspend, None, || {
+    let rows = tx.run(TransactionAttribute::ForceNew, Some(QUERY_TIMEOUT), || {
         tx.with_connection(|conn| conn.query_once(sql, &[]))
     })?;
     Ok(rows

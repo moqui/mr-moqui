@@ -87,3 +87,58 @@ fn the_artifacts_of_a_statement_are_bounded() {
     assert_eq!(stat.artifacts.len(), MAX_ARTIFACTS + 1);
     assert_eq!(stat.artifacts.get(super::OTHER), Some(&5));
 }
+
+/// Past the bound a new statement counts in the "(other)" row; clearing frees the rows again.
+#[test]
+fn statements_past_the_bound_count_in_the_other_row() {
+    let registry = super::Registry::new(3);
+    let at = crate::hooks::StatementArtifact::default;
+    for name in ["a", "b", "c", "d", "e"] {
+        registry.record(
+            &format!("SELECT bound_{name} FROM x"),
+            Duration::from_micros(1),
+            false,
+            at(),
+        );
+    }
+    let rows = registry.list("sql", "", "");
+    assert_eq!(rows.len(), 4, "{rows:?}");
+    let other = rows
+        .iter()
+        .find(|row| row.get("sql") == Some(&Value::string(super::OTHER)))
+        .expect("the other row");
+    assert_eq!(other.get("hitCount"), Some(&Value::I64(2)));
+    // a statement already kept still counts in its own row
+    registry.record("SELECT bound_a FROM x", Duration::from_micros(1), false, at());
+    assert_eq!(
+        registry.list("", "", "bound_a")[0].get("hitCount"),
+        Some(&Value::I64(2))
+    );
+    registry.clear();
+    assert!(registry.list("", "", "").is_empty());
+    for name in ["x", "y", "z"] {
+        registry.record(
+            &format!("SELECT bound_{name} FROM x"),
+            Duration::from_micros(1),
+            false,
+            at(),
+        );
+    }
+    assert_eq!(registry.list("", "", "").len(), 3, "clearing freed every row");
+}
+
+/// Two long statements that differ only past the kept prefix are two rows, each key bounded.
+#[test]
+fn long_statements_keep_a_bounded_key_with_a_hash_of_the_whole() {
+    let columns = (0..2000)
+        .map(|index| format!("c{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let first = statement_key(&format!("SELECT {columns} FROM a WHERE b = 'one' AND c_first = 1"));
+    let second = statement_key(&format!("SELECT {columns} FROM a WHERE b = 'two' AND c_second = 2"));
+    let same = statement_key(&format!("SELECT {columns} FROM a WHERE b = 'three' AND c_first = 3"));
+    assert_ne!(first, second);
+    assert_eq!(first, same);
+    assert!(first.len() < super::KEY_TEXT_MAX + 64, "{}", first.len());
+    assert!(first.starts_with("SELECT c0, c1, "));
+}

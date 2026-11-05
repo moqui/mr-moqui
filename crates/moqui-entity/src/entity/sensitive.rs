@@ -58,8 +58,13 @@ const IDENTITY_ADMIN_ENTITY_KEYS: &[&str] = &[
     "userpasswordhistory",
 ];
 
-/// Secret-config entities: `EmailServer` (host and password) and `SystemMessageRemote` (HMAC secret).
-const SECRET_CONFIG_ENTITY_KEYS: &[&str] = &["emailserver", "systemmessageremote"];
+/// Secret-config entities: `EmailServer` (host and password), `SystemMessageRemote` (HMAC secret) and
+/// `DatabaseConnection` (an external database's host and password, refused on production even when a row was loaded;
+/// plans/Tools-Database.md §4.3).
+const SECRET_CONFIG_ENTITY_KEYS: &[&str] = &["emailserver", "systemmessageremote", "databaseconnection"];
+
+/// Audit entities a request may never write: `DatabaseAudit`, what ran outside the entity facade (§14.2).
+const AUDIT_ENTITY_KEYS: &[&str] = &["databaseaudit"];
 
 /// The text after the last `.`, in lower case.
 fn simple_entity_key(entity_name: &str) -> String {
@@ -86,10 +91,15 @@ pub fn is_secret_config_entity(entity_name: &str) -> bool {
     SECRET_CONFIG_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
 }
 
-/// Entities the generic tools and loads do not take from a request entity name: identity-admin and secret-config.
-/// `UserAccount` stays available there.
+/// `DatabaseAudit`: written only by the services it records, never through generic entity writes or loads.
+pub fn is_audit_entity(entity_name: &str) -> bool {
+    AUDIT_ENTITY_KEYS.contains(&simple_entity_key(entity_name).as_str())
+}
+
+/// Entities the generic tools and loads do not take from a request entity name: identity-admin, secret-config and
+/// audit. `UserAccount` stays available there.
 pub fn is_restricted_generic_entity(entity_name: &str) -> bool {
-    is_identity_admin_entity(entity_name) || is_secret_config_entity(entity_name)
+    is_identity_admin_entity(entity_name) || is_secret_config_entity(entity_name) || is_audit_entity(entity_name)
 }
 
 /// Drop the password fields from a write's parameters.
@@ -125,8 +135,8 @@ mod tests {
     use moqui_lib::object::Value;
 
     use super::{
-        is_identity_admin_entity, is_restricted_generic_entity, is_secret_config_entity, is_user_account_entity,
-        simple_entity_key, strip_user_account_secrets,
+        is_audit_entity, is_identity_admin_entity, is_restricted_generic_entity, is_secret_config_entity,
+        is_user_account_entity, simple_entity_key, strip_user_account_secrets,
     };
 
     #[test]
@@ -160,6 +170,7 @@ mod tests {
             ("moqui.security.UserPasswordHistory", true, false),
             ("moqui.basic.email.EmailServer", false, true),
             ("moqui.service.message.SystemMessageRemote", false, true),
+            ("moqui.database.DatabaseConnection", false, true),
             ("moqui.security.UserAccount", false, false),
             ("users", false, false),
             ("moqui.basic.Enumeration", false, false),
@@ -169,6 +180,10 @@ mod tests {
             assert_eq!(is_secret_config_entity(name), secret, "{name}");
             assert_eq!(is_restricted_generic_entity(name), identity || secret, "{name}");
         }
+        // the database audit: restricted, and no one writes it generically
+        assert!(is_audit_entity("moqui.database.DatabaseAudit"));
+        assert!(is_restricted_generic_entity("moqui.database.DatabaseAudit"));
+        assert!(!is_audit_entity("moqui.entity.EntityAuditLog"));
         assert!(is_user_account_entity("moqui.security.UserAccount"));
         assert!(is_user_account_entity("users"));
         assert!(!is_user_account_entity("moqui.security.UserAccountX"));

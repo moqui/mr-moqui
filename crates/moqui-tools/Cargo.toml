@@ -15,6 +15,7 @@ publish.workspace = true
 moqui-core = { workspace = true }
 moqui-lib = { workspace = true }
 indexmap = { workspace = true }
+jiff = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]

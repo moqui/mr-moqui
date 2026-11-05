@@ -31,6 +31,8 @@ use crate::catalog;
 
 /// How long a probe's answer is kept.
 pub const CACHE_FOR: Duration = Duration::from_secs(300);
+/// How long an answer is kept when the database did not answer.
+pub const FAILED_CACHE_FOR: Duration = Duration::from_secs(15);
 
 /// The feature names, in the order the screens show them.
 pub const FEATURES: &[&str] = &[
@@ -169,7 +171,7 @@ impl Capabilities {
     }
 }
 
-type Row = IndexMap<String, Value>;
+pub(crate) type Row = IndexMap<String, Value>;
 /// Runs one named probe query, its error as text.
 type Probe<'a> = &'a dyn Fn(&str, &str) -> Result<Vec<Row>, String>;
 type Cache = Mutex<HashMap<String, (Instant, Arc<Capabilities>)>>;
@@ -200,10 +202,12 @@ fn column_flag(row: Option<&Row>, name: &str) -> bool {
 #[must_use]
 pub fn probe_group(facade: &EntityFacade, group: &str, embedded: bool) -> Capabilities {
     let db = format!("group:{group}");
+    // The driver's error can name the host and port: it goes to the log, and the reason the screen shows does not
+    // carry it.
     let run = |name: &str, sql: &str| {
         catalog::query(facade, group, sql).map_err(|err| {
             tracing::warn!(error = %err, "Capabilities probe {name} failed on {db}");
-            err.to_string()
+            format!("the {name} query failed (the server log has the detail)")
         })
     };
     match catalog::group_dialect(facade, group).as_deref() {
@@ -224,7 +228,7 @@ pub fn probe_group(facade: &EntityFacade, group: &str, embedded: bool) -> Capabi
     }
 }
 
-fn probe_postgres(db: String, embedded: bool, run: Probe<'_>) -> Capabilities {
+pub(crate) fn probe_postgres(db: String, embedded: bool, run: Probe<'_>) -> Capabilities {
     let mut caps = Capabilities {
         db,
         backend: Some(if embedded {
@@ -268,18 +272,21 @@ fn probe_postgres(db: String, embedded: bool, run: Probe<'_>) -> Capabilities {
             found.is_some_and(|row| column_text(Some(row), "installed_version").is_some()),
         )
     };
-    let preload = run("preload", catalog::postgres::PRELOAD);
-    let preloaded = column_text(first(&preload), "libraries")
-        .unwrap_or_default()
-        .split(',')
-        .any(|library| library.trim() == "pg_stat_statements");
+    // A role without pg_read_all_settings may not read shared_preload_libraries (RDS, Cloud SQL): unknown then, and
+    // the view itself decides.
+    let preloaded = run("preload", catalog::postgres::PRELOAD).ok().map(|rows| {
+        column_text(rows.first(), "libraries")
+            .unwrap_or_default()
+            .split(',')
+            .any(|library| library.trim() == "pg_stat_statements")
+    });
 
     // Statement stats in the database
     let statements = {
         let (present, installed) = extension("pg_stat_statements");
         if !present {
             Feature::no("the server has no pg_stat_statements extension")
-        } else if !preloaded {
+        } else if preloaded == Some(false) {
             Feature::no(if embedded {
                 "pg_stat_statements is not loaded: turn on the datasource's pg-stat-statements and restart"
             } else {
@@ -289,6 +296,9 @@ fn probe_postgres(db: String, embedded: bool, run: Probe<'_>) -> Capabilities {
             Feature::no("the pg_stat_statements extension is not created in this database (CREATE EXTENSION)")
         } else {
             match run("statements", catalog::postgres::STATEMENTS_READABLE) {
+                Err(_) if preloaded.is_none() => Feature::no(
+                    "pg_stat_statements does not read: it is not in shared_preload_libraries, or this role may not read it",
+                ),
                 Err(err) => Feature::no(format!("pg_stat_statements does not read: {err}")),
                 Ok(_) if !read_all_stats => {
                     Feature::limited("the text of other roles' statements needs the pg_read_all_stats role")
@@ -403,24 +413,24 @@ fn probe_mysql(db: String, run: Probe<'_>) -> Capabilities {
     });
     caps.database_size = column_number(first(&run("size", catalog::mysql::DATABASE_SIZE)), "database_size");
 
-    let grants: Vec<String> = run("grants", catalog::mysql::GRANTS)
+    let grant_texts: Vec<String> = run("grants", catalog::mysql::GRANTS)
         .unwrap_or_default()
         .iter()
         .flat_map(|row| row.values().map(to_plain_string))
-        .map(|grant| grant.to_ascii_uppercase())
         .collect();
-    let global = |privilege: &str| {
-        grants
-            .iter()
-            .any(|grant| grant.contains(" ON *.*") && (grant.contains("ALL PRIVILEGES") || grant.contains(privilege)))
-    };
-    let process = global("PROCESS");
-    let kill_any = global("SUPER")
-        || global(if mariadb {
+    let grants = GlobalGrants::parse(&grant_texts);
+    let process = grants.has("PROCESS");
+    let kill_any = grants.has("SUPER")
+        || grants.has(if mariadb {
             "CONNECTION ADMIN"
         } else {
             "CONNECTION_ADMIN"
         });
+    let roles_note = if grants.through_roles {
+        "; privileges granted through roles are not counted here"
+    } else {
+        ""
+    };
     let performance_schema = column_flag(
         first(&run("performance_schema", catalog::mysql::PERFORMANCE_SCHEMA)),
         "performance_schema",
@@ -444,17 +454,22 @@ fn probe_mysql(db: String, run: Probe<'_>) -> Capabilities {
         if process {
             Feature::yes()
         } else {
-            Feature::limited("only this user's threads; the others need the PROCESS privilege")
+            Feature::limited(format!(
+                "only this user's threads; the others need the PROCESS privilege{roles_note}"
+            ))
         },
     );
     let kill = if kill_any {
         Feature::yes()
     } else {
-        Feature::limited(if mariadb {
-            "only this user's threads; the others need the CONNECTION ADMIN or SUPER privilege"
-        } else {
-            "only this user's threads; the others need the CONNECTION_ADMIN privilege"
-        })
+        Feature::limited(format!(
+            "only this user's threads; the others need the {} privilege{roles_note}",
+            if mariadb {
+                "CONNECTION ADMIN or SUPER"
+            } else {
+                "CONNECTION_ADMIN"
+            }
+        ))
     };
     caps.features.insert("cancel", kill.clone());
     caps.features.insert("terminate", kill);
@@ -495,23 +510,76 @@ fn probe_mysql(db: String, run: Probe<'_>) -> Capabilities {
     caps
 }
 
+/// The privileges `SHOW GRANTS` gives on `*.*`, read from the list before ` ON `, so a user or host name such as
+/// `superset` is never taken for one. A grant of roles (no ` ON `) is noted: what the roles give is not read here.
+#[derive(Debug, Default)]
+pub(crate) struct GlobalGrants {
+    privileges: Vec<String>,
+    pub(crate) through_roles: bool,
+}
+
+impl GlobalGrants {
+    pub(crate) fn parse(grants: &[String]) -> Self {
+        let mut out = Self::default();
+        for grant in grants {
+            let upper = grant.trim().to_ascii_uppercase();
+            let Some(rest) = upper.strip_prefix("GRANT ") else {
+                continue;
+            };
+            let Some(on) = rest.find(" ON ") else {
+                out.through_roles = true;
+                continue;
+            };
+            let object = rest[on + 4..].trim_start();
+            if !(object.starts_with("*.*") || object.starts_with("`*`.`*`")) {
+                continue;
+            }
+            out.privileges
+                .extend(rest[..on].split(',').map(|privilege| privilege.trim().to_string()));
+        }
+        out
+    }
+
+    pub(crate) fn has(&self, privilege: &str) -> bool {
+        self.privileges
+            .iter()
+            .any(|held| held == privilege || held == "ALL" || held == "ALL PRIVILEGES")
+    }
+}
+
 fn cache() -> &'static Cache {
     static CACHE: OnceLock<Cache> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// The capabilities of `group`, from the cache when probed in the last [`CACHE_FOR`] and `refresh` is false.
-pub fn group_capabilities(facade: &EntityFacade, group: &str, embedded: bool, refresh: bool) -> Arc<Capabilities> {
-    let key = format!("group:{group}");
+/// The capabilities of `group`, from the cache when probed in the last [`CACHE_FOR`] ([`FAILED_CACHE_FOR`] when the
+/// database did not answer) and `refresh` is false. The cache is per facade (each factory's entity facade, with its
+/// own datasources) and group. `embedded` is asked only when the group is probed.
+pub fn group_capabilities(
+    facade: &EntityFacade,
+    group: &str,
+    embedded: impl FnOnce() -> bool,
+    refresh: bool,
+) -> Arc<Capabilities> {
+    let identity = facade.identity().as_ptr().cast::<()>() as usize;
+    let key = format!("{identity:x}/group:{group}");
     if !refresh {
         if let Some((at, caps)) = lock(cache()).get(&key) {
-            if at.elapsed() < CACHE_FOR {
+            let keep = if caps.error.is_some() {
+                FAILED_CACHE_FOR
+            } else {
+                CACHE_FOR
+            };
+            if at.elapsed() < keep {
                 return Arc::clone(caps);
             }
         }
     }
-    let caps = Arc::new(probe_group(facade, group, embedded));
-    lock(cache()).insert(key, (Instant::now(), Arc::clone(&caps)));
+    let caps = Arc::new(probe_group(facade, group, embedded()));
+    let mut cache = lock(cache());
+    // a facade that is gone leaves its rows: drop the expired ones as new ones come
+    cache.retain(|_, (at, _)| at.elapsed() < CACHE_FOR);
+    cache.insert(key, (Instant::now(), Arc::clone(&caps)));
     caps
 }
 

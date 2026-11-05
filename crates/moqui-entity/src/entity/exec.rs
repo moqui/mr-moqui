@@ -225,12 +225,21 @@ fn trace<T>(sql: &str, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Err
     result
 }
 
-/// Literal values are never exported, including SQL outside the parameterized entity paths.
+/// Literal values are never exported, including SQL outside the parameterized entity paths. At most about 4 KiB.
 pub fn redact_sql(sql: &str) -> String {
-    let mut output = String::with_capacity(sql.len().min(4096));
+    redact_sql_to(sql, 4096)
+}
+
+/// [`redact_sql`] of the whole text: the key of the query stats (`query_stats::statement_key`).
+pub(crate) fn redact_sql_uncapped(sql: &str) -> String {
+    redact_sql_to(sql, usize::MAX)
+}
+
+fn redact_sql_to(sql: &str, cap: usize) -> String {
+    let mut output = String::with_capacity(sql.len().min(cap));
     let mut chars = sql.chars().peekable();
     while let Some(ch) = chars.next() {
-        if output.len() >= 4096 {
+        if output.len() >= cap {
             break;
         }
         if ch == '\'' {

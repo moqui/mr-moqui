@@ -197,6 +197,7 @@ pub fn rest(
         }
     } else if sensitive::is_identity_admin_entity(&full_name)
         || sensitive::is_user_account_entity(&full_name)
+        || sensitive::is_audit_entity(&full_name)
         || (sensitive::is_secret_config_entity(&full_name) && !(crate::hooks::get().in_group)("ADMIN")?)
     {
         return Err(kinded(

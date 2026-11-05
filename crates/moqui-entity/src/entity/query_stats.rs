@@ -43,7 +43,6 @@ pub const OTHER: &str = "(other)";
 const SHARDS: usize = 16;
 
 static ENABLED: AtomicBool = AtomicBool::new(false);
-static STATEMENTS: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Default)]
 struct Stat {
@@ -57,18 +56,6 @@ struct Stat {
     /// standard deviation is shown in microseconds anyway.
     squared_micros: f64,
     artifacts: HashMap<String, u64>,
-}
-
-fn shards() -> &'static [Mutex<HashMap<String, Stat>>] {
-    static SHARD_MAPS: OnceLock<Vec<Mutex<HashMap<String, Stat>>>> = OnceLock::new();
-    SHARD_MAPS.get_or_init(|| (0..SHARDS).map(|_| Mutex::new(HashMap::new())).collect())
-}
-
-fn shard_of(key: &str) -> &'static Mutex<HashMap<String, Stat>> {
-    let mut hasher = DefaultHasher::new();
-    key.hash(&mut hasher);
-    let index = usize::try_from(hasher.finish() % SHARDS as u64).unwrap_or(0);
-    &shards()[index]
 }
 
 /// Whether statements are counted.
@@ -103,49 +90,132 @@ pub fn configure(conf: &MNode) {
     set_enabled(on);
 }
 
-/// The key of a statement: [`super::exec::redact_sql`] (quoted strings, numbers and dollar-quoted text become `?`,
-/// comments go), then runs of whitespace become one space.
+/// The most bytes of normalized text a key keeps; a longer statement keeps this much and a hash of the whole, so two
+/// long statements that differ past the prefix stay two rows and a key stays small.
+pub const KEY_TEXT_MAX: usize = 4_000;
+
+/// The key of a statement: the text with literals redacted ([`super::exec::redact_sql_uncapped`]: quoted strings,
+/// numbers and dollar-quoted text become `?`, comments go), runs of whitespace as one space. Past [`KEY_TEXT_MAX`]
+/// bytes it is that prefix, `…` and a hash of the whole normalized text.
 #[must_use]
 pub fn statement_key(sql: &str) -> String {
-    let redacted = super::exec::redact_sql(sql);
-    let mut key = String::with_capacity(redacted.len());
+    let redacted = super::exec::redact_sql_uncapped(sql);
+    let mut key = String::with_capacity(redacted.len().min(KEY_TEXT_MAX + 32));
+    let mut hasher: Option<DefaultHasher> = None;
     for word in redacted.split_whitespace() {
+        if let Some(hasher) = hasher.as_mut() {
+            word.hash(hasher);
+            continue;
+        }
+        if key.len() + word.len() + 1 > KEY_TEXT_MAX {
+            let mut whole = DefaultHasher::new();
+            key.hash(&mut whole);
+            word.hash(&mut whole);
+            hasher = Some(whole);
+            continue;
+        }
         if !key.is_empty() {
             key.push(' ');
         }
         key.push_str(word);
     }
+    if let Some(hasher) = hasher {
+        key.push_str(&format!(" \u{2026} #{:016x}", hasher.finish()));
+    }
     key
+}
+
+/// The statements of one instance, bounded and sharded. The process has one ([`registry`]); the tests make their own.
+pub(crate) struct Registry {
+    shards: Vec<Mutex<HashMap<String, Stat>>>,
+    statements: AtomicUsize,
+    max_statements: usize,
+}
+
+impl Registry {
+    pub(crate) fn new(max_statements: usize) -> Self {
+        Self {
+            shards: (0..SHARDS).map(|_| Mutex::new(HashMap::new())).collect(),
+            statements: AtomicUsize::new(0),
+            max_statements,
+        }
+    }
+
+    fn shard_of(&self, key: &str) -> &Mutex<HashMap<String, Stat>> {
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        let index = usize::try_from(hasher.finish() % SHARDS as u64).unwrap_or(0);
+        &self.shards[index]
+    }
+
+    pub(crate) fn record(&self, sql: &str, elapsed: Duration, error: bool, at: crate::hooks::StatementArtifact) {
+        let key = statement_key(sql);
+        let nanos = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
+        let mut map = lock(self.shard_of(&key));
+        let stat = if let Some(stat) = map.get_mut(&key) {
+            stat
+        } else {
+            // Reserve a row; past the bound the statement counts in the other row, in its own shard.
+            let reserved = self.statements.fetch_add(1, Ordering::Relaxed) < self.max_statements;
+            if !reserved {
+                self.statements.fetch_sub(1, Ordering::Relaxed);
+                drop(map);
+                let mut other_map = lock(self.shard_of(OTHER));
+                let other = other_map.entry(OTHER.to_string()).or_default();
+                count(other, nanos, error, at.artifact);
+                return;
+            }
+            map.entry(key).or_insert_with(|| Stat {
+                entity: at.entity.clone(),
+                ..Stat::default()
+            })
+        };
+        if stat.entity.is_none() {
+            stat.entity = at.entity;
+        }
+        count(stat, nanos, error, at.artifact);
+    }
+
+    pub(crate) fn clear(&self) {
+        for shard in &self.shards {
+            let mut map = lock(shard);
+            // the other row holds no reservation
+            let reserved = map.len() - usize::from(map.contains_key(OTHER));
+            map.clear();
+            self.statements.fetch_sub(reserved, Ordering::Relaxed);
+        }
+    }
+
+    pub(crate) fn list(&self, order_by: &str, entity_filter: &str, sql_filter: &str) -> Vec<IndexMap<String, Value>> {
+        let entity_filter = entity_filter.trim().to_lowercase();
+        let sql_filter = sql_filter.trim().to_lowercase();
+        let mut rows = Vec::new();
+        for shard in &self.shards {
+            let map = lock(shard);
+            for (sql, stat) in map.iter() {
+                let entity = stat.entity.clone().unwrap_or_default();
+                if !entity_filter.is_empty() && !entity.to_lowercase().contains(&entity_filter) {
+                    continue;
+                }
+                if !sql_filter.is_empty() && !sql.to_lowercase().contains(&sql_filter) {
+                    continue;
+                }
+                rows.push(row(sql, &entity, stat));
+            }
+        }
+        order(&mut rows, order_by);
+        rows
+    }
+}
+
+fn registry() -> &'static Registry {
+    static REGISTRY: OnceLock<Registry> = OnceLock::new();
+    REGISTRY.get_or_init(|| Registry::new(MAX_STATEMENTS))
 }
 
 /// Count one statement that took `elapsed`, failed or not. Only called while [`enabled`].
 pub(crate) fn record(sql: &str, elapsed: Duration, error: bool) {
-    let key = statement_key(sql);
-    let at = crate::hooks::artifact_name();
-    let nanos = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
-    let mut map = lock(shard_of(&key));
-    let stat = if let Some(stat) = map.get_mut(&key) {
-        stat
-    } else {
-        // Reserve a row; past the bound the statement counts in the other row, in its own shard.
-        let reserved = STATEMENTS.fetch_add(1, Ordering::Relaxed) < MAX_STATEMENTS;
-        if !reserved {
-            STATEMENTS.fetch_sub(1, Ordering::Relaxed);
-            drop(map);
-            let mut other_map = lock(shard_of(OTHER));
-            let other = other_map.entry(OTHER.to_string()).or_default();
-            count(other, nanos, error, at.artifact);
-            return;
-        }
-        map.entry(key).or_insert_with(|| Stat {
-            entity: at.entity.clone(),
-            ..Stat::default()
-        })
-    };
-    if stat.entity.is_none() {
-        stat.entity = at.entity;
-    }
-    count(stat, nanos, error, at.artifact);
+    registry().record(sql, elapsed, error, crate::hooks::artifact_name());
 }
 
 fn count(stat: &mut Stat, nanos: u64, error: bool, artifact: Option<String>) {
@@ -173,10 +243,7 @@ fn count(stat: &mut Stat, nanos: u64, error: bool, artifact: Option<String>) {
 
 /// Forget every statement counted.
 pub fn clear() {
-    for shard in shards() {
-        lock(shard).clear();
-    }
-    STATEMENTS.store(0, Ordering::Relaxed);
+    registry().clear();
 }
 
 /// The statements counted, as Java's `getQueryStatsList`: maps of `entityName`, `sql`, `hitCount`, `errorCount`,
@@ -185,24 +252,7 @@ pub fn clear() {
 /// field name, `-` in front for descending; numbers sort as numbers.
 #[must_use]
 pub fn list(order_by: &str, entity_filter: &str, sql_filter: &str) -> Vec<IndexMap<String, Value>> {
-    let entity_filter = entity_filter.trim().to_lowercase();
-    let sql_filter = sql_filter.trim().to_lowercase();
-    let mut rows = Vec::new();
-    for shard in shards() {
-        let map = lock(shard);
-        for (sql, stat) in map.iter() {
-            let entity = stat.entity.clone().unwrap_or_default();
-            if !entity_filter.is_empty() && !entity.to_lowercase().contains(&entity_filter) {
-                continue;
-            }
-            if !sql_filter.is_empty() && !sql.to_lowercase().contains(&sql_filter) {
-                continue;
-            }
-            rows.push(row(sql, &entity, stat));
-        }
-    }
-    order(&mut rows, order_by);
-    rows
+    registry().list(order_by, entity_filter, sql_filter)
 }
 
 fn micros(nanos: u128) -> f64 {

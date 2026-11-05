@@ -1184,10 +1184,16 @@ fn get_query_stats_list<'js>(
     })
 }
 
-/// `ec.entity.clearQueryStats()`.
+/// `ec.entity.clearQueryStats()`: through `org.moqui.impl.DatabaseServices.reset#QueryStats` (moqui-tools), which
+/// needs `DATABASE_ADMIN` and writes the audit row; a refusal is a message error, as the service adds it.
 fn clear_query_stats(ctx: Ctx<'_>) -> rquickjs::Result<()> {
     host_guard(&ctx, || {
-        crate::entity::query_stats::clear();
+        crate::service::call::sync_with(
+            "org.moqui.impl.DatabaseServices.reset#QueryStats",
+            &std::collections::BTreeMap::new(),
+            &crate::service::call::CallOptions::default(),
+        )
+        .map_err(|err| Exception::throw_message(&ctx, err.message()))?;
         Ok(())
     })
 }

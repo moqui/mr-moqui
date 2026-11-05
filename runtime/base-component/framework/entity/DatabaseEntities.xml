@@ -132,6 +132,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="userName" type="text-medium"/>
         <field name="password" type="text-medium" encrypt="true"/>
         <field name="sslMode" type="text-short"/>
+        <!-- sslrootcert as the datasource conf takes it: the path of a PEM file of the certificate authorities to trust,
+            not the PEM itself; empty trusts the public ones -->
         <field name="sslRootCert" type="text-medium"/>
         <field name="readOnly" type="text-indicator" default="'Y'"/>
         <field name="ownerUserId" type="id"/>

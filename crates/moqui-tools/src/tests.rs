@@ -37,17 +37,55 @@ fn the_services_register_at_the_locations_the_service_files_name() {
     let mut map = std::collections::BTreeMap::new();
     super::service::register(&mut map).unwrap();
     let registered: Vec<&str> = map.keys().copied().collect();
-    let dir = moqui_core::context::framework_dir().join("service/org/moqui/impl");
-    let text = std::fs::read_to_string(dir.join("DatabaseServices.xml")).unwrap();
-    let mut named: Vec<String> = text
-        .split("location=\"")
-        .skip(1)
-        .filter_map(|rest| rest.split_once('"').map(|(location, _)| location.to_string()))
-        .filter(|location| location.starts_with("moqui_tools::"))
-        .collect();
+    let mut files = Vec::new();
+    service_files(&moqui_core::context::framework_dir().join("service"), &mut files);
+    assert!(!files.is_empty());
+    let mut named: Vec<String> = Vec::new();
+    for file in files {
+        let text = std::fs::read_to_string(&file).unwrap();
+        named.extend(
+            text.split("location=\"")
+                .skip(1)
+                .filter_map(|rest| rest.split_once('"').map(|(location, _)| location.to_string()))
+                .filter(|location| location.starts_with("moqui_tools::")),
+        );
+    }
     named.sort_unstable();
     named.dedup();
     assert_eq!(registered, named);
+}
+
+/// Every `.xml` file under `dir`, at any depth.
+fn service_files(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    for entry in std::fs::read_dir(dir).unwrap().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            service_files(&path, out);
+        } else if path.extension().is_some_and(|extension| extension == "xml") {
+            out.push(path);
+        }
+    }
+}
+
+/// Privileges come from the list before ` ON ` and only on `*.*`; a user named like a privilege is not one, and a
+/// grant of roles is noted.
+#[test]
+fn mysql_grants_are_read_from_the_privilege_list() {
+    let grants = crate::capabilities::GlobalGrants::parse(&[
+        "GRANT USAGE ON *.* TO `superset`@`%`".to_string(),
+        "GRANT SELECT, PROCESS ON `app`.* TO `superset`@`%`".to_string(),
+        "GRANT `monitor`@`%` TO `superset`@`%`".to_string(),
+    ]);
+    assert!(!grants.has("SUPER"));
+    assert!(!grants.has("PROCESS"), "PROCESS on one schema is not global");
+    assert!(grants.through_roles);
+    let admin = crate::capabilities::GlobalGrants::parse(&[
+        "GRANT PROCESS, CONNECTION_ADMIN ON *.* TO `ops`@`localhost`".to_string(),
+    ]);
+    assert!(admin.has("PROCESS") && admin.has("CONNECTION_ADMIN") && !admin.has("SUPER"));
+    assert!(!admin.through_roles);
+    let all = crate::capabilities::GlobalGrants::parse(&["GRANT ALL PRIVILEGES ON *.* TO `root`@`%`".to_string()]);
+    assert!(all.has("SUPER"));
 }
 
 #[test]
@@ -68,8 +106,9 @@ fn db_names_a_group_or_an_external_connection() {
     assert!(DbRef::parse("group:", "transactional").is_err());
 }
 
-/// On the embedded cluster with pg_stat_statements preloaded and created: every feature is there, as the bootstrap
-/// superuser; on one without the preload, statement stats are not, and say why.
+/// On the embedded cluster with pg_stat_statements preloaded: before the extension is created statement stats are not
+/// available, and say why; after, every feature is there, as the bootstrap superuser. An unknown group answers with
+/// the reason.
 #[test]
 fn the_embedded_cluster_allows_everything_with_pg_stat_statements_loaded() {
     let nanos = std::time::SystemTime::now()
@@ -141,4 +180,53 @@ fn the_embedded_cluster_allows_everything_with_pg_stat_statements_loaded() {
     drop(facade);
     drop(driver);
     drop(cluster);
+}
+
+/// A role that may not read `shared_preload_libraries` (a managed server) still gets statement stats when the view
+/// reads; the reason the screen shows does not carry the driver's error.
+#[test]
+fn statement_stats_are_decided_by_the_view_when_the_preload_setting_is_hidden() {
+    use crate::capabilities::{probe_postgres, Feature, Row};
+    use moqui_lib::object::Value;
+    let row = |pairs: &[(&str, Value)]| -> Row {
+        pairs
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), value.clone()))
+            .collect()
+    };
+    let readable = std::cell::Cell::new(true);
+    let run = |name: &str, _sql: &str| -> Result<Vec<Row>, String> {
+        match name {
+            "server" => Ok(vec![row(&[
+                ("version", Value::string("PostgreSQL 17.2")),
+                ("is_superuser", Value::Bool(false)),
+            ])]),
+            "roles" => Ok(vec![row(&[("pg_read_all_stats", Value::Bool(true))])]),
+            "extensions" => Ok(vec![row(&[
+                ("name", Value::string("pg_stat_statements")),
+                ("installed_version", Value::string("1.11")),
+            ])]),
+            "statements" if readable.get() => Ok(vec![row(&[("statements", Value::I64(3))])]),
+            other => Err(format!("the {other} query failed (the server log has the detail)")),
+        }
+    };
+    let caps = probe_postgres("group:transactional".to_string(), false, &run);
+    assert_eq!(
+        caps.feature("statementStats"),
+        Feature {
+            available: true,
+            reason: None
+        }
+    );
+    readable.set(false);
+    let caps = probe_postgres("group:transactional".to_string(), false, &run);
+    let statements = caps.feature("statementStats");
+    assert!(!statements.available);
+    assert!(
+        statements
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("shared_preload_libraries")),
+        "{statements:?}"
+    );
 }

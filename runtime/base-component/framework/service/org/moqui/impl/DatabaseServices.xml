@@ -17,7 +17,8 @@ along with this software (see the LICENSE.md file). If not, see
         framework/entity/DatabaseEntities.xml. A service that works on a database takes db: group:<groupName> for an
         entity group's database (empty is the default group), or ext:<connectionId> for a moqui.database.DatabaseConnection,
         which is refused with "Not available" on a production instance or without the DATABASE_EXTERNAL permission. No
-        Java counterpart. -->
+        Java counterpart. Each service refuses a user the Tools app's own authorization (TOOLS_APP) does not let view
+        component://tools/screen/Tools.xml, whatever calls it. -->
     <service verb="get" noun="Capabilities" type="rust" location="moqui_tools::service::get_capabilities"
             transaction="ignore">
         <description>What the database db allows the Tools screens, and why the rest is not available ("needs the
@@ -43,5 +44,11 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="databaseSize" type="Long"/>
             <parameter name="features" type="Map"/>
         </out-parameters>
+    </service>
+    <service verb="reset" noun="QueryStats" type="rust" location="moqui_tools::service::reset_query_stats"
+            transaction="ignore">
+        <description>Forget the entity facade's statement stats of this instance (entity-facade@query-stats), as
+            ec.entity.clearQueryStats() does. Needs the DATABASE_ADMIN permission, and writes a DbaStatsReset
+            DatabaseAudit row.</description>
     </service>
 </services>
