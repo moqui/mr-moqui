@@ -50,7 +50,7 @@ type Chunk = std::io::Result<Bytes>;
 /// Event streams open at once on this node; one more is answered 503, and the client tries again.
 const MAX_STREAMS: usize = 256;
 /// How long the stream's thread waits for a client that takes nothing before it ends the stream.
-const SEND_STALL: std::time::Duration = std::time::Duration::from_secs(60);
+pub(crate) const SEND_STALL: std::time::Duration = std::time::Duration::from_secs(60);
 
 static STREAMS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
