@@ -205,7 +205,7 @@ fn export_data_grid(parameters: &BTreeMap<String, Value>, facade: &EntityFacade)
     if !location.is_empty() && !grid::export_location_allowed(&location, &actor, admin) {
         add_error(
             "An export is written under your own runtime://tmp/grid-export/<userId>/ or \
-             dbresource://moqui/database/export/<userId>/; another place needs DATABASE_ADMIN",
+             dbresource://moqui/database/export/<userId>/; another dbresource:// place or runtime://export/ needs DATABASE_ADMIN",
         );
         return none();
     }

@@ -566,7 +566,7 @@ along with this software (see the LICENSE.md file). If not, see
             transaction="ignore">
         <description>The whole source (conditions, filter, sort, columns) as format csv (default) or xlsx, written to
             location: under the user's own runtime://tmp/grid-export/(userId)/ or dbresource://moqui/database/export/(userId)/,
-            anywhere else only with DATABASE_ADMIN; when empty a new location under runtime://tmp/grid-export/(userId)/,
+            with DATABASE_ADMIN also any dbresource:// location or one under runtime://export/, never component://, file: or other runtime:// places; when empty a new location under runtime://tmp/grid-export/(userId)/,
             which the screen sends as a download after checking that the userId of its path is the current user's (the
             cleanup job removes those files after a day). An entity source is read through
             the find's cursor and CSV written row by row; XLSX is built in memory and stops at 100,000 rows; a SQL source

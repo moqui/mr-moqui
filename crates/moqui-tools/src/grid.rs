@@ -1179,14 +1179,20 @@ pub fn export_dir(user_id: &str) -> String {
 }
 
 /// Whether `actor` may write an export to `location`: under its own [`export_dir`], or its own
-/// `dbresource://moqui/database/export/<userId>/`; anywhere else needs `admin` (`DATABASE_ADMIN`).
+/// `dbresource://moqui/database/export/<userId>/`. With `admin` (`DATABASE_ADMIN`) also any `dbresource://` location
+/// and anything under `runtime://export/`; never `component://`, `file:` or another `runtime://` place.
 #[must_use]
 pub fn export_location_allowed(location: &str, actor: &Actor, admin: bool) -> bool {
     let location = location.trim();
     if location.is_empty() || location.split('/').any(|part| part == ".." || part == ".") || location.contains('\\') {
         return false;
     }
-    if admin {
+    let admin_place = |location: &str| {
+        ["dbresource://", "runtime://export/"]
+            .iter()
+            .any(|prefix| location.starts_with(prefix) && location.len() > prefix.len())
+    };
+    if admin && admin_place(location) {
         return true;
     }
     let Some(user) = actor
@@ -2013,6 +2019,21 @@ mod tests {
             false
         ));
         assert!(export_location_allowed("dbresource://other/a.csv", &ana, true));
+        assert!(export_location_allowed("runtime://export/a.csv", &ana, true));
+        assert!(export_location_allowed(
+            "runtime://tmp/grid-export/ANA/x/a.csv",
+            &ana,
+            true
+        ));
+        for refused in [
+            "component://framework/data/a.csv",
+            "file:/etc/a.csv",
+            "runtime://conf/a.csv",
+            "runtime://tmp/other/a.csv",
+            "runtime://tmp/grid-export/BO/x/a.csv",
+        ] {
+            assert!(!export_location_allowed(refused, &ana, true), "{refused}");
+        }
     }
 
     #[test]
