@@ -32,19 +32,20 @@ The services:
 | `publish#DbForm` | The drafts start at `fromDate` (now), each ending the row it replaces; `fieldNames` limits it. Refused when the dependencies would have a cycle |
 | `create#DbFormFieldSuccessor` | A new field for a new type or meaning, copying the old one's options, attributes and dependencies: a draft, or started at `fromDate` with the old field ended then. The answers keep the old name |
 | `end#DbFormField`, `end#DbFormFieldOption` | End a field (with the dependencies that name it) or an option at `thruDate` (now) |
-| `update#DbFormField` | On a dated form, an in-place edit; a published field keeps its type |
+| `update#DbFormField` | On a dated form, an in-place edit; a published field keeps its type, and the dates and `replacesFieldName` change only through the services above |
 | `delete#DbFormField`, `delete#DbFormFieldOption` | On a dated form, refused for a field or option with answers: end it |
 
 ## Dependencies
 
 A `DbFormFieldDependency` shows or requires one field by the value of another: `sourceFieldName`, `operator`, `value`,
 `targetFieldName` and `effect` (`show` or `require`). The operators are a fixed list: `equals` (the value, or one of a
-comma-separated list; with several values, as a multiple select has, any one of them), `not-equals` (none of them),
-`empty` and `not-empty`. A value is data, never an expression (`${` is refused).
+comma-separated list, each trimmed; with several values, as a multiple select has, any one of them), `not-equals` (none
+of them), `empty` and `not-empty`. A value is data, never an expression (`${` is refused), and `equals` and
+`not-equals` need one.
 
 - `store#DbFormFieldDependency` creates or updates one and `end#DbFormFieldDependency` ends one. Both check the
-  operator and effect, that the two fields are the form's and differ, and, at now and each later date a row starts or
-  ends, that the rules make no cycle and give no field two rules of one effect.
+  operator and effect, that the two fields are the form's and differ, and, at now and each date a row starts or ends,
+  that the rules make no cycle and give no field two rules of one effect.
 - The form maps the rows in effect to `visible-when` (show) and `require-when` (require) on the target field, and a
   field's `isRequired` to `required="true"` on its sub-field. These render in every mode: `qvt` (a style, and a bound
   `required` on text-line, password and date-time), `qvt-static` (`$mq.shown`, `$mq.holds`), `html` and `tui`. A field

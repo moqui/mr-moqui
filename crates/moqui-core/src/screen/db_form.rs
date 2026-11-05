@@ -408,8 +408,8 @@ pub(super) fn db_form_node(form_id: &str, as_of: AsOf) -> Result<MNode, Error> {
 
 /// The `visible-when` and `require-when` elements of the dependencies in effect, by target field. A dependency whose
 /// source or target is not in the form is left out (a field it names may have ended), and so is one with an operator or
-/// effect not in the allowlist or with `${` in its value, which `store#DbFormFieldDependency` would have refused, each
-/// with an error naming it.
+/// effect not in the allowlist, with `${` in its value, or an equals or not-equals with no value, which
+/// `store#DbFormFieldDependency` would have refused, each with an error naming it.
 /// A field takes one of each: a second dependency with the same target and effect is left out with a warning.
 fn dependency_conditions(
     form_id: &str,
@@ -456,6 +456,11 @@ fn dependency_conditions(
         let value = db_text(row, "value");
         if value.contains("${") {
             tracing::error!("DbFormFieldDependency {form_id}:{seq} has an expression in its value; left out");
+            continue;
+        }
+        // the render modes read a blank equals differently (qvt: always, tui: not-empty), so it is never written
+        if value.trim().is_empty() && (operator == "equals" || operator == "not-equals") {
+            tracing::error!("DbFormFieldDependency {form_id}:{seq} has {operator} with no value; left out");
             continue;
         }
         let list = out.entry(target.clone()).or_default();

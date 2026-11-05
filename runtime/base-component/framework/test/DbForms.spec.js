@@ -2,7 +2,7 @@
 // form keeps update#DbFormField's delete and recreate; on a dated form a draft is left out until it is published, an
 // edit is in place and audit-logged, a published field keeps its type and a successor field from a date takes a new
 // one, an answered field or option is ended and never deleted, and a response reads the form as of its date. A
-// dependency's operator is from the allowlist, a cycle is refused, and evaluate#DbFormDependencies checks a submit on
+// dependency's operator is from the allowlist, an equals has a value, a cycle is refused, and evaluate#DbFormDependencies checks a submit on
 // the server. The renders of the dependencies are crates/moqui-core screen::tests::db_forms.
 // Run: ./moq test framework --spec DbForms
 const S = 'org.moqui.impl.ScreenServices.'
@@ -166,16 +166,18 @@ feature('a dependency takes an operator from the allowlist and no expression, an
             show: invoke('store#DbFormFieldDependency', { formId: FORM, sourceFieldName: 'kind', operator: 'not-empty', targetFieldName: 'extra', effect: 'show' }),
             operator: invoke('store#DbFormFieldDependency', { formId: FORM, sourceFieldName: 'kind', operator: 'matches', value: '.*', targetFieldName: 'q1_2', effect: 'show' }),
             expression: invoke('store#DbFormFieldDependency', { formId: FORM, sourceFieldName: 'kind', value: '${ec.user.userId}', targetFieldName: 'q1_2', effect: 'show' }),
+            blank: invoke('store#DbFormFieldDependency', { formId: FORM, sourceFieldName: 'kind', value: ' ', targetFieldName: 'q1_2', effect: 'show' }),
             twice: invoke('store#DbFormFieldDependency', { formId: FORM, sourceFieldName: 'q1_2', operator: 'not-empty', targetFieldName: 'serial', effect: 'require' }),
             cycle: invoke('store#DbFormFieldDependency', { formId: FORM, sourceFieldName: 'extra', operator: 'not-empty', targetFieldName: 'kind', effect: 'show' }),
             rows: sys(() => ec.entity.find('moqui.screen.form.DbFormFieldDependency').condition('formId', FORM).count()),
         }
     },
-    then({ require, show, operator, expression, twice, cycle, rows }) {
+    then({ require, show, operator, expression, blank, twice, cycle, rows }) {
         require.errors == '' && require.dependencySeqId != null
         show.errors == ''
         operator.errors.includes('not one of')
         expression.errors.includes('not an expression')
+        blank.errors.includes('needs a value')
         twice.errors.includes('already has a require')
         cycle.errors.includes('cycle')
         rows == 2

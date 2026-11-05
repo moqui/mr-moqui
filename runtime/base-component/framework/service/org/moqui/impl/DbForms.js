@@ -336,6 +336,9 @@ function storeDependency(p) {
   if (!OPERATORS.includes(operator)) return refuse(`Operator ${operator} is not one of ${OPERATORS.join(', ')}`)
   if (!EFFECTS.includes(p.effect)) return refuse(`Effect ${p.effect} is not one of ${EFFECTS.join(', ')}`)
   if (String(p.value ?? '').includes('${')) return refuse('A dependency value is a value, not an expression')
+  if ((operator === 'equals' || operator === 'not-equals') && String(p.value ?? '').trim() === '') {
+    return refuse(`Operator ${operator} needs a value: use empty or not-empty for a field with no value`)
+  }
   if (!p.sourceFieldName || !p.targetFieldName) return refuse('A dependency names a source field and a target field')
   if (p.sourceFieldName === p.targetFieldName) return refuse(`Field ${p.targetFieldName} cannot depend on itself`)
   const names = new Set(fieldsOf(formId).map((field) => field.fieldName))
