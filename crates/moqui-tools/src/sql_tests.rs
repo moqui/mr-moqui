@@ -127,7 +127,11 @@ fn facade_on(driver: Arc<dyn DbDriver>) -> EntityFacade {
     )
     .unwrap();
     facade
-        .check_tables(&["moqui.database.DatabaseAudit", "moqui.database.SqlRunToken", "moqui.entity.SequenceValueItem"])
+        .check_tables(&[
+            "moqui.database.DatabaseAudit",
+            "moqui.database.SqlRunToken",
+            "moqui.entity.SequenceValueItem",
+        ])
         .unwrap();
     facade
 }

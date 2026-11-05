@@ -47,6 +47,8 @@ pub mod postgres {
     // ---- SQL (plans/Tools-Database.md §8) ----
     /// The database the connection is on: what a production confirmation asks to be typed.
     pub const CURRENT_DATABASE: &str = "SELECT current_database() AS database_name";
+    /// The schema the connection resolves unqualified names in: where the entity group's tables are.
+    pub const CURRENT_SCHEMA: &str = "SELECT current_schema() AS schema_name";
     /// Every column of the tables and views outside the system schemas, for the editor's completion.
     pub const COLUMNS: &str = "SELECT table_schema AS table_schema, table_name AS table_name, \
          column_name AS column_name, current_schema() AS current_schema FROM information_schema.columns \
@@ -60,6 +62,9 @@ pub mod postgres {
          WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) \
          ORDER BY total_exec_time DESC LIMIT ?";
     pub const STATEMENT_STATS_RESET: &str = "SELECT pg_stat_statements_reset() AS reset";
+    /// The planner's estimate of a table's rows (`?` is the table name); -1 when it was never analyzed.
+    pub const TABLE_ESTIMATE: &str =
+        "SELECT CAST(reltuples AS BIGINT) AS estimate FROM pg_class WHERE oid = to_regclass(?)";
     /// Cancel the statement of a session: the caller appends its backend pid, a number, and `)`.
     pub const CANCEL_BACKEND: &str = "SELECT pg_cancel_backend(";
     /// When a session started: the caller appends its backend pid, a number. With the pid it names one session, so a
@@ -97,6 +102,9 @@ pub mod mysql {
          SUM_NO_INDEX_USED AS sum_no_index_used FROM performance_schema.events_statements_summary_by_digest \
          WHERE SCHEMA_NAME = DATABASE() ORDER BY SUM_TIMER_WAIT DESC LIMIT ?";
     pub const STATEMENT_STATS_RESET: &str = "TRUNCATE TABLE performance_schema.events_statements_summary_by_digest";
+    /// InnoDB's estimate of a table's rows (`?` is the table name).
+    pub const TABLE_ESTIMATE: &str =
+        "SELECT TABLE_ROWS AS estimate FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?";
     /// `KILL QUERY` takes no placeholder: the caller appends the connection id, a number.
     pub const KILL_QUERY: &str = "KILL QUERY ";
     /// When the server started, in epoch seconds: with it a connection id names one connection, since the ids start
