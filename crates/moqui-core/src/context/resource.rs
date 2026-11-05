@@ -502,7 +502,7 @@ impl ResourceFacade {
     /// `file`, `runtime`, or `component` schemes.
     pub fn write_bytes(&self, location: &str, bytes: &[u8]) -> Result<(), Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
-        check_lock(location, false)?;
+        self.check_lock(location, false)?;
         if let Some(provider) = self.provider(location) {
             return provider.write_bytes(location, bytes);
         }
@@ -624,7 +624,7 @@ impl ResourceFacade {
     /// to storage, never all in memory where the storage can take it as it is read (a file, a `git://` content blob).
     pub fn write_from(&self, location: &str, input: &mut dyn std::io::Read, size: Option<u64>) -> Result<(), Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
-        check_lock(location, false)?;
+        self.check_lock(location, false)?;
         if let Some(provider) = self.provider(location) {
             return provider.write_from(location, input, size);
         }
@@ -715,7 +715,7 @@ impl ResourceFacade {
     /// Create a directory and any missing parents.
     pub fn make_directory(&self, location: &str) -> Result<(), Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
-        check_lock(location, false)?;
+        self.check_lock(location, false)?;
         if let Some(provider) = self.provider(location) {
             return provider.make_directory(location);
         }
@@ -729,9 +729,9 @@ impl ResourceFacade {
     /// Delete a file, or an empty directory. False when nothing is there.
     pub fn delete(&self, location: &str) -> Result<bool, Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
-        check_lock(location, true)?;
+        self.check_lock(location, true)?;
         let deleted = self.delete_at(location)?;
-        crate::resource::locks::release(location);
+        self.release_locks(location);
         Ok(deleted)
     }
 
@@ -762,10 +762,10 @@ impl ResourceFacade {
     /// Move a file or directory to a new location of the same kind of storage.
     pub fn rename(&self, location: &str, new_location: &str) -> Result<(), Error> {
         crate::entity::fence::check_effect(crate::entity::fence::Effect::Resource, location)?;
-        check_lock(location, true)?;
-        check_lock(new_location, false)?;
+        self.check_lock(location, true)?;
+        self.check_lock(new_location, false)?;
         self.rename_at(location, new_location)?;
-        crate::resource::locks::release(location);
+        self.release_locks(location);
         Ok(())
     }
 
@@ -978,6 +978,23 @@ impl ResourceFacade {
         moqui_lib::sync::read(&self.entity).clone()
     }
 
+    /// Refused when another user holds a WebDAV lock on the location ([`crate::resource::locks`], kept in the
+    /// database so every member of a cluster sees it); with `tree` (a delete or move) on anything under it too. With no
+    /// entity facade installed there are no locks.
+    pub(crate) fn check_lock(&self, location: &str, tree: bool) -> Result<(), Error> {
+        match self.installed() {
+            Some(facade) => crate::resource::locks::check_current(&facade, location, tree).map_err(Error::new),
+            None => Ok(()),
+        }
+    }
+
+    /// Drop the locks of a location deleted or moved, and of what was under it.
+    pub(crate) fn release_locks(&self, location: &str) {
+        if let Some(facade) = self.installed() {
+            crate::resource::locks::release(&facade, location);
+        }
+    }
+
     fn db_ref(&self, location: &str) -> Result<ResourceRef, Error> {
         let Some(facade) = self.installed() else {
             return Err(Error::new("database resource is not available"));
@@ -1090,12 +1107,6 @@ fn strip_prefix<'a>(location: &'a str, prefixes: &[&str]) -> &'a str {
         }
     }
     location
-}
-
-/// Refused when another user holds a WebDAV lock on the location ([`crate::resource::locks`]); with `tree` (a delete or
-/// move) on anything under it too.
-fn check_lock(location: &str, tree: bool) -> Result<(), Error> {
-    crate::resource::locks::check_current(location, tree).map_err(Error::new)
 }
 
 fn join_location(parent: &str, child: &str) -> String {

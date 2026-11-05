@@ -236,8 +236,12 @@ fn apply_each(
 
 /// Why `change` under `root` is refused: a WebDAV lock another user holds on what it writes, or for a delete or a
 /// move on anything under what it takes away.
-fn locked(root: &str, change: &ResourceChange) -> Option<String> {
-    let check = |path: &str, tree: bool| crate::resource::locks::check_current(&join_location(root, path), tree);
+fn locked(facade: &ResourceFacade, root: &str, change: &ResourceChange) -> Option<String> {
+    let check = |path: &str, tree: bool| {
+        facade
+            .check_lock(&join_location(root, path), tree)
+            .map_err(|err| err.message().to_string())
+    };
     match change {
         ResourceChange::Write { path, .. } | ResourceChange::MakeDirectory { path } => check(path, false),
         ResourceChange::Delete { path } => check(path, true),
@@ -327,7 +331,7 @@ impl ResourceFacade {
     /// `dbresource://`). Storage that keeps no versions writes the bytes and drops the note.
     pub fn write_bytes_noted(&self, location: &str, bytes: &[u8], note: Option<&str>) -> Result<(), Error> {
         let note = note.map(str::trim).filter(|note| !note.is_empty());
-        super::check_lock(location, false)?;
+        self.check_lock(location, false)?;
         if let Some(provider) = self.provider(location) {
             return provider.write_bytes_noted(location, bytes, note);
         }
@@ -357,7 +361,7 @@ impl ResourceFacade {
         for change in changes {
             match change.normalized() {
                 // a change of a location another user holds a WebDAV lock on is refused, and only that change
-                Ok(change) => match locked(root, &change) {
+                Ok(change) => match locked(self, root, &change) {
                     Some(reason) => refused.push((change.path().to_string(), reason)),
                     None => valid.push(change),
                 },
@@ -377,7 +381,7 @@ impl ResourceFacade {
                 _ => continue,
             };
             if !outcome.failures.iter().any(|(path, _)| path == change.path()) {
-                crate::resource::locks::release(&join_location(root, taken));
+                self.release_locks(&join_location(root, taken));
             }
         }
         outcome.failures.extend(refused);
@@ -471,7 +475,7 @@ impl ResourceFacade {
     ) -> Result<Option<String>, Error> {
         let location = strip_hash(location);
         let note = note.map(str::trim).filter(|note| !note.is_empty());
-        super::check_lock(location, true)?;
+        self.check_lock(location, true)?;
         if let Some(provider) = self.provider(location) {
             return provider.restore_version(location, version_name, note);
         }
