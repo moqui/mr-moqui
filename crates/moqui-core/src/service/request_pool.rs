@@ -31,8 +31,6 @@ const DEFAULT_REQUEST_WORKERS: u32 = 8;
 const DEFAULT_REQUEST_QUEUE: u32 = 64;
 const DEFAULT_SERVICE_WORKERS: u32 = 25;
 const DEFAULT_TRANSFER_WORKERS: u32 = 4;
-/// An entity of the `content` group: its manager is the pool streamed database downloads read from.
-const CONTENT_ENTITY: &str = "moqui.resource.ContentBlobChunk";
 
 /// Factory-owned request workers. [`RequestPool::idle`] starts no threads.
 ///
@@ -263,9 +261,9 @@ pub fn transfer_readers(factory: &ExecutionContextFactory) -> u32 {
 fn content_manager(
     facade: &crate::entity::EntityFacade,
 ) -> Result<(String, crate::transaction::TransactionManager), Error> {
-    let manager = match facade.transactions_for(CONTENT_ENTITY) {
-        Ok(manager) => manager,
-        Err(_) => default_manager(facade)?,
+    let manager = match crate::service::content::content_transactions(facade) {
+        Some(manager) => manager,
+        None => default_manager(facade)?,
     };
     let group = facade
         .groups()
