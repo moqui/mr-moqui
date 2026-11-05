@@ -257,6 +257,8 @@ fn insert_pending(
         return Ok(Vec::new());
     }
     let insert_sql = pending_insert_sql(facade)?;
+    // When the rows were made, so the drain can tell rows that keep failing from new ones.
+    let stamp = Value::Timestamp(jiff::Timestamp::now());
     let mut inserted = Vec::new();
     // Writes that carry their values: the document id is found from them, and the last write to
     // a document decides between index and delete.
@@ -322,6 +324,7 @@ fn insert_pending(
             Value::string(id),
             Value::string(*operation),
             origin,
+            stamp.clone(),
         ];
         probe_execute(conn, &insert_sql, &params)?;
         inserted.push(row_id);
@@ -373,6 +376,7 @@ fn insert_pending(
                     Value::string(&key),
                     Value::string(operation),
                     legacy_origin(&touches, entity_name).map_or(Value::Null, Value::String),
+                    stamp.clone(),
                 ];
                 probe_execute(conn, &insert_sql, &params)?;
                 inserted.push(row_id);
@@ -966,6 +970,7 @@ fn pending_insert_sql(facade: &EntityFacade) -> Result<String, Error> {
                 "primaryKey",
                 "operation",
                 "originAgentId",
+                "lastUpdatedStamp",
             ],
         )
     })

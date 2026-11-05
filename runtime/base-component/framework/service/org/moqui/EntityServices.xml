@@ -46,20 +46,29 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Deliver DataFeedPending rows: assemble each document and call the receive service (or, for a document
             that no longer assembles, the delete service) of every real-time push DataFeed that has it, then remove the rows
             that were delivered. A commit runs this for its own rows on a service worker. With no IDs a batch of every
-            pending row is tried, for rows a failed or full worker left behind.</description>
+            pending row is tried, for rows a failed or full worker left behind. A row whose delivery still fails after
+            stuckMinutes pending is an error of the batch, so the job run is kept and its error handling fires; the rows
+            stay pending.</description>
         <in-parameters>
             <parameter name="dataFeedPendingIds" type="List"><parameter name="dataFeedPendingId"/></parameter>
+            <parameter name="stuckMinutes" type="BigDecimal" default-value="60"><description>With no IDs, how long a row
+                may keep failing before the batch is an error.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="documentsIndexed" type="Integer"/>
             <parameter name="documentsDeleted" type="Integer"/>
             <parameter name="rowsLeft" type="Integer"/>
+            <parameter name="rowsStuck" type="Integer"/>
+            <parameter name="rowsPending" type="Integer"/>
         </out-parameters>
         <actions><script><![CDATA[
-            const report = ec.search.processFeedPending(dataFeedPendingIds);
+            const report = ec.search.processFeedPending(dataFeedPendingIds, stuckMinutes);
             documentsIndexed = report.documentsIndexed;
             documentsDeleted = report.documentsDeleted;
             rowsLeft = report.rowsLeft;
+            rowsStuck = report.rowsStuck;
+            rowsPending = report.rowsPending;
+            if (report.stuckError) ec.message.addError(report.stuckError);
         ]]></script></actions>
     </service>
 
