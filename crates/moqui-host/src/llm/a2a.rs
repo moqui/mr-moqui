@@ -91,6 +91,27 @@ impl Drop for Open {
 
 type Chunk = std::io::Result<Bytes>;
 
+/// Write an A2A stream into the response channel on the stream's thread: each frame (`None` is a keep-alive comment)
+/// sent within `stall`, as the Assist stream sends ([`crate::stall::send_within`]), so a client that stops reading ends
+/// the stream and gives back its thread and slot (HL-027); the stop check is the server stopping or the client gone,
+/// polled at least every second while nothing comes.
+fn write_stream(
+    write: Box<dyn FnOnce(a2a::Sink<'_>, a2a::Stop<'_>) + Send>,
+    tx: &mpsc::Sender<Chunk>,
+    shutdown: &tokio::sync::watch::Receiver<bool>,
+    stall: std::time::Duration,
+) {
+    let stop = || *shutdown.borrow() || tx.is_closed();
+    let mut sink = |frame: Option<&str>| -> bool {
+        if stop() {
+            return false;
+        }
+        let text = frame.map_or_else(|| ": ping\n\n".to_string(), str::to_string);
+        crate::stall::send_within(tx, Ok(Bytes::from(text)), stall).is_ok()
+    };
+    write(&mut sink, &stop);
+}
+
 /// The response body of a stream: chunks from its thread until it drops its sender.
 struct ChannelBody(mpsc::Receiver<Chunk>);
 
@@ -231,11 +252,14 @@ pub(crate) async fn handle(
                 Err(full) => return busy(&full),
             };
             let (done, reply) = tokio::sync::oneshot::channel::<Reply>();
+            let shutdown = state.shutdown.clone();
             let spawned = std::thread::Builder::new()
                 .name("moqui-a2a-wait".to_string())
                 .spawn(move || {
                     let _open = open;
-                    let _ = done.send(finish());
+                    // the wait stops when the server does or the client closed the request (its receiver dropped)
+                    let answered = finish(&|| *shutdown.borrow() || done.is_closed());
+                    let _ = done.send(answered);
                 });
             if let Err(error) = spawned {
                 return crate::http::internal_error(&format!("the A2A wait did not start: {error}"));
@@ -256,14 +280,7 @@ pub(crate) async fn handle(
                 .name("moqui-a2a-sse".to_string())
                 .spawn(move || {
                     let _open = open;
-                    let mut sink = |frame: Option<&str>| -> bool {
-                        if *shutdown.borrow() || tx.is_closed() {
-                            return false;
-                        }
-                        let text = frame.map_or_else(|| ": ping\n\n".to_string(), str::to_string);
-                        tx.blocking_send(Ok(Bytes::from(text))).is_ok()
-                    };
-                    write(&mut sink);
+                    write_stream(write, &tx, &shutdown, super::sse::SEND_STALL);
                 });
             if let Err(error) = spawned {
                 return crate::http::internal_error(&format!("the A2A stream did not start: {error}"));
@@ -278,3 +295,7 @@ pub(crate) async fn handle(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "a2a_tests.rs"]
+mod tests;

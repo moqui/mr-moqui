@@ -498,7 +498,7 @@ pub fn serve(factory: &Arc<ExecutionContextFactory>, request: &HttpRequest) -> A
                 Ok(super::tools::Called::Now(result)) => Answer::Reply(result_reply(&id, result)),
                 Ok(super::tools::Called::Wait(wait)) => Answer::Later {
                     user_id: caller.user_id.clone(),
-                    finish: Box::new(move || result_reply(&id, wait())),
+                    finish: Box::new(move |_stop: crate::a2a::Stop<'_>| result_reply(&id, wait())),
                 },
                 Err(error) => Answer::Reply(error.reply(Some(&id))),
             }

@@ -721,6 +721,19 @@ pub fn execute_query(ec: &ExecutionContext, options: &Json) -> Result<Json, Erro
     search::limits::with_limits(limits, || execute_query_inner(ec, options, &mut 64))
 }
 
+/// The typed frames of a child query's result, taken out of it rather than copied
+/// (plans/High-Level-Review.md HL-016): the composing parent reads only the result's notices, inspection and
+/// requests after.
+fn take_frames(result: &mut Json) -> Result<Vec<frame::Frame>, Error> {
+    match result.get_mut("frames").map(Json::take) {
+        Some(Json::Array(frames)) => frames
+            .into_iter()
+            .map(|frame| serde_json::from_value::<frame::Frame>(frame).map_err(fail))
+            .collect(),
+        _ => Ok(Vec::new()),
+    }
+}
+
 fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize) -> Result<Json, Error> {
     if !options.is_object() {
         return Err(fail("a report query must be an object"));
@@ -804,7 +817,7 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
             if query.get("thru").is_none() {
                 query["thru"] = range["thru"].clone();
             }
-            let result = match execute_query_inner(ec, &query, budget) {
+            let mut result = match execute_query_inner(ec, &query, budget) {
                 Ok(result) => result,
                 Err(error) => {
                     tracing::error!(%error,"independent report query failed");
@@ -812,9 +825,7 @@ fn execute_query_inner(ec: &ExecutionContext, options: &Json, budget: &mut usize
                     continue;
                 }
             };
-            for frame in result["frames"].as_array().into_iter().flatten() {
-                frames.push(serde_json::from_value::<frame::Frame>(frame.clone()).map_err(fail)?);
-            }
+            frames.extend(take_frames(&mut result)?);
             notices.extend(result["notices"].as_array().into_iter().flatten().cloned());
             if options["inspect"] == true {
                 for mut step in result["inspection"].as_array().into_iter().flatten().cloned() {
@@ -1642,16 +1653,10 @@ fn execute_comparison(ec: &ExecutionContext, options: &Json, budget: &mut usize,
     .to_string());
     previous_options["thru"] = range["from"].clone();
     child_ranges(&mut previous_options, now, -width)?;
-    let current = execute_query_inner(ec, &current_options, budget)?;
-    let previous = execute_query_inner(ec, &previous_options, budget)?;
-    let frames = |result: &Json| {
-        result["frames"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|frame| serde_json::from_value::<frame::Frame>(frame.clone()).map_err(fail))
-            .collect::<Result<Vec<_>, _>>()
-    };
+    let mut current = execute_query_inner(ec, &current_options, budget)?;
+    let mut previous = execute_query_inner(ec, &previous_options, budget)?;
+    // each branch's frames are taken out of its result, not copied (HL-016): only its notices, inspection and
+    // requests are read after
     fn bucket_ids(query: &Json, ids: &mut BTreeMap<String, ()>) {
         if let Some(queries) = query["queries"].as_array() {
             for query in queries {
@@ -1710,8 +1715,8 @@ fn execute_comparison(ec: &ExecutionContext, options: &Json, budget: &mut usize,
         })
         .unwrap_or_else(|| keys.into_keys().collect());
     let compared = frame::compare_previous(
-        frames(&current)?,
-        frames(&previous)?,
+        take_frames(&mut current)?,
+        take_frames(&mut previous)?,
         width,
         if has_service && options.get("comparisonKeys").is_none() {
             None
@@ -2791,6 +2796,53 @@ pub fn register(registry: &mut moqui_core::native::NativeRegistry) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// HL-016: a child's frames taken out of its result are the frames the copy gave, and comparing them with the
+    /// previous period gives the same result; the rest of the child's result is left for the parent.
+    #[test]
+    fn taking_a_childs_frames_gives_what_copying_them_did() {
+        let rows = |offset: i64| {
+            (0..50)
+                .map(|n| {
+                    BTreeMap::from([
+                        ("time".to_string(), json!(1_700_000_000_000_i64 + n * 60_000 + offset)),
+                        ("service".to_string(), json!(format!("svc-{}", n % 4))),
+                        ("value".to_string(), json!(n as f64 * 1.5)),
+                    ])
+                })
+                .collect::<Vec<_>>()
+        };
+        let child = |offset: i64| {
+            let frames = vec![
+                frame::Frame::from_rows(&rows(offset)),
+                frame::Frame::from_rows(&rows(offset + 7)),
+            ];
+            json!({"frames":frames,"notices":[{"level":"info","message":"kept"}],"inspection":[],"range":{}})
+        };
+        let copied = |result: &Json| {
+            result["frames"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|frame| serde_json::from_value::<frame::Frame>(frame.clone()).map_err(fail))
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        let (mut current, mut previous) = (child(0), child(-3_600_000));
+        let (current_copy, previous_copy) = (copied(&current), copied(&previous));
+        let (current_taken, previous_taken) = (take_frames(&mut current).unwrap(), take_frames(&mut previous).unwrap());
+        assert_eq!(current_taken, current_copy);
+        assert_eq!(previous_taken, previous_copy);
+        assert_eq!(current["notices"][0]["message"], "kept", "the rest of the result stays");
+        let keys = ["time".to_string()];
+        assert_eq!(
+            frame::compare_previous(current_taken, previous_taken, 3_600_000, Some(&keys)).unwrap(),
+            frame::compare_previous(current_copy, previous_copy, 3_600_000, Some(&keys)).unwrap()
+        );
+        // a result with no frames, or not an object, gives none
+        assert!(take_frames(&mut json!({"notices":[]})).unwrap().is_empty());
+        assert!(take_frames(&mut json!(5)).unwrap().is_empty());
+    }
 
     #[test]
     fn unit_fields_take_the_unit_from_the_row_or_the_documents() {

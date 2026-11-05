@@ -111,11 +111,13 @@ pub(crate) async fn handle(
                 Err(full) => return busy(&full),
             };
             let (done, reply) = tokio::sync::oneshot::channel::<Reply>();
+            let shutdown = state.shutdown.clone();
             let spawned = std::thread::Builder::new()
                 .name("moqui-mcp-wait".to_string())
                 .spawn(move || {
                     let _open = open;
-                    let _ = done.send(finish());
+                    let answered = finish(&|| *shutdown.borrow() || done.is_closed());
+                    let _ = done.send(answered);
                 });
             if let Err(error) = spawned {
                 return crate::http::internal_error(&format!("the MCP wait did not start: {error}"));
