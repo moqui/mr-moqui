@@ -169,3 +169,91 @@ fn a_purge_commits_each_chunk_apart_from_the_callers_transaction() {
     assert!(outer.is_err());
     assert_eq!(count(&facade, "bulk"), 0);
 }
+
+const MEMBER: &str = "moqui.entity.view.DbViewEntityMember";
+
+fn member(facade: &EntityFacade, alias: &str, join_from: Option<&str>) -> crate::entity::EntityValue {
+    let mut row = facade.make_value(MEMBER).unwrap();
+    row.set("dbViewEntityName", Value::string("SpecView"));
+    row.set("entityAlias", Value::string(alias));
+    row.set("entityName", Value::string("moqui.basic.Enumeration"));
+    if let Some(from) = join_from {
+        row.set("joinFromAlias", Value::string(from));
+    }
+    row
+}
+
+/// `DbViewEntityMember` refers to itself (`joinFromAlias`): a row is deleted only after the rows that join from it, in
+/// whatever order they were read, so the self-referencing foreign key does not refuse the delete.
+#[test]
+fn rows_of_a_self_referencing_entity_are_deleted_referring_rows_first() {
+    let facade = crate::testing::open();
+    let rows = vec![
+        member(&facade, "MASTER", None),
+        member(&facade, "MEMBER2", Some("MEMBER1")),
+        member(&facade, "MEMBER1", Some("MASTER")),
+        member(&facade, "OTHER", Some("GONE")),
+    ];
+    let pk = ["dbViewEntityName".to_string(), "entityAlias".to_string()];
+    let self_refs = vec![vec![
+        ("dbViewEntityName".to_string(), "dbViewEntityName".to_string()),
+        ("joinFromAlias".to_string(), "entityAlias".to_string()),
+    ]];
+    let ordered: Vec<String> = super::children_first(rows, &pk, &self_refs)
+        .iter()
+        .map(|row| {
+            row.get("entityAlias")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect();
+    let at = |alias: &str| ordered.iter().position(|got| got == alias).unwrap();
+    assert!(
+        at("MEMBER2") < at("MEMBER1") && at("MEMBER1") < at("MASTER"),
+        "{ordered:?}"
+    );
+    assert_eq!(ordered.len(), 4);
+}
+
+/// The delete of such an entity reads its rows in one query, and a find with its own order keeps it.
+#[test]
+fn a_self_referencing_delete_and_an_ordered_update_are_read_in_one_query() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = crate::testing::open_with_tape(Arc::clone(&tape));
+    for row in [
+        member(&facade, "MASTER", None),
+        member(&facade, "MEMBER1", Some("MASTER")),
+    ] {
+        row.create(&facade).unwrap();
+    }
+    let from = tape.lock().unwrap().len();
+    let deleted = facade
+        .find(MEMBER)
+        .unwrap()
+        .eq("dbViewEntityName", Value::string("SpecView"))
+        .bulk_chunk(1)
+        .delete_all()
+        .unwrap();
+    assert_eq!(deleted, 2);
+    let member_reads = tape.lock().unwrap()[from..]
+        .iter()
+        .filter(|sql| sql.starts_with("SELECT") && sql.contains("\"db_view_entity_member\""))
+        .count();
+    assert_eq!(member_reads, 1, "{:?}", &tape.lock().unwrap()[from..]);
+
+    let (facade, tape) = seeded(5);
+    let from = tape.lock().unwrap().len();
+    let set = [("testMedium".to_string(), Value::string("done"))];
+    assert_eq!(
+        bulk(&facade)
+            .order_by("testId", true)
+            .bulk_chunk(2)
+            .update_all(set)
+            .unwrap(),
+        5
+    );
+    let reads = reads(&tape, from);
+    assert_eq!(reads.len(), 1, "{reads:?}");
+    assert!(reads[0].contains("ORDER BY \"test_id\" DESC"), "{reads:?}");
+}

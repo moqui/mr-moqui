@@ -16,6 +16,7 @@
 //! chunks, reading only the key (and the fields an update sets) unless an ECA rule, the data feed, a transaction cache
 //! or a sim needs whole rows (plans/High-Level-Review.md HL-033).
 
+use std::collections::HashMap;
 use std::time::Instant;
 
 use moqui_db::sql::{Condition, OrderBy};
@@ -24,7 +25,7 @@ use moqui_lib::object::Value;
 
 use super::EntityFind;
 use crate::entity::load_feed;
-use crate::entity::value::EntityList;
+use crate::entity::value::{EntityList, EntityValue};
 use crate::transaction::TransactionAttribute;
 
 /// Rows a bulk write reads in one query, unless [`EntityFind::bulk_chunk`] sets another.
@@ -41,11 +42,14 @@ pub struct Purged {
     pub stopped_early: bool,
 }
 
-/// The rows of a find, a chunk at a time in primary-key order. A find with a limit or offset, of a view, or of an entity
-/// with no primary key is read in one chunk.
+/// The rows of a find, a chunk at a time in primary-key order. A find with a limit, an offset or its own order, of a
+/// view, of an entity with no primary key, or a delete of an entity that refers to itself is read in one chunk.
 struct KeyPager {
     base: EntityFind,
     pk: Vec<String>,
+    /// For a delete: each relationship of the entity to itself, as (field, related primary key field) pairs. The rows
+    /// are then deleted referring rows first ([`children_first`]).
+    self_refs: Vec<Vec<(String, String)>>,
     /// Rows per chunk; `None` reads all in one.
     chunk: Option<i64>,
     /// The primary key of the last row read.
@@ -81,7 +85,17 @@ impl KeyPager {
             self.after = Some(key.collect());
         }
         self.done = !full;
-        Ok((!list.is_empty()).then_some(list))
+        if list.is_empty() {
+            return Ok(None);
+        }
+        if self.self_refs.is_empty() {
+            return Ok(Some(list));
+        }
+        Ok(Some(EntityList::new(children_first(
+            list.into_values(),
+            &self.pk,
+            &self.self_refs,
+        ))))
     }
 
     /// The key of the last row read, for a log line.
@@ -95,6 +109,66 @@ impl KeyPager {
             None => "the end".to_string(),
         }
     }
+}
+
+/// `rows` reordered so that a row another of them refers to through `self_refs` comes after it: a delete in this order
+/// does not remove a row a later one still refers to (a self-referencing foreign key, as `DbViewEntityMember`'s
+/// `joinFromAlias`). Rows in a cycle keep their order, at the end.
+fn children_first(rows: Vec<EntityValue>, pk: &[String], self_refs: &[Vec<(String, String)>]) -> Vec<EntityValue> {
+    let text = |values: Vec<Option<&Value>>| -> Option<String> {
+        let mut key = String::new();
+        for value in values {
+            let value = value.filter(|value| !value.is_null())?;
+            key.push_str(&moqui_lib::object::to_plain_string(value));
+            key.push('\u{1f}');
+        }
+        Some(key)
+    };
+    let keys: Vec<Option<String>> = rows
+        .iter()
+        .map(|row| text(pk.iter().map(|name| row.get(name)).collect()))
+        .collect();
+    let at: HashMap<&str, usize> = keys
+        .iter()
+        .enumerate()
+        .filter_map(|(index, key)| key.as_deref().map(|key| (key, index)))
+        .collect();
+    // Each row's targets: the rows of the set it refers to.
+    let mut referrers = vec![0_usize; rows.len()];
+    let mut targets: Vec<Vec<usize>> = vec![Vec::new(); rows.len()];
+    for (index, row) in rows.iter().enumerate() {
+        for pairs in self_refs {
+            let target = pk.iter().map(|name| {
+                pairs
+                    .iter()
+                    .find(|(_, related)| related == name)
+                    .and_then(|(field, _)| row.get(field))
+            });
+            let Some(target) = text(target.collect()).and_then(|key| at.get(key.as_str()).copied()) else {
+                continue;
+            };
+            if target != index {
+                targets[index].push(target);
+                referrers[target] += 1;
+            }
+        }
+    }
+    let mut order = Vec::with_capacity(rows.len());
+    let mut ready: Vec<usize> = (0..rows.len()).rev().filter(|&index| referrers[index] == 0).collect();
+    let mut placed = vec![false; rows.len()];
+    while let Some(index) = ready.pop() {
+        placed[index] = true;
+        order.push(index);
+        for &target in &targets[index] {
+            referrers[target] -= 1;
+            if referrers[target] == 0 {
+                ready.push(target);
+            }
+        }
+    }
+    order.extend((0..rows.len()).filter(|&index| !placed[index]));
+    let mut slots: Vec<Option<EntityValue>> = rows.into_iter().map(Some).collect();
+    order.into_iter().filter_map(|index| slots[index].take()).collect()
 }
 
 /// Rows after `last` in primary-key order: `k1 > v1 OR (k1 = v1 AND k2 > v2) OR ...`.
@@ -139,30 +213,50 @@ impl EntityFind {
         Ok(eca || held || facade.sim_active() || load_feed::feed_keeps_values(facade, &self.entity_name))
     }
 
-    /// The pager of this find's rows. With `select`, the rows read only the primary key and these fields.
-    fn key_pager(mut self, select: Option<Vec<String>>) -> Result<KeyPager, Error> {
-        let pk: Vec<String> = self.facade.with_entity(&self.entity_name, |entity, _, _| {
-            Ok(if entity.is_view {
-                Vec::new()
-            } else {
-                entity.pk_field_names().into_iter().map(str::to_string).collect()
-            })
+    /// The pager of this find's rows. With `select`, the rows read only the primary key and these fields. A `delete`
+    /// orders the rows of an entity that refers to itself so that none is deleted before a row that refers to it.
+    fn key_pager(mut self, select: Option<Vec<String>>, delete: bool) -> Result<KeyPager, Error> {
+        let (pk, self_refs) = self.facade.with_entity(&self.entity_name, |entity, _, _| {
+            if entity.is_view {
+                return Ok((Vec::new(), Vec::new()));
+            }
+            let pk: Vec<String> = entity.pk_field_names().into_iter().map(str::to_string).collect();
+            let self_refs: Vec<Vec<(String, String)>> = entity
+                .relationships
+                .iter()
+                .filter(|relationship| {
+                    delete
+                        && relationship.relationship_type.starts_with("one")
+                        && relationship.related == entity.full_name
+                        && !relationship.key_pairs.is_empty()
+                })
+                .map(|relationship| relationship.key_pairs.clone())
+                .collect();
+            Ok((pk, self_refs))
         })?;
-        let paged = !pk.is_empty() && self.limit.is_none() && self.offset.is_none();
+        // The rows of a self-referencing entity are ordered as a whole, and a find's own order is kept, as before: such a
+        // delete or update is read in one query.
+        let paged = !pk.is_empty()
+            && self.limit.is_none()
+            && self.offset.is_none()
+            && self.order.is_empty()
+            && self_refs.is_empty();
         let chunk = self.bulk_chunk.unwrap_or(BULK_CHUNK);
         self = self.use_cache(false);
+        // A find that already selects fields needs the key too, to page by it and to order the deletes.
+        if (paged || !self_refs.is_empty()) && (select.is_some() || !self.select_fields.is_empty()) {
+            let refs = self_refs.iter().flatten().map(|(field, _)| field);
+            for name in pk.iter().chain(select.iter().flatten()).chain(refs) {
+                self = self.select_field(name);
+            }
+        }
         if paged {
             self.order = pk.iter().map(|name| OrderBy::asc(name.as_str())).collect();
-            // A find that already selects fields needs the key too, to page by it.
-            if select.is_some() || !self.select_fields.is_empty() {
-                for name in pk.iter().chain(select.iter().flatten()) {
-                    self = self.select_field(name);
-                }
-            }
         }
         Ok(KeyPager {
             base: self,
             pk,
+            self_refs,
             chunk: paged.then_some(chunk),
             after: None,
             done: false,
@@ -172,7 +266,8 @@ impl EntityFind {
 
     /// Java `updateAll`: set `fields` on each row found and update the rows that change, so each update runs its
     /// entity ECA rules. Returns how many rows were updated. Not for a `create-only` entity. The find skips the cache.
-    /// The rows are read [`BULK_CHUNK`] at a time by primary key, in the caller's transaction.
+    /// The rows are read [`BULK_CHUNK`] at a time by primary key, in the caller's transaction; a find with its own order
+    /// is read in one query and updated in that order.
     pub fn update_all(self, fields: impl IntoIterator<Item = (String, Value)>) -> Result<i64, Error> {
         let fields: Vec<(String, Value)> = fields.into_iter().collect();
         let _authz = self.authz_guard();
@@ -183,7 +278,7 @@ impl EntityFind {
         } else {
             Some(fields.iter().map(|(name, _)| name.clone()).collect())
         };
-        let mut pager = self.key_pager(select)?;
+        let mut pager = self.key_pager(select, false)?;
         let mut updated = 0_i64;
         while let Some(list) = pager.next()? {
             for value in list.values() {
@@ -203,13 +298,16 @@ impl EntityFind {
 
     /// Java `deleteAll`: delete each row found through the value path, so each delete runs its entity ECA rules.
     /// Returns how many rows were deleted. Not for a `create-only` entity. The find skips the cache. The rows are read
-    /// [`BULK_CHUNK`] at a time by primary key, in the caller's transaction.
+    /// [`BULK_CHUNK`] at a time by primary key, in the caller's transaction. A find with its own order is read in one
+    /// query and deleted in that order; the rows of an entity with a relationship to itself are read in one query and
+    /// deleted referring rows first, so a self-referencing foreign key does not refuse the delete (Java deletes in the
+    /// order the database returns, which only happens to work).
     pub fn delete_all(self) -> Result<i64, Error> {
         let _authz = self.authz_guard();
         let facade = self.facade.clone();
         self.refuse_create_only("deleted")?;
         let select = (!self.bulk_reads_whole_rows("delete", true)?).then(Vec::new);
-        let mut pager = self.key_pager(select)?;
+        let mut pager = self.key_pager(select, true)?;
         let mut deleted = 0_i64;
         while let Some(list) = pager.next()? {
             for value in list.values() {
@@ -237,7 +335,7 @@ impl EntityFind {
         let tx = facade.transactions_for(&entity_name)?;
         // Each chunk begins a transaction of its own, which holds nothing in a transaction cache.
         let select = (!self.bulk_reads_whole_rows("delete", false)?).then(Vec::new);
-        let mut pager = self.key_pager(select)?;
+        let mut pager = self.key_pager(select, true)?;
         let mut purged = Purged::default();
         while !pager.done {
             if !more() {
