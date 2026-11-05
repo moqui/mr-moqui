@@ -285,6 +285,12 @@ pub(super) fn db_form_node(form_id: &str, as_of: AsOf) -> Result<MNode, Error> {
     let conditions = dependency_conditions(form_id, &dependencies, dated, as_of, &field_names);
     for db_field in fields {
         let field_name = db_text(db_field, "fieldName");
+        let field_type = db_text(db_field, "fieldTypeEnumId");
+        let Some(widget_name) = field_type.get(6..).filter(|name| !name.is_empty()) else {
+            // failure tolerance: the form, and the response services that read it, keep its other fields
+            tracing::error!("DbFormField {form_id}:{field_name} has no fieldTypeEnumId; left out of the form");
+            continue;
+        };
         let field = MNode::new("field");
         field.set_attribute("name", field_name.clone());
         let entry = db_text(db_field, "entryName");
@@ -308,12 +314,6 @@ pub(super) fn db_form_node(form_id: &str, as_of: AsOf) -> Result<MNode, Error> {
         if db_text(db_field, "isRequired") == "Y" {
             sub.set_attribute("required", "true");
         }
-        let field_type = db_text(db_field, "fieldTypeEnumId");
-        let Some(widget_name) = field_type.get(6..).filter(|name| !name.is_empty()) else {
-            return Err(Error::new(format!(
-                "DbFormField record with formId [{form_id}] and fieldName [{field_name}] has no fieldTypeEnumId"
-            )));
-        };
         let widget = sub.append(widget_name);
         let of_field = |entity: &str| -> Result<EntityList, Error> {
             Ok(facade

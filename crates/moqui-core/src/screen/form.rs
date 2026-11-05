@@ -325,7 +325,8 @@ fn list_field_hidden_widget(field: &MNode) -> bool {
     !field.children_named("conditional-field").iter().any(shown)
 }
 
-/// The assembled form `name` of `def`, from the definition's cache when it was assembled before.
+/// The assembled form `name` of `def`, from the definition's cache when it was assembled before. A form that extends a
+/// `DbForm` is read as of the context's date, so it is assembled each time and not kept.
 ///
 /// # Errors
 ///
@@ -343,7 +344,9 @@ pub fn assemble(
     let node = assemble_node(facade, factory, def, name, 0, false)?;
     super::scan::check_form(&node, &def.location);
     let instance = Arc::new(FormInstance::of(def, &node)?);
-    def.generated.put_form(name, Arc::clone(&instance));
+    if !extends_db_form(def, name) {
+        def.generated.put_form(name, Arc::clone(&instance));
+    }
     Ok(instance)
 }
 

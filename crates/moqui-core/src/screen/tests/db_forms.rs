@@ -71,6 +71,8 @@ fn seed(world: &World) {
         &[("fromDate", stamp(JAN_2021)), ("replacesFieldName", text("oldQ"))],
     );
     field("draftQ", "Draft question", "DBFFT_text-line", "4", &[]);
+    // a field with no type is left out, and the form renders without it
+    field("noType", "No type", "", "5", std::slice::from_ref(&from_2020));
     let option = |seq: &str, key: &str, label: &str, dates: &[(&str, Value)]| {
         let mut fields = vec![
             form(),
@@ -147,8 +149,8 @@ fn a_dated_db_form_renders_as_of_a_date_with_its_dependencies() {
         "a successor in place: {now}"
     );
     assert!(
-        !now.contains("Now_draftQ") && !now.contains(">Delta<"),
-        "no drafts now: {now}"
+        !now.contains("Now_draftQ") && !now.contains(">Delta<") && !now.contains("Now_noType"),
+        "no drafts now, no field with no type: {now}"
     );
     assert!(
         now.contains(">Bravo<") && !now.contains(">Alpha<"),
