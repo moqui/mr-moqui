@@ -1392,3 +1392,60 @@ fn eviction_sweep_cost_per_write_and_per_entity() {
         );
     }
 }
+
+/// plans/High-Level-Review.md HL-002: a frame's writes of one entity are evicted again at its end in one sweep, and the
+/// lists another thread cached while the frame was open are fresh after it: one held an updated row, one matches a
+/// created row, one holds a deleted row. A list none of the writes touches stays.
+#[test]
+fn a_frames_writes_of_one_entity_make_one_frame_end_sweep() {
+    let facade = testing::open();
+    for (id, kind) in [("U1", "A"), ("U2", "A"), ("U3", "A"), ("D1", "D"), ("K1", "K")] {
+        put_enum(&facade, id, kind, "stored");
+    }
+    let cached = |facade: &EntityFacade, kind: &str| -> Vec<String> {
+        let rows = facade
+            .find(ENUM)
+            .unwrap()
+            .eq("enumTypeId", Value::string(kind))
+            .use_cache(true)
+            .list()
+            .unwrap();
+        let mut found: Vec<String> = rows
+            .values()
+            .iter()
+            .map(|row| {
+                let text = |name: &str| row.get(name).and_then(Value::as_str).unwrap_or_default().to_string();
+                format!("{}:{}", text("enumId"), text("description"))
+            })
+            .collect();
+        found.sort();
+        found
+    };
+    // Cached before the frame, so its writes keep their values for the frame end.
+    for kind in ["A", "C", "D", "K"] {
+        let _ = cached(&facade, kind);
+    }
+    let tx = facade.transactions_for(ENUM).unwrap();
+    assert!(tx.begin(None).unwrap());
+    for id in ["U1", "U2", "U3"] {
+        set_enum(&facade, id, "description", "changed").unwrap();
+    }
+    put_enum(&facade, "C1", "C", "created");
+    delete_enum(&facade, "D1").unwrap();
+    // Another thread reads the committed rows and caches them, after the writes' own evictions.
+    let reader = facade.clone();
+    std::thread::spawn(move || {
+        for kind in ["A", "C", "D", "K"] {
+            assert!(!cached(&reader, kind).is_empty() || kind == "C");
+        }
+    })
+    .join()
+    .unwrap();
+    let sweeps = super::frame_sweeps();
+    tx.commit().unwrap();
+    assert_eq!(super::frame_sweeps() - sweeps, 1, "one sweep for the five writes");
+    assert_eq!(cached(&facade, "A"), ["U1:changed", "U2:changed", "U3:changed"]);
+    assert_eq!(cached(&facade, "C"), ["C1:created"]);
+    assert!(cached(&facade, "D").is_empty());
+    assert_eq!(cached(&facade, "K"), ["K1:stored"]);
+}

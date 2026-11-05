@@ -690,11 +690,10 @@ fn end_frame_write(facade: &EntityFacade, token: u64, full_name: &str) {
     });
     note_feed_definition(facade, full_name);
     note_localized(facade, full_name);
-    // The writes again, now that other threads may have read and cached the rows as they were before the end.
+    // The writes again, now that other threads may have read and cached the rows as they were before the end: one
+    // sweep for all of them.
     let result = match (writes.flatten(), read_meta(facade, full_name)) {
-        (Some(writes), Ok(meta)) => writes
-            .iter()
-            .try_for_each(|write| evict(facade, &meta, write.operation, &write.values).map(|_| ())),
+        (Some(writes), Ok(meta)) => evict_frame(facade, &meta, &writes),
         _ => clear_named(facade, full_name),
     };
     if let Err(err) = result {
@@ -763,6 +762,90 @@ fn evict(facade: &EntityFacade, meta: &ReadMeta, operation: &str, values: &Field
         clear_named(facade, view)?;
     }
     Ok(cached)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Frame-end sweeps on this thread, for the tests.
+    static FRAME_SWEEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Frame-end sweeps run on this thread so far, for the tests.
+#[cfg(test)]
+fn frame_sweeps() -> usize {
+    FRAME_SWEEPS.with(std::cell::Cell::get)
+}
+
+/// [`evict`] for every write a frame kept of one entity, in one sweep of each cache (plans/High-Level-Review.md
+/// HL-002): a cached list goes when one of its rows has the key of a delete, update or upsert (keys compared as
+/// text, through one buffer), or when its condition may match the values of a create, update or upsert. A write with
+/// no whole primary key may change any list, so the lists are cleared. Counts go as [`evict`] takes them; the views
+/// of the entity are cleared once. The store fence moves first, once.
+fn evict_frame(facade: &EntityFacade, meta: &ReadMeta, writes: &[FrameWrite]) -> Result<(), Error> {
+    #[cfg(test)]
+    FRAME_SWEEPS.with(|sweeps| sweeps.set(sweeps.get() + 1));
+    if writes.is_empty() {
+        return Ok(());
+    }
+    let (lists, counts) = facade.with_slot_read(OneCaches::default, |caches| {
+        if let Some(generation) = caches.generations.get(&meta.full_name) {
+            generation.fetch_add(1, AtomicOrdering::SeqCst);
+        }
+        (
+            caches.lists.get(&meta.full_name).cloned(),
+            caches.counts.get(&meta.full_name).cloned(),
+        )
+    });
+    let mut held_keys: HashSet<String> = HashSet::new();
+    let mut any_list = false;
+    let mut matching: Vec<&FieldMap> = Vec::new();
+    for write in writes {
+        let values = &*write.values;
+        if write.operation != "create" {
+            match pk_of(values, &meta.pk_fields) {
+                Some(key) => {
+                    held_keys.insert(key);
+                }
+                None => any_list = true,
+            }
+        }
+        if write.operation != "delete" {
+            matching.push(values);
+        }
+    }
+    if let Some(cache) = lists {
+        if any_list {
+            cache.clear()?;
+        } else {
+            let mut buffer = String::new();
+            cache.remove_where(|_, cached| {
+                let held = !held_keys.is_empty()
+                    && cached.rows.iter().any(|row| {
+                        buffer.clear();
+                        write_pk(row.fields(), &meta.pk_fields, &mut buffer) && held_keys.contains(buffer.as_str())
+                    });
+                held || matching
+                    .iter()
+                    .any(|values| may_match(cached.condition.as_ref(), values))
+            })?;
+        }
+    }
+    if let Some(cache) = counts {
+        if writes.iter().any(|write| write.operation != "create") {
+            cache.clear()?;
+        } else {
+            cache.remove_where(|_, cached| {
+                matching
+                    .iter()
+                    .any(|values| may_match(cached.condition.as_ref(), values))
+            })?;
+        }
+    }
+    let views = views_by_member(facade);
+    for view in views.get(&meta.full_name).into_iter().flatten() {
+        clear_named(facade, view)?;
+    }
+    Ok(())
 }
 
 /// Whether a write may change a cached list: a delete when the list held the row, a create when the row may match,
