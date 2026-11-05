@@ -10,7 +10,14 @@ const remove = () => {
 }
 
 spec({
-    setupSpec() { login("john.doe") },
+    setupSpec() {
+        login("john.doe")
+        // writeDocumentsToFile makes no directory, and a test worker's runtime may have no tmp/ yet: make it here, so
+        // the spec does not depend on another spec of the same worker having written there first
+        const marker = ec.resource.getLocationReference("runtime://tmp/DocumentExportSpec.dir-marker")
+        marker.putText("")
+        marker.delete()
+    },
     cleanup() { remove() },
 })
 
