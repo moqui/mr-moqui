@@ -14,9 +14,12 @@ answered:
 
 - `DbFormField`, `DbFormFieldOption` and `DbFormFieldDependency` have `fromDate` and `thruDate` (not key fields). A row
   with no `fromDate` is a **draft**.
-- The form is read **as of a date**, now by default, with drafts left out. A render reads the date from the context
-  field `dbFormAsOfDate` and includes drafts when `dbFormIncludeDrafts` is true (a preview); a draft field that replaces
-  another, or a draft option with the key of another, puts that one out of the preview. `ec.screen.getFormNode("DbForm#id",
+- The form is read **as of a date**, now by default, with drafts left out. A render reads the date from the form's
+  `db-form-as-of` attribute and includes drafts when its `db-form-include-drafts` is true (a preview), each an
+  expression evaluated in the screen's context, on the `form-single` or `form-list` that extends the `DbForm` (or the
+  outermost form of an `extends` chain that has one; for a `DbForm` that modifies a screen form, that form). They are
+  attributes and not context fields so that a request parameter cannot show the drafts or move the date. A draft field
+  that replaces another, or a draft option with the key of another, puts that one out of the preview. `ec.screen.getFormNode("DbForm#id",
   asOfDate, includeDrafts)` reads it the same way, and `get#FormResponse` reads the form as of the response's
   `responseDate`, so a response reads as it was submitted.
 - The key fields are audit-logged (`EntityAuditLog`): a field's `title`, `isRequired`, `fieldTypeEnumId`, dates and

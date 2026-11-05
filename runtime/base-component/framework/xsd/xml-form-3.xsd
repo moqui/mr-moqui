@@ -102,6 +102,17 @@ along with this software (see the LICENSE.md file). If not, see
                 definition will be built up each time it is used instead of only when first referred to. This is
                 necessary when auto-fields-* elements have ${} string expansion for service or entity names.</xs:documentation></xs:annotation>
         </xs:attribute>
+        <xs:attribute name="db-form-as-of" type="xs:string">
+            <xs:annotation><xs:documentation>For a form that extends a dated DbForm (extends="DbForm#formId"), or that a DbForm
+                modifies for a user group: an expression for the date its fields, options and dependencies are read as of (a
+                Timestamp, date-time text or epoch millis). Empty, or an expression that gives nothing, is now. It is on the form
+                and not read from the context, so a request parameter cannot move the date. See docs/ui/Db-Forms.md.</xs:documentation></xs:annotation>
+        </xs:attribute>
+        <xs:attribute name="db-form-include-drafts" type="xs:string">
+            <xs:annotation><xs:documentation>For a form that extends a dated DbForm: an expression, true (or "true" or "Y") to
+                include the DbForm's drafts (rows with no fromDate), as a preview does. Empty is false: a form shows no drafts
+                unless its screen asks for them here.</xs:documentation></xs:annotation>
+        </xs:attribute>
 
         <xs:attribute name="background-submit" type="boolean" default="false">
             <xs:annotation><xs:documentation>Submit the form in the background without reloading the screen.</xs:documentation></xs:annotation>
@@ -486,6 +497,17 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="dynamic" type="boolean" default="false">
             <xs:annotation><xs:documentation>If true then this form will be considered dynamic and the internal
                 definition will be built up each time it is used instead of only when first referred to.</xs:documentation></xs:annotation>
+        </xs:attribute>
+        <xs:attribute name="db-form-as-of" type="xs:string">
+            <xs:annotation><xs:documentation>For a form that extends a dated DbForm (extends="DbForm#formId"), or that a DbForm
+                modifies for a user group: an expression for the date its fields, options and dependencies are read as of (a
+                Timestamp, date-time text or epoch millis). Empty, or an expression that gives nothing, is now. It is on the form
+                and not read from the context, so a request parameter cannot move the date. See docs/ui/Db-Forms.md.</xs:documentation></xs:annotation>
+        </xs:attribute>
+        <xs:attribute name="db-form-include-drafts" type="xs:string">
+            <xs:annotation><xs:documentation>For a form that extends a dated DbForm: an expression, true (or "true" or "Y") to
+                include the DbForm's drafts (rows with no fromDate), as a preview does. Empty is false: a form shows no drafts
+                unless its screen asks for them here.</xs:documentation></xs:annotation>
         </xs:attribute>
         <xs:attribute name="views" type="xs:string">
             <xs:annotation><xs:documentation>The views of the list the user may switch between (IronStone style-guide §8.2), a comma

@@ -27,10 +27,11 @@ use moqui_lib::object::Value;
 use crate::context::{Error, ExecutionContext};
 use crate::entity::{EntityList, EntityValue};
 
-/// The context fields a render reads the date of its `DbForm`s from: a time stamp (or text or epoch millis), and
-/// whether drafts are included (true, "true" or "Y"), for a preview.
-pub const AS_OF_FIELD: &str = "dbFormAsOfDate";
-pub const DRAFTS_FIELD: &str = "dbFormIncludeDrafts";
+/// The attributes of a `form-single` or `form-list` that set the date its `DbForm` is read as of: an expression for a
+/// time stamp (or text or epoch millis), and one for whether drafts are included (true, "true" or "Y"), for a preview.
+/// They are on the form, not in the context, so a request parameter cannot move the date or show the drafts.
+pub const AS_OF_ATTRIBUTE: &str = "db-form-as-of";
+pub const DRAFTS_ATTRIBUTE: &str = "db-form-include-drafts";
 
 /// The date a `DbForm` is read as of, and whether its drafts are included.
 #[derive(Clone, Copy, Debug)]
@@ -51,11 +52,29 @@ impl AsOf {
         }
     }
 
-    /// From the render's context ([`AS_OF_FIELD`], [`DRAFTS_FIELD`]).
-    pub fn from_context() -> Self {
-        let date = crate::script::context_value(AS_OF_FIELD);
-        let drafts = crate::script::context_value(DRAFTS_FIELD);
-        Self::of(date.as_ref(), drafts.as_ref())
+    /// Whether `form` has either attribute ([`AS_OF_ATTRIBUTE`], [`DRAFTS_ATTRIBUTE`]).
+    pub fn declared_on(form: &MNode) -> bool {
+        [AS_OF_ATTRIBUTE, DRAFTS_ATTRIBUTE]
+            .iter()
+            .any(|name| form.attribute(name).is_some_and(|text| !text.trim().is_empty()))
+    }
+
+    /// From the attributes of `form`, each expression evaluated in the render's context; no form, or no attribute, is
+    /// now without drafts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when an expression does not evaluate.
+    pub fn of_form(form: Option<&MNode>) -> Result<Self, Error> {
+        let eval = |name: &str| -> Result<Option<Value>, Error> {
+            match form.and_then(|form| form.attribute(name)).filter(|text| !text.trim().is_empty()) {
+                Some(expression) => crate::script::eval_value(&expression).map(Some),
+                None => Ok(None),
+            }
+        };
+        let date = eval(AS_OF_ATTRIBUTE)?;
+        let drafts = eval(DRAFTS_ATTRIBUTE)?;
+        Ok(Self::of(date.as_ref(), drafts.as_ref()))
     }
 }
 
@@ -171,13 +190,14 @@ pub(super) fn db_form_groups(location: &str, name: &str) -> Result<Vec<(String, 
 }
 
 /// The `DbForm` nodes that modify this form for the current user's groups, as `getDbFormNodeList`.
-pub(super) fn user_db_forms(location: &str, name: &str) -> Result<Vec<MNode>, Error> {
+/// They are read as of the date the screen form's attributes give ([`AsOf::of_form`]).
+pub(super) fn user_db_forms(location: &str, name: &str, form: Option<&MNode>) -> Result<Vec<MNode>, Error> {
     let forms = db_form_groups(location, name)?;
     if forms.is_empty() {
         return Ok(Vec::new());
     }
     let user_groups = crate::user::current_user_groups()?;
-    let as_of = AsOf::from_context();
+    let as_of = AsOf::of_form(form)?;
     forms
         .iter()
         .filter(|(_, groups)| groups.iter().any(|group| user_groups.contains(group)))

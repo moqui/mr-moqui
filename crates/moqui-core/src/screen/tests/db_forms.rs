@@ -119,12 +119,11 @@ fn a_dated_db_form_renders_as_of_a_date_with_its_dependencies() {
         r#"<screen require-authentication="false">
     <widgets>
         <form-single name="Now" extends="DbForm#CS_TPL"/>
-        <section name="Preview"><actions><set field="dbFormIncludeDrafts" from="true"/></actions><widgets>
-            <form-single name="Preview" extends="DbForm#CS_TPL" dynamic="true"/>
+        <section name="Preview"><actions><set field="previewing" from="true"/></actions><widgets>
+            <form-single name="Preview" extends="DbForm#CS_TPL" dynamic="true" db-form-include-drafts="previewing"/>
         </widgets></section>
-        <section name="Past"><actions><set field="dbFormIncludeDrafts" from="false"/>
-            <set field="dbFormAsOfDate" value="2020-06-01 00:00:00"/></actions><widgets>
-            <form-single name="Past" extends="DbForm#CS_TPL"/>
+        <section name="Past"><actions><set field="pastDate" value="2020-06-01 00:00:00"/></actions><widgets>
+            <form-single name="Past" extends="DbForm#CS_TPL" db-form-as-of="pastDate"/>
         </widgets></section>
     </widgets>
 </screen>"#,
@@ -175,6 +174,22 @@ fn a_dated_db_form_renders_as_of_a_date_with_its_dependencies() {
     assert!(
         preview.contains("id=\"Preview_newQ\"") && !preview.contains(">Alpha<"),
         "{preview}"
+    );
+
+    // A request parameter, by the context names a render once read, neither shows the drafts nor moves the date.
+    let mut get = request("GET", "/");
+    get.query.push(("dbFormIncludeDrafts".into(), "true".into()));
+    get.query.push(("dbFormAsOfDate".into(), "2020-06-01 00:00:00".into()));
+    get.query.push(("db-form-include-drafts".into(), "true".into()));
+    let asked = serve_at(&world.factory, get, &root).body_text();
+    let now_asked = {
+        let start = asked.find("id=\"Now\"").unwrap_or_else(|| panic!("form Now: {asked}"));
+        let end = asked[start..].find("</form>").map_or(asked.len(), |end| start + end);
+        asked[start..end].to_string()
+    };
+    assert!(
+        now_asked.contains("id=\"Now_newQ\"") && !now_asked.contains("Now_oldQ") && !now_asked.contains("Now_draftQ"),
+        "the parameters are not the form's date: {now_asked}"
     );
 
     let mut get = request("GET", "/");

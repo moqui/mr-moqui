@@ -326,7 +326,7 @@ fn list_field_hidden_widget(field: &MNode) -> bool {
 }
 
 /// The assembled form `name` of `def`, from the definition's cache when it was assembled before. A form that extends a
-/// `DbForm` is read as of the context's date, so it is assembled each time and not kept.
+/// `DbForm` is read as of its `db-form-as-of` date, so it is assembled each time and not kept.
 ///
 /// # Errors
 ///
@@ -341,7 +341,7 @@ pub fn assemble(
     if let Some(found) = def.generated.form(name) {
         return Ok(found);
     }
-    let node = assemble_node(facade, factory, def, name, 0, false)?;
+    let node = assemble_node(facade, factory, def, name, 0, false, None)?;
     super::scan::check_form(&node, &def.location);
     let instance = Arc::new(FormInstance::of(def, &node)?);
     if !extends_db_form(def, name) {
@@ -362,8 +362,9 @@ pub fn assemble_dynamic(
     def: &ScreenDef,
     name: &str,
 ) -> Result<Arc<FormInstance>, Error> {
-    let node = assemble_node(facade, factory, def, name, 0, true)?;
-    for db_form in user_db_forms(&def.location, name)? {
+    let node = assemble_node(facade, factory, def, name, 0, true, None)?;
+    let base = def.forms.get(name).map(|form| form.node.node()).transpose()?;
+    for db_form in user_db_forms(&def.location, name, base.as_ref())? {
         merge_form_nodes(&node, &db_form, false, true);
     }
     Ok(Arc::new(FormInstance::of(def, &node)?))
@@ -376,7 +377,7 @@ pub(crate) fn has_db_extensions(location: &str, name: &str) -> bool {
 }
 
 /// Whether the form `name` of `def` extends a `DbForm` (`extends="DbForm#id"`). Its fields are read as of the render's
-/// date (`dbFormAsOfDate`), so it is assembled for each render, like a dynamic one.
+/// date (`db-form-as-of`), so it is assembled for each render, like a dynamic one.
 pub(crate) fn extends_db_form(def: &ScreenDef, name: &str) -> bool {
     def.forms.get(name).is_some_and(|form| {
         form.node.node().is_ok_and(|node| {
@@ -387,6 +388,8 @@ pub(crate) fn extends_db_form(def: &ScreenDef, name: &str) -> bool {
     })
 }
 
+/// `as_of_form` is the form, outermost first, whose `db-form-as-of` and `db-form-include-drafts` a `DbForm` it extends
+/// is read by; none yet is this one when it has them.
 fn assemble_node(
     facade: &ScreenFacade,
     factory: &ExecutionContextFactory,
@@ -394,6 +397,7 @@ fn assemble_node(
     name: &str,
     depth: usize,
     dynamic: bool,
+    as_of_form: Option<&MNode>,
 ) -> Result<MNode, Error> {
     if depth > MAX_EXTENDS_DEPTH {
         return Err(Error::new(format!(
@@ -420,7 +424,8 @@ fn assemble_node(
         if dynamic {
             extends = script::expand(&extends)?;
         }
-        let found = extends_node(facade, factory, def, &extends, depth, dynamic)?;
+        let as_of_form = as_of_form.or_else(|| AsOf::declared_on(&base).then_some(&base));
+        let found = extends_node(facade, factory, def, &extends, depth, dynamic, as_of_form)?;
         merge_form_nodes(&assembled, &found, true, true);
     }
     let is_list = base.has_name("form-list");
@@ -545,21 +550,22 @@ fn extends_node(
     extends: &str,
     depth: usize,
     dynamic: bool,
+    as_of_form: Option<&MNode>,
 ) -> Result<MNode, Error> {
     let (location, form_name) = match extends.split_once('#') {
         Some((location, form_name)) => (location, form_name),
         None => (def.location.as_str(), extends),
     };
     if location == def.location {
-        return assemble_node(facade, factory, def, form_name, depth + 1, dynamic);
+        return assemble_node(facade, factory, def, form_name, depth + 1, dynamic, as_of_form);
     }
     if location == "moqui.screen.form.DbForm" || location == "DbForm" {
-        return db_form_node(form_name, AsOf::from_context());
+        return db_form_node(form_name, AsOf::of_form(as_of_form)?);
     }
     let other = facade.screen_def(factory, location)?;
     // The assembled form is kept with this definition, so a change to the other screen makes this one stale.
     def.generated.add_dependencies(&other.sources);
-    assemble_node(facade, factory, &other, form_name, depth + 1, dynamic)
+    assemble_node(facade, factory, &other, form_name, depth + 1, dynamic, as_of_form)
 }
 
 fn has_descendant(node: &MNode, name: &str) -> bool {
