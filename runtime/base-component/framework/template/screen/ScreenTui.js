@@ -305,15 +305,15 @@ $w("]");
     const linkStatement = (node, inList) => guarded(node, `{\n    const $l = ${linkExpr(node, inList)};\n    if ($l.text || $l.icon || $l.tooltip) $emit($l);\n}\n`);
 
     const valueCall = (widget) => `sri.getFieldValueString(${S.nodeLit(widget, false)}) || ${fallbackKey(widget)}`;
-    // current-description labels a value the options do not hold (a status the transitions do not lead back to)
+    // current-description labels a value the options do not hold (a status the transitions do not lead back to). Checks offer
+    // declared options only: a saved N means unchecked, not an additional checkbox, so their code has no such option.
     const inlineOptions = (widget, kind) => `(() => {
         const $value = String(${valueCall(widget)} || "");
         const $options = [];
         const $map = sri.getFieldOptions(${S.nodeLit(widget, true)});
         if ($map && $map.forEach) $map.forEach(($label, $key) => $options.push({value:String($key),label:String($label == null ? "" : $label)}));
-        // Checks offer declared options only: a saved N means unchecked, not an additional checkbox.
-        if (${kind !== "check"} && $value && !$options.some(($opt) => $opt.value === $value)) $options.push({value:$value,label:${attr(widget, "current-description") ? `ec.resource.expand(${jsString(attr(widget, "current-description"))}, "") || $value` : "$value"}});
-        return {kind:${jsString(kind)},value:$value,options:$options};
+${kind === "check" ? "" : `        if ($value && !$options.some(($opt) => $opt.value === $value)) $options.push({value:$value,label:${attr(widget, "current-description") ? `ec.resource.expand(${jsString(attr(widget, "current-description"))}, "") || $value` : "$value"}});
+`}        return {kind:${jsString(kind)},value:$value,options:$options};
     })()`;
     // As qvt's remote(): the URL without its query, its fixed parameters, and {parameter: field} for depends-on.
     const remoteExpr = (holder, transition) => {

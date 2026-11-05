@@ -2289,20 +2289,20 @@
                 '<q-list v-for="(column, columnIdx) in columns" :key="column.id" bordered dense class="q-mb-sm rounded-borders">' +
                     '<q-item-label header>{{column.label}}</q-item-label>' +
                     '<q-item v-for="(field, fieldIdx) in column.children" :key="field.id" :data-column-field="field.id">' +
-                        '<q-item-section side v-if="columnIdx !== 0"><q-btn flat round dense size="sm" icon="close" aria-label="Hide field" @click="hideField(columnIdx, fieldIdx)"><q-tooltip>Hide</q-tooltip></q-btn></q-item-section>' +
+                        '<q-item-section side v-if="columnIdx !== 0"><q-btn flat round dense size="sm" icon="close" data-action="hide" aria-label="Hide field" @click="hideField(columnIdx, fieldIdx)"><q-tooltip>Hide</q-tooltip></q-btn></q-item-section>' +
                         '<q-item-section><q-item-label>{{field.label}}</q-item-label></q-item-section>' +
                         '<q-item-section v-if="columnIdx === 0" side>' +
-                            '<q-btn-dropdown dense flat no-caps label="Display" aria-label="Display field" class="m-btn-tonal"><q-list dense>' +
+                            '<q-btn-dropdown dense flat no-caps label="Display" data-action="display" aria-label="Display field" class="m-btn-tonal"><q-list dense>' +
                                 '<q-item v-for="(toColumn, toColumnIdx) in columns.slice(1)" :key="toColumn.id" clickable v-close-popup @click="moveToCol(columnIdx, fieldIdx, toColumnIdx+1)">' +
                                     '<q-item-section>{{toColumn.label}}</q-item-section></q-item>' +
                                 '<q-item clickable v-close-popup @click="moveToCol(columnIdx, fieldIdx, columns.length+1)"><q-item-section>New Column</q-item-section></q-item>' +
                             '</q-list></q-btn-dropdown>' +
                         '</q-item-section>' +
                         '<q-item-section v-else side><q-btn-group flat>' +
-                            '<q-btn :disabled="columnIdx <= 1" dense flat size="sm" icon="west" aria-label="Move to previous column" @click="moveToCol(columnIdx, fieldIdx, columnIdx-1)"><q-tooltip>Move to previous column</q-tooltip></q-btn>' +
-                            '<q-btn :disabled="fieldIdx === 0" dense flat size="sm" icon="expand_less" aria-label="Move up within column" @click="moveInCol(columnIdx, fieldIdx, fieldIdx-1)"><q-tooltip>Move up within column</q-tooltip></q-btn>' +
-                            '<q-btn :disabled="(fieldIdx + 1) === column.children.length" dense flat size="sm" icon="expand_more" aria-label="Move down within column" @click="moveInCol(columnIdx, fieldIdx, fieldIdx+1)"><q-tooltip>Move down within column</q-tooltip></q-btn>' +
-                            '<q-btn dense flat size="sm" icon="east" aria-label="Move to next column" @click="moveToCol(columnIdx, fieldIdx, columnIdx+1)"><q-tooltip>Move to next column</q-tooltip></q-btn>' +
+                            '<q-btn :disabled="columnIdx <= 1" dense flat size="sm" icon="west" data-action="previous-column" aria-label="Move to previous column" @click="moveToCol(columnIdx, fieldIdx, columnIdx-1)"><q-tooltip>Move to previous column</q-tooltip></q-btn>' +
+                            '<q-btn :disabled="fieldIdx === 0" dense flat size="sm" icon="expand_less" data-action="up" aria-label="Move up within column" @click="moveInCol(columnIdx, fieldIdx, fieldIdx-1)"><q-tooltip>Move up within column</q-tooltip></q-btn>' +
+                            '<q-btn :disabled="(fieldIdx + 1) === column.children.length" dense flat size="sm" icon="expand_more" data-action="down" aria-label="Move down within column" @click="moveInCol(columnIdx, fieldIdx, fieldIdx+1)"><q-tooltip>Move down within column</q-tooltip></q-btn>' +
+                            '<q-btn dense flat size="sm" icon="east" data-action="next-column" aria-label="Move to next column" @click="moveToCol(columnIdx, fieldIdx, columnIdx+1)"><q-tooltip>Move to next column</q-tooltip></q-btn>' +
                         '</q-btn-group></q-item-section>' +
                     '</q-item>' +
                 '</q-list>' +
@@ -2319,8 +2319,9 @@
                         .find((element) => element.getAttribute("data-column-field") === String(fieldId));
                     if (!row) return;
                     const buttons = Array.from(row.querySelectorAll("button:not([disabled])"));
-                    const target = buttons.find((button) => button.getAttribute("aria-label") === action) ||
-                        buttons.find((button) => button.getAttribute("aria-label") === fallbackAction) || buttons[0];
+                    // by data-action, not the label, which may be localized
+                    const target = buttons.find((button) => button.getAttribute("data-action") === action) ||
+                        buttons.find((button) => button.getAttribute("data-action") === fallbackAction) || buttons[0];
                     if (target) target.focus();
                 });
             },
@@ -2329,16 +2330,15 @@
                 const field = children.splice(fieldIdx, 1)[0];
                 children.splice(newFieldIdx, 0, field);
                 const up = newFieldIdx < fieldIdx;
-                this.focusField(field.id, up ? "Move up within column" : "Move down within column",
-                    up ? "Move down within column" : "Move up within column");
+                this.focusField(field.id, up ? "up" : "down", up ? "down" : "up");
             },
             moveToCol(columnIdx, fieldIdx, newColumnIdx) {
                 const newColumn = newColumnIdx >= this.columns.length ? this.addColumn() : this.columns[newColumnIdx];
                 const field = this.columns[columnIdx].children.splice(fieldIdx, 1)[0];
                 newColumn.children.push(field);
                 const previous = newColumnIdx < columnIdx;
-                this.focusField(field.id, columnIdx === 0 ? "Hide field" : previous ? "Move to previous column" : "Move to next column",
-                    previous ? "Move to next column" : "Move to previous column");
+                this.focusField(field.id, columnIdx === 0 ? "hide" : previous ? "previous-column" : "next-column",
+                    previous ? "next-column" : "previous-column");
             },
             addColumn() {
                 const oldLength = this.columns.length;
@@ -2350,7 +2350,7 @@
                 if (columnIdx === 0) return;
                 const field = this.columns[columnIdx].children.splice(fieldIdx, 1)[0];
                 this.columns[0].children.push(field);
-                this.focusField(field.id, "Display field");
+                this.focusField(field.id, "display");
             },
             resetColumns() { this.columns = moqui.deepCopy(this.columnsInitial); },
             saveColumns() {

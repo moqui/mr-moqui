@@ -114,10 +114,22 @@ Fix shared widget or theme causes before local repetitions. Preserve routes, sav
 record compatibility handling where changes are unavoidable. Demonstrate reusable patterns in Gallery and verify
 them again with real application content.
 
+Established client patterns to reuse rather than reinvent:
+- **Confirmation:** ask through `moqui.confirmAction(message, opener)` (the in-app dialog in the focus stack, where
+  only Confirm approves), never `window.confirm`; a script that can also load without the qvt shell falls back to
+  the browser's. A form the user may not submit says so above its disabled fields.
+- **History:** popstate compares the address bar with the bar as last pushed or replaced (`rememberHistory`), never
+  with a route the menu data derived, so in-page fragment links keep unsent input.
+- **Times and empty states:** show service timestamps in the user's zone with the zone named once, keep raw values
+  for actions and exports, and give each empty list its reason (nothing recorded, or nothing matching the filters).
+- **Focus restore:** find controls by a `data-action`, not by a visible or accessible label that may be localized.
+
 Use existing tests when they already cover the behavior. Focused rule/bug regressions belong in `test/`; complete
 activities, responsive/access walks and sweeps belong in `acceptance/`. Follow the testing skill's rendering and
 budget limits. Run the relevant acceptance journeys when the review requests them, and the affected component's
-acceptance suite when adding or changing an acceptance test.
+acceptance suite when adding or changing an acceptance test. Measured theme and geometry checks of shared components
+belong in an offline acceptance client suite (a `suite.js` with no server, such as webroot's `ThemeLayout`), which
+`./moq accept` runs with `--offline`.
 
 Finish each bounded batch by rerunning affected activities, running the required regression/lint checks, updating
 the running notes, and committing the changes with their notes. Notes identify findings addressed, design decisions,

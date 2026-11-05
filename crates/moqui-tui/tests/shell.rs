@@ -216,13 +216,19 @@ fn the_palette_finds_apps_then_asks_the_server_once_the_typing_stops() {
 
 #[test]
 fn go_to_takes_a_path_or_a_menu_title() {
-    let (mut session, link) = started();
-    press(&mut session, &link, Key::Char('g'));
-    typed(&mut session, &link, "qapps/tools");
-    press(&mut session, &link, Key::Enter);
-    assert!(calls(&link)
-        .iter()
-        .any(|call| matches!(call, LinkCall::Level { path, .. } if path == "/apps/tools")));
+    // a plain path and a Material /qapps path both go to the terminal's /apps screen
+    for input in ["apps/tools", "qapps/tools"] {
+        let (mut session, link) = started();
+        press(&mut session, &link, Key::Char('g'));
+        typed(&mut session, &link, input);
+        press(&mut session, &link, Key::Enter);
+        assert!(
+            calls(&link)
+                .iter()
+                .any(|call| matches!(call, LinkCall::Level { path, .. } if path == "/apps/tools")),
+            "{input}"
+        );
+    }
 }
 
 #[test]

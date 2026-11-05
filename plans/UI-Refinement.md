@@ -98,6 +98,29 @@ unverified.
   ledger, selected before/after evidence, test results and prioritized remaining work for continuing into addon
   applications.
 
+## Resumed after the merge — batches 13 to 17 (Nov 5)
+
+After `02d6b325` merged 98 upstream commits, a review of the local commits and the merge (no P1, no authorization or
+contract regression; upstream's asynchronous compose send, CSV formula guard, ModelDetail transactions and the bundled
+screens all settled with the local work) led to five more batches: post-merge corrections (13); test time, an offline
+acceptance suite and macOS loopback skips, ending with the first exit-zero full gate (14); the deferred replay, report
+fallback, incident and recovery proposals, re-reviewed and corrected (15); every remaining open finding (16); and the
+review's cleanups (17). Each batch passed `./moq test-framework`. The webroot client budget is 44 s and basic-comms
+client 7 s, with the user's agreement. These sessions committed locally and pushed nothing themselves. `/tmp` paths in the earlier notes are historical evidence locations and may no longer exist; what
+the deferred proposals needed is now in the repository and in the batch notes.
+
+| Commit | Batch |
+|---|---|
+| `cfe13827` | 13: history under a default subscreen, ServiceRun output, index bounds, BasicComms cleanup, alert title order, shared sort parser |
+| `70511f5d` | 14: webroot ThemeLayout acceptance, offline `./moq accept`, budgets, macOS loopback skips, recorded-call spool wait |
+| `d5215abf` | 15: UI-088/089/092/102–107 |
+| `71d1ad5a` | 16: UI-016/017/033/035/084/085, in-app confirmations, read-only form note, histogram not reproduced |
+| This commit | 17: review cleanups and this record |
+
+What remains is coverage, not open findings: the activities the ledger below marks pending (actual 200% browser zoom,
+access-limited and narrow walks, the remaining application activities and Chat TUI, successful external providers and
+replay of real user sessions beyond the local fixture) before expanding into addons.
+
 ## Wrap-up — stopped after batch 12 at the user's request
 
 The user ended this review after the alert configuration batch. **This is a completed bounded review effort,
@@ -134,7 +157,8 @@ available only in ignored `plans/ui-refinement-evidence/`; no images from that d
 | `aec0202f` | Chat pickers/keyboard actions and visible shared selections |
 | This commit | Alert configuration, numeric round trips and state feedback; final review record |
 
-Prioritized deferred work, if the review is resumed:
+Prioritized deferred work, if the review is resumed (as recorded at batch 12; items 1–3 are done in batches 15–16,
+item 5 in batch 14):
 
 1. **UI-088/089, P1/P2:** replay capture exceeds the receiver body limit; replay JSON requests use the wrong app
    mount. Private proposals exist under `/tmp/ui-batch10-replay-{capture,url}.patch`, but are unapplied and untested.
@@ -211,8 +235,8 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-013 | B03 Compose: failed server/device save followed by Close | P1 source-confirmed with focused browser regression | Compose closes only after confirmed persistence, retains text and exposes Retry save; draft storage returns the persistence outcome while preserving synchronous in-memory draft reads | ShellSync server/host/localStorage refusal+retry passed; live missing-identity Close and Refresh preserve subject/body at 1920/390 |
 | UI-014 | DA-01/05 Home and Workspace: creation forms precede work; GoTo lacks title/cancel and can close on empty Enter | P2 observed hierarchy/labels plus focused reproduction | Dev AIDE home task-first, compact creation dialogs; labelled GoTo with loading/error/empty/retry and stale-result guard | Home, Escape cancellation, empty Enter, missing-name recovery and successful workspace lookup inspected; 26 client and 6 ArtifactIndex checks pass |
 | UI-015 | T06 ServiceRun: select unknown service name | P2 observed raw rendering error | Existence guard and helpful message/recovery link; implicit entity services preserved | 5 AdminOverview checks pass; live unknown-service message and Browse Service List recovery link verified |
-| UI-016 | S01 Components: no deployment-history rows says no component was loaded above six loaded components | P3 observed misleading empty state | Screen-local wording; deferred to next administration batch | Distinguish deployment history from loaded components |
-| UI-017 | Appearance color editor: new semantic foreground tokens are not listed | P3 source-inspection gap | Core appearance token inventory; deferred | Schemes can override CSS tokens, editor discovery remains pending |
+| UI-016 | S01 Components: no deployment-history rows says no component was loaded above six loaded components | P3 observed misleading empty state | Screen-local wording; deferred to next administration batch | Distinguish deployment history from loaded components. Fixed in batch 16. |
+| UI-017 | Appearance color editor: new semantic foreground tokens are not listed | P3 source-inspection gap | Core appearance token inventory; deferred | Schemes can override CSS tokens, editor discovery remains pending. Fixed in batch 16. |
 | UI-018 | D04 shipped dashboard definition/panel editor: copy action below long editor; query selector disabled in read-only view | P2 observed hierarchy and focused component rule | Copy-first layout, grouped labelled panel fields, read-only query inspection, Open dashboard action | Copy/native edit/Save version/Open dashboard passed with changed title visible; CSV headers/row verified, filter applied and removed; 47 WebrootReport and 19 Monitoring checks pass |
 
 | UI-019 | DA-08: replace a live designer preview iframe | P2 observed console/network warnings | DevAideQvue/Screen mark the old same-origin frame as leaving immediately before replacement; retain real network error reporting | QVue and XML screen acceptance passed; 12/12 focused client checks; cancelled old shellData request identified in netlog |
@@ -231,9 +255,9 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 
 | UI-031 | S01 Cache List → populated native cache → Cache Elements | P2 fixed and retested | Reported count can be nonzero while the generic entry facade cannot enumerate native cache entries; distinguish unavailable details from empty cache | ScreenColorScheme count 1, zero detail rows observed; source ownership confirmed. Screen-only correction retested at 1920 and 390, Material/Standard; zero entries has a distinct message. |
 | UI-032 | S01 Thread List and S05 Service Job List, macOS | P2 fixed and retested | Empty platform thread enumeration is shown as Threads: 0; scheduler last-execute value is raw milliseconds | ThreadList screenshot; use nullable Process.Threads and localized scheduler timestamp/clear labels. Corrected and retested in both themes and 390px; AdminOverview 7/7. |
-| UI-033 | S11 Usage → Check a Quota → empty Check | P3 observed validation gap | Empty form closes silently; valid EX_JOHN_DOE displays quota without a clear cost currency | Empty and valid checks observed; no model request. Required user input and clearer quota presentation deferred. |
+| UI-033 | S11 Usage → Check a Quota → empty Check | P3 observed validation gap | Empty form closes silently; valid EX_JOHN_DOE displays quota without a clear cost currency | Empty and valid checks observed; no model request. Required user input and clearer quota presentation deferred. Fixed in batch 16. |
 | UI-034 | Shared nested breadcrumb menu, System → LLM and Agents → Models | P2 fixed and retested | Menu opener was a span with tabIndex -1 and no role; Tab from System skips to Search | Real button opener: Tab/Enter/Space/Escape and child navigation passed. Text contrast raised from 2.72:1 to 16.9:1 in default dark; existing QVT fixture 30/30. |
-| UI-035 | T02 Tools entity browser and edit | P3 observed hierarchy/layout | Database maintenance actions precede discovery; two short edit fields span 1920px; Find return loses the prior filter | Create/find/edit and duplicate recovery work; layout and return-context refinement deferred. `tools-entity-edit-before.jpg` |
+| UI-035 | T02 Tools entity browser and edit | P3 observed hierarchy/layout | Database maintenance actions precede discovery; two short edit fields span 1920px; Find return loses the prior filter | Create/find/edit and duplicate recovery work; layout and return-context refinement deferred. `tools-entity-edit-before.jpg`. Fixed in batch 16. |
 | UI-036 | T02/T03 EntityDataFind CSV export | P2 fixed and browser retested | Headers and values share the same exportable field set; conditional empty cells retain their column | Existing CSV fixture/core tests pass; rebuilt debug browser export has two matching headers, quoted text and empty cell. `/tmp/ui-review-entity-export-after.csv` |
 | UI-037 | M02 Explore → Add filter without Label | P3 fixed and retested | Known predicates have readable summaries; authored labels and typed queries remain unchanged; Add filter aligns with inputs | Default light/dark 1920 and dark390; severity_text = "ERROR" applies and returns7 errors. Existing reporting fixture covers operators, negation and conservative JSON fallback. |
 | UI-038 | G08 Wizard required-field recovery, default dark | P2 fixed and retested | Semantic validation text and subtle changed-field fill replace low-contrast defaults; default notifications use readable tonal pairs | Error helper 2.63→7.38:1; label on changed field 3.78→6.19:1. Default light/dark and Forest checked; notification message/caption/action regression passes. |
@@ -289,16 +313,16 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-081 | D06 Evaluate now feedback | P2 fixed and retested in batch12 | Submit successful appears even when pause or the interval prevents a fresh evaluation | Dark1920, interval60. Evaluated timestamp remains unchanged on immediate repeat. Existing service counters include skipped claims; UI must describe the request without claiming fresh results. Final correction/retest: see Batch12. |
 | UI-082 | D06 firing → recovery notifications | P2 fixed and retested in batch12 | Firing and Normal notifications have the same title and warning icon | Dark1920, local ReportAlert self-notifications at20:56/20:58. Evidence dashboard-alert-notification-states-dark-before-1920.png. Both remain navigable, but their state is indistinguishable. Final correction/retest: see Batch12. |
 | UI-083 | D06 AlertRule reload → change pause → save | P2 fixed and retested in batch12 | Saved1000000000 reloads as1,000,000,000 and fails finite-number validation on a later unrelated save | Dark1920, ui-d06-alert. Removing commas through the field permits Save and retains Paused Y. Inspect shared formatting and other JSON-backed numeric fields before selecting a correction. Final correction/retest: see Batch12. |
-| UI-084 | M08 Replays search | P3 observed layout/empty state / deferred at wrap-up | User/Visit inputs span1920px and both initial empty and no-match result show only table headers | Dark1920, no recording fixture yet; filter ui-review-no-recording and clear both complete. Evidence monitor-replays-dark-before-1920.png. Playback and masking remain unverified. |
-| UI-085 | M09 Releases → Release Detail | P3 observed hierarchy/readability / deferred at wrap-up | Empty regression list has no explanation or heading; revision/times are compressed into prose and error fingerprints dominate row labels | Dark1920, moqui0.1.0. Error link reaches the corresponding known schedule-validation error; Back retains release context. Evidence monitor-release-detail-dark-before-1920.png. Synthetic comparative regression/disposition remains pending. |
+| UI-084 | M08 Replays search | P3 observed layout/empty state / fixed in batch 16 (deferred at wrap-up) | User/Visit inputs span1920px and both initial empty and no-match result show only table headers | Dark1920, no recording fixture yet; filter ui-review-no-recording and clear both complete. Evidence monitor-replays-dark-before-1920.png. Playback and masking remain unverified. |
+| UI-085 | M09 Releases → Release Detail | P3 observed hierarchy/readability / fixed in batch 16 (deferred at wrap-up) | Empty regression list has no explanation or heading; revision/times are compressed into prose and error fingerprints dominate row labels | Dark1920, moqui0.1.0. Error link reaches the corresponding known schedule-validation error; Back retains release context. Evidence monitor-release-detail-dark-before-1920.png. Synthetic comparative regression/disposition remains pending. |
 
 | UI-086 | TUI Ctrl+K → Apps → Comms | P2 fixed and retested | Normalize local shell navigation to /apps while preserving query and unrelated URLs | Comms/Gallery open, F3 returns, Gallery quick-note opens/cancels, and Contrived search opens EXT_CONTRIVED detail. Synthetic route fixtures also pass. |
 | UI-087 | B05 TUI Reply to at390/1280 | P2 fixed and retested | Shared radio layout wraps labels and reserves their rows within the field width | All three audience choices remain readable at1920/1280/390; arrows select each, Tab moves to frequency, restored Everyone saves and agrees with Material. |
-| UI-088 | M08 enable recording → Gallery interaction → Replays | P1 observed capture failure / deferred at wrap-up | Initial replay exceeds256KiB receiver body limit and capture stops without user feedback | Confirmed server log03:14:31 and Monitor error; no recording stored. All temporary settings restored. Preserve masking and bounded ingestion in the correction. |
-| UI-089 | M08 replay player data request | P2 source-confirmed route mismatch / deferred at wrap-up | report.appPath changes the /apps JSON transition into a /qapps HTML wrapper | Same distinction as playlist loading; focused private patch prepared. Live playback awaits a successful recording fixture. |
+| UI-088 | M08 enable recording → Gallery interaction → Replays | P1 observed capture failure / fixed in batch 15 (deferred at wrap-up) | Initial replay exceeds256KiB receiver body limit and capture stops without user feedback | Confirmed server log03:14:31 and Monitor error; no recording stored. All temporary settings restored. Preserve masking and bounded ingestion in the correction. |
+| UI-089 | M08 replay player data request | P2 source-confirmed route mismatch / fixed in batch 15 (deferred at wrap-up) | report.appPath changes the /apps JSON transition into a /qapps HTML wrapper | Same distinction as playlist loading; focused private patch prepared. Live playback awaits a successful recording fixture. |
 | UI-090 | Shared dark drawer current/on-path labels | P2 fixed and retested | Readable semantic text replaces the brand-fill color for current/on-path labels | Current row improves from2.77:1 to5.76:1 dark;4.97:1 light. Default/Warm, desktop/phone and selected-bar preservation checked. Focus fill remains separate UI096. |
 | UI-091 | D07 embedded playlist → Inspect panel | P2 fixed and retested | Keep the original server screenUrl for inspection/export transitions while navigation uses the Material mount | Reproduced JSON parse error, corrected, then live Inspect returns diagnostic data with no alert. Existing fixture clicks Inspect and asserts /apps endpoint plus definition/panel IDs;47/47 passes. |
-| UI-092 | Standard Dashboard tabular fallback | P3 observed readability / deferred | Time columns display epoch milliseconds instead of human-readable dates | Targeted /apps playlist link reaches Monitor overview and shows data, but time1793242800000 requires interpretation. Retain compatibility; refine shared fallback formatting later. |
+| UI-092 | Standard Dashboard tabular fallback | P3 observed readability / fixed in batch 15 (was deferred) | Time columns display epoch milliseconds instead of human-readable dates | Targeted /apps playlist link reaches Monitor overview and shows data, but time1793242800000 requires interpretation. Retain compatibility; refine shared fallback formatting later. |
 | UI-093 | B06 Chat member/destination pickers | P1 fixed and retested | Read-only choice transitions accept the existing widget POST as well as GET | User search, room membership, quick/main direct-message creation and forwarding complete locally. Existing authorization assertions pass; record search has no configured live provider and remains fixture-only. |
 | UI-094 | B06 main/thread/edit message editors | P2 fixed and retested | Give each editor a distinct name and update it without replacing editor state | Main/thread/edit names verified; room rename and restoration update the composer name while retaining its unsent draft. Draft then cleared without posting. |
 | UI-095 | B06 keyboard message actions | P2 fixed and retested | Labelled message articles expose the toolbar on keyboard focus and retain it through teleported menus | Tab reaches reactions/reply/thread/More; Enter opens Edit and Escape preserves text/returns to composer. Forwarding also completes. |
@@ -308,12 +332,12 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-099 | B08 and shared multiple-choice inputs | P1 fixed and retested | Keep selected chips visible while retaining submitted IDs and cleared-value behavior | Calls recipient chip and hidden ID agree before and after unavailable-media refusal. Quick-chat clearing disables Start; fixture verifies keyboard clear and submitted values. Evidence shared-multiple-choice-visible-after-1920.png. |
 | UI-100 | B08/B09 History filter recovery | P2 fixed and retested | Explicit empty parameters remove inherited outcome/folder/heard/page filters | Voicemail→Trash→Heard→Inbox preserves heard; heard All clears only heard; overall All clears voicemail context and returns to No calls here yet. |
 | UI-101 | B06 direct-message and member pickers | P1 fixed and retested | Chat callers tolerate null cleared selections and main Start invokes its method without a click-event argument | Search/no-result/clear/reopen and quick/main Start pass; add-member succeeds and peer leave restores membership. Shared selection serialization remains unchanged. |
-| UI-102 | M10 Incidents list | P3 observed layout/readability / deferred at wrap-up | Full-width filters precede empty table headers; populated Detected dates show epoch milliseconds | John/light1920 on8094, empty list and incident100000. Evidence monitor-incidents-light-before-1920.png. |
-| UI-103 | M10 IncidentDetail | P2 observed readability; P3 grouping / deferred at wrap-up | Header and timeline show epoch milliseconds; update/note forms span the workspace and empty evidence/recovery sections provide no explanation | Minor incident100000, source and history agree but human-readable time and coherent sections are missing. Evidence monitor-incident-detail-light-before-1920.png. |
-| UI-104 | M10 unknown IncidentDetail bookmark | P3 observed recovery presentation / deferred at wrap-up | Main content contains only raw no incident ui-review-missing without a recovery link | Sidebar Incidents still returns to the list; preserve authorization and real error handling in the correction. |
-| UI-105 | M10 Recovery edit flow | P2 observed edit friction / deferred at wrap-up | Policies/adapters offer only Add or change; entering an existing ID does not load its values and rows have no Edit action | Entered DEFAULT in the policy dialog; Description/Steps remained blank. Canceled without saving. Provide explicit loaded edit state and preserve submitted values on refusal. |
-| UI-106 | M10 Recovery page/dialog hierarchy | P3 observed layout / deferred at wrap-up | Tall single-column policy form lacks logical groups; adapter form mixes all type-specific fields; Newest actions has empty headers | Default light1920; evidence monitor-recovery-policy-light-before-1920.png. Save remains reachable, but editing requires too much scanning/reentry. |
-| UI-107 | M10 approved Manual recovery action | P2 observed missing task information / deferred at wrap-up | AwaitingOperator shows Mark done/failed/Cancel but omits the saved manual instructions and adapter context | Action100000 correctly waits without infrastructure work; instructions exist in its requestJson but are not rendered. Display only the manual instructions, never arbitrary request payloads. Evidence monitor-recovery-waiting-light-before-1920.png. |
+| UI-102 | M10 Incidents list | P3 observed layout/readability / fixed in batch 15 (deferred at wrap-up) | Full-width filters precede empty table headers; populated Detected dates show epoch milliseconds | John/light1920 on8094, empty list and incident100000. Evidence monitor-incidents-light-before-1920.png. |
+| UI-103 | M10 IncidentDetail | P2 observed readability; P3 grouping / fixed in batch 15 (deferred at wrap-up) | Header and timeline show epoch milliseconds; update/note forms span the workspace and empty evidence/recovery sections provide no explanation | Minor incident100000, source and history agree but human-readable time and coherent sections are missing. Evidence monitor-incident-detail-light-before-1920.png. |
+| UI-104 | M10 unknown IncidentDetail bookmark | P3 observed recovery presentation / fixed in batch 15 (deferred at wrap-up) | Main content contains only raw no incident ui-review-missing without a recovery link | Sidebar Incidents still returns to the list; preserve authorization and real error handling in the correction. |
+| UI-105 | M10 Recovery edit flow | P2 observed edit friction / fixed in batch 15 (deferred at wrap-up) | Policies/adapters offer only Add or change; entering an existing ID does not load its values and rows have no Edit action | Entered DEFAULT in the policy dialog; Description/Steps remained blank. Canceled without saving. Provide explicit loaded edit state and preserve submitted values on refusal. |
+| UI-106 | M10 Recovery page/dialog hierarchy | P3 observed layout / fixed in batch 15 (deferred at wrap-up) | Tall single-column policy form lacks logical groups; adapter form mixes all type-specific fields; Newest actions has empty headers | Default light1920; evidence monitor-recovery-policy-light-before-1920.png. Save remains reachable, but editing requires too much scanning/reentry. |
+| UI-107 | M10 approved Manual recovery action | P2 observed missing task information / fixed in batch 15 (deferred at wrap-up) | AwaitingOperator shows Mark done/failed/Cancel but omits the saved manual instructions and adapter context | Action100000 correctly waits without infrastructure work; instructions exist in its requestJson but are not rendered. Display only the manual instructions, never arbitrary request payloads. Evidence monitor-recovery-waiting-light-before-1920.png. |
 
 ## Running implementation notes
 
@@ -1472,6 +1496,25 @@ again against the merged sources before it was applied; the corrections that rev
 - Verification: core screen tests 409, framework template specs 42/42, AdminOverview 13/13, webroot client 396/396
   (40.5/44 s), screen lint (0 parse failures). Changed acceptance: Monitoring 19/19, and the Tools acceptance suite
   (Monitoring is its only spec) 19/19. `./moq test-framework` exits 0 (webroot 40.3/44 s, tools 2.2/3 s).
+
+### Batch 17 — review cleanups
+
+- Flame graphs recolor their labels only when the frames, zoom or theme change (not on every panel update), decide
+  each fill/opacity composite once, and label frames of at least 1% of the graph; narrower ones keep their tooltip.
+- Playlists: a pause made by a load failure ends when Retry loads a dashboard (a pause by hand stays), and Previous or
+  Next restarts the interval so the chosen dashboard gets its full time.
+- The Columns dialog restores focus by each button's `data-action`, not its English label (render golden updated).
+- ScreenTui writes the current-value option only for drop-downs and radios, with no constant condition or comment in
+  the generated code (tui-depends golden updated).
+- The TUI go-to test types both `apps/tools` and `qapps/tools`; the report component's tests are `report/tests.rs`
+  and `report/gap_tests.rs`. Gallery Editor tolerates a missing `ec.web`; Proof-Tests notes that `GROOVY_SHELL_WEB`
+  stays sealed after the screen's removal.
+- Checked, not changed: the TUI shell's `terminal_url` in `run_menu` is the one normalization for typed, menu, recent
+  and saved-find entries, so it stays; `/termws` serves only the Moqui TUI session, so the terminal's OSC 11 theme
+  query always reaches the TUI; OutOfOffice's workspace `<div>` split across two `render-mode` texts is the pattern
+  Alerts, Incidents and Replays use.
+- Verification: moqui-tui, core screen tests 409, webroot client 396/396 (40.8/44 s), example 32/32, screen lint
+  (0 parse failures). `./moq test-framework` exits 0 (webroot 40.6/44 s, tools 2.2/3 s, dev-aide 25.1/30 s).
 
 ### Next activity baseline — M10 incident lifecycle
 
