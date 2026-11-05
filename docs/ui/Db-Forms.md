@@ -31,7 +31,7 @@ The services:
 | `set#DbFormDated` | The form becomes dated; its rows with no `fromDate` start at `fromDate` (now) |
 | `publish#DbForm` | The drafts start at `fromDate` (now, or later: an earlier date is refused), each ending the row it replaces; `fieldNames` limits it. Refused when the dependencies would have a cycle |
 | `create#DbFormFieldSuccessor` | A new field for a new type or meaning, copying the old one's options, attributes and dependencies: a draft, or started at `fromDate` (now or later) with the old field ended then. The answers keep the old name |
-| `end#DbFormField`, `end#DbFormFieldOption` | End a field (with the dependencies that name it) or an option at `thruDate` (now) |
+| `end#DbFormField`, `end#DbFormFieldOption` | End a field (with the dependencies that name it) or an option at `thruDate` (now, or later: an earlier date is refused, as for `end#DbFormFieldDependency`) |
 | `update#DbFormField` | On a dated form, an in-place edit; a published field keeps its type, and the dates and `replacesFieldName` change only through the services above |
 | `delete#DbFormField`, `delete#DbFormFieldOption` | On a dated form, refused for a field or option with answers: end it |
 

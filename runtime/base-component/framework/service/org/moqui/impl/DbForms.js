@@ -218,6 +218,7 @@ function endField({ formId, fieldName, thruDate }) {
   const field = ec.entity.find(FIELD).condition({ formId, fieldName }).one()
   if (!field) return refuse(`Field ${fieldName} of DbForm ${formId} not found`)
   const thru = dateOf(thruDate, nowMs())
+  if (isPast(thru)) return refuse(`A field ends now or later, not ${thru.toISOString()}`)
   field.set('thruDate', thru)
   field.update()
   for (const row of dependenciesOf(formId)) {
@@ -247,7 +248,9 @@ function deleteOption({ formId, fieldName, sequenceNum }) {
 function endOption({ formId, fieldName, sequenceNum, thruDate }) {
   const option = ec.entity.find(OPTION).condition({ formId, fieldName, sequenceNum }).one()
   if (!option) return refuse(`Option ${sequenceNum} of field ${fieldName} of DbForm ${formId} not found`)
-  option.set('thruDate', dateOf(thruDate, nowMs()))
+  const thru = dateOf(thruDate, nowMs())
+  if (isPast(thru)) return refuse(`An option ends now or later, not ${thru.toISOString()}`)
+  option.set('thruDate', thru)
   option.update()
   return {}
 }
@@ -396,7 +399,9 @@ function storeDependency(parameters) {
 function endDependency({ formId, dependencySeqId, thruDate }) {
   const row = ec.entity.find(DEPENDENCY).condition({ formId, dependencySeqId }).one()
   if (!row) return refuse(`Dependency ${dependencySeqId} of DbForm ${formId} not found`)
-  row.set('thruDate', dateOf(thruDate, nowMs()))
+  const thru = dateOf(thruDate, nowMs())
+  if (isPast(thru)) return refuse(`A dependency ends now or later, not ${thru.toISOString()}`)
+  row.set('thruDate', thru)
   row.update()
   return {}
 }

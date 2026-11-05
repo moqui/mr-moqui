@@ -152,15 +152,17 @@ feature('an answered field or option is ended, never deleted', {
         const deleteField = invoke('delete#DbFormField', { formId: FORM, fieldName: 'q1' })
         const deleteOption = invoke('delete#DbFormFieldOption', { formId: FORM, fieldName: 'kind', sequenceNum: 1 })
         const unanswered = invoke('delete#DbFormFieldOption', { formId: FORM, fieldName: 'kind', sequenceNum: 3 })
+        const pastEnd = invoke('end#DbFormFieldOption', { formId: FORM, fieldName: 'kind', sequenceNum: 1, thruDate: new Date(Date.now() - 3600000) })
         const ended = invoke('end#DbFormFieldOption', { formId: FORM, fieldName: 'kind', sequenceNum: 1 })
-        return { deleteField, deleteOption, unanswered, ended, keys: optionKeys(FORM, 'kind'),
+        return { deleteField, deleteOption, unanswered, pastEnd, ended, keys: optionKeys(FORM, 'kind'),
             stillThere: sys(() => ec.entity.find('moqui.screen.form.DbFormField').condition({ formId: FORM, fieldName: 'q1' }).count()) }
     },
-    then({ deleteField, deleteOption, unanswered, ended, keys, stillThere }) {
+    then({ deleteField, deleteOption, unanswered, pastEnd, ended, keys, stillThere }) {
         deleteField.errors.includes('end it')
         stillThere == 1
         deleteOption.errors.includes('end it')
         unanswered.errors == ''
+        pastEnd.errors.includes('now or later')
         ended.errors == ''
         keys.length == 1
         keys[0] == 'B'
