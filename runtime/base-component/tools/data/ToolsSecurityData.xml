@@ -28,16 +28,6 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="DATABASE_ADMIN" fromDate="0"/>
     <moqui.security.UserPermission userPermissionId="DATABASE_EXTERNAL" description="Tools: External Databases"/>
     <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="DATABASE_EXTERNAL" fromDate="0"/>
-    <!-- org.moqui.impl.DatabaseServices (crates/moqui-tools): each service refuses a user the Tools app's own
-        authorization (TOOLS_APP above) does not let view Tools.xml, and checks DATABASE_ADMIN or DATABASE_EXTERNAL where
-        it needs them, so any signed-in user reaches the service and the service decides. inheritAuthz N: what the
-        services read and write through the entity facade needs its own authorization. -->
-    <artifactGroups artifactGroupId="TOOLS_DATABASE_API" description="Tools database services (each checks the Tools app)">
-        <artifacts artifactName="org\.moqui\.impl\.DatabaseServices\..*" nameIsPattern="Y" artifactTypeEnumId="AT_SERVICE"
-                inheritAuthz="N"/>
-        <authz artifactAuthzId="TOOLS_DATABASE_API_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALLOW"
-                authzActionEnumId="AUTHZA_ALL"/>
-    </artifactGroups>
 
     <!-- System App artifacts/authz -->
     <artifactGroups artifactGroupId="SYSTEM_APP" description="System App (via root screen)">
