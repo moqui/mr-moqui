@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The probe and catalog SQL of the Tools database screens, a constant per dialect (plans/Tools-Database.md §4.2), and
-//! [`query`], which runs one on an entity group's connection. The schema comparison's queries are in
+//! The probe and catalog SQL of the Tools database screens, a constant per dialect (plans/archive/Tools-Database.md
+//! §4.2), and [`query`], which runs one on an entity group's connection. The schema comparison's queries are in
 //! `crates/moqui-db/src/sql/` beside the DDL builders, since `moqui-entity` cannot depend on this crate. Each query's
 //! columns are aliased in lower case, so a row reads the same on every server.
 
@@ -44,7 +44,7 @@ pub mod postgres {
     /// Reads only when the library is loaded and the extension installed.
     pub const STATEMENTS_READABLE: &str = "SELECT count(*) AS statements FROM pg_stat_statements";
 
-    // ---- SQL (plans/Tools-Database.md §8) ----
+    // ---- SQL (plans/archive/Tools-Database.md §8) ----
     /// The database the connection is on: what a production confirmation asks to be typed.
     pub const CURRENT_DATABASE: &str = "SELECT current_database() AS database_name";
     /// The schema the connection resolves unqualified names in: where the entity group's tables are.
@@ -90,7 +90,7 @@ pub mod mysql {
     pub const SYS_INDEXES_READABLE: &str = "SELECT COUNT(*) AS indexes FROM sys.schema_redundant_indexes";
     pub const GRANTS: &str = "SHOW GRANTS";
 
-    // ---- SQL (plans/Tools-Database.md §8) ----
+    // ---- SQL (plans/archive/Tools-Database.md §8) ----
     pub const CURRENT_DATABASE: &str = "SELECT DATABASE() AS database_name";
     pub const COLUMNS: &str = "SELECT TABLE_SCHEMA AS table_schema, TABLE_NAME AS table_name, \
          COLUMN_NAME AS column_name, DATABASE() AS current_schema FROM information_schema.COLUMNS \

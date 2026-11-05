@@ -1,6 +1,6 @@
-// The Tools SQL services (plans/Tools-Database.md §8, §14): the run, history, saved queries and catalog as a Tools screen
-// calls them, and their own permission check. The database rules (read only, the token, audit, cancel) are tested in
-// crates/moqui-tools sql_tests.rs.
+// The Tools SQL services (plans/archive/Tools-Database.md §8, §14): the run, history, saved queries and catalog as a
+// Tools screen calls them, and their own permission check. The database rules (read only, the token, audit, cancel) are
+// tested in crates/moqui-tools sql_tests.rs.
 const D = 'org.moqui.impl.DatabaseServices.'
 // A Tools screen's transition calls these with the screen's inherited TOOLS_APP authorization; outside a screen the
 // spec stands in for that with authorization disabled.

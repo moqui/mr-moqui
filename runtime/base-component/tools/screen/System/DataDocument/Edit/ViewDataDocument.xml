@@ -36,7 +36,8 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="submitButton"><default-field title="Download"><submit/></default-field></field>
             </form-single>
         </container-dialog>
-        <!-- the document's records are in the data grid (plans/Tools-Database.md §2.1, §9.6), with its saved views -->
+        <!-- the document's records are in the data grid (plans/archive/Tools-Database.md §2.1, §9.6), with its saved
+            views -->
         <container-box><box-header title="The document's records"/><box-body>
             <label text="The records of this document open in the data grid, where they can be filtered, sorted, exported and kept as saved views." type="p" style="m-muted"/>
             <link url="//apps/tools/Data/Grid" text="Open in the data grid" btn-type="primary" parameter-map="{entityName: entityName}"/>

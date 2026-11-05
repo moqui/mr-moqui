@@ -13,8 +13,8 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <!-- The Tools app's database administration (framework/entity/DatabaseEntities.xml, org.moqui.impl.DatabaseServices,
-    plans/Tools-Database.md): the kinds and statuses of database jobs and the actions of the audit. The permissions are
-    in tools/data/ToolsSecurityData.xml. -->
+    plans/archive/Tools-Database.md): the kinds and statuses of database jobs and the actions of the audit. The
+    permissions are in tools/data/ToolsSecurityData.xml. -->
 <entity-facade-xml type="seed">
     <!-- DatabaseJob.kindEnumId (§6) -->
     <moqui.basic.EnumerationType enumTypeId="DatabaseJobKind" description="Database Job Kind"/>
@@ -52,7 +52,7 @@ along with this software (see the LICENSE.md file). If not, see
             serviceName="org.moqui.impl.DatabaseServices.purge#DatabaseAudit" cronExpression="0 41 3 * * ?" paused="N"
             errorHistoryOnly="Y"/>
 
-    <!-- ========== ETL (crates/moqui-tools/src/etl, plans/Tools-Database.md §10.2) ========== -->
+    <!-- ========== ETL (crates/moqui-tools/src/etl, plans/archive/Tools-Database.md §10.2) ========== -->
     <!-- EtlMapping.sourceTypeEnumId -->
     <moqui.basic.EnumerationType enumTypeId="EtlSourceType" description="ETL Source Type"/>
     <moqui.basic.Enumeration enumId="EtlsEntity" enumTypeId="EtlSourceType" sequenceNum="1" description="Entity"/>

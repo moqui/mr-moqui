@@ -56,15 +56,15 @@ Plan [Monitoring](Monitoring.md); guide [Monitoring](../docs/tools/Monitoring.md
 
 ## Tools: database, data and ETL
 
-Plan [Tools-Database](Tools-Database.md); guide [Database](../docs/tools/Database.md).
+Built; plan archived as [Tools-Database](archive/Tools-Database.md); guide [Database](../docs/tools/Database.md).
 
 | Area | Item | Source |
 |---|---|---|
-| Screens | The ETL screens (mappings, a mapping's fields, runs, value maps, "Load into…" from the grid), Database › Settings and Connections, and the grid's file source and upload on the screen; their services are built | Tools-Database §10.4, §4.3, §4.4, §9.1 |
-| Spreadsheet features | IronCalc (after its spike), column and footer formulas, free cells, formulas kept from imported files | Tools-Database §12 |
-| Deferred | Saving grid edits to an external database's tables; SQL on the embedded cluster as a role of its own without superuser, so the read-only path is also a sandbox; query stats from every cluster member in one list; a "skip failed rows" load with a savepoint per row | Tools-Database §12 |
+| Spreadsheet features | IronCalc (after its spike), column and footer formulas, free cells, formulas kept from imported files | [Tools-Database §12](archive/Tools-Database.md#12-future-spreadsheet-features) |
+| Deferred | Saving grid edits to an external database's tables; SQL on the embedded cluster as a role of its own without superuser, so the read-only path is also a sandbox; query stats from every cluster member in one list; a "skip failed rows" load with a savepoint per row | [Tools-Database §12](archive/Tools-Database.md#12-future-spreadsheet-features) |
 | MySQL jobs | The MySQL and MariaDB job runner paths (lock wait timeout and retries, stage progress, `sys.innodb_lock_waits` and `INNODB_LOCK_WAITS`, `KILL QUERY` cancel by connection id) have never run against a server; the host tests run on Postgres only | `crates/moqui-tools/src/jobs.rs`, `crates/moqui-host/tests/it/database_jobs.rs` |
 | DataDocument expressions | Anyone who can write `moqui.entity.document.DataDocumentField` can store an expression, which is JavaScript run as whoever reads the document; its context holds no encrypted or password fields but can call `ec`. Gating these writes (as ETL expressions are on `GROOVY_SHELL_WEB`) is undecided | [Attack-Surface, Open questions](../docs/security/Attack-Surface.md#open-questions), `crates/moqui-entity/src/entity/field_rw.rs` |
+| Scheduled ETL runs | A scheduled run signs in as the mapping's owner only when the owner is a `ServiceJobUser` of the job, and reads the mapping's own source. But an `ADMIN` can write both `ServiceJob` and `ServiceJobUser`, so can still schedule another user's saved mapping to run as that user (on its own source only). Closing it needs a check on who writes the `ServiceJobUser` row, or the owner's consent | [Database, Scheduling](../docs/tools/Database.md#scheduling), `crates/moqui-tools/src/etl/service.rs` (`sign_in_owner`) |
 
 ## Maps
 

@@ -12,10 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! ETL services on the embedded cluster (plans/Tools-Database.md §10, §15 step 6): a saved mapping of a CSV in the
-//! resource store checked (a missing foreign key, the diff), run on a worker to its EtlRun, and run against a bad file
-//! that the database refuses, rolled back with its error rows and file; field matching and the grid's file info. Then,
-//! with authorization on as an ADMIN who is not in ADMIN_ADV: an expression refused without GROOVY_SHELL_WEB, a
+//! ETL services on the embedded cluster (plans/archive/Tools-Database.md §10, §15 step 6): a saved mapping of a CSV in
+//! the resource store checked (a missing foreign key, the diff), run on a worker to its EtlRun, and run against a bad
+//! file that the database refuses, rolled back with its error rows and file; field matching and the grid's file info.
+//! Then, with authorization on as an ADMIN who is not in ADMIN_ADV: an expression refused without GROOVY_SHELL_WEB, a
 //! location outside the allowed places refused, a UserAccount password lookup refused, and a run on the worker that
 //! would add the user to ADMIN_ADV refused by the security rules.
 

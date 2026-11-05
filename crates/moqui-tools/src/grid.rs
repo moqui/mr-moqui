@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The data grid's server side (plans/Tools-Database.md §9): no state per grid; each call takes the source spec and
-//! runs the source again.
+//! The data grid's server side (plans/archive/Tools-Database.md §9): no state per grid; each call takes the source spec
+//! and runs the source again.
 //!
 //! - **Sources** ([`Source`]): an entity find (a view entity, `DbViewEntity` or `DataDocument.<id>` read only) with
 //!   conditions by the `search-form-inputs` rules, a SQL query wrapped as `SELECT * FROM (<sql>) q`, run read only

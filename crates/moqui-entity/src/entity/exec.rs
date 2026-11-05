@@ -203,8 +203,8 @@ pub fn split_sql(sql: &str) -> Vec<&str> {
 }
 
 /// The statements of a script, split at each `;` outside quoted text, quoted names, dollar-quoted bodies and comments
-/// as `syntax` writes them (plans/Tools-Database.md 8.1). Each statement is trimmed and keeps its comments; a piece
-/// that is only comments and space is left out.
+/// as `syntax` writes them (plans/archive/Tools-Database.md 8.1). Each statement is trimmed and keeps its comments; a
+/// piece that is only comments and space is left out.
 pub fn split_sql_as(sql: &str, syntax: SqlSyntax) -> Vec<&str> {
     let blank = blank_sql(sql, syntax);
     let mut out = Vec::new();

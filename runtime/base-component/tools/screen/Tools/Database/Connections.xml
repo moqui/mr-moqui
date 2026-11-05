@@ -12,11 +12,11 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- External databases (plans/Tools-Database.md §4.3): connections to databases the entity groups do not use, which SQL,
-    the data grid and Database › Overview then offer as ext:<connectionId>. Only with DATABASE_EXTERNAL, and never on a
-    production instance: every refusal there reads "Not available". A connection's owner, or a DATABASE_ADMIN holder,
-    may change, test or delete it. Saving replaces it whole; a change of its type, host, port, user, TLS mode or root
-    certificate without a new password clears the stored one. -->
+<!-- External databases (plans/archive/Tools-Database.md §4.3): connections to databases the entity groups do not use,
+    which SQL, the data grid and Database › Overview then offer as ext:<connectionId>. Only with DATABASE_EXTERNAL, and
+    never on a production instance: every refusal there reads "Not available". A connection's owner, or a DATABASE_ADMIN
+    holder, may change, test or delete it. Saving replaces it whole; a change of its type, host, port, user, TLS mode or
+    root certificate without a new password clears the stored one. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Connections" default-menu-index="7" default-menu-include="false">
 

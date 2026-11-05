@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What the schema, job, table and activity services share (plans/Tools-Database.md §5–§7): the entity group's
+//! What the schema, job, table and activity services share (plans/archive/Tools-Database.md §5–§7): the entity group's
 //! database a service's `db` names ([`GroupDb`]), its queries with parameters, and reading the services' parameters.
 
 use std::collections::BTreeMap;
@@ -41,7 +41,7 @@ pub enum Server {
 }
 
 /// The database a service's `db` names: an entity group's (`group:<name>`), or an external connection's
-/// (`ext:<connectionId>`, plans/Tools-Database.md §4.3), reached only through [`crate::ext::gate`].
+/// (`ext:<connectionId>`, plans/archive/Tools-Database.md §4.3), reached only through [`crate::ext::gate`].
 #[derive(Clone)]
 pub struct GroupDb {
     /// The entity group; for an external connection `ext:<connectionId>`, which no entity names.

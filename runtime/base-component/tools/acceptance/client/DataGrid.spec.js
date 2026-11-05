@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
-// The data grid walk of plans/Tools-Database.md §15 step 5, in the browser on the qvt shell (./moq accept tools --spec
-// DataGrid): the grid on an entity's rows, an edit, a pasted range, undo, a save that the next read shows, and an export
-// downloaded from the user's own place.
+// The data grid walk of plans/archive/Tools-Database.md §15 step 5, in the browser on the qvt shell (./moq accept tools
+// --spec DataGrid): the grid on an entity's rows, an edit, a pasted range, undo, a save that the next read shows, and
+// an export downloaded from the user's own place.
 spec({ timeout: 120 })
 
 function gridPage() {

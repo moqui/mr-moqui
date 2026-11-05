@@ -130,9 +130,9 @@ impl DatasourceConf {
     }
 }
 
-/// The settings of the embedded cluster a datasource's conf gives (plans/Tools-Database.md §4.4): `shared-buffers`,
-/// `work-mem`, `maintenance-work-mem` and `effective-cache-size`, as Postgres writes a size (`64MB`). `None` keeps the
-/// cluster's default from code. They apply when this process starts the cluster.
+/// The settings of the embedded cluster a datasource's conf gives (plans/archive/Tools-Database.md §4.4):
+/// `shared-buffers`, `work-mem`, `maintenance-work-mem` and `effective-cache-size`, as Postgres writes a size (`64MB`).
+/// `None` keeps the cluster's default from code. They apply when this process starts the cluster.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EmbeddedSettings {
     pub shared_buffers: Option<String>,
@@ -295,7 +295,7 @@ pub struct DatasourceConf {
     /// `runtime-add-fks`, true unless set to something other than `true`.
     pub runtime_add_fks: bool,
     /// `pg-stat-statements`, false unless `true`: on Postgres, load `pg_stat_statements` for this datasource's
-    /// database (plans/Tools-Database.md §7.2). Ignored on MySQL.
+    /// database (plans/archive/Tools-Database.md §7.2). Ignored on MySQL.
     pub pg_stat_statements: bool,
     /// Whether the embedded cluster preloads `pg_stat_statements` when it starts for this datasource: this one's
     /// `pg-stat-statements`, or for `transactional` on the embedded cluster that of any embedded datasource

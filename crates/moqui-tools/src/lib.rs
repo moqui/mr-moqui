@@ -12,9 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The Tools app's server side (plans/Tools-Database.md §13): `org.moqui.impl.DatabaseServices` ([`service`]) on the
-//! entities of `framework/entity/DatabaseEntities.xml`: what each database allows ([`capabilities`]), the catalog
-//! queries per dialect ([`catalog`]), SQL runs, explain and the database's statement stats ([`sql`], with their
+//! The Tools app's server side (plans/archive/Tools-Database.md §13): `org.moqui.impl.DatabaseServices` ([`service`])
+//! on the entities of `framework/entity/DatabaseEntities.xml`: what each database allows ([`capabilities`]), the
+//! catalog queries per dialect ([`catalog`]), SQL runs, explain and the database's statement stats ([`sql`], with their
 //! services in [`sql_service`]) and the audit ([`audit`]). The jobs, data grid and ETL of the plan come here as well.
 //!
 //! A service that works on a database takes `db`: `group:<groupName>` for an entity group's database, or
@@ -37,14 +37,14 @@ pub mod settings;
 pub mod sql;
 pub mod sql_service;
 
-// ---------- Schema and jobs (plans/Tools-Database.md §5, §6, §7.3, §7.4) ----------
+// ---------- Schema and jobs (plans/archive/Tools-Database.md §5, §6, §7.3, §7.4) ----------
 pub mod activity;
 pub mod group_db;
 pub mod jobs;
 pub mod schema;
 pub mod tables;
 
-// ---------- ETL and the grid's file source (plans/Tools-Database.md §9.1, §10) ----------
+// ---------- ETL and the grid's file source (plans/archive/Tools-Database.md §9.1, §10) ----------
 pub mod etl;
 pub mod files;
 

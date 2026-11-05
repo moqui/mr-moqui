@@ -12,11 +12,11 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The database's sessions (plans/Tools-Database.md §7.3, org.moqui.impl.DatabaseServices.get#DatabaseActivity): what
-    each runs and waits on, who blocks whom, and the marks: this server's own sessions, idle in a transaction for over a
-    minute, running for over ten seconds. Cancel stops a session's statement and End closes the session; both need
-    DATABASE_ADMIN; a session of this server is refused until a second question confirms it (force). Below, the index checks of
-    get#IndexHealth. -->
+<!-- The database's sessions (plans/archive/Tools-Database.md §7.3,
+    org.moqui.impl.DatabaseServices.get#DatabaseActivity): what each runs and waits on, who blocks whom, and the marks:
+    this server's own sessions, idle in a transaction for over a minute, running for over ten seconds. Cancel stops a
+    session's statement and End closes the session; both need DATABASE_ADMIN; a session of this server is refused until
+    a second question confirms it (force). Below, the index checks of get#IndexHealth. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Activity" default-menu-index="2">
 

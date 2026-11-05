@@ -12,10 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! One ETL run (plans/Tools-Database.md §10.3, decision 7): the source's extractor, the [`MappingTransformer`], and a
-//! loader of the target, an entity (the entity-auto `create#`, `store#` or `update#` service per row) or a service (one
-//! call per row), each row's number followed through the load. Every write is a service call as the user, with
-//! authorization on: the entity's ECAs and the security rules run as they would for the user's own call.
+//! One ETL run (plans/archive/Tools-Database.md §10.3, decision 7): the source's extractor, the [`MappingTransformer`],
+//! and a loader of the target, an entity (the entity-auto `create#`, `store#` or `update#` service per row) or a
+//! service (one call per row), each row's number followed through the load. Every write is a service call as the user,
+//! with authorization on: the entity's ECAs and the security rules run as they would for the user's own call.
 //!
 //! - **No batch size:** the run is one transaction. Any error rolls it all back; the extract and transform errors are
 //!   all collected; the first database error ends the loading, since Postgres aborts the transaction then.

@@ -447,7 +447,7 @@ impl TransactionManager {
 
     /// Close the connection enlisted in the active frame when the frame ends, instead of returning it to the pool: a
     /// session a statement may have changed (a setting, a temporary table) goes to no later borrower
-    /// (plans/Tools-Database.md 8.2). Call after the frame's first [`Self::with_connection`].
+    /// (plans/archive/Tools-Database.md 8.2). Call after the frame's first [`Self::with_connection`].
     ///
     /// # Errors
     ///
@@ -464,7 +464,7 @@ impl TransactionManager {
 
     /// [`Self::with_connection`], and the connection is closed instead of going back to the pool: at once when no
     /// frame is active (an autocommit statement), else when the frame ends ([`Self::discard_connection_at_end`]). For a
-    /// statement that may leave session state behind (plans/Tools-Database.md 8.2).
+    /// statement that may leave session state behind (plans/archive/Tools-Database.md 8.2).
     ///
     /// # Errors
     ///

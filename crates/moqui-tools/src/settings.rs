@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! A database's settings, read only (plans/Tools-Database.md §4.4): Postgres `pg_settings`, MySQL and MariaDB
+//! A database's settings, read only (plans/archive/Tools-Database.md §4.4): Postgres `pg_settings`, MySQL and MariaDB
 //! `SHOW VARIABLES`. On the embedded cluster four of them come from the transactional datasource's conf
 //! (`shared-buffers`, `work-mem`, `maintenance-work-mem`, `effective-cache-size`): those rows name their attribute,
 //! the conf's value, and whether the running value differs, which a restart of the cluster applies. Nothing here

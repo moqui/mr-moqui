@@ -173,8 +173,8 @@ pub fn transactional_conf(factory: &ExecutionContextFactory) -> Result<Datasourc
 }
 
 /// After a datasource with `pg-stat-statements` on opens on Postgres: `CREATE EXTENSION IF NOT EXISTS
-/// pg_stat_statements` in its database (plans/Tools-Database.md §7.2). `shared_preload_libraries` is checked first,
-/// and a warning says when the server does not load it. Neither stops the
+/// pg_stat_statements` in its database (plans/archive/Tools-Database.md §7.2). `shared_preload_libraries` is checked
+/// first, and a warning says when the server does not load it. Neither stops the
 /// start: a role that may not create the extension, or a server without it, gets a warning. On MySQL the setting is
 /// ignored, with a debug line (statement digests are in `performance_schema`).
 pub fn create_pg_stat_statements(conf: &DatasourceConf, driver: &dyn DbDriver) {

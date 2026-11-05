@@ -1,9 +1,9 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
-/* The data grid (plans/Tools-Database.md §9.3): Tabulator (libs/tabulator) in the shell's palette, light and dark. Loaded after
-   libs/tabulator/tabulator.min.css; a grid's element has the class m-data-grid. The colors come from the shell's tokens
-   (css/WebrootVue.qvt.css: --m-panel-bg, --m-text, --m-border, ...) and Quasar's brand colors (--q-primary, --q-negative,
-   --q-warning, --q-positive), so a color scheme and dark mode carry over.
+/* The data grid (plans/archive/Tools-Database.md §9.3): Tabulator (libs/tabulator) in the shell's palette, light and
+   dark. Loaded after libs/tabulator/tabulator.min.css; a grid's element has the class m-data-grid. The colors come
+   from the shell's tokens (css/WebrootVue.qvt.css: --m-panel-bg, --m-text, --m-border, ...) and Quasar's brand colors
+   (--q-primary, --q-negative, --q-warning, --q-positive), so a color scheme and dark mode carry over.
    Each rule is Tabulator's own selector (tabulator.min.css 6.7) with .m-data-grid added to its .tabulator, or in front of it
    for the rules that start at .tabulator-row, so it wins by one class; Tabulator's !important ones are answered with
    !important. The lists and menus Tabulator puts on the body are outside the grid: those rules add body in front. */

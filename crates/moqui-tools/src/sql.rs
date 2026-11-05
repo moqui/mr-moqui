@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! SQL runs of the Tools SQL screen (plans/Tools-Database.md §8), on an entity group's database through
+//! SQL runs of the Tools SQL screen (plans/archive/Tools-Database.md §8), on an entity group's database through
 //! `moqui_entity::entity::info::run_sql_with`.
 //!
 //! - **Read only by default:** each statement runs in a read-only transaction of its own, so the database refuses a

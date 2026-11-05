@@ -549,7 +549,7 @@ fn flat_xml(etl: &mut SimpleEtl, location: &str, text: &str) -> Result<(), Error
 }
 
 /// The value key under which an extractor of rows puts each entry's row number (1-based, in the file), for the errors
-/// and the last committed row of a run (plans/Tools-Database.md §10.2). A loader leaves it out.
+/// and the last committed row of a run (plans/archive/Tools-Database.md §10.2). A loader leaves it out.
 pub const ROW_NUMBER_KEY: &str = "_etlRowNumber";
 
 /// The header of a table of rows, shared by an extractor that reads it and a transformer that names columns by letter
@@ -597,9 +597,9 @@ impl CsvOptions {
     }
 }
 
-/// Reads a plain table in CSV, streamed record by record (plans/Tools-Database.md §10.3): each data row is an entry of
-/// [`CsvOptions::etl_type`] with its cells by column name (text; an empty cell is left out) and its row number under
-/// [`ROW_NUMBER_KEY`]. A row of only empty cells is skipped. A stop of the run ends the read and is not an error.
+/// Reads a plain table in CSV, streamed record by record (plans/archive/Tools-Database.md §10.3): each data row is an
+/// entry of [`CsvOptions::etl_type`] with its cells by column name (text; an empty cell is left out) and its row number
+/// under [`ROW_NUMBER_KEY`]. A row of only empty cells is skipped. A stop of the run ends the read and is not an error.
 pub struct CsvExtractor<R: std::io::Read> {
     reader: Option<R>,
     options: CsvOptions,

@@ -1,7 +1,7 @@
-// A 100,000 row CSV loaded through run#EtlMapping in batches (plans/Tools-Database.md §15 step 6): every row loads in
-// committed batches of 5,000, with no errors, under a time budget. The file is made here, in dbresource://moqui/etl/.
-// The run is here with wait: true; the queued path (a job on the worker pool, its EtlRun from pending to done) is the
-// etl_runs host test (crates/moqui-host/tests/it/etl_runs.rs).
+// A 100,000 row CSV loaded through run#EtlMapping in batches (plans/archive/Tools-Database.md §15 step 6): every row
+// loads in committed batches of 5,000, with no errors, under a time budget. The file is made here, in
+// dbresource://moqui/etl/. The run is here with wait: true; the queued path (a job on the worker pool, its EtlRun from
+// pending to done) is the etl_runs host test (crates/moqui-host/tests/it/etl_runs.rs).
 // Run: ./moq accept tools --spec EtlLoad
 const ROWS = 100000
 // seconds for the run: the whole feature (making the file, the run in 20 batches, the count) took 34 s on a debug build

@@ -503,7 +503,7 @@ pub fn for_factory(factory: &ExecutionContextFactory) -> Arc<Telemetry> {
             resource.service_name = name;
         }
         // The database sessions carry the instance id, so the server's activity shows whose they are
-        // (plans/Tools-Database.md 7.3).
+        // (plans/archive/Tools-Database.md 7.3).
         crate::driver::set_application_name(&resource.instance_id);
         Arc::new(Telemetry::from_conf(&factory.conf_text(), resource))
     }));

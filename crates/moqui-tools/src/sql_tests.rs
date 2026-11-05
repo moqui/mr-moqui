@@ -12,8 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! SQL runs (plans/Tools-Database.md §15 step 4): read only by default and refused by the database, the one-time token
-//! of a run with changes, an audit row for every statement run, and cancel, here and from another instance.
+//! SQL runs (plans/archive/Tools-Database.md §15 step 4): read only by default and refused by the database, the
+//! one-time token of a run with changes, an audit row for every statement run, and cancel, here and from another
+//! instance.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

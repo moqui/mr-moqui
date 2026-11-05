@@ -30,15 +30,15 @@ use crate::{capabilities, DbRef, NOT_AVAILABLE};
 pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
     rust_service!(map, get_capabilities)?;
     rust_service!(map, reset_query_stats)?;
-    // ---- SQL (plans/Tools-Database.md §8): crate::sql_service ----
+    // ---- SQL (plans/archive/Tools-Database.md §8): crate::sql_service ----
     crate::sql_service::register(map)?;
-    // ---- the data grid (plans/Tools-Database.md §9): crate::grid_service ----
+    // ---- the data grid (plans/archive/Tools-Database.md §9): crate::grid_service ----
     crate::grid_service::register(map)?;
-    // ---- external databases (plans/Tools-Database.md §4.3): crate::ext ----
+    // ---- external databases (plans/archive/Tools-Database.md §4.3): crate::ext ----
     crate::ext::register(map)?;
-    // ---- settings (plans/Tools-Database.md §4.4): crate::settings ----
+    // ---- settings (plans/archive/Tools-Database.md §4.4): crate::settings ----
     crate::settings::register(map)?;
-    // ---------- Schema and jobs (plans/Tools-Database.md §5, §6, §7.3, §7.4) ----------
+    // ---------- Schema and jobs (plans/archive/Tools-Database.md §5, §6, §7.3, §7.4) ----------
     crate::register_schema_and_jobs(map)?;
     Ok(())
 }

@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! ETL runs on the in-memory facade (plans/Tools-Database.md §15 step 6): the transformer's conversions (an
+//! ETL runs on the in-memory facade (plans/archive/Tools-Database.md §15 step 6): the transformer's conversions (an
 //! expression only for a user with `GROOVY_SHELL_WEB`), number patterns, a batched run that fails in its third batch,
 //! a batched run stopped by a transform error, and a check that finds a missing foreign key and the diff.
 

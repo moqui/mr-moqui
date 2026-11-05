@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What an ETL run and the grid's file source may reach (plans/Tools-Database.md §10, §14.1):
+//! What an ETL run and the grid's file source may reach (plans/archive/Tools-Database.md §10, §14.1):
 //!
 //! - **Files** ([`readable`], [`read_bytes`]): the caller's own uploads under
 //!   `dbresource://moqui/database/upload/<userId>/`, the import root `dbresource://moqui/etl/`, and `runtime://import/`;

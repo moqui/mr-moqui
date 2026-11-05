@@ -12,9 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The entity layer's pieces of the Tools app's database sections on an embedded cluster (plans/Tools-Database.md):
-//! the schema comparison's catalog queries and names (5.1), the SQL runner's read-only transaction and cancel (8.2,
-//! 8.3), result column origins (9.5) and the sessions' application name (7.3).
+//! The entity layer's pieces of the Tools app's database sections on an embedded cluster
+//! (plans/archive/Tools-Database.md): the schema comparison's catalog queries and names (5.1), the SQL runner's
+//! read-only transaction and cancel (8.2, 8.3), result column origins (9.5) and the sessions' application name (7.3).
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};

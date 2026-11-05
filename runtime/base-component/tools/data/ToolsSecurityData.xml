@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
         <authz artifactAuthzId="TOOLS_APP_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 
-    <!-- Tools database administration (plans/Tools-Database.md §14.1), both sealed (user-facade authz
+    <!-- Tools database administration (plans/archive/Tools-Database.md §14.1), both sealed (user-facade authz
         sealed-permissions): DATABASE_ADMIN cancels or terminates sessions, runs DDL and maintenance jobs and resets
         statement stats; DATABASE_EXTERNAL reaches databases the entity groups do not use (db=ext:...), never on a
         production instance. -->

@@ -614,7 +614,7 @@ pub(super) fn convert_fields(facade: &EntityFacade, entity_name: &str, fields: &
 }
 
 /// Convert each of `fields` that is not of its field's type from its text, as a data file's values are: what an ETL
-/// mapping does to a row for an entity target (plans/Tools-Database.md §10.3), so a type error is the row's.
+/// mapping does to a row for an entity target (plans/archive/Tools-Database.md §10.3), so a type error is the row's.
 ///
 /// # Errors
 ///

@@ -703,8 +703,8 @@ pub fn datasource_group_names(facade: &EntityFacade) -> Vec<String> {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SqlResult {
     pub columns: Vec<String>,
-    /// Where each of `columns` comes from, as the driver told it (plans/Tools-Database.md 9.5): empty when it did not,
-    /// and with no rows. [`resolve_column_origins`] names the tables and columns.
+    /// Where each of `columns` comes from, as the driver told it (plans/archive/Tools-Database.md 9.5): empty when it
+    /// did not, and with no rows. [`resolve_column_origins`] names the tables and columns.
     pub column_origins: Vec<Option<ColumnOrigin>>,
     pub records: Vec<Vec<Value>>,
     pub limit_reached: bool,
@@ -719,11 +719,11 @@ pub struct SqlRunOptions<'a> {
     /// A query reads at most this many rows; 0 reads them all.
     pub limit: usize,
     /// Run in a read-only transaction of its own, so the database refuses a write: Postgres
-    /// `SET TRANSACTION READ ONLY`, MySQL `START TRANSACTION READ ONLY` (plans/Tools-Database.md 8.2). A caller's
-    /// transaction is suspended while it runs.
+    /// `SET TRANSACTION READ ONLY`, MySQL `START TRANSACTION READ ONLY` (plans/archive/Tools-Database.md 8.2). A
+    /// caller's transaction is suspended while it runs.
     pub read_only: bool,
     /// Called on the statement's connection just before the statement is sent, with what a cancel needs
-    /// (plans/Tools-Database.md 8.3).
+    /// (plans/archive/Tools-Database.md 8.3).
     pub on_start: Option<&'a mut dyn FnMut(SqlStart)>,
     /// The values of the statement's `?` placeholders, bound by the driver, never pasted into the text (a SQL screen's
     /// `:name` parameters).
@@ -792,7 +792,7 @@ const QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3600);
 
 /// Whether `sql` gives rows, as [`run_sql`] decides it: the database's description of the prepared statement (an
 /// `INSERT ... RETURNING` gives rows), else its first word ([`is_query`]). For a confirmation that lists the
-/// statements that may change data (plans/Tools-Database.md 8.2). It is asked on a connection of its own, the
+/// statements that may change data (plans/archive/Tools-Database.md 8.2). It is asked on a connection of its own, the
 /// caller's transaction suspended, so a statement that does not prepare cannot abort the caller's transaction.
 ///
 /// # Errors
@@ -867,7 +867,7 @@ pub fn run_sql_with(
 }
 
 /// [`run_sql_with`] on a transaction manager and dialect of a database no entity group uses (an external connection,
-/// plans/Tools-Database.md 4.3).
+/// plans/archive/Tools-Database.md 4.3).
 ///
 /// # Errors
 ///
@@ -1042,7 +1042,7 @@ pub struct Relation {
     pub schema: String,
     pub name: String,
     /// A table (`relkind` `r` or `p`), not a view or other relation: a view's columns name the view, not the table
-    /// under it, so its rows are not edited through it (plans/Tools-Database.md 9.5).
+    /// under it, so its rows are not edited through it (plans/archive/Tools-Database.md 9.5).
     pub is_table: bool,
     /// Its columns' names by attribute number.
     pub columns: BTreeMap<i16, String>,

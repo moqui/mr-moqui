@@ -13,23 +13,23 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <!-- ETL mappings and the data grid's file source (plans/Tools-Database.md §9.1, §10), in crates/moqui-tools/src/etl
-        and files.rs; the entities are the moqui.etl section of framework/entity/DatabaseEntities.xml. A mapping is
-        mappingId (a saved moqui.etl.EtlMapping) or mapping, an inline map of EtlMapping's field names with fields, a
-        list of maps of EtlMappingField's (a field may have valueMap, a map from value to value, in place of a
-        valueMapId). A refusal is a message-facade error and no out parameters. Each service refuses a user the Tools
-        app's authorization (TOOLS_APP) does not let view component://tools/screen/Tools.xml; writes, checks and runs
-        need authorization for all actions on it, a SQL source the SQL_RUNNER_WEB permission, and an expression field
-        the GROOVY_SHELL_WEB permission (to save, check or run it). A run is the user's own with authorization on, also
-        on the worker pool or as a ServiceJob's user, so its writes and service calls run the security rules. Only a
-        mapping's owner or a DATABASE_ADMIN holder may change, copy over or delete it. A file is read only from the
-        user's own uploads (dbresource://moqui/database/upload/(userId)/), dbresource://moqui/etl/ and
-        runtime://import/, or any dbresource:// location with DATABASE_ADMIN; anything else is "Not available". An
-        identity-admin, secret-config or audit entity (the moqui.etl entities among them), or a view over one, is no
-        source, target or lookup, nor the noun of an entity-auto service target; no delete# service is a target. A
-        UserAccount password field, by name or as a view's alias of one, is no target or lookup field and is left out
-        of an entity source's rows. load#SpreadsheetEntity reads a location from the same places. No Java
-        counterpart. -->
+    <!-- ETL mappings and the data grid's file source (plans/archive/Tools-Database.md §9.1, §10), in
+        crates/moqui-tools/src/etl and files.rs; the entities are the moqui.etl section of
+        framework/entity/DatabaseEntities.xml. A mapping is mappingId (a saved moqui.etl.EtlMapping) or mapping, an
+        inline map of EtlMapping's field names with fields, a list of maps of EtlMappingField's (a field may have
+        valueMap, a map from value to value, in place of a valueMapId). A refusal is a message-facade error and no out
+        parameters. Each service refuses a user the Tools app's authorization (TOOLS_APP) does not let view
+        component://tools/screen/Tools.xml; writes, checks and runs need authorization for all actions on it, a SQL
+        source the SQL_RUNNER_WEB permission, and an expression field the GROOVY_SHELL_WEB permission (to save, check or
+        run it). A run is the user's own with authorization on, also on the worker pool or as a ServiceJob's user, so
+        its writes and service calls run the security rules. Only a mapping's owner or a DATABASE_ADMIN holder may
+        change, copy over or delete it. A file is read only from the user's own uploads
+        (dbresource://moqui/database/upload/(userId)/), dbresource://moqui/etl/ and runtime://import/, or any
+        dbresource:// location with DATABASE_ADMIN; anything else is "Not available". An identity-admin, secret-config
+        or audit entity (the moqui.etl entities among them), or a view over one, is no source, target or lookup, nor the
+        noun of an entity-auto service target; no delete# service is a target. A UserAccount password field, by name or
+        as a view's alias of one, is no target or lookup field and is left out of an entity source's rows.
+        load#SpreadsheetEntity reads a location from the same places. No Java counterpart. -->
 
     <service verb="run" noun="EtlMapping" type="rust" location="moqui_tools::etl::service::run_etl_mapping"
             transaction="ignore">

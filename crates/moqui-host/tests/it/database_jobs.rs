@@ -12,10 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Database jobs on the embedded cluster (plans/Tools-Database.md §6, §15 step 3): a `CREATE INDEX CONCURRENTLY` job
-//! runs on a service worker to a valid index; a second, held up by an open transaction, is cancelled through
-//! `pg_cancel_backend` as from another instance, leaves the invalid index the cancel leaves, and run again ends with a
-//! valid index.
+//! Database jobs on the embedded cluster (plans/archive/Tools-Database.md §6, §15 step 3): a `CREATE INDEX
+//! CONCURRENTLY` job runs on a service worker to a valid index; a second, held up by an open transaction, is cancelled
+//! through `pg_cancel_backend` as from another instance, leaves the invalid index the cancel leaves, and run again ends
+//! with a valid index.
 
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};

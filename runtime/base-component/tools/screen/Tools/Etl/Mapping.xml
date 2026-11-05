@@ -12,11 +12,11 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- One ETL mapping (plans/Tools-Database.md §10.4): its source, target and options, the source column to target field
-    table with each field's converted sample value and error, a test against a file, a run, a check of the whole
-    source, a schedule (a ServiceJob that calls run#EtlMapping with mappingId) and the mapping's runs. The component is
-    Mapping.qvue, over the JSON transitions of Etl.xml; the terminal shows the mapping, its fields and its runs. With no
-    mappingId it is a new mapping. -->
+<!-- One ETL mapping (plans/archive/Tools-Database.md §10.4): its source, target and options, the source column to
+    target field table with each field's converted sample value and error, a test against a file, a run, a check of the
+    whole source, a schedule (a ServiceJob that calls run#EtlMapping with mappingId) and the mapping's runs. The
+    component is Mapping.qvue, over the JSON transitions of Etl.xml; the terminal shows the mapping, its fields and its
+    runs. With no mappingId it is a new mapping. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Mapping" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
 

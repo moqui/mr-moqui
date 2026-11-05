@@ -130,7 +130,7 @@ pub(crate) fn enforce(
     Ok(())
 }
 
-/// A foreign key of a record with no related record: what an ETL check reports (plans/Tools-Database.md §10.3).
+/// A foreign key of a record with no related record: what an ETL check reports (plans/archive/Tools-Database.md §10.3).
 #[derive(Clone, Debug, PartialEq)]
 pub struct MissingRelated {
     pub relationship: String,

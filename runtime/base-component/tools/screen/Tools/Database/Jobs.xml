@@ -12,8 +12,8 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The database jobs (plans/Tools-Database.md §6, org.moqui.impl.DatabaseServices.get#DatabaseJobs), newest first: a
-    schema or maintenance plan waiting to run, running, or ended. Each opens its page with the statements. -->
+<!-- The database jobs (plans/archive/Tools-Database.md §6, org.moqui.impl.DatabaseServices.get#DatabaseJobs), newest
+    first: a schema or maintenance plan waiting to run, running, or ended. Each opens its page with the statements. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Jobs" default-menu-index="5">
 

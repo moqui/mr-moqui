@@ -34,8 +34,8 @@ use moqui_lib::object::Value;
 pub struct DbRow {
     pub columns: Vec<(Arc<str>, Value)>,
     /// Where each column comes from, in the order of `columns`, shared by the rows of one result; `None` when the
-    /// driver does not tell (plans/Tools-Database.md 9.5). A column the server names no table for (an expression, a
-    /// constant) is `None` in it.
+    /// driver does not tell (plans/archive/Tools-Database.md 9.5). A column the server names no table for (an
+    /// expression, a constant) is `None` in it.
     pub origins: Option<Arc<[Option<ColumnOrigin>]>>,
 }
 
@@ -156,13 +156,13 @@ pub trait DbConnection: Send {
     fn canceller(&self) -> Box<dyn DbCancel>;
 
     /// The server's id of this session, as its activity lists it: the Postgres backend pid (`pg_backend_pid()`) or
-    /// the MySQL `CONNECTION_ID()`. `None` when the driver does not know it (plans/Tools-Database.md 8.3).
+    /// the MySQL `CONNECTION_ID()`. `None` when the driver does not know it (plans/archive/Tools-Database.md 8.3).
     fn backend_id(&self) -> Option<i64> {
         None
     }
 
     /// Make the transaction just begun on this connection read only, before any statement in it, so the database
-    /// refuses a write (plans/Tools-Database.md 8.2). The default is Postgres' `SET TRANSACTION READ ONLY`.
+    /// refuses a write (plans/archive/Tools-Database.md 8.2). The default is Postgres' `SET TRANSACTION READ ONLY`.
     fn set_transaction_read_only(&mut self) -> Result<(), Error> {
         self.execute("SET TRANSACTION READ ONLY", &[]).map(|_| ())
     }
@@ -202,9 +202,9 @@ pub trait DbConnection: Send {
 }
 
 /// The name each session of this process gives the database, so its activity can tell the app's own sessions, and
-/// one cluster member's from another's (plans/Tools-Database.md 7.3): Postgres `application_name`, a MySQL connection
-/// attribute. Core sets it to the instance id. The generation counts the changes, so the pool can bring a session
-/// opened before a change up to date ([`DbConnection::set_application_name`]).
+/// one cluster member's from another's (plans/archive/Tools-Database.md 7.3): Postgres `application_name`, a MySQL
+/// connection attribute. Core sets it to the instance id. The generation counts the changes, so the pool can bring a
+/// session opened before a change up to date ([`DbConnection::set_application_name`]).
 static APPLICATION_NAME: RwLock<Option<Arc<str>>> = RwLock::new(None);
 static APPLICATION_NAME_GENERATION: AtomicU64 = AtomicU64::new(0);
 

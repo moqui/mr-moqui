@@ -12,7 +12,7 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The entity model against the database (plans/Tools-Database.md §5): each table with a difference, from
+<!-- The entity model against the database (plans/archive/Tools-Database.md §5): each table with a difference, from
     org.moqui.impl.DatabaseServices.compare#Schema. A selection of tables, one table, every missing index or every foreign
     key is planned with plan#SchemaChanges, which keeps the plan as a pending database job; its page (Database › Job)
     shows the statements and runs exactly those. Planning needs DATABASE_ADMIN. Download DDL is get#SchemaDdl. -->

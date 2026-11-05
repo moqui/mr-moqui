@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Database jobs (plans/Tools-Database.md §6): DDL and maintenance that run on a service worker, one statement after
-//! another. A job is only ever a plan the server made (`plan#SchemaChanges`, `plan#TableMaintenance`,
+//! Database jobs (plans/archive/Tools-Database.md §6): DDL and maintenance that run on a service worker, one statement
+//! after another. A job is only ever a plan the server made (`plan#SchemaChanges`, `plan#TableMaintenance`,
 //! `plan#LoadWrap`, [`create_plan_job`]): no service takes statement text from the caller, so a job is not a way
 //! around the SQL runner's own permission. Each statement runs on a connection of its own outside a transaction, which
 //! is closed after it, with no statement timeout and its backend id and backend start kept on its row so any cluster

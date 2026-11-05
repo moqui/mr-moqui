@@ -12,8 +12,8 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The entity facade's statement statistics of this instance (plans/Tools-Database.md §7.1): each statement's hits,
-    errors and times, and the screens, services and REST paths that ran it. Counted when the conf's entity-facade
+<!-- The entity facade's statement statistics of this instance (plans/archive/Tools-Database.md §7.1): each statement's
+    hits, errors and times, and the screens, services and REST paths that ran it. Counted when the conf's entity-facade
     query-stats is true. Reset (org.moqui.impl.DatabaseServices.reset#QueryStats) needs DATABASE_ADMIN. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"

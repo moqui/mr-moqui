@@ -644,9 +644,9 @@ fn view_members(facade: &EntityFacade, entity_name: &str) -> Result<(String, Opt
 
 impl EntityDbMeta<'_> {
     /// Compare the tables of these entities with the database, as the table check would make them, and change
-    /// nothing (plans/Tools-Database.md 5.1). View-entities expand to their member entities; no names compares every
-    /// entity. A database whose catalog cannot be read is an entry of [`super::SchemaDiff::errors`], and the others are
-    /// compared.
+    /// nothing (plans/archive/Tools-Database.md 5.1). View-entities expand to their member entities; no names compares
+    /// every entity. A database whose catalog cannot be read is an entry of [`super::SchemaDiff::errors`], and the
+    /// others are compared.
     ///
     /// # Errors
     ///

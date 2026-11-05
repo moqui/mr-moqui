@@ -12,9 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Schema: the comparison of the entity model with the database (`compare#Schema`, plans/Tools-Database.md §5.1), the
-//! plan of statements that brings a selection of its differences in line in the online forms (`plan#SchemaChanges`,
-//! §5.2), which a job then runs (`crate::jobs`), and the DDL of a set of entities as a `.sql` file (`get#SchemaDdl`).
+//! Schema: the comparison of the entity model with the database (`compare#Schema`, plans/archive/Tools-Database.md
+//! §5.1), the plan of statements that brings a selection of its differences in line in the online forms
+//! (`plan#SchemaChanges`, §5.2), which a job then runs (`crate::jobs`), and the DDL of a set of entities as a `.sql`
+//! file (`get#SchemaDdl`).
 
 use std::collections::{BTreeMap, BTreeSet};
 

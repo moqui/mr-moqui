@@ -78,7 +78,7 @@ struct Sheet {
     rows: Vec<Vec<Value>>,
 }
 
-/// One sheet read whole, for the ETL `SheetExtractor` and the grid's file source (plans/Tools-Database.md §9.1,
+/// One sheet read whole, for the ETL `SheetExtractor` and the grid's file source (plans/archive/Tools-Database.md §9.1,
 /// §10.3): every row of the used area that has a value, each with its row number in the sheet (from 1), cells typed as
 /// [`cell_value`] reads them. No header is taken out; the caller picks its header row.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -140,7 +140,8 @@ pub fn read_sheet_bytes(bytes: &[u8], sheet_name: &str, sheet_index: usize) -> R
 }
 
 /// A run of an inline ETL mapping in place of `load#SpreadsheetEntity`'s own loop: moqui-tools installs it
-/// (plans/Tools-Database.md §10.3), so the load maps its rows as an ETL run does; without it the loop below runs.
+/// (plans/archive/Tools-Database.md §10.3), so the load maps its rows as an ETL run does; without it the loop below
+/// runs.
 pub type InlineLoad = fn(&BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, LibError>;
 
 static INLINE_LOAD: std::sync::OnceLock<InlineLoad> = std::sync::OnceLock::new();

@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Activity (plans/Tools-Database.md §7.3): the database's sessions with their state, waits and statement, the app's
-//! own marked by the application name the drivers give them, and the blocking chains as trees
+//! Activity (plans/archive/Tools-Database.md §7.3): the database's sessions with their state, waits and statement, the
+//! app's own marked by the application name the drivers give them, and the blocking chains as trees
 //! (`get#DatabaseActivity`); cancelling and ending a session (`cancel#DatabaseSession`, `terminate#DatabaseSession`).
 //! And the index health queries of §4.2 (`get#IndexHealth`): foreign keys with no index, unused, duplicate and
 //! invalid indexes, and transaction id wraparound.

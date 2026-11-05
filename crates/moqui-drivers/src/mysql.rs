@@ -143,8 +143,8 @@ mod driver {
 
     /// The connection attributes a session sends with the crate's own (`performance_schema.session_connect_attrs`):
     /// `program_name`, and `application_name` with the process's name for its sessions, the instance id, so the
-    /// server's activity shows whose they are (plans/Tools-Database.md 7.3). Attributes go only with the handshake,
-    /// so a session opened before the instance id was known keeps the attributes of then.
+    /// server's activity shows whose they are (plans/archive/Tools-Database.md 7.3). Attributes go only with the
+    /// handshake, so a session opened before the instance id was known keeps the attributes of then.
     fn connect_attrs() -> std::collections::HashMap<&'static str, String> {
         let mut attrs = std::collections::HashMap::from([("program_name", "moqui".to_string())]);
         if let Some(name) = moqui_core::driver::application_name() {

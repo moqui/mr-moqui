@@ -12,9 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Tables (plans/Tools-Database.md §7.4): sizes, estimates and maintenance times from one catalog query per dialect
-//! (`get#TableStats`), an exact count of one table on request (`count#TableRows`), and maintenance planned as the
-//! statements of a job (`plan#TableMaintenance`).
+//! Tables (plans/archive/Tools-Database.md §7.4): sizes, estimates and maintenance times from one catalog query per
+//! dialect (`get#TableStats`), an exact count of one table on request (`count#TableRows`), and maintenance planned as
+//! the statements of a job (`plan#TableMaintenance`).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 

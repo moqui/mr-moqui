@@ -1,7 +1,7 @@
 /* This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. */
 
 /*
- * The pure helpers of the SQL editor (Tools › SQL, plans/Tools-Database.md §8, §7.5) as moqui.sql, loaded by
+ * The pure helpers of the SQL editor (Tools › SQL, plans/archive/Tools-Database.md §8, §7.5) as moqui.sql, loaded by
  * component://tools/screen/Tools/Sql.qvue and tested in the page by test/client/pages/WebrootSql.page.js:
  *   - blank(text, dialect) and statements(text, dialect): the script with its comments and quoted runs blanked, and its
  *     statements split on the semicolons left, with their offsets, as the server's blank_sql and split_sql_as

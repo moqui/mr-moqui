@@ -73,12 +73,13 @@ mod cluster {
         /// The theseus install. `None` is `install` under the cluster directory.
         pub install_dir: Option<PathBuf>,
         /// Preload `pg_stat_statements` and turn on `track_io_timing` (a datasource's `pg-stat-statements`,
-        /// plans/Tools-Database.md §7.2). Postmaster-level: it applies when this process starts the cluster, not to
-        /// one it adopts. The extension itself is created per database ([`crate::entity_db::create_pg_stat_statements`]).
+        /// plans/archive/Tools-Database.md §7.2). Postmaster-level: it applies when this process starts the cluster,
+        /// not to one it adopts. The extension itself is created per database
+        /// ([`crate::entity_db::create_pg_stat_statements`]).
         pub pg_stat_statements: bool,
         /// `shared_buffers`, `work_mem`, `maintenance_work_mem` and `effective_cache_size` from the transactional
-        /// datasource's conf (plans/Tools-Database.md §4.4); `None` keeps the default from code. Postmaster-level, as
-        /// the others here: they apply when this process starts the cluster.
+        /// datasource's conf (plans/archive/Tools-Database.md §4.4); `None` keeps the default from code.
+        /// Postmaster-level, as the others here: they apply when this process starts the cluster.
         pub settings: moqui_core::entity::datasource::EmbeddedSettings,
     }
 

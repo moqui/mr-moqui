@@ -12,12 +12,12 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The data grid (plans/Tools-Database.md §9): the rows of an entity, a view entity, a data document or a SQL result in a
-    Tabulator grid (Grid.qvue), edited in place and saved in one transaction where the source can be (save#DataGridChanges),
-    exported, and kept as saved views. The source is entityName (or selectedEntity), a saved view (viewId), or a SQL result
-    handed over from the SQL screen. Every request goes to the transitions below, over the data grid services of
-    org.moqui.impl.DatabaseServices; a SQL source needs SQL_RUNNER_WEB. The terminal render is a paged list of the same
-    rows, read only, whose rows open the record form (Record.xml) for an entity. -->
+<!-- The data grid (plans/archive/Tools-Database.md §9): the rows of an entity, a view entity, a data document or a SQL
+    result in a Tabulator grid (Grid.qvue), edited in place and saved in one transaction where the source can be
+    (save#DataGridChanges), exported, and kept as saved views. The source is entityName (or selectedEntity), a saved
+    view (viewId), or a SQL result handed over from the SQL screen. Every request goes to the transitions below, over
+    the data grid services of org.moqui.impl.DatabaseServices; a SQL source needs SQL_RUNNER_WEB. The terminal render is
+    a paged list of the same rows, read only, whose rows open the record form (Record.xml) for an entity. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Grid" default-menu-index="1" render-modes="vue,qvue,tui" server-static="vue,qvue">
 

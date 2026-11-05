@@ -12,9 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `MappingTransformer` (plans/Tools-Database.md §10.3): a row of the source becomes an entry of the target, field by
-//! field: the source column (or a constant), trimmed, its default when empty, a value map (case-insensitive), a
-//! format pattern for dates and numbers, a lookup (one cached find per distinct value per run, as the user), an
+//! `MappingTransformer` (plans/archive/Tools-Database.md §10.3): a row of the source becomes an entry of the target,
+//! field by field: the source column (or a constant), trimmed, its default when empty, a value map (case-insensitive),
+//! a format pattern for dates and numbers, a lookup (one cached find per distinct value per run, as the user), an
 //! expression (JavaScript with `row`, `value` and `ec`, compiled once per run by the script cache; only for a user with
 //! `GROOVY_SHELL_WEB`), and `required` /
 //! `skipIfEmpty`. For an entity target the values are then converted to the fields' types. A row with an error is

@@ -12,10 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! ETL mappings (plans/Tools-Database.md §10): saved or inline mappings ([`mapping`]) run through `moqui_lib::etl`:
-//! the source's extractor ([`source`]), the [`transform::MappingTransformer`] and the target's loader ([`run`]), as
-//! `org.moqui.impl.EtlServices` ([`service`]). `load#SpreadsheetEntity` runs an inline mapping through the same path.
-//! What a mapping may reach, and that a run is the user's own with authorization on, is [`access`].
+//! ETL mappings (plans/archive/Tools-Database.md §10): saved or inline mappings ([`mapping`]) run through
+//! `moqui_lib::etl`: the source's extractor ([`source`]), the [`transform::MappingTransformer`] and the target's loader
+//! ([`run`]), as `org.moqui.impl.EtlServices` ([`service`]). `load#SpreadsheetEntity` runs an inline mapping through
+//! the same path. What a mapping may reach, and that a run is the user's own with authorization on, is [`access`].
 
 pub mod access;
 pub mod mapping;

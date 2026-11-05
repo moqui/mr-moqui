@@ -2,7 +2,7 @@
 
 The Tools app (`/apps/tools`) administers the databases of the entity groups and, outside production, external ones.
 Its sections are Data (the data grid, record forms, views, load, export, snapshots), SQL, Schema, ETL and Database. The
-design is [plans/Tools-Database.md](../../plans/Tools-Database.md); this guide says what was built.
+design is [plans/archive/Tools-Database.md](../../plans/archive/Tools-Database.md); this guide says what was built.
 
 The code:
 
@@ -26,8 +26,8 @@ The code:
   - `EtlServices.xml`, beside it.
 - Entities: `runtime/base-component/framework/entity/DatabaseEntities.xml` (packages `moqui.database` and
   `moqui.etl`).
-- Screens: `runtime/base-component/tools/screen/Tools/` (Data, `Sql.xml`, Schema, `Etl.xml`, Database), listed in
-  the [tools README](../../runtime/base-component/tools/README.md).
+- Screens: `runtime/base-component/tools/screen/Tools/` (Data, `Sql.xml`, Schema, `Etl.xml` and `Etl/`, Database),
+  listed in the [tools README](../../runtime/base-component/tools/README.md).
 
 ## The database selector
 
@@ -54,10 +54,15 @@ the source spec and runs the source again.
 | SQL (`db`, `sql`) | One `SELECT`, `WITH`, `VALUES` or `TABLE`, wrapped as `SELECT * FROM (sql) q`, run read only and audited | Only when every column is of one table, with its entity's whole primary key and `lastUpdatedStamp`, from a statement with no join, set operation, `DISTINCT`, `GROUP BY` or subquery in its `FROM` |
 | A file (`location`, `sheet`, `headerRow`, `format`, `delimiter`) | CSV, or XLSX, XLSM, XLSB, XLS or ODS. A sheet is cached per node (64 MB); a CSV is read for each call | No |
 
-- **Opening a source.** The screen opens an entity by name, a saved view, or a SQL result handed over by the SQL
-  screen's "Open in grid".
-- **File sources.** The services take them (the `type: "file"` source, `upload#GridFile`, `get#GridFileInfo`); the
-  screen does not offer them yet.
+- **Opening a source.** The screen opens an entity by name, a saved view, a SQL result handed over by the SQL
+  screen's "Open in grid", or a file.
+- **File sources.** File uploads a CSV or spreadsheet (`upload#GridFile`), or names a location. Then it picks the
+  sheet, the header row and the format (`get#GridFileInfo`), and the grid shows the file read only (the `type: "file"`
+  source).
+- **Load into…** (a file source only) loads the file through ETL, over the JSON transitions of `Etl.xml`:
+  - it matches the file's columns to a target's fields (`match#EtlFields`) and shows the first 200 rows converted, with
+    each field's error (`check#EtlSample`);
+  - then Save mapping keeps it as a saved mapping, Check checks the whole file with nothing written, and Load runs it.
 - **Where a file may come from.** Only the places ETL reads (see [ETL](#etl)). Uploads go to
   `dbresource://moqui/database/upload/<userId>/<uploadId>/<name>`, at most 100 MB, and `clean#GridUploads` (daily)
   removes them after seven days.
@@ -195,8 +200,36 @@ all actions on the Tools app. The services check both whatever calls them.
 
 ## ETL
 
-Mappings load files, SQL results and entity data into entities or services. The services (`EtlServices.xml`,
-`crates/moqui-tools/src/etl/`) are built. The ETL screens are not yet; `Etl.xml` is a placeholder left out of the menu.
+Mappings load files, SQL results and entity data into entities or services. The services are `EtlServices.xml` and
+`crates/moqui-tools/src/etl/`.
+
+**The screens** (`Etl.xml` and `Etl/`). `Etl.xml` also holds the JSON transitions that the mapping form and the grid's
+Load into… call.
+
+- **Mappings** (`Etl/Mappings.xml`): the saved mappings, found by description or target, with copy and delete.
+- **Mapping** (`Etl/Mapping.xml`, `Mapping.qvue`; read only in the terminal):
+  - the source, the target and the options;
+  - the source column to target field table, with each field's converted sample value and error (`check#EtlSample`, the
+    first 200 rows), and a test against another file;
+  - Save, Check (the whole source, nothing written), Run, Schedule, and the mapping's runs.
+  - An expression field needs `GROOVY_SHELL_WEB` and a SQL source `SQL_RUNNER_WEB`. Without them those inputs are
+    disabled.
+- **Schedule** (on the Mapping, the `etlSchedule` transition) makes a `ServiceJob` that calls `run#EtlMapping` with
+  the `mappingId`. See [Scheduling](#scheduling) below.
+  - The cron expression is checked first: one that does not parse, or is never due, is refused. The answer gives the
+    next run.
+  - The mapping is stored again, so the schedule gets the same checks as a change of the mapping. That limits it to the
+    mapping's owner or a `DATABASE_ADMIN` holder.
+  - The job is made paused. Its `mappingId` parameter and a `ServiceJobUser` of the mapping's owner (notified of each
+    run) are added, and only then is the job unpaused, so the scheduler never sees half a job. A failure removes what
+    was made.
+- **Runs** (`Etl/Runs.xml`, `get#EtlRuns`): the latest runs, newest first. These are the user's own, or everyone's with
+  `DATABASE_ADMIN`; with `mappingId`, one mapping's.
+- **Run** (`Etl/Run.xml`, `get#EtlRun`): the status and counts as the run goes, the first errors, and the error file
+  of every failed row as a download. Rerun (`rerun#EtlRun`, from `nextStartRow`; see below) is offered only when
+  `canRerun` says it would be taken.
+- **Value Maps** (`Etl/ValueMaps.xml`): the value maps, each changed or deleted by its owner or a `DATABASE_ADMIN`
+  holder.
 
 - **A mapping** (`moqui.etl.EtlMapping` and its `EtlMappingField` rows, or an inline map with the same names):
   - **the source:** an entity find, SQL on a group's database, a CSV or spreadsheet, or a flat record XML file;
@@ -261,7 +294,8 @@ Mappings load files, SQL results and entity data into entities or services. The 
 - **Owners:**
   - A mapping or value map is changed, copied over or deleted only by its owner or a `DATABASE_ADMIN` holder.
   - `get#EtlRuns` and `get#EtlRun` show the user's own runs, or every run with `DATABASE_ADMIN`.
-- **Scheduling:** a `ServiceJob` that calls `run#EtlMapping` with a `mappingId`.
+- <a id="scheduling"></a>**Scheduling:** a `ServiceJob` that calls `run#EtlMapping` with a `mappingId`. The
+  Mapping screen's Schedule makes one.
   - A cron run has no user signed in (see [Attack-Surface, Jobs](../security/Attack-Surface.md#jobs)), so the run signs
     in as the mapping's `ownerUserId` and then runs as that user. All of the owner's own checks apply: the Tools app,
     `GROOVY_SHELL_WEB`, `SQL_RUNNER_WEB`, the locations and the `ext:` gate.
@@ -303,13 +337,16 @@ Mappings load files, SQL results and entity data into entities or services. The 
     `ANALYZE TABLE` and `OPTIMIZE TABLE`.
   - `VACUUM FULL` and `CLUSTER` take an exclusive lock and need it allowed.
 - **Jobs**, and a job's page with its statements, progress, blockers and Cancel.
-- **Settings** (`get#DatabaseSettings`):
+- **Settings** (`Database/Settings.xml`, `get#DatabaseSettings`):
   - **the server's settings, read only:** `pg_settings` with source and pending restart, or `SHOW VARIABLES`.
   - **on the embedded cluster,** `shared_buffers`, `work_mem`, `maintenance_work_mem` and `effective_cache_size` also
-    show their conf attribute and whether the running value differs from it.
-  - The service is built; its screen is not yet.
-- **Connections:** the external databases (`find#`, `store#`, `delete#`, `test#DatabaseConnection`). The services are
-  built; the screen is not yet.
+    show their conf attribute and whether the running value differs from it. A restart of the server applies a changed
+    conf value.
+- **Connections** (`Database/Connections.xml`): the external databases (`find#`, `store#`, `delete#`,
+  `test#DatabaseConnection`); see [External databases](#external-databases).
+  - It is not in the menu. Overview and the Tools dashboard link to it ("External databases") only when the server
+    offers external databases to the user.
+  - Saving replaces a connection whole, under the password-clearing rule.
 - **Speed Test:** Java's entity speed test, as it was.
 
 ## External databases
@@ -402,8 +439,6 @@ services. The generic tools, entity REST, request loads, ETL targets and every e
 
 ## Not built
 
-- The ETL screens (mappings, runs, value maps, "Load into…" from the grid), the Settings and Connections screens, and
-  the grid's file source on the screen. Their services are built.
 - The spreadsheet features and the other items deferred by the plan:
   - saving grid edits to an external database;
   - SQL on the embedded cluster as a role without superuser;

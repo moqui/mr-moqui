@@ -12,13 +12,14 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The extractors of an ETL run (plans/Tools-Database.md §10.3): a CSV file streamed (`moqui_lib::etl::CsvExtractor`),
-//! a spreadsheet's sheet ([`SheetExtractor`], over `moqui_core::service::spreadsheet::read_sheet_bytes`), an entity
-//! find read a page at a time, a SQL query on an entity group's database run read only, and a flat record XML file.
-//! Each entry carries its row number under `ROW_NUMBER_KEY`. A file is read only from the places
-//! [`super::access`] allows; an entity source is not a restricted entity and its rows leave out the `UserAccount`
-//! password fields; a SQL source reads an entity group's database or an external connection (`ext:<id>`, through
-//! [`crate::ext::gate`] and its pool, the one vague error on any refusal), read only, and writes a `DbaSql` audit row.
+//! The extractors of an ETL run (plans/archive/Tools-Database.md §10.3): a CSV file streamed
+//! (`moqui_lib::etl::CsvExtractor`), a spreadsheet's sheet ([`SheetExtractor`], over
+//! `moqui_core::service::spreadsheet::read_sheet_bytes`), an entity find read a page at a time, a SQL query on an
+//! entity group's database run read only, and a flat record XML file. Each entry carries its row number under
+//! `ROW_NUMBER_KEY`. A file is read only from the places [`super::access`] allows; an entity source is not a restricted
+//! entity and its rows leave out the `UserAccount` password fields; a SQL source reads an entity group's database or an
+//! external connection (`ext:<id>`, through [`crate::ext::gate`] and its pool, the one vague error on any refusal),
+//! read only, and writes a `DbaSql` audit row.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;

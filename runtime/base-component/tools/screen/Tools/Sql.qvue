@@ -11,13 +11,13 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The SQL editor and its results (plans/Tools-Database.md §8, §7.5), served by Sql.xml in the qvue render mode; every
-    request goes to that screen's transitions (org.moqui.impl.DatabaseServices). The editor is m-code-editor in the
-    database's dialect, completing its tables and columns (get#SqlCatalog) and showing a table's entity on hover. Run takes
-    the statement at the cursor (Ctrl+Enter), the selection, or the whole script (Ctrl+Shift+Enter); each result set is a tab
-    in a read-only grid (Tabulator, css/DataGrid.css), the other statements a line each. Allow changes lists the statements
-    that may change data (classify#Sql) and runs them only once that is confirmed. The pure helpers are moqui.sql
-    (js/WebrootSql.js). -->
+<!-- The SQL editor and its results (plans/archive/Tools-Database.md §8, §7.5), served by Sql.xml in the qvue render
+    mode; every request goes to that screen's transitions (org.moqui.impl.DatabaseServices). The editor is m-code-editor
+    in the database's dialect, completing its tables and columns (get#SqlCatalog) and showing a table's entity on hover.
+    Run takes the statement at the cursor (Ctrl+Enter), the selection, or the whole script (Ctrl+Shift+Enter); each
+    result set is a tab in a read-only grid (Tabulator, css/DataGrid.css), the other statements a line each. Allow
+    changes lists the statements that may change data (classify#Sql) and runs them only once that is confirmed. The pure
+    helpers are moqui.sql (js/WebrootSql.js). -->
 <template><div class="q-pa-sm">
     <div class="row items-center q-col-gutter-sm q-mb-sm">
         <div class="col-12 col-sm-4 col-md-3">

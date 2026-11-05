@@ -13,12 +13,12 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
-    <!-- The Tools app's database administration (plans/Tools-Database.md), in crates/moqui-tools; the entities are in
-        framework/entity/DatabaseEntities.xml. A service that works on a database takes db: group:<groupName> for an
-        entity group's database (empty is the default group), or ext:<connectionId> for a moqui.database.DatabaseConnection,
-        which is refused with "Not available" on a production instance or without the DATABASE_EXTERNAL permission. No
-        Java counterpart. Each service refuses a user the Tools app's own authorization (TOOLS_APP) does not let view
-        component://tools/screen/Tools.xml, whatever calls it. -->
+    <!-- The Tools app's database administration (plans/archive/Tools-Database.md), in crates/moqui-tools; the entities
+        are in framework/entity/DatabaseEntities.xml. A service that works on a database takes db: group:<groupName> for
+        an entity group's database (empty is the default group), or ext:<connectionId> for a
+        moqui.database.DatabaseConnection, which is refused with "Not available" on a production instance or without the
+        DATABASE_EXTERNAL permission. No Java counterpart. Each service refuses a user the Tools app's own authorization
+        (TOOLS_APP) does not let view component://tools/screen/Tools.xml, whatever calls it. -->
     <service verb="get" noun="Capabilities" type="rust" location="moqui_tools::service::get_capabilities"
             transaction="ignore">
         <description>What the database db allows the Tools screens, and why the rest is not available ("needs the
@@ -52,7 +52,7 @@ along with this software (see the LICENSE.md file). If not, see
             DatabaseAudit row.</description>
     </service>
 
-    <!-- ========== Schema and jobs (plans/Tools-Database.md §5, §6, §7.3, §7.4) ========== -->
+    <!-- ========== Schema and jobs (plans/archive/Tools-Database.md §5, §6, §7.3, §7.4) ========== -->
     <!-- crates/moqui-tools/src/{schema,jobs,tables,activity}.rs. A refusal (not authorized, no DATABASE_ADMIN, an
         unknown group or job, bad input) is a message-facade error and no out parameters; a part that could not be read
         (a catalog view, progress) is named in reasons with the database's error, and the rest is answered. -->
@@ -318,7 +318,7 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <!-- ========== end Schema and jobs ========== -->
 
-    <!-- ========== SQL (plans/Tools-Database.md §8, §7.2 Queries, §7.5, §14; crates/moqui-tools/src/sql.rs and
+    <!-- ========== SQL (plans/archive/Tools-Database.md §8, §7.2 Queries, §7.5, §14; crates/moqui-tools/src/sql.rs and
         sql_service.rs) ==========
         The SQL services need SQL_RUNNER_WEB and authorization for all actions on the Tools app, checked in the service
         whatever calls it (list#DatabaseStatements and reset#DatabaseStatements need only the Tools app, the reset
@@ -493,7 +493,8 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="deleted" type="Long"/></out-parameters>
     </service>
 
-    <!-- ========== The data grid (plans/Tools-Database.md §9; crates/moqui-tools/src/grid.rs and grid_service.rs) ==========
+    <!-- ========== The data grid (plans/archive/Tools-Database.md §9; crates/moqui-tools/src/grid.rs and
+        grid_service.rs) ==========
         No state per grid: each call takes the source spec, source = {type: entity, entityName, conditions} (conditions
         are search-form inputs: field, field_op, field_not, field_ic, field_from, field_thru, field_period; none on a
         secret or encrypted field) or {type: sql, db, sql, keyColumns, stampColumn} (one SELECT, WITH, VALUES or TABLE,
@@ -653,7 +654,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="viewId" required="true"/></in-parameters>
     </service>
 
-    <!-- ========== External databases (plans/Tools-Database.md §4.3; crates/moqui-tools/src/ext.rs) ==========
+    <!-- ========== External databases (plans/archive/Tools-Database.md §4.3; crates/moqui-tools/src/ext.rs) ==========
         moqui.database.DatabaseConnection rows, used as db=ext:(connectionId) by the activity, table, statement stats,
         capabilities, SQL and grid SQL services (never schema, jobs, session cancel, table maintenance or entity
         sources). Every one of these services, and every connection service, refuses unless the instance is not a
@@ -721,7 +722,7 @@ along with this software (see the LICENSE.md file). If not, see
         <out-parameters><parameter name="databases" type="List"/></out-parameters>
     </service>
 
-    <!-- ========== Settings (plans/Tools-Database.md §4.4; crates/moqui-tools/src/settings.rs) ========== -->
+    <!-- ========== Settings (plans/archive/Tools-Database.md §4.4; crates/moqui-tools/src/settings.rs) ========== -->
     <service verb="get" noun="DatabaseSettings" type="rust" location="moqui_tools::settings::get_database_settings"
             transaction="ignore">
         <description>The settings of db (an entity group's database, or ext: through its gate) whose name holds filter,

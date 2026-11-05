@@ -12,11 +12,11 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The schema comparison (plans/Tools-Database.md 5.1): each entity's table against the database's catalog, as the
-//! table check would make it. Missing tables; missing, extra and differently typed columns; missing, extra and invalid
-//! indexes; missing and extra foreign keys; and, on Postgres, foreign keys whose columns no index leads with. The
-//! catalog is read in three queries per database (`moqui_db::sql::catalog`), not per table, and names are compared as
-//! the DDL builders make them. It reads only: what to do about a difference is the caller's.
+//! The schema comparison (plans/archive/Tools-Database.md 5.1): each entity's table against the database's catalog, as
+//! the table check would make it. Missing tables; missing, extra and differently typed columns; missing, extra and
+//! invalid indexes; missing and extra foreign keys; and, on Postgres, foreign keys whose columns no index leads with.
+//! The catalog is read in three queries per database (`moqui_db::sql::catalog`), not per table, and names are compared
+//! as the DDL builders make them. It reads only: what to do about a difference is the caller's.
 
 use std::collections::{HashMap, HashSet};
 

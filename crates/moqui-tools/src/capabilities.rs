@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! What a database allows the Tools screens, and why the rest is not available (plans/Tools-Database.md §4.1): probed
-//! once with the queries of [`crate::catalog`] and cached for [`CACHE_FOR`] per database. Each feature is a
+//! What a database allows the Tools screens, and why the rest is not available (plans/archive/Tools-Database.md §4.1):
+//! probed once with the queries of [`crate::catalog`] and cached for [`CACHE_FOR`] per database. Each feature is a
 //! [`Feature`] under one of the names of [`FEATURES`]; a probe that fails is logged and marks the features it decides
 //! as not available, with the error as the reason, and the others are still probed.
 

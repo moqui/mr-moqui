@@ -12,10 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! External databases (plans/Tools-Database.md §4.3, §15 step 7): on a dev instance SQL runs on a second database of
-//! the embedded cluster through a `DatabaseConnection` row, over TCP (a socket host is refused), read only as the row
-//! says; a stored password is cleared when its host changes; only the owner or a database admin changes a row; a
-//! user without `DATABASE_EXTERNAL`, and a production-purpose instance, get the one vague error.
+//! External databases (plans/archive/Tools-Database.md §4.3, §15 step 7): on a dev instance SQL runs on a second
+//! database of the embedded cluster through a `DatabaseConnection` row, over TCP (a socket host is refused), read only
+//! as the row says; a stored password is cleared when its host changes; only the owner or a database admin changes a
+//! row; a user without `DATABASE_EXTERNAL`, and a production-purpose instance, get the one vague error.
 
 #![cfg(all(unix, feature = "embedded-postgres"))]
 

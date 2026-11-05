@@ -416,7 +416,7 @@ fn a_lost_socket_marks_the_connection_lost_and_a_statement_error_does_not() {
 }
 
 /// A column definition names the table column it comes from (`org_table`, `org_name`), not the alias; an expression
-/// names none (plans/Tools-Database.md 9.5).
+/// names none (plans/archive/Tools-Database.md 9.5).
 #[test]
 fn a_column_origin_is_its_org_table_and_name() {
     let column = mysql::Column::new(ColumnType::MYSQL_TYPE_LONG)
@@ -488,7 +488,7 @@ fn on_a_server_catalog_queries_run_origins_are_kept_and_read_only_refuses_writes
 }
 
 /// On a server: the tables the check makes compare clean, foreign keys found by their columns whatever the server
-/// named them (plans/Tools-Database.md 5.1).
+/// named them (plans/archive/Tools-Database.md 5.1).
 #[test]
 fn on_a_server_the_schema_comparison_reads_what_the_check_made() {
     let Some(driver) = test_driver() else {

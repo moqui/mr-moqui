@@ -1,8 +1,12 @@
 # Tools: Database, Data and ETL
 
-November 5, 2026 — design and implementation plan. Steps 1–8 are built on the server side, with the Data, SQL,
-Schema and Database screens; the ETL, Settings and Connections screens and the grid's file source on the screen remain
-(the guide, [docs/tools/Database.md](../docs/tools/Database.md), says what was built). Database administration, the
+> Archived 2026-11-05: built. The guide is [docs/tools/Database.md](../../docs/tools/Database.md); what is still open
+> (the spreadsheet features of §12, the MySQL and MariaDB job-runner paths, and the rest) is in
+> [Remaining-Work](../Remaining-Work.md).
+
+November 5, 2026 — design and implementation plan, built: steps 1–8 on the server side and every screen (Data with
+the grid's file source and Load into…, SQL, Schema, ETL, and Database with Settings and Connections). The guide,
+[docs/tools/Database.md](../../docs/tools/Database.md), says what was built. Database administration, the
 data grid and ETL become the main part of the existing **Tools** app (`component://tools/screen/Tools.xml`, mounted as `tools`,
 menu-index 99), whose screens are reorganized around them. They cover:
 
@@ -819,7 +823,7 @@ sections. It is not named `moqui-database`, which is too close to the existing `
 and dialects). As `moqui-collab` does, it adds services (`CollabServices.xml:20`: `type="rust"
 location="moqui_collab::…"`) and submits a `moqui_core::extension::Extension` (`crates/moqui-core/src/extension.rs:35`),
 so an edit to it does not rebuild core. It is linked in every host build and left out of the browser. The checklist is
-[Crate-Split, Adding a crate](archive/Crate-Split.md#adding-a-crate): workspace members, the host feature and
+[Crate-Split, Adding a crate](Crate-Split.md#adding-a-crate): workspace members, the host feature and
 `use … as _`, `moq` `write_app_crate`, `scripts/check-packages.sh`, the Features table, the `moqui_tools::` prefix in
 `extension::LOCATIONS` (a private const, `extension.rs:79`), and a registry test against the service XML's locations.
 

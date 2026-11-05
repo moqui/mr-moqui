@@ -12,10 +12,11 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The tables of the chosen database (plans/Tools-Database.md §7.4, org.moqui.impl.DatabaseServices.get#TableStats):
-    sizes, row estimates from the catalog, dead rows and the last vacuum and analyze; Count gives one table's exact rows.
-    Maintenance of the selected tables is planned with plan#TableMaintenance as a pending database job, whose page shows
-    the statements before they run; VACUUM FULL and CLUSTER lock the table and need that confirmed. Needs DATABASE_ADMIN. -->
+<!-- The tables of the chosen database (plans/archive/Tools-Database.md §7.4,
+    org.moqui.impl.DatabaseServices.get#TableStats): sizes, row estimates from the catalog, dead rows and the last
+    vacuum and analyze; Count gives one table's exact rows. Maintenance of the selected tables is planned with
+    plan#TableMaintenance as a pending database job, whose page shows the statements before they run; VACUUM FULL and
+    CLUSTER lock the table and need that confirmed. Needs DATABASE_ADMIN. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Tables" default-menu-index="4">
 

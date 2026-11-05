@@ -12,11 +12,11 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- One database job (plans/Tools-Database.md §6): its statements as planned, then as they run, with each running
-    statement's progress and the sessions blocking it (get#DatabaseJobStatus, asked every 2 seconds while it runs). Run
-    starts exactly the planned statements (run#DatabaseJob, on a worker); Cancel stops it (cancel#DatabaseJob); a blocker
-    can be cancelled or ended. Running, cancelling and ending need DATABASE_ADMIN. The component is JobDetail.qvue; the
-    terminal twin is JobDetailTui.xml. -->
+<!-- One database job (plans/archive/Tools-Database.md §6): its statements as planned, then as they run, with each
+    running statement's progress and the sessions blocking it (get#DatabaseJobStatus, asked every 2 seconds while it
+    runs). Run starts exactly the planned statements (run#DatabaseJob, on a worker); Cancel stops it
+    (cancel#DatabaseJob); a blocker can be cancelled or ended. Running, cancelling and ending need DATABASE_ADMIN. The
+    component is JobDetail.qvue; the terminal twin is JobDetailTui.xml. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Job" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
 

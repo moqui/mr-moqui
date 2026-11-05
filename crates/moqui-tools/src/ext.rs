@@ -12,8 +12,8 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! External databases (plans/Tools-Database.md §4.3, §1 decision 4): `moqui.database.DatabaseConnection` rows, reached
-//! as `db=ext:<connectionId>`, never on a production instance.
+//! External databases (plans/archive/Tools-Database.md §4.3, §1 decision 4): `moqui.database.DatabaseConnection` rows,
+//! reached as `db=ext:<connectionId>`, never on a production instance.
 //!
 //! - **The gate** ([`gate`]): not production (`moqui_core::web::is_production`) and the `DATABASE_EXTERNAL` permission.
 //!   Every refusal is the one vague [`crate::NOT_AVAILABLE`], naming neither cause, and on production a connection row

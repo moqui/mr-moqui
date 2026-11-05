@@ -13,10 +13,10 @@
  */
 
 //! The catalog queries of the schema comparison (`EntityDbMeta::compare`), per dialect, beside the DDL builders whose
-//! names and types they are compared with (plans/Tools-Database.md 4.2, 5.1): the tables' columns with their types,
-//! the indexes and the foreign keys of the current schema, each in one query for the whole schema. Also the lookups of
-//! a SQL result's column origins (9.5). Each query's columns are aliased in lower case, so a row is read by name on
-//! every database.
+//! names and types they are compared with (plans/archive/Tools-Database.md 4.2, 5.1): the tables' columns with their
+//! types, the indexes and the foreign keys of the current schema, each in one query for the whole schema. Also the
+//! lookups of a SQL result's column origins (9.5). Each query's columns are aliased in lower case, so a row is read by
+//! name on every database.
 
 use moqui_lib::object::Value;
 

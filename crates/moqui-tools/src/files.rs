@@ -12,14 +12,14 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The data grid's file source (plans/Tools-Database.md §9.1): CSV, or XLSX, XLSM, XLSB, XLS or ODS through calamine,
-//! from a resource location or an upload, read only from the places `etl::access` allows (the caller's own uploads,
-//! the import roots, any `dbresource://` for `DATABASE_ADMIN`). A sheet is read whole (bounded by `MAX_SHEET_CELLS`)
-//! and kept in a per-node LRU cache keyed by location, last-modified time, sheet and header row, at most
-//! [`CACHE_BYTES`] by an estimate of its memory; a CSV is streamed on each call. Columns are named and rows numbered
-//! as an ETL run names and numbers them (`moqui_lib::etl::unique_column_names`, the header row a line of the file).
-//! [`file_columns`], [`file_rows`], [`file_count`] and [`file_query`] are what `grid.rs` calls for a `type: "file"`
-//! source; `clean#GridUploads` removes uploads after seven days and the grid's export files after a day.
+//! The data grid's file source (plans/archive/Tools-Database.md §9.1): CSV, or XLSX, XLSM, XLSB, XLS or ODS through
+//! calamine, from a resource location or an upload, read only from the places `etl::access` allows (the caller's own
+//! uploads, the import roots, any `dbresource://` for `DATABASE_ADMIN`). A sheet is read whole (bounded by
+//! `MAX_SHEET_CELLS`) and kept in a per-node LRU cache keyed by location, last-modified time, sheet and header row, at
+//! most [`CACHE_BYTES`] by an estimate of its memory; a CSV is streamed on each call. Columns are named and rows
+//! numbered as an ETL run names and numbers them (`moqui_lib::etl::unique_column_names`, the header row a line of the
+//! file). [`file_columns`], [`file_rows`], [`file_count`] and [`file_query`] are what `grid.rs` calls for a `type:
+//! "file"` source; `clean#GridUploads` removes uploads after seven days and the grid's export files after a day.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::io::Cursor;

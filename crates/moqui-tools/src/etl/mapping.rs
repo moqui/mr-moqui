@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! An ETL mapping (plans/Tools-Database.md §10.2): its source, its target and its fields, read from the
+//! An ETL mapping (plans/archive/Tools-Database.md §10.2): its source, its target and its fields, read from the
 //! `moqui.etl.EtlMapping` rows or from an inline map with the same names, as a service takes it.
 
 use std::collections::{BTreeMap, HashMap};

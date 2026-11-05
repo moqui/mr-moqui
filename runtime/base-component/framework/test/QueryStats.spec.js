@@ -1,4 +1,5 @@
-// Statement stats from the entity facade (plans/Tools-Database.md §7.1): on in the dev conf (entity-facade@query-stats).
+// Statement stats from the entity facade (plans/archive/Tools-Database.md §7.1): on in the dev conf
+// (entity-facade@query-stats).
 const S = 'org.moqui.impl.BasicServices.get#GeoRegionsForDropDown'
 // A Tools screen's transition calls the database services with the screen's inherited TOOLS_APP authorization;
 // outside a screen the spec stands in for that with authorization disabled.

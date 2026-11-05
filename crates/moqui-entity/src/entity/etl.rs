@@ -34,10 +34,10 @@ use crate::transaction::{TransactionAttribute, TransactionManager};
 /// manager after another, with no two-phase commit, as everywhere in this port.
 ///
 /// With [`Self::batch_size`] the transactions it began are committed after every N entries and begun again; an entry
-/// that fails rolls back its batch only, and the next entry starts a new one (plans/Tools-Database.md §10.3, decision
-/// 7). With [`EtlTransactions::JoinCaller`] it begins nothing: each write joins the caller's transaction, as a service
-/// call does, and an error marks that transaction rollback-only. [`Self::writer`] replaces the entity write, for a
-/// loader that calls a service per row.
+/// that fails rolls back its batch only, and the next entry starts a new one (plans/archive/Tools-Database.md §10.3,
+/// decision 7). With [`EtlTransactions::JoinCaller`] it begins nothing: each write joins the caller's transaction, as a
+/// service call does, and an error marks that transaction rollback-only. [`Self::writer`] replaces the entity write,
+/// for a loader that calls a service per row.
 pub struct EtlLoader {
     facade: EntityFacade,
     began: Vec<TransactionManager>,

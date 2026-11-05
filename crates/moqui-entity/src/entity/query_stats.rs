@@ -12,9 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Statement stats of this instance, Java's Query Stats (plans/Tools-Database.md §7.1): per statement text, the hits,
-//! errors, minimum, maximum, total and sum of squares of the durations, the first entity, and counts by the artifact
-//! that ran it (a screen, service or REST path). On when the conf's `entity-facade@query-stats` is `true`
+//! Statement stats of this instance, Java's Query Stats (plans/archive/Tools-Database.md §7.1): per statement text, the
+//! hits, errors, minimum, maximum, total and sum of squares of the durations, the first entity, and counts by the
+//! artifact that ran it (a screen, service or REST path). On when the conf's `entity-facade@query-stats` is `true`
 //! ([`configure`], read once when the facade opens); off, recording costs one relaxed load.
 //!
 //! The key is the statement text through [`statement_key`]: literals become `?` and whitespace is collapsed, so SQL with

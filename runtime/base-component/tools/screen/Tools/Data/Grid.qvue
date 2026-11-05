@@ -11,16 +11,17 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The data grid (plans/Tools-Database.md §9.3), served by Grid.xml in the qvue render mode: Tabulator (libs/tabulator,
-    themed by css/DataGrid.css) with its rows loaded a page at a time as it scrolls, sorted and filtered on the server, every
-    request through moqui.request (the session token, the shell's errors). Edits are marked until saved; undo and redo, range
-    copy and paste, new and deleted rows; Save sends only the edited fields of each row with its stamp, in one transaction,
-    and a refused row keeps its edits with the field errors on its cells. The source is an entity (entityName or
-    selectedEntity, the other URL parameters its conditions), a saved view (viewId), or a SQL result the SQL screen hands
-    over (sqlKey); DataDocument.<id> and DbViewEntity sources are read only, with Related opening Data › Browse. File opens
-    an uploaded or placed CSV or spreadsheet (its sheet and header row), read only, and Load into… maps its columns to a
-    target's fields (match#EtlFields), shows the first 200 rows converted (check#EtlSample), and saves the mapping, checks
-    the whole file or loads it, over the JSON transitions of Tools/Etl (Etl.xml). -->
+<!-- The data grid (plans/archive/Tools-Database.md §9.3), served by Grid.xml in the qvue render mode: Tabulator
+    (libs/tabulator, themed by css/DataGrid.css) with its rows loaded a page at a time as it scrolls, sorted and
+    filtered on the server, every request through moqui.request (the session token, the shell's errors). Edits are
+    marked until saved; undo and redo, range copy and paste, new and deleted rows; Save sends only the edited fields of
+    each row with its stamp, in one transaction, and a refused row keeps its edits with the field errors on its cells.
+    The source is an entity (entityName or selectedEntity, the other URL parameters its conditions), a saved view
+    (viewId), or a SQL result the SQL screen hands over (sqlKey); DataDocument.<id> and DbViewEntity sources are read
+    only, with Related opening Data › Browse. File opens an uploaded or placed CSV or spreadsheet (its sheet and header
+    row), read only, and Load into… maps its columns to a target's fields (match#EtlFields), shows the first 200 rows
+    converted (check#EtlSample), and saves the mapping, checks the whole file or loads it, over the JSON transitions of
+    Tools/Etl (Etl.xml). -->
 <template><div class="q-pa-sm">
     <div class="row items-center q-col-gutter-sm q-mb-sm">
         <div class="col-12 col-sm-5 col-md-4">

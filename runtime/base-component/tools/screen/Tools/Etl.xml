@@ -12,9 +12,10 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- Mappings that load a file, a query result or entity data into an entity or a service (plans/Tools-Database.md §10.4):
-    Mappings, a Mapping's form (Mapping.qvue), Runs, a Run and Value maps, over org.moqui.impl.EtlServices. The JSON
-    transitions here serve Mapping.qvue and the data grid's "Load into…"; every write is a POST. -->
+<!-- Mappings that load a file, a query result or entity data into an entity or a service
+    (plans/archive/Tools-Database.md §10.4): Mappings, a Mapping's form (Mapping.qvue), Runs, a Run and Value maps, over
+    org.moqui.impl.EtlServices. The JSON transitions here serve Mapping.qvue and the data grid's "Load into…"; every
+    write is a POST. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="ETL" default-menu-index="5" menu-image="sym_o_move_down" menu-image-type="icon">
     <always-actions>

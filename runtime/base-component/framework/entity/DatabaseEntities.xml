@@ -12,19 +12,20 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The Tools app's database administration, data grid and ETL (plans/Tools-Database.md): its jobs, saved queries and
-    grid views, the audit of what ran outside the entity facade, the connections to databases the entity groups do not
-    use, and the ETL mappings and runs. The services are org.moqui.impl.DatabaseServices (crates/moqui-tools); the
-    enumerations and status items are in framework/data/DatabaseSetupData.xml. No Java counterpart. -->
+<!-- The Tools app's database administration, data grid and ETL (plans/archive/Tools-Database.md): its jobs, saved
+    queries and grid views, the audit of what ran outside the entity facade, the connections to databases the entity
+    groups do not use, and the ETL mappings and runs. The services are org.moqui.impl.DatabaseServices
+    (crates/moqui-tools); the enumerations and status items are in framework/data/DatabaseSetupData.xml. No Java
+    counterpart. -->
 <entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
 
     <!-- ========== moqui.database ========== -->
 
     <entity entity-name="DatabaseJob" package="moqui.database" use="transactional" cache="never">
         <description>DDL or maintenance that runs outside an HTTP request, one statement after another, each on a
-            connection of its own (plans/Tools-Database.md §6). db is group:&lt;groupName&gt; or ext:&lt;connectionId&gt;.
-            instanceId is the instance that runs it: a job left Running under it when the instance starts again is marked
-            Failed.</description>
+            connection of its own (plans/archive/Tools-Database.md §6). db is group:&lt;groupName&gt; or
+            ext:&lt;connectionId&gt;. instanceId is the instance that runs it: a job left Running under it when the
+            instance starts again is marked Failed.</description>
         <field name="jobId" type="id" is-pk="true"/>
         <field name="db" type="text-medium"/>
         <field name="description" type="text-medium"/>
@@ -164,7 +165,7 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <!-- ========== moqui.etl ========== -->
-    <!-- The ETL mappings and their runs (plans/Tools-Database.md §10.2), run by org.moqui.impl.EtlServices
+    <!-- The ETL mappings and their runs (plans/archive/Tools-Database.md §10.2), run by org.moqui.impl.EtlServices
         (crates/moqui-tools/src/etl). -->
     <entity entity-name="EtlMapping" package="moqui.etl" use="configuration" cache="never">
         <description>A saved mapping from a source to a target. The source: an entity find (sourceEntityName with

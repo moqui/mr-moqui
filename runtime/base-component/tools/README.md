@@ -8,7 +8,7 @@ of `data/ToolsSecurityData.xml` and `data/MonitoringSecurityData.xml`, granted t
 
 `screen/Tools.xml`, grouped by section. The guide to Data, SQL, Schema, ETL and Database is
 [docs/tools/Database.md](../../../docs/tools/Database.md); the design is
-[plans/Tools-Database.md](../../../plans/Tools-Database.md).
+[plans/archive/Tools-Database.md](../../../plans/archive/Tools-Database.md).
 
 | Screen | What it is |
 | --- | --- |

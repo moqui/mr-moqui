@@ -200,7 +200,7 @@ pub(super) fn check_file(
 }
 
 /// Check one record of `entity` against the database, inside a [`check_with`] or [`check_info_with`] body: an ETL
-/// check's diff (plans/Tools-Database.md §10.3). Outside a check it does nothing.
+/// check's diff (plans/archive/Tools-Database.md §10.3). Outside a check it does nothing.
 ///
 /// # Errors
 ///

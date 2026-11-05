@@ -85,7 +85,7 @@ pub(super) struct Column {
 }
 
 /// The result columns of a statement, and the table column each comes from (`RowDescription`'s table oid and
-/// attribute number, plans/Tools-Database.md 9.5), both shared by its rows.
+/// attribute number, plans/archive/Tools-Database.md 9.5), both shared by its rows.
 #[derive(Clone)]
 pub(super) struct Columns {
     pub(super) list: Arc<[Column]>,

@@ -12,9 +12,9 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `moqui.database.DatabaseAudit` (plans/Tools-Database.md §14.2): a row for what ran outside the entity facade, written
-//! in a transaction of its own so it survives a rollback of what it records. A row that cannot be written is logged and
-//! the action goes on.
+//! `moqui.database.DatabaseAudit` (plans/archive/Tools-Database.md §14.2): a row for what ran outside the entity
+//! facade, written in a transaction of its own so it survives a rollback of what it records. A row that cannot be
+//! written is logged and the action goes on.
 //!
 //! The rows are this module's to write: the read fence does not allow the entity (a fenced agent could otherwise
 //! change or delete audit rows), so the writes here lift it ([`moqui_core::entity::fence::lift`]), which is the trusted

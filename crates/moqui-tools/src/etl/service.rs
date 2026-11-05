@@ -12,12 +12,12 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `org.moqui.impl.EtlServices` (plans/Tools-Database.md §10, §14.1): running a mapping (a job on the worker pool, or
-//! here with `wait`), the check of a file's first rows for "Load into…", matching columns to target fields, storing,
-//! copying and deleting mappings and value maps, the runs, and `load#SpreadsheetEntity`'s inline mapping. A refusal
-//! is a message-facade error and no out parameters. Writes, checks and runs need authorization for all actions on the
-//! Tools app; a SQL source also needs `SQL_RUNNER_WEB`, and an `expression` field `GROOVY_SHELL_WEB`. A run is the
-//! user's own, with authorization on, also on a worker or in a ServiceJob ([`super::access::run_as_user`]). Only a
+//! `org.moqui.impl.EtlServices` (plans/archive/Tools-Database.md §10, §14.1): running a mapping (a job on the worker
+//! pool, or here with `wait`), the check of a file's first rows for "Load into…", matching columns to target fields,
+//! storing, copying and deleting mappings and value maps, the runs, and `load#SpreadsheetEntity`'s inline mapping. A
+//! refusal is a message-facade error and no out parameters. Writes, checks and runs need authorization for all actions
+//! on the Tools app; a SQL source also needs `SQL_RUNNER_WEB`, and an `expression` field `GROOVY_SHELL_WEB`. A run is
+//! the user's own, with authorization on, also on a worker or in a ServiceJob ([`super::access::run_as_user`]). Only a
 //! mapping's owner, or a `DATABASE_ADMIN` holder, may change, copy over or delete it.
 
 use std::collections::BTreeMap;
