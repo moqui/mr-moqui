@@ -1372,7 +1372,12 @@
             explorePanel(){this.menu=false;const url=report.exploreUrl(this.panel,{filters:this.filters,range:this.range});if(url)report.navigate(url);},
             async changePanel(action){
                 this.menu=false;
-                if(action==='removePanel' && root.confirm && !root.confirm('Remove the panel '+(this.title || this.panel.title || this.panelId)+' from this dashboard? A new version is saved; an earlier version can be restored.'))return;
+                if(action==='removePanel'){
+                    const message='Remove the panel '+(this.title || this.panel.title || this.panelId)+' from this dashboard? A new version is saved; an earlier version can be restored.';
+                    // the shell's in-app confirmation where there is one (qvt), else the browser's
+                    const confirmed=moqui.confirmAction ? await moqui.confirmAction(message) : (!root.confirm || root.confirm(message));
+                    if(!confirmed)return;
+                }
                 this.busy=true;this.actionError='';
                 try {
                     const result=await moqui.request('/apps/dashboards/Dashboard/'+action,{method:'POST',params:{definitionId:this.dashboardId,panelId:this.sourcePanelId(),moquiSessionToken:moqui.sessionToken || ''}});

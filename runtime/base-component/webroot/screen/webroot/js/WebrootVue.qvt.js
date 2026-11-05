@@ -7293,19 +7293,21 @@
                 const now = lt.place(this.known, this.children, key);
                 if (now.parent === target.parent && now.previous === target.previous) return;
                 const tree = this.tree;
-                if (tree.confirmMove) {
-                    const column = (tree.columns || [])[0];
-                    const label = (at) => !at ? lvLocalize("Top level") : this.known[at] && column
-                        ? column.fields.map((field) => moqui.listViews.text(this.known[at].row, field)).filter(Boolean).join(" / ") || at : at;
-                    const message = lvLocalize("Move") + ' "' + label(key) + '" ' + lvLocalize("from") + ' "' + label(now.parent)
-                        + '" ' + lvLocalize("to") + ' "' + label(target.parent) + '"?';
-                    if (!root.confirm(message)) return;
-                }
-                const params = Object.assign({}, tree.parameters || {}, moqui.listViews.keyParams(this.known[key].row, tree.keyFields),
-                    { [tree.parentField]: target.parent || "", previousSiblingId: target.previous || "" });
-                // the new parent open when the list loads again
-                if (target.parent) this.setOpen(target.parent, true);
-                this.post(tree.transition, params).then((ok) => { if (ok) this.$emit("moved"); });
+                const move = () => {
+                    const params = Object.assign({}, tree.parameters || {}, moqui.listViews.keyParams(this.known[key].row, tree.keyFields),
+                        { [tree.parentField]: target.parent || "", previousSiblingId: target.previous || "" });
+                    // the new parent open when the list loads again
+                    if (target.parent) this.setOpen(target.parent, true);
+                    return this.post(tree.transition, params).then((ok) => { if (ok) this.$emit("moved"); });
+                };
+                if (!tree.confirmMove) return move();
+                const column = (tree.columns || [])[0];
+                const label = (at) => !at ? lvLocalize("Top level") : this.known[at] && column
+                    ? column.fields.map((field) => moqui.listViews.text(this.known[at].row, field)).filter(Boolean).join(" / ") || at : at;
+                const message = lvLocalize("Move") + ' "' + label(key) + '" ' + lvLocalize("from") + ' "' + label(now.parent)
+                    + '" ' + lvLocalize("to") + ' "' + label(target.parent) + '"?';
+                // the in-app confirmation, in the dialog stack like the others; only Confirm moves the row
+                return moqui.confirmAction(message).then((confirmed) => confirmed ? move() : undefined);
             },
             // a drag starts from a row's own area, not from a control of it (a field keeps its text selection)
             arm(event, entry) { this.armed = this.canMove && !entry.muted && !moqui.listViews.onControl(event.target, event.currentTarget) ? entry.key : ""; },
@@ -9801,7 +9803,10 @@
                 if (resp.secondFactorRequired) this.reLoginMfaData = resp;
                 else if (resp.loggedIn) this.reLoginPostLogin();
             },
-            reLoginReload() { if (root.confirm("Reload page? All changes will be lost.")) root.location.href = this.currentLinkUrl; },
+            reLoginReload() {
+                moqui.confirmAction(localized("Reload page? All changes will be lost."))
+                    .then((confirmed) => { if (confirmed) root.location.href = this.currentLinkUrl; });
+            },
             reLoginSendOtp(factorId) {
                 moqui.request(this.appRootPath + "/rest/sendOtp", { method: "POST", params: { moquiSessionToken: this.moquiSessionToken, factorId } })
                     .then((result) => { if (result.json) moqui.notifyMessages(result.json.messages, result.json.errors, result.json.validationErrors); }, moqui.handleAjaxError);

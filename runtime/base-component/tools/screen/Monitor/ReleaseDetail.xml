@@ -13,6 +13,12 @@
     </transition>
     <actions><script><![CDATA[
         incidentAllowed = ec.user.hasPermission('MONITOR_INCIDENT')
+        // Release and error times come as epoch milliseconds or date text; show them in the user's time zone.
+        const displayTime = value => {
+            if (value == null || value === '') return ec.l10n.localize('Not recorded')
+            const date = new Date(/^-?\d+$/.test(String(value)) ? Number(value) : value)
+            return Number.isNaN(date.getTime()) ? String(value) : ec.l10n.format(date, 'yyyy-MM-dd HH:mm:ss')
+        }
         regressionList = []
         errorList = []
         releaseInfo = {}
@@ -20,13 +26,15 @@
             // Decimals from the entities are not JavaScript numbers.
             const num = value => value == null ? null : typeof value == 'object' && value.toNumber ? value.toNumber() : Number(value)
             const result = ec.service.sync().name('org.moqui.monitor.MonitorServices.get#Release').parameters({serviceName, version}).call()
-            releaseInfo = result.release || {}
+            releaseInfo = Object.assign({}, result.release || {})
+            releaseInfo.releasedText = displayTime(releaseInfo.releasedDate)
             const shown = (metric, value) => value == null ? '' : metric == 'latency_p95' ? num(value).toFixed(3) + ' s' : (num(value) * 100).toFixed(2) + '%'
             regressionList = (result.regressions || []).map(row => Object.assign({}, row, {
                 change: shown(row.metric, row.baselineValue) + ' → ' + shown(row.metric, row.candidateValue),
                 ratio: row.magnitude == null ? '' : num(row.magnitude).toFixed(1) + 'x',
                 confident: row.confidence == null ? '' : (num(row.confidence) * 100).toFixed(1) + '%'}))
-            errorList = result.newErrors || []
+            errorList = (result.newErrors || []).map(row => Object.assign({}, row, {firstSeenText: displayTime(row.firstSeen),
+                errorText: row.type || row.message || ec.l10n.localize('Error') + ' ' + String(row.fingerprint || '').slice(0, 12)}))
         }
     ]]></script></actions>
     <widgets>
@@ -34,32 +42,66 @@
         <section name="NotAllowed" condition="!incidentAllowed"><widgets>
             <label text="Releases need the MONITOR_INCIDENT permission." type="p"/>
         </widgets><fail-widgets>
-            <label text="Revision ${releaseInfo.revision || ''}, released ${releaseInfo.releasedDate || ''}${releaseInfo.attributionUncertain ? ' (instance identity uncertain)' : ''}" type="p"/>
-            <link url="compare" text="Compare with ${releaseInfo.previousVersion || ''}" condition="releaseInfo.previousVersion" parameter-map="{leftVersion:releaseInfo.previousVersion, rightVersion:version}"/>
-            <form-list name="RegressionList" list="regressionList" skip-form="true">
-                <field name="metric"><default-field title="Metric"><display/></default-field></field>
-                <field name="change"><default-field title="Baseline → candidate"><display/></default-field></field>
-                <field name="ratio"><default-field title="Change"><display/></default-field></field>
-                <field name="confident"><default-field title="Confidence"><display/></default-field></field>
-                <field name="severity"><default-field title="Severity"><display/></default-field></field>
-                <field name="dataQuality"><default-field title="Data"><display/></default-field></field>
-                <field name="locality"><default-field title="Where"><display/></default-field></field>
-                <field name="affectedInstances"><default-field title="Affected"><display/></default-field></field>
-                <field name="statusId"><default-field title="Status"><display/></default-field></field>
-                <field name="incidentId"><default-field title="Incident">
-                    <link url="incident" text="${incidentId || ''}" condition="incidentId" parameter-map="{incidentId:incidentId}" link-type="anchor"/>
-                </default-field></field>
-                <field name="dismiss"><default-field title="">
-                    <link url="dismissRegression" text="Dismiss" condition="statusId == 'Open'" parameter-map="{regressionId:regressionId, serviceName:serviceName, version:version}"/>
-                </default-field></field>
-            </form-list>
-            <label text="Error groups first seen since this release" type="h5"/>
-            <form-list name="NewErrorList" list="errorList" skip-form="true">
-                <field name="type"><default-field title="Error"><link url="error" text="${type || fingerprint}" parameter-map="{fingerprint:fingerprint}" link-type="anchor"/></default-field></field>
-                <field name="message"><default-field title="Message"><display/></default-field></field>
-                <field name="firstSeen"><default-field title="First seen"><display/></default-field></field>
-                <field name="count"><default-field title="Count"><display/></default-field></field>
-            </form-list>
+            <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[<div style="width:100%;max-width:1600px">]]></text>
+                <text type="tui" template="false">[]</text></render-mode>
+            <container-box><box-header title="Release"/><box-toolbar>
+                <link url="compare" text="Compare with ${releaseInfo.previousVersion || ''}" condition="releaseInfo.previousVersion" parameter-map="{leftVersion:releaseInfo.previousVersion, rightVersion:version}"/>
+            </box-toolbar><box-body>
+                <container-row>
+                    <row-col md="3"><label text="Revision" type="strong"/></row-col>
+                    <row-col md="9"><label text="${releaseInfo.revision || ec.l10n.localize('Not recorded')}" style="m-wrap-anywhere"/></row-col>
+                </container-row>
+                <container-row>
+                    <row-col md="3"><label text="Released" type="strong"/></row-col>
+                    <row-col md="9"><label text="${releaseInfo.releasedText} (${ec.user.timeZone})"/></row-col>
+                </container-row>
+                <container-row>
+                    <row-col md="3"><label text="Previous version" type="strong"/></row-col>
+                    <row-col md="9"><label text="${releaseInfo.previousVersion || ec.l10n.localize('None recorded')}"/></row-col>
+                </container-row>
+                <label text="The instance identity of this release is uncertain, so its regressions may mix instances." type="p" style="text-warning" condition="releaseInfo.attributionUncertain"/>
+            </box-body></container-box>
+            <container-box><box-header title="Regressions against the previous version"/><box-body>
+                <section name="RegressionsFound" condition="regressionList.length"><widgets>
+                    <form-list name="RegressionList" list="regressionList" skip-form="true">
+                        <field name="metric"><default-field title="Metric"><display/></default-field></field>
+                        <field name="change"><default-field title="Baseline → candidate"><display/></default-field></field>
+                        <field name="ratio"><default-field title="Change"><display/></default-field></field>
+                        <field name="confident"><default-field title="Confidence"><display/></default-field></field>
+                        <field name="severity"><default-field title="Severity"><display/></default-field></field>
+                        <field name="dataQuality"><default-field title="Data"><display/></default-field></field>
+                        <field name="locality"><default-field title="Where"><display/></default-field></field>
+                        <field name="affectedInstances"><default-field title="Affected"><display/></default-field></field>
+                        <field name="statusId"><default-field title="Status"><display/></default-field></field>
+                        <field name="incidentId"><default-field title="Incident">
+                            <link url="incident" text="${incidentId || ''}" condition="incidentId" parameter-map="{incidentId:incidentId}" link-type="anchor"/>
+                        </default-field></field>
+                        <field name="dismiss"><default-field title="">
+                            <link url="dismissRegression" text="Dismiss" condition="statusId == 'Open'" parameter-map="{regressionId:regressionId, serviceName:serviceName, version:version}"/>
+                        </default-field></field>
+                    </form-list>
+                </widgets><fail-widgets>
+                    <label text="No regressions are recorded for this release. The detector compares it with the previous version once both have enough traffic; a release without a previous version has nothing to compare." type="p"/>
+                </fail-widgets></section>
+            </box-body></container-box>
+            <container-box><box-header title="Error groups first seen since this release"/><box-body>
+                <section name="NewErrorsFound" condition="errorList.length"><widgets>
+                    <form-list name="NewErrorList" list="errorList" skip-form="true">
+                        <field name="type"><default-field title="Error"><link url="error" text="${errorText}" style="m-wrap-anywhere" parameter-map="{fingerprint:fingerprint}" link-type="anchor"/></default-field></field>
+                        <field name="message"><default-field title="Message"><display style="m-wrap-anywhere"/></default-field></field>
+                        <field name="firstSeen"><default-field title="First seen"><display text="${firstSeenText}"/></default-field></field>
+                        <field name="count"><default-field title="Count"><display/></default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="type"/><field-ref name="message"/></column>
+                            <column><field-ref name="firstSeen"/><field-ref name="count"/></column>
+                        </columns>
+                    </form-list>
+                </widgets><fail-widgets>
+                    <label text="No new error groups have appeared since this release started." type="p"/>
+                </fail-widgets></section>
+            </box-body></container-box>
+            <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[</div>]]></text>
+                <text type="tui" template="false">[]</text></render-mode>
         </fail-widgets></section>
     </widgets>
 </screen>

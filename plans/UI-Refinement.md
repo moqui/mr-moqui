@@ -1445,6 +1445,34 @@ again against the merged sources before it was applied; the corrections that rev
 - Observed, not changed: the browser pane refuses the push service-worker registration (`/sw.js` serves normally),
   which logs "An unknown error occurred when fetching the script".
 
+### Batch 16 — the remaining open findings
+
+- UI-084: Replays has Find replays and Replays sections in the 1600px workspace, user/visit filters in columns, times
+  in the user's zone, phone columns, and distinct empty states: none recorded (with where replay is enabled) and no
+  match for the filters. ReplayDetail shows the same readable times. Live: both empty states at 1920.
+- UI-085: Release Detail groups Release (revision, released time in the user's zone, previous version, uncertain
+  attribution), Regressions against the previous version and Error groups first seen, each with an explanation when
+  empty; error rows are labelled by type or message rather than by fingerprint. Live: moqui 0.1.0.
+- UI-016: an empty Deployed list says there is no deployment history and that the started components run as usual.
+- UI-017: the appearance token inventory (`SURFACE_TOKENS`) lists the semantic text tokens (positive, warning, info,
+  secondary, accent) beside negative-text, so the color editor offers them; Qvt-Client.md lists them.
+- UI-033: Check a Quota with no user says to enter one; the cost names its currency when the usage rows share one,
+  "mixed currencies" when not, and the models' price currency when there are no rows. Live: empty and EX_JOHN_DOE.
+- UI-035: the Entity List puts Find entities first and Database maintenance after it, with a note on what changes the
+  schema; the edit form is bounded to 960px; Edit's "Back to Find" returns to the last search of that entity (kept in
+  the session by Find). Live: Enumeration enumTypeId=DataSourceType → Edit → Back to Find keeps the filter.
+- Native confirmations: the list-tree move, the re-login reload, the dashboard panel Remove and declared extension
+  actions now use the in-app confirmation (`moqui.confirmAction`); WebrootReport and WebrootExt keep the browser's
+  where no qvt shell is loaded. The views regression and the Monitoring acceptance Remove step use the in-app dialog.
+- S03 follow-up: a form the user may not submit (Material and Standard) says so above its disabled fields. Live: as
+  `sec.view.only`, Create User Account shows the note over 12 disabled fields.
+- Logs histogram (batch 2 observation): not reproduced. The trace link's `trace_id:<id>` over 1 h and over its 7-day
+  range, and `trace_id:*` with 37 records, each draw a matching Documents over time chart; both queries share the
+  dataset, range, query and filters. No change.
+- Verification: core screen tests 409, framework template specs 42/42, AdminOverview 13/13, webroot client 396/396
+  (40.5/44 s), screen lint (0 parse failures). Changed acceptance: Monitoring 19/19, and the Tools acceptance suite
+  (Monitoring is its only spec) 19/19. `./moq test-framework` exits 0 (webroot 40.3/44 s, tools 2.2/3 s).
+
 ### Next activity baseline — M10 incident lifecycle
 
 While gate20 runs, John exercises incident100000 on8094 at1920 in default light. New incident Escape/reopen works;

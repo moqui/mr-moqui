@@ -1204,6 +1204,8 @@
                 ":validation-errors-initial": isForm ? savedErrors(at(n, "name")) : null
             };
             w((skipStart ? "" : '<div class="q-my-md"><' + tag + A(attrs) + ">"));
+            // A form the user may not submit says why its fields are disabled, rather than open with nothing to do.
+            if (isForm && st.disabled && !skipStart) w('<p class="m-muted" role="note">' + t(L("You do not have permission to submit this form, so its fields are read-only.")) + "</p>");
             return { skipStart, tag };
         };
 
