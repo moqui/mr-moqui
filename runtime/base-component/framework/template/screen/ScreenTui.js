@@ -524,11 +524,16 @@ ${kind === "check" ? "" : `        if ($value && !$options.some(($opt) => $opt.v
         if (!w) return "";
         const o = opts || {};
         const when = child(sub, "visible-when");
+        const requireWhen = child(sub, "require-when");
         const required = attr(field, "required") === "true" || attr(sub, "required") === "true";
         const nullable = widget.name === "editable";
         const idExpr = o.idExpr || `$uid(${jsString(fieldIdOf(field))})`;
         const nameExpr = o.nameExpr || jsString(attr(field, "name") || "field");
-        const whenField = when ? jsString(attr(when, "field")) + (o.suffixExpr ? " + " + o.suffixExpr : "") : "";
+        // a visible-when or require-when: the field (with a multi row's suffix), its value and an operator other than equals
+        const whenObject = (rule) => {
+            const operator = attr(rule, "operator");
+            return `{field:${jsString(attr(rule, "field")) + (o.suffixExpr ? " + " + o.suffixExpr : "")},value:String(${exprOf(attr(rule, "value"))} || "")${operator && operator !== "equals" ? `,operator:${jsString(operator)}` : ""}}`;
+        };
         return `(() => {
             ${nullable ? `const $w = ${w};\n            if ($w == null) return null;\n            ` : ""}let $required = ${required ? "true" : "false"};
             const $max = ${maxlengthOf(sub, widget)};
@@ -545,12 +550,12 @@ ${kind === "check" ? "" : `        if ($value && !$options.some(($opt) => $opt.v
             if ($max > 0) $field.maxlength = $max;
             if ($rules.length) $field.rules = $rules;
             ${attr(sub, "tooltip") ? `$field.tooltip = String(${S.expandExpr(attr(sub, "tooltip"))} || "");` : ""}
-            ${when ? `$field.visibleWhen = {field:${whenField},value:String(${exprOf(attr(when, "value"))} || "")};` : ""}
+            ${when ? `$field.visibleWhen = ${whenObject(when)};` : ""}${requireWhen ? `\n            $field.requireWhen = ${whenObject(requireWhen)};` : ""}
             return $field;
         })()`;
     };
     // Children of a field sub-node that are not drawn: set, ignored, and the visible-when rule the field carries.
-    const notWidget = (widget) => widget.name === "set" || widget.name === "ignored" || widget.name === "visible-when";
+    const notWidget = (widget) => widget.name === "set" || widget.name === "ignored" || widget.name === "visible-when" || widget.name === "require-when";
     const placeholderEmit = (id, text, url) =>
         `$emit({t:"placeholder",id:$uid(${jsString(id)}),text:${jsString(text)}${url ? `,url:${url}` : ""}});\n`;
     const emitWidget = (field, sub, widget) => {
@@ -1601,7 +1606,7 @@ ${items}$closeChildren();
         "text-area", "text-find", "text-line", "scan-input", "entity-options", "list-options", "option", "depends-on", "field-layout",
         "field-ref", "form-list-column", "columns", "column", "auto-fields-entity", "auto-fields-service",
         "auto-widget-entity", "auto-widget-service", "exclude", "entity-find", "entity-find-one", "set",
-        "hidden-parameters", "row-selection", "row-actions", "visible-when", "editable-load", "action", "first-row",
+        "hidden-parameters", "row-selection", "row-actions", "visible-when", "require-when", "editable-load", "action", "first-row",
         "second-row", "last-row", "parameter", "dialog", "tree-node", "tree-sub-node", "view-board", "view-calendar", "view-tree",
         "context"
     ];

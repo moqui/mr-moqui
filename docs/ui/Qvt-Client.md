@@ -1225,7 +1225,7 @@ user-specific permission decisions.
   date or time from the pattern for a string; epoch millis text is a time stamp with any date pattern, and with no pattern, as `ec.l10n.format`
   on the server), `merge`, `url` / `qs` (path and query from a parameter map), `link` (the url a `${}` expression of a link or number-card gave:
   a relative path resolved against the screen's own path, as the server render resolves a link's url; an absolute path or an external URL as
-  it is), `shown` (`visible-when`), `btnKind` and `btnText` (the color and classes of a link or menu button whose `btn-type` is an expression, as
+  it is), `shown` and `holds` (`visible-when` and `require-when`, with their operator; [Db-Forms](Db-Forms.md)), `btnKind` and `btnText` (the color and classes of a link or menu button whose `btn-type` is an expression, as
   `ScreenQvt.js` writes them), `cols` (the classes of a `row-col` whose sizes are expressions).
 - **Mobile columns.** The template is the same for every request, so a form-list with `columns type="mobile"` holds a list for each column set,
   `<template v-if="_uiType === 'mobile'">` and the default under `v-else`: the client shows the one of the `_uiType` its request carries
@@ -1283,7 +1283,7 @@ level at the path itself (no walk down the default subscreens), which is how the
   rows inline (`groups` from `get#ListViewColumns`, a row's card fields as their cell text and its first link as `_open`).
 - **Fields.** `field`: `name`, `title`, `required`, `maxlength`, `rules` (`{kind: number | integer | pattern | range, pattern, min, minEq, max,
   maxEq, message}`, from `sri.getFieldValidationRules`; a JavaScript pattern a client cannot read is the server's to check), `tooltip`,
-  `visibleWhen` `{field, value}`, and one widget `w` by `kind`: `textLine` (`inputType`, `mask`, `size`, `prefix`, `disabled`, and a
+  `visibleWhen` and `requireWhen` `{field, value, operator}`, and one widget `w` by `kind`: `textLine` (`inputType`, `mask`, `size`, `prefix`, `disabled`, and a
   `default-transition`'s `defaultUrl`, `defaultParameters` and `dependsOn`), `textArea` (`rows`, `editorType`,
   `readOnly` for html and rich: never posted), `password` (no value, ever), `dropDown` (`options` `[{value, label}]`, or `optionsUrl` with
   `optionsParameters` (fixed) and `dependsOn` `{parameter: field}`, the transition answering a list or `{options: [...]}`; `multiple`, `combo`,

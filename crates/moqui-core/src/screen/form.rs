@@ -19,7 +19,8 @@
 //! `transition` calls one service gets `validate-service` (or `validate-entity`) on its fields, as `setSubFieldValidateAttrs`.
 //! A form is assembled once per definition and kept with it; a `dynamic="true"` form, and a form that a `DbForm` of some
 //! user group modifies (`DbFormLookup`), is assembled for each render, with the user's `DbForm` fields merged in.
-//! `extends="DbForm#formId"` extends a form made of `DbForm` records.
+//! `extends="DbForm#formId"` extends a form made of `DbForm` records (`db_form`), read as of the render's date, so such a
+//! form is assembled for each render too.
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -29,6 +30,7 @@ use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
 
 use super::cache::ScreenFacade;
+use super::db_form::{db_form_groups, db_form_node, user_db_forms, AsOf};
 use super::definition::{Actions, ScreenDef};
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
 use crate::script;
@@ -370,209 +372,16 @@ pub(crate) fn has_db_extensions(location: &str, name: &str) -> bool {
     db_form_groups(location, name).is_ok_and(|forms| forms.iter().any(|(_, groups)| !groups.is_empty()))
 }
 
-/// The `DbForm` ids that modify the form, each with the user groups it is for: `DbFormLookup`, read as its two entities.
-fn db_form_groups(location: &str, name: &str) -> Result<Vec<(String, Vec<String>)>, Error> {
-    let Some(facade) = ExecutionContext::with_current(|ec| ec.factory().entity()).flatten() else {
-        return Ok(Vec::new());
-    };
-    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    let forms = facade
-        .find("moqui.screen.form.DbForm")?
-        .eq("modifyXmlScreenForm", Value::string(format!("{location}#{name}")))
-        .use_cache(true)
-        .list()?;
-    let mut out = Vec::new();
-    for form in forms.iter() {
-        let form_id = db_text(form, "formId");
-        let groups = facade
-            .find("moqui.screen.form.DbFormUserGroup")?
-            .eq("formId", Value::string(form_id.clone()))
-            .use_cache(true)
-            .list()?;
-        out.push((
-            form_id,
-            groups.iter().map(|group| db_text(group, "userGroupId")).collect(),
-        ));
-    }
-    Ok(out)
-}
-
-/// The `DbForm` nodes that modify this form for the current user's groups, as `getDbFormNodeList`.
-fn user_db_forms(location: &str, name: &str) -> Result<Vec<MNode>, Error> {
-    let forms = db_form_groups(location, name)?;
-    if forms.is_empty() {
-        return Ok(Vec::new());
-    }
-    let user_groups = crate::user::current_user_groups()?;
-    forms
-        .iter()
-        .filter(|(_, groups)| groups.iter().any(|group| user_groups.contains(group)))
-        .map(|(id, _)| {
-            let node = db_form_node(id)?;
-            // F10: a field a DbForm adds or changes names the DbForm, for the screen builder's canvas
-            if crate::devtools::is_dev_instance() {
-                for field in node.children_named("field") {
-                    field.set_attribute(super::stamp::ATTRIBUTE, format!("dbform:{id}:0:0"));
-                }
-            }
-            Ok(node)
+/// Whether the form `name` of `def` extends a `DbForm` (`extends="DbForm#id"`). Its fields are read as of the render's
+/// date (`dbFormAsOfDate`), so it is assembled for each render, like a dynamic one.
+pub(crate) fn extends_db_form(def: &ScreenDef, name: &str) -> bool {
+    def.forms.get(name).is_some_and(|form| {
+        form.node.node().is_ok_and(|node| {
+            node.attribute("extends").is_some_and(|extends| {
+                extends.starts_with("DbForm#") || extends.starts_with("moqui.screen.form.DbForm#")
+            })
         })
-        .collect()
-}
-
-/// Field attributes and sub-field attributes of a `DbFormFieldAttribute`; any other name goes on the widget.
-const DB_FIELD_ATTRIBUTES: &[&str] = &["name", "from", "entry-name", "hide"];
-const DB_SUB_FIELD_ATTRIBUTES: &[&str] = &[
-    "title",
-    "tooltip",
-    "red-when",
-    "validate-service",
-    "validate-parameter",
-    "validate-entity",
-    "validate-field",
-];
-
-fn db_text(value: &crate::entity::EntityValue, field: &str) -> String {
-    value
-        .get(field)
-        .filter(|value| !value.is_null())
-        .map(moqui_lib::object::to_plain_string)
-        .unwrap_or_default()
-}
-
-fn db_number(value: &crate::entity::EntityValue, field: &str) -> i64 {
-    db_text(value, field).parse().unwrap_or(0)
-}
-
-/// `getDbFormNode`: a form-single or form-list built from a `DbForm` and its `DbFormField`, attribute and option records.
-fn db_form_node(form_id: &str) -> Result<MNode, Error> {
-    let facade = ExecutionContext::with_current(|ec| ec.factory().entity())
-        .flatten()
-        .ok_or_else(|| Error::new("no entity facade is installed"))?;
-    let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
-    let id = Value::string(form_id);
-    let form = facade
-        .find("moqui.screen.form.DbForm")?
-        .eq("formId", id.clone())
-        .use_cache(true)
-        .one()?
-        .ok_or_else(|| Error::new(format!("Could not find DbForm record with ID [{form_id}]")))?;
-    let node = MNode::new(if db_text(&form, "isListForm") == "Y" {
-        "form-list"
-    } else {
-        "form-single"
-    });
-    let fields = facade
-        .find("moqui.screen.form.DbFormField")?
-        .eq("formId", id.clone())
-        .order_by("layoutSequenceNum", false)
-        .use_cache(true)
-        .list()?;
-    for db_field in fields.iter() {
-        let field_name = db_text(db_field, "fieldName");
-        let field = MNode::new("field");
-        field.set_attribute("name", field_name.clone());
-        let entry = db_text(db_field, "entryName");
-        if !entry.is_empty() {
-            field.set_attribute("from", entry);
-        }
-        let condition = db_text(db_field, "condition");
-        let sub = if condition.is_empty() {
-            field.append("default-field")
-        } else {
-            let sub = field.append("conditional-field");
-            sub.set_attribute("condition", condition);
-            sub
-        };
-        for attribute in ["title", "tooltip"] {
-            let value = db_text(db_field, attribute);
-            if !value.is_empty() {
-                sub.set_attribute(attribute, value);
-            }
-        }
-        let field_type = db_text(db_field, "fieldTypeEnumId");
-        let Some(widget_name) = field_type.get(6..).filter(|name| !name.is_empty()) else {
-            return Err(Error::new(format!(
-                "DbFormField record with formId [{form_id}] and fieldName [{field_name}] has no fieldTypeEnumId"
-            )));
-        };
-        let widget = sub.append(widget_name);
-        let of_field = |entity: &str| -> Result<crate::entity::EntityList, Error> {
-            Ok(facade
-                .find(entity)?
-                .eq("formId", id.clone())
-                .eq("fieldName", Value::string(field_name.clone()))
-                .use_cache(true)
-                .list()?)
-        };
-        for attribute in of_field("moqui.screen.form.DbFormFieldAttribute")?.iter() {
-            let name = db_text(attribute, "attributeName");
-            let value = db_text(attribute, "value");
-            if DB_FIELD_ATTRIBUTES.contains(&name.as_str()) {
-                field.set_attribute(name, value);
-            } else if DB_SUB_FIELD_ATTRIBUTES.contains(&name.as_str()) {
-                sub.set_attribute(name, value);
-            } else {
-                widget.set_attribute(name, value);
-            }
-        }
-        let options = of_field("moqui.screen.form.DbFormFieldOption")?;
-        let entity_options = of_field("moqui.screen.form.DbFormFieldEntOpts")?;
-        let mut combined: Vec<(i64, bool, &crate::entity::EntityValue)> = options
-            .iter()
-            .map(|value| (db_number(value, "sequenceNum"), false, value))
-            .chain(
-                entity_options
-                    .iter()
-                    .map(|value| (db_number(value, "sequenceNum"), true, value)),
-            )
-            .collect();
-        combined.sort_by_key(|(sequence, _, _)| *sequence);
-        for (sequence_num, from_entity, option) in combined {
-            if !from_entity {
-                let node = widget.append("option");
-                node.set_attribute("key", db_text(option, "keyValue"));
-                node.set_attribute("text", db_text(option, "text"));
-                continue;
-            }
-            let options_node = widget.append("entity-options");
-            let option_text = db_text(option, "text");
-            options_node.set_attribute(
-                "text",
-                if option_text.is_empty() {
-                    "${description}".to_string()
-                } else {
-                    option_text
-                },
-            );
-            let find = options_node.append("entity-find");
-            find.set_attribute("entity-name", db_text(option, "entityName"));
-            let of_sequence = |entity: &str| -> Result<Vec<crate::entity::EntityValue>, Error> {
-                Ok(of_field(entity)?
-                    .into_values()
-                    .into_iter()
-                    .filter(|value| db_number(value, "sequenceNum") == sequence_num)
-                    .collect())
-            };
-            for cond in of_sequence("moqui.screen.form.DbFormFieldEntOptsCond")? {
-                let node = find.append("econdition");
-                node.set_attribute("field-name", db_text(&cond, "entityFieldName"));
-                node.set_attribute("value", db_text(&cond, "value"));
-            }
-            let mut orders = of_sequence("moqui.screen.form.DbFormFieldEntOptsOrder")?;
-            orders.sort_by_key(|order| db_number(order, "orderSequenceNum"));
-            for order in orders {
-                find.append("order-by")
-                    .set_attribute("field-name", db_text(&order, "entityFieldName"));
-            }
-        }
-        let layout = db_text(db_field, "layoutSequenceNum");
-        if !layout.is_empty() {
-            field.set_attribute("layoutSequenceNum", layout);
-        }
-        merge_field_node(&node, &field, false);
-    }
-    Ok(node)
+    })
 }
 
 fn assemble_node(
@@ -742,7 +551,7 @@ fn extends_node(
         return assemble_node(facade, factory, def, form_name, depth + 1, dynamic);
     }
     if location == "moqui.screen.form.DbForm" || location == "DbForm" {
-        return db_form_node(form_name);
+        return db_form_node(form_name, AsOf::from_context());
     }
     let other = facade.screen_def(factory, location)?;
     // The assembled form is kept with this definition, so a change to the other screen makes this one stale.
@@ -830,7 +639,7 @@ fn merge_form_nodes(base: &MNode, over: &MNode, deep_copy: bool, copy_fields: bo
 }
 
 /// `ScreenForm.mergeFieldNode`: a field of the same name is merged in place, else appended.
-fn merge_field_node(base: &MNode, over: &MNode, deep_copy: bool) {
+pub(super) fn merge_field_node(base: &MNode, over: &MNode, deep_copy: bool) {
     let name = over.attribute("name");
     let existing = base
         .children()

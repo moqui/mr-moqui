@@ -20,6 +20,7 @@
 
 pub(crate) mod aggregate;
 mod cache;
+pub mod db_form;
 mod definition;
 mod dispatch;
 pub mod ext;

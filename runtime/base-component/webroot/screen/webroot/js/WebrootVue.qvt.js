@@ -882,13 +882,20 @@
                 default: return left === right || (left !== null && right !== null && typeof left === typeof right && String(left) === String(right));
             }
         },
-        // The style of a field shown only while another field has a value.
-        shown: (expected, actual) => {
+        // Whether a visible-when or require-when holds: equals (the value, or one of a comma list or collection; with
+        // several actual values, any one), not-equals, empty or not-empty. The rule of db_form.rs condition_holds.
+        holds: (expected, actual, operator) => {
+            const parts = (Array.isArray(actual) ? actual : actual === null || actual === undefined ? [] : [actual]).map(String).filter((part) => part !== "");
+            if (operator === "empty") return !parts.length;
+            if (operator === "not-empty") return parts.length > 0;
             let wanted = expected;
-            if (typeof wanted === "string" && wanted.indexOf(",") >= 0) wanted = wanted.split(",");
-            const holds = Array.isArray(wanted) ? wanted.map(String).includes(String(actual)) : String(wanted) === String(actual);
-            return { display: holds ? "" : "none" };
-        }
+            if (typeof wanted === "string") wanted = wanted.split(",").map((part) => part.trim());
+            wanted = Array.isArray(wanted) ? wanted.map(String) : [String(wanted)];
+            const any = parts.some((part) => wanted.includes(part));
+            return operator === "not-equals" ? !any : any;
+        },
+        // The style of a field shown only while another field has a value.
+        shown: (expected, actual, operator) => ({ display: qvt.helpers.holds(expected, actual, operator) ? "" : "none" })
     };
 
     qvt.formatValue = (value, pattern, type) => {

@@ -252,3 +252,37 @@ feature("a menu and a drop-down in a scrolling table open outside it, and the me
         assert.deepEqual(JSON.parse(text), { menuVisible: true, dropdownOnBody: true, menuClosed: true, scrolls: true })
     },
 })
+
+// visible-when and require-when of the html mode (moqui-form-when.js; docs/ui/Db-Forms.md): a box shows and its inputs
+// are required while the rule holds, a hidden box's input is not required, and a hidden field counts as empty.
+feature("a field's box shows and is required by the value of another field of its form", {
+    expect() {
+        const page = browser.newPage({ viewport: { width: 800, height: 600 } })
+        const rule = (field, operator, values) => JSON.stringify({ form: "F", field, operator, values }).replace(/"/g, "&quot;")
+        page.setContent(`<!doctype html><html data-theme="light">
+            <form id="F"><select name="kind" id="kind"><option value="A">A</option><option value="B">B</option></select>
+            <div class="field" id="serialBox" data-require-when="${rule("kind", "equals", ["B"])}"><label>Serial</label><div class="widget"><input name="serial" id="serial"></div></div>
+            <div class="field" id="noteBox" data-visible-when="${rule("kind", "not-equals", ["A"])}" data-require-when="${rule("kind", "not-empty", [""])}"><label>Note</label><div class="widget"><input name="note" id="note" value="x"></div></div>
+            <div class="field" id="extraBox" data-visible-when="${rule("note", "not-empty", [""])}"><label>Extra</label><div class="widget"><input name="extra"></div></div>
+            </form><pre id="result"></pre>
+            <script src="/js/moqui-form-when.js"></script>
+            <script>
+            document.addEventListener("DOMContentLoaded", () => {
+                const state = () => ({ note: !document.getElementById("noteBox").hidden, extra: !document.getElementById("extraBox").hidden,
+                    serial: document.getElementById("serial").required, noteRequired: document.getElementById("note").required,
+                    marked: document.getElementById("serialBox").hasAttribute("data-required") });
+                const first = state();
+                const kind = document.getElementById("kind"); kind.value = "B"; kind.dispatchEvent(new Event("change", { bubbles: true }));
+                document.getElementById("result").textContent = JSON.stringify({ first, second: state() });
+            });
+            </script>`)
+        const text = page.waitFor(() => {
+            const node = document.getElementById("result")
+            return node && node.textContent ? node.textContent : null
+        })
+        assert.deepEqual(JSON.parse(text), {
+            first: { note: false, extra: false, serial: false, noteRequired: false, marked: false },
+            second: { note: true, extra: true, serial: true, noteRequired: true, marked: true },
+        })
+    },
+})

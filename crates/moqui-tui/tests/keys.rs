@@ -748,6 +748,42 @@ fn dates_checks_radios_rules_and_visible_when() {
     assert_eq!(session.buffer("W.html"), "<p>Keep <strong>HTML</strong></p>");
 }
 
+const REQUIRE_JSON: &str = r#"{
+  "v": 1,
+  "screen": { "path": "/r", "title": "Rules" },
+  "c": [{ "t": "form", "id": "R", "name": "R", "transitionUrl": "/r/save", "c": [
+    { "t": "field", "id": "R.kind", "name": "kind", "title": "Kind",
+      "w": { "kind": "radio", "value": "A", "options": [{ "value": "A", "label": "A" }, { "value": "B", "label": "B" }] } },
+    { "t": "field", "id": "R.serial", "name": "serial", "title": "Serial", "requireWhen": { "field": "kind", "value": "B" },
+      "w": { "kind": "textLine", "value": "" } },
+    { "t": "field", "id": "R.note", "name": "note", "title": "Note", "requireWhen": { "field": "kind", "value": "", "operator": "not-empty" },
+      "visibleWhen": { "field": "kind", "value": "A", "operator": "not-equals" }, "w": { "kind": "textLine", "value": "" } },
+    { "t": "field", "id": "R.go", "name": "go", "title": "Go", "w": { "kind": "submit", "text": "Go" } }
+  ]}]
+}"#;
+
+/// A require-when field is required while its rule holds, and a field its visible-when hides is not required.
+#[test]
+fn require_when_marks_a_field_only_while_its_rule_holds() {
+    let link = FakeLink::from_json(&[REQUIRE_JSON]).unwrap();
+    let mut session = Session::new(ScreenModel::from_json(REQUIRE_JSON).unwrap());
+    let submit = |session: &mut Session| {
+        while session.focus_id() != "R.go" {
+            press(session, &link, Key::Tab);
+        }
+        press(session, &link, Key::Enter);
+    };
+    // kind A: serial is not required, and note (required while kind has a value) is hidden
+    submit(&mut session);
+    assert!(session.mark("R.serial").is_none() && session.mark("R.note").is_none());
+    assert_eq!(transitions(&link).len(), 1);
+    session.set_buffer("R.kind", "B".to_string());
+    submit(&mut session);
+    assert!(session.mark("R.serial").is_some(), "serial is required for B");
+    assert!(session.mark("R.note").is_some(), "note shows and is required for B");
+    assert_eq!(transitions(&link).len(), 1);
+}
+
 #[test]
 fn numbered_links_follow_by_number_and_paste_is_one_edit() {
     let (mut session, link) = list_session();

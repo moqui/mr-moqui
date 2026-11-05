@@ -465,6 +465,9 @@ pub enum Node {
         tooltip: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         visible_when: Option<VisibleWhen>,
+        /// Required while another field of its form meets the rule (`require-when`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        require_when: Option<VisibleWhen>,
         w: Widget,
     },
     Placeholder {
@@ -911,12 +914,37 @@ pub struct HtmlLink {
     pub url: String,
 }
 
-/// Show the field only while another field of its form has a value.
+/// A rule on another field of the form: a field shows (`visible-when`) or is required (`require-when`) while it holds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VisibleWhen {
     pub field: String,
+    /// One value or a comma-separated list.
     #[serde(default)]
     pub value: String,
+    /// equals (the default), not-equals, empty or not-empty (xml-form-3.xsd WhenAttributes).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub operator: String,
+}
+
+impl VisibleWhen {
+    /// Whether the rule holds for the field's value, which has several comma-separated parts for a multiple select:
+    /// equals when any part is one of the values (with no value, when the field has one), not-equals when none is.
+    pub fn holds(&self, actual: &str) -> bool {
+        let parts: Vec<&str> = actual
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .collect();
+        let wanted: Vec<&str> = self.value.split(',').map(str::trim).collect();
+        let any = parts.iter().any(|part| wanted.contains(part));
+        match self.operator.as_str() {
+            "empty" => parts.is_empty(),
+            "not-empty" => !parts.is_empty(),
+            "not-equals" => !any,
+            _ if self.value.is_empty() => !parts.is_empty(),
+            _ => any,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -970,7 +970,11 @@ along with this software (see the LICENSE.md file). If not, see
             </xs:sequence>
             <xs:element minOccurs="0" maxOccurs="unbounded" ref="set"/>
             <xs:element minOccurs="0" ref="visible-when"/>
+            <xs:element minOccurs="0" ref="require-when"/>
         </xs:sequence>
+        <xs:attribute name="required" type="boolean"><xs:annotation><xs:documentation>The field must have a value, as
+            when its validate-service parameter is required (a DbForm field's isRequired writes it); the server checks
+            its own rules again.</xs:documentation></xs:annotation></xs:attribute>
         <xs:attribute name="title" type="xs:string">
             <xs:annotation><xs:documentation>The name of this field that will be shown to the user; can use the ${}
                 and map.key (dot) syntax to insert values from the context.</xs:documentation></xs:annotation>
@@ -1005,24 +1009,48 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:attribute>
     </xs:extension></xs:complexContent></xs:complexType>
 
+    <xs:attributeGroup name="WhenAttributes">
+        <xs:attribute name="field" type="xs:string" use="required"><xs:annotation><xs:documentation>
+            The name of the field of the same form (usually a drop-down) whose value decides
+        </xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="value" type="xs:string"><xs:annotation><xs:documentation>
+            The value the field should match, may be a list of comma-separated values
+        </xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="from" type="xs:string"><xs:annotation><xs:documentation>
+            An expression that evaluates to a String or Collection, in place of value
+        </xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="operator" default="equals"><xs:annotation><xs:documentation>
+            equals: the field's value is the value or one of the list (with several values, as a multiple select has,
+            any one of them); not-equals: none of them is; empty: the field has no value; not-empty: it has one (the
+            value is not used for these two). The same rule in every render mode and in
+            org.moqui.impl.ScreenServices.evaluate#DbFormDependencies.
+        </xs:documentation></xs:annotation>
+            <xs:simpleType><xs:restriction base="xs:token">
+                <xs:enumeration value="equals"/>
+                <xs:enumeration value="not-equals"/>
+                <xs:enumeration value="empty"/>
+                <xs:enumeration value="not-empty"/>
+            </xs:restriction></xs:simpleType>
+        </xs:attribute>
+    </xs:attributeGroup>
     <xs:element name="visible-when">
         <xs:annotation><xs:documentation>
             Used to dynamically show or hide a field based on the value of another field (usually a drop-down).
-            If this element is present the field is hidden unless the value of the named field matches
-                the value/from String or is in the value/from Collection.
-            NOTE: currently implemented for qvt only (qapps and other Quasar-Vue Templates)
+            If this element is present the field is hidden unless the value of the named field meets the operator
+            (by default: matches the value/from String or is in the value/from Collection). Implemented in the qvt,
+            html (js/moqui-form-when.js) and tui render modes; the server does not see it, so a rule the server must
+            keep is checked there too (for a DbForm, evaluate#DbFormDependencies).
         </xs:documentation></xs:annotation>
-        <xs:complexType>
-            <xs:attribute name="field" type="xs:string" use="required"><xs:annotation><xs:documentation>
-                The name of the field (usually a drop-down) used to determine if this field should be visible or not
-            </xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="value" type="xs:string"><xs:annotation><xs:documentation>
-                The value the field should match in order for this to be visible, may be a list of comma-separated values
-            </xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="from" type="xs:string"><xs:annotation><xs:documentation>
-                Groovy expression that evaluates to a String or Collection
-            </xs:documentation></xs:annotation></xs:attribute>
-        </xs:complexType>
+        <xs:complexType><xs:attributeGroup ref="WhenAttributes"/></xs:complexType>
+    </xs:element>
+    <xs:element name="require-when">
+        <xs:annotation><xs:documentation>
+            The field is required while the value of the named field meets the operator, as visible-when decides when
+            a field shows; a field hidden by its visible-when is not required. Implemented in the qvt (text-line,
+            password and date-time widgets), html (js/moqui-form-when.js, any widget) and tui render modes; the server
+            checks it again (for a DbForm, evaluate#DbFormDependencies).
+        </xs:documentation></xs:annotation>
+        <xs:complexType><xs:attributeGroup ref="WhenAttributes"/></xs:complexType>
     </xs:element>
 
   <!-- ================== Field Sub-Elements ==================== -->

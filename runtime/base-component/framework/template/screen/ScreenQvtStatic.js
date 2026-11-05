@@ -388,7 +388,7 @@
         const validate = (sub) => {
             const v = validation(sub);
             const has = (name) => v.classes.indexOf(name) >= 0;
-            return { required: has("required"), email: has("email"), url: has("url"), number: has("number"), digits: has("digits"), v };
+            return { required: has("required") || at(sub, "required") === "true", email: has("email"), url: has("url"), number: has("number"), digits: has("digits"), v };
         };
         // The host's rules, as ScreenQvt.js rulesOf writes them. The message is already localized. A class-derived
         // number or digits rule would be a second check of the same field, so those are not added here.
@@ -564,7 +564,7 @@
                 type: at(n, "input-type") || (check.email ? "email" : check.url ? "url" : "text"), name, size: at(n, "size") || null,
                 style: at(n, "size") ? null : "width:100%;", maxlength: at(n, "maxlength") || null,
                 class: cls(check.v.classes || null, align === "center" ? "text-center" : align === "right" ? "text-right" : null),
-                required: check.required || null, ":rules": ruleList(n, check), form: owner()
+                ...requiredAttrs(n, check), ":rules": ruleList(n, check), form: owner()
             });
             labelAttr(n, out);
             if (at(n, "prefix")) textAttr(out, "prefix", at(n, "prefix"), n, true);
@@ -640,7 +640,7 @@
         const password = (n) => {
             const check = validate(n.parent);
             const field = fieldOf(n);
-            const out = Object.assign({ type: "password", name: nameOf(n), size: at(n, "size") || "25", maxlength: at(n, "maxlength") || null, required: check.required || null, form: owner() }, idAttrs(n));
+            const out = Object.assign({ type: "password", name: nameOf(n), size: at(n, "size") || "25", maxlength: at(n, "maxlength") || null, ...requiredAttrs(n, check), form: owner() }, idAttrs(n));
             if (at(n, "autocomplete")) plainAttr(out, "autocomplete", at(n, "autocomplete"), n);
             else out.autocomplete = "new-password";
             labelAttr(n, out);
@@ -719,7 +719,7 @@
             const format = at(n, "format") || dateDefault(n);
             const check = validate(n.parent);
             const out = Object.assign({
-                name: nameOf(n), type: at(n, "type") || null, size: at(n, "size") || null, format: maskFormat(format), required: check.required || null,
+                name: nameOf(n), type: at(n, "type") || null, size: at(n, "size") || null, format: maskFormat(format), ...requiredAttrs(n, check),
                 ":rules": at(n, "rules") ? "[" + at(n, "rules") + "]" : null, "auto-year": at(n, "auto-year") || "true", ":minute-step": at(n, "minute-stepping") || "5", form: owner()
             }, idAttrs(n));
             labelAttr(n, out);
@@ -1206,13 +1206,24 @@
             pop();
         };
 
+        // A visible-when or require-when as the arguments of $mq.shown and $mq.holds: value, the field, the operator.
+        const whenArgs = (when) => {
+            const target = fieldRef(at(when, "field"));
+            const value = at(when, "from") ? X(at(when, "from"), when, "from") : exp(at(when, "value") || "", when, "value", false);
+            const operator = at(when, "operator");
+            return value + "," + target + (operator && operator !== "equals" ? "," + sq(operator) : "");
+        };
+        // The required prop of a widget: by its validation, else bound to its require-when while its visible-when holds.
+        const requiredAttrs = (n, check) => {
+            if (check.required) return { required: true };
+            const requireWhen = n.parent ? first(n.parent, "require-when") : null;
+            if (!requireWhen) return {};
+            const shown = first(n.parent, "visible-when");
+            return { ":required": "$mq.holds(" + whenArgs(requireWhen) + ")" + (shown ? "&&$mq.holds(" + whenArgs(shown) + ")" : "") };
+        };
         const fieldBox = (when, containerStyle, big) => {
             let style = null;
-            if (when) {
-                const target = fieldRef(at(when, "field"));
-                const value = at(when, "from") ? X(at(when, "from"), when, "from") : exp(at(when, "value"), when, "value", false);
-                style = "$mq.shown(" + value + "," + target + ")";
-            }
+            if (when) style = "$mq.shown(" + whenArgs(when) + ")";
             const box = big ? "big-row-item" : cls("q-ma-sm", containerStyle || null);
             const attrs = { class: box, ":style": style };
             if (containerStyle && isDynamic(containerStyle)) { delete attrs.class; attrs[":class"] = "'q-ma-sm '+" + exp(containerStyle, null, "container-style", false); }
@@ -1462,7 +1473,7 @@
         const renderNode = (n) => {
             const name = n.name;
             if (widgetFns[name]) { widgetFns[name](n); return; }
-            if (name === "set" || name === "visible-when" || name === "ignored") return;
+            if (name === "set" || name === "visible-when" || name === "require-when" || name === "ignored") return;
             if (name === "container") {
                 containerOpen(n);
                 n.children.forEach(renderNode);
@@ -1510,7 +1521,7 @@
         // The widgets of a field sub-node. A set element is run on the server when the package is made (its result is in the package).
         const subWidgets = (sub) => {
             if (kids(sub, "ignored").length) return;
-            sub.children.filter((widget) => widget.name !== "set" && widget.name !== "visible-when").forEach(renderWidget);
+            sub.children.filter((widget) => widget.name !== "set" && widget.name !== "visible-when" && widget.name !== "require-when").forEach(renderWidget);
         };
 
         const singleField = (field, big) => {

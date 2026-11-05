@@ -76,7 +76,10 @@
             const field = sub.parent;
             const form = field.parent;
             const formLit = form ? `,"parent":{"name":${lit(form.name)},"attrs":${JSON.stringify(pick(form.attrs, ["name", "map"]))}}` : "";
-            parts.push(`"parent":{"name":${lit(sub.name)},"attrs":${JSON.stringify(sub.attrs || {})},"parent":{"name":"field","attrs":${JSON.stringify(field.attrs || {})}${formLit}}}`);
+            // the field's require-when and visible-when, which a widget's required prop reads
+            const whens = (sub.children || []).filter((kid) => kid.name === "require-when" || kid.name === "visible-when");
+            const whenLit = whens.some((kid) => kid.name === "require-when") ? `,"children":[${whens.map(childLit).join(",")}]` : "";
+            parts.push(`"parent":{"name":${lit(sub.name)},"attrs":${JSON.stringify(sub.attrs || {})}${whenLit},"parent":{"name":"field","attrs":${JSON.stringify(field.attrs || {})}${formLit}}}`);
         }
         return `{${parts.join(",")}}`;
     };
@@ -298,7 +301,18 @@
         const validate = (sub) => {
             const v = validation(sub);
             const has = (name) => v.classes.indexOf(name) >= 0;
-            return { required: has("required"), email: has("email"), url: has("url"), number: has("number"), digits: has("digits"), v };
+            return { required: has("required") || at(sub, "required") === "true", email: has("email"), url: has("url"), number: has("number"), digits: has("digits"), v };
+        };
+        // The required prop of a widget: required by its validation, else bound to its require-when (while its visible-when,
+        // if any, also holds: a hidden field is not required).
+        const requiredAttrs = (n, check) => {
+            if (check.required) return { required: true };
+            const sub = n.parent;
+            const requireWhen = sub ? first(sub, "require-when") : null;
+            if (!requireWhen) return {};
+            const holds = whenExpr(requireWhen) || "true";
+            const shown = whenExpr(first(sub, "visible-when"));
+            return { ":required": shown ? "(" + holds + ")&&(" + shown + ")" : holds };
         };
         // The rules of a field as the template array of functions, the messages localized here.
         const rulesOf = (n, check) => {
@@ -314,12 +328,14 @@
         const quasarMask = (mask) => mask.replace(/9/g, "#").replace(/a/g, "S").replace(/\*/g, "N");
 
         // Remote options: the URL, its fixed parameters, and the fields it depends on as {parameter: field}.
+        // The fields it depends on are the row's own in a multi form-list, whose fields are named name_N (fnmWith).
         const remote = (holder, transition) => {
             const url = sri.makeUrlByType(transition, "transition", holder, "false");
             const params = Object.assign({}, url.getParameterMap());
             const deps = kids(holder, "depends-on");
             const dependsOn = {};
-            deps.forEach((dep) => { dependsOn[at(dep, "parameter") || at(dep, "field")] = at(dep, "field"); delete params[at(dep, "parameter") || at(dep, "field")]; });
+            const row = st.multi && st.entry !== "" && /^\d+$/.test(st.entry) ? "_" + st.entry : "";
+            deps.forEach((dep) => { dependsOn[at(dep, "parameter") || at(dep, "field")] = at(dep, "field") + row; delete params[at(dep, "parameter") || at(dep, "field")]; });
             const clean = {};
             Object.keys(params).forEach((key) => { if (params[key] !== null && params[key] !== undefined && params[key] !== "") clean[key] = params[key]; });
             return { url: url.url, params: clean, dependsOn, hasDepends: deps.length > 0 };
@@ -516,7 +532,7 @@
                 prefix: at(n, "prefix") ? x(at(n, "prefix")) : null, size: at(n, "size") || null, style: at(n, "size") ? null : "width:100%;",
                 maxlength: at(n, "maxlength") || null, disable: disabled || null,
                 class: cls(check.v.classes || null, align === "center" ? "text-center" : align === "right" ? "text-right" : null),
-                required: check.required || null, mask: mask ? quasarMask(mask) : null, "fill-mask": mask ? "_" : null,
+                ...requiredAttrs(n, check), mask: mask ? quasarMask(mask) : null, "fill-mask": mask ? "_" : null,
                 "reverse-fill-mask": mask && check.number ? true : null, ":rules": rulesOf(n, check), form: owner(), tooltip: tip(n)
             };
             if (at(n, "default-transition")) {
@@ -571,7 +587,7 @@
             w("<m-text-line" + A(Object.assign({
                 id: fid(n), type: "password", name, label: label(n), size: at(n, "size") || "25", maxlength: at(n, "maxlength") || null,
                 autocomplete: xn(at(n, "autocomplete")) || "new-password",
-                required: check.required || null, disable: st.disabled || null, form: owner(), tooltip: tip(n)
+                ...requiredAttrs(n, check), disable: st.disabled || null, form: owner(), tooltip: tip(n)
             }, bindOnly(name, ""))) + "></m-text-line>");
         };
 
@@ -629,7 +645,7 @@
             const value = sri.getFieldValueString(fieldOf(n), at(n, "default-value"), format, at(n, "type") || "date-time");
             w("<m-date-time" + A(Object.assign({
                 id: fid(n), name, type: at(n, "type") || null, size: at(n, "size") || null, label: label(n), disable: st.disabled || null,
-                format: maskFormat(format), required: check.required || null, ":rules": at(n, "rules") ? "[" + at(n, "rules") + "]" : null,
+                format: maskFormat(format), ...requiredAttrs(n, check), ":rules": at(n, "rules") ? "[" + at(n, "rules") + "]" : null,
                 "auto-year": at(n, "auto-year") || "true", ":minute-step": at(n, "minute-stepping") || "5", form: owner(), tooltip: tip(n)
             }, bindOnly(name, value))) + "></m-date-time>");
         };
@@ -1161,18 +1177,28 @@
             w("<m-form-paginate" + A({ ":paginate": props }) + "></m-form-paginate>");
         };
 
-        const visibleStyle = (when, fieldNameFn) => {
+        // A visible-when or require-when as a template expression: whether it holds for the form's value now (the
+        // operators of xml-form-3.xsd WhenAttributes); null for an equals with no value, which always holds.
+        const whenExpr = (when) => {
             if (!when) return null;
+            const operator = at(when, "operator") || "equals";
+            const target = fieldRef(at(when, "field"));
+            const empty = "(" + target + "==null||" + target + "===''||(Array.isArray(" + target + ")&&!" + target + ".length))";
+            if (operator === "empty") return empty;
+            if (operator === "not-empty") return "!" + empty;
             let value = "";
             if (at(when, "from")) value = ec.resource.expression(at(when, "from"), "");
             else value = ec.resource.expand(at(when, "value"), "");
             if (blank(value)) return null;
             if (typeof value === "string" && value.indexOf(",") >= 0) value = value.split(",");
-            const target = fieldRef(at(when, "field"));
-            if (Array.isArray(value) || (value && typeof value === "object" && value.length !== undefined && typeof value !== "string")) {
-                return "{display:(" + arr(Array.from(value)) + ".includes(" + target + ")?'':'none')}";
-            }
-            return "{display:(" + sq(value) + "==" + target + "?'':'none')}";
+            const equal = Array.isArray(value) || (value && typeof value === "object" && value.length !== undefined && typeof value !== "string")
+                ? arr(Array.from(value)) + ".includes(" + target + ")"
+                : sq(value) + "==" + target;
+            return operator === "not-equals" ? "!(" + equal + ")" : equal;
+        };
+        const visibleStyle = (when) => {
+            const holds = whenExpr(when);
+            return holds ? "{display:(" + holds + "?'':'none')}" : null;
         };
 
         const formOpen = (n, formAttrs) => {

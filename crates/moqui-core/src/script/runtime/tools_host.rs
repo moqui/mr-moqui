@@ -617,13 +617,12 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     ec.resource.runTokenCommand = (command) => host.runTokenCommand(String(command));
 
     // ---- forms: the field names a form has, for the DB form response services ----
-    ec.screen.getFormNode = function (location) {
+    // A DbForm is read as of a date (now by default), with its drafts when includeDrafts (db_form.rs).
+    ec.screen.getFormNode = function (location, asOfDate, includeDrafts) {
         location = String(location);
         if (location.startsWith("DbForm#")) {
-            const fields = ec.entity.find("moqui.screen.form.DbFormField").condition("formId", location.substring(7))
-                .orderBy("layoutSequenceNum").list();
-            return makeNode({ name: "form-single", attributes: {},
-                children: fields.map((field) => ({ name: "field", attributes: { name: field.fieldName } })) });
+            return makeNode(host.parseNode(host.dbFormXml(location.substring(7), asOfDate == null ? null : asOfDate,
+                !!includeDrafts)));
         }
         return makeNode(host.parseNode(host.formXml(location)));
     };
@@ -2326,6 +2325,20 @@ fn form_xml(ctx: Ctx<'_>, location: String) -> rquickjs::Result<String> {
     })
 }
 
+/// The XML of the form a `DbForm` makes as of a date (null for now), with its drafts when asked.
+fn db_form_xml(ctx: Ctx<'_>, form_id: String, as_of: JsValue<'_>, drafts: bool) -> rquickjs::Result<String> {
+    host_guard(&ctx, || {
+        let date = if as_of.is_null() || as_of.is_undefined() {
+            None
+        } else {
+            Some(js_to_host(&ctx, &as_of)?)
+        };
+        let as_of = crate::screen::db_form::AsOf::of(date.as_ref(), Some(&Value::Bool(drafts)));
+        crate::screen::db_form::db_form_xml(&form_id, as_of)
+            .map_err(|err| Exception::throw_message(&ctx, err.message()))
+    })
+}
+
 /// `ScheduledJobRunner.isLastRunBeforeLastSchedule`: no last run, or the last run is before the latest time the cron
 /// expression came due.
 fn is_last_run_before_last_schedule(
@@ -2753,6 +2766,7 @@ pub(super) fn install<'js>(
     method!("runSqlCountConf", run_sql_count_conf);
     method!("runSqlUpdateConf", run_sql_update_conf);
     method!("formXml", form_xml);
+    method!("dbFormXml", db_form_xml);
     method!("isLastRunBeforeLastSchedule", is_last_run_before_last_schedule);
     method!("nextCronExecution", next_cron_execution);
     method!("cronDescription", cron_description);
