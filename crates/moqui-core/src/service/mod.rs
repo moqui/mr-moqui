@@ -16,6 +16,8 @@
 
 #[macro_use]
 pub(crate) mod rust_services;
+#[cfg(test)]
+mod anonymous_tests;
 pub(crate) mod backup;
 pub mod call;
 mod call_media;
