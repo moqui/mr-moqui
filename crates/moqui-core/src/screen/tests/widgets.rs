@@ -711,3 +711,14 @@ fn a_section_include_inside_an_included_section_finds_the_nested_sections_of_wha
         assert!(text.contains(expected), "{expected} in {text}");
     }
 }
+
+#[test]
+fn csv_guards_formula_text_and_quotes_a_carriage_return() {
+    let context = ExecutionContextFactory::test_context();
+    // A value a spreadsheet would read as a formula gets a leading apostrophe; a plain number (-12.50, +1) does not;
+    // a CR is quoted as an LF is.
+    assert_eq!(
+        body(context.factory(), "/CsvGuard.csv", &[]),
+        "Text,Amount\n\"'=HYPERLINK(\"\"http://x\"\")\",-12.50\n'+A1,3.00\n+1,2.00\n'@SUM(A1),0.00\n'-cmd,\"-1,234.50\"\n\"line\rbreak\",1.00\n"
+    );
+}
