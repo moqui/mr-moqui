@@ -299,8 +299,8 @@ Load into… call.
   - A cron run has no user signed in (see [Attack-Surface, Jobs](../security/Attack-Surface.md#jobs)), so the run signs
     in as the mapping's `ownerUserId` and then runs as that user. All of the owner's own checks apply: the Tools app,
     `GROOVY_SHELL_WEB`, `SQL_RUNNER_WEB`, the locations and the `ext:` gate.
-  - The owner must be a `ServiceJobUser` of the job. Whoever writes a `ServiceJob` otherwise could run another user's
-    mapping as that user.
+  - The owner must be a `ServiceJobUser` of the job. An `ADMIN` may write both, so may schedule another user's saved
+    mapping to run as that user; that is allowed on purpose.
   - The run reads the mapping's own source: the job's `location` and `contentBytes` parameters are ignored.
   - The owner signs in as any login does. A missing owner, an account that is disabled or terminated, and a password
     that must change or has expired refuse the run, with a logged error. So an expired password fails the owner's
@@ -405,6 +405,7 @@ cancel, table maintenance or entity sources.
 | Grid reads and saves, Browse, Export | The app, plus the entity's own authorization through the entity-auto services. Restricted entities and views over them are refused |
 | ETL runs and checks, saving mappings, Data › Load, Snapshots | The app, authorized for all actions |
 | ETL expressions | `GROOVY_SHELL_WEB` (sealed; seeded on no group) |
+| Writing a DataDocument field expression (a `fieldPath` with `(`) | `DATABASE_ADMIN`, checked by `Security.eecas.xml` on every create and update; a seed load is not checked |
 | SQL, the grid's SQL source, a SQL grid view, ETL from SQL | `SQL_RUNNER_WEB` (`ADMIN_ADV`) and all actions on the Tools app |
 | Cancel or end a session, run DDL and maintenance jobs, reset stats, cancel another user's SQL, wider export and ETL locations, other users' runs | `DATABASE_ADMIN` (`ADMIN_ADV`) |
 | External databases | `DATABASE_EXTERNAL` (`ADMIN_ADV`), and not a production instance |
