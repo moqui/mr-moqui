@@ -947,10 +947,21 @@ fn step(factory: &Arc<ExecutionContextFactory>, run_id: &str, local: &Arc<LocalR
 }
 
 /// The record references the conversation's tool results and user messages hold (plan 7.7).
-fn seen_references(facade: &EntityFacade, conversation_id: &str) -> Result<tools::format::Seen, Error> {
+pub(crate) fn seen_references(facade: &EntityFacade, conversation_id: &str) -> Result<tools::format::Seen, Error> {
+    // the active window only, as the model reads it (HL-013): its summary stands for the compacted turns
+    let conversation = facade
+        .find(super::CONVERSATION)?
+        .eq("conversationId", Value::string(conversation_id))
+        .disable_authz()
+        .one()?;
+    let through = conversation.as_ref().and_then(|row| int_of(row, "compactedThroughSeq"));
+    let mut seen = tools::format::Seen::default();
+    if let Some(summary) = conversation.as_ref().and_then(|row| text_of(row, "compactionSummary")) {
+        seen.add(&summary);
+    }
     let messages = facade
         .find(MESSAGE)?
-        .eq("conversationId", Value::string(conversation_id))
+        .condition(window::active_messages(conversation_id, through))
         .condition(Condition::is_in(
             "role",
             vec![Value::string("tool"), Value::string("user")],
@@ -963,7 +974,6 @@ fn seen_references(facade: &EntityFacade, conversation_id: &str) -> Result<tools
         .filter_map(|row| text_of(row, "messageId"))
         .map(Value::string)
         .collect();
-    let mut seen = tools::format::Seen::default();
     if ids.is_empty() {
         return Ok(seen);
     }

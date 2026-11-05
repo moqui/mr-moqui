@@ -1408,6 +1408,117 @@ fn a_watch_hides_nothing_from_another_stream_and_a_follower_fills_a_gap_from_the
     assert_eq!(ring, [1, 2, 5, 6, 3, 4]);
 }
 
+/// HL-021: one active run among many watched unrelated runs wakes only its own follower, and that follower looks at
+/// only the events it has not read, not the run's whole ring.
+#[test]
+fn an_event_wakes_only_its_own_runs_followers_and_they_read_only_what_is_new() {
+    let hub = Arc::new(RunHub::new());
+    for n in 0..2000 {
+        hub.push_live("run-busy", "text.delta", json!({"n": n}));
+    }
+    let quiet: Vec<String> = (0..40).map(|n| format!("run-quiet-{n}")).collect();
+    for run_id in &quiet {
+        for n in 0..50 {
+            hub.push_live(run_id, "status", json!({"n": n}));
+        }
+    }
+    let end_of = |run_id: &str| hub.wait(run_id, None, Duration::ZERO).last().map(|event| event.index);
+    let before = hub.stats();
+    let waiters: Vec<_> = quiet
+        .iter()
+        .map(|run_id| {
+            let (hub, run_id, cursor) = (Arc::clone(&hub), run_id.clone(), end_of(run_id));
+            std::thread::spawn(move || hub.wait(&run_id, cursor, Duration::from_millis(600)).len())
+        })
+        .collect();
+    let follower = {
+        let (hub, cursor) = (Arc::clone(&hub), end_of("run-busy"));
+        std::thread::spawn(move || {
+            let mut cursor = cursor;
+            let mut got = 0;
+            let deadline = Instant::now() + WAIT;
+            while got < 100 && Instant::now() < deadline {
+                let events = hub.wait("run-busy", cursor, Duration::from_millis(200));
+                cursor = events.last().map(|event| event.index).or(cursor);
+                got += events.len();
+            }
+            got
+        })
+    };
+    std::thread::sleep(Duration::from_millis(50));
+    let after_reads = hub.stats();
+    for n in 0..100 {
+        hub.push_live("run-busy", "text.delta", json!({"n": n}));
+        if n % 10 == 0 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    assert_eq!(follower.join().unwrap(), 100);
+    for waiter in waiters {
+        assert_eq!(
+            waiter.join().unwrap(),
+            0,
+            "a quiet run's waiter got nothing and only timed out"
+        );
+    }
+    let after = hub.stats();
+    // the end_of reads above looked at each ring once; after them only the 100 new events were looked at
+    assert_eq!(after.inspected - after_reads.inspected, 100);
+    assert_eq!(after_reads.inspected - before.inspected, 2000 + 40 * 50);
+    let woken = after.wakeups - before.wakeups;
+    assert!(
+        (1..=100).contains(&woken),
+        "only the busy run's follower wakes: {woken}"
+    );
+}
+
+/// HL-021: a follower behind a ring that wrapped gets the stored events the ring dropped from the database, then the
+/// ring's, each once and in order, and the live events after them.
+#[test]
+fn a_follower_behind_a_wrapped_ring_fills_the_gap_from_the_database() {
+    let bed = bed("hub-wrap");
+    let _entered = bed.ctx.enter();
+    let hub = engine(&bed.factory).hub();
+    row(
+        &bed.facade,
+        RUN,
+        &[("runId", "run-wrap"), ("userId", USER), ("statusId", "AgrWorking")],
+    );
+    let total = i64::try_from(hub::RING).unwrap() + 10;
+    for seq in 1..=10 {
+        let mut event = bed.facade.make_value(events::RUN_EVENT).unwrap();
+        event.set("runId", Value::string("run-wrap"));
+        event.set("eventSeq", Value::I64(seq));
+        event.set("eventType", Value::string("status"));
+        event.set("payloadJson", Value::string(json!({"n": seq}).to_string()));
+        event.create(&bed.facade).unwrap();
+    }
+    hub.push_stored(
+        "run-wrap",
+        (1..=total)
+            .map(|seq| (seq, "status".to_string(), json!({"n": seq})))
+            .collect(),
+    );
+    let ring = hub.wait("run-wrap", None, Duration::ZERO);
+    assert_eq!(ring.len(), hub::RING, "the ring wrapped");
+    assert_eq!(ring.first().and_then(|event| event.seq), Some(11));
+    // a cursor before the ring's start reads the whole ring, not past its end
+    assert_eq!(hub.wait("run-wrap", Some(3), Duration::ZERO).len(), hub::RING);
+    let mut follower = hub::Follower::new(&hub, "run-wrap", 0);
+    let seqs: Vec<i64> = follower
+        .next(&hub, &bed.facade, Duration::ZERO)
+        .unwrap()
+        .iter()
+        .filter_map(|event| event.seq)
+        .collect();
+    assert_eq!(seqs, (1..=total).collect::<Vec<_>>());
+    hub.push_live("run-wrap", "text.delta", json!({"delta": "x"}));
+    let live = follower.next(&hub, &bed.facade, Duration::ZERO).unwrap();
+    assert_eq!(live.len(), 1);
+    assert_eq!((live[0].seq, live[0].event_type.as_str()), (None, "text.delta"));
+    assert_eq!(follower.last(), total);
+}
+
 /// The steps of a run in order: input and cached tokens, and whether a compaction came before the step's call.
 fn step_usage(bed: &Bed, run_id: &str) -> Vec<(u64, u64, bool)> {
     let compacted: Vec<i64> = stored(bed, run_id)
@@ -1905,4 +2016,142 @@ fn external_harness_runs_are_never_claimed_or_recovered_by_the_native_engine() {
     assert!(!lease::claim(&bed.facade, "external-run", "native-node", 60_000).unwrap());
     assert_eq!(lease::sweep(&bed.factory).unwrap(), 0);
     assert!(fake::requests(&bed.endpoint).is_empty());
+}
+
+/// A conversation of `old` compacted turns (each a user message and an answer with a large replay, summarized through
+/// the last of them) and then the same three active turns. Every fifth old message is left unflagged, as a row the
+/// range alone must keep out. Out: its id.
+fn lifetime(bed: &Bed, key: &str, old: usize) -> String {
+    let facade = &bed.facade;
+    let conversation_id = format!("conv-{key}");
+    row(
+        facade,
+        CONVERSATION,
+        &[
+            ("conversationId", &conversation_id),
+            ("userId", USER),
+            ("agentId", "assist"),
+            ("statusId", "AgcActive"),
+            ("lastMessageSeq", "0"),
+        ],
+    );
+    let mut through = None;
+    for turn in 0..old {
+        for (role, text) in [
+            ("user", format!("old question {turn}")),
+            ("assistant", format!("old answer {turn}")),
+        ] {
+            let id = step::append_message(
+                facade,
+                &conversation_id,
+                None,
+                role,
+                (role == "user").then_some(USER),
+                None,
+                &[step::Part::text(&text)],
+                None,
+                None,
+            )
+            .unwrap();
+            let mut message = facade
+                .find(MESSAGE)
+                .unwrap()
+                .eq("messageId", Value::string(&id))
+                .one()
+                .unwrap()
+                .unwrap();
+            through = int_of(&message, "messageSeq");
+            if role == "assistant" {
+                message.set("replayJson", Value::string("x".repeat(4000)));
+            }
+            if through.unwrap_or(0) % 5 != 0 {
+                message.set("compacted", Value::string("Y"));
+            }
+            message.update(facade).unwrap();
+        }
+    }
+    if let Some(through) = through {
+        let mut conversation = facade
+            .find(CONVERSATION)
+            .unwrap()
+            .eq("conversationId", Value::string(&conversation_id))
+            .one()
+            .unwrap()
+            .unwrap();
+        conversation.set("compactedThroughSeq", Value::I64(through));
+        conversation.set("compactionSummary", Value::string("The user asked old questions."));
+        conversation.update(facade).unwrap();
+    }
+    for turn in 0..3 {
+        for (role, text) in [
+            ("user", format!("question {turn}")),
+            ("assistant", format!("answer {turn}")),
+        ] {
+            step::append_message(
+                facade,
+                &conversation_id,
+                None,
+                role,
+                (role == "user").then_some(USER),
+                None,
+                &[step::Part::text(&text)],
+                None,
+                None,
+            )
+            .unwrap();
+        }
+    }
+    conversation_id
+}
+
+/// The message rows a step reads for the conversation, and their bytes (every field as text).
+fn active_read(bed: &Bed, conversation_id: &str) -> (usize, usize) {
+    let through = bed
+        .facade
+        .find(CONVERSATION)
+        .unwrap()
+        .eq("conversationId", Value::string(conversation_id))
+        .one()
+        .unwrap()
+        .and_then(|row| int_of(&row, "compactedThroughSeq"));
+    let rows = bed
+        .facade
+        .find(MESSAGE)
+        .unwrap()
+        .condition(crate::window::active_messages(conversation_id, through))
+        .list()
+        .unwrap();
+    let bytes = rows
+        .values()
+        .iter()
+        .map(|row| {
+            ["role", "replayJson", "metadataJson", "compacted", "tokenCount"]
+                .iter()
+                .map(|field| text_of(row, field).map_or(0, |text| text.len()))
+                .sum::<usize>()
+        })
+        .sum();
+    (rows.values().len(), bytes)
+}
+
+/// HL-013: the history a step builds reads the active window only, by the message sequence: the same rows and bytes,
+/// and the same messages sent, for a conversation one turn long and one of hundreds of compacted turns.
+#[test]
+fn a_step_reads_only_the_active_window_whatever_the_conversations_lifetime() {
+    let bed = bed("lifetime");
+    let _entered = bed.ctx.enter();
+    let short = lifetime(&bed, "short", 1);
+    let long = lifetime(&bed, "long", 200);
+    assert_eq!(active_read(&bed, &short), active_read(&bed, &long));
+    assert_eq!(active_read(&bed, &long).0, 6);
+    let (short_history, long_history) = (
+        crate::window::load(&bed.facade, &short).unwrap(),
+        crate::window::load(&bed.facade, &long).unwrap(),
+    );
+    assert_eq!(short_history.messages(), long_history.messages());
+    assert_eq!(long_history.entries.len(), 6);
+    assert_eq!(long_history.summary.as_deref(), Some("The user asked old questions."));
+    // the reference check reads the same window, and the summary for what it covers
+    let seen = |conversation_id: &str| step::seen_references(&bed.facade, conversation_id).unwrap();
+    assert_eq!(seen(&short), seen(&long));
 }

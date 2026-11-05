@@ -19,7 +19,12 @@ along with this software (see the LICENSE.md file). If not, see
     component adds a task type with an ai-task element of the llm-facade conf naming an implementation of
     prepare#AiTask. With async true a task is a job: its record is a tool-less AgentRun (get#AiTask reads it) and its user
     hears of the end in the agent inbox, and at webhookUrl (https, public addresses only) when given. The AI field
-    proposal never writes: the user saves the value, or approves it as an "Update with AI" run's approval card. -->
+    proposal never writes: the user saves the value, or approves it as an "Update with AI" run's approval card.
+    The services take no transaction (transaction="ignore"), since a model call is never made inside one: a synchronous
+    task called while the caller has a transaction open is refused, unless allowInTransaction, which suspends it for the
+    call and cuts the call to the time it has left. Call one outside a transaction (a screen transition with
+    begin-transaction="false") or with async true, whose job runs with none open. -->
+
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <service verb="run" noun="AiTask" type="rust" location="moqui_llm::ai_task::run_ai_task" transaction="ignore">
@@ -31,6 +36,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="modelId"/>
             <parameter name="async" type="Boolean" default="false"/>
             <parameter name="webhookUrl"/>
+            <parameter name="allowInTransaction" type="Boolean" default="false"><description>Make the model call though a transaction is open (suspended for the call, which is cut to its remaining time); else the call is refused in one</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="output" type="Map"/>
@@ -47,6 +53,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="focus"/>
             <parameter name="async" type="Boolean" default="false"/>
             <parameter name="webhookUrl"/>
+            <parameter name="allowInTransaction" type="Boolean" default="false"><description>Make the model call though a transaction is open (suspended for the call, which is cut to its remaining time); else the call is refused in one</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="summary"/>
@@ -64,6 +71,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="multiple" type="Boolean" default="false"/>
             <parameter name="async" type="Boolean" default="false"/>
             <parameter name="webhookUrl"/>
+            <parameter name="allowInTransaction" type="Boolean" default="false"><description>Make the model call though a transaction is open (suspended for the call, which is cut to its remaining time); else the call is refused in one</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="label"/>
@@ -83,6 +91,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="schema"/>
             <parameter name="async" type="Boolean" default="false"/>
             <parameter name="webhookUrl"/>
+            <parameter name="allowInTransaction" type="Boolean" default="false"><description>Make the model call though a transaction is open (suspended for the call, which is cut to its remaining time); else the call is refused in one</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="valueMap" type="Map"/>
@@ -99,6 +108,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="targetLanguage" required="true"/>
             <parameter name="async" type="Boolean" default="false"/>
             <parameter name="webhookUrl"/>
+            <parameter name="allowInTransaction" type="Boolean" default="false"><description>Make the model call though a transaction is open (suspended for the call, which is cut to its remaining time); else the call is refused in one</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="translatedText"/>
@@ -115,6 +125,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="text" allow-html="any"/>
             <parameter name="async" type="Boolean" default="false"/>
             <parameter name="webhookUrl"/>
+            <parameter name="allowInTransaction" type="Boolean" default="false"><description>Make the model call though a transaction is open (suspended for the call, which is cut to its remaining time); else the call is refused in one</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="generatedText"/>
@@ -186,6 +197,7 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="instructions" allow-html="any"/>
             <parameter name="mode" default-value="value"><description>value or approval</description></parameter>
             <parameter name="agentId"/>
+            <parameter name="allowInTransaction" type="Boolean" default="false"><description>Make the model call though a transaction is open (suspended for the call, which is cut to its remaining time); else the call is refused in one</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="proposedValue"/>

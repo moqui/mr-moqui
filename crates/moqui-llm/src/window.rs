@@ -873,8 +873,30 @@ fn json_map(text: Option<String>) -> Map<String, Json> {
     }
 }
 
-/// The history of a conversation as stored: its messages with their parts and what compaction did, its summary, and
-/// the anchor of the estimate (the newest assistant message's `tokenCount` and `promptChars`).
+/// The condition of a conversation's active messages, the ones still sent (plans/High-Level-Review.md HL-013): after
+/// `compactedThroughSeq` (`through`), so the conversation's message index (`AGENT_MSG_SEQ`) serves the read and its
+/// rows do not grow with the conversation's lifetime, and not flagged `compacted`, the exact negation of
+/// [`super::flag_of`]'s true.
+///
+/// The range is the whole rule: compaction only ever summarizes a prefix ([`summarize_older`] marks every message
+/// before the third newest user turn and stores the last one's sequence as `compactedThroughSeq`), and a message's
+/// sequence is unique in its conversation and only grows. The flag is a backstop for a row marked otherwise.
+pub(crate) fn active_messages(conversation_id: &str, through: Option<i64>) -> Condition {
+    let mut conditions = vec![
+        Condition::equals("conversationId", Value::string(conversation_id)),
+        Condition::or(vec![
+            Condition::is_null("compacted"),
+            Condition::not_in("compacted", vec![Value::string("Y"), Value::string("true")]),
+        ]),
+    ];
+    if let Some(through) = through {
+        conditions.push(Condition::greater("messageSeq", Value::I64(through)));
+    }
+    Condition::and(conditions)
+}
+
+/// The history of a conversation as stored: its active messages with their parts and what compaction did, its
+/// summary, and the anchor of the estimate (the newest assistant message's `tokenCount` and `promptChars`).
 ///
 /// # Errors
 ///
@@ -885,9 +907,10 @@ pub fn load(facade: &EntityFacade, conversation_id: &str) -> Result<History, Err
         .eq("conversationId", Value::string(conversation_id))
         .disable_authz()
         .one()?;
+    let through = conversation.as_ref().and_then(|row| int_of(row, "compactedThroughSeq"));
     let rows = facade
         .find(MESSAGE)?
-        .eq("conversationId", Value::string(conversation_id))
+        .condition(active_messages(conversation_id, through))
         .order_by("messageSeq", false)
         .disable_authz()
         .list()?;
@@ -917,7 +940,7 @@ pub fn load(facade: &EntityFacade, conversation_id: &str) -> Result<History, Err
     }
     let mut history = History {
         summary: conversation.as_ref().and_then(|row| text_of(row, "compactionSummary")),
-        summarized_through: conversation.as_ref().and_then(|row| int_of(row, "compactedThroughSeq")),
+        summarized_through: through,
         ..History::default()
     };
     for row in rows.values() {

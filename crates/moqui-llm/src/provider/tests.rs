@@ -1074,12 +1074,13 @@ fn a_completion_keeps_its_usage_when_the_callers_transaction_rolls_back() {
     let result: Result<(), moqui_lib::error::Error> =
         transactions.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
             assert!(transactions.in_transaction());
-            // the provider call runs with the transaction suspended (a debug build asserts it), then resumes it
+            // an opted-in call runs with the transaction suspended (a debug build asserts it), then resumes it
             let answer = llm.complete(
                 &facade,
                 &crate::CompleteRequest {
                     model: Some("complete-model".to_string()),
                     prompt: Some("Hello".to_string()),
+                    allow_in_transaction: true,
                     ..crate::CompleteRequest::default()
                 },
             )?;
@@ -1133,6 +1134,58 @@ fn a_completion_ends_by_its_timeout() {
         .unwrap_err();
     assert!(error.to_string().contains("timeout"), "{error}");
     assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+}
+
+/// HL-041: a completion with the caller's transaction open is refused, nothing sent and no connection parked; one that
+/// opts in is cut to the time the transaction has left, not its own 300 seconds.
+#[test]
+fn a_completion_in_a_transaction_is_refused_unless_it_opts_in_and_then_ends_with_the_transaction() {
+    let facade = moqui_core::testing::open();
+    let llm =
+        crate::LlmFacade::new(LlmConf::from_conf_text(&COMPLETE_CONF.replace("complete-fake", "in-tx-fake")).unwrap());
+    fake::clear("in-tx-fake");
+    let transactions = facade.transactions_for("moqui.llm.LlmCall").unwrap();
+    let ask = |allow: bool| crate::CompleteRequest {
+        model: Some("complete-model".to_string()),
+        prompt: Some("Hello".to_string()),
+        allow_in_transaction: allow,
+        ..crate::CompleteRequest::default()
+    };
+    let parked_before = transactions.stats().parked;
+    let refused: Result<(), moqui_lib::error::Error> =
+        transactions.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
+            // a read first, so the transaction holds a connection
+            facade.find("moqui.basic.Enumeration")?.limit(1).list()?;
+            let error = llm.complete(&facade, &ask(false)).unwrap_err();
+            assert!(error.to_string().contains(super::IN_TRANSACTION), "{error}");
+            assert_eq!(transactions.stats().parked, parked_before, "nothing was suspended");
+            assert!(transactions.in_transaction());
+            Ok(())
+        });
+    refused.unwrap();
+    assert!(fake::requests("in-tx-fake").is_empty(), "nothing was sent");
+
+    fake::script(
+        "in-tx-fake",
+        vec![fake::Reply::steps(vec![
+            Step::Hang(5000),
+            Step::Finish("stop".to_string()),
+        ])],
+    );
+    let started = Instant::now();
+    let opted: Result<(), moqui_lib::error::Error> = transactions.run(
+        moqui_core::transaction::TransactionAttribute::UseOrBegin,
+        Some(Duration::from_millis(400)),
+        || {
+            let error = llm.complete(&facade, &ask(true)).unwrap_err();
+            assert!(error.to_string().contains("timeout"), "{error}");
+            Ok(())
+        },
+    );
+    // the transaction's own deadline passed meanwhile, so it ends rolled back; the call did not outlast it
+    let _ = opted;
+    assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+    assert_eq!(fake::requests("in-tx-fake").len(), 1);
 }
 
 const QUOTA_CONF: &str = r#"<llm-facade>
