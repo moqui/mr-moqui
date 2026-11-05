@@ -560,3 +560,69 @@ fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins(
     moqui_lib::env::set_property("dav_public_url", "https://dav.example/base/");
     assert_eq!(super::public_base_url(factory), "https://dav.example/base");
 }
+
+/// The SFTP view of the drives (`files::tree`), as the SSH server's `sftp-drives` serves it: a write is an upload that
+/// makes a new version, and a user reaches only what the drive lets them, reading a view-only drive and writing none
+/// of it, and not seeing another user's drive at all (HL-010).
+#[test]
+fn the_sftp_tree_writes_versions_and_refuses_what_the_drive_does_not_allow() {
+    use super::files::tree;
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "alice");
+    user(&facade, "bob");
+    login("alice");
+    tree::make_directory("/My files/Docs").unwrap();
+    tree::write("/My files/Docs/a.txt", b"one".to_vec()).unwrap();
+    tree::write("/My files/Docs/a.txt", b"two".to_vec()).unwrap();
+    assert_eq!(tree::read("/My files/Docs/a.txt").unwrap(), b"two");
+    let drive_id = to_plain_string(
+        service("org.moqui.impl.FileServices.get#UserDrives", &[])
+            .get("personalDriveId")
+            .unwrap(),
+    );
+    let versions = service(
+        "org.moqui.impl.FileServices.get#Versions",
+        &[
+            ("driveId", Value::string(&drive_id)),
+            ("path", Value::string("Docs/a.txt")),
+        ],
+    );
+    let Some(Value::List(versions)) = versions.get("versionList") else {
+        panic!("{versions:?}")
+    };
+    assert!(versions.len() >= 2, "each write is a version: {versions:?}");
+    service(
+        "org.moqui.impl.FileServices.create#Drive",
+        &[
+            ("driveName", Value::string("Viewed")),
+            (
+                "memberList",
+                Value::List(vec![Value::Map(indexmap::IndexMap::from([
+                    ("userId".to_string(), Value::string("bob")),
+                    ("permissionEnumId".to_string(), Value::string("RdpView")),
+                ]))]),
+            ),
+        ],
+    );
+    tree::write("/Viewed/shared.txt", b"alice's".to_vec()).unwrap();
+    login("bob");
+    assert_eq!(tree::read("/Viewed/shared.txt").unwrap(), b"alice's");
+    assert!(
+        tree::write("/Viewed/shared.txt", b"bob's".to_vec()).is_err(),
+        "a view-only drive"
+    );
+    assert!(tree::write("/Viewed/new.txt", b"bob's".to_vec()).is_err());
+    assert!(
+        tree::read("/My files/Docs/a.txt").is_err(),
+        "alice's own drive is not bob's"
+    );
+    assert!(tree::stat("/My files/Docs/a.txt").unwrap().is_none());
+    let _ = ExecutionContext::with_current(|ec| ec.message().clear_errors());
+    login("alice");
+    assert_eq!(
+        tree::read("/Viewed/shared.txt").unwrap(),
+        b"alice's",
+        "bob's writes were refused"
+    );
+}
