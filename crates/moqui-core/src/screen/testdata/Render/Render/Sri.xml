@@ -47,6 +47,13 @@
                 {name: 'list-options', attrs: {list: 'listOptions', key: '${k}', text: '${t}'}},
                 {name: 'list-options', attrs: {list: "['p', 'q']"}}],
                 parent: {name: 'default-field', attrs: {}, parent: {name: 'field', attrs: {name: 'f'}}}}).entries()),
+            // a key given again keeps its first place and takes the last label
+            duplicate: Array.from(sri.getFieldOptions({name: 'drop-down', attrs: {}, children: [
+                {name: 'option', attrs: {key: 'Y', text: 'Yes'}},
+                {name: 'list-options', attrs: {list: 'listOptions', key: '${k}', text: '${t}'}},
+                {name: 'option', attrs: {key: 'a', text: 'Again'}}, {name: 'option', attrs: {key: 'Y', text: 'Yes again'}},
+                {name: 'list-options', attrs: {list: "['p', 'b']"}}],
+                parent: {name: 'default-field', attrs: {}, parent: {name: 'field', attrs: {name: 'f'}}}}).entries()),
         };
 
         // context, writers, themes
