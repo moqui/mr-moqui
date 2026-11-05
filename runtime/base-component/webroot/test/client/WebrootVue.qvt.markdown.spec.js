@@ -156,6 +156,122 @@ feature("the SQL screen runs a statement, fetches more, confirms changes and sho
     },
 })
 
+// Tools' data grid (component://tools/screen/Tools/Data/Grid.qvue) mounted in the page on the vendored Tabulator, its
+// transitions answered by fixtures shaped like org.moqui.impl.DatabaseServices' data grid answers: the rows, an edit, a
+// save with a refused row marked and its edits kept, a pasted range, undo, and an export sent as a download.
+feature("the data grid loads rows, edits, saves with a refused row, pastes a range, undoes and exports", {
+    expect() {
+        const page = browser.newPage()
+        page.setContent(`<!doctype html><html><head><link rel="stylesheet" href="/libs/quasar/quasar.prod.css"></head><body><div id="app"></div>
+            <script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
+            <script src="/js/MoquiLib.js"></script><script src="/js/MoquiL10n.js"></script><script>
+            const columns = [{name: "thingId", title: "Thing", type: "text", editable: false, editor: null, pk: true, notNull: true, maxLength: 20},
+                {name: "description", title: "Description", type: "text", editable: true, editor: "input", pk: false, notNull: false, maxLength: 40},
+                {name: "amount", title: "Amount", type: "number", editable: true, editor: "number", pk: false}]
+            const rows = [{thingId: "T1", description: "One", amount: 1, _stamp: "s1"}, {thingId: "T2", description: "Two", amount: 2, _stamp: "s2"},
+                {thingId: "T3", description: "Three", amount: null, _stamp: "s3"}]
+            let saves = 0
+            // a SQL result's columns: its labels, each with the entity field it saves to
+            const sqlColumns = [{name: "enum_id", title: "enum_id", type: "text", editable: false, editor: null, pk: true, field: "enumId"},
+                {name: "description", title: "description", type: "text", editable: true, editor: "input", pk: false, field: "description"}]
+            const answers = {
+                gridInfo: () => ({entityNames: [], userId: "U1", canSql: false, related: null}),
+                gridColumns: (p) => JSON.parse(p.sourceJson).type == "sql" ? {columns: sqlColumns, entityName: "moqui.basic.Enumeration", hasStamp: true,
+                    keyColumns: ["enum_id"], stampColumn: "last_updated_stamp"} : {columns, entityName: "moqui.test.Thing", hasStamp: true},
+                gridRows: (p) => JSON.parse(p.sourceJson).type == "sql" ? {last_page: 1, data: [{enum_id: "E1", description: "First", _stamp: "e1"}]}
+                    : {last_page: 1, last_row: 3, data: JSON.parse(JSON.stringify(rows))},
+                gridSave: () => ++saves == 1 ? {saved: false, refused: [{kind: "update", index: 0, pk: {thingId: "T1"}, message: "Description is too long",
+                    fieldErrors: {description: "too long"}, conflict: false}]} : {saved: true, updated: 2, created: 0, deleted: 0, createdKeys: []},
+                gridExport: () => ({location: "runtime://tmp/grid-export/U1/abc/Thing.csv", fileName: "Thing.csv", contentType: "text/csv", rowCount: 3})
+            }
+            window.calls = []
+            moqui.request = (url, options) => {
+                const name = url.split("/").pop(), params = Object.assign({}, options && options.params)
+                calls.push({name, method: (options && options.method) || "GET", params})
+                return Promise.resolve({ok: true, status: 200, json: answers[name] ? answers[name](params) : {}})
+            }
+            window.notified = []
+            moqui.notifyMessages = (messages, errors) => { notified.push(errors || messages) }
+            moqui.handleAjaxError = (err) => { notified.push(String(err)) }
+            window.downloads = []
+            HTMLAnchorElement.prototype.click = function () { downloads.push(this.getAttribute("href")) }
+            fetch("/files/runtime/base-component/tools/screen/Tools/Data/Grid.qvue").then((r) => r.text()).then((text) => {
+                const module = {}
+                const part = (tag) => text.slice(text.indexOf("<" + tag + ">") + tag.length + 2, text.lastIndexOf("<" + "/" + tag + ">"))
+                new Function("module", part("script"))(module)
+                const component = Object.assign(module.exports, {template: part("template")})
+                const app = Vue.createApp({data() { return {basePath: "/apps", linkBasePath: "/qapps", currentPathList: ["tools", "Data", "Grid"],
+                    currentParameters: {entityName: "moqui.test.Thing"}} }, template: '<grid-screen ref="grid"></grid-screen>'})
+                app.use(Quasar)
+                app.component("grid-screen", component)
+                window.vm = app.mount("#app")
+            })
+            </script></body></html>`)
+        page.waitFor(() => !!(window.vm && vm.$refs.grid && vm.$refs.grid.ready && document.querySelectorAll("#app .tabulator-row").length === 3))
+        assert.ok(page.evaluate(() => !!document.querySelector("#app .m-data-grid.tabulator")), "the grid has the theme's class")
+        const rowsCall = page.evaluate(() => JSON.parse(JSON.stringify(calls.find((call) => call.name === "gridRows"))))
+        assert.equal(JSON.parse(rowsCall.params.sourceJson).entityName, "moqui.test.Thing")
+        assert.equal(rowsCall.params.page, 1)
+        assert.equal(page.evaluate(() => document.querySelector("#app .tabulator-row:nth-child(3) .tabulator-cell[tabulator-field=amount]").textContent), "null")
+        // an edit: marked, counted
+        page.evaluate(() => { vm.$refs.grid.grid.getRows()[0].getCell("description").setValue("Changed"); return true })
+        page.waitFor(() => vm.$refs.grid.changeCount === 1)
+        assert.ok(page.evaluate(() => document.querySelector("#app .tabulator-row .tabulator-cell[tabulator-field=description]").classList.contains("m-grid-edited")))
+        // a save the server refuses: the row and its cell are marked, the edit is kept
+        page.evaluate(() => { vm.$refs.grid.save(); return true })
+        page.waitFor(() => !!document.querySelector("#app .tabulator-row.m-grid-refused"))
+        const saveCall = page.evaluate(() => JSON.parse(JSON.stringify(calls.filter((call) => call.name === "gridSave")[0])))
+        assert.equal(saveCall.method, "POST", "a save is a POST")
+        const saved = saveCall.params
+        assert.deepEqual(JSON.parse(saved.updatesJson), [{pk: {thingId: "T1"}, stamp: "s1", fields: {description: "Changed"}}], "only the edited field, with the stamp")
+        assert.equal(page.evaluate(() => document.querySelector("#app .tabulator-row.m-grid-refused .tabulator-cell[tabulator-field=description]").title), "too long")
+        assert.equal(page.evaluate(() => vm.$refs.grid.changeCount), 1, "the edit is kept")
+        // with changes unsaved, the header's sort and filters wait
+        assert.ok(page.evaluate(() => document.querySelector("#app .m-data-grid").classList.contains("m-grid-locked")))
+        // a pasted range: two cells of the description column, pasted into from the clipboard module as the browser's paste
+        // event reaches it (a synthetic paste event carries no data)
+        page.evaluate(() => {
+            const grid = vm.$refs.grid.grid, rows = grid.getRows()
+            grid.addRange(rows[1].getCell("description"), rows[2].getCell("description"))
+            return true
+        })
+        page.evaluate(() => {
+            const grid = vm.$refs.grid.grid
+            grid.modules.clipboard.paste({target: grid.element.querySelector(".tabulator-tableholder"), clipboardData: {getData: () => "Pasted A\nPasted B"}, preventDefault() {}})
+            return true
+        })
+        assert.equal(page.evaluate(() => JSON.stringify(vm.$refs.grid.grid.getRanges()[0].getCells().flat().map((cell) => cell.getValue()))), JSON.stringify(["Pasted A", "Pasted B"]))
+        page.waitFor(() => vm.$refs.grid.changeCount === 3)
+        // undo takes the whole paste back in one step
+        page.evaluate(() => { vm.$refs.grid.undo(); return true })
+        page.waitFor(() => JSON.stringify(vm.$refs.grid.grid.getRanges()[0].getCells().flat().map((cell) => cell.getValue())) === JSON.stringify(["Two", "Three"]))
+        assert.equal(page.evaluate(() => vm.$refs.grid.changeCount), 1, "the edit before the paste stays")
+        // the save goes through: the edits are cleared and the rows read again
+        page.evaluate(() => { vm.$refs.grid.save(); return true })
+        page.waitFor(() => vm.$refs.grid.changeCount === 0 && calls.filter((call) => call.name === "gridRows").length >= 2)
+        // export: the file written by the server, sent as a download of the user's own place
+        page.evaluate(() => { vm.$refs.grid.exportRows("csv"); return true })
+        page.waitFor(() => downloads.length === 1)
+        const download = page.evaluate(() => downloads[0])
+        assert.ok(download.includes("/gridDownload?location=" + encodeURIComponent("runtime://tmp/grid-export/U1/abc/Thing.csv")), download)
+        assert.ok(download.includes("contentType=text%2Fcsv"), download)
+        // a SQL result saves to its entity: each label sent as the entity field it is
+        page.evaluate(() => { vm.$refs.grid.open({type: "sql", db: "group:transactional", sql: "select enum_id, description from enumeration"}); return true })
+        page.waitFor(() => vm.$refs.grid.ready && vm.$refs.grid.grid.getRows().length === 1 && vm.$refs.grid.grid.getRows()[0].getData().enum_id === "E1")
+        page.evaluate(() => { vm.$refs.grid.grid.getRows()[0].getCell("description").setValue("Edited"); return true })
+        page.waitFor(() => vm.$refs.grid.changeCount === 1)
+        page.evaluate(() => { vm.$refs.grid.save(); return true })
+        page.waitFor(() => calls.filter((call) => call.name === "gridSave").length === 3)
+        const sqlSave = page.evaluate(() => JSON.parse(JSON.stringify(calls.filter((call) => call.name === "gridSave")[2])))
+        assert.equal(sqlSave.method, "POST")
+        assert.equal(sqlSave.params.saveEntityName, "moqui.basic.Enumeration")
+        assert.deepEqual(JSON.parse(sqlSave.params.updatesJson), [{pk: {enumId: "E1"}, stamp: "e1", fields: {description: "Edited"}}])
+        const sqlRows = page.evaluate(() => JSON.parse(JSON.stringify(calls.filter((call) => call.name === "gridRows").pop())))
+        assert.equal(sqlRows.method, "POST", "a SQL source is read in a POST body")
+        assert.equal(JSON.parse(sqlRows.params.sourceJson).keyColumns[0], "enum_id")
+    },
+})
+
 // The SQL editor's helpers (js/WebrootSql.js), in the page.
 
 browser.runInPage({

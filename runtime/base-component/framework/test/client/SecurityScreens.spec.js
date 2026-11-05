@@ -195,6 +195,21 @@ feature("A01 the SQL Runner does not run a statement from the query string", {
     },
 })
 
+// The data grid takes a SQL source only in the request body, as the SQL screen takes its SQL.
+feature("A01 the data grid does not run a SQL source from the query string", {
+    when() {
+        const s = formSession(USER, PASSWORD)
+        const sourceJson = JSON.stringify({ type: "sql", db: "group:transactional", sql: "SELECT 1 AS sec_grid_probe" })
+        const res = s.get("/apps/tools/Data/Grid/gridColumns", { params: { sourceJson } })
+        if (res.status == 401 || res.status == 403) skip("logged-in user cannot open the Tools app")
+        return { res, body: res.text.toLowerCase() }
+    },
+    then({ res, body }) {
+        !body.includes("sec_grid_probe")
+        body.includes("request body")
+    },
+})
+
 // test_a01_more.py: test_menu_data_tools_without_login_is_not_the_menu
 feature("A01 menu data for Tools without a login is not the menu", {
     when() {

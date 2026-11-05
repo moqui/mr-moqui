@@ -791,6 +791,9 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
         entityEcaDisabled: host.entityEcaDisabled, getStackNameString: host.stackNameString,
         // Java's: disable returns whether authorization was already disabled; it stays so until enable
         disableAuthz: host.disableAuthz, enableAuthz: host.enableAuthz,
+        // body() as the current user, with authorization on whatever disabled it (a ServiceJob, an async call): the
+        // screen at location checked for all actions and pushed under it, as a request to it would be
+        runAsUser: (location, body) => host.runAsUser(String(location), body),
         // whether authorization is disabled now, changing nothing (disableAuthz to ask would hold a guard of its own)
         authzDisabled: host.authzDisabled,
         // Java's: disable returns whether tarpit counting was already disabled; it stays so until enable
@@ -2570,6 +2573,54 @@ fn enable_entity_eca(ctx: Ctx<'_>) -> rquickjs::Result<()> {
     host_guard(&ctx, || with_ec(&ctx, ExecutionContext::enable_entity_eca))
 }
 
+/// `ec.artifactExecution.runAsUser(location, body)`: authorization required again for the rest of `body` (a ServiceJob
+/// or an async call runs with it off), and the screen `location` checked for all actions as the current user and pushed,
+/// so what `body` calls is authorized as from that screen. A user the screen does not authorize is refused, and `body`
+/// does not run. The script's own disableAuthz state is set aside while `body` runs and put back after, whatever `body`
+/// did with `disableAuthz` and `enableAuthz`, so nothing outside the call changes.
+fn run_as_user<'js>(ctx: Ctx<'js>, location: String, body: Function<'js>) -> rquickjs::Result<JsValue<'js>> {
+    let outer_script_authz = with_ec(&ctx, ExecutionContext::take_script_authz)?;
+    let required = with_ec(&ctx, ExecutionContext::require_authz)?;
+    let pushed = with_ec(&ctx, |ec| {
+        ec.push_checked(
+            "AT_XML_SCREEN",
+            &location,
+            "all",
+            crate::context::Authz::Required,
+            crate::context::Tarpit::Skip,
+            None,
+        )
+    });
+    // the guards go in the reverse of their making: what body left of the script's state, then the requirement, and then
+    // the caller's own state comes back
+    let restore = |required| {
+        ExecutionContext::with_current(|ec| drop(ec.take_script_authz()));
+        drop(required);
+        ExecutionContext::with_current(|ec| ec.put_script_authz(outer_script_authz));
+    };
+    match pushed {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            restore(required);
+            return Err(Exception::throw_message(&ctx, err.message()));
+        }
+        Err(err) => {
+            restore(required);
+            return Err(err);
+        }
+    }
+    let result = body.call::<_, JsValue<'js>>(());
+    // the frame is popped whatever body did
+    let popped = ExecutionContext::with_current(ExecutionContext::pop);
+    restore(required);
+    match popped {
+        Some(Err(err)) => tracing::warn!("Pop after runAsUser of {location}: {}", err.message()),
+        None => tracing::warn!("No execution context to pop after runAsUser of {location}"),
+        Some(Ok(())) => {}
+    }
+    result
+}
+
 /// `ec.artifactExecution.disableAuthz()`: authorization is not checked for this execution context until
 /// `enableAuthz()`. Returns whether it was already disabled, as Java.
 fn disable_authz(ctx: Ctx<'_>) -> rquickjs::Result<bool> {
@@ -2866,6 +2917,7 @@ pub(super) fn install<'js>(
     method!("getComponentInfoList", get_component_info_list);
     method!("getRuntimePath", get_runtime_path);
     method!("getInstanceId", get_instance_id);
+    method!("runAsUser", run_as_user);
     method!("getThreadList", get_thread_list);
     method!("waitWorkerPoolEmpty", wait_worker_pool_empty);
     method!("getRequestDetails", get_request_details);

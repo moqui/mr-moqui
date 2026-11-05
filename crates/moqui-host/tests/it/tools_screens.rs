@@ -101,9 +101,6 @@ const DETAILS: &[&str] = &[
     "/System/Llm/Triggers/TriggerDetail?triggerId=GATE_TRIGGER",
     "/System/Llm/Gateway/ClientDetail?clientId=GATE_CLIENT",
     "/Tools/Schema/Entity?selectedEntity=moqui.basic.Enumeration",
-    "/Tools/Data/Grid?selectedEntity=moqui.basic.Enumeration",
-    "/Tools/Data/Grid?entityName=moqui.basic.Enumeration",
-    "/Tools/Data/Grid",
     "/Tools/Data/Record?selectedEntity=moqui.basic.Enumeration&enumId=PtjNotSent",
     "/Tools/Schema/Entities?viewOption=master",
     "/Tools/Database/SpeedTest?baseCalls=10",
@@ -113,7 +110,6 @@ const DETAILS: &[&str] = &[
     "/Tools/Data/Browse/AutoEdit/AutoEditDetail?aen=moqui.basic.StatusType&den=moqui.basic.StatusItem&statusTypeId=PrintJob",
     "/Tools/Data/Views/ViewDbView?dbViewEntityName=GateView",
     "/Tools/Data/Views/ViewDbView?dbViewEntityName=GateView&enumId=GATE_ENUM",
-    "/Tools/Data/Grid?selectedEntity=DataDocument.GateDoc&enumId=GATE_ENUM",
     "/Tools/Data/Views/EditDbView?dbViewEntityName=GateView",
     "/Tools/Service/ServiceDetail?serviceName=org.moqui.impl.BasicServices.convert%23Uom",
     "/Tools/Service/ServiceRun?serviceName=org.moqui.impl.BasicServices.echo%23Data",
@@ -328,17 +324,21 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
         view.contains("Gate enum type") && !view.contains("is not available"),
         "{view}"
     );
-    // A data document's view is an entity to the entity data screens: the find shows its row, and its expression field
-    // with `defaultDisplay` `Y` is a display field of the find form.
+    // A data document's view is an entity to the data grid: its rows (with a condition) show its row.
+    let source = encode(r#"{"type":"entity","entityName":"DataDocument.GateDoc","conditions":{"enumId":"GATE_ENUM"}}"#);
     let (_, doc) = get(
         address,
         &john,
-        "/Tools/Data/Grid?selectedEntity=DataDocument.GateDoc&enumId=GATE_ENUM",
+        &format!("/Tools/Data/Grid/gridRows?sourceJson={source}"),
     );
-    assert!(
-        doc.contains(r#"<span class="display String">Gate enum</span>"#) && doc.contains(r#"name="enumLabel""#),
-        "{doc}"
+    assert!(doc.contains("Gate enum") && !doc.contains("\"errors\" : \""), "{doc}");
+    let (_, columns) = get(
+        address,
+        &john,
+        &format!("/Tools/Data/Grid/gridColumns?sourceJson={source}"),
     );
+    // the document's fields are its columns (its expression field, enumLabel, is not among them yet)
+    assert!(columns.contains("\"description\""), "{columns}");
     // The conf caches, the screen definitions, and the entity list caches are listed together.
     let (_, cache) = get(address, &john, "/System/Cache/CacheList?filterRegexp=screen.def");
     assert!(cache.contains("cacheName=screen.definition"), "{cache}");
@@ -667,7 +667,7 @@ fn run_sql(address: SocketAddr, auth: &str, changes: bool, sql: &str, limit: &st
             .split_once("://")
             .and_then(|(_, rest)| rest.find('/').map(|at| rest[at..].to_string()))
             .unwrap_or(location);
-        let (base, query) = path.split_once('?').map_or((path.as_str(), ""), |parts| parts);
+        let (base, query) = path.split_once('?').unwrap_or((path.as_str(), ""));
         let target = if base.ends_with(".html") {
             path.clone()
         } else if query.is_empty() {
