@@ -76,7 +76,12 @@ pub struct SourceGuard {
 /// The most sources tracked; past this the ones not blocked go first, then the blocks that end soonest.
 const MAX_SOURCES: usize = 50_000;
 
-/// The key a source counts under: an IPv4 address, or an IPv6 address's /64.
+/// The key a source counts under: an IPv4 address (an IPv4-mapped IPv6 one as its IPv4 address), or an IPv6
+/// address's /64. Every per-source limit of the listeners counts by it, so one host cannot spread over its /64.
+pub fn source_key(source: IpAddr) -> IpAddr {
+    key_of(source)
+}
+
 fn key_of(source: IpAddr) -> IpAddr {
     match source {
         IpAddr::V4(_) => source,
@@ -309,6 +314,113 @@ impl RequestGate {
                 if *count == 0 {
                     self.by_source.remove(&key);
                 }
+            }
+        }
+    }
+}
+
+/// A listener's connection slots with a share per source (plans/High-Level-Review.md HL-032): at most `total` held at
+/// once, and at most `per_source` by one source ([`source_key`]), so one host cannot hold every slot of a pool that
+/// connections wait in before they authenticate. Only sources holding a slot are in the table, so it is bounded by
+/// `total` and nothing is scanned per call. Cheap to clone; the clones share the slots.
+#[derive(Clone)]
+pub struct SourceSlots {
+    inner: std::sync::Arc<SlotsInner>,
+}
+
+struct SlotsInner {
+    total: usize,
+    per_source: usize,
+    state: std::sync::Mutex<SlotsState>,
+}
+
+#[derive(Default)]
+struct SlotsState {
+    held: usize,
+    by_source: HashMap<IpAddr, usize>,
+}
+
+/// Why [`SourceSlots::take`] refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SlotRefused {
+    /// Every slot is held.
+    Full,
+    /// The source holds its share.
+    Source,
+}
+
+/// One held slot, given back when dropped.
+pub struct SourceSlot {
+    inner: std::sync::Arc<SlotsInner>,
+    key: IpAddr,
+}
+
+impl SourceSlots {
+    /// `total` slots, `per_source` of them for one source; 0 for `per_source` is no share.
+    pub fn new(total: usize, per_source: usize) -> Self {
+        SourceSlots {
+            inner: std::sync::Arc::new(SlotsInner {
+                total,
+                per_source,
+                state: std::sync::Mutex::default(),
+            }),
+        }
+    }
+
+    /// A slot for a connection from `source`.
+    ///
+    /// # Errors
+    ///
+    /// [`SlotRefused`] when every slot is held, or the source holds its share.
+    pub fn take(&self, source: IpAddr) -> Result<SourceSlot, SlotRefused> {
+        let key = key_of(source);
+        let mut state = crate::sync::lock(&self.inner.state);
+        if state.held >= self.inner.total {
+            return Err(SlotRefused::Full);
+        }
+        let from_source = state.by_source.get(&key).copied().unwrap_or(0);
+        if self.inner.per_source > 0 && from_source >= self.inner.per_source {
+            return Err(SlotRefused::Source);
+        }
+        state.held += 1;
+        state.by_source.insert(key, from_source + 1);
+        Ok(SourceSlot {
+            inner: std::sync::Arc::clone(&self.inner),
+            key,
+        })
+    }
+
+    /// The slots held now.
+    pub fn held(&self) -> usize {
+        crate::sync::lock(&self.inner.state).held
+    }
+
+    /// The slots `source` holds now.
+    pub fn held_by(&self, source: IpAddr) -> usize {
+        crate::sync::lock(&self.inner.state)
+            .by_source
+            .get(&key_of(source))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub fn total(&self) -> usize {
+        self.inner.total
+    }
+
+    pub fn per_source(&self) -> usize {
+        self.inner.per_source
+    }
+}
+
+impl Drop for SourceSlot {
+    fn drop(&mut self) {
+        let mut state = crate::sync::lock(&self.inner.state);
+        state.held = state.held.saturating_sub(1);
+        if let Some(count) = state.by_source.get_mut(&self.key) {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                state.by_source.remove(&self.key);
             }
         }
     }

@@ -856,9 +856,9 @@ async fn upgraded_sockets_count_against_max_per_client() {
     let (address, stop, server) = listening(app, guard, limits).await;
     let (first, head) = upgraded(address, "/callws").await;
     assert!(head.starts_with("HTTP/1.1 101"), "{head}");
-    let (_second, head) = upgraded(address, "/callws").await;
+    let (second, head) = upgraded(address, "/callws").await;
     assert!(head.starts_with("HTTP/1.1 101"), "{head}");
-    let (_third, head) = upgraded(address, "/callws").await;
+    let (third, head) = upgraded(address, "/callws").await;
     assert!(
         !head.contains(" 101 "),
         "a third socket from one address is refused: {head}"
@@ -867,9 +867,42 @@ async fn upgraded_sockets_count_against_max_per_client() {
     tokio::time::sleep(Duration::from_millis(200)).await;
     let answered = ask(address, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").await;
     assert!(answered.starts_with("HTTP/1.1 200"), "{answered}");
+    // the stop's drain waits for open sockets
+    drop((second, third));
     drop(stop);
     tokio::time::timeout(Duration::from_secs(5), server)
         .await
         .expect("the listener did not stop")
+        .unwrap();
+}
+
+/// The stop's drain waits for an open WebSocket as for a connection, and ends once it closes (HL-027).
+#[tokio::test]
+async fn the_shutdown_drain_waits_for_an_open_websocket() {
+    use axum::extract::ws::WebSocketUpgrade;
+    let app = Router::new().route(
+        "/notws",
+        get(|ws: WebSocketUpgrade| async {
+            ws.on_upgrade(|mut socket| async move { while let Some(Ok(_)) = socket.recv().await {} })
+        }),
+    );
+    let limits = ListenLimits {
+        shutdown: Some(Duration::from_secs(5)),
+        ..ListenLimits::defaults()
+    };
+    let (address, stop, mut server) = listening(app, unguarded(), limits).await;
+    let (socket, head) = upgraded(address, "/notws").await;
+    assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+    drop(stop);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), &mut server)
+            .await
+            .is_err(),
+        "the drain waits for the open socket"
+    );
+    drop(socket);
+    tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .expect("the drain ended once the socket closed")
         .unwrap();
 }

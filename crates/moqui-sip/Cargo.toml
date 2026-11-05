@@ -27,6 +27,8 @@ rustls = { workspace = true }
 sha2 = { workspace = true }
 str0m = { workspace = true }
 tokio = { workspace = true }
+# The TLS listener is accepted here, with a handshake deadline, and handed to rsipstack (ua.rs).
+tokio-rustls = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 

@@ -172,3 +172,25 @@ fn an_ipv6_source_counts_as_its_64_and_a_full_table_keeps_its_blocks() {
     assert!(guard.is_blocked(a, t0 + Duration::from_secs(1)));
     assert!(guard.entries.len() <= MAX_SOURCES);
 }
+
+/// A source holds at most its share of the slots, an IPv6 /64 and an IPv4-mapped address counted as one source, and
+/// a dropped slot is given back (HL-032).
+#[test]
+fn slots_keep_a_share_per_source() {
+    let slots = SourceSlots::new(4, 2);
+    let a: IpAddr = "2001:db8:1:2::1".parse().unwrap();
+    let a2: IpAddr = "2001:db8:1:2:ffff::9".parse().unwrap();
+    let v4: IpAddr = "203.0.113.9".parse().unwrap();
+    let mapped: IpAddr = "::ffff:203.0.113.9".parse().unwrap();
+    let first = slots.take(a).unwrap();
+    let _second = slots.take(a2).unwrap();
+    assert_eq!(slots.take(a).err(), Some(SlotRefused::Source), "the same /64");
+    let _third = slots.take(v4).unwrap();
+    let _fourth = slots.take(mapped).unwrap();
+    assert_eq!(slots.take(mapped).err(), Some(SlotRefused::Full));
+    assert_eq!(slots.held_by(v4), 2);
+    drop(first);
+    assert_eq!(slots.held(), 3);
+    assert!(slots.take(a).is_ok());
+    assert_eq!(slots.held(), 3, "the slot taken above was dropped again");
+}

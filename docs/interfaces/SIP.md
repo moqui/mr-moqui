@@ -31,7 +31,7 @@ Every listener is off until its setting is set.
 | --- | --- | --- |
 | `sip_port` | empty (off) | SIP over UDP and TCP; 5060 by convention |
 | `sip_host` | `127.0.0.1` | The address `sip_port` binds |
-| `sip_tls_port` | empty (off) | SIP over TLS; 5061 by convention. The certificate comes from `runtime/cert` (for `sip_public_address`, else `default`), as the HTTPS listener's and TURN's do |
+| `sip_tls_port` | empty (off) | SIP over TLS; 5061 by convention. The certificate comes from `runtime/cert` (for `sip_public_address`, else `default`), as the HTTPS listener's and TURN's do. A client must finish its TLS handshake within 10 seconds; at most 128 handshakes run at once, 8 from one source |
 | `sip_tls_host` | `sip_host` | The address `sip_tls_port` binds |
 | `sip_rtp_ports` | `20000-20999` | The UDP range of the phone legs' RTP, one port a leg |
 | `sip_rtp_host` | `sip_host` | The address the RTP sockets bind |

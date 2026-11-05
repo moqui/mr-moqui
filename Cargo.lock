@@ -5097,6 +5097,7 @@ dependencies = [
  "sha2 0.11.1",
  "str0m",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
  "tracing",
 ]
