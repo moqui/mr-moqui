@@ -79,6 +79,7 @@ pub fn artifacts_changed(factory: &ExecutionContextFactory) {
 const LOCATIONS: &[(&str, &str)] = &[
     ("moqui_git::", "git"),
     ("moqui_collab::", "collab"),
+    ("moqui_tools::", "tools"),
     ("moqui_dav::", "dav"),
     ("moqui_devkit::", "devkit"),
     ("moqui_mail::send_template", "smtp"),

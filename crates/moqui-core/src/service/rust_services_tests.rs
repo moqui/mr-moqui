@@ -162,6 +162,10 @@ fn an_unlinked_framework_crate_service_reports_its_feature() {
         super::missing_feature("moqui_collab::service::save_document"),
         Some("collab")
     );
+    assert_eq!(
+        super::missing_feature("moqui_tools::service::get_capabilities"),
+        Some("tools")
+    );
     assert_eq!(super::missing_feature("moqui_dav::elfinder::run_command"), Some("dav"));
     assert_eq!(
         super::missing_feature("moqui_devkit::service::restart_server"),

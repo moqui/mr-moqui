@@ -821,7 +821,7 @@
             receive#IncomingSystemMessage (SystemMessageServices) as a remote system. sealed-permissions: UserGroupPermission
             create/update/delete for these IDs is allowed only if the caller already has that permission. -->
         <authz privileged-groups="ADMIN,ADMIN_ADV,SYSMSG_RECEIVE"
-                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY"/>
+                sealed-permissions="GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,DATABASE_ADMIN,DATABASE_EXTERNAL"/>
     </user-facade>
 
     <transaction-facade use-transaction-cache="true" use-connection-stash="true" use-lock-track="${entity_lock_track}" use-statement-timeout="${entity_statement_timeout}">
@@ -1338,8 +1338,12 @@
             Good numbers for a decent sized server are 100 servlet container (Jetty) threads, 16 worker threads, plus a
             few extra so 120 connections in the main pool.
         -->
+        <!-- pg-stat-statements: on Postgres, load pg_stat_statements (the embedded cluster preloads it; an external
+            server must have it in shared_preload_libraries) and create the extension; ignored on MySQL. Turned on for
+            development in runtime/conf/MoquiDevConf.xml. -->
         <datasource group-name="transactional" database-conf-name="${entity_ds_db_conf}" schema-name="${entity_ds_schema}"
-                runtime-add-missing="${entity_add_missing_runtime}" startup-add-missing="${entity_add_missing_startup}">
+                runtime-add-missing="${entity_add_missing_runtime}" startup-add-missing="${entity_add_missing_startup}"
+                pg-stat-statements="false">
             <!-- by default no inline-jdbc or jndi-jdbc elements, use default from database conf -->
         </datasource>
 
@@ -1349,7 +1353,8 @@
             hold the workers' 66, an agent worker and the webroot webapp's 4 transfer-workers, each reading a window
             of a streamed download (71), as the transactional pool does when the content shares it. -->
         <datasource group-name="content" database-conf-name="${content_ds_db_conf}" schema-name="${content_ds_schema}"
-                runtime-add-missing="${entity_add_missing_runtime}" startup-add-missing="${entity_add_missing_startup}">
+                runtime-add-missing="${entity_add_missing_runtime}" startup-add-missing="${entity_add_missing_startup}"
+                pg-stat-statements="false">
             <inline-jdbc pool-maxsize="80"><xa-properties serverName="${content_ds_host ?: entity_ds_host}"
                     port="${content_ds_port ?: entity_ds_port}" databaseName="${content_ds_database}"
                     user="${content_ds_user ?: entity_ds_user}" password="${content_ds_password ?: entity_ds_password}"
@@ -1443,6 +1448,7 @@
         <load-data location="component://framework/data/XmppSetupData.xml"/>
         <load-data location="component://framework/data/XmppSecurityData.xml"/>
         <load-data location="component://framework/data/EdgeSetupData.xml"/>
+        <load-data location="component://framework/data/DatabaseSetupData.xml"/>
         <load-data location="component://framework/data/SftpDemoData.xml"/>
     </entity-facade>
     <database-list>

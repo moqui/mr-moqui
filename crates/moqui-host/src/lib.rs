@@ -37,6 +37,8 @@ use moqui_git as _;
 use moqui_mail as _;
 // The reports, in every build, the same way.
 use moqui_report as _;
+// The Tools app's database services, in every build, the same way.
+use moqui_tools as _;
 // The business messaging channels (the sms chat bridge adapter), the same way.
 #[cfg(feature = "channels")]
 use moqui_channels as _;

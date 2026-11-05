@@ -245,3 +245,46 @@ fn the_edge_conf_merges_each_child_by_its_key() {
         .collect();
     assert_eq!(entities, ["a.Identity"]);
 }
+
+/// The dev conf's datasource overrides carry only `pg-stat-statements`: each keeps the default conf's other attributes
+/// and its `inline-jdbc` child (content's), and a datasource with no child stays without one.
+#[test]
+fn the_dev_conf_datasource_overrides_keep_the_default_jdbc_child() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime");
+    let base = MNode::parse_file(root.join("base-component/framework/conf/MoquiDefaultConf.xml")).unwrap();
+    let over = MNode::parse_file(root.join("conf/MoquiDevConf.xml")).unwrap();
+    let default_content = crate::entity::datasource::datasource_nodes(&base)
+        .into_iter()
+        .find(|node| node.attribute_is("group-name", "content"))
+        .and_then(|node| node.first_named("inline-jdbc"))
+        .map(|inline| inline.attribute("pool-maxsize"))
+        .unwrap();
+    let before = crate::entity::datasource::datasource_nodes(&base).len();
+    super::merge_conf(&base, &over);
+    let datasource = |group: &str| {
+        crate::entity::datasource::datasource_nodes(&base)
+            .into_iter()
+            .find(|node| node.attribute_is("group-name", group))
+            .unwrap()
+    };
+    let content = datasource("content");
+    assert_eq!(content.attribute("pg-stat-statements").as_deref(), Some("true"));
+    assert_eq!(
+        content.attribute("database-conf-name").as_deref(),
+        Some("${content_ds_db_conf}")
+    );
+    let inline = content
+        .first_named("inline-jdbc")
+        .expect("content keeps its inline-jdbc");
+    assert_eq!(inline.attribute("pool-maxsize"), default_content);
+    assert!(inline.first_named("xa-properties").is_some());
+    let transactional = datasource("transactional");
+    assert_eq!(transactional.attribute("pg-stat-statements").as_deref(), Some("true"));
+    assert_eq!(
+        transactional.attribute("database-conf-name").as_deref(),
+        Some("${entity_ds_db_conf}")
+    );
+    assert!(transactional.first_named("inline-jdbc").is_none());
+    // merged in place, none added
+    assert_eq!(crate::entity::datasource::datasource_nodes(&base).len(), before);
+}

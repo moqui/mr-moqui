@@ -39,6 +39,8 @@ pub fn open_for_factory(
         &conf,
     )?;
     facade.crypt_from_conf(&conf)?;
+    // statement stats: entity-facade@query-stats, read once here
+    moqui_entity::entity::query_stats::configure(&conf);
     Ok(facade)
 }
 

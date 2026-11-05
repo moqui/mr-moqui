@@ -208,7 +208,11 @@ fn trace<T>(sql: &str, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Err
     let started = Instant::now();
     let trace = crate::hooks::trace_statement(sql);
     let result = body();
-    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let elapsed = started.elapsed();
+    let duration_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
+    if super::query_stats::enabled() {
+        super::query_stats::record(sql, elapsed, result.is_err());
+    }
     STATEMENT_COUNT.fetch_add(1, Ordering::Relaxed);
     STATEMENT_MILLIS.fetch_add(duration_ms, Ordering::Relaxed);
     if duration_ms >= SLOW_MS {

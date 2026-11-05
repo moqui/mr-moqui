@@ -4929,6 +4929,7 @@ dependencies = [
  "moqui-report",
  "moqui-rtc",
  "moqui-sip",
+ "moqui-tools",
  "moqui-tui",
  "moqui-xmpp",
  "opentelemetry-proto",
@@ -5099,6 +5100,17 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "moqui-tools"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "moqui-core",
+ "moqui-drivers",
+ "moqui-lib",
  "tracing",
 ]
 

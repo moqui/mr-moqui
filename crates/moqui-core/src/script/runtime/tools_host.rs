@@ -118,9 +118,9 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     ec.entity.getAllEntityInfo = host.getAllEntityInfo;
     ec.entity.getDatasourceGroupNames = host.getDatasourceGroupNames;
     ec.entity.getEecaRuleCount = host.getEecaRuleCount;
-    // Query statistics are a conf flag, off by default in Java (entity-facade@query-stats); the port does not keep them.
-    ec.entity.getQueryStatsList = () => [];
-    ec.entity.clearQueryStats = () => {};
+    // statement stats of this instance when entity-facade@query-stats is on (moqui_entity::entity::query_stats)
+    ec.entity.getQueryStatsList = host.getQueryStatsList;
+    ec.entity.clearQueryStats = host.clearQueryStats;
     ec.entity.runSqlStatement = host.runSqlStatement;
     // another database, named by a map of `entity_ds_db_conf`, `entity_ds_host`, `entity_ds_port`, `entity_ds_database`,
     // `entity_ds_user` and `entity_ds_password`, as Java's `getConfConnection`
@@ -1164,6 +1164,31 @@ fn get_eeca_rule_count(ctx: Ctx<'_>) -> rquickjs::Result<i32> {
     host_guard(&ctx, || {
         let facade = facade_of(&ctx)?;
         Ok(i32::try_from(crate::entity::load_feed::eca_rule_count(&facade)).unwrap_or(i32::MAX))
+    })
+}
+
+/// `ec.entity.getQueryStatsList(orderBy, entityFilter, sqlFilter)`: the statement stats of this instance, as Java's.
+fn get_query_stats_list<'js>(
+    ctx: Ctx<'js>,
+    order_by: Opt<JsValue<'js>>,
+    entity_filter: Opt<JsValue<'js>>,
+    sql_filter: Opt<JsValue<'js>>,
+) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        let rows = crate::entity::query_stats::list(
+            &text_or_empty(&ctx, order_by.0.as_ref())?,
+            &text_or_empty(&ctx, entity_filter.0.as_ref())?,
+            &text_or_empty(&ctx, sql_filter.0.as_ref())?,
+        );
+        js_list(&ctx, rows)
+    })
+}
+
+/// `ec.entity.clearQueryStats()`.
+fn clear_query_stats(ctx: Ctx<'_>) -> rquickjs::Result<()> {
+    host_guard(&ctx, || {
+        crate::entity::query_stats::clear();
+        Ok(())
     })
 }
 
@@ -2674,6 +2699,8 @@ pub(super) fn install<'js>(
     method!("prettyName", pretty_name);
     method!("getDatasourceGroupNames", get_datasource_group_names);
     method!("getEecaRuleCount", get_eeca_rule_count);
+    method!("getQueryStatsList", get_query_stats_list);
+    method!("clearQueryStats", clear_query_stats);
     method!("eecaRuleTexts", eeca_rule_texts);
     method!("runSqlStatement", run_sql_statement);
     method!("writeData", write_data);

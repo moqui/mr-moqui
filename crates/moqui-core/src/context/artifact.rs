@@ -194,6 +194,19 @@ impl ArtifactStack {
             .join(", ")
     }
 
+    /// The entity of the `AT_ENTITY` frame on top, if one is, and the name of the first frame below it that is not an
+    /// entity's: what a statement runs for, in the query stats.
+    pub(super) fn statement_artifact(&self) -> (Option<String>, Option<String>) {
+        let mut frames = self.frames.iter().rev().peekable();
+        let entity = frames
+            .next_if(|frame| frame.artifact_type == "AT_ENTITY")
+            .map(|frame| frame.name.clone());
+        let artifact = frames
+            .find(|frame| frame.artifact_type != "AT_ENTITY")
+            .map(|frame| frame.name.clone());
+        (entity, artifact)
+    }
+
     /// The artifact names, top first, joined with ", ": Java's `getStackNameString`.
     pub(super) fn name_string(&self) -> String {
         self.frames
