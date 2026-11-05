@@ -106,7 +106,7 @@
     const reportPropsExpr = (node) => node.name === "report-embed" ? reportEmbedExpr(node) : node.name === "report-dashboard" ?
         `{dashboard:(${attr(node, "dashboard") || "{}"}),frames:(${attr(node, "frames") || "{}"})}` :
         `{frame:(${attr(node, "frame") || "{fields:[]}"}),panel:(${attr(node, "panel") || "{}"}),title:${expandExpr(attr(node, "title") || "")}}`;
-    const reportDataFn = String(function (props, mode) {
+    const reportDataFn = String(function (props, mode, l10n) {
         if (!props) return "";
         const escape = (value) => String(value == null ? "" : value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
         const cell = (value) => value == null ? "—" : typeof value === "object" && typeof value.toNumber !== "function" ? JSON.stringify(value) : String(value);
@@ -116,6 +116,55 @@
             if (typeof value === "string" && !numeric && /^[=+@\-\t\r]/.test(text)) text = "'" + text;
             return '"' + text.replace(/"/g, '""') + '"';
         };
+        // Only typed presentation values are formatted. Data exports below keep the original frame cells.
+        const configured = (field, definition) => {
+            const settings = definition && definition.fieldConfig || {};
+            let result = Object.assign({}, settings.defaults || {}, field);
+            for (const override of settings.overrides || []) {
+                const match = override.match || {};
+                let matches = match.name ? field.name === match.name : match.type ? field.type === match.type : false;
+                if (match.regex && String(match.regex).length <= 256) {
+                    try { matches = new RegExp(match.regex).test(field.name); } catch (_) { matches = false; }
+                }
+                if (matches) result = Object.assign(result, override.config || {});
+            }
+            return Object.assign(result, result.config || {});
+        };
+        const shown = (value, config, row) => {
+            if (value == null) return config.noValue || "—";
+            const raw = cell(value);
+            const numeric = typeof value !== "boolean" && raw.trim() !== "" && Number.isFinite(Number(raw));
+            for (const mapping of config.mappings || []) {
+                if ((mapping.value !== undefined && String(mapping.value) === raw) ||
+                        (numeric && mapping.from !== undefined && Number(raw) >= mapping.from && Number(raw) <= mapping.to)) return mapping.text;
+            }
+            try {
+                if (config.type === "time" || config.kind === "time") {
+                    // Passing a Date retains the instant across the script bridge; l10n uses the viewer's zone.
+                    const date = new Date(/^[+-]?\d+$/.test(raw) ? Number(raw) : value);
+                    return Number.isNaN(date.getTime()) ? raw : l10n.format(date, "yyyy-MM-dd HH:mm:ss.SSS z");
+                }
+                if (!numeric || !["number", "integer"].includes(config.type || config.kind)) return raw;
+                const unit = Array.isArray(config.units) && config.units[row] || config.unit || "";
+                let number = Number(raw), suffix = "";
+                if (unit === "duration" || unit === "ns") { number /= 1e6; suffix = " ms"; }
+                else if (unit === "ms" || unit === "s") suffix = " " + unit;
+                else if (unit === "percent" || unit === "%") suffix = "%";
+                else if (unit === "bytes") {
+                    const units = [" B", " KiB", " MiB", " GiB", " TiB"];
+                    let at = 0;
+                    while (Math.abs(number) >= 1024 && at < units.length - 1) { number /= 1024; at++; }
+                    suffix = units[at];
+                }
+                const supplied = Number(config.decimals);
+                const decimals = config.decimals == null || !Number.isFinite(supplied)
+                    ? (Number.isInteger(number) ? 0 : 2) : Math.min(12, Math.max(0, Math.trunc(supplied)));
+                if (/^(currency:)?[A-Z]{3}$/.test(unit)) {
+                    return l10n.formatCurrency(value, unit.replace(/^currency:/, ""), config.decimals == null ? 2 : decimals);
+                }
+                return l10n.format(number, "#,##0" + (decimals ? "." + "0".repeat(decimals) : "")) + suffix;
+            } catch (_) { return raw; }
+        };
         const panel = (frame, definition, title) => {
             const fields = frame && frame.fields || [];
             const length = fields.reduce((n, field) => Math.max(n, (field.values || []).length), 0);
@@ -124,14 +173,15 @@
             if (mode === "csv") return [fields.map(field => csv(field.name)).join(","), ...rows.map(row => row.map((value, at) => csv(value, fields[at])).join(","))].join("\r\n") + "\r\n";
             if (mode === "xml") return "<report title=\"" + escape(title) + "\">" + rows.map(row => "<row>" + row.map((value, at) => "<field name=\"" + escape(fields[at].name) + "\">" + escape(cell(value)) + "</field>").join("") + "</row>").join("") + "</report>";
             if (mode === "text") return title + "\n" + (length ? [fields.map(field => field.name), ...rows.map(row => row.map(cell))].map(row => row.join("\t")).join("\n") : "No data in this time range") + "\n";
-            return "<section class=\"report-panel\"><h3>" + escape(title) + "</h3>" + (length ? "<table><thead><tr>" + fields.map(field => "<th>" + escape(field.name) + "</th>").join("") + "</tr></thead><tbody>" + rows.map(row => "<tr>" + row.map(value => "<td>" + escape(cell(value)) + "</td>").join("") + "</tr>").join("") + "</tbody></table>" : "<p>No data in this time range</p>") + "</section>";
+            const displayFields = fields.map(field => configured(field, definition));
+            return "<section class=\"report-panel\"><h3>" + escape(title) + "</h3>" + (length ? "<table><thead><tr>" + fields.map(field => "<th>" + escape(field.name) + "</th>").join("") + "</tr></thead><tbody>" + rows.map((row, index) => "<tr>" + row.map((value, at) => "<td>" + escape(shown(value, displayFields[at], index)) + "</td>").join("") + "</tr>").join("") + "</tbody></table>" : "<p>No data in this time range</p>") + "</section>";
         };
         if (!props.dashboard) return panel(props.frame, props.panel, props.title);
         const panels = props.dashboard.panels || {};
         const entries = Array.isArray(panels) ? panels.map((value, at) => [value.id || String(at), value]) : Object.entries(panels);
         return entries.map(([id, definition]) => panel((props.frames[id] || [])[0], definition)).join(mode === "csv" ? "\r\n" : "\n");
     });
-    const reportRenderExpr = (node, mode) => `(${reportDataFn})(${reportPropsExpr(node)},${jsString(mode)})`;
+    const reportRenderExpr = (node, mode) => `(${reportDataFn})(${reportPropsExpr(node)},${jsString(mode)},ec.l10n)`;
 
     // The literals of the unit being generated, while the host has asked for them (beginLits). Each distinct literal is
     // made once, when the unit is compiled, as $lits[i]: the host converts it once (sri.holdNodeLit) and it is frozen,

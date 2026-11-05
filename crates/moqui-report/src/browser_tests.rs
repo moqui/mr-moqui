@@ -30,3 +30,29 @@ fn replay_ids_and_page_addresses_are_held_to_their_shape() {
         "https://x.test/apps/a"
     );
 }
+
+#[test]
+fn replay_request_caps_default_separately_and_preserve_explicit_legacy_limits() {
+    assert_eq!(replay_body_limit("", ""), 1_048_576);
+    assert_eq!(
+        replay_body_limit("262144", ""),
+        262_144,
+        "an explicit legacy cap remains binding"
+    );
+    assert_eq!(
+        replay_body_limit("262144", "524288"),
+        524_288,
+        "only an explicit replay cap overrides it"
+    );
+    assert_eq!(
+        replay_body_limit("65536", "32768"),
+        32_768,
+        "a smaller replay cap is honored"
+    );
+    assert_eq!(
+        replay_body_limit("0", ""),
+        0,
+        "legacy zero is not replaced by a default"
+    );
+    assert_eq!(replay_body_limit("262144", "0"), 0);
+}

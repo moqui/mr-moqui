@@ -54,7 +54,7 @@ fn signed_in_pages_send_rum_under_their_own_identity_and_replays_keep_to_their_c
         Some(
             r#"<entity-facade-xml type="seed"><moqui.security.UserAccount userId="RUM_VIEWER" username="rum.viewer" disabled="N"/></entity-facade-xml>"#,
         ),
-        r#"<telemetry sample-ratio="0"><browser enabled="true" replay-enabled="true" replay-max-bytes="3000"/></telemetry>"#,
+        r#"<telemetry sample-ratio="0"><browser enabled="true" replay-enabled="true" replay-max-bytes="700000"/></telemetry>"#,
         &[],
     );
     let address = gate.server.address();
@@ -113,13 +113,30 @@ fn signed_in_pages_send_rum_under_their_own_identity_and_replays_keep_to_their_c
     assert_eq!(logs.hits.len(), 1);
     assert_eq!(logs.hits[0].body.get("user.id"), Some(&Value::string("EX_JOHN_DOE")));
 
-    // Replay: chunks until the size cap, then refused.
+    // The ordinary telemetry cap is unchanged even though a replay snapshot can be larger.
+    let oversized_trace = json!({"resourceSpans":[], "padding":"*".repeat(300000)});
+    let (status, text) = post(address, "/rum/traces", &cookie, Some(&token), &oversized_trace);
+    assert_eq!(status, 400);
+    assert!(
+        text.contains("browser telemetry body exceeds the configured limit"),
+        "{text}"
+    );
+
+    // Replay: a masked snapshot-sized event above 256 KiB fits the default request cap; the cumulative cap still holds.
     let replay = "0123abcd-replay-fixture-0001";
     let chunk = |seq: u64| {
         json!({"replayId":replay,"seq":seq,"start":now,"end":now + 1000,"url":"/qapps/system?secret=1","traceIds":[trace],
             "events":[{"type":4,"data":{"href":"/qapps/system","width":800,"height":600},"timestamp":now},
-                      {"type":3,"data":{"source":0,"texts":[{"id":1,"value":"*".repeat(1000)}]},"timestamp":now + 10}]})
+                      {"type":3,"data":{"source":0,"texts":[{"id":1,"value":"*".repeat(300000)}]},"timestamp":now + 10}]})
     };
+    let oversized_replay = json!({"replayId":"ui-review-oversized-0001", "seq":0,
+        "events":[{"type":2,"data":{"text":"*".repeat(1_048_576)}}]});
+    let (status, text) = post(address, "/rum/replay", &cookie, Some(&token), &oversized_replay);
+    assert_eq!(status, 413);
+    assert!(
+        text.contains("browser telemetry body exceeds the configured limit"),
+        "{text}"
+    );
     assert_eq!(post(address, "/rum/replay", &cookie, Some(&token), &chunk(0)).0, 200);
     assert_eq!(post(address, "/rum/replay", &cookie, Some(&token), &chunk(1)).0, 200);
     assert_eq!(

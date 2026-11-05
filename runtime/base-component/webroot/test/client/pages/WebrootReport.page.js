@@ -214,6 +214,37 @@ test("panel export keeps exact range and variables and decodes server XLSX bytes
         assert.deepEqual(Array.from(new Uint8Array(await blob.arrayBuffer())),[80,75,3,4]);assert.equal(download,'latency.xlsx');
     } finally {app.unmount();target.remove();window.fetch=previousFetch;URL.createObjectURL=previousCreate;URL.revokeObjectURL=previousRevoke;HTMLAnchorElement.prototype.click=previousClick;}
 });
+test("session replay preserves the JSON transition mount in the Material shell", async () => {
+    const target=document.createElement('div');document.body.appendChild(target);
+    const previous={request:moqui.request,loadScript:moqui.loadScript,loadStylesheet:moqui.loadStylesheet,
+        appRoot:report.appRoot,rrweb:window.rrweb};
+    const url='/apps/monitor/ReplayDetail/events?replayId=ui-review-replay-0001';
+    const events=[{type:4,timestamp:1000,data:{}},{type:2,timestamp:2000,data:{}}];
+    let requested,received,destroyed=false;
+    report.appRoot=()=>'/qapps';
+    moqui.request=value=>{requested=value;return Promise.resolve(value===url?{json:{events}}:{text:'<html>Material shell</html>'});};
+    moqui.loadScript=()=>Promise.resolve();moqui.loadStylesheet=()=>{};
+    window.rrweb={Replayer:class {
+        constructor(value){received=value;}
+        getMetaData(){return {totalTime:1000};}
+        on(){} pause(){} destroy(){destroyed=true;}
+    }};
+    const app=Vue.createApp(moqui.qvtComponents['m-session-replay'],{url});
+    try {
+        assert.equal(report.appPath(url),url.replace('/apps/','/qapps/'),'fixture represents a Material screen');
+        const player=app.mount(target);
+        await Promise.resolve();await Promise.resolve();await Vue.nextTick();
+        assert.equal(requested,url,'data requests retain their authorized transition mount and replay ID');
+        assert.deepEqual(received,events);
+        assert.equal(player.state,'ready');
+        assert.equal(target.querySelector('button').textContent,'Play');
+        assert.equal(target.querySelector('[aria-label="Position"]').max,'1000');
+    } finally {
+        app.unmount();target.remove();moqui.request=previous.request;moqui.loadScript=previous.loadScript;
+        moqui.loadStylesheet=previous.loadStylesheet;report.appRoot=previous.appRoot;window.rrweb=previous.rrweb;
+    }
+    assert.equal(destroyed,true);
+});
 test("playlist controls render authorized frames and reject stale or changed selections", async () => {
     const target=document.createElement('div');document.body.appendChild(target);
     const previousRequest=moqui.request,previousInterval=window.setInterval,previousFetch=window.fetch,pending=[],inspected=[];let rotate;

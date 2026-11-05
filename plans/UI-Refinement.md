@@ -1406,6 +1406,45 @@ lint (0 parse failures). The full gate result is under Batch 14, which was gated
 - Not changed: ShellSync's one confined `allowProblems()` (the in-page harness takes no pattern) and the wizard
   supersession case, which drives a stand-in root through setUrl.
 
+### Batch 15 — the deferred patches: replay capture and playback, Standard report values, incidents and recovery
+
+The private proposals recorded at wrap-up (formerly under `/tmp`) still applied after the merge. Each was reviewed
+again against the merged sources before it was applied; the corrections that review asked for are part of this batch.
+
+- UI-088: replay requests have their own `replay-body-limit` (1 MiB default; an explicit legacy `body-limit` stays the
+  cap unless overridden; trace/log admission keeps 256 KiB). The recorder sends complete events in order with one
+  request in flight and one bounded pending chunk, and stops with a payload-free diagnostic when an event cannot fit.
+  Masking is unchanged. Live: with RUM, replay and replay sample ratio 1 set temporarily in Monitor › Settings, a full
+  Gallery load and scroll posted three `/rum/replay` chunks, all 200, and Replays listed the session; the three
+  overrides were reverted afterwards (Revert all, in-app confirmation).
+- UI-089: the player requests its events from the supplied `/apps` JSON transition rather than the `/qapps` shell
+  path. Live: ReplayDetail loads 7.3 s of events, Play advances, and every text node in the replayed page is masked.
+- UI-092: the Standard and print report fallbacks format typed time values in the viewer's zone and known number
+  units; CSV, XML and text exports keep the original frame values.
+- UI-102/103/104/107: Incidents groups its filters and has a real empty state; IncidentDetail shows readable times
+  in the user's zone, grouped context/state/timeline/recovery sections, an explicit unavailable state with Back to
+  incidents for a missing ID (checked only after the MONITOR_INCIDENT guard), and a waiting Manual action's saved
+  instructions as escaped text in a box (the review replaced an unstyled `m-tonal` container). Live: a disposable
+  incident shows Onset/Detected as 2026-11-05 02:26:43 in US/Central; `incidentId=ui-review-missing` shows Incident
+  unavailable with its link.
+- UI-105/106: Recovery rows have Edit, which loads the stored policy or adapter; New refuses an existing ID before
+  storage and keeps the typed values. Review corrections: the duplicate check runs only for MONITOR_RECOVER_ADMIN
+  holders and reads one row (others get the store service's permission refusal), the form-only mode markers are no
+  longer screen parameters, Mode defaults to Advisory without an empty choice the service would refuse, and Newest
+  actions shows a readable Created time. Live: DEFAULT's Edit shows order 1000 (no grouping), cooldown 60, daily
+  limit 3; a New policy with ID DEFAULT warns "Policy ID already exists" with the dialog and values kept.
+- Tests: the incidents feature is re-inserted at the end of AdminOverview (its old context no longer matched) with a
+  literal instant; the recovery feature drops XML-text checks and the second duplicate POST, writes its fixture rows
+  past entity authorization, and keeps one Recovery HTML render. AdminOverview 13/13 (tools 0.9/3 s), ScreenHtml
+  14/14, WebrootRum and WebrootReport 56/56, moqui-report 77, host monitor_rum and monitor_tui, the shared report
+  render rule, screen lint (0 parse failures). Requested acceptance: Tools Monitoring 19/19.
+- Gate: `./moq test-framework` passed every phase but cargo, where the devkit test that pins each template spec's
+  feature count still expected 13 ScreenHtml features; UI-092 adds the fourteenth. With the count updated,
+  `cargo test --workspace --no-fail-fast` passes (69 test binaries). Feature time: webroot 40.6/44 s, tools 2.1/3 s,
+  dev-aide 24.2/30 s.
+- Observed, not changed: the browser pane refuses the push service-worker registration (`/sw.js` serves normally),
+  which logs "An unknown error occurred when fetching the script".
+
 ### Next activity baseline — M10 incident lifecycle
 
 While gate20 runs, John exercises incident100000 on8094 at1920 in default light. New incident Escape/reopen works;

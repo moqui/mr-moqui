@@ -11,48 +11,87 @@
         <error-response url="."/>
     </transition>
     <actions><script><![CDATA[
-        incidentAllowed = ec.user.hasPermission('MONITOR_INCIDENT')
+        // Incident/recovery JSON exposes entity timestamps as epoch-millisecond strings. Keep the raw values for actions.
+        const displayTime = value => {
+            if (value == null || value === '') return ec.l10n.localize('Not recorded')
+            const date = new Date(/^-?\d+$/.test(String(value)) ? Number(value) : value)
+            return Number.isNaN(date.getTime()) ? ec.l10n.localize('Unavailable') : ec.l10n.format(date, 'yyyy-MM-dd HH:mm:ss')
+        }
+        incidentAllowed = !!ec.user.userId && ec.user.hasPermission('MONITOR_INCIDENT')
         incidentList = []
         if (incidentAllowed) {
             const result = ec.service.sync().name('org.moqui.monitor.MonitorServices.list#Incidents').parameters({statusId: statusId || 'open', serviceName}).call()
-            incidentList = result.incidents || []
+            incidentList = (result.incidents || []).map(row => Object.assign({}, row, {detectedText: displayTime(row.detectedDate)}))
         }
         statusOptions = [{value: 'open', label: ec.l10n.localize('Open (not resolved)')}, {value: 'all', label: ec.l10n.localize('All')}]
             .concat(['Open', 'Mitigating', 'Monitoring', 'Reopened', 'Resolved'].map(value => ({value, label: ec.l10n.localize(value)})))
     ]]></script></actions>
     <widgets>
         <label text="Incidents" type="h4"/>
+        <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[<div style="width:100%;max-width:1600px">]]></text>
+            <text type="tui" template="false">[]</text></render-mode>
         <section name="NotAllowed" condition="!incidentAllowed"><widgets>
             <label text="Incidents need the MONITOR_INCIDENT permission." type="p"/>
         </widgets><fail-widgets>
-            <container-dialog id="NewIncidentDialog" button-text="New incident">
-                <form-single name="NewIncident" transition="createIncident">
-                    <field name="title"><default-field title="Title"><text-line size="60"/></default-field></field>
-                    <field name="severity"><default-field title="Severity"><drop-down no-current-selected-key="major">
-                        <option key="minor" text="Minor"/><option key="major" text="Major"/><option key="critical" text="Critical"/>
-                    </drop-down></default-field></field>
-                    <field name="serviceName"><default-field title="Service"><text-line/></default-field></field>
-                    <field name="summary"><default-field title="Summary"><text-area rows="3"/></default-field></field>
-                    <field name="submit"><default-field><submit text="Open incident"/></default-field></field>
-                </form-single>
-            </container-dialog>
-            <form-single name="IncidentFilter" transition=".">
-                <field name="statusId"><default-field title="Status"><drop-down no-current-selected-key="open">
-                    <list-options list="statusOptions" key="${value}" text="${label}"/>
-                </drop-down></default-field></field>
-                <field name="serviceName"><default-field title="Service"><text-line/></default-field></field>
-                <field name="find"><default-field><submit text="Find"/></default-field></field>
-            </form-single>
-            <form-list name="IncidentList" list="incidentList" skip-form="true">
-                <field name="detectedDate"><default-field title="Detected"><display/></default-field></field>
-                <field name="title"><default-field title="Incident"><link url="incidentDetail" text="${title || incidentId}" parameter-map="{incidentId:incidentId}" link-type="anchor"/></default-field></field>
-                <field name="severity"><default-field title="Severity"><display/></default-field></field>
-                <field name="statusId"><default-field title="Status"><display/></default-field></field>
-                <field name="serviceName"><default-field title="Service"><display/></default-field></field>
-                <field name="version"><default-field title="Version"><display/></default-field></field>
-                <field name="causeStatus"><default-field title="Cause"><display/></default-field></field>
-                <field name="source"><default-field title="From"><display/></default-field></field>
-            </form-list>
+            <container-box><box-header title="Find incidents"/>
+                <box-toolbar>
+                    <container-dialog id="NewIncidentDialog" button-text="New incident">
+                        <form-single name="NewIncident" transition="createIncident">
+                            <field name="title"><default-field title="Title"><text-line size="60"/></default-field></field>
+                            <field name="severity"><default-field title="Severity"><drop-down no-current-selected-key="major">
+                                <option key="minor" text="Minor"/><option key="major" text="Major"/><option key="critical" text="Critical"/>
+                            </drop-down></default-field></field>
+                            <field name="serviceName"><default-field title="Service"><text-line/></default-field></field>
+                            <field name="summary"><default-field title="Summary"><text-area rows="3"/></default-field></field>
+                            <field name="submit"><default-field><submit text="Open incident"/></default-field></field>
+                            <field-layout>
+                                <field-ref name="title"/>
+                                <field-row><field-ref name="severity"/><field-ref name="serviceName"/></field-row>
+                                <field-ref name="summary"/><field-ref name="submit"/>
+                            </field-layout>
+                        </form-single>
+                    </container-dialog>
+                </box-toolbar><box-body>
+                    <label text="Search open incidents by default, or choose a status to review earlier incidents." type="p"/>
+                    <form-single name="IncidentFilter" transition=".">
+                        <field name="statusId"><default-field title="Status"><drop-down no-current-selected-key="open">
+                            <list-options list="statusOptions" key="${value}" text="${label}"/>
+                        </drop-down></default-field></field>
+                        <field name="serviceName"><default-field title="Service"><text-line/></default-field></field>
+                        <field name="find"><default-field><submit text="Find"/></default-field></field>
+                        <field-layout>
+                            <field-col-row>
+                                <field-col xs="12" md="4"><field-ref name="statusId"/></field-col>
+                                <field-col xs="12" md="4"><field-ref name="serviceName"/></field-col>
+                            </field-col-row>
+                            <field-ref name="find"/>
+                        </field-layout>
+                    </form-single>
+                </box-body>
+            </container-box>
+            <container-box><box-header title="Matching incidents"/><box-body>
+                <label text="Times shown in ${ec.user.timeZone}." type="p" style="m-muted"/>
+                <section name="AvailableIncidentList" condition="incidentList.length"><widgets>
+                    <form-list name="IncidentList" list="incidentList" skip-form="true">
+                        <field name="detectedDate"><default-field title="Detected"><display text="${detectedText}"/></default-field></field>
+                        <field name="title"><default-field title="Incident"><link url="incidentDetail" text="${title || incidentId}" style="m-wrap-anywhere" parameter-map="{incidentId:incidentId}" link-type="anchor"/></default-field></field>
+                        <field name="severity"><default-field title="Severity"><display/></default-field></field>
+                        <field name="statusId"><default-field title="Status"><display/></default-field></field>
+                        <field name="serviceName"><default-field title="Service"><display style="m-wrap-anywhere"/></default-field></field>
+                        <field name="version"><default-field title="Version"><display style="m-wrap-anywhere"/></default-field></field>
+                        <field name="causeStatus"><default-field title="Cause"><display/></default-field></field>
+                        <field name="source"><default-field title="From"><display/></default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="title"/><field-ref name="detectedDate"/><field-ref name="serviceName"/><field-ref name="version"/></column>
+                            <column><field-ref name="severity"/><field-ref name="statusId"/><field-ref name="causeStatus"/><field-ref name="source"/></column>
+                        </columns>
+                    </form-list>
+                </widgets><fail-widgets>
+                    <label text="No incidents match these filters. Change the status or service and search again." type="p"/>
+                </fail-widgets></section>
+            </box-body></container-box>
         </fail-widgets></section>
+        <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[</div>]]></text>
+            <text type="tui" template="false">[]</text></render-mode>
     </widgets>
 </screen>

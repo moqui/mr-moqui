@@ -297,7 +297,13 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="error-sample-ratio" type="xs:string"><xs:annotation><xs:documentation>The share of
                 page sessions that send JavaScript errors. Default 1.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="body-limit" type="xs:positiveInteger"><xs:annotation><xs:documentation>The largest
-                post in bytes. Default 262144.</xs:documentation></xs:annotation></xs:attribute>
+                trace/log post in bytes. Default 262144. When explicitly configured, also the replay request cap
+                unless replay-body-limit is set.</xs:documentation></xs:annotation></xs:attribute>
+            <xs:attribute name="replay-body-limit" type="xs:positiveInteger"><xs:annotation><xs:documentation>The
+                largest replay JSON post in UTF-8 bytes, including its envelope. Defaults to an explicitly configured
+                body-limit, otherwise 1048576. A full snapshot is one event and is never split. The webapp's max-body
+                still applies; replay-max-bytes separately limits cumulative event-array bytes.
+                </xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="requests-per-minute" type="xs:positiveInteger"><xs:annotation><xs:documentation>
                 Posts per user and visit a minute. Default 120.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="replay-enabled" type="boolean"><xs:annotation><xs:documentation>Record rrweb session

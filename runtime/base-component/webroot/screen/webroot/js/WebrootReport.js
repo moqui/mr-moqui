@@ -1209,7 +1209,8 @@
         data: () => ({ state: "loading", message: "", playing: false, at: 0, total: 0 }),
         mounted() {
             moqui.loadStylesheet("/libs/rrweb/style.min.css");
-            Promise.all([moqui.loadScript("/libs/rrweb/rrweb.umd.min.js", null, () => !!root.rrweb), moqui.request(report.appPath(this.url))])
+            // The supplied URL is a JSON transition, not a screen link to remount under /qapps.
+            Promise.all([moqui.loadScript("/libs/rrweb/rrweb.umd.min.js", null, () => !!root.rrweb), moqui.request(this.url)])
                 .then(([, result]) => {
                     const events = (result.json && result.json.events) || [];
                     if (events.length < 2) { this.state = "empty"; return; }

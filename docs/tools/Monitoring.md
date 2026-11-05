@@ -59,6 +59,12 @@ annotations, the scheduled reports in `schedule.rs` and the ingest keys in `moni
   `replay-max-bytes` (5 MiB), which the server holds each replay to; it keeps them gzipped in `browser_replays` for
   `replay-retention-days` (7). Replays are never a report dataset: Monitor › Replays reads them through services that
   need `MONITOR_REPLAY` (ADMIN has it), and each one opened is logged.
+  Replay JSON requests have their own `replay-body-limit` (1 MiB by default); an explicitly configured `body-limit`
+  remains the replay cap unless `replay-body-limit` overrides it. Trace/log defaults stay at 256 KiB, and the webapp's
+  request-body cap still applies before the replay service. The replay limit includes the UTF-8 JSON envelope;
+  `replay-max-bytes` separately limits cumulative event-array bytes. The recorder sends complete events in order,
+  with one request in flight and one bounded pending chunk. An event that cannot fit, a full pending buffer or a
+  rejected post stops capture with a concise console diagnostic; it never truncates a snapshot or logs its contents.
 
 The indexes are `otel_spans`, `otel_logs`, `otel_metrics`, `otel_errors`, `monitor_annotations` and
 `browser_replays`.

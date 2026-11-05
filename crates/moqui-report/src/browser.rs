@@ -24,6 +24,18 @@ const BROWSER: &str = "telemetry/browser";
 const MAX_RECORDS: usize = 512;
 /// Replays whose budget is held; more evict the oldest.
 const MAX_REPLAYS: usize = 4096;
+const DEFAULT_BODY_LIMIT: usize = 262_144;
+const DEFAULT_REPLAY_BODY_LIMIT: usize = 1_048_576;
+
+/// A separate replay cap admits an inline-CSS snapshot. An explicit legacy cap remains the fallback.
+fn replay_body_limit(common: &str, replay: &str) -> usize {
+    replay
+        .trim()
+        .parse()
+        .ok()
+        .or_else(|| common.trim().parse().ok())
+        .unwrap_or(DEFAULT_REPLAY_BODY_LIMIT)
+}
 
 pub fn register(registry: &mut NativeRegistry) -> Result<(), moqui_core::context::Error> {
     for (name, function) in [
@@ -71,6 +83,7 @@ pub fn page_settings(ec: &ExecutionContext) -> Option<Json> {
         "replaySampleRatio": if replay { ratio("replay-sample-ratio", 0.1) } else { 0.0 },
         "replayMaxMinutes": ec.factory().conf_number(BROWSER, "replay-max-minutes", 30_u64),
         "replayMaxBytes": ec.factory().conf_number(BROWSER, "replay-max-bytes", 5_242_880_u64),
+        "replayBodyLimit": replay_body_limit(&setting(ec, "body-limit"), &setting(ec, "replay-body-limit")),
         "replayBlockSelector": setting(ec, "replay-block-selector"),
         "replayUnmaskSelector": setting(ec, "replay-unmask-selector"),
     }))
@@ -89,13 +102,17 @@ fn signed_in() -> Result<String, Error> {
 }
 
 /// The session's user and visit, a body within the limit, and a request within the session's rate.
-fn admit(ec: &ExecutionContext, body: &str) -> Result<(String, String), Error> {
+fn admit(ec: &ExecutionContext, body: &str, replay: bool) -> Result<(String, String), Error> {
     if setting(ec, "enabled") != "true" {
         return Err(Error::new("browser telemetry is off"));
     }
     let user = signed_in()?;
     let visit = moqui_core::user::visit_id()?.unwrap_or_default();
-    let limit = ec.factory().conf_number(BROWSER, "body-limit", 262_144_usize);
+    let limit = if replay {
+        replay_body_limit(&setting(ec, "body-limit"), &setting(ec, "replay-body-limit"))
+    } else {
+        ec.factory().conf_number(BROWSER, "body-limit", DEFAULT_BODY_LIMIT)
+    };
     if body.len() > limit {
         return Err(Error::new("browser telemetry body exceeds the configured limit"));
     }
@@ -141,7 +158,7 @@ fn service_name(ec: &ExecutionContext) -> String {
 /// `signal` (traces or logs) and the page's OTLP/JSON `bodyText`. Answers the records refused.
 fn receive_browser(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> Result<Parameters, Error> {
     let body = text(p, "bodyText");
-    let (user, visit) = admit(ec, body)?;
+    let (user, visit) = admit(ec, body, false)?;
     let signal = match text(p, "signal") {
         "traces" => Signal::Traces,
         "logs" => Signal::Logs,
@@ -240,7 +257,7 @@ fn page_path(url: &str) -> String {
 /// events the page recorded, already masked there.
 fn receive_replay(ec: &ExecutionContext, _: &ServiceInfo<'_>, p: &Parameters) -> Result<Parameters, Error> {
     let body = text(p, "bodyText");
-    let (user, visit) = admit(ec, body)?;
+    let (user, visit) = admit(ec, body, true)?;
     if setting(ec, "replay-enabled") != "true" {
         return Err(Error::new("session replay is off"));
     }

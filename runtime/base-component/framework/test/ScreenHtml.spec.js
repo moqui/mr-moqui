@@ -249,3 +249,55 @@ function dynamicFilter(mode) {
 feature("Html: dynamic filter summaries use configured labels with ID fallback", { expect() { dynamicFilter("Html"); } });
 feature("Qvt: dynamic filter summaries use configured labels with ID fallback", { expect() { dynamicFilter("Qvt"); } });
 
+feature('HTML report fallback formats typed times and units while data exports retain raw cells', { expect() {
+    const T = readModule('../TemplateSupport.js');
+    const S = readModule('ScreenSupport.js')(T);
+    const node = {name:'report-panel',attrs:{frame:'frame',panel:'panel'},children:[]};
+    const frame = {fields:[
+        {name:'when',type:'time',values:[1710055800123,'2024-03-10T08:30:00.123Z','invalid time',0]},
+        {name:'timestamp',type:'integer',values:[1793242800000,42,null,null]},
+        {name:'identifier',type:'string',values:['1793242800000',null,null,null]},
+        {name:'elapsed',type:'number',unit:'ns',values:[12500000,0,null,null]},
+        {name:'size',type:'number',config:{unit:'bytes',decimals:1},values:[1536,null,null,null]},
+        {name:'ratio',type:'number',values:[12.5,null,null,null]},
+        {name:'decimal',type:'number',values:[basicConvert('7.25','BigDecimal'),null,null,null]},
+        {name:'money',type:'number',config:{unit:'USD',units:['EUR','JPY'],decimals:2},values:[12.5,25,null,null]},
+        {name:'mapped',type:'string',config:{mappings:[{value:'Y',text:'<Ready>'}],noValue:'No result'},values:['Y',null,null,null]}
+    ]};
+    const panel = {title:'Typed report',fieldConfig:{overrides:[{match:{name:'ratio'},config:{unit:'percent',decimals:1}}]}};
+    const before = JSON.stringify({frame,panel});
+    const currencyCalls = [];
+    const context = {frame,panel,ec:{resource:{expand:text=>text},l10n:{
+        // Real host formatter with a deterministic viewer zone; the fixture does not change the user's preference.
+        format:(value,pattern)=>ec.l10n.format(value,pattern,null,'America/Chicago'),
+        formatCurrency:(value,unit,decimals)=>{
+            currencyCalls.push([value,unit,decimals]);
+            return unit+' '+Number(value).toFixed(decimals);
+        }
+    }}};
+    const html = runInContext(S.reportRenderExpr(node,'html'),context);
+    assert.match(html,/>2024-03-10 01:30:00\.123 CST</);
+    assert.match(html,/>2024-03-10 03:30:00\.123 CDT</);
+    assert.match(html,/>1969-12-31 18:00:00\.000 CST</);
+    assert.match(html,/>invalid time</);
+    assert.match(html,/>1,793,242,800,000</);
+    assert.match(html,/>1793242800000</);
+    assert.match(html,/>12\.50 ms</);
+    assert.match(html,/>0 ms</);
+    assert.match(html,/>1\.5 KiB</);
+    assert.match(html,/>12\.5%</);
+    assert.match(html,/>7\.25</);
+    assert.match(html,/>EUR 12\.50</);
+    assert.match(html,/>JPY 25\.00</);
+    assert.deepEqual(currencyCalls,[[12.5,'EUR',2],[25,'JPY',2]]);
+    assert.match(html,/>&lt;Ready&gt;</);
+    assert.match(html,/>No result</);
+    for (const mode of ['csv','xml','text']) {
+        const exported = runInContext(S.reportRenderExpr(node,mode),context);
+        assert.ok(exported.includes('1710055800123'));
+        assert.ok(exported.includes('12500000'));
+        assert.ok(exported.includes('1536'));
+        assert.ok(!exported.includes('KiB') && !exported.includes('12.50 ms') && !exported.includes('CST'));
+    }
+    assert.equal(JSON.stringify({frame,panel}),before);
+} });

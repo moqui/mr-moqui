@@ -43,8 +43,92 @@
     // A share of sessions, decided from an id so one tab session is in or out for all its signals.
     const sampled = (id, ratio) => ratio >= 1 || (ratio > 0 && parseInt(String(id).slice(0, 8), 16) / 0xffffffff < ratio);
 
+    const utf8Length = (text) => new root.TextEncoder().encode(text).byteLength;
+    // One in-flight request and one bounded pending chunk. Serialized events are immutable snapshots; never split one.
+    const replayQueue = (options) => {
+        const cap = (value, fallback) => {
+            if (value == null) return fallback;
+            const number = Number(value);
+            return Number.isFinite(number) ? Math.max(0, Math.floor(number)) : 0;
+        };
+        const bodyLimit = cap(options.bodyLimit, 1048576), maxBytes = cap(options.maxBytes, 5242880);
+        const clock = options.now || Date.now, started = clock(), maxMs = cap(options.maxMinutes, 30) * 60000;
+        let parts = [], partBytes = 0, reservedBytes = 0, inFlight = false, inFlightBytes = 0, seq = 0;
+        let accepting = true, failed = false, reason = '', chunkStart = started, chunkUrl = '', traces = new Set();
+        const arrayBytes = (count = parts.length, bytes = partBytes) => 2 + bytes + Math.max(0, count - 1);
+        const header = (reserve, url = chunkUrl, ids = Array.from(traces)) => JSON.stringify({ replayId: options.replayId,
+            seq: reserve ? 999999 : seq, start: reserve ? Number.MAX_SAFE_INTEGER : chunkStart,
+            end: reserve ? Number.MAX_SAFE_INTEGER : clock(), url, traceIds: ids, events: [] });
+        const requestBytes = (count, bytes) => utf8Length(header(true)) + bytes + Math.max(0, count - 1);
+        const clear = () => { parts = []; partBytes = 0; traces.clear(); };
+        const stop = (why, discard = true) => {
+            const firstFailure = discard && !failed;
+            if (discard) { failed = true; clear(); }
+            if (accepting || firstFailure) { accepting = false; reason = why; options.onStop && options.onStop(why); }
+            if (!discard) flush();
+        };
+        const flush = () => {
+            if (failed || inFlight) return false;
+            if (accepting && clock() - started >= maxMs) { stop('time limit reached', false); return false; }
+            if (!parts.length || (options.ready && !options.ready())) return false;
+            if (seq >= 1000000) { stop('chunk limit reached'); return false; }
+            const eventsBytes = arrayBytes(), body = header(false).slice(0, -3) + '[' + parts.join(',') + ']}';
+            const bytes = utf8Length(body);
+            if (bytes > bodyLimit) { stop('request size limit reached'); return false; }
+            if (reservedBytes + eventsBytes > maxBytes) { stop('event size limit reached'); return false; }
+            // Reserve before fetch: a slow response must not permit more than the cumulative budget.
+            reservedBytes += eventsBytes; inFlight = true; inFlightBytes = bytes; seq++; clear();
+            let sent;
+            try { sent = options.send(body); } catch (_) { sent = Promise.reject(); }
+            Promise.resolve(sent).then((result) => {
+                inFlight = false; inFlightBytes = 0;
+                if (!result || !result.ok) {
+                    const status = Number(result && result.status) || 0;
+                    stop(status ? 'request rejected (HTTP ' + status + ')' : 'request failed');
+                } else flush();
+            }, () => { inFlight = false; inFlightBytes = 0; stop('request failed'); });
+            return true;
+        };
+        return {
+            get accepting() { return accepting; },
+            get status() { return { accepting, reason, queuedBytes: parts.length ? arrayBytes() : 0, reservedBytes, inFlightBytes }; },
+            add(event) {
+                if (!accepting) return false;
+                if (clock() - started >= maxMs) { stop('time limit reached', false); return false; }
+                let encoded;
+                try { encoded = JSON.stringify(event); } catch (_) { stop('event could not be encoded'); return false; }
+                if (typeof encoded !== 'string') { stop('event could not be encoded'); return false; }
+                const bytes = utf8Length(encoded);
+                const nextUrl = String(options.url()).slice(0, 2048);
+                if (!parts.length) { chunkStart = clock(); chunkUrl = nextUrl; }
+                if (requestBytes(parts.length + 1, partBytes + bytes) > bodyLimit) {
+                    // An event may fit a fresh envelope even when the preceding chunk has many optional traces.
+                    if (utf8Length(header(true, nextUrl, [])) + bytes > bodyLimit) {
+                        stop('one event exceeds the request size limit'); return false;
+                    }
+                    if (parts.length && !flush()) { stop('pending replay buffer is full', false); return false; }
+                    chunkStart = clock(); chunkUrl = nextUrl; traces.clear();
+                }
+                if (reservedBytes + arrayBytes(parts.length + 1, partBytes + bytes) > maxBytes) {
+                    stop('event size limit reached', false); return false;
+                }
+                parts.push(encoded); partBytes += bytes;
+                if (parts.length >= 300) flush();
+                return true;
+            },
+            trace(id) {
+                if (!accepting || !/^[0-9a-f]{32}$/i.test(String(id)) || traces.size >= 200 || traces.has(id)) return;
+                traces.add(id);
+                // Trace context is optional; do not make an already queued event exceed the request cap.
+                if (requestBytes(parts.length, partBytes) > bodyLimit) traces.delete(id);
+            },
+            flush,
+            stop
+        };
+    };
+
     const otlp = {
-        nanos, pathOf, sampled, randomHex,
+        nanos, pathOf, sampled, randomHex, replayQueue,
         span(item) {
             const span = { traceId: item.traceId, spanId: item.spanId, name: item.name, kind: item.kind === "client" ? 3 : 1,
                 startTimeUnixNano: nanos(item.start), endTimeUnixNano: nanos(Math.max(item.end, item.start)), attributes: attributes(item.attributes) };
@@ -107,12 +191,13 @@
     rum.sessionId = sessionId;
 
     // ---- posting ----
-    const post = (path, body) => {
+    const post = (path, body, details = false) => {
         const token = moqui.sessionToken;
-        if (!token) return Promise.resolve(false);
-        return root.fetch(path, { method: "POST", keepalive: body.length < 60000, credentials: "same-origin",
+        if (!token) return Promise.resolve(details ? { ok: false, status: 0 } : false);
+        return root.fetch(path, { method: "POST", keepalive: utf8Length(body) < 60000, credentials: "same-origin",
             headers: { "Content-Type": "application/json", "X-CSRF-Token": token }, body })
-            .then((response) => response.ok, () => false);
+            .then((response) => details ? { ok: response.ok, status: response.status } : response.ok,
+                () => details ? { ok: false, status: 0 } : false);
     };
     // Batches small enough for a keepalive post.
     const batches = (items, build) => {
@@ -245,37 +330,28 @@
     // ---- replay ----
     if (settings.replay && sampled(sessionId.slice(16), Number(settings.replaySampleRatio))) {
         const replayId = sessionId.slice(0, 8) + "-" + randomHex(24);
-        const started = Date.now();
-        const maxMs = Number(settings.replayMaxMinutes || 30) * 60000;
-        const maxBytes = Number(settings.replayMaxBytes || 5242880);
-        let events = [];
-        let sent = 0;
-        let seq = 0;
-        let stop = null;
-        let traces = new Set();
-        let chunkStart = started;
-        const end = () => { if (stop) { try { stop(); } catch (_) { /* gone */ } stop = null; } replay = null; };
-        replay = {
-            trace(traceId) { if (traces.size < 200) traces.add(traceId); },
-            flush() {
-                if (!events.length || !moqui.sessionToken) return;
-                const body = JSON.stringify({ replayId, seq: seq++, start: chunkStart, end: Date.now(), url: pathOf(root.location.href),
-                    traceIds: Array.from(traces), events });
-                events = [];
-                traces = new Set();
-                chunkStart = Date.now();
-                sent += body.length;
-                post("/rum/replay", body).then((ok) => { if (!ok) end(); });
-                if (sent >= maxBytes || Date.now() - started >= maxMs) end();
+        let dispose = null, reported = false;
+        const recorder = otlp.replayQueue({ replayId, bodyLimit: settings.replayBodyLimit,
+            maxBytes: settings.replayMaxBytes, maxMinutes: settings.replayMaxMinutes,
+            url: () => pathOf(root.location.href), ready: () => !!moqui.sessionToken,
+            send: (body) => post("/rum/replay", body, true),
+            onStop(reason) {
+                if (dispose) { try { dispose(); } catch (_) { /* gone */ } dispose = null; }
+                rum.replayStatus = { state: "stopped", reason };
+                // Fixed reasons/status only: never report a captured event or a server response body.
+                if (!reported) { console.info("Session replay stopped: " + reason); reported = true; }
             }
-        };
-        moqui.loadScript("/libs/rrweb/rrweb.umd.min.js", null, () => !!root.rrweb).then(() => {
-            if (!replay) return;
-            stop = root.rrweb.record(otlp.replayOptions(settings, (event) => {
-                events.push(event);
-                if (events.length >= 300) replay && replay.flush();
-            }));
-        }, (error) => { console.info("Session replay not recorded", error); replay = null; });
+        });
+        replay = recorder;
         rum.replayId = replayId;
+        rum.replayStatus = { state: "starting" };
+        moqui.loadScript("/libs/rrweb/rrweb.umd.min.js", null, () => !!root.rrweb).then(() => {
+            if (!recorder.accepting) return;
+            // record() can synchronously emit a FullSnapshot that stops capture before it returns its disposer.
+            const stop = root.rrweb.record(otlp.replayOptions(settings, (event) => recorder.add(event)));
+            if (typeof stop !== "function") { recorder.stop("recorder could not start"); return; }
+            if (!recorder.accepting) { stop(); }
+            else { dispose = stop; rum.replayStatus = { state: "recording" }; }
+        }).catch(() => recorder.stop("recorder could not start"));
     }
 })(typeof window !== "undefined" ? window : globalThis);

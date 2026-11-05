@@ -6,9 +6,134 @@ function render(path, root = "System", parameters = {}) {
     return {status: result.status, errors: result.errorMessages.join(" | "), output: String(result.output || "")}
 }
 
+// fixture rows, written and read past entity authorization; the screens' own permission checks still apply
+function sys(run) {
+    const wasDisabled = ec.artifactExecution.disableAuthz()
+    try { return run() } finally { if (!wasDisabled) ec.artifactExecution.enableAuthz() }
+}
+
 spec({
     setupSpec() {
         ec.user.internalLoginUser("john.doe")
+    }
+})
+
+feature("recovery editors load configuration, keep rejected blanks and separate new IDs from updates", {
+    expect() {
+        const source = ec.resource.getLocationText("component://tools/screen/Monitor/Recovery.xml")
+        const actions = /^    <actions><script><!\[CDATA\[([\s\S]*?)\]\]><\/script><\/actions>/m.exec(source)[1]
+        const policy = {policyId: "UI_RECOVERY_EDIT", description: "Loaded recovery policy", enabled: "N", sequenceNum: 1000000,
+            serviceName: "example.*", minSeverity: "critical", mode: "advisory", ladderJson: '[{"action":"escalate"}]',
+            adapterId: "UI_RECOVERY_ADAPTER", contactJson: '{"type":"notification"}', minConfidence: 0.999999,
+            cooldownMinutes: 0, maxActionsPerDay: 10, deadlineMinutes: 20, verifyMinutes: 30, maxRollbackRate: 0.01234567}
+        const adapter = {adapterId: "UI_RECOVERY_ADAPTER", description: "Loaded manual adapter", adapterType: "manual",
+            url: "https://example.invalid/recovery", urlProperty: "review_recovery_url", statusUrl: "https://example.invalid/status",
+            secretProperty: "review_recovery_signing_key", headerPropertiesJson: '{"Authorization":"review_recovery_auth"}',
+            allowInternal: "N", instructions: "Review the incident before doing anything."}
+        const inspect = (parameters = {}, errors = {}, allowed = true) => {
+            let reads = 0
+            const state = {
+                ec: {
+                    user: {hasPermission: () => allowed}, l10n: ec.l10n, web: {errorParameters: errors},
+                    service: {sync: () => ({name: () => ({call: () => {
+                        reads++
+                        return {policies: [policy], adapters: [adapter], actions: [], stopped: false}
+                    }})})}
+                },
+                editPolicyId: policy.policyId, editAdapterId: adapter.adapterId, incidentAllowed: null, adminAllowed: null,
+                policyList: null, adapterList: null, actionList: null, recoveryStopped: null, selectedPolicy: null,
+                selectedAdapter: null, policyMissing: null, adapterMissing: null, policyForm: null, adapterForm: null,
+                policyTitle: null, adapterTitle: null, ...parameters
+            }
+            runInContext(actions, state)
+            return {...state, reads}
+        }
+        const selected = inspect()
+        for (const [name, value] of Object.entries(policy)) assert.equal(selected.policyForm[name], String(value), name)
+        for (const [name, value] of Object.entries(adapter)) assert.equal(selected.adapterForm[name], String(value), name)
+        assert.equal(selected.policyList[0].stepsText, "Escalate")
+        assert.equal(selected.policyForm.sequenceNum, "1000000")
+        assert.equal(selected.policyForm.cooldownMinutes, "0")
+        const rejectedPolicy = inspect({}, {moquiFormName: "StorePolicy", description: "", contactJson: "", minConfidence: "not a number",
+            sequenceNum: "1000001", ladderJson: "not JSON"})
+        assert.equal(rejectedPolicy.policyForm.description, "")
+        assert.equal(rejectedPolicy.policyForm.contactJson, "")
+        assert.equal(rejectedPolicy.policyForm.minConfidence, "not a number")
+        assert.equal(rejectedPolicy.policyForm.sequenceNum, "1000001")
+        assert.equal(rejectedPolicy.policyForm.ladderJson, "not JSON")
+        assert.equal(rejectedPolicy.adapterForm.description, adapter.description)
+        const rejectedAdapter = inspect({}, {moquiFormName: "StoreAdapter", instructions: "", secretProperty: "", headerPropertiesJson: "{}"})
+        assert.equal(rejectedAdapter.adapterForm.instructions, "")
+        assert.equal(rejectedAdapter.adapterForm.secretProperty, "")
+        assert.equal(rejectedAdapter.adapterForm.headerPropertiesJson, "{}")
+        assert.equal(rejectedAdapter.policyForm.description, policy.description)
+        const fresh = inspect({editPolicyId: "", editAdapterId: ""})
+        assert.equal(fresh.policyForm.policyId, "")
+        assert.equal(fresh.policyForm.mode, "advisory")
+        assert.equal(fresh.policyForm.ladderJson, "[]")
+        assert.equal(fresh.adapterForm.adapterType, "manual")
+        assert.equal(fresh.adapterForm.secretProperty, "")
+        assert.equal(fresh.adapterForm.headerPropertiesJson, "")
+        const missing = inspect({editPolicyId: "missing", editAdapterId: "missing"})
+        assert(missing.policyMissing && missing.adapterMissing)
+        assert.equal(missing.selectedPolicy, null)
+        assert.equal(missing.selectedAdapter, null)
+        const denied = inspect({}, {}, false)
+        assert.equal(denied.reads, 0)
+        assert.equal(denied.selectedPolicy, null)
+        assert.equal(denied.selectedAdapter, null)
+        assert.equal(denied.adapterForm.secretProperty, "")
+        // The one Recovery HTML render verifies the actual bound controls, not a second mode/screen sweep.
+        sys(() => {
+            for (const [entityName, fields] of [["moqui.monitor.RecoveryAdapter", adapter], ["moqui.monitor.RecoveryPolicy", policy]]) {
+                const value = ec.entity.makeValue(entityName)
+                value.setFields(fields, true, null, null)
+                value.create()
+            }
+        })
+        const page = render("Recovery", "Monitor", {editPolicyId: policy.policyId, editAdapterId: adapter.adapterId})
+        assert.equal(page.status, 200)
+        assert.equal(page.errors, "")
+        assert(!/Error rendering|Exception in render/.test(page.output))
+        const input = id => new RegExp('<input\\b[^>]*\\bid="' + id + '"[^>]*>').exec(page.output)?.[0] || ""
+        assert(input("StorePolicy_sequenceNum").includes('value="1000000"'))
+        assert(input("StorePolicy_minConfidence").includes('value="0.999999"'))
+        assert(input("StorePolicy_maxRollbackRate").includes('value="0.01234567"'))
+        assert(input("StorePolicy_cooldownMinutes").includes('value="0"'))
+        assert(input("StorePolicy_policyId").includes('type="hidden"'))
+        assert(input("StoreAdapter_adapterId").includes('type="hidden"'))
+        assert(input("StoreAdapter_secretProperty").includes('value="review_recovery_signing_key"'))
+        assert(page.output.includes("editPolicyId=UI_RECOVERY_EDIT"))
+        assert(page.output.includes("editAdapterId=UI_RECOVERY_ADAPTER"))
+        assert(page.output.includes("Manual: operator instructions"))
+        assert(page.output.includes("Webhook: connection and signing"))
+        assert(page.output.includes("Review the incident before doing anything."))
+        // Exercise the actual transition boundary: a message + check-errors must skip the store, redirect,
+        // and save the rejected inputs. An isolated script throw would bypass this entire recovery path.
+        const test = ec.screen.makeTest().rootScreen("component://tools/screen/Monitor.xml").renderMode("html")
+        // The adapter transition has the same shape; one duplicate POST covers the boundary.
+        for (const [kind, id, entityName] of [["Policy", policy.policyId, "moqui.monitor.RecoveryPolicy"]]) {
+            const idName = kind === "Policy" ? "policyId" : "adapterId"
+            const submitted = {moquiFormName: "Store" + kind, [idName]: id, ["recovery" + kind + "Mode"]: "create",
+                description: "", enabled: "N", ladderJson: "[]", adapterType: "manual", instructions: "Rejected instructions"}
+            const rejected = test.render("Recovery/store" + kind, submitted, "post")
+            assert.equal(rejected.status, 302, kind + " duplicate uses its error response")
+            assert(rejected.errorMessages.join(" | ").includes("ID already exists"))
+            assert(String(rejected.header("Location")).includes("_openDialog=" + kind + "Dialog"))
+            const kept = ec.web.errorParameters
+            assert.equal(kept.moquiFormName, "Store" + kind)
+            assert.equal(kept.description, "", kind + " intentionally cleared description survives the error redirect")
+            assert.equal(kept[idName], id)
+            const unchanged = sys(() => ec.entity.find(entityName).condition(idName, id).one())
+            assert.equal(unchanged.description, kind === "Policy" ? policy.description : adapter.description)
+            if (kind === "Adapter") assert.equal(unchanged.instructions, adapter.instructions)
+        }
+    },
+    cleanup() {
+        sys(() => {
+            ec.entity.find("moqui.monitor.RecoveryPolicy").condition("policyId", "UI_RECOVERY_EDIT").deleteAll()
+            ec.entity.find("moqui.monitor.RecoveryAdapter").condition("adapterId", "UI_RECOVERY_ADAPTER").deleteAll()
+        })
     }
 })
 
@@ -351,5 +476,88 @@ feature("alert numeric edit values round trip without grouping or display precis
                 if (shown !== "") assert.equal(Number(shown), expected, "canonical numeric precision is retained")
             }
         }
+    }
+})
+
+feature("incident display dates preserve raw values and missing records retain the permission boundary", {
+    expect() {
+        // The existing Monitoring acceptance owns the screens' renders. Exercise their actual data mapping only.
+        const scripts = Object.fromEntries(["Incidents", "IncidentDetail"].map(name => {
+            const source = ec.resource.getLocationText("component://tools/screen/Monitor/" + name + ".xml")
+            return [name, /<script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/.exec(source)[1]]
+        }))
+        const instant = new Date("2026-11-04T18:28:00.123Z"), epoch = instant.getTime()
+        const formatted = ec.l10n.format(instant, "yyyy-MM-dd HH:mm:ss")
+        const incident = {incidentId:"000123", onsetDate:"2026-11-04T18:28:00.123Z", detectedDate:String(epoch), statusId:"Open"}
+        const response = {
+            incident,
+            evidence:[{evidenceSeqId:"000001", evidenceDate:epoch, kind:"note", summary:"Fixture note"}],
+            recovery:{decisions:[{decisionId:"000002", decidedDate:0, statusId:"AwaitingApproval"}],
+                actions:[{actionId:"000003", createdDate:null, statusId:"AwaitingOperator", adapterId:"UI_MANUAL",
+                    requestJson:JSON.stringify({instructions:"Review fixture only.\nDo not restart."})},
+                    {actionId:"000004", createdDate:"invalid", statusId:"Failed", requestJson:'{"instructions":"do not display a failed request"}'},
+                    {actionId:"000005", statusId:"AwaitingOperator", requestJson:'{"instructions":""}'},
+                    {actionId:"000006", statusId:"AwaitingOperator", requestJson:'malformed secret payload'},
+                    {actionId:"000007", statusId:"AwaitingOperator", requestJson:'{"instructions":"not a manual shape","callbackToken":"secret"}'}]}
+        }
+        const inspect = (name, allowed = true, exists = true, failure = null, signedIn = true) => {
+            let reads = 0, calls = 0
+            const logged = []
+            const services = {
+                "org.moqui.monitor.MonitorServices.list#Incidents": {incidents:[incident]},
+                "org.moqui.monitor.MonitorServices.get#Incident": response
+            }
+            const fake = {logger:{error:message => logged.push(message)}, l10n:ec.l10n, user:{userId:signedIn ? "EX_JOHN_DOE" : null, timeZone:ec.user.timeZone, hasPermission:permission => allowed && permission === "MONITOR_INCIDENT"},
+                entity:{find(entityName) {
+                    assert.equal(entityName,"moqui.monitor.MonitorIncident");reads++
+                    return {condition(field,value) {assert.equal(field,"incidentId");assert.equal(value,"000123");return this},
+                        useCache() {return this}, disableAuthz() {return this}, one() {return exists ? {incidentId:"000123"} : null}}
+                }},
+                service:{sync() {return {name(value) {this.serviceName=value;return this}, parameters() {return this},
+                    call() {calls++;if (failure) throw new Error(failure);return services[this.serviceName]}}}}
+            }
+            const state = {ec:fake, incidentId:"000123", statusId:"all", serviceName:"ui.fixture", incidentAllowed:null,
+                incidentFound:null, incidentList:null, statusOptions:null, incident:null, causeList:null, evidenceList:null,
+                regressionList:null, decisionList:null, actionList:null, manualActionList:null, recoveryStopped:null, recoverAllowed:null}
+            runInContext(scripts[name], state)
+            return {state,reads,calls,logged}
+        }
+        const list = inspect("Incidents").state
+        assert.equal(list.incidentList[0].detectedText,formatted)
+        assert.equal(list.incidentList[0].detectedDate,String(epoch))
+        assert.equal(list.incidentList[0].incidentId,"000123")
+        const inspected = inspect("IncidentDetail"), detail = inspected.state
+        assert.equal(detail.incident.onsetText,formatted)
+        assert.equal(detail.incident.detectedText,formatted)
+        assert.equal(detail.incident.detectedDate,String(epoch))
+        assert.equal(detail.incident.incidentId,"000123")
+        assert.equal(detail.evidenceList[0].evidenceText,formatted)
+        assert.equal(detail.evidenceList[0].evidenceDate,epoch)
+        assert.equal(detail.decisionList[0].decidedText,ec.l10n.format(new Date(0),"yyyy-MM-dd HH:mm:ss"))
+        assert.equal(detail.decisionList[0].decisionId,"000002")
+        assert.equal(detail.decisionList[0].waiting,true)
+        assert.equal(detail.actionList[0].createdText,ec.l10n.localize("Not recorded"))
+        assert.equal(detail.actionList[0].actionId,"000003")
+        assert.equal(detail.actionList[0].active,true)
+        assert.equal(detail.actionList[1].createdText,ec.l10n.localize("Unavailable"))
+        assert.equal(detail.actionList[0].manualInstructions,"Review fixture only.\nDo not restart.")
+        assert.equal(detail.actionList[0].adapterId,"UI_MANUAL")
+        assert.equal(detail.actionList[1].manualInstructions,"")
+        assert.equal(detail.actionList[2].manualInstructions,ec.l10n.localize("No operator instructions were recorded for this manual action."))
+        assert.equal(detail.actionList[3].manualInstructions,ec.l10n.localize("Operator instructions are unavailable. Contact the recovery administrator before marking this action done."))
+        assert.equal(detail.actionList[4].manualInstructions,detail.actionList[3].manualInstructions)
+        assert.deepEqual(detail.manualActionList.map(row => row.actionId),["000003","000005","000006","000007"])
+        assert.equal(inspected.logged.length,2)
+        assert.ok(inspected.logged[0].includes("000006") && inspected.logged[1].includes("000007"))
+        assert.ok(!inspected.logged.join(" ").includes("secret"),"diagnostics never include request payloads")
+        const missing = inspect("IncidentDetail",true,false)
+        assert.equal(missing.state.incidentFound,false);assert.equal(missing.reads,1);assert.equal(missing.calls,0)
+        const denied = inspect("IncidentDetail",false,true)
+        assert.equal(denied.state.incidentFound,false);assert.equal(denied.reads,0);assert.equal(denied.calls,0)
+        const anonymous = inspect("IncidentDetail",true,true,null,false)
+        assert.equal(anonymous.state.incidentFound,false);assert.equal(anonymous.reads,0);assert.equal(anonymous.calls,0)
+        let actualFailure = ""
+        try { inspect("IncidentDetail",true,true,"fixture service unavailable") } catch (error) { actualFailure=String(error) }
+        assert.ok(actualFailure.includes("fixture service unavailable"),"real service failures remain errors, not missing records")
     }
 })
