@@ -69,7 +69,7 @@
     const inputsOf = (box) => Array.from(box.querySelectorAll("input, select, textarea"))
         .filter((el) => ["hidden", "submit", "button", "reset", "image", "checkbox"].indexOf(el.type) < 0);
 
-    const boxes = [];
+    let boxes = [];
 
     // The box of the field a rule names, when the page has one, to tell whether it is hidden.
     const boxOfField = (form, name) => {
@@ -106,8 +106,10 @@
         return changed;
     };
 
-    // The boxes not bound yet: those of the page, and of a dialog or container filled after it loaded.
+    // The boxes not bound yet: those of the page, and of a dialog or container filled after it loaded. A box no longer
+    // on the page (its dialog filled again) is let go.
     const scan = () => {
+        boxes = boxes.filter((entry) => entry.box.isConnected);
         doc.querySelectorAll("[data-visible-when], [data-require-when]").forEach((box) => {
             if (box.dataset.mqWhenBound) return;
             box.dataset.mqWhenBound = "1";
