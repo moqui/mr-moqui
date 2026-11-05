@@ -37,7 +37,7 @@ use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
 use fallible_iterator::FallibleIterator;
-use moqui_core::driver::DbRow;
+use moqui_core::driver::{ColumnOrigin, DbRow};
 use moqui_lib::error::Error;
 use postgres_protocol::authentication::sasl::{ChannelBinding, ScramSha256, SCRAM_SHA_256};
 use postgres_protocol::message::backend::{
@@ -84,10 +84,27 @@ pub(super) struct Column {
     pub(super) ty: Type,
 }
 
+/// The result columns of a statement, and the table column each comes from (`RowDescription`'s table oid and
+/// attribute number, plans/Tools-Database.md 9.5), both shared by its rows.
+#[derive(Clone)]
+pub(super) struct Columns {
+    pub(super) list: Arc<[Column]>,
+    origins: Option<Arc<[Option<ColumnOrigin>]>>,
+}
+
+impl Default for Columns {
+    fn default() -> Self {
+        Self {
+            list: Arc::new([]),
+            origins: None,
+        }
+    }
+}
+
 /// What a prepared statement takes and gives.
 pub(super) struct Described {
     pub(super) params: Vec<Type>,
-    pub(super) columns: Arc<[Column]>,
+    pub(super) columns: Columns,
 }
 
 /// Parameter `index`'s bytes, written into the message in the format the request names for it; `false` for a NULL.
@@ -493,6 +510,11 @@ impl Wire {
         let mut parameters = vec![("user", user), ("database", database), ("client_encoding", "UTF8")];
         if let Some(options) = options {
             parameters.push(("options", options));
+        }
+        // The process's name for its sessions, the instance id, so the server's activity shows whose they are.
+        let application_name = moqui_core::driver::application_name();
+        if let Some(name) = application_name.as_deref() {
+            parameters.push(("application_name", name));
         }
         frontend::startup_message(parameters, &mut wire.write).map_err(|err| io_error("startup", err))?;
         wire.flush()?;
@@ -971,7 +993,7 @@ impl Wire {
             Ok(())
         })?;
         let mut params = Vec::new();
-        let mut columns: Arc<[Column]> = Arc::new([]);
+        let mut columns = Columns::default();
         self.round("prepare", |message| {
             match message {
                 Message::ParameterDescription(body) => params = params_of(&body)?,
@@ -1083,7 +1105,7 @@ impl Wire {
     pub(super) fn query(
         &mut self,
         statement: &str,
-        columns: &[Column],
+        columns: &Columns,
         formats: &[i16],
         count: usize,
         encode: Encode<'_>,
@@ -1111,7 +1133,7 @@ impl Wire {
         context: &str,
     ) -> Result<(Vec<DbRow>, u64), Error> {
         self.bind_execute(Some(sql), "", Describe::Portal, &[TEXT], count, encode)?;
-        let mut columns: Arc<[Column]> = Arc::new([]);
+        let mut columns = Columns::default();
         let mut rows = Vec::new();
         let mut changed = 0;
         self.round(context, |message| {
@@ -1155,7 +1177,7 @@ impl Wire {
         self.bind_execute(Some(sql), name, Describe::Statement, &[TEXT], count, encode)?;
         let mut parsed = false;
         let mut params = Vec::new();
-        let mut columns: Arc<[Column]> = Arc::new([]);
+        let mut columns = Columns::default();
         let mut rows = Vec::new();
         let mut changed = 0;
         let ran = self.round(context, |message| {
@@ -1239,31 +1261,44 @@ fn params_of(body: &ParameterDescriptionBody) -> Result<Vec<Type>, Error> {
     Ok(params)
 }
 
-fn columns_of(body: &RowDescriptionBody) -> Result<Arc<[Column]>, Error> {
+fn columns_of(body: &RowDescriptionBody) -> Result<Columns, Error> {
     let mut fields = body.fields();
     let mut columns = Vec::new();
+    let mut origins = Vec::new();
     while let Some(field) = fields.next().map_err(|err| io_error("describe", err))? {
         columns.push(Column {
             name: Arc::from(field.name()),
             ty: type_of(field.type_oid()),
         });
+        // A column that is not a table's (an expression, a constant) has table oid 0.
+        origins.push((field.table_oid() != 0).then(|| ColumnOrigin::Postgres {
+            table_oid: field.table_oid(),
+            column: field.column_id(),
+        }));
     }
-    Ok(columns.into())
+    let origins = Some(origins.into());
+    Ok(Columns {
+        list: columns.into(),
+        origins,
+    })
 }
 
-fn row_of(body: &DataRowBody, columns: &[Column], decode: Decode<'_>) -> Result<DbRow, Error> {
+fn row_of(body: &DataRowBody, columns: &Columns, decode: Decode<'_>) -> Result<DbRow, Error> {
     let buffer = body.buffer();
     let mut ranges = body.ranges();
-    let mut cells = Vec::with_capacity(columns.len());
+    let mut cells = Vec::with_capacity(columns.list.len());
     let mut index = 0;
     while let Some(range) = ranges.next().map_err(|err| io_error("row", err))? {
-        let column = columns.get(index).ok_or_else(|| protocol_error("row column"))?;
+        let column = columns.list.get(index).ok_or_else(|| protocol_error("row column"))?;
         let value = decode(&column.ty, range.map(|range| &buffer[range]))
             .map_err(|err| Error::new(format!("postgres column {index}")).with_source(err))?;
         cells.push((Arc::clone(&column.name), value));
         index += 1;
     }
-    Ok(DbRow { columns: cells })
+    Ok(DbRow {
+        columns: cells,
+        origins: columns.origins.clone(),
+    })
 }
 
 /// A cancel of a running statement, on a connection of its own, as the protocol has it, within [`CANCEL_TIMEOUT`].

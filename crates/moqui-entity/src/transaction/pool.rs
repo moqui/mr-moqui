@@ -26,7 +26,7 @@ use moqui_lib::error::Error;
 use moqui_lib::object::Value;
 use moqui_lib::sync::{lock, wait_timeout};
 
-use crate::driver::{DbCancel, DbConnection, DbDriver, DbRow};
+use crate::driver::{application_name, application_name_generation, DbCancel, DbConnection, DbDriver, DbRow};
 
 /// The idle-connection checkout test when the conf names none.
 pub const DEFAULT_TEST_QUERY: &str = "SELECT 1";
@@ -202,14 +202,33 @@ struct Tracked {
     in_tx: bool,
     /// When it last went back on an idle list.
     idle_since: Instant,
+    /// The [`application_name_generation`] this session's name is from.
+    name_generation: u64,
 }
 
 impl Tracked {
-    fn new(conn: Box<dyn DbConnection>) -> Self {
+    /// `name_generation` is the one before the driver connected, which sent the name of then.
+    fn new(conn: Box<dyn DbConnection>, name_generation: u64) -> Self {
         Self {
             conn,
             in_tx: false,
             idle_since: Instant::now(),
+            name_generation,
+        }
+    }
+
+    /// Give the server the process's application name when it changed since this session last did (a session opened
+    /// before core knew the instance id). A failure is logged and the session used as it is.
+    fn refresh_name(&mut self) {
+        let generation = application_name_generation();
+        if self.name_generation == generation {
+            return;
+        }
+        self.name_generation = generation;
+        if let Some(name) = application_name() {
+            if let Err(err) = self.conn.set_application_name(&name) {
+                tracing::warn!(error = %err, "Could not set the application name of a database session");
+            }
         }
     }
 }
@@ -291,6 +310,18 @@ impl DbConnection for Tracked {
 
     fn canceller(&self) -> Box<dyn DbCancel> {
         self.conn.canceller()
+    }
+
+    fn backend_id(&self) -> Option<i64> {
+        self.conn.backend_id()
+    }
+
+    fn set_transaction_read_only(&mut self) -> Result<(), Error> {
+        self.conn.set_transaction_read_only()
+    }
+
+    fn set_application_name(&mut self, name: &str) -> Result<(), Error> {
+        self.conn.set_application_name(name)
     }
 
     fn returns_rows(&mut self, sql: &str) -> Result<Option<bool>, Error> {
@@ -445,9 +476,10 @@ impl Pool {
                     }
                 },
                 Step::Connect => {
+                    let name_generation = application_name_generation();
                     let connected = self.inner.driver.connect();
                     let tracked = match connected {
-                        Ok(conn) => Tracked::new(conn),
+                        Ok(conn) => Tracked::new(conn, name_generation),
                         Err(err) => {
                             self.mark_creating(class, false);
                             self.inner.available.notify_all();
@@ -520,7 +552,8 @@ impl Pool {
         Ok(true)
     }
 
-    fn wrap(&self, tracked: Tracked, class: Class) -> PooledConn {
+    fn wrap(&self, mut tracked: Tracked, class: Class) -> PooledConn {
+        tracked.refresh_name();
         PooledConn {
             tracked: Some(tracked),
             pool: Arc::clone(&self.inner),
@@ -670,6 +703,11 @@ impl PooledConn {
         if let Some(tracked) = self.tracked.take() {
             self.lost = tracked.is_closed();
         }
+    }
+
+    /// Close the client when it is given back instead of returning it to the pool; it stays usable until then.
+    pub(super) fn discard_on_return(&mut self) {
+        self.discard = true;
     }
 
     /// False after [`Self::discard`] took the client.

@@ -166,6 +166,7 @@ impl DbConnection for FakeConn {
         self.touch(sql)?;
         Ok(vec![DbRow {
             columns: vec![("id".into(), Value::I64(i64::try_from(self.id).unwrap_or(i64::MAX)))],
+            origins: None,
         }])
     }
 

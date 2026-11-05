@@ -266,3 +266,7 @@ pub fn apply_datasource_conf(
 #[cfg(all(test, unix, feature = "embedded-postgres"))]
 #[path = "entity_facade_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix, feature = "embedded-postgres"))]
+#[path = "tools_db_tests.rs"]
+mod tools_db_tests;

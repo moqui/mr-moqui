@@ -412,3 +412,129 @@ fn a_lost_socket_marks_the_connection_lost_and_a_statement_error_does_not() {
         mysql::DriverError::MixedParams
     ))));
 }
+
+/// A column definition names the table column it comes from (`org_table`, `org_name`), not the alias; an expression
+/// names none (plans/Tools-Database.md 9.5).
+#[test]
+fn a_column_origin_is_its_org_table_and_name() {
+    let column = mysql::Column::new(ColumnType::MYSQL_TYPE_LONG)
+        .with_schema(b"app")
+        .with_table(b"t")
+        .with_org_table(b"widget")
+        .with_name(b"id_alias")
+        .with_org_name(b"widget_id");
+    assert_eq!(
+        column_origin(&column),
+        Some(ColumnOrigin::Mysql {
+            schema: "app".into(),
+            table: "widget".into(),
+            column: "widget_id".into(),
+        })
+    );
+    assert_eq!(
+        column_origin(&mysql::Column::new(ColumnType::MYSQL_TYPE_LONG).with_name(b"one")),
+        None
+    );
+    let attrs = connect_attrs();
+    assert_eq!(attrs.get("program_name").map(String::as_str), Some("moqui"));
+}
+
+/// On a server: the catalog queries of the schema comparison parse and run, a result's rows carry their columns'
+/// origins, the backend id is `CONNECTION_ID()`, and a read-only transaction refuses a write.
+#[test]
+fn on_a_server_catalog_queries_run_origins_are_kept_and_read_only_refuses_writes() {
+    let Some(driver) = test_driver() else {
+        tracing::debug!("MySQL was not reachable");
+        return;
+    };
+    let mut conn = must(driver.connect_mysql());
+    for sql in [
+        moqui_db::sql::catalog::MYSQL_COLUMNS,
+        moqui_db::sql::catalog::MYSQL_INDEXES,
+        moqui_db::sql::catalog::MYSQL_FOREIGN_KEYS,
+    ] {
+        must(conn.query_once(sql, &[]));
+    }
+    let id = must(conn.query_once("SELECT CONNECTION_ID() AS id", &[]));
+    let id = id[0].get("id").map(moqui_lib::object::to_plain_string);
+    assert_eq!(conn.backend_id().map(|id| id.to_string()), id);
+
+    let table = format!("moqui_ro_probe_{}", std::process::id());
+    must(conn.execute(
+        &format!("CREATE TABLE {table} (id INT PRIMARY KEY, label VARCHAR(20))"),
+        &[],
+    ));
+    let mut probe = || {
+        must(conn.execute(&format!("INSERT INTO {table} VALUES (1, 'a')"), &[]));
+        let rows = must(conn.query_once(&format!("SELECT id AS ident, label, 1 AS one FROM {table}"), &[]));
+        let origin = rows[0].origin(0).cloned();
+        assert!(
+            matches!(&origin, Some(ColumnOrigin::Mysql { table: t, column, .. }) if **t == *table && &**column == "id"),
+            "{origin:?}"
+        );
+        assert_eq!(rows[0].origin(2), None);
+        must(conn.begin());
+        must(conn.set_transaction_read_only());
+        let refused = conn.execute(&format!("INSERT INTO {table} VALUES (2, 'b')"), &[]);
+        let _ = conn.rollback();
+        refused
+    };
+    let refused = probe();
+    let _ = conn.execute(&format!("DROP TABLE {table}"), &[]);
+    let err = refused.expect_err("a write in a read-only transaction");
+    assert!(format!("{err:?}").contains("READ ONLY"), "{err:?}");
+}
+
+/// On a server: the tables the check makes compare clean, foreign keys found by their columns whatever the server
+/// named them (plans/Tools-Database.md 5.1).
+#[test]
+fn on_a_server_the_schema_comparison_reads_what_the_check_made() {
+    let Some(driver) = test_driver() else {
+        tracing::debug!("MySQL was not reachable");
+        return;
+    };
+    let mariadb = must(driver.connect_mysql()).mariadb;
+    let framework = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let facade = must(crate::entity_facade::open_entity_facade_dialect(
+        &framework,
+        Arc::new(driver),
+        moqui_core::transaction::PoolConfig {
+            min: 0,
+            max: 4,
+            reserve: 1,
+            ..Default::default()
+        },
+        if mariadb { "mysql" } else { "mysql8" },
+    ));
+    let entities = [
+        "moqui.basic.EnumerationType",
+        "moqui.basic.StatusFlow",
+        "moqui.basic.Enumeration",
+        "moqui.test.TestEntity",
+        "moqui.test.TestFts",
+    ];
+    must(facade.check_tables(&entities));
+    let diff = must(facade.meta().compare(&entities));
+    assert!(diff.errors.is_empty(), "{:?}", diff.errors);
+    assert_eq!(diff.checked, entities.len());
+    assert!(diff.tables.is_empty(), "{:#?}", diff.tables);
+
+    // Read only on MySQL runs only a query: DDL or a CALL would commit the read-only transaction first.
+    let read_only = |sql: &str| {
+        moqui_core::entity::info::run_sql_with(
+            &facade,
+            "transactional",
+            sql,
+            moqui_core::entity::info::SqlRunOptions {
+                read_only: true,
+                ..Default::default()
+            },
+        )
+    };
+    let rows = must(read_only("SELECT enum_id FROM ENUMERATION"));
+    assert!(rows.records.is_empty() || !rows.column_origins.is_empty());
+    for sql in ["CREATE TABLE moqui_ro_made (id INT)", "CALL nothing()", "SET autocommit = 0"] {
+        let err = read_only(sql).expect_err(sql);
+        assert!(err.to_string().contains("only a query"), "{sql}: {err}");
+    }
+}

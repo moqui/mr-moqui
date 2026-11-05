@@ -416,6 +416,7 @@ impl MemConn {
                 1,
                 vec![DbRow {
                     columns: vec![("1".into(), Value::I64(1))],
+                    origins: None,
                 }],
             ));
         }
@@ -461,6 +462,7 @@ impl MemConn {
                     .iter()
                     .map(|(column, alias)| (alias.as_str().into(), row.get(column).cloned().unwrap_or(Value::Null)))
                     .collect(),
+                origins: None,
             })
             .collect();
         let count = u64::try_from(projected.len()).unwrap_or(u64::MAX);
@@ -495,6 +497,7 @@ impl MemConn {
             1,
             vec![DbRow {
                 columns: vec![("seq_num".into(), Value::I64(end))],
+                origins: None,
             }],
         ))
     }
@@ -672,6 +675,7 @@ impl MemConn {
                 1,
                 vec![DbRow {
                     columns: vec![("count".into(), Value::I64(n))],
+                    origins: None,
                 }],
             ));
         }
@@ -1091,6 +1095,7 @@ fn project(row: &Row, columns: &[String]) -> DbRow {
             .iter()
             .map(|name| (name.as_str().into(), row.get(name).cloned().unwrap_or(Value::Null)))
             .collect(),
+        origins: None,
     }
 }
 
