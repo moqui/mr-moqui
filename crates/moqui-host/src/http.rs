@@ -28,7 +28,6 @@ use axum::middleware::Next;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
-use moqui_core::context::ErrorKind;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::transaction::PoolStats;
 use moqui_core::web::{WebRequest, WebResponse};
@@ -38,6 +37,7 @@ use tokio::net::TcpListener;
 use crate::guard::{setting, Event, Guard, GuardConf};
 use crate::notws;
 
+pub(crate) mod admission;
 mod serve;
 #[cfg(feature = "edge")]
 pub(crate) use serve::h2_request_form;
@@ -922,59 +922,40 @@ async fn dispatch_screen(
         };
         web.body = bytes.to_vec();
     }
-    let factory = Arc::clone(&state.factory);
-    let job_factory = Arc::clone(&factory);
-    let serve_factory = Arc::clone(&factory);
-    let (done, result) = tokio::sync::oneshot::channel::<Option<WebResponse>>();
+    // the shared admission (queue age, abandonment, overload; HL-006): a request whose client has gone (the deadline
+    // passed, the client went away) before a worker took it is not run
+    let serve_factory = Arc::clone(&state.factory);
     let guard = Arc::clone(&state.guard);
-    let queued = std::time::Instant::now();
-    let queue_timeout = state.guard.conf().queue_timeout;
     let worker_trace = trace_context.clone();
-    // The job owns `done`. A worker that panics or a pool that stops drops it, which ends the wait. A job nobody waits
-    // for any more (the deadline passed, the client went away) is not run, and one that waited past the queue timeout
-    // is answered `None`, a 503, instead.
-    let submitted = factory.request_pool().try_submit(job_factory, move || {
-        let _trace = moqui_core::telemetry::attach(worker_trace);
-        if done.is_closed() {
-            guard.counts.abandoned.fetch_add(1, Ordering::Relaxed);
-            return Ok(());
-        }
-        if queue_timeout.is_some_and(|wait| queued.elapsed() > wait) {
-            guard.counts.queue_expired.fetch_add(1, Ordering::Relaxed);
-            let _ = done.send(None);
-            return Ok(());
-        }
-        let response = moqui_core::screen::serve(&serve_factory, web);
-        if moqui_core::web::take_auth_failure() {
-            guard.record(client, Event::AuthFailure);
-        }
-        let _ = done.send(Some(response));
-        Ok(())
-    });
-    if let Err(err) = submitted {
-        if err.kind() == ErrorKind::Unavailable {
-            state.guard.counts.queue_full.fetch_add(1, Ordering::Relaxed);
-            return state.guard.unavailable("service unavailable");
-        }
-        return internal_error(err.message());
-    }
+    let served = admission::run(
+        Arc::clone(&state.factory),
+        Arc::clone(&state.guard),
+        state.guard.conf().queue_timeout,
+        move || {
+            let _trace = moqui_core::telemetry::attach(worker_trace);
+            let response = moqui_core::screen::serve(&serve_factory, web);
+            if moqui_core::web::take_auth_failure() {
+                guard.record(client, Event::AuthFailure);
+            }
+            response
+        },
+    );
     // an upload was exempt from the request deadline while it arrived; its screen has the deadline
-    let result = match state.limits.request.filter(|_| upload) {
-        Some(deadline) => match tokio::time::timeout(deadline, result).await {
-            Ok(result) => result,
+    let served = match state.limits.request.filter(|_| upload) {
+        Some(deadline) => match tokio::time::timeout(deadline, served).await {
+            Ok(served) => served,
             Err(_) => return plain(504, "the request took too long"),
         },
-        None => result.await,
+        None => served.await,
     };
-    match result {
-        Ok(Some(response)) => {
+    match served {
+        Ok(response) => {
             // Only the synchronous body construction uses this guard; the stream
             // captures an owned handle for its transfer workers before it returns.
             let _trace = moqui_core::telemetry::attach(trace_context);
             from_web(&state.factory, response)
         }
-        Ok(None) => state.guard.unavailable("the server is busy; try again"),
-        Err(_) => plain(500, "request worker stopped"),
+        Err(refusal) => refusal.response(&state.guard),
     }
 }
 
