@@ -98,8 +98,9 @@ fn number(parameters: &BTreeMap<String, Value>, key: &str) -> usize {
         .get(key)
         .filter(|value| !is_empty(value))
         .and_then(|value| to_plain_string(value).trim().parse::<f64>().ok())
-        .filter(|number| *number >= 0.0)
-        .map_or(0, |number| number as usize)
+        .filter(|number| number.is_finite() && *number >= 0.0)
+        // past any limit the callee takes; it refuses or caps what is too large
+        .map_or(0, |number| number.min(1e12) as usize)
 }
 
 fn params_map(parameters: &BTreeMap<String, Value>) -> BTreeMap<String, Value> {
@@ -180,7 +181,12 @@ fn run_sql(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
         offset: number(parameters, "offset"),
         timeout: Duration::from_secs(number(parameters, "timeoutSeconds") as u64),
     };
-    match sql::run(facade, &request, moqui_core::web::is_production()) {
+    match sql::run(
+        facade,
+        &request,
+        &audit::Actor::current(),
+        moqui_core::web::is_production(),
+    ) {
         Ok(outcome) => {
             let mut out = BTreeMap::new();
             out.insert("runId".to_string(), Value::String(outcome.run_id));
@@ -255,17 +261,26 @@ fn explain_sql(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> O
     let mariadb = catalog::group_is_mysql(facade, &group)
         && crate::capabilities::group_capabilities(facade, &group, || false, false).backend
             == Some(crate::capabilities::Backend::Mariadb);
+    let request = sql::ExplainRequest {
+        run_id: text(parameters, "runId"),
+        group,
+        sql_text: text(parameters, "sqlText"),
+        params: params_map(parameters),
+        analyze: flag(parameters, "analyze"),
+        token: text(parameters, "token"),
+        confirm_database_name: text(parameters, "confirmDatabaseName"),
+        mariadb,
+        timeout: Duration::from_secs(number(parameters, "timeoutSeconds") as u64),
+    };
     match sql::explain(
         facade,
-        &group,
-        &text(parameters, "sqlText"),
-        &params_map(parameters),
-        flag(parameters, "analyze"),
-        &text(parameters, "token"),
-        mariadb,
+        &request,
+        &audit::Actor::current(),
+        moqui_core::web::is_production(),
     ) {
         Ok(outcome) => {
             let mut out = BTreeMap::new();
+            out.insert("runId".to_string(), Value::String(outcome.run_id));
             out.insert("format".to_string(), Value::string(outcome.format));
             out.insert("plan".to_string(), Value::String(outcome.plan));
             out.insert("analyzed".to_string(), Value::Bool(outcome.analyzed));
@@ -412,6 +427,10 @@ fn reset_database_statements(parameters: &BTreeMap<String, Value>, facade: &Enti
     let Some(group) = group_of(parameters, facade) else {
         return none();
     };
+    if moqui_core::entity::fence::active() {
+        add_error("Resetting statement stats is not done under the read fence");
+        return none();
+    }
     let (sql, result) = if catalog::group_is_mysql(facade, &group) {
         let sql = catalog::mysql::STATEMENT_STATS_RESET;
         (sql, catalog::execute(facade, &group, sql).map(|_| ()))
@@ -636,6 +655,18 @@ pub fn audit_days() -> i64 {
 /// `purge#DatabaseAudit` (the `DatabaseAuditPurge` ServiceJob): delete the audit rows older than [`audit_days`]. Out:
 /// `deleted`.
 fn purge_database_audit(_parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Out {
+    // the ServiceJob runs it with no user signed in; a user calling it needs DATABASE_ADMIN
+    if current_user().is_some() && !moqui_core::user::has_permission("DATABASE_ADMIN").unwrap_or(false) {
+        add_error("Purging the database audit needs the DATABASE_ADMIN permission");
+        return none();
+    }
+    let tokens = sql::purge_tokens(facade).unwrap_or_else(|err| {
+        tracing::error!(error = %err, "Could not purge the expired SQL run tokens");
+        0
+    });
+    if tokens > 0 {
+        tracing::info!("Purged {tokens} expired SQL run tokens");
+    }
     let days = audit_days();
     let cutoff = jiff::Timestamp::now()
         .checked_sub(jiff::SignedDuration::from_hours(24 * days))

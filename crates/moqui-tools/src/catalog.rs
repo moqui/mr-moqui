@@ -60,8 +60,12 @@ pub mod postgres {
          WHERE dbid = (SELECT oid FROM pg_database WHERE datname = current_database()) \
          ORDER BY total_exec_time DESC LIMIT ?";
     pub const STATEMENT_STATS_RESET: &str = "SELECT pg_stat_statements_reset() AS reset";
-    /// Cancel the statement of a session, by its backend pid (`?`).
-    pub const CANCEL_BACKEND: &str = "SELECT pg_cancel_backend(?) AS cancelled";
+    /// Cancel the statement of a session: the caller appends its backend pid, a number, and `)`.
+    pub const CANCEL_BACKEND: &str = "SELECT pg_cancel_backend(";
+    /// When a session started: the caller appends its backend pid, a number. With the pid it names one session, so a
+    /// cancel does not reach a later session that has the same pid.
+    pub const BACKEND_START: &str =
+        "SELECT CAST(backend_start AS TEXT) AS backend_start FROM pg_stat_activity WHERE pid = ";
 }
 
 /// MySQL 8 and MariaDB (the `mysql` and `mysql8` database confs).
@@ -95,6 +99,11 @@ pub mod mysql {
     pub const STATEMENT_STATS_RESET: &str = "TRUNCATE TABLE performance_schema.events_statements_summary_by_digest";
     /// `KILL QUERY` takes no placeholder: the caller appends the connection id, a number.
     pub const KILL_QUERY: &str = "KILL QUERY ";
+    /// When the server started, in epoch seconds: with it a connection id names one connection, since the ids start
+    /// again only when the server does.
+    pub const SERVER_START: &str =
+        "SELECT CAST(UNIX_TIMESTAMP() - CAST(VARIABLE_VALUE AS SIGNED) AS SIGNED) AS server_start \
+         FROM performance_schema.global_status WHERE VARIABLE_NAME = 'Uptime'";
 }
 
 /// The most one catalog query may take: past it the transaction's deadline cancels the statement.

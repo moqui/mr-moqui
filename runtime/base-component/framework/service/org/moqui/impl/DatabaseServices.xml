@@ -61,10 +61,12 @@ along with this software (see the LICENSE.md file). If not, see
         included. -->
     <service verb="classify" noun="Sql" type="rust" location="moqui_tools::sql_service::classify_sql" transaction="ignore">
         <description>The statements of sqlText as a run with Allow Changes needs them confirmed: each with changes (it
-            may change data), ownTransaction (VACUUM, CREATE INDEX CONCURRENTLY, CREATE DATABASE: runs on its own) and
-            implicitCommit (MySQL DDL); changeCount; and token, the one-time confirmation run#Sql takes for this user, db
-            and sqlText, good for ten minutes. On a production instance confirmDatabaseName is the name run#Sql needs
-            typed. parameterNames are the :name parameters.</description>
+            may change data), ownTransaction (VACUUM, CREATE INDEX CONCURRENTLY, CREATE DATABASE: runs on its own),
+            implicitCommit (MySQL DDL, which commits) and transactionControl; changeCount; and token, the one-time
+            confirmation run#Sql or explain#Sql takes for this user, db and sqlText on any instance, good for ten minutes
+            (moqui.database.SqlRunToken). On a production instance confirmDatabaseName is the name run#Sql needs typed.
+            parameterNames are the :name parameters. Transaction control (COMMIT, ROLLBACK, BEGIN, SAVEPOINT, SET
+            TRANSACTION, MySQL LOCK TABLES, SET autocommit, ...) is refused in every mode: a run is its own transaction.</description>
         <in-parameters>
             <parameter name="db"/>
             <parameter name="sqlText" required="true" allow-html="any"/>
@@ -84,10 +86,13 @@ along with this software (see the LICENSE.md file). If not, see
             transaction and stops at the first failure (rolledBack), unless eachOnOwn; a read-only script stops at its first
             failure too. parameters binds each :name as a value. limit rows per query (500, at most 100,000); offset
             fetches more of a single read-only query; timeoutSeconds (300, at most 3,600) cancels the statement running at
-            the time. runId (8 to 36 letters, digits or -) names the run for cancel#SqlRun; one is made when empty.
+            the time. runId (8 to 36 letters, digits or -) names the run for cancel#SqlRun; one is made when empty, and
+            one running on any instance is refused. A cancel or timeout with statements left rolls a transaction back.
+            Every connection a run with changes used is closed after it, so no session state reaches later work.
             results has, per statement: seq, sql, givesRows, columns, records (lists of values), limitReached,
             rowsAffected, durationMs, error, rerunnable (a plain query run read only: may be run again to sort, filter or
-            fetch more) and skipped.</description>
+            fetch more), skipped, rolledBack (it ran and was rolled back) and auditId. A refused attempt with changes (no
+            or a spent token, the wrong name) is audited too.</description>
         <in-parameters>
             <parameter name="db"/>
             <parameter name="sqlText" required="true" allow-html="any"/>
@@ -112,8 +117,10 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="cancel" noun="SqlRun" type="rust" location="moqui_tools::sql_service::cancel_sql_run" transaction="ignore">
         <description>Cancel the run runId: the user's own, or any with DATABASE_ADMIN. On this instance through its
             connection's canceller; a run on another instance is found by its running audit row and cancelled with
-            pg_cancel_backend or KILL QUERY. outcome is cancelled, cancelledRemote (with instanceId and backendId) or
-            notRunning. Writes a DbaCancel audit row.</description>
+            pg_cancel_backend or KILL QUERY, once the session is checked to be the one the row recorded (Postgres
+            backend_start, MySQL the server's start); a running row older than the longest timeout is ignored. outcome is
+            cancelled, cancelledRemote (with instanceId and backendId) or notRunning. Refused under the read fence for a
+            remote cancel. Writes a DbaCancel audit row.</description>
         <in-parameters><parameter name="runId" required="true"/></in-parameters>
         <out-parameters>
             <parameter name="outcome"/>
@@ -124,16 +131,22 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="explain" noun="Sql" type="rust" location="moqui_tools::sql_service::explain_sql" transaction="ignore">
         <description>The plan of one statement (§7.5): Postgres EXPLAIN (FORMAT JSON, VERBOSE, BUFFERS), MySQL and MariaDB
             EXPLAIN FORMAT=JSON. analyze runs it: Postgres adds ANALYZE, MySQL EXPLAIN ANALYZE (format text), MariaDB
-            ANALYZE FORMAT=JSON; a statement that may change data then needs the token of classify#Sql and runs in a
-            transaction that is rolled back (rolledBack). plan is the database's text (JSON when format is json).</description>
+            ANALYZE FORMAT=JSON. A statement that may change data then needs the token of classify#Sql (and on production
+            confirmDatabaseName) and runs in a transaction that is rolled back (rolledBack), as every analyzed statement on
+            MySQL and MariaDB does. Registered under runId for cancel#SqlRun, under timeoutSeconds as run#Sql. plan is the
+            database's text (JSON when format is json).</description>
         <in-parameters>
             <parameter name="db"/>
             <parameter name="sqlText" required="true" allow-html="any"/>
             <parameter name="parameters" type="Map"/>
             <parameter name="analyze" type="Boolean" default-value="false"/>
             <parameter name="token"/>
+            <parameter name="confirmDatabaseName"/>
+            <parameter name="runId"/>
+            <parameter name="timeoutSeconds" type="Integer"/>
         </in-parameters>
         <out-parameters>
+            <parameter name="runId"/>
             <parameter name="format"/>
             <parameter name="plan"/>
             <parameter name="analyzed" type="Boolean"/>
@@ -171,7 +184,7 @@ along with this software (see the LICENSE.md file). If not, see
     <service verb="reset" noun="DatabaseStatements" type="rust" location="moqui_tools::sql_service::reset_database_statements"
             transaction="ignore">
         <description>Reset the database's own statement stats: pg_stat_statements_reset(), or a TRUNCATE of the digest
-            table. Needs DATABASE_ADMIN; writes a DbaStatsReset audit row.</description>
+            table. Needs DATABASE_ADMIN; refused under the read fence; writes a DbaStatsReset audit row.</description>
         <in-parameters><parameter name="db"/></in-parameters>
     </service>
     <service verb="find" noun="SqlHistory" type="rust" location="moqui_tools::sql_service::find_sql_history" transaction="ignore">
@@ -209,7 +222,8 @@ along with this software (see the LICENSE.md file). If not, see
     </service>
     <service verb="purge" noun="DatabaseAudit" type="rust" location="moqui_tools::sql_service::purge_database_audit">
         <description>Delete the DatabaseAudit rows older than the database_audit_days property (90 by default, at least
-            1): the DatabaseAuditPurge ServiceJob.</description>
+            1), and the expired SqlRunToken rows: the DatabaseAuditPurge ServiceJob, which runs with no user signed in; a
+            signed-in caller needs DATABASE_ADMIN.</description>
         <out-parameters><parameter name="deleted" type="Long"/></out-parameters>
     </service>
 </services>

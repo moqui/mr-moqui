@@ -27,7 +27,8 @@ feature('a read-only run returns rows and the user sees it in the history; a wri
         read.results[0].records.map(r => r[0]).includes('DbaSql')
         read.results[0].rerunnable == true
         write.error.includes('confirmation')
-        history.history[0].statementText.includes('enumeration')
+        history.history.some(h => h.statementText.includes('enumeration') && h.errorText == null)
+        history.history.some(h => h.statementText.includes('spec_note') && h.errorText.includes('confirmation'))
     },
 })
 feature('saved queries are the owner\'s to change; the catalog maps entities to their tables; the database\'s stats read', {
@@ -64,5 +65,45 @@ feature('a user without SQL_RUNNER_WEB is refused the SQL services', {
         run.error.includes('SQL_RUNNER_WEB')
         run.results == null
         saved.error.includes('SQL_RUNNER_WEB')
+    },
+})
+feature('with authorization on, the service itself asks for all actions on the Tools app', {
+    when() {
+        // the service granted outright (as a screen's inherited authorization lets it run), to ADMIN and to a group with
+        // SQL_RUNNER_WEB that the Tools app does not let in
+        asAdmin(() => {
+            call('create#moqui.security.ArtifactGroup', { artifactGroupId: 'SQL_SPEC_API', description: 'SqlServices spec' })
+            call('create#moqui.security.ArtifactGroupMember', { artifactGroupId: 'SQL_SPEC_API',
+                artifactName: D + 'run#Sql', artifactTypeEnumId: 'AT_SERVICE', inheritAuthz: 'N' })
+            call('create#moqui.security.UserGroup', { userGroupId: 'SQL_SPEC_GROUP', description: 'SqlServices spec' })
+            for (const userGroupId of ['ADMIN', 'SQL_SPEC_GROUP'])
+                call('create#moqui.security.ArtifactAuthz', { artifactAuthzId: 'SQL_SPEC_' + userGroupId, userGroupId,
+                    artifactGroupId: 'SQL_SPEC_API', authzTypeEnumId: 'AUTHZT_ALLOW', authzActionEnumId: 'AUTHZA_ALL' })
+            call('create#moqui.security.UserGroupPermission', { userGroupId: 'SQL_SPEC_GROUP',
+                userPermissionId: 'SQL_RUNNER_WEB', fromDate: '2000-01-01T00:00:00Z' })
+            call('create#moqui.security.UserGroupMember', { userGroupId: 'SQL_SPEC_GROUP', userId: 'SQL_PLAIN_USER',
+                fromDate: '2000-01-01T00:00:00Z' })
+        })
+        const authorized = (name, parameters) => {
+            try {
+                const result = call(name, parameters) || {}
+                const error = ec.message.getErrorsString()
+                ec.message.clearErrors()
+                return Object.assign({}, result, { error })
+            } catch (e) { ec.message.clearErrors(); return { error: String(e.message || e) } }
+        }
+        // signed in again, so the new grant is read
+        login('john.doe')
+        const admin = authorized(D + 'run#Sql', { sqlText: 'SELECT 1' })
+        login('sql.plain.user')
+        try {
+            return { admin, outside: authorized(D + 'run#Sql', { sqlText: 'SELECT 1' }) }
+        } finally { login('john.doe') }
+    },
+    then({ admin, outside }) {
+        admin.error == ''
+        admin.results.length == 1
+        outside.error.includes('all actions on the Tools app')
+        outside.results == null
     },
 })

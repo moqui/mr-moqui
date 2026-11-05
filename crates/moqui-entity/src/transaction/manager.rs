@@ -462,6 +462,30 @@ impl TransactionManager {
         Ok(())
     }
 
+    /// [`Self::with_connection`], and the connection is closed instead of going back to the pool: at once when no
+    /// frame is active (an autocommit statement), else when the frame ends ([`Self::discard_connection_at_end`]). For a
+    /// statement that may leave session state behind (plans/Tools-Database.md 8.2).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::with_connection`].
+    pub fn with_connection_closed_after<T, F>(&self, body: F) -> Result<T, Error>
+    where
+        F: FnOnce(&mut dyn DbConnection) -> Result<T, Error>,
+    {
+        self.absorb_deadline();
+        if !self.has_active() {
+            let mut pooled = self.inner.pool.checkout_ordinary()?;
+            let result = body(pooled.conn());
+            pooled.discard();
+            return result;
+        }
+        let result = self.with_connection(body);
+        // the frame has its connection now, unless the checkout itself failed
+        let _ = self.discard_connection_at_end();
+        result
+    }
+
     /// Reserve checkout. The closure begins and commits its own transaction, or stays autocommit.
     /// Does not use the caller's enlisted connection.
     pub fn with_reserve<T, F>(&self, body: F) -> Result<T, Error>
