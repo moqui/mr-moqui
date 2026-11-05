@@ -1408,6 +1408,117 @@ fn a_watch_hides_nothing_from_another_stream_and_a_follower_fills_a_gap_from_the
     assert_eq!(ring, [1, 2, 5, 6, 3, 4]);
 }
 
+/// HL-021: one active run among many watched unrelated runs wakes only its own follower, and that follower looks at
+/// only the events it has not read, not the run's whole ring.
+#[test]
+fn an_event_wakes_only_its_own_runs_followers_and_they_read_only_what_is_new() {
+    let hub = Arc::new(RunHub::new());
+    for n in 0..2000 {
+        hub.push_live("run-busy", "text.delta", json!({"n": n}));
+    }
+    let quiet: Vec<String> = (0..40).map(|n| format!("run-quiet-{n}")).collect();
+    for run_id in &quiet {
+        for n in 0..50 {
+            hub.push_live(run_id, "status", json!({"n": n}));
+        }
+    }
+    let end_of = |run_id: &str| hub.wait(run_id, None, Duration::ZERO).last().map(|event| event.index);
+    let before = hub.stats();
+    let waiters: Vec<_> = quiet
+        .iter()
+        .map(|run_id| {
+            let (hub, run_id, cursor) = (Arc::clone(&hub), run_id.clone(), end_of(run_id));
+            std::thread::spawn(move || hub.wait(&run_id, cursor, Duration::from_millis(600)).len())
+        })
+        .collect();
+    let follower = {
+        let (hub, cursor) = (Arc::clone(&hub), end_of("run-busy"));
+        std::thread::spawn(move || {
+            let mut cursor = cursor;
+            let mut got = 0;
+            let deadline = Instant::now() + WAIT;
+            while got < 100 && Instant::now() < deadline {
+                let events = hub.wait("run-busy", cursor, Duration::from_millis(200));
+                cursor = events.last().map(|event| event.index).or(cursor);
+                got += events.len();
+            }
+            got
+        })
+    };
+    std::thread::sleep(Duration::from_millis(50));
+    let after_reads = hub.stats();
+    for n in 0..100 {
+        hub.push_live("run-busy", "text.delta", json!({"n": n}));
+        if n % 10 == 0 {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    assert_eq!(follower.join().unwrap(), 100);
+    for waiter in waiters {
+        assert_eq!(
+            waiter.join().unwrap(),
+            0,
+            "a quiet run's waiter got nothing and only timed out"
+        );
+    }
+    let after = hub.stats();
+    // the end_of reads above looked at each ring once; after them only the 100 new events were looked at
+    assert_eq!(after.inspected - after_reads.inspected, 100);
+    assert_eq!(after_reads.inspected - before.inspected, 2000 + 40 * 50);
+    let woken = after.wakeups - before.wakeups;
+    assert!(
+        (1..=100).contains(&woken),
+        "only the busy run's follower wakes: {woken}"
+    );
+}
+
+/// HL-021: a follower behind a ring that wrapped gets the stored events the ring dropped from the database, then the
+/// ring's, each once and in order, and the live events after them.
+#[test]
+fn a_follower_behind_a_wrapped_ring_fills_the_gap_from_the_database() {
+    let bed = bed("hub-wrap");
+    let _entered = bed.ctx.enter();
+    let hub = engine(&bed.factory).hub();
+    row(
+        &bed.facade,
+        RUN,
+        &[("runId", "run-wrap"), ("userId", USER), ("statusId", "AgrWorking")],
+    );
+    let total = i64::try_from(hub::RING).unwrap() + 10;
+    for seq in 1..=10 {
+        let mut event = bed.facade.make_value(events::RUN_EVENT).unwrap();
+        event.set("runId", Value::string("run-wrap"));
+        event.set("eventSeq", Value::I64(seq));
+        event.set("eventType", Value::string("status"));
+        event.set("payloadJson", Value::string(json!({"n": seq}).to_string()));
+        event.create(&bed.facade).unwrap();
+    }
+    hub.push_stored(
+        "run-wrap",
+        (1..=total)
+            .map(|seq| (seq, "status".to_string(), json!({"n": seq})))
+            .collect(),
+    );
+    let ring = hub.wait("run-wrap", None, Duration::ZERO);
+    assert_eq!(ring.len(), hub::RING, "the ring wrapped");
+    assert_eq!(ring.first().and_then(|event| event.seq), Some(11));
+    // a cursor before the ring's start reads the whole ring, not past its end
+    assert_eq!(hub.wait("run-wrap", Some(3), Duration::ZERO).len(), hub::RING);
+    let mut follower = hub::Follower::new(&hub, "run-wrap", 0);
+    let seqs: Vec<i64> = follower
+        .next(&hub, &bed.facade, Duration::ZERO)
+        .unwrap()
+        .iter()
+        .filter_map(|event| event.seq)
+        .collect();
+    assert_eq!(seqs, (1..=total).collect::<Vec<_>>());
+    hub.push_live("run-wrap", "text.delta", json!({"delta": "x"}));
+    let live = follower.next(&hub, &bed.facade, Duration::ZERO).unwrap();
+    assert_eq!(live.len(), 1);
+    assert_eq!((live[0].seq, live[0].event_type.as_str()), (None, "text.delta"));
+    assert_eq!(follower.last(), total);
+}
+
 /// The steps of a run in order: input and cached tokens, and whether a compaction came before the step's call.
 fn step_usage(bed: &Bed, run_id: &str) -> Vec<(u64, u64, bool)> {
     let compacted: Vec<i64> = stored(bed, run_id)
