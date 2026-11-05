@@ -17,6 +17,8 @@
 //!
 //! ```text
 //! ec.resource.digest(location, "sha256" | "sha1")            -> lower-case hex of the file's bytes
+//! ec.resource.digestText(text, "sha256" | "sha1")            -> lower-case hex of the text's UTF-8 bytes: a stable key
+//!     for a value too long to be a key itself
 //! ec.resource.gunzip(source, target, maxBytes)                 -> bytes written; refused past maxBytes
 //! ec.resource.extractArchive(source, targetDir, limits)        -> {entries: [{path, size}], skipped: [{path, reason}]}
 //!     a tar, gzip-compressed or not; regular files only, no absolute or parent paths, limits {maxBytes, maxEntries}
@@ -98,6 +100,18 @@ fn resource_digest(ctx: Ctx<'_>, location: String, algorithm: String) -> rquickj
             )),
         }
     })
+}
+
+fn text_digest(ctx: Ctx<'_>, text: String, algorithm: String) -> rquickjs::Result<String> {
+    use sha2::Digest;
+    match algorithm.as_str() {
+        "sha256" => Ok(hex(&sha2::Sha256::digest(text.as_bytes()))),
+        "sha1" => Ok(hex(&sha1::Sha1::digest(text.as_bytes()))),
+        other => Err(Exception::throw_message(
+            &ctx,
+            &format!("unknown digest {other}: use sha256 or sha1"),
+        )),
+    }
 }
 
 fn resource_gunzip(ctx: Ctx<'_>, source: String, target: String, max_bytes: f64) -> rquickjs::Result<f64> {
@@ -335,6 +349,7 @@ pub(super) fn methods<'js>(ctx: &Ctx<'js>, host: &Object<'js>) -> Result<(), Err
         };
     }
     method!("resourceDigest", resource_digest);
+    method!("textDigest", text_digest);
     method!("resourceGunzip", resource_gunzip);
     method!("resourceExtractArchive", resource_extract_archive);
     method!("resourceReadLines", resource_read_lines);

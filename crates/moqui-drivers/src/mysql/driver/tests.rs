@@ -394,3 +394,21 @@ fn a_server_that_stalls_after_accepting_bounds_connect_and_cancel() {
     assert!(cancel.kill_within(limit).is_err());
     assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
 }
+
+/// A read past the read timeout, or a socket that failed, leaves the connection of no use: it reports itself closed,
+/// so the pool drops it instead of sending a ROLLBACK that waits out the timeout again. A statement's own error does
+/// not.
+#[test]
+fn a_lost_socket_marks_the_connection_lost_and_a_statement_error_does_not() {
+    let timed_out = mysql_err(mysql::Error::IoError(std::io::Error::from(
+        std::io::ErrorKind::WouldBlock,
+    )));
+    assert!(connection_lost(&timed_out));
+    assert!(connection_lost(&mysql_err(mysql::Error::DriverError(
+        mysql::DriverError::PacketOutOfSync
+    ))));
+    assert!(!connection_lost(&Error::new("mysql stream is open")));
+    assert!(!connection_lost(&mysql_err(mysql::Error::DriverError(
+        mysql::DriverError::MixedParams
+    ))));
+}

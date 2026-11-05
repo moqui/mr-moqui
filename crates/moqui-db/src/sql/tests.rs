@@ -1474,6 +1474,36 @@ fn complex_alias_case_and_java_column_references() {
     assert!(sql.contains("GROUP BY \"OI\".\"orderId\", (COALESCE("), "{sql}");
 }
 
+/// A cast to an integer in a complex-alias expression, as `ROUND(x, CAST(digits AS INTEGER))` needs on Postgres, is
+/// `SIGNED` on MySQL, which has no INTEGER type for a cast and refused the statement.
+#[test]
+fn a_cast_to_integer_is_signed_on_mysql() {
+    let model = sample_model(&format!(
+        r#"{ORDERS}
+        <view-entity entity-name="ItemRounded" package="sample">
+            <member-entity entity-alias="OI" entity-name="sample.OrderItem"/>
+            <alias name="orderId" entity-alias="OI"/>
+            <alias name="rounded" type="number-decimal"><complex-alias function="ROUND">
+                <complex-alias-field entity-alias="OI" field="unitAmount"/>
+                <complex-alias expression="CAST(COALESCE(OI.QUANTITY, 2) AS integer)"/>
+            </complex-alias></alias>
+        </view-entity>"#
+    ));
+    let (_, dialects) = framework();
+    let view = model.entity("sample.ItemRounded").unwrap();
+    let render = |dialect: &Dialect| {
+        select_view(view, &model, dialect, &values(), None, &[], LimitOffset::default())
+            .unwrap()
+            .sql
+    };
+    let postgres = render(&sample_postgres());
+    assert!(postgres.contains("AS integer)"), "{postgres}");
+    for name in ["mysql", "mysql8"] {
+        let sql = render(dialects.get(name).unwrap());
+        assert!(sql.contains("CAST(COALESCE(`OI`.`quantity`, 2) AS SIGNED)"), "{sql}");
+    }
+}
+
 #[test]
 fn a_complex_alias_operator_outside_the_allow_list_is_an_error() {
     let view = |operator: &str| {

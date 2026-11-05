@@ -549,6 +549,9 @@ impl<'a> Renderer<'a> {
         let chars: Vec<char> = text.chars().collect();
         let mut index = 0;
         let mut quoted = false;
+        // the word before, for `CAST(x AS INTEGER)`: MySQL casts to `SIGNED`, and has no INTEGER type for a cast
+        let mut after_as = false;
+        let mysql = super::ident::is_mysql(self.dialect);
         while index < chars.len() {
             let ch = chars[index];
             if ch == '\'' {
@@ -570,6 +573,11 @@ impl<'a> Renderer<'a> {
                 index += 1;
             }
             let first: String = chars[start..index].iter().collect();
+            let was_after_as = std::mem::replace(&mut after_as, first.eq_ignore_ascii_case("AS"));
+            if mysql && was_after_as && is_integer_type(&first) {
+                out.push_str("SIGNED");
+                continue;
+            }
             if index + 1 < chars.len()
                 && chars[index] == '.'
                 && (chars[index + 1].is_ascii_alphabetic() || chars[index + 1] == '_')
@@ -1199,6 +1207,13 @@ fn check_operator(operator: &str) -> Result<(), Error> {
             "complex-alias operator {operator} is not supported"
         )))
     }
+}
+
+/// An integer type a `CAST` names, which MySQL writes `SIGNED`.
+fn is_integer_type(word: &str) -> bool {
+    ["INTEGER", "INT", "BIGINT", "SMALLINT"]
+        .iter()
+        .any(|name| word.eq_ignore_ascii_case(name))
 }
 
 fn is_word(ch: char) -> bool {

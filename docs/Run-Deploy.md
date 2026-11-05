@@ -399,8 +399,11 @@ embeds it.
 ### External Postgres or MySQL
 
 Set `entity_ds_db_conf` and the other `entity_ds_*` properties, in the environment, `.env` or the runtime conf. There
-are examples in `runtime/conf/MoquiDevConf.xml`. MySQL has open issues: two tables are not created and emoji cannot be
-stored ([MySQL-Issues](../plans/MySQL-Issues.md)).
+are examples in `runtime/conf/MoquiDevConf.xml`. Use `mysql8` for MySQL 8 and `mysql` for MariaDB (which has no
+`LATERAL`) and MySQL 5.7. Both create `utf8mb4` tables, so any character (an emoji) can be stored; create the database
+with `CHARACTER SET utf8mb4`. A database made before, with 3-byte `utf8` tables, needs a fresh load or each table
+converted by hand (`ALTER TABLE ... CONVERT TO CHARACTER SET utf8mb4`). Loading every data type into each was checked
+([MySQL-Issues](../plans/archive/MySQL-Issues.md)).
 
 | Property | Example | What it does |
 |---|---|---|
@@ -448,8 +451,7 @@ else uses `ec.resource`. No foreign key or view-entity crosses between the conte
 For a server of its own, set `content_ds_host`, `content_ds_port`, `content_ds_user`, `content_ds_password`,
 `content_ds_sslmode` and `content_ds_sslrootcert`. Each one left empty takes its `entity_ds_` value. So setting only
 `content_ds_db_conf=postgres` puts the content in a `moqui_content` database on the transactional server, which must
-exist. `content_ds_schema` names a schema, as `entity_ds_schema` does. A MySQL content database has the open MySQL
-issues above.
+exist. `content_ds_schema` names a schema, as `entity_ds_schema` does.
 
 One transaction spans both databases, as Moqui Java's transaction spans every datasource, but without two-phase commit:
 

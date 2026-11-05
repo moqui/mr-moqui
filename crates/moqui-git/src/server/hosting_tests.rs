@@ -445,6 +445,47 @@ fn the_tree_refs_compare_and_merge_methods_through_services() {
     );
     assert_eq!(list(&tags, "refList").len(), 1);
     assert_eq!(entry(&list(&tags, "refList")[0], "annotated"), &Value::Bool(true));
+
+    // A ref made in a transaction that holds the repository row (a service that updated it, as a commit does) is
+    // recorded in that transaction. Recorded in a new one, the insert's foreign key check waited on the caller's lock
+    // on this same thread until the lock wait timeout (InnoDB's shared lock on the parent row, here key share against
+    // FOR UPDATE), and the update was lost.
+    {
+        let _entered = fixture.context.enter();
+        let tx = fixture.entity.transactions_for(crate::GIT_REPOSITORY).unwrap();
+        let held: Result<(), moqui_lib::error::Error> = tx.run(
+            moqui_core::transaction::TransactionAttribute::UseOrBegin,
+            Some(std::time::Duration::from_secs(20)),
+            || {
+                {
+                    let _authz = fixture.context.disable_authz();
+                    fixture
+                        .entity
+                        .find(crate::GIT_REPOSITORY)?
+                        .eq("repositoryId", s("code"))
+                        .for_update(true)
+                        .one()?;
+                }
+                ok(
+                    &fixture,
+                    WRITER,
+                    "org.moqui.impl.GitServices.create#GitRef",
+                    &[("repositoryId", s("code")), ("refName", s("held"))],
+                );
+                Ok(())
+            },
+        );
+        held.unwrap();
+        let _authz = fixture.context.disable_authz();
+        let recorded = fixture
+            .entity
+            .find("moqui.resource.GitUpdateRef")
+            .unwrap()
+            .eq("refName", s("refs/heads/held"))
+            .list()
+            .unwrap();
+        assert_eq!(recorded.len(), 1, "the ref write is in the push log");
+    }
     let (_, errors) = call(
         &fixture,
         WRITER,

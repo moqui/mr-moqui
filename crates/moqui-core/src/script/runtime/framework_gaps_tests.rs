@@ -1310,7 +1310,10 @@ fn resource_digests_archives_and_line_windows() {
     set_dir(&dir);
     holds(
         r#"ec.resource.digest(dir + "/abc.txt", "sha256") === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
-            && ec.resource.digest(dir + "/abc.txt", "sha1") === "a9993e364706816aba3e25717850c26c9cd0d89d""#,
+            && ec.resource.digest(dir + "/abc.txt", "sha1") === "a9993e364706816aba3e25717850c26c9cd0d89d"
+            && ec.resource.digestText("abc") === "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            && ec.resource.digestText("abc", "sha1") === "a9993e364706816aba3e25717850c26c9cd0d89d"
+            && ec.resource.digestText("\u00e9") === "4a99557e4033c3539de2eb65472017cad5f9557f7a0625a09f1c3f6e2ba69c4c""#,
     );
     holds(
         r#"(function () {

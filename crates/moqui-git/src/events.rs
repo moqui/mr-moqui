@@ -106,9 +106,12 @@ fn now_millis() -> i64 {
 }
 
 impl GitProvider {
-    /// Write a `GitUpdate` and its refs, each ref with `result` (`pending` while a push makes it): in a transaction of
-    /// its own, or with `join` in the caller's (a write through `git://`, which the caller may still roll back). Its
-    /// id; a failure is logged and gives `None`, as the change itself goes on.
+    /// Write a `GitUpdate` and its refs, each ref with `result` (`pending` while a push makes it), in the caller's
+    /// transaction when there is one, which it may still roll back, else in one of its own. Not in a new transaction
+    /// beside the caller's: the caller may hold a lock on the repository row (it updated the row, as a commit does), and
+    /// the foreign key check of the insert waits on it (InnoDB's shared lock on the parent row, or Postgres's key share
+    /// against `FOR UPDATE`) on this same thread, until the lock wait timeout. Its id; a failure is logged and gives
+    /// `None`, as the change itself goes on.
     fn write_update(
         &self,
         repository_id: &str,
@@ -116,19 +119,13 @@ impl GitProvider {
         prior: &[(String, ObjectId)],
         refs: &[(RefUpdate, String)],
         status: &str,
-        join: bool,
     ) -> Option<String> {
         let _rows = rows_guard();
         let written = (|| -> Result<String, Error> {
             let entity = self.entity()?;
             let transactions = entity.transactions_for(GIT_UPDATE)?;
-            let attribute = if join {
-                moqui_core::transaction::TransactionAttribute::UseOrBegin
-            } else {
-                moqui_core::transaction::TransactionAttribute::ForceNew
-            };
             transactions
-                .run(attribute, None, || {
+                .run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
                     let mut update = EntityValue::make(&entity, GIT_UPDATE)?;
                     update.set_sequenced_id_primary(&entity)?;
                     let update_id = text(update.get("updateId")).unwrap_or_default();
@@ -189,7 +186,7 @@ impl GitProvider {
         prior: &[(String, ObjectId)],
         refs: &[(RefUpdate, String)],
     ) -> Option<String> {
-        self.write_update(repository_id, origin, prior, refs, "recording", false)
+        self.write_update(repository_id, origin, prior, refs, "recording")
     }
 
     /// Record a change refused before any ref moved (each ref with why), for the push log: nothing to run after it.
@@ -200,7 +197,7 @@ impl GitProvider {
         prior: &[(String, ObjectId)],
         refs: &[(RefUpdate, String)],
     ) {
-        self.write_update(repository_id, origin, prior, refs, "none", false);
+        self.write_update(repository_id, origin, prior, refs, "none");
     }
 
     /// Set each ref's result once a push made (or refused) it, and make the update pending (`none` when nothing
@@ -231,7 +228,7 @@ impl GitProvider {
             return;
         }
         if changed {
-            self.schedule(repository_id);
+            self.schedule_after_commit(repository_id);
         }
     }
 
@@ -265,28 +262,32 @@ impl GitProvider {
                 )
             })
             .collect();
-        let join = origin.source == "write";
         if self
-            .write_update(repository_id, origin, prior, &refs, "pending", join)
+            .write_update(repository_id, origin, prior, &refs, "pending")
             .is_none()
         {
             return;
         }
-        // a write's commit is in the caller's transaction: its events run once that commits
-        let deferred = join
-            && (|| -> Result<bool, Error> {
-                let transactions = self.entity()?.transactions_for(GIT_UPDATE)?;
-                if !transactions.in_transaction() {
-                    return Ok(false);
-                }
-                let factory = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
-                    .ok_or_else(|| Error::new("no execution context"))?;
-                let provider = self.clone();
-                let id = repository_id.to_string();
-                transactions.on_commit(move || schedule_on(&factory, provider, &id))?;
-                Ok(true)
-            })()
-            .unwrap_or(false);
+        self.schedule_after_commit(repository_id);
+    }
+
+    /// [`Self::schedule`] once the caller's transaction commits, which holds the update rows; at once when there is
+    /// none. Run before, the events would read rows they cannot see yet, and wait on the rows the caller holds (the
+    /// user row of a login, the repository row).
+    fn schedule_after_commit(&self, repository_id: &str) {
+        let deferred = (|| -> Result<bool, Error> {
+            let transactions = self.entity()?.transactions_for(GIT_UPDATE)?;
+            if !transactions.in_transaction() {
+                return Ok(false);
+            }
+            let factory = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
+                .ok_or_else(|| Error::new("no execution context"))?;
+            let provider = self.clone();
+            let id = repository_id.to_string();
+            transactions.on_commit(move || schedule_on(&factory, provider, &id))?;
+            Ok(true)
+        })()
+        .unwrap_or(false);
         if !deferred {
             self.schedule(repository_id);
         }

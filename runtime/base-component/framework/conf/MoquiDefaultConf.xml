@@ -1578,16 +1578,17 @@
         </datasource>
         -->
         <database name="mysql" fts-style="mysql-fulltext" join-style="ansi-no-parenthesis" offset-style="limit" never-nulls="true"
-                table-engine="InnoDB" character-set="utf8" collate="utf8_general_ci" fk-style="name_fk"
+                table-engine="InnoDB" character-set="utf8mb4" collate="utf8mb4_unicode_ci" fk-style="name_fk"
                 constraint-name-clip-length="60"
                 default-isolation-level="ReadCommitted" default-test-query="SELECT 1"
                 default-jdbc-driver="com.mysql.jdbc.Driver"
                 default-xa-ds-class="com.mysql.jdbc.jdbc2.optional.MysqlXADataSource">
             <!--
-                NOTE: to support 4 byte UTF-8 characters use 'utf8mb4' for character-set, and a corresponding collate such as
-                'utf8mb4_col'. Use this character set and collate when creating your database/schema in MySQL before running Moqui,
-                and if set here it will be set on tables that are created as well. For existing databases already set to plain utf8
-                you'll need to run SQL statements on MySQL to change the character set and collate for each table.
+                Tables are 4-byte utf8mb4, so any character (an emoji) can be stored. Create the database with the same
+                character set and collation; an existing 3-byte utf8 database needs its tables converted
+                (ALTER TABLE ... CONVERT TO CHARACTER SET utf8mb4) or a fresh load. text-intermediate and text-long are TEXT,
+                as on Postgres: stored off the row, so long text fields do not put a row over MySQL's 65,535 byte limit.
+                text-medium stays VARCHAR(255) as it is used in keys (at 4 bytes a character a key is at most 768).
             -->
 
             <!-- use DATETIME instead of TIMESTAMP so can be null and gets no default value; issue with newer MySQL versions -->
@@ -1601,6 +1602,8 @@
             <database-type type="currency-amount" sql-type="DECIMAL(24,4)"/>
             <database-type type="currency-precise" sql-type="DECIMAL(25,5)"/>
 
+            <database-type type="text-intermediate" sql-type="TEXT"/>
+            <database-type type="text-long" sql-type="TEXT"/>
             <database-type type="text-very-long" sql-type="LONGTEXT"/>
             <database-type type="text-fts" sql-type="LONGTEXT"/>
             <database-type type="binary-very-long" sql-type="LONGBLOB"/>
@@ -1614,13 +1617,14 @@
                     sslMode="${entity_ds_sslmode}"/></inline-jdbc>
         </database>
         <database name="mysql8" fts-style="mysql-fulltext" lb-name="mysql" join-style="ansi-no-parenthesis" offset-style="limit" from-lateral-style="lateral"
-                never-nulls="true" table-engine="InnoDB" character-set="utf8" collate="utf8_general_ci" fk-style="name_fk"
+                never-nulls="true" table-engine="InnoDB" character-set="utf8mb4" collate="utf8mb4_0900_ai_ci" fk-style="name_fk"
                 constraint-name-clip-length="60"
                 default-isolation-level="ReadCommitted" default-test-query="SELECT 1"
                 default-startup-add-missing="true" default-runtime-add-missing="false"
                 default-jdbc-driver="com.mysql.cj.jdbc.Driver"
                 default-xa-ds-class="com.mysql.cj.jdbc.MysqlXADataSource">
             <!-- NOTE that from-lateral-style=lateral requires MySQL 8.0.14 or later -->
+            <!-- utf8mb4 tables, and text-intermediate and text-long as TEXT: see the note on the mysql database above -->
             <!--
                 When Bitronix starts it attempts to recover transactions, this may result in an error like:
                 bitronix.tm.recovery.RecoveryException: failed recovering resource transactional_DS
@@ -1639,6 +1643,8 @@
             <database-type type="currency-amount" sql-type="DECIMAL(24,4)"/>
             <database-type type="currency-precise" sql-type="DECIMAL(25,5)"/>
 
+            <database-type type="text-intermediate" sql-type="TEXT"/>
+            <database-type type="text-long" sql-type="TEXT"/>
             <database-type type="text-very-long" sql-type="LONGTEXT"/>
             <database-type type="text-fts" sql-type="LONGTEXT"/>
             <database-type type="binary-very-long" sql-type="LONGBLOB"/>

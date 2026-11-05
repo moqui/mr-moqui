@@ -42,6 +42,8 @@ mod driver {
     const CHARSET_BINARY: u16 = 63;
     /// `ER_UNSUPPORTED_PS`: the statement cannot be prepared.
     const ER_UNSUPPORTED_PS: u16 = 1295;
+    /// `ER_CLIENT_INTERACTION_TIMEOUT`: MySQL 8 closed a session idle past `wait_timeout`.
+    const ER_CLIENT_INTERACTION_TIMEOUT: u16 = 4031;
     /// The most a TCP connection takes.
     pub(super) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
     /// The most one read waits, the sign-in's included, unless the datasource's `read-timeout` says otherwise: past the
@@ -220,6 +222,7 @@ mod driver {
                 statements: StatementLru::new(STATEMENT_CACHE_CAP),
                 kill,
                 mariadb: version.as_deref().is_some_and(is_mariadb),
+                lost: false,
                 conn: NonNull::from(Box::leak(Box::new(conn))),
             })
         }
@@ -248,6 +251,9 @@ mod driver {
         kill: Arc<KillState>,
         /// The server is MariaDB, which bounds statements with `max_statement_time`.
         mariadb: bool,
+        /// A call lost the connection ([`connection_lost`]): [`DbConnection::is_closed`], so the pool discards it
+        /// rather than send a ROLLBACK that would wait out the read timeout again.
+        lost: bool,
         conn: NonNull<mysql::Conn>,
     }
 
@@ -378,7 +384,67 @@ mod driver {
             self.ensure_idle()?;
             let kill = Arc::clone(&self.kill);
             let _busy = BusyFlag::arm(&kill.busy);
-            self.conn().query_drop(sql).map_err(mysql_err)
+            let result = self.conn().query_drop(sql).map_err(mysql_err);
+            self.note(result)
+        }
+
+        /// `result`, remembering when its error lost the connection.
+        fn note<T>(&mut self, result: Result<T, Error>) -> Result<T, Error> {
+            if let Err(err) = &result {
+                self.lost |= connection_lost(err);
+            }
+            result
+        }
+
+        fn execute_rows(&mut self, sql: &str, params: &[Value]) -> Result<u64, Error> {
+            self.ensure_idle()?;
+            let mysql_params = to_params(params)?;
+            let kill = Arc::clone(&self.kill);
+            let _busy = BusyFlag::arm(&kill.busy);
+            match self.prep_cached(sql) {
+                Ok(()) => {
+                    self.cached_drain(sql, mysql_params)?;
+                    Ok(self.conn().affected_rows())
+                }
+                Err(err) if params.is_empty() && unsupported_prepared(&err) => {
+                    self.conn().query_drop(sql).map_err(mysql_err)?;
+                    Ok(self.conn().affected_rows())
+                }
+                Err(err) => Err(mysql_err(err)),
+            }
+        }
+
+        fn open_stream_rows(&mut self, sql: &str, params: &[Value]) -> Result<(), Error> {
+            self.ensure_idle()?;
+            let mysql_params = to_params(params)?;
+            let kill = Arc::clone(&self.kill);
+            let mut busy = BusyFlag::arm(&kill.busy);
+            self.prep_cached(sql).map_err(mysql_err)?;
+            let result = self.stream_result(sql, mysql_params)?;
+            self.stream = Some(result);
+            self.stream_names = None;
+            busy.keep();
+            Ok(())
+        }
+    }
+
+    /// True when the call that failed with `err` left the connection of no use: its socket failed or timed out (a read
+    /// past the read timeout), it fell out of step with the server, or the server closed an idle session (MySQL 8's
+    /// `ER_CLIENT_INTERACTION_TIMEOUT`, 4031). A statement's own error (a key, a killed query) leaves it usable.
+    fn connection_lost(err: &Error) -> bool {
+        use mysql::DriverError;
+        use std::error::Error as _;
+        match err.source().and_then(|source| source.downcast_ref::<mysql::Error>()) {
+            Some(mysql::Error::IoError(_) | mysql::Error::CodecError(_)) => true,
+            Some(mysql::Error::DriverError(driver)) => matches!(
+                driver,
+                DriverError::PacketOutOfSync
+                    | DriverError::PacketTooLarge
+                    | DriverError::UnexpectedPacket
+                    | DriverError::Timeout
+            ),
+            Some(mysql::Error::MySqlError(server)) => server.code == ER_CLIENT_INTERACTION_TIMEOUT,
+            _ => false,
         }
     }
 
@@ -411,43 +477,28 @@ mod driver {
             }
         }
 
+        fn is_closed(&self) -> bool {
+            self.lost
+        }
+
         fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64, Error> {
-            self.ensure_idle()?;
-            let mysql_params = to_params(params)?;
-            let kill = Arc::clone(&self.kill);
-            let _busy = BusyFlag::arm(&kill.busy);
-            match self.prep_cached(sql) {
-                Ok(()) => {
-                    self.cached_drain(sql, mysql_params)?;
-                    Ok(self.conn().affected_rows())
-                }
-                Err(err) if params.is_empty() && unsupported_prepared(&err) => {
-                    self.conn().query_drop(sql).map_err(mysql_err)?;
-                    Ok(self.conn().affected_rows())
-                }
-                Err(err) => Err(mysql_err(err)),
-            }
+            let result = self.execute_rows(sql, params);
+            self.note(result)
         }
 
         fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
-            self.rows(sql, params, true)
+            let result = self.rows(sql, params, true);
+            self.note(result)
         }
 
         fn query_once(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
-            self.rows(sql, params, false)
+            let result = self.rows(sql, params, false);
+            self.note(result)
         }
 
         fn open_stream(&mut self, sql: &str, params: &[Value]) -> Result<(), Error> {
-            self.ensure_idle()?;
-            let mysql_params = to_params(params)?;
-            let kill = Arc::clone(&self.kill);
-            let mut busy = BusyFlag::arm(&kill.busy);
-            self.prep_cached(sql).map_err(mysql_err)?;
-            let result = self.stream_result(sql, mysql_params)?;
-            self.stream = Some(result);
-            self.stream_names = None;
-            busy.keep();
-            Ok(())
+            let result = self.open_stream_rows(sql, params);
+            self.note(result)
         }
 
         fn next_row(&mut self) -> Result<Option<DbRow>, Error> {
@@ -456,7 +507,10 @@ mod driver {
             };
             match stream.next() {
                 Some(Ok(row)) => Ok(Some(map_row(row, &mut self.stream_names)?)),
-                Some(Err(err)) => Err(mysql_err(err)),
+                Some(Err(err)) => {
+                    let result = Err(mysql_err(err));
+                    self.note(result)
+                }
                 None => Ok(None),
             }
         }
@@ -846,6 +900,8 @@ mod driver {
     }
 
     // Inline `mod driver` loads children from mysql/driver/, not from beside mysql.rs.
+    #[cfg(test)]
+    mod network_tests;
     #[cfg(test)]
     mod tests;
 }

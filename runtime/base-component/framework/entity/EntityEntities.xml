@@ -129,7 +129,7 @@ along with this software (see the LICENSE.md file). If not, see
     <entity entity-name="DataDocumentField" package="moqui.entity.document" use="configuration">
         <field name="dataDocumentId" type="id" is-pk="true"/>
         <field name="fieldSeqId" type="id" is-pk="true"/>
-        <field name="fieldPath" type="text-medium"><description>
+        <field name="fieldPath" type="text-intermediate"><description>
             String formatted like "RelationshipName:RelationshipName:fieldName" with zero or more relationship names.
             If there is no relationship name the field is on the primary entity. More than one relationship names means
             follow that path of relationships to get to the field.

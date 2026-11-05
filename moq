@@ -674,6 +674,9 @@ tests, which no regression command runs:
   cargo test -p moqui-host --test gate3_browser
   cargo test-slow                   the host's #[ignore] tests
   cargo test -p moqui --test cli -- --ignored
+  cargo test -p moqui-drivers --features mysql --lib -- --ignored mysql::
+                                    only with MOQUI_TEST_MYSQL=user:pass@host:port/database: the network
+                                    bounds of the MySQL driver against that MySQL or MariaDB server
 For a scheduled runner and before a release, or when the user asks.
 
 Options:
@@ -2362,6 +2365,9 @@ task_accept_all() {
     suite "gate3_browser" cargo test -p moqui-host --test gate3_browser
     suite "cargo test-slow" cargo test-slow
     suite "moqui cli ignored tests" cargo test -p moqui --test cli -- --ignored
+    if [ -n "${MOQUI_TEST_MYSQL:-}" ]; then
+        suite "mysql driver network bounds" cargo test -p moqui-drivers --features mysql --lib -- --ignored mysql::
+    fi
     suite_summary accept-all
 }
 
