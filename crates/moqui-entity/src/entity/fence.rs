@@ -67,6 +67,8 @@ pub const ALLOWED_ENTITIES: &[&str] = &[
     "moqui.server.Visit",
     "moqui.server.Visitor",
     "moqui.server.HttpSession",
+    // a fenced read-only SQL run records itself (plans/Tools-Database.md §14.2)
+    "moqui.database.DatabaseAudit",
     "moqui.agent.AgentRun",
     "moqui.agent.AgentRunStep",
     "moqui.agent.AgentRunEvent",

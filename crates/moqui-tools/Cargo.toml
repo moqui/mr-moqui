@@ -16,6 +16,7 @@ moqui-core = { workspace = true }
 moqui-lib = { workspace = true }
 indexmap = { workspace = true }
 jiff = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
