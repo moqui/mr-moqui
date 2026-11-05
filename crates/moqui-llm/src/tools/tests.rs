@@ -53,6 +53,32 @@ pub(crate) fn calls(key: &str) -> Spans {
         .unwrap_or_default()
 }
 
+/// The keys of held test writes the test released.
+static RELEASED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Let the held test write of `key` end.
+pub(crate) fn release(key: &str) {
+    RELEASED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .push(key.to_string());
+}
+
+fn wait_released(key: &str) {
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while Instant::now() < deadline {
+        let released = RELEASED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .any(|known| known == key);
+        if released {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn key_of(args: &Json) -> String {
     args.get("key").and_then(Json::as_str).unwrap_or_default().to_string()
 }
@@ -199,6 +225,8 @@ fn approving(name: &str, classification: Classification) -> ToolSpec {
                 Property::required("key", "string", ""),
                 Property::optional("conflict", "boolean", ""),
                 Property::optional("handoff", "boolean", ""),
+                Property::optional("hold", "boolean", ""),
+                Property::optional("panic", "boolean", ""),
             ]),
             classification,
         )
@@ -268,6 +296,13 @@ fn approved_run(ctx: &mut TurnContext<'_>, approval_id: &str, args: &Json) -> To
     }
     let key = key_of(args);
     note(&key, Instant::now());
+    // a write that stops after it began: it blocks until the test releases it, or panics
+    if args.get("hold").and_then(Json::as_bool).unwrap_or(false) {
+        wait_released(&key);
+    }
+    if args.get("panic").and_then(Json::as_bool).unwrap_or(false) {
+        panic!("the test write {key} panics after it began");
+    }
     approval::finish(ctx, approval_id, true, &json!({"wrote": key}));
     ToolOutcome::text(format!("wrote {key}"))
 }

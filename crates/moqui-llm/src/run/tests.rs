@@ -1059,8 +1059,132 @@ fn a_write_needs_the_lease_and_a_lost_node_cannot_end_the_run() {
         Some("AgrWorking")
     );
     assert!(stored(&bed, "run-hold").is_empty());
-    assert!(in_tx(&bed.facade, || held(&bed.facade, "run-hold", "node-b", Hold::Lease)).is_ok());
-    assert!(in_tx(&bed.facade, || held(&bed.facade, "run-hold", &node, Hold::LeaseOrNone)).is_err());
+    assert!(in_tx(&bed.facade, || held(
+        &bed.facade,
+        "run-hold",
+        &Holder::node_only("node-b"),
+        Hold::Lease
+    ))
+    .is_ok());
+    assert!(in_tx(&bed.facade, || held(
+        &bed.facade,
+        "run-hold",
+        &Holder::node_only(&node),
+        Hold::LeaseOrNone
+    ))
+    .is_err());
+}
+
+/// HL-042: node A's renewal fails past the lease while its step is inside a tool, node B takes the run over and pauses
+/// it, and the user's answer reaches A, which claims the run again. The old step's writes pass the owner check (A
+/// owns the run again) but not the generation: only the new step's result is stored.
+#[test]
+fn a_step_of_an_older_holding_writes_nothing_once_the_run_is_claimed_again() {
+    let bed = bed("generation");
+    let _entered = bed.ctx.enter();
+    let node = engine(&bed.factory).node().to_string();
+    // a claim moves the generation on; a renewal keeps it
+    row(
+        &bed.facade,
+        RUN,
+        &[("runId", "run-gen"), ("userId", USER), ("statusId", "AgrWorking")],
+    );
+    assert_eq!(
+        lease::claim_generation(&bed.facade, "run-gen", "node-a", 60_000).unwrap(),
+        Some(1)
+    );
+    assert_eq!(
+        lease::claim_generation(&bed.facade, "run-gen", "node-a", 60_000).unwrap(),
+        Some(1)
+    );
+    assert_eq!(
+        lease::claim_generation(&bed.facade, "run-gen", "node-b", 60_000).unwrap(),
+        None
+    );
+    lease::release(&bed.facade, "run-gen", "node-a").unwrap();
+    assert_eq!(
+        lease::claim_generation(&bed.facade, "run-gen", "node-b", 60_000).unwrap(),
+        Some(2)
+    );
+
+    fake::script(
+        &bed.endpoint,
+        vec![
+            tools(vec![tool("g1", "test_read", json!({"key": "gen-read", "waitMs": 800}))]),
+            fake::Reply::text("Done after the answer."),
+        ],
+    );
+    let started = start_run(&bed.factory, &request("Read slowly")).unwrap();
+    let run_id = started.run_id.clone();
+    wait_until("the call to run", || {
+        call_statuses(&bed, &run_id) == [("test_read".to_string(), "AgtcRunning".to_string())]
+    });
+    assert_eq!(int_of(&run_row(&bed, &run_id), "leaseGeneration"), Some(1));
+    // A's renewal fails past the lease (no renew here); B takes the run over and pauses it for a question
+    let mut lapsed = run_row(&bed, &run_id);
+    lapsed.set("leaseExpireDate", stamp(now_millis() - 1_000));
+    lapsed.update(&bed.facade).unwrap();
+    assert_eq!(
+        lease::claim_generation(&bed.facade, &run_id, "node-b", 60_000).unwrap(),
+        Some(2)
+    );
+    row(
+        &bed.facade,
+        QUESTION,
+        &[
+            ("questionId", "q-gen"),
+            ("runId", &run_id),
+            ("userId", USER),
+            ("statusId", "AgqOpen"),
+        ],
+    );
+    let mut paused = run_row(&bed, &run_id);
+    paused.set("statusId", Value::string(RunState::InputRequired.status_id()));
+    paused.set("pauseKindEnumId", Value::string(PauseKind::Question.enum_id()));
+    paused.set("pauseRef", Value::string("q-gen"));
+    paused.set("leaseOwner", Value::Null);
+    paused.set("leaseExpireDate", Value::Null);
+    paused.update(&bed.facade).unwrap();
+    // the answer reaches A, which claims the run again while its old step is still inside the tool
+    submit_input(&bed.factory, &run_id, USER, "message", "blue", None).unwrap();
+    assert_eq!(int_of(&run_row(&bed, &run_id), "leaseGeneration"), Some(3));
+    assert_eq!(
+        text_of(&run_row(&bed, &run_id), "leaseOwner").as_deref(),
+        Some(node.as_str())
+    );
+
+    assert_eq!(wait_for(&bed.factory, &run_id, WAIT).unwrap(), RunState::Completed);
+    wait_until("both reads to end", || calls("gen-read").len() == 2);
+    let results = stored(&bed, &run_id)
+        .iter()
+        .filter(|event| event.event_type == "tool.result")
+        .count();
+    assert_eq!(results, 1, "only the new holding's result");
+    let (history, _) = step::load_history(&bed.facade, &started.conversation_id).unwrap();
+    assert_eq!(
+        history
+            .iter()
+            .filter(|message| message.role == crate::provider::Role::Tool)
+            .count(),
+        1
+    );
+    assert_eq!(
+        call_statuses(&bed, &run_id),
+        [("test_read".to_string(), "AgtcDone".to_string())]
+    );
+    // a write of the first holding is refused by its generation, whoever owns the run now
+    let stale = in_tx(&bed.facade, || {
+        held(&bed.facade, &run_id, &Holder::at(&node, 1), Hold::LeaseOrNone)
+    })
+    .unwrap_err();
+    assert!(is_lease_lost(&stale), "{stale}");
+    assert!(in_tx(&bed.facade, || held(
+        &bed.facade,
+        &run_id,
+        &Holder::at(&node, 3),
+        Hold::LeaseOrNone
+    ))
+    .is_ok());
 }
 
 #[test]
