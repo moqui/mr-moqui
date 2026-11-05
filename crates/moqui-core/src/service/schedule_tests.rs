@@ -1075,3 +1075,81 @@ fn a_lock_held_by_a_gone_member_is_taken_over_before_it_expires() {
         runs(&world, "GONE").iter().any(|run| text(run, "hasError") == "N")
     });
 }
+
+/// plans/High-Level-Review.md HL-035: a job's `transactionTimeout` bounds its scripts though the service begins no
+/// transaction: a looping script ends interrupted, and the job's lock is released, within seconds.
+#[test]
+fn a_looping_job_script_ends_at_the_jobs_timeout_and_releases_its_lock() {
+    let world = jobs_world_with(
+        2,
+        8,
+        Some(
+            r#"<services>
+            <service verb="loop" noun="Forever" authenticate="false" transaction="ignore">
+                <actions><script>while (true) {}</script></actions>
+            </service>
+            <service verb="loop" noun="Declared" authenticate="false" transaction="ignore" transaction-timeout="1">
+                <actions><script>while (true) {}</script></actions>
+            </service>
+        </services>"#,
+        ),
+        |_| {},
+    );
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    add_job(
+        &world,
+        "LOOPS",
+        "loop#Forever",
+        "* * * * * *",
+        &[("transactionTimeout", "1")],
+    );
+    let started = Instant::now();
+    let report = world.ctx.factory().service_pools().tick();
+    assert_eq!(report.jobs_run, 1, "{report:?}");
+    wait_for("the run to end", || {
+        runs(&world, "LOOPS").iter().any(|run| !text(run, "endTime").is_empty())
+    });
+    let run = &runs(&world, "LOOPS")[0];
+    assert_eq!(text(run, "hasError"), "Y");
+    assert!(text(run, "errors").contains("interrupted"), "{}", text(run, "errors"));
+    let lock = world
+        .facade
+        .find("moqui.service.job.ServiceJobRunLock")
+        .unwrap()
+        .eq("jobName", Value::string("LOOPS"))
+        .one()
+        .unwrap()
+        .expect("the lock row");
+    assert_eq!(text(&lock, "jobRunId"), "", "the lock is released");
+    assert!(started.elapsed() < Duration::from_secs(6), "{:?}", started.elapsed());
+    // Called directly, as an async call's worker calls it, a service that begins no transaction is bounded by the
+    // transaction-timeout it declares.
+    let started = Instant::now();
+    // The script's error is the call's message, as a service's error is.
+    let _ = super::super::call::sync("loop#Declared", &BTreeMap::new());
+    let errors = world.ctx.message().errors().join("\n");
+    assert!(errors.contains("interrupted"), "{errors}");
+    assert!(started.elapsed() < Duration::from_secs(4), "{:?}", started.elapsed());
+}
+
+/// A long batch job opts out of the job's time limit with `noTimeLimit`; otherwise the limit is `transactionTimeout`,
+/// 1800 seconds when it is empty.
+#[test]
+fn a_job_says_no_time_limit_to_run_its_scripts_without_one() {
+    let facade = crate::testing::open();
+    let job = |fields: &[(&str, &str)]| {
+        let mut row = facade.make_value("moqui.service.job.ServiceJob").unwrap();
+        for (name, text) in fields {
+            row.set(*name, Value::string(*text));
+        }
+        row
+    };
+    let limit = super::super::jobs::script_limit;
+    assert_eq!(limit(&job(&[])), Some(Duration::from_secs(1800)));
+    assert_eq!(
+        limit(&job(&[("transactionTimeout", "5")])),
+        Some(Duration::from_secs(5))
+    );
+    assert_eq!(limit(&job(&[("transactionTimeout", "5"), ("noTimeLimit", "Y")])), None);
+}

@@ -80,6 +80,9 @@ pub(crate) struct JobRun {
     service_name: String,
     parameters: BTreeMap<String, Value>,
     timeout: Duration,
+    /// The run's scripts end when it is out ([`crate::script::DeadlineGuard`]), whatever the service's transaction
+    /// attribute; `None` when the job says `noTimeLimit` (plans/High-Level-Review.md HL-035).
+    script_limit: Option<Duration>,
     job_run_id: String,
     /// The lock's `lastRunTime` before this run, restored when the run fails.
     last_run_time: Value,
@@ -433,11 +436,8 @@ fn dispatch(
             job_name: job_name.clone(),
             service_name: field_text(job, "serviceName"),
             parameters,
-            timeout: Duration::from_secs(
-                number(job, "transactionTimeout").map_or(DEFAULT_JOB_TIMEOUT_SECONDS, |secs| {
-                    u64::try_from(secs).unwrap_or(DEFAULT_JOB_TIMEOUT_SECONDS)
-                }),
-            ),
+            timeout: job_timeout(job),
+            script_limit: script_limit(job),
             job_run_id: run_id.clone(),
             last_run_time: ready.last_run_time,
             delete_when_done: queued,
@@ -630,11 +630,8 @@ pub fn run_job_now(job_name: &str, extra: &BTreeMap<String, Value>) -> Result<St
         job_name: job_name.to_string(),
         service_name: field_text(&job, "serviceName"),
         parameters,
-        timeout: Duration::from_secs(
-            number(&job, "transactionTimeout")
-                .and_then(|secs| u64::try_from(secs).ok())
-                .unwrap_or(DEFAULT_JOB_TIMEOUT_SECONDS),
-        ),
+        timeout: job_timeout(&job),
+        script_limit: script_limit(&job),
         job_run_id: run_id.clone(),
         last_run_time: Value::Null,
         delete_when_done: false,
@@ -755,6 +752,9 @@ pub(crate) fn run_job(job: JobRun) {
         operation_retry: job.retries,
         ..CallOptions::default()
     };
+    // The job's time bounds its scripts even when the service begins no transaction; a transaction inside keeps the
+    // earlier of the two.
+    let _deadline = crate::script::DeadlineGuard::new(job.script_limit);
     let called = match &job.rules {
         Some(rules) => {
             let mut rules = super::pool::TxRules {
@@ -1350,6 +1350,20 @@ impl LockPlan {
 
 // ---- values -------------------------------------------------------------------------------
 
+/// `ServiceJob.transactionTimeout` in seconds, [`DEFAULT_JOB_TIMEOUT_SECONDS`] when empty or negative.
+fn job_timeout(job: &EntityValue) -> Duration {
+    Duration::from_secs(
+        number(job, "transactionTimeout")
+            .and_then(|secs| u64::try_from(secs).ok())
+            .unwrap_or(DEFAULT_JOB_TIMEOUT_SECONDS),
+    )
+}
+
+/// The time a job's scripts may run: its [`job_timeout`], or none when it says `noTimeLimit`.
+pub(crate) fn script_limit(job: &EntityValue) -> Option<Duration> {
+    (field_text(job, "noTimeLimit") != "Y").then(|| job_timeout(job))
+}
+
 fn number(row: &EntityValue, field: &str) -> Option<i64> {
     match basic_convert(row.get(field)?, "Long").value {
         Value::I64(number) => Some(number),
@@ -1434,6 +1448,7 @@ mod tests {
             service_name: "never#Called".to_string(),
             parameters: BTreeMap::new(),
             timeout: Duration::from_secs(60),
+            script_limit: None,
             job_run_id: run_id.to_string(),
             last_run_time: timestamp_value(PREVIOUS),
             delete_when_done: false,
