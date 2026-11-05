@@ -462,6 +462,20 @@ impl TransactionManager {
         Ok(())
     }
 
+    /// An ordinary checkout, outside any frame (the caller's transaction is not joined), closed after the closure
+    /// instead of returned to the pool: for a statement that changes its session or runs long, such as a database
+    /// job's (plans/Tools-Database.md §6), whose session no later borrower should get.
+    pub fn with_own_connection<T, F>(&self, body: F) -> Result<T, Error>
+    where
+        F: FnOnce(&mut dyn DbConnection) -> Result<T, Error>,
+    {
+        let mut pooled = self.inner.pool.checkout_ordinary()?;
+        let result = body(pooled.conn());
+        pooled.discard();
+        drop(pooled);
+        result
+    }
+
     /// Reserve checkout. The closure begins and commits its own transaction, or stays autocommit.
     /// Does not use the caller's enlisted connection.
     pub fn with_reserve<T, F>(&self, body: F) -> Result<T, Error>

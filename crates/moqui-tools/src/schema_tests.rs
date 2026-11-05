@@ -118,7 +118,7 @@ fn a_postgres_plan_is_in_the_online_forms() {
             (
                 "CREATE INDEX CONCURRENTLY IF NOT EXISTS \"half_made\" ON \"enumeration\" (\"description\")"
                     .to_string(),
-                some("002")
+                some("000002")
             ),
             ("DROP INDEX CONCURRENTLY IF EXISTS \"stray_idx\"".to_string(), None),
             (
@@ -128,8 +128,8 @@ fn a_postgres_plan_is_in_the_online_forms() {
                 None
             ),
             (
-                "ALTER TABLE \"enumeration\" VALIDATE CONSTRAINT \"ENUM_STATUS_FLOW\"".to_string(),
-                some("005")
+                "ALTER TABLE \"enumeration\" VALIDATE CONSTRAINT \"enum_status_flow\"".to_string(),
+                some("000005")
             ),
             (
                 "ALTER TABLE \"enumeration\" DROP CONSTRAINT IF EXISTS \"old_fk\"".to_string(),
@@ -159,36 +159,92 @@ fn a_plan_of_one_row_and_a_rebuild() {
     );
 }
 
-/// MySQL: indexes in place without a lock, a key added as the builder writes it, with the warning that it copies the
-/// table.
+/// A MySQL table's differences as the comparison gives them, its DDL from the builders on the `mysql8` conf: the
+/// foreign key index and the key to StatusFlow missing, a plain and a unique index extra.
+fn mysql_table(dialect: &moqui_db::dialect::Dialect) -> TableDiff {
+    let conf = MNode::parse_file(moqui_core::context::framework_dir().join("conf/MoquiDefaultConf.xml")).expect("conf");
+    let model =
+        moqui_db::model::EntityModel::load_directory(&conf, &moqui_core::context::framework_dir().join("entity"))
+            .expect("model");
+    let entity = model.entity("moqui.basic.Enumeration").expect("entity");
+    let relationship = entity
+        .relationships
+        .iter()
+        .find(|relationship| relationship.related == "moqui.basic.StatusFlow")
+        .expect("relationship");
+    let related = model.entity("moqui.basic.StatusFlow").expect("related");
+    let table = moqui_db::sql::physical_name(dialect, &entity.table_name);
+    TableDiff {
+        entity_name: entity.full_name.clone(),
+        group: "transactional".to_string(),
+        table_name: table,
+        missing_indexes: vec![IndexDiff {
+            name: moqui_db::sql::foreign_key_index_name(entity, relationship, dialect),
+            columns: vec!["STATUS_FLOW_ID".to_string()],
+            unique: false,
+            kind: IndexKind::ForeignKey,
+            ddl: vec![moqui_db::sql::create_fk_index(entity, relationship, dialect).expect("index ddl")],
+        }],
+        extra_indexes: vec![
+            CatalogIndex {
+                name: "STRAY_IDX".to_string(),
+                valid: true,
+                ..CatalogIndex::default()
+            },
+            CatalogIndex {
+                name: "STRAY_UNIQUE".to_string(),
+                unique: true,
+                valid: true,
+                ..CatalogIndex::default()
+            },
+        ],
+        missing_foreign_keys: vec![ForeignKeyDiff {
+            name: moqui_db::sql::foreign_key_name(entity, relationship, dialect),
+            related_entity: related.full_name.clone(),
+            related_table: moqui_db::sql::physical_name(dialect, &related.table_name),
+            columns: vec!["STATUS_FLOW_ID".to_string()],
+            ddl: moqui_db::sql::create_foreign_key(entity, relationship, related, dialect).ok(),
+        }],
+        ..TableDiff::default()
+    }
+}
+
+/// MySQL: indexes in place without a lock, a unique index (a constraint on InnoDB) never dropped, and a key added as
+/// the builder writes it, with the warning that it copies the table.
 #[test]
-fn a_mysql_plan_builds_in_place() {
+fn a_mysql_plan_builds_in_place_and_keeps_unique_indexes() {
     let mut plan = Plan::default();
     let none = |_: &str, _: &str| None;
-    let mut diff = table();
-    diff.invalid_indexes.clear();
-    diff.missing_indexes[0].ddl = vec!["CREATE INDEX `ENUM_CODE_IDX` ON `ENUMERATION` (`ENUM_CODE`)".to_string()];
-    diff.table_name = "ENUMERATION".to_string();
+    let dialect = dialect("mysql8");
+    let diff = mysql_table(&dialect);
     plan_table(
         &mut plan,
         &diff,
-        &dialect("mysql8"),
+        &dialect,
         Server::Mysql,
         &changes(&["missingIndexes", "extraIndexes", "missingForeignKeys"]),
         &BTreeSet::new(),
         &none,
     );
     let statements: Vec<String> = texts(&plan).into_iter().map(|(text, _)| text).collect();
-    assert_eq!(
-        statements[0],
-        "CREATE INDEX `ENUM_CODE_IDX` ON `ENUMERATION` (`ENUM_CODE`) ALGORITHM=INPLACE LOCK=NONE"
+    assert_eq!(statements.len(), 3, "{statements:?}");
+    assert!(
+        statements[0].starts_with("CREATE INDEX `") && statements[0].ends_with(") ALGORITHM=INPLACE LOCK=NONE"),
+        "{statements:?}"
     );
     assert_eq!(
         statements[1],
-        "DROP INDEX `stray_idx` ON `ENUMERATION` ALGORITHM=INPLACE LOCK=NONE"
+        format!(
+            "DROP INDEX `STRAY_IDX` ON `{}` ALGORITHM=INPLACE LOCK=NONE",
+            diff.table_name
+        )
     );
     assert!(
-        statements[2].starts_with("ALTER TABLE \"enumeration\" ADD CONSTRAINT"),
+        !statements.iter().any(|sql| sql.contains("STRAY_UNIQUE")),
+        "{statements:?}"
+    );
+    assert!(
+        statements[2].starts_with(&format!("ALTER TABLE `{}` ADD CONSTRAINT `", diff.table_name)),
         "{statements:?}"
     );
     assert!(
@@ -196,4 +252,16 @@ fn a_mysql_plan_builds_in_place() {
         "{:?}",
         plan.warnings
     );
+    assert!(
+        plan.warnings.iter().any(|warning| warning.contains("STRAY_UNIQUE")),
+        "{:?}",
+        plan.warnings
+    );
+}
+
+/// The MySQL catalog marks a unique index as a constraint's, so the comparison never calls it extra.
+#[test]
+fn the_mysql_catalog_marks_unique_indexes_as_constraints() {
+    assert!(moqui_db::sql::catalog::MYSQL_INDEXES
+        .contains("INDEX_NAME = 'PRIMARY' OR MIN(NON_UNIQUE) = 0 AS is_constraint"));
 }

@@ -249,11 +249,3 @@ pub(crate) fn cell_text(value: Option<&Value>) -> String {
         None => String::new(),
     }
 }
-
-/// A script given as one text, as a list of its statements ([`moqui_core::entity::exec::split_sql`]).
-pub(crate) fn split_script(script: &str) -> Vec<Value> {
-    moqui_core::entity::exec::split_sql(script)
-        .into_iter()
-        .map(Value::string)
-        .collect()
-}

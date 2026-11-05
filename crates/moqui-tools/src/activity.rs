@@ -203,6 +203,53 @@ pub(crate) fn terminate_database_session(
     signal_session(parameters, facade, true)
 }
 
+/// What a signal needs to know of a session.
+struct Session {
+    /// A client's session, not a server worker (autovacuum, the WAL writer, MySQL's daemons).
+    client: bool,
+    kind: String,
+    application_name: String,
+}
+
+/// The session `pid` of this database (Postgres) or server (MySQL), or `None` when there is none.
+fn session_of(db: &GroupDb, pid: i64) -> Result<Option<Session>, LibError> {
+    if db.is_postgres() {
+        let rows = db.query(
+            "SELECT backend_type, application_name FROM pg_stat_activity \
+             WHERE pid = ? AND datname = current_database()",
+            &[Value::I64(pid)],
+        )?;
+        return Ok(rows.first().map(|row| {
+            let kind = cell_text(row.get("backend_type"));
+            Session {
+                client: kind == "client backend",
+                kind,
+                application_name: cell_text(row.get("application_name")),
+            }
+        }));
+    }
+    let rows = db.query(
+        "SELECT COMMAND AS command, USER AS user_name FROM information_schema.PROCESSLIST WHERE ID = ?",
+        &[Value::I64(pid)],
+    )?;
+    let Some(row) = rows.first() else {
+        return Ok(None);
+    };
+    let command = cell_text(row.get("command"));
+    let user = cell_text(row.get("user_name"));
+    let names: HashMap<i64, String> = db
+        .query(MYSQL_APPLICATION_NAMES, &[])
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|row| Some((cell_number(row.get("pid"))?, cell_text(row.get("application_name")))))
+        .collect();
+    Ok(Some(Session {
+        client: command != "Daemon" && !matches!(user.as_str(), "system user" | "event_scheduler"),
+        kind: format!("{command} {user}"),
+        application_name: names.get(&pid).cloned().unwrap_or_default(),
+    }))
+}
+
 fn signal_session(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -223,6 +270,33 @@ fn signal_session(
         add_error("pid must be a session's id, a positive number");
         return Ok(Out::new());
     };
+    let force = crate::group_db::flag(parameters, "force");
+    let session = match session_of(&db, pid) {
+        Ok(Some(session)) => session,
+        Ok(None) => {
+            add_error(format!("no client session {pid} on this database"));
+            return Ok(Out::new());
+        }
+        Err(err) => {
+            add_error(format!("Could not read session {pid}: {err}"));
+            return Ok(Out::new());
+        }
+    };
+    if !session.client {
+        add_error(format!(
+            "session {pid} is a server worker ({}), not a client's",
+            session.kind
+        ));
+        return Ok(Out::new());
+    }
+    let own = moqui_core::driver::application_name().is_some_and(|own| *own == *session.application_name)
+        || crate::jobs::is_job_backend(facade, pid);
+    if own && !force {
+        add_error(format!(
+            "session {pid} is this app's own (a framework session or a database job's); set force to signal it"
+        ));
+        return Ok(Out::new());
+    }
     let result = crate::jobs::signal_backend(&db, pid, terminate);
     crate::audit::record(
         facade,
@@ -231,7 +305,7 @@ fn signal_session(
             db: Some(db.db_text()),
             is_change: true,
             error_text: result.as_ref().err().map(ToString::to_string),
-            detail_json: Some(format!(r#"{{"pid":{pid}}}"#)),
+            detail_json: Some(format!(r#"{{"pid":{pid},"force":{force},"ownSession":{own}}}"#)),
             ..crate::audit::AuditEntry::default()
         },
     );

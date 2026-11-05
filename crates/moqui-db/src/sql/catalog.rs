@@ -67,11 +67,11 @@ pub const MYSQL_COLUMNS: &str = "SELECT c.TABLE_NAME AS table_name, c.COLUMN_NAM
      WHERE c.TABLE_SCHEMA = database() AND t.TABLE_TYPE = 'BASE TABLE' \
      ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION";
 
-/// MySQL and MariaDB have no invalid index; a unique index is the unique constraint, which the comparison expects
-/// when the entity declares it, so only the primary key counts as a constraint's index.
+/// MySQL and MariaDB have no invalid index. On InnoDB a unique index is a unique constraint, so it counts as a
+/// constraint's index, as the primary key does: it is never extra, and never planned to be dropped.
 pub const MYSQL_INDEXES: &str = "SELECT TABLE_NAME AS table_name, INDEX_NAME AS index_name, \
      MIN(NON_UNIQUE) = 0 AS is_unique, INDEX_NAME = 'PRIMARY' AS is_primary, 1 AS is_valid, \
-     INDEX_NAME = 'PRIMARY' AS is_constraint, \
+     INDEX_NAME = 'PRIMARY' OR MIN(NON_UNIQUE) = 0 AS is_constraint, \
      GROUP_CONCAT(COLUMN_NAME ORDER BY SEQ_IN_INDEX SEPARATOR ',') AS column_names \
      FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = database() \
      GROUP BY TABLE_NAME, INDEX_NAME";

@@ -142,7 +142,7 @@ impl Plan {
         table: &str,
         what: String,
     ) -> String {
-        let seq = format!("{:03}", self.statements.len() + 1);
+        let seq = crate::jobs::seq_id(self.statements.len());
         self.statements.push(PlanStatement {
             statement_seq_id: seq.clone(),
             statement_text: text,
@@ -171,6 +171,42 @@ impl Plan {
             "warnings".to_string(),
             Value::List(self.warnings.iter().map(Value::string).collect()),
         );
+        out
+    }
+
+    /// [`Self::out`], with the plan stored as a Pending job of `kind` that `run#DatabaseJob` runs as shown (§5.2):
+    /// `jobId`, or null with `jobReason` when there is nothing to run or the user lacks `DATABASE_ADMIN` (the plan is
+    /// still shown). `description` and `lockTimeoutMs` come from the parameters.
+    pub(crate) fn out_with_job(
+        &self,
+        facade: &EntityFacade,
+        db: &GroupDb,
+        kind: &str,
+        parameters: &BTreeMap<String, Value>,
+    ) -> Out {
+        let mut out = self.out();
+        let reason = if self.statements.is_empty() {
+            Some("nothing to run")
+        } else if !moqui_core::user::has_permission("DATABASE_ADMIN").unwrap_or(false) {
+            Some("running a plan needs the DATABASE_ADMIN permission")
+        } else {
+            None
+        };
+        let job_id = match reason {
+            Some(reason) => {
+                out.insert("jobReason".to_string(), Value::string(reason));
+                None
+            }
+            None => crate::jobs::create_plan_job(
+                facade,
+                db,
+                kind,
+                &crate::group_db::text(parameters, "description"),
+                crate::group_db::number(parameters, "lockTimeoutMs"),
+                &self.statements,
+            ),
+        };
+        out.insert("jobId".to_string(), job_id.map_or(Value::Null, Value::String));
         out
     }
 }
@@ -319,6 +355,14 @@ pub(crate) fn plan_table(
     }
     if changes.contains("extraIndexes") {
         for index in table.extra_indexes.iter().filter(|index| wanted(&index.name)) {
+            // a unique index on InnoDB is a unique constraint: never dropped as an extra index
+            if index.unique && server != Server::Postgres {
+                plan.warn(format!(
+                    "{} is a unique constraint on MySQL; it is not dropped",
+                    index.name
+                ));
+                continue;
+            }
             let drop = online_drop_index(dialect, server, table_name, &index.name);
             plan.add(drop, None, entity, table_name, format!("drop index {}", index.name));
         }
@@ -345,7 +389,7 @@ pub(crate) fn plan_table(
                     format!(
                         "ALTER TABLE {} VALIDATE CONSTRAINT {}",
                         quote_ident(dialect, table_name),
-                        quote_ident(dialect, &key.name)
+                        quote_ident(dialect, &physical_name(dialect, &key.name))
                     ),
                     Some(added),
                     entity,
@@ -431,7 +475,7 @@ pub(crate) fn plan_schema_changes(
     {
         plan.warn("Some statements take a lock that blocks writes; each waits at most the job's lock timeout");
     }
-    let mut out = plan.out();
+    let mut out = plan.out_with_job(facade, &db, "DbjDdl", parameters);
     out.insert(
         "checked".to_string(),
         Value::I64(i64::try_from(diff.checked).unwrap_or(i64::MAX)),
@@ -506,6 +550,124 @@ fn plan_drop_all_keys(plan: &mut Plan, facade: &EntityFacade, db: &GroupDb, name
         let drop = drop_foreign_key(&db.dialect, db.server, &table, &key);
         plan.add(drop, None, entity, &table, format!("drop foreign key {key}"));
     }
+}
+
+/// Postgres: each foreign key of the current schema with its definition, to make it again as it was.
+const POSTGRES_KEY_DEFINITIONS: &str = "SELECT t.relname AS table_name, c.conname AS constraint_name, \
+     pg_get_constraintdef(c.oid) AS definition FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid \
+     JOIN pg_namespace n ON n.oid = t.relnamespace WHERE c.contype = 'f' AND n.nspname = current_schema() \
+     ORDER BY t.relname, c.conname";
+
+/// `plan#LoadWrap`: the two jobs that wrap a bulk load (Data › Load, Snapshots): one that drops every foreign key of
+/// the selected entities' tables, and one that makes them again after the load. On Postgres a key is made again from
+/// its own definition, `NOT VALID` then `VALIDATE CONSTRAINT`; on MySQL from the model. In: `db`, `entityNames`,
+/// `description`, `lockTimeoutMs`. Out: `dropStatements`, `restoreStatements` (plan statements), `warnings`,
+/// `dropJobId`, `restoreJobId` (null, with `jobReason`, as for `plan#SchemaChanges`).
+pub(crate) fn plan_load_wrap(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+) -> Result<BTreeMap<String, Value>, LibError> {
+    if !crate::service::may_view_tools() {
+        return Ok(Out::new());
+    }
+    let Some(db) = GroupDb::of(parameters, facade) else {
+        return Ok(Out::new());
+    };
+    let names = selected(parameters, facade, &db);
+    let mut drop = Plan::default();
+    plan_drop_all_keys(&mut drop, facade, &db, &names, &BTreeSet::new());
+    let mut restore = Plan::default();
+    if db.is_postgres() {
+        let tables: BTreeMap<String, String> = drop
+            .statements
+            .iter()
+            .map(|statement| (statement.table_name.to_ascii_lowercase(), statement.entity_name.clone()))
+            .collect();
+        match db.query(POSTGRES_KEY_DEFINITIONS, &[]) {
+            Ok(rows) => {
+                for row in rows {
+                    let table = cell_text(row.get("table_name"));
+                    let Some(entity) = tables.get(&table.to_ascii_lowercase()) else {
+                        continue;
+                    };
+                    let key = cell_text(row.get("constraint_name"));
+                    let definition = cell_text(row.get("definition"));
+                    let quoted_table = quote_ident(&db.dialect, &table);
+                    let quoted_key = quote_ident(&db.dialect, &key);
+                    let definition = definition.trim_end_matches(" NOT VALID");
+                    let added = restore.add(
+                        format!("ALTER TABLE {quoted_table} ADD CONSTRAINT {quoted_key} {definition} NOT VALID"),
+                        None,
+                        entity,
+                        &table,
+                        format!("add foreign key {key}"),
+                    );
+                    restore.add(
+                        format!("ALTER TABLE {quoted_table} VALIDATE CONSTRAINT {quoted_key}"),
+                        Some(added),
+                        entity,
+                        &table,
+                        format!("validate foreign key {key}"),
+                    );
+                }
+            }
+            Err(err) => drop.warn(format!("Could not read the foreign keys' definitions: {err}")),
+        }
+    } else {
+        for name in &names {
+            let built = facade.with_entity(name, |entity, dialect, model| {
+                let mut statements = Vec::new();
+                if entity.is_view {
+                    return Ok(statements);
+                }
+                for relationship in entity.relationships.iter().filter(|r| key_relationship(r)) {
+                    let Ok(related) = model.entity(&relationship.related) else {
+                        continue;
+                    };
+                    if related.is_view || entity.group != related.group {
+                        continue;
+                    }
+                    if let Ok(sql) = create_foreign_key(entity, relationship, related, dialect) {
+                        let what = format!("add foreign key to {}", related.full_name);
+                        statements.push((sql, physical_name(dialect, &entity.table_name), what));
+                    }
+                }
+                Ok(statements)
+            });
+            for (sql, table, what) in built.unwrap_or_default() {
+                restore.add(sql, None, name, &table, what);
+            }
+        }
+        restore.warn("Adding a foreign key on MySQL copies the table, which takes as long as the table is big");
+    }
+    let description = crate::group_db::text(parameters, "description");
+    let with = |suffix: &str| {
+        let mut parameters = parameters.clone();
+        parameters.insert(
+            "description".to_string(),
+            Value::string(format!("{description} ({suffix})").trim().to_string()),
+        );
+        parameters
+    };
+    let drop_out = drop.out_with_job(facade, &db, "DbjLoadWrap", &with("drop foreign keys"));
+    let restore_out = restore.out_with_job(facade, &db, "DbjLoadWrap", &with("restore foreign keys"));
+    let mut out = Out::new();
+    let take = |out: &Out, key: &str| out.get(key).cloned().unwrap_or(Value::Null);
+    out.insert("dropStatements".to_string(), take(&drop_out, "statements"));
+    out.insert("restoreStatements".to_string(), take(&restore_out, "statements"));
+    out.insert("dropJobId".to_string(), take(&drop_out, "jobId"));
+    out.insert("restoreJobId".to_string(), take(&restore_out, "jobId"));
+    let mut warnings = drop.warnings.clone();
+    warnings.extend(restore.warnings.iter().cloned());
+    out.insert(
+        "warnings".to_string(),
+        Value::List(warnings.into_iter().map(Value::String).collect()),
+    );
+    if let Some(reason) = drop_out.get("jobReason").or_else(|| restore_out.get("jobReason")) {
+        out.insert("jobReason".to_string(), reason.clone());
+    }
+    out.insert("db".to_string(), Value::string(db.db_text()));
+    Ok(out)
 }
 
 /// `get#SchemaDdl`: the DDL of `entityNames` (every entity of the group when empty) in the database's dialect, from
@@ -616,6 +778,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, moqui_core::extension::R
     use moqui_core::rust_service;
     rust_service!(map, compare_schema)?;
     rust_service!(map, plan_schema_changes)?;
+    rust_service!(map, plan_load_wrap)?;
     rust_service!(map, get_schema_ddl)?;
     Ok(())
 }

@@ -266,7 +266,7 @@ pub(crate) fn plan_table_maintenance(
         let entity = entities.get(&table.to_ascii_lowercase()).cloned().unwrap_or_default();
         plan.add(sql, None, &entity, &table, format!("{action} {table}"));
     }
-    let mut out = plan.out();
+    let mut out = plan.out_with_job(facade, &db, "DbjMaintenance", parameters);
     out.insert("exclusiveLock".to_string(), Value::Bool(exclusive));
     out.insert("db".to_string(), Value::string(db.db_text()));
     out.insert("kindEnumId".to_string(), Value::string("DbjMaintenance"));

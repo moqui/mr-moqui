@@ -518,6 +518,21 @@ fn on_a_server_the_schema_comparison_reads_what_the_check_made() {
     assert!(diff.errors.is_empty(), "{:?}", diff.errors);
     assert_eq!(diff.checked, entities.len());
     assert!(diff.tables.is_empty(), "{:#?}", diff.tables);
+    // a unique index the model does not have is a unique constraint on InnoDB, never an extra index
+    let _ = moqui_core::entity::info::run_sql(
+        &facade,
+        "transactional",
+        "CREATE UNIQUE INDEX MOQUI_EXTRA_UNIQUE ON ENUMERATION (ENUM_ID, ENUM_CODE)",
+        0,
+    );
+    let diff = must(facade.meta().compare(&["moqui.basic.Enumeration"]));
+    let _ = moqui_core::entity::info::run_sql(
+        &facade,
+        "transactional",
+        "DROP INDEX MOQUI_EXTRA_UNIQUE ON ENUMERATION",
+        0,
+    );
+    assert!(diff.tables.is_empty(), "{:#?}", diff.tables);
 
     // Read only on MySQL runs only a query: DDL or a CALL would commit the read-only transaction first.
     let read_only = |sql: &str| {
@@ -533,7 +548,11 @@ fn on_a_server_the_schema_comparison_reads_what_the_check_made() {
     };
     let rows = must(read_only("SELECT enum_id FROM ENUMERATION"));
     assert!(rows.records.is_empty() || !rows.column_origins.is_empty());
-    for sql in ["CREATE TABLE moqui_ro_made (id INT)", "CALL nothing()", "SET autocommit = 0"] {
+    for sql in [
+        "CREATE TABLE moqui_ro_made (id INT)",
+        "CALL nothing()",
+        "SET autocommit = 0",
+    ] {
         let err = read_only(sql).expect_err(sql);
         assert!(err.to_string().contains("only a query"), "{sql}: {err}");
     }
