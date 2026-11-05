@@ -26,6 +26,7 @@ Design, status and review documents for MR Moqui. User guides for built features
 - [Monitoring.md](Monitoring.md): the monitoring, diagnosis and recovery requirements, the architecture, the M1–M7 plan (built: telemetry pipeline and indexes, OTLP in and out, the Monitor and Dashboards apps) and the Later stages. Guide: [Monitoring](../docs/tools/Monitoring.md). Monitor › Settings is built and archived ([Monitor-Settings](archive/Monitor-Settings.md)).
 
 **Dev tools**
+- [Tools-Database.md](Tools-Database.md): the Tools app reorganized around database administration (activity, query stats, tables, schema comparison, DDL and maintenance jobs, SQL), the data grid (Tabulator) on entities, SQL and files, and ETL mappings. Design and plan; not built.
 - [design-dev-aide.md](design-dev-aide.md): Dev AIDE, the assisted IDE at `/qapps/dev`: workspace, editor, git, live reload, the artifact index and browser, the entity modeler, service writer and screen builder, and the dev agent.
 
 **Maps**
