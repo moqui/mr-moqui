@@ -649,4 +649,63 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Delete a grid view the current user owns.</description>
         <in-parameters><parameter name="viewId" required="true"/></in-parameters>
     </service>
+
+    <!-- ========== External databases (plans/Tools-Database.md §4.3; crates/moqui-tools/src/ext.rs) ==========
+        moqui.database.DatabaseConnection rows, used as db=ext:(connectionId) by the activity, table, statement stats,
+        capabilities, SQL and grid SQL services (never schema, jobs, session cancel, table maintenance or entity
+        sources). Every one of these services, and every connection service, refuses unless the instance is not a
+        production one and the user has DATABASE_EXTERNAL, with the one error "Not available", naming neither cause;
+        on production a connection row is neither read nor used. A connection is opened through the host's conf
+        connection factory with its sslMode and sslRootCert (a path), one pool per connection closed after ten idle
+        minutes; a readOnly one (the default) runs every statement in a read-only transaction and takes no changes. -->
+    <service verb="find" noun="DatabaseConnections" type="rust" location="moqui_tools::ext::find_database_connections"
+            transaction="ignore">
+        <description>Every connection: connectionId, description, dbType, host, port, databaseName, userName, sslMode,
+            sslRootCert, readOnly, ownerUserId and hasPassword; never the password.</description>
+        <out-parameters><parameter name="connections" type="List"/></out-parameters>
+    </service>
+    <service verb="store" noun="DatabaseConnection" type="rust" location="moqui_tools::ext::store_database_connection"
+            transaction="ignore">
+        <description>Create or update a connection. connectionId is 1 to 40 letters, digits, _ or -; dbType is postgres,
+            mysql (MariaDB too) or mysql8. A store with no password keeps the stored one (encrypted). readOnly is true
+            unless false is given. A change closes the connection's pool.</description>
+        <in-parameters>
+            <parameter name="connectionId" required="true"/>
+            <parameter name="description"/>
+            <parameter name="dbType" required="true"/>
+            <parameter name="host"/>
+            <parameter name="port"/>
+            <parameter name="databaseName"/>
+            <parameter name="userName"/>
+            <parameter name="password" allow-html="any"/>
+            <parameter name="sslMode"/>
+            <parameter name="sslRootCert"/>
+            <parameter name="readOnly" type="Boolean"/>
+        </in-parameters>
+        <out-parameters><parameter name="connectionId"/></out-parameters>
+    </service>
+    <service verb="delete" noun="DatabaseConnection" type="rust" location="moqui_tools::ext::delete_database_connection"
+            transaction="ignore">
+        <description>Delete a connection and close its pool.</description>
+        <in-parameters><parameter name="connectionId" required="true"/></in-parameters>
+    </service>
+    <service verb="test" noun="DatabaseConnection" type="rust" location="moqui_tools::ext::test_database_connection"
+            transaction="ignore">
+        <description>Open the connection and read the server's version: connected and version, or connected false with
+            a short reason (the detail is in the server log).</description>
+        <in-parameters><parameter name="connectionId" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="connected" type="Boolean"/>
+            <parameter name="version"/>
+            <parameter name="reason"/>
+        </out-parameters>
+    </service>
+    <service verb="get" noun="DatabaseList" type="rust" location="moqui_tools::ext::get_database_list" transaction="ignore">
+        <description>The databases a picker offers: each entity group's database (db group:(name), with the groups that
+            share it in groupNames), then, when includeExternal is not false and the gate passes, each connection (db
+            ext:(id)). Each has db, groupNames, databaseConf, description, readOnly and external. Schema, Data's entity
+            sources and ETL targets ask with includeExternal false.</description>
+        <in-parameters><parameter name="includeExternal" type="Boolean"/></in-parameters>
+        <out-parameters><parameter name="databases" type="List"/></out-parameters>
+    </service>
 </services>

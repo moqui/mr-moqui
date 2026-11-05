@@ -583,7 +583,7 @@ fn run_claimed(facade: &EntityFacade, job: &EntityValue, job_id: &str, status: &
     }
     let mut db_parameters = BTreeMap::new();
     db_parameters.insert("db".to_string(), Value::string(field(job, "db")));
-    let Some(db) = GroupDb::of(&db_parameters, facade) else {
+    let Some(db) = GroupDb::of_group(&db_parameters, facade) else {
         lock(live()).remove(job_id);
         let _ = transition(facade, job_id, RUNNING, FAILED, vec![("endTime", now())]);
         return Ok(Out::new());
@@ -977,7 +977,7 @@ pub(crate) fn cancel_database_job(
                 .unwrap_or_default();
             let mut db_parameters = BTreeMap::new();
             db_parameters.insert("db".to_string(), Value::string(field(&job, "db")));
-            if let (Some(pid), Some(db)) = (backend, GroupDb::of(&db_parameters, facade)) {
+            if let (Some(pid), Some(db)) = (backend, GroupDb::of_group(&db_parameters, facade)) {
                 let statement = running
                     .as_ref()
                     .map(|row| field(row, "statementText"))
@@ -1106,7 +1106,7 @@ pub(crate) fn get_database_job_status(
         .filter_map(|row| cell_number(row.get("backendPid")))
         .collect();
     if !running_pids.is_empty() {
-        if let Some(db) = GroupDb::of(&db_parameters, facade) {
+        if let Some(db) = GroupDb::of_group(&db_parameters, facade) {
             for pid in running_pids {
                 for sql in progress_queries(db.server, pid) {
                     progress.extend(db.query_or_note(&sql, &[], "progress", &mut reasons));

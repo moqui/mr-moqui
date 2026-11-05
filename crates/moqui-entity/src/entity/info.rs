@@ -804,8 +804,16 @@ pub fn sql_gives_rows(facade: &EntityFacade, group: &str, sql: &str) -> Result<b
         .groups
         .get(group)
         .ok_or_else(|| Error::new(format!("no entity group named {group}")))?;
+    sql_gives_rows_on(&runtime.transactions, sql)
+}
+
+/// [`sql_gives_rows`] on a transaction manager of a database no entity group uses (an external connection).
+///
+/// # Errors
+///
+/// When no connection can be had.
+pub fn sql_gives_rows_on(tx: &TransactionManager, sql: &str) -> Result<bool, Error> {
     let sql = sql.trim().trim_end_matches(';');
-    let tx = &runtime.transactions;
     let described = tx.run(TransactionAttribute::IgnoreSuspend, None, || {
         tx.with_connection(|conn| conn.returns_rows(sql))
     })?;
@@ -848,18 +856,32 @@ pub fn run_sql_with(
     facade: &EntityFacade,
     group: &str,
     sql: &str,
-    mut options: SqlRunOptions<'_>,
+    options: SqlRunOptions<'_>,
 ) -> Result<SqlResult, Error> {
     let runtime = facade
         .inner
         .groups
         .get(group)
         .ok_or_else(|| Error::new(format!("no entity group named {group}")))?;
+    run_sql_on(&runtime.transactions, &runtime.dialect, sql, options)
+}
+
+/// [`run_sql_with`] on a transaction manager and dialect of a database no entity group uses (an external connection,
+/// plans/Tools-Database.md 4.3).
+///
+/// # Errors
+///
+/// As [`run_sql_with`].
+pub fn run_sql_on(
+    tx: &TransactionManager,
+    dialect: &moqui_db::dialect::Dialect,
+    sql: &str,
+    mut options: SqlRunOptions<'_>,
+) -> Result<SqlResult, Error> {
     let sql = sql.trim().trim_end_matches(';');
     // Raw SQL does not pass the write gate, so under the read fence only a plain query runs.
     super::fence::check_sql(sql)?;
-    let syntax = SqlSyntax::of(&runtime.dialect);
-    let tx = &runtime.transactions;
+    let syntax = SqlSyntax::of(dialect);
     if !options.read_only {
         return run_statement(tx, sql, syntax, &mut options);
     }

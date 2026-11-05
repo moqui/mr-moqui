@@ -82,9 +82,12 @@ fn group_of(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Opti
             add_error(format!("no entity group named {group}"));
             None
         }
-        Ok(DbRef::External(_)) => {
-            add_error(NOT_AVAILABLE);
-            None
+        Ok(DbRef::External(id)) => {
+            let group = crate::ext::external_group(facade, &id);
+            if group.is_none() {
+                add_error(NOT_AVAILABLE);
+            }
+            group
         }
         Err(message) => {
             add_error(message);

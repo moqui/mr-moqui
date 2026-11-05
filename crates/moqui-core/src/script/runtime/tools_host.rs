@@ -2240,6 +2240,8 @@ fn conf_db_of<'js>(ctx: &Ctx<'js>, conf: &JsValue<'js>) -> rquickjs::Result<crat
         database: text("entity_ds_database"),
         user: text("entity_ds_user"),
         password: text("entity_ds_password"),
+        ssl_mode: text("entity_ds_sslmode"),
+        ssl_root_cert: text("entity_ds_sslrootcert"),
     })
 }
 

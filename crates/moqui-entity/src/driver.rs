@@ -245,6 +245,12 @@ pub struct ConfDb {
     pub database: String,
     pub user: String,
     pub password: String,
+    /// `sslmode`: empty keeps the driver's default (TLS to a Postgres host that is not loopback or a socket, none to
+    /// MySQL); `disable` turns TLS off; `require`, `verify-ca` and `verify-full` (MySQL's `REQUIRED`, `VERIFY_CA`,
+    /// `VERIFY_IDENTITY`) turn it on and say what of the server's certificate is checked.
+    pub ssl_mode: String,
+    /// `sslrootcert`: the path of a PEM file of the authorities to trust in place of the public ones.
+    pub ssl_root_cert: String,
 }
 
 impl std::fmt::Debug for ConfDb {
@@ -256,6 +262,8 @@ impl std::fmt::Debug for ConfDb {
             .field("database", &self.database)
             .field("user", &self.user)
             .field("password", &"<redacted>")
+            .field("ssl_mode", &self.ssl_mode)
+            .field("ssl_root_cert", &self.ssl_root_cert)
             .finish()
     }
 }

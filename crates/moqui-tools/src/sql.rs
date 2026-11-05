@@ -211,7 +211,11 @@ pub fn statements(facade: &EntityFacade, group: &str, sql_text: &str) -> Result<
             let described = (!control)
                 .then(|| bind_parameters(sql, syntax, &BTreeMap::new(), true).ok())
                 .flatten()
-                .and_then(|(bound, _)| info::sql_gives_rows(facade, group, &bound).ok());
+                .and_then(|(bound, _)| {
+                    catalog::group_tx(facade, group)
+                        .and_then(|tx| info::sql_gives_rows_on(&tx, &bound))
+                        .ok()
+                });
             let gives_rows = described.unwrap_or_else(|| info::is_query(sql));
             Statement {
                 seq: index + 1,
@@ -460,7 +464,7 @@ pub fn classify(
         return Err(Refusal::new("There is no statement to run"));
     }
     refuse_transaction_control(&statements)?;
-    let db = format!("group:{group}");
+    let db = catalog::db_text(group);
     let token = issue_token(facade, user_id, &db, sql_text).map_err(|err| {
         tracing::warn!(error = %err, "Could not issue a SQL run token");
         Refusal::new("The confirmation could not be issued (the server log has the detail)")
@@ -704,14 +708,18 @@ pub fn cancel(
             serde_json::Value::String(text) => text.clone(),
             other => other.to_string(),
         });
-        let group = row
-            .get("db")
-            .map(to_plain_string)
-            .and_then(|db| db.strip_prefix("group:").map(str::to_string));
+        // an external connection's run is cancelled only through its gate
+        let group = row.get("db").map(to_plain_string).and_then(|db| {
+            if let Some(group) = db.strip_prefix("group:") {
+                Some(group.to_string())
+            } else {
+                db.starts_with("ext:").then_some(db).filter(|_| crate::ext::gate())
+            }
+        });
         let (Some(backend_id), Some(recorded), Some(group)) = (backend_id, recorded, group) else {
             continue;
         };
-        if !facade.group_names().contains(&group) {
+        if !catalog::is_external(&group) && !facade.group_names().contains(&group) {
             continue;
         }
         let mysql = catalog::group_is_mysql(facade, &group);
@@ -852,7 +860,7 @@ pub fn run(
     production: bool,
 ) -> Result<RunOutcome, Refusal> {
     let group = request.group.as_str();
-    let db = format!("group:{group}");
+    let db = catalog::db_text(group);
     let syntax = syntax_of(facade, group);
     let statements = statements(facade, group, &request.sql_text).map_err(|err| Refusal::new(err.to_string()))?;
     if statements.is_empty() {
@@ -879,6 +887,9 @@ pub fn run(
     let mut bound = Vec::with_capacity(statements.len());
     for statement in &statements {
         bound.push(bind_parameters(&statement.sql, syntax, &request.params, false)?);
+    }
+    if request.allow_changes && catalog::target(facade, group).is_ok_and(|db| db.read_only) {
+        return Err(Refusal::new("This connection is read only"));
     }
     let read_only = !request.allow_changes;
     let limit = match request.limit {
@@ -1108,7 +1119,7 @@ impl Runner<'_> {
                 audit::mark_running(&facade, &entry, &actor);
             }));
         };
-        let result = info::run_sql_with(
+        let result = run_on(
             self.facade,
             &self.state.group,
             sql,
@@ -1242,6 +1253,13 @@ impl Statement {
     }
 }
 
+/// [`info::run_sql_on`] on the database `group` names: an entity group's, or an external connection's
+/// (`ext:<connectionId>`).
+fn run_on(facade: &EntityFacade, group: &str, sql: &str, options: SqlRunOptions<'_>) -> Result<SqlResult, Error> {
+    let db = catalog::target(facade, group)?;
+    info::run_sql_on(&db.tx, &db.dialect, sql, options)
+}
+
 // ---- the data grid's queries (§9.1) ----
 
 /// Run `sql` (one query the grid wrapped, with its `?` values) read only for `actor`: under the run timeout, registered
@@ -1271,7 +1289,7 @@ pub fn grid_query(
     };
     let started = Instant::now();
     let start_time = jiff::Timestamp::now();
-    let result = info::run_sql_with(
+    let result = run_on(
         facade,
         group,
         sql,
@@ -1288,7 +1306,7 @@ pub fn grid_query(
         facade,
         &AuditEntry {
             action: "DbaSql",
-            db: Some(format!("group:{group}")),
+            db: Some(catalog::db_text(group)),
             run_id: Some(registered.run_id.clone()),
             statement_seq: Some(1),
             statement_text: Some(sql.to_string()),
@@ -1381,7 +1399,7 @@ pub fn explain(
     production: bool,
 ) -> Result<ExplainOutcome, Refusal> {
     let group = request.group.as_str();
-    let db = format!("group:{group}");
+    let db = catalog::db_text(group);
     let syntax = syntax_of(facade, group);
     let statements = statements(facade, group, &request.sql_text).map_err(|err| Refusal::new(err.to_string()))?;
     let [statement] = statements.as_slice() else {
@@ -1390,6 +1408,9 @@ pub fn explain(
     refuse_transaction_control(&statements)?;
     let analyze = request.analyze;
     let changes = statement.changes;
+    if analyze && changes && catalog::target(facade, group).is_ok_and(|db| db.read_only) {
+        return Err(Refusal::new("This connection is read only"));
+    }
     if analyze && changes {
         let confirmed = if take_token(facade, &request.token, actor.user_id.as_deref(), &db, &request.sql_text) {
             if production {
@@ -1443,7 +1464,7 @@ pub fn explain(
             Ok(tx) => {
                 let mut kept = None;
                 let ran = tx.run(TransactionAttribute::ForceNew, Some(MAX_TIMEOUT), || {
-                    kept = Some(info::run_sql_with(
+                    kept = Some(run_on(
                         facade,
                         group,
                         &text,
@@ -1461,7 +1482,7 @@ pub fn explain(
             }
         }
     } else {
-        info::run_sql_with(
+        run_on(
             facade,
             group,
             &text,

@@ -40,38 +40,74 @@ pub enum Server {
     Mariadb,
 }
 
-/// An entity group's database.
-pub(crate) struct GroupDb {
-    pub(crate) group: String,
-    pub(crate) tx: TransactionManager,
-    pub(crate) dialect: moqui_db::dialect::Dialect,
-    pub(crate) server: Server,
+/// The database a service's `db` names: an entity group's (`group:<name>`), or an external connection's
+/// (`ext:<connectionId>`, plans/Tools-Database.md §4.3), reached only through [`crate::ext::gate`].
+#[derive(Clone)]
+pub struct GroupDb {
+    /// The entity group; for an external connection `ext:<connectionId>`, which no entity names.
+    pub group: String,
+    pub tx: TransactionManager,
+    pub dialect: moqui_db::dialect::Dialect,
+    pub server: Server,
+    /// An external connection.
+    pub external: bool,
+    /// An external connection marked `readOnly`: every statement in a read-only transaction.
+    pub read_only: bool,
 }
 
 impl GroupDb {
-    /// The group `db` names. `ext:` is refused with [`NOT_AVAILABLE`] until external connections are built (§4.3,
-    /// §15 step 7). A refusal adds the error and is `None`.
+    /// The database `db` names, an external one included (its gate first). A refusal adds the error and is `None`:
+    /// for an external one the one vague [`NOT_AVAILABLE`].
     pub(crate) fn of(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Option<Self> {
-        let db = match DbRef::parse(&text(parameters, "db"), facade.default_group()) {
-            Ok(db) => db,
+        match Self::resolve(facade, &text(parameters, "db")) {
+            Ok(db) => Some(db),
             Err(message) => {
                 add_error(message);
-                return None;
-            }
-        };
-        match db {
-            DbRef::External(_) => {
-                add_error(NOT_AVAILABLE);
                 None
             }
-            DbRef::Group(group) => {
-                let found = Self::named(facade, &group);
-                if found.is_none() {
-                    add_error(format!("no entity group named {group}"));
-                }
-                found
-            }
         }
+    }
+
+    /// [`Self::of`] for what is offered on the entity groups' databases only (schema, jobs, sessions' cancel, table
+    /// maintenance): an external connection is refused.
+    pub(crate) fn of_group(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) -> Option<Self> {
+        let db = Self::of(parameters, facade)?;
+        if db.external {
+            add_error("This is not offered on an external database");
+            return None;
+        }
+        Some(db)
+    }
+
+    /// The database of the `db` text: empty is the default group. An external connection passes
+    /// [`crate::ext::gate`] first, and every refusal of one is the vague [`NOT_AVAILABLE`].
+    ///
+    /// # Errors
+    ///
+    /// The refusal's message.
+    pub fn resolve(facade: &EntityFacade, db: &str) -> Result<Self, String> {
+        match DbRef::parse(db, facade.default_group())? {
+            DbRef::External(id) => {
+                if !crate::ext::gate() {
+                    return Err(NOT_AVAILABLE.to_string());
+                }
+                crate::ext::open(facade, &id).map_err(|err| {
+                    tracing::info!(error = %err, "External database {id} is not available");
+                    NOT_AVAILABLE.to_string()
+                })
+            }
+            DbRef::Group(group) => Self::named(facade, &group).ok_or_else(|| format!("no entity group named {group}")),
+        }
+    }
+
+    /// The SQL syntax of the database.
+    pub fn syntax(&self) -> moqui_core::entity::exec::SqlSyntax {
+        moqui_core::entity::exec::SqlSyntax::of(&self.dialect)
+    }
+
+    /// MySQL or MariaDB.
+    pub fn is_mysql(&self) -> bool {
+        self.server != Server::Postgres
     }
 
     /// The group named `group`, or `None` when the facade has none or its database is not Postgres or MySQL.
@@ -80,6 +116,17 @@ impl GroupDb {
             .groups()
             .find(|(name, _, _)| *name == group)
             .map(|(_, dialect, tx)| (dialect.clone(), tx.clone()))?;
+        Some(Self::on(group, tx, dialect, false, false))
+    }
+
+    /// The database of `tx` and `dialect` under the name `group`.
+    pub(crate) fn on(
+        group: &str,
+        tx: TransactionManager,
+        dialect: moqui_db::dialect::Dialect,
+        external: bool,
+        read_only: bool,
+    ) -> Self {
         let server = if moqui_db::sql::is_mysql(&dialect) {
             if is_mariadb(group, &tx) {
                 Server::Mariadb
@@ -89,17 +136,23 @@ impl GroupDb {
         } else {
             Server::Postgres
         };
-        Some(Self {
+        Self {
             group: group.to_string(),
             tx,
             dialect,
             server,
-        })
+            external,
+            read_only,
+        }
     }
 
-    /// `group:<name>`, as the rows keep it.
-    pub(crate) fn db_text(&self) -> String {
-        format!("group:{}", self.group)
+    /// `group:<name>` or `ext:<connectionId>`, as the services take it and the rows keep it.
+    pub fn db_text(&self) -> String {
+        if self.external {
+            self.group.clone()
+        } else {
+            format!("group:{}", self.group)
+        }
     }
 
     pub(crate) fn is_postgres(&self) -> bool {
@@ -108,11 +161,16 @@ impl GroupDb {
 
     /// Run one query with `params` (`?` placeholders) in a transaction of its own, the caller's suspended, so a failed
     /// query cannot abort the caller's transaction, within [`crate::catalog::QUERY_TIMEOUT`].
-    pub(crate) fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<IndexMap<String, Value>>, Error> {
+    pub fn query(&self, sql: &str, params: &[Value]) -> Result<Vec<IndexMap<String, Value>>, Error> {
         let rows = self.tx.run(
             TransactionAttribute::ForceNew,
             Some(crate::catalog::QUERY_TIMEOUT),
-            || self.tx.with_connection(|conn| conn.query_once(sql, params)),
+            || {
+                if self.read_only {
+                    self.tx.with_connection(|conn| conn.set_transaction_read_only())?;
+                }
+                self.tx.with_connection(|conn| conn.query_once(sql, params))
+            },
         )?;
         Ok(rows
             .into_iter()
