@@ -17,6 +17,12 @@
 //! HTTPS listener does not share its port), all off while their setting is empty, and the UDP relay sockets in
 //! `turn_relay_ports`. One thread owns the [`Turn`] and the UDP sockets; a thread per TCP or TLS connection reads its
 //! stream a message at a time and writes what the server sends it. TLS uses the host's certificates (`runtime/cert`).
+//!
+//! The TCP and TLS connections are bounded ([`StreamLimits`], plans/High-Level-Review.md HL-031): at most
+//! `max_connections` at once and `per_source` from one source (an IPv6 /64 is one), so the threads they take are
+//! bounded too; one must send a whole message (after its TLS handshake) within `handshake`, and one with nothing read
+//! or written for `idle` is closed; and what waits to be written to a client is at most `max_queued` messages, past
+//! which the client is not reading and its connection is closed (its allocations end with it, as on any close).
 //! The media node revokes a leg's credential when the leg leaves ([`TurnNode::revoke`]).
 
 use std::collections::HashMap;
@@ -24,16 +30,45 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, ToSocketAddrs, UdpSocket};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, sync_channel, Receiver, Sender, SyncSender, TryRecvError, TrySendError};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use moqui_lib::source_guard::SourceSlots;
 use moqui_rtc::turn::{frame_len, Turn, TurnConfig, TurnOutput};
 use moqui_rtc::Proto;
 
 /// The most bytes a stream may buffer without a whole message.
 const MAX_STREAM_BUFFER: usize = 64 * 1024;
+
+/// The bounds of the TCP and TLS client connections.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct StreamLimits {
+    /// Connections at once, over every TCP and TLS listener.
+    pub max_connections: usize,
+    /// Of `max_connections`, those from one source.
+    pub per_source: usize,
+    /// How long a connection has to send its first whole message, its TLS handshake included.
+    pub handshake: Duration,
+    /// How long a connection may go with nothing read or written.
+    pub idle: Duration,
+    /// The messages waiting to be written to one client; one more closes its connection.
+    pub max_queued: usize,
+}
+
+impl Default for StreamLimits {
+    fn default() -> Self {
+        StreamLimits {
+            max_connections: 512,
+            per_source: 16,
+            handshake: Duration::from_secs(10),
+            // an allocation is refreshed within its 10-minute lifetime, and media keeps a busy one going
+            idle: Duration::from_secs(10 * 60),
+            max_queued: 512,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct TurnSettings {
@@ -45,6 +80,7 @@ pub(crate) struct TurnSettings {
     pub public_ip: IpAddr,
     pub relay_ports: (u16, u16),
     pub config: TurnConfig,
+    pub limits: StreamLimits,
 }
 
 fn port(text: &str, name: &str) -> Result<Option<u16>, String> {
@@ -171,6 +207,7 @@ pub(crate) fn settings(
         public_ip,
         relay_ports,
         config,
+        limits: StreamLimits::default(),
     }))
 }
 
@@ -215,7 +252,7 @@ enum In {
     Opened {
         listen: SocketAddr,
         remote: SocketAddr,
-        tx: Sender<Vec<u8>>,
+        tx: SyncSender<Vec<u8>>,
     },
     Closed {
         listen: SocketAddr,
@@ -297,12 +334,13 @@ pub(crate) fn start(runtime_dir: &Path, s: &TurnSettings) -> Result<TurnNode, St
         }
     }
     let turn = Turn::new(s.config.clone(), &listeners);
+    let slots = SourceSlots::new(s.limits.max_connections, s.limits.per_source);
     for (listener, tls) in stream_listeners {
-        let (tx, stop) = (tx.clone(), Arc::clone(&stop));
+        let (tx, stop, slots, limits) = (tx.clone(), Arc::clone(&stop), slots.clone(), s.limits);
         threads.push(
             std::thread::Builder::new()
                 .name("moqui-turn-accept".to_string())
-                .spawn(move || accept(listener, tls, tx, &stop))
+                .spawn(move || accept(listener, tls, tx, &stop, &slots, limits))
                 .map_err(|e| e.to_string())?,
         );
     }
@@ -335,7 +373,7 @@ fn run(
     let listen_udp = udp.as_ref().and_then(|u| u.local_addr().ok());
     // by the address the server reports (the public one), the socket bound on `bind`
     let mut relays: HashMap<SocketAddr, UdpSocket> = HashMap::new();
-    let mut streams: HashMap<(SocketAddr, SocketAddr), Sender<Vec<u8>>> = HashMap::new();
+    let mut streams: HashMap<(SocketAddr, SocketAddr), SyncSender<Vec<u8>>> = HashMap::new();
     let mut cursor = range.0;
     let mut buf = vec![0u8; 2_048];
     let mut next = Instant::now();
@@ -392,7 +430,17 @@ fn run(
                     } else if let Some(socket) = relays.get(&from) {
                         let _ = socket.send_to(&data, to);
                     } else if let Some(tx) = streams.get(&(from, to)) {
-                        let _ = tx.send(data);
+                        match tx.try_send(data) {
+                            Ok(()) => {}
+                            // the client does not read what it is sent: dropping its sender closes the connection
+                            Err(TrySendError::Full(_)) => {
+                                tracing::debug!("TURN: {to} does not read what it is sent; its connection is closed");
+                                streams.remove(&(from, to));
+                            }
+                            Err(TrySendError::Disconnected(_)) => {
+                                streams.remove(&(from, to));
+                            }
+                        }
                     }
                 }
                 TurnOutput::AllocateRelay {
@@ -440,7 +488,14 @@ fn bind_relay(bind: IpAddr, range: (u16, u16), cursor: &mut u16) -> Option<(UdpS
     None
 }
 
-fn accept(listener: TcpListener, tls: Option<Arc<rustls::ServerConfig>>, tx: Sender<In>, stop: &Arc<AtomicBool>) {
+fn accept(
+    listener: TcpListener,
+    tls: Option<Arc<rustls::ServerConfig>>,
+    tx: Sender<In>,
+    stop: &Arc<AtomicBool>,
+    slots: &SourceSlots,
+    limits: StreamLimits,
+) {
     let Ok(listen) = listener.local_addr() else { return };
     if listener.set_nonblocking(true).is_err() {
         return;
@@ -448,35 +503,45 @@ fn accept(listener: TcpListener, tls: Option<Arc<rustls::ServerConfig>>, tx: Sen
     while !stop.load(Ordering::Acquire) {
         match listener.accept() {
             Ok((stream, remote)) => {
+                let Ok(slot) = slots.take(remote.ip()) else {
+                    tracing::debug!("TURN: a connection from {remote} closed: too many from there or in all");
+                    continue;
+                };
                 let (tls, tx, stop) = (tls.clone(), tx.clone(), Arc::clone(stop));
-                let _ = std::thread::Builder::new()
+                let spawned = std::thread::Builder::new()
                     .name("moqui-turn-conn".to_string())
                     .spawn(move || {
                         let _ = stream.set_nonblocking(false);
                         let _ = stream.set_read_timeout(Some(Duration::from_millis(5)));
+                        let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
                         let _ = stream.set_nodelay(true);
-                        let (out_tx, out_rx) = channel::<Vec<u8>>();
+                        let (out_tx, out_rx) = sync_channel::<Vec<u8>>(limits.max_queued);
                         let _ = tx.send(In::Opened {
                             listen,
                             remote,
                             tx: out_tx,
                         });
+                        let link = Link {
+                            listen,
+                            remote,
+                            tx: &tx,
+                            out: &out_rx,
+                            stop: &stop,
+                            limits,
+                        };
                         match tls {
                             Some(config) => match rustls::ServerConnection::new(config) {
-                                Ok(conn) => serve(
-                                    rustls::StreamOwned::new(conn, stream),
-                                    listen,
-                                    remote,
-                                    &tx,
-                                    &out_rx,
-                                    &stop,
-                                ),
+                                Ok(conn) => serve(rustls::StreamOwned::new(conn, stream), &link),
                                 Err(e) => tracing::debug!("TURN TLS did not start: {e}"),
                             },
-                            None => serve(stream, listen, remote, &tx, &out_rx, &stop),
+                            None => serve(stream, &link),
                         }
                         let _ = tx.send(In::Closed { listen, remote });
+                        drop(slot);
                     });
+                if let Err(e) = spawned {
+                    tracing::warn!("TURN: no thread for a connection from {remote}: {e}");
+                }
             }
             Err(e) if e.kind() == ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(20)),
             Err(_) => std::thread::sleep(Duration::from_millis(20)),
@@ -484,21 +549,31 @@ fn accept(listener: TcpListener, tls: Option<Arc<rustls::ServerConfig>>, tx: Sen
     }
 }
 
-/// One TCP or TLS client: its stream split into messages for the server, and what the server sends it written back.
-fn serve<S: Read + Write>(
-    mut stream: S,
+/// What one connection's thread serves it with.
+struct Link<'a> {
     listen: SocketAddr,
     remote: SocketAddr,
-    tx: &Sender<In>,
-    out: &Receiver<Vec<u8>>,
-    stop: &AtomicBool,
-) {
+    tx: &'a Sender<In>,
+    out: &'a Receiver<Vec<u8>>,
+    stop: &'a AtomicBool,
+    limits: StreamLimits,
+}
+
+/// One TCP or TLS client: its stream split into messages for the server, and what the server sends it written back,
+/// until it closes, misses its handshake or idle deadline, or stops reading (its queue's sender dropped).
+fn serve<S: Read + Write>(mut stream: S, link: &Link<'_>) {
     let mut buf: Vec<u8> = Vec::new();
     let mut chunk = [0u8; 4_096];
-    while !stop.load(Ordering::Acquire) {
+    let opened = Instant::now();
+    let mut spoke = false;
+    let mut active = opened;
+    while !link.stop.load(Ordering::Acquire) {
         match stream.read(&mut chunk) {
             Ok(0) => return,
-            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Ok(n) => {
+                active = Instant::now();
+                buf.extend_from_slice(&chunk[..n]);
+            }
             Err(e)
                 if matches!(
                     e.kind(),
@@ -510,11 +585,13 @@ fn serve<S: Read + Write>(
             if buf.len() < len {
                 break;
             }
+            spoke = true;
             let data: Vec<u8> = buf.drain(..len).collect();
-            if tx
+            if link
+                .tx
                 .send(In::Stream {
-                    from: remote,
-                    listen,
+                    from: link.remote,
+                    listen: link.listen,
                     data,
                 })
                 .is_err()
@@ -525,64 +602,33 @@ fn serve<S: Read + Write>(
         if buf.len() > MAX_STREAM_BUFFER {
             return;
         }
-        while let Ok(data) = out.try_recv() {
-            if stream.write_all(&data).is_err() || stream.flush().is_err() {
-                return;
+        loop {
+            match link.out.try_recv() {
+                Ok(data) => {
+                    if stream.write_all(&data).is_err() || stream.flush().is_err() {
+                        return;
+                    }
+                    active = Instant::now();
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => return,
             }
+        }
+        if !spoke && opened.elapsed() >= link.limits.handshake {
+            tracing::debug!(
+                "TURN: {} sent no message within {:?}",
+                link.remote,
+                link.limits.handshake
+            );
+            return;
+        }
+        if active.elapsed() >= link.limits.idle {
+            tracing::debug!("TURN: {} was idle for {:?}", link.remote, link.limits.idle);
+            return;
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use std::collections::HashMap;
-
-    use super::settings;
-
-    fn of(pairs: &[(&str, &str)]) -> Result<Option<super::TurnSettings>, String> {
-        let map: HashMap<String, String> = pairs
-            .iter()
-            .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
-            .collect();
-        let property = move |name: &str| map.get(name).cloned().unwrap_or_default();
-        settings(
-            &property,
-            "127.0.0.1:10000".parse().unwrap(),
-            "203.0.113.5:10000".parse().unwrap(),
-            &[],
-        )
-    }
-
-    #[test]
-    fn turn_is_off_without_a_listener_and_needs_a_secret() {
-        assert!(of(&[]).unwrap().is_none());
-        assert!(of(&[("turn_port", "3478")]).is_err());
-        let s = of(&[("turn_port", "3478"), ("turn_auth_secret", "s3cret")])
-            .unwrap()
-            .unwrap();
-        assert_eq!(s.public_host, "203.0.113.5");
-        assert_eq!(s.relay_ports, (49152, 65535));
-        assert_eq!(
-            s.config.allowed_peers,
-            vec!["203.0.113.5:10000".parse().unwrap(), "127.0.0.1:10000".parse().unwrap()]
-        );
-        // another media node by address alone is on the media port, or as given
-        let s = of(&[
-            ("turn_port", "3478"),
-            ("turn_auth_secret", "s3cret"),
-            ("turn_allowed_peers", "198.51.100.7, 198.51.100.8:11000"),
-        ])
-        .unwrap()
-        .unwrap();
-        assert!(s.config.allowed_peers.contains(&"198.51.100.7:10000".parse().unwrap()));
-        assert!(s.config.allowed_peers.contains(&"198.51.100.8:11000".parse().unwrap()));
-    }
-
-    #[test]
-    fn a_bad_range_or_address_is_an_error() {
-        let base = [("turn_port", "3478"), ("turn_auth_secret", "s3cret")];
-        assert!(of(&[base[0], base[1], ("turn_relay_ports", "60000-50000")]).is_err());
-        assert!(of(&[base[0], base[1], ("turn_tls443_host", "not an address")]).is_err());
-        assert!(of(&[base[0], base[1], ("turn_allowed_peers", "nope")]).is_err());
-    }
-}
+#[path = "turn_tests.rs"]
+mod tests;

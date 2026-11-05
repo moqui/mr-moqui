@@ -40,7 +40,9 @@ use super::definition::{
 use super::dispatch;
 use super::gate::{self, HeldWrite, RenderOptions, RenderOrigin, TransitionGate, TransitionOutcome};
 use super::url::{encode_path, parse_last_standalone, resolve_screen_path, ScreenUrlInfo};
-use crate::context::{Authz, Error, ErrorKind, ExecutionContext, ExecutionContextFactory, Tarpit};
+use crate::context::{
+    AnonymousAccess, AnonymousLogin, Authz, Error, ErrorKind, ExecutionContext, ExecutionContextFactory, Tarpit,
+};
 use crate::script::{self, ContextFrame};
 use crate::user;
 use crate::web::{self, WebRequest};
@@ -1384,7 +1386,7 @@ fn check_authentication(info: &ScreenUrlInfo) -> Result<(), Error> {
 #[derive(Default)]
 pub(super) struct Frames {
     pushed: usize,
-    anonymous: bool,
+    anonymous: AnonymousLogin,
     /// The frames are not artifact hits: a check, or the screens that run actions before the render.
     untracked: bool,
     /// The base of the isolated check these frames are, restored when they drop ([`Frames::check`]).
@@ -1396,8 +1398,10 @@ impl Frames {
     /// own, while the actions run under them (always- and pre-actions, a check's lookups) still record theirs.
     pub(super) fn untracked() -> Self {
         Self {
+            pushed: 0,
+            anonymous: AnonymousLogin::default(),
             untracked: true,
-            ..Self::default()
+            check_base: None,
         }
     }
 
@@ -1406,9 +1410,10 @@ impl Frames {
     /// inheritable grant does not reach the screens it lists).
     pub(super) fn check() -> Self {
         Self {
+            pushed: 0,
+            anonymous: AnonymousLogin::default(),
             untracked: true,
             check_base: ExecutionContext::with_current(ExecutionContext::begin_isolated_check),
-            ..Self::default()
         }
     }
 
@@ -1491,16 +1496,16 @@ impl Frames {
         self.apply_anonymous(def)
     }
 
+    /// A screen logs in before it grants, so a session that cannot be read fails the screen before its frame is
+    /// marked. The grant is for whoever runs under the screen.
     fn apply_anonymous(&mut self, def: &ScreenDef) -> Result<(), Error> {
-        let all = match def.authentication {
-            Authentication::AnonymousAll => true,
-            Authentication::AnonymousView => false,
+        let access = match def.authentication {
+            Authentication::AnonymousAll => AnonymousAccess::All,
+            Authentication::AnonymousView => AnonymousAccess::View,
             _ => return Ok(()),
         };
-        if user::login_anonymous()? {
-            self.anonymous = true;
-        }
-        ExecutionContext::with_current(|ec| ec.set_anonymous_authorized(all, ""));
+        self.anonymous.begin()?;
+        ExecutionContext::with_current(|ec| ec.grant_anonymous(access, None));
         Ok(())
     }
 }
@@ -1515,9 +1520,8 @@ impl Drop for Frames {
         if let Some(previous) = self.check_base {
             ExecutionContext::with_current(|ec| ec.end_isolated_check(previous));
         }
-        if self.anonymous {
-            user::logout_anonymous_only();
-        }
+        // Last, once the frames are popped and the stack the check set aside is back.
+        self.anonymous.end();
     }
 }
 

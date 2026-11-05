@@ -339,20 +339,22 @@ pub fn postgres_server_driver(
 
 #[cfg(feature = "mysql")]
 fn mysql_driver(conf: &DatasourceConf) -> Result<Arc<dyn DbDriver>, Error> {
-    Ok(Arc::new(
-        super::mysql::MysqlDriver::new(
-            &conf.host,
-            conf.port.unwrap_or(MYSQL_PORT),
-            &conf.user,
-            &conf.password,
-            &conf.database,
-            conf.tls,
-        )
-        .isolation(
-            conf.isolation_level
-                .map(moqui_core::entity::datasource::IsolationLevel::sql),
-        ),
-    ))
+    let driver = super::mysql::MysqlDriver::new(
+        &conf.host,
+        conf.port.unwrap_or(MYSQL_PORT),
+        &conf.user,
+        &conf.password,
+        &conf.database,
+        conf.tls,
+    )
+    .isolation(
+        conf.isolation_level
+            .map(moqui_core::entity::datasource::IsolationLevel::sql),
+    );
+    Ok(Arc::new(match conf.read_timeout {
+        Some(timeout) => driver.read_timeout(timeout),
+        None => driver,
+    }))
 }
 
 #[cfg(not(feature = "mysql"))]

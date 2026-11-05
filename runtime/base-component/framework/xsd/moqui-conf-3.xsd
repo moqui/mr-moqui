@@ -88,7 +88,8 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="worker-pool-core" type="xs:integer"><xs:annotation><xs:documentation>
                 The core (minimum) size of the worker thread pool.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-pool-max" type="xs:integer"><xs:annotation><xs:documentation>
-                The maximum size of the worker thread pool.</xs:documentation></xs:annotation></xs:attribute>
+                The maximum size of the worker thread pool, 25 by default. Each worker can hold two connections
+                (a transaction and a suspended one), so it counts twice in the startup check of the pool size.</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="worker-pool-alive" type="xs:integer"><xs:annotation><xs:documentation>
                 The amount of time, in seconds, to keep idle worker threads alive (beyond core pool size).</xs:documentation></xs:annotation></xs:attribute>
             <xs:attribute name="notification-topic-factory" type="xs:string"><xs:annotation><xs:documentation>
@@ -634,9 +635,11 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="status-ips" type="xs:string"><xs:annotation><xs:documentation>
                 Comma separated addresses that may read /health and /metrics, besides loopback. No Java counterpart.
             </xs:documentation></xs:annotation></xs:attribute>
-            <xs:attribute name="transfer-workers" type="non-neg-int-expandable" default="16"><xs:annotation><xs:documentation>
+            <xs:attribute name="transfer-workers" type="non-neg-int-expandable" default="4"><xs:annotation><xs:documentation>
                 A file response over 256 KiB streams, read a window at a time as the client takes it; at most this many
-                reads of files in the database run at once. No Java counterpart.
+                reads of files in the database run at once, each holding a connection of the content pool for one
+                window. Fewer run when that pool cannot hold this many beside the request and service workers (a
+                warning at startup says so). No Java counterpart.
             </xs:documentation></xs:annotation></xs:attribute>
         </xs:complexType>
     </xs:element>
@@ -653,7 +656,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:sequence>
                 <xs:element minOccurs="0" name="connections"><xs:complexType>
                     <xs:attribute name="max" type="xs:string"><xs:annotation><xs:documentation>
-                        Connections served at once, HTTP and HTTPS together (webapp_max_connections, 1024). Past it new
+                        Connections served at once, HTTP and HTTPS together (webapp_max_connections, 4096). Past it new
                         connections wait until one closes.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="max-per-client" type="xs:string"><xs:annotation><xs:documentation>
                         Connections from one client address at once (64); past it a new one is closed. Trusted proxies
@@ -661,6 +664,10 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="header-timeout" type="xs:string"><xs:annotation><xs:documentation>
                         Seconds for the request head, the TLS handshake, and an idle kept-alive connection
                         (webapp_header_timeout, 30); 0 is no limit.</xs:documentation></xs:annotation></xs:attribute>
+                    <xs:attribute name="write-timeout" type="xs:string"><xs:annotation><xs:documentation>
+                        Seconds a write to a client may take nothing before the connection, or the WebSocket on it, is
+                        closed (webapp_write_timeout, 60); a write that moves any bytes starts it again. Also the
+                        connections' TCP_USER_TIMEOUT on Linux. 0 is no limit.</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="shutdown-timeout" type="xs:string"><xs:annotation><xs:documentation>
                         Seconds open connections may take to finish after a stop (webapp_shutdown_timeout, 30).</xs:documentation></xs:annotation></xs:attribute>
                     <xs:attribute name="http2-max-streams" type="xs:string"><xs:annotation><xs:documentation>
@@ -1785,6 +1792,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <xs:annotation><xs:documentation>Connections inside pool-maxsize that only the framework's own short
                     work takes (sequence banks, sessions, login, hits, job and semaphore records, cluster membership),
                     so a full pool cannot block it.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="read-timeout" type="xs:nonNegativeInteger">
+                <xs:annotation><xs:documentation>MySQL: the most time in seconds one read from the database waits, the
+                    sign-in's included; 0 waits without a limit. Defaults to 600 seconds.</xs:documentation></xs:annotation>
             </xs:attribute>
             <xs:attribute name="pool-time-idle" type="xs:nonNegativeInteger">
                 <xs:annotation><xs:documentation>Maximum time in seconds that unused excess connections should stay in

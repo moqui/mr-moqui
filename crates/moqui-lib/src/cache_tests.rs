@@ -70,6 +70,17 @@ fn put_if_absent_stores_once_among_racing_threads_and_again_after_expiry() {
     assert_eq!(cache.get(&"key".to_string()).unwrap(), Some(99));
 }
 
+/// `put_if` stores only when its check holds, and leaves an entry already there when it does not.
+#[test]
+fn put_if_stores_only_when_the_check_holds() {
+    let cache = MCache::<String, u32>::new("fenced", CacheConfig::new().background(false));
+    assert!(!cache.put_if("key".to_string(), 1, || false).unwrap());
+    assert_eq!(cache.get(&"key".to_string()).unwrap(), None);
+    assert!(cache.put_if("key".to_string(), 2, || true).unwrap());
+    assert!(!cache.put_if("key".to_string(), 3, || false).unwrap());
+    assert_eq!(cache.get(&"key".to_string()).unwrap(), Some(2));
+}
+
 #[test]
 fn fresh_get_and_eviction_order() {
     let clock = ManualClock::new(10);

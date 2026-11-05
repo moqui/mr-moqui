@@ -741,6 +741,10 @@ mod driver {
                 .queue_simple(&format!("SET LOCAL statement_timeout = {ms}"), "statement_timeout")
         }
 
+        fn set_read_timeout(&mut self, timeout: Option<std::time::Duration>) -> Result<(), Error> {
+            self.wire.set_read_timeout(timeout)
+        }
+
         fn canceller(&self) -> Box<dyn DbCancel> {
             let (process_id, secret_key) = self.wire.cancel_key();
             Box::new(PgCancel {
@@ -752,7 +756,8 @@ mod driver {
     }
 
     impl DbCancel for PgCancel {
-        /// On the calling thread, the deadline thread, on a connection of its own.
+        /// On a deadline worker (or the calling thread, `poll_deadline`), on a connection of its own, within
+        /// `pgwire::CANCEL_TIMEOUT`.
         fn cancel(&self) -> Result<(), Error> {
             pgwire::cancel(&self.endpoint, self.process_id, self.secret_key)
         }

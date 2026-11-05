@@ -36,6 +36,18 @@ function attempt(name, parameters) {
 const compose = (name, parameters) => attempt("org.moqui.comms.ComposeServices." + name, parameters)
 const chips = values => JSON.stringify(values.map(value => ({value, label: value})))
 const rows = fields => sys(() => Array.from(ec.entity.find(MESSAGE).condition(fields).list()))
+// a send now in a transaction (send#Compose's) is claimed in it and goes once it commits (EmailClientServices.send#Draft):
+// the message once its send has a result
+function settled(emailMessageId) {
+    const deadline = Date.now() + 10000
+    let row = rows({emailMessageId})[0]
+    while (row && row.statusId == "ES_READY" && !row.sendError && Date.now() < deadline) {
+        const pause = Date.now() + 50
+        while (Date.now() < pause) { /* look again shortly */ }
+        row = rows({emailMessageId})[0]
+    }
+    return row
+}
 const attachments = emailMessageId =>
     sys(() =>
         Array.from(ec.entity.find("moqui.basic.email.EmailMessageAttachment").condition("emailMessageId", emailMessageId).list())
@@ -159,16 +171,21 @@ feature("a send retried with its ref sends once; the retry answers duplicate wit
             "send#Compose",
             Object.assign(draftOf(ownerIdentity, "ref-draft-1", "Second version"), {holdSeconds: 0})
         )
+        const firstRow = settled(first.emailMessageId)
         const retry = compose(
             "send#Compose",
             Object.assign(draftOf(ownerIdentity, "ref-draft-1", "Changed on retry"), {holdSeconds: 0})
         )
         const saveAfter = compose("save#ComposeDraft", draftOf(ownerIdentity, "ref-draft-1", "Saved after the send"))
-        return {first, retry, saveAfter, captured: capture.count(), found: rows({clientRef: "ref-draft-1"})}
+        return {first, firstRow, retry, saveAfter, captured: capture.count(), found: rows({clientRef: "ref-draft-1"})}
     },
-    then({first, retry, saveAfter, captured, found}) {
+    then({first, firstRow, retry, saveAfter, captured, found}) {
         first.errors == ""
-        first.sent == true
+        first.statusId == "ES_READY"
+        first.sent == false
+        first.sendError == null
+        first.message == "Sending…"
+        firstRow.statusId == "ES_SENT"
         first.duplicate == false
         retry.errors == ""
         retry.duplicate == true
@@ -195,9 +212,10 @@ feature("a send held for undo answers its retry with the hold, and after the und
             "send#Compose",
             Object.assign(draftOf(ownerIdentity, "ref-held-1", "Held, then sent"), {holdSeconds: 0})
         )
-        return {held, retry, undone, again, captured: capture.count(), found: rows({clientRef: "ref-held-1"})}
+        const againRow = settled(again.emailMessageId)
+        return {held, retry, undone, again, againRow, captured: capture.count(), found: rows({clientRef: "ref-held-1"})}
     },
-    then({held, retry, undone, again, captured, found}) {
+    then({held, retry, undone, again, againRow, captured, found}) {
         held.errors == ""
         held.statusId == "ES_SCHEDULED"
         retry.duplicate == true
@@ -208,7 +226,8 @@ feature("a send held for undo answers its retry with the hold, and after the und
         again.errors == ""
         again.duplicate == false
         again.emailMessageId == held.emailMessageId
-        again.statusId == "ES_SENT"
+        again.statusId == "ES_READY"
+        againRow.statusId == "ES_SENT"
         captured == 1
         found.length == 1
     }
@@ -229,6 +248,7 @@ feature("another user's ref finds nothing of the owner's: a save makes their own
             "send#Compose",
             Object.assign(draftOf(otherIdentity, "ref-draft-1", "Not a retry"), {holdSeconds: 0})
         )
+        settled(sent.emailMessageId)
         return {
             owned,
             upload,
@@ -329,19 +349,21 @@ feature(
                 "send#Compose",
                 Object.assign(draftOf(johnIdentity, "ref-op-1", "Op second"), {holdSeconds: 0})
             )
+            const sentRow = settled(sent.result?.emailMessageId)
             const retry = operation(
                 "send#Compose",
                 Object.assign(draftOf(johnIdentity, "ref-op-1", "Op retry"), {holdSeconds: 0})
             )
-            return {first, second, sent, retry, captured: capture.count(), found: rows({clientRef: "ref-op-1"})}
+            return {first, second, sent, sentRow, retry, captured: capture.count(), found: rows({clientRef: "ref-op-1"})}
         },
-        then({first, second, sent, retry, captured, found}) {
+        then({first, second, sent, sentRow, retry, captured, found}) {
             first.errors == ""
             first.source == (bossInstalled ? "boss.internal" : null)
             second.result.emailMessageId == first.result.emailMessageId
             second.result.duplicate == false
             sent.errors == ""
-            sent.result.sent == true
+            sent.result.statusId == "ES_READY"
+            sentRow.statusId == "ES_SENT"
             sent.result.duplicate == false
             retry.errors == ""
             retry.result.duplicate == true

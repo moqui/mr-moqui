@@ -951,7 +951,7 @@ pub(crate) fn document_condition(cond: &DocCondition) -> Result<Condition, Error
 
 fn merge_rows(info: &DocumentInfo, rows: &[BTreeMap<String, Value>], stamp: Timestamp) -> Vec<Document> {
     let stamp_text = stamp.to_string();
-    let mut docs: IndexMap<String, Document> = IndexMap::new();
+    let mut docs: IndexMap<String, (Document, ChildIndex)> = IndexMap::new();
     for (at, row) in rows.iter().enumerate() {
         let id = info.doc_id(row);
         // Without every primary key aliased, Java does not merge: each row is its own document.
@@ -960,7 +960,7 @@ fn merge_rows(info: &DocumentInfo, rows: &[BTreeMap<String, Value>], stamp: Time
         } else {
             at.to_string()
         };
-        let doc = docs.entry(key).or_insert_with(|| {
+        let (doc, index) = docs.entry(key).or_insert_with(|| {
             let mut doc = Document::new();
             doc.insert("_type".to_string(), Value::string(&info.data_document_id));
             if !id.is_empty() {
@@ -972,11 +972,85 @@ fn merge_rows(info: &DocumentInfo, rows: &[BTreeMap<String, Value>], stamp: Time
             }
             doc.insert("_entity".to_string(), Value::string(&info.primary_entity_label));
             set_fields(&info.root, row, &mut doc);
-            doc
+            (doc, ChildIndex::default())
         });
-        populate_related(&info.root, row, doc);
+        populate_related(&info.root, row, doc, index);
     }
-    docs.into_values().collect()
+    docs.into_values().map(|(doc, _)| doc).collect()
+}
+
+/// The type-many children of one map, by the document alias of each list on it, so a row finds the child it joins
+/// without comparing it with every child before it (plans/High-Level-Review.md HL-001). Kept for one assembly only.
+#[derive(Default)]
+struct ChildIndex {
+    lists: HashMap<String, ListIndex>,
+}
+
+#[derive(Default)]
+struct ListIndex {
+    /// Positions in the list by the hash of each child's direct fields ([`child_hash`]), in insertion order.
+    buckets: HashMap<u64, Vec<usize>>,
+    /// The index of each child's own lists, by position in the list.
+    children: Vec<ChildIndex>,
+}
+
+/// The hash of a row's direct, non-expression fields of `node`, a missing one as null: equal to the hash of a child
+/// those fields match. The hash only narrows the search; a candidate still matches only as [`child_matches`] says.
+/// It stays the child's while the child grows: a later write into the child map comes from a row that joined it,
+/// whose value for each direct alias is the child's own (a type-one descendant that reuses the alias writes that same
+/// value) or null, which is not written.
+fn child_hash(node: &FieldNode, row: &BTreeMap<String, Value>) -> u64 {
+    use std::hash::Hasher;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for field in node.fields.iter().filter(|field| !field.is_expression) {
+        hash_value(row.get(&field.alias).unwrap_or(&Value::Null), &mut hasher);
+    }
+    hasher.finish()
+}
+
+/// A hash that agrees with `Value`'s equality (`java_equals`): equal values hash alike. A map hashes by its length
+/// alone, as its equality ignores order.
+fn hash_value(value: &Value, state: &mut impl std::hash::Hasher) {
+    use std::hash::Hash;
+    std::mem::discriminant(value).hash(state);
+    match value {
+        Value::Null => {}
+        Value::String(text) => text.hash(state),
+        Value::Bool(flag) => flag.hash(state),
+        Value::I32(number) => number.hash(state),
+        Value::I64(number) => number.hash(state),
+        Value::F64(number) => number.to_bits().hash(state),
+        Value::Decimal(number) => {
+            number.mantissa().hash(state);
+            number.scale().hash(state);
+        }
+        Value::Timestamp(stamp) => stamp.hash(state),
+        Value::Date(date) => date.hash(state),
+        Value::Time(time) => time.hash(state),
+        Value::Bytes(bytes) => bytes.hash(state),
+        Value::List(items) => {
+            items.len().hash(state);
+            for item in items {
+                hash_value(item, state);
+            }
+        }
+        Value::Map(entries) => entries.len().hash(state),
+        Value::Object(object) => std::sync::Arc::as_ptr(&object.0).cast::<()>().hash(state),
+    }
+}
+
+/// `candidate` is the child of `node` that `row` joins: each direct, non-expression field equal, a missing one as null.
+fn child_matches(node: &FieldNode, candidate: Option<&Value>, row: &BTreeMap<String, Value>) -> bool {
+    #[cfg(test)]
+    tests::COMPARED.with(|compared| compared.set(compared.get() + 1));
+    let Some(Value::Map(candidate)) = candidate else {
+        return false;
+    };
+    node.fields.iter().filter(|field| !field.is_expression).all(|field| {
+        let left = candidate.get(&field.alias).unwrap_or(&Value::Null);
+        let right = row.get(&field.alias).unwrap_or(&Value::Null);
+        left == right
+    })
 }
 
 fn set_fields(node: &FieldNode, row: &BTreeMap<String, Value>, target: &mut Document) {
@@ -993,50 +1067,58 @@ fn set_fields(node: &FieldNode, row: &BTreeMap<String, Value>, target: &mut Docu
 }
 
 /// `populateDataDocRelatedMap`: type-one children set fields on `target`; a type-many child
-/// joins the list entry whose direct fields match this row, or adds one.
-fn populate_related(node: &FieldNode, row: &BTreeMap<String, Value>, target: &mut Document) {
+/// joins the first list entry whose direct fields match this row, or adds one. `index` is `target`'s [`ChildIndex`].
+fn populate_related(node: &FieldNode, row: &BTreeMap<String, Value>, target: &mut Document, index: &mut ChildIndex) {
     for rel in &node.relationships {
         if rel.type_one {
             set_fields(&rel.node, row, target);
-            populate_related(&rel.node, row, target);
+            populate_related(&rel.node, row, target, index);
             continue;
         }
-        let list = match target.get_mut(&rel.document_alias) {
-            Some(Value::List(list)) => Some(list),
-            _ => None,
-        };
-        let matched = list.and_then(|list| {
-            list.iter_mut().find(|candidate| {
-                let Value::Map(candidate) = candidate else {
-                    return false;
-                };
-                rel.node
-                    .fields
+        let hash = child_hash(&rel.node, row);
+        let list_index = index.lists.entry(rel.document_alias.clone()).or_default();
+        if let Some(Value::List(list)) = target.get_mut(&rel.document_alias) {
+            // The bucket holds positions in insertion order, so the first match is the linear search's.
+            let found = list_index.buckets.get(&hash).and_then(|positions| {
+                positions
                     .iter()
-                    .filter(|field| !field.is_expression)
-                    .all(|field| {
-                        let left = candidate.get(&field.alias).unwrap_or(&Value::Null);
-                        let right = row.get(&field.alias).unwrap_or(&Value::Null);
-                        left == right
-                    })
-            })
-        });
-        match matched {
-            Some(Value::Map(existing)) => populate_related(&rel.node, row, existing),
-            _ => {
-                let mut child = Document::new();
-                set_fields(&rel.node, row, &mut child);
-                populate_related(&rel.node, row, &mut child);
-                if child.is_empty() {
-                    continue;
+                    .copied()
+                    .find(|&at| child_matches(&rel.node, list.get(at), row))
+            });
+            if let Some(at) = found {
+                if let (Some(Value::Map(existing)), Some(child_index)) =
+                    (list.get_mut(at), list_index.children.get_mut(at))
+                {
+                    populate_related(&rel.node, row, existing, child_index);
                 }
-                match target.get_mut(&rel.document_alias) {
-                    Some(Value::List(list)) => list.push(Value::Map(child)),
-                    _ => {
-                        target.insert(rel.document_alias.clone(), Value::List(vec![Value::Map(child)]));
-                    }
-                }
+                continue;
             }
+        }
+        let mut child = Document::new();
+        let mut child_index = ChildIndex::default();
+        set_fields(&rel.node, row, &mut child);
+        populate_related(&rel.node, row, &mut child, &mut child_index);
+        if child.is_empty() {
+            continue;
+        }
+        let at = match target.get_mut(&rel.document_alias) {
+            Some(Value::List(list)) => {
+                list.push(Value::Map(child));
+                list.len() - 1
+            }
+            _ => {
+                target.insert(rel.document_alias.clone(), Value::List(vec![Value::Map(child)]));
+                // A value under the alias that was not this list is replaced, and so is its index.
+                *list_index = ListIndex::default();
+                0
+            }
+        };
+        list_index.buckets.entry(hash).or_default().push(at);
+        if list_index.children.len() <= at {
+            list_index.children.resize_with(at, ChildIndex::default);
+            list_index.children.push(child_index);
+        } else {
+            list_index.children[at] = child_index;
         }
     }
 }

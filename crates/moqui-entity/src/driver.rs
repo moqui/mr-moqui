@@ -85,8 +85,18 @@ pub trait DbConnection: Send {
 
     fn query_once(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error>;
 
+    /// Open a stream of the rows of `sql`, read with [`Self::next_row`] until it gives `None` or
+    /// [`Self::close_stream`]. One stream per connection; it lives on the transaction's enlisted connection
+    /// (the entity iterator begins a transaction when none is in place), and the pool discards a connection
+    /// that comes back with one open.
+    ///
+    /// How much a stream holds in memory is the driver's: Postgres fetches through a cursor a batch at a time
+    /// and MySQL reads an active result, so memory stays bounded; the browser's SQLite reads the whole result
+    /// here, before the first row, so a stream there costs as much memory as a list and an early stop still
+    /// pays for every row (plans/High-Level-Review.md HL-003).
     fn open_stream(&mut self, sql: &str, params: &[Value]) -> Result<(), Error>;
 
+    /// The next row of the open stream; `None` at its end, or with no stream open.
     fn next_row(&mut self) -> Result<Option<DbRow>, Error>;
 
     fn close_stream(&mut self) -> Result<(), Error>;
@@ -119,6 +129,15 @@ pub trait DbConnection: Send {
     fn returns_rows(&mut self, sql: &str) -> Result<Option<bool>, Error> {
         let _ = sql;
         Ok(None)
+    }
+
+    /// The longest one read from the database waits, so a host that stops answering without a reset does not hold
+    /// the caller until the kernel gives up: the manager sets the transaction's remaining time plus a margin when the
+    /// connection joins a transaction, and `None` when it goes back to the pool. A read past it fails and the
+    /// connection is closed. The default does nothing.
+    fn set_read_timeout(&mut self, timeout: Option<Duration>) -> Result<(), Error> {
+        let _ = timeout;
+        Ok(())
     }
 
     /// Remaining statement time. `None` clears it. The default does nothing.
@@ -184,7 +203,8 @@ pub fn conf_driver(conf: &ConfDb) -> Result<Arc<dyn DbDriver>, Error> {
 }
 
 /// Cancels the statement running on another thread. A connection with no
-/// active statement returns success.
+/// active statement returns success. A cancel runs on a deadline worker: it bounds its own network work (connect,
+/// handshake, the request) with a short deadline of its own, so a host that does not answer does not hold the worker.
 pub trait DbCancel: Send + Sync {
     fn cancel(&self) -> Result<(), Error>;
 }

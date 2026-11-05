@@ -109,10 +109,7 @@ pub(crate) fn note_touch(
     {
         return;
     }
-    let keep_fields = !facade.flags().disable_data_feed
-        && entity_name != SKIP_FEED_ENTITY
-        && entity_name != PENDING_ENTITY
-        && feed_may_target(facade, entity_name);
+    let keep_fields = feed_keeps_values(facade, entity_name);
     let touch = Touch {
         entity_name: entity_name.to_string(),
         operation: operation.to_string(),
@@ -121,6 +118,15 @@ pub(crate) fn note_touch(
         origin_agent: keep_fields.then(|| (crate::hooks::get().agent_id)()).flatten(),
     };
     TOUCHES.with(|touches| touches.borrow_mut().entry(frame).or_default().push(touch));
+}
+
+/// Whether the data feed keeps the values of a write of `entity_name` ([`note_touch`]), so a bulk write that would
+/// read only the primary key reads whole rows (plans/High-Level-Review.md HL-033).
+pub(crate) fn feed_keeps_values(facade: &EntityFacade, entity_name: &str) -> bool {
+    !facade.flags().disable_data_feed
+        && entity_name != SKIP_FEED_ENTITY
+        && entity_name != PENDING_ENTITY
+        && feed_may_target(facade, entity_name)
 }
 
 /// False when the feed configuration, as last read and not older than the feed definitions, has no document on
@@ -251,6 +257,8 @@ fn insert_pending(
         return Ok(Vec::new());
     }
     let insert_sql = pending_insert_sql(facade)?;
+    // When the rows were made, so the drain can tell rows that keep failing from new ones.
+    let stamp = Value::Timestamp(jiff::Timestamp::now());
     let mut inserted = Vec::new();
     // Writes that carry their values: the document id is found from them, and the last write to
     // a document decides between index and delete.
@@ -316,6 +324,7 @@ fn insert_pending(
             Value::string(id),
             Value::string(*operation),
             origin,
+            stamp.clone(),
         ];
         probe_execute(conn, &insert_sql, &params)?;
         inserted.push(row_id);
@@ -367,6 +376,7 @@ fn insert_pending(
                     Value::string(&key),
                     Value::string(operation),
                     legacy_origin(&touches, entity_name).map_or(Value::Null, Value::String),
+                    stamp.clone(),
                 ];
                 probe_execute(conn, &insert_sql, &params)?;
                 inserted.push(row_id);
@@ -960,6 +970,7 @@ fn pending_insert_sql(facade: &EntityFacade) -> Result<String, Error> {
                 "primaryKey",
                 "operation",
                 "originAgentId",
+                "lastUpdatedStamp",
             ],
         )
     })

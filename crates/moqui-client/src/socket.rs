@@ -15,8 +15,8 @@
 //! The server's sockets held by the host for a page (plans/Mobile-Desktop.md §4, "One transport seam"). A page on the
 //! app scheme cannot open a WebSocket through it, and a page's WebSocket cannot send the `login_key` header, so the
 //! host opens `/notws` (or `/callws`) with the device key on a thread of its own, hands the page each text frame and
-//! sends the page's. A dropped socket connects again, waiting longer each time up to a minute, as `moqui tui
-//! --server`'s does; a close for authentication (1008, the key revoked or expired) does not.
+//! sends the page's. A dropped socket connects again, waiting longer each time up to a minute with jitter
+//! (`moqui_lib::reconnect`), as `moqui tui --server`'s does; a close for authentication (1008, the key revoked or expired) does not.
 
 use std::collections::VecDeque;
 use std::io::{Read, Write};
@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use moqui_lib::error::Error;
+use moqui_lib::reconnect::Backoff;
 use moqui_lib::sync::lock;
 
 /// The paths a page may open a socket to.
@@ -151,7 +152,7 @@ struct Link {
 
 impl Link {
     fn run(&self, sink: &Sink) {
-        let mut wait = Duration::from_secs(2);
+        let mut backoff = Backoff::new();
         while !self.stopped() {
             let mut opened = false;
             match self.connect_and_serve(sink, &mut opened) {
@@ -161,17 +162,16 @@ impl Link {
             }
             // a socket that was open starts its waits over: the next drop is new trouble, not the same
             if opened {
-                wait = Duration::from_secs(2);
+                backoff.reset();
             }
             if self.stopped() {
                 return;
             }
             sink(Event::Closed);
-            let until = Instant::now() + wait;
+            let until = Instant::now() + backoff.next_wait(moqui_lib::reconnect::jitter());
             while !self.stopped() && Instant::now() < until {
                 std::thread::sleep(Duration::from_millis(200));
             }
-            wait = (wait * 2).min(Duration::from_secs(60));
         }
     }
 

@@ -186,6 +186,7 @@ impl InProcess {
             web: live.web,
             closing: live.closing,
             exporter: None,
+            hold: None,
         };
         live.handle.spawn(run_connection(server, false, Http::One, serving));
         let (outbox, mut queued) = tokio::sync::mpsc::unbounded_channel::<tungstenite::Message>();

@@ -351,6 +351,21 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.resource.ContentBlob" short-alias="blob">
             <key-map field-name="oid" related="blobId"/></relationship>
     </entity>
+    <entity entity-name="ResourceLock" package="moqui.resource" use="transactional" cache="never">
+        <description>A WebDAV write lock on a resource location (a file, or a folder and with depth infinity what is under
+            it), which every writer on every member of a cluster keeps (crates/moqui-core/src/resource/locks.rs). The key
+            is the SHA-256 (base64url) of lockPath, so a write's check reads by primary key. A row past expiresDate
+            holds nothing and is removed as locks are taken.</description>
+        <field name="lockKey" type="text-short" is-pk="true"/>
+        <field name="lockPath" type="text-long"/>
+        <field name="lockToken" type="text-medium"/>
+        <field name="userId" type="id"/>
+        <field name="ownerXml" type="text-long"><description>The D:owner element the client sent.</description></field>
+        <field name="depthInfinity" type="text-indicator"/>
+        <field name="lockSeconds" type="number-integer"/>
+        <field name="expiresDate" type="date-time"/>
+    </entity>
+
     <entity entity-name="GitLfsLock" package="moqui.resource" use="nontransactional" cache="never">
         <description>A file of a repository locked with git lfs lock, so others do not change it meanwhile.</description>
         <field name="lockId" type="id" is-pk="true"/>

@@ -122,7 +122,7 @@ fn basic(username: &str, password: &str) -> String {
 }
 
 fn body(response: &DavResponse) -> String {
-    String::from_utf8_lossy(&response.body).into_owned()
+    String::from_utf8_lossy(&response.body_bytes().unwrap()).into_owned()
 }
 
 fn header<'a>(response: &'a DavResponse, name: &str) -> Option<&'a str> {
@@ -559,4 +559,115 @@ fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins(
     check("https://public.example:10443");
     moqui_lib::env::set_property("dav_public_url", "https://dav.example/base/");
     assert_eq!(super::public_base_url(factory), "https://dav.example/base");
+}
+
+/// HEAD answers from the file's size and reads nothing of it: with its stored content gone (its size still kept),
+/// HEAD is answered while GET cannot be read; and GET's content is a stream, a range a window of it (HL-010).
+#[test]
+fn head_answers_without_reading_the_file_and_get_streams_it() {
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "alice");
+    let (_, password) = app_password("alice", "Laptop");
+    let alice = Client {
+        factory: context.factory(),
+        authorization: Some(basic("alice", &password)),
+    };
+    let file = "/dav/files/alice/My%20files/head.txt";
+    assert_eq!(alice.send("PUT", file, &[], "hello there").status, 201);
+    let got = alice.send("GET", file, &[("Range", "bytes=6-")], "");
+    assert_eq!(got.status, 206);
+    assert!(got.body.is_empty() && got.stream.is_some(), "{got:?}");
+    assert_eq!(body(&got), "there");
+    // the content goes, its size stays
+    {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let resource = facade
+            .find("moqui.resource.DbResource")
+            .unwrap()
+            .eq("filename", Value::string("head.txt"))
+            .one()
+            .unwrap()
+            .unwrap();
+        let mut stored = facade.make_value("moqui.resource.DbResourceFile").unwrap();
+        stored.set("resourceId", resource.get("resourceId").unwrap().clone());
+        stored.set("fileData", Value::Null);
+        stored.set("blobId", Value::string("GONE"));
+        stored.update(&facade).unwrap();
+    }
+    let head = alice.send("HEAD", file, &[], "");
+    assert_eq!(head.status, 200, "{head:?}");
+    assert_eq!(header(&head, "Content-Length"), Some("11"));
+    assert!(head.body.is_empty() && head.stream.is_none());
+    let got = alice.send("GET", file, &[], "");
+    assert!(
+        got.status != 200 || got.body_bytes().is_err(),
+        "the content cannot be read: {got:?}"
+    );
+}
+
+/// The SFTP view of the drives (`files::tree`), as the SSH server's `sftp-drives` serves it: a write is an upload that
+/// makes a new version, and a user reaches only what the drive lets them, reading a view-only drive and writing none
+/// of it, and not seeing another user's drive at all (HL-010).
+#[test]
+fn the_sftp_tree_writes_versions_and_refuses_what_the_drive_does_not_allow() {
+    use super::files::tree;
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "alice");
+    user(&facade, "bob");
+    login("alice");
+    tree::make_directory("/My files/Docs").unwrap();
+    tree::write("/My files/Docs/a.txt", b"one".to_vec()).unwrap();
+    tree::write("/My files/Docs/a.txt", b"two".to_vec()).unwrap();
+    assert_eq!(tree::read("/My files/Docs/a.txt").unwrap(), b"two");
+    let drive_id = to_plain_string(
+        service("org.moqui.impl.FileServices.get#UserDrives", &[])
+            .get("personalDriveId")
+            .unwrap(),
+    );
+    let versions = service(
+        "org.moqui.impl.FileServices.get#Versions",
+        &[
+            ("driveId", Value::string(&drive_id)),
+            ("path", Value::string("Docs/a.txt")),
+        ],
+    );
+    let Some(Value::List(versions)) = versions.get("versionList") else {
+        panic!("{versions:?}")
+    };
+    assert!(versions.len() >= 2, "each write is a version: {versions:?}");
+    service(
+        "org.moqui.impl.FileServices.create#Drive",
+        &[
+            ("driveName", Value::string("Viewed")),
+            (
+                "memberList",
+                Value::List(vec![Value::Map(indexmap::IndexMap::from([
+                    ("userId".to_string(), Value::string("bob")),
+                    ("permissionEnumId".to_string(), Value::string("RdpView")),
+                ]))]),
+            ),
+        ],
+    );
+    tree::write("/Viewed/shared.txt", b"alice's".to_vec()).unwrap();
+    login("bob");
+    assert_eq!(tree::read("/Viewed/shared.txt").unwrap(), b"alice's");
+    assert!(
+        tree::write("/Viewed/shared.txt", b"bob's".to_vec()).is_err(),
+        "a view-only drive"
+    );
+    assert!(tree::write("/Viewed/new.txt", b"bob's".to_vec()).is_err());
+    assert!(
+        tree::read("/My files/Docs/a.txt").is_err(),
+        "alice's own drive is not bob's"
+    );
+    assert!(tree::stat("/My files/Docs/a.txt").unwrap().is_none());
+    let _ = ExecutionContext::with_current(|ec| ec.message().clear_errors());
+    login("alice");
+    assert_eq!(
+        tree::read("/Viewed/shared.txt").unwrap(),
+        b"alice's",
+        "bob's writes were refused"
+    );
 }

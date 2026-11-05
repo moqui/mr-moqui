@@ -23,8 +23,16 @@
 //! between nodes while watched is not sent twice. A stream follows a ring with a [`Follower`]: its own place in the
 //! ring and the last sequence it sent; a stored event past the next one brings the missing ones from the database
 //! first, so a stream has no gap whatever the ring missed.
+//!
+//! Delivery is proportional to the streams interested in a run (plans/High-Level-Review.md HL-021): an event wakes
+//! only its own run's waiters, each run having its own signal, which they wait on outside the hub's lock, and a waiter
+//! reads only the ring's suffix past its cursor, found by arithmetic since the ring's indices have no holes.
+//!
+//! The replay before a follow, the keep-alive, the stop checks and the settled check around it are
+//! [`super::stream`]'s, shared by every reader of a run's events.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -36,7 +44,7 @@ use serde_json::Value as Json;
 use moqui_core::context::ExecutionContextFactory;
 
 /// Events kept per run.
-const RING: usize = 2048;
+pub(crate) const RING: usize = 2048;
 /// Runs kept; the least recently used ring goes first.
 const RINGS: usize = 512;
 /// How often the remote tail reads.
@@ -56,12 +64,59 @@ pub struct HubEvent {
 #[derive(Default)]
 struct Ring {
     next: u64,
+    /// In index order with no holes (the oldest go first), so the events after a cursor are found by arithmetic.
     events: VecDeque<HubEvent>,
     /// The highest stored sequence put in.
     last_seq: i64,
     /// The stored sequences the ring holds.
     seqs: std::collections::BTreeSet<i64>,
     touched: Option<Instant>,
+    /// The wakeup of this run's waiters only (plans/High-Level-Review.md HL-021).
+    signal: Arc<Signal>,
+}
+
+impl Ring {
+    /// The events after `cursor` (all of them with `None`): the suffix past it, found from the first event's index,
+    /// so only the events a waiter has not read are looked at and cloned.
+    fn after(&self, cursor: Option<u64>) -> Vec<HubEvent> {
+        let Some(first) = self.events.front().map(|event| event.index) else {
+            return Vec::new();
+        };
+        let start = cursor.map_or(0, |cursor| {
+            usize::try_from((cursor + 1).saturating_sub(first)).unwrap_or(usize::MAX)
+        });
+        self.events.range(start.min(self.events.len())..).cloned().collect()
+    }
+}
+
+/// A run's wakeup: the ring's `next` as last published, and a condvar only that run's waiters wait on. Published
+/// after the hub's lock is let go, so a waiter never sleeps on the shared lock's condvar.
+#[derive(Default)]
+struct Signal {
+    published: Mutex<u64>,
+    wake: Condvar,
+}
+
+impl Signal {
+    /// The ring's events through index `next - 1` are in: wake this run's waiters.
+    fn publish(&self, next: u64) {
+        {
+            let mut published = lock(&self.published);
+            *published = (*published).max(next);
+        }
+        self.wake.notify_all();
+    }
+
+    /// Wait up to `timeout` for an event past `seen` (the ring's `next` when the waiter last read it). True when one
+    /// was published, false on the timeout.
+    fn wait_past(&self, seen: u64, timeout: Duration) -> bool {
+        let published = lock(&self.published);
+        if *published > seen {
+            return true;
+        }
+        let (published, result) = wait_timeout(&self.wake, published, timeout);
+        *published > seen || !result.timed_out()
+    }
 }
 
 #[derive(Default)]
@@ -73,11 +128,21 @@ struct State {
     tail_started: bool,
 }
 
+/// What the hub's waiters did, for a check that delivery is proportional to the streams interested in a run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HubStats {
+    /// Waits ended by an event of the waiter's run (not by a timeout).
+    pub wakeups: u64,
+    /// Ring events looked at by the waiters.
+    pub inspected: u64,
+}
+
 /// The hub of one node.
 #[derive(Default)]
 pub struct RunHub {
     state: Mutex<State>,
-    wake: Condvar,
+    wakeups: AtomicU64,
+    inspected: AtomicU64,
 }
 
 impl RunHub {
@@ -85,12 +150,21 @@ impl RunHub {
         Self::default()
     }
 
+    /// What the waiters did so far.
+    pub fn stats(&self) -> HubStats {
+        HubStats {
+            wakeups: self.wakeups.load(Ordering::Relaxed),
+            inspected: self.inspected.load(Ordering::Relaxed),
+        }
+    }
+
     fn ring<'a>(state: &'a mut State, run_id: &str) -> &'a mut Ring {
         if !state.rings.contains_key(run_id) && state.rings.len() >= RINGS {
+            // never a watched ring, or one a waiter waits on (it holds the ring's signal)
             let oldest = state
                 .rings
                 .iter()
-                .filter(|(id, _)| !state.watchers.contains_key(*id))
+                .filter(|(id, ring)| !state.watchers.contains_key(*id) && Arc::strong_count(&ring.signal) == 1)
                 .min_by_key(|(_, ring)| ring.touched)
                 .map(|(id, _)| id.clone());
             if let Some(oldest) = oldest {
@@ -122,19 +196,21 @@ impl RunHub {
         }
     }
 
-    /// A live-only event.
+    /// A live-only event; only the run's own waiters wake.
     pub fn push_live(&self, run_id: &str, event_type: &str, payload: Json) {
-        {
+        let (signal, next) = {
             let mut state = lock(&self.state);
-            Self::push(Self::ring(&mut state, run_id), None, event_type, payload);
-        }
-        self.wake.notify_all();
+            let ring = Self::ring(&mut state, run_id);
+            Self::push(ring, None, event_type, payload);
+            (Arc::clone(&ring.signal), ring.next)
+        };
+        signal.publish(next);
     }
 
     /// Stored events after their commit; one the ring already holds is left out, and one older than the ring's newest
-    /// still goes in (a follower that sent past it leaves it out).
+    /// still goes in (a follower that sent past it leaves it out). Only the run's own waiters wake.
     pub fn push_stored(&self, run_id: &str, events: Vec<(i64, String, Json)>) {
-        {
+        let (signal, next) = {
             let mut state = lock(&self.state);
             let ring = Self::ring(&mut state, run_id);
             for (seq, event_type, payload) in events {
@@ -142,8 +218,9 @@ impl RunHub {
                     Self::push(ring, Some(seq), &event_type, payload);
                 }
             }
-        }
-        self.wake.notify_all();
+            (Arc::clone(&ring.signal), ring.next)
+        };
+        signal.publish(next);
     }
 
     /// The highest stored sequence in the run's ring.
@@ -163,27 +240,26 @@ impl RunHub {
             .map(|event| event.index)
     }
 
-    /// The events after `cursor` (all the ring has with `None`), waiting up to `timeout` for one.
+    /// The events after `cursor` (all the ring has with `None`), waiting up to `timeout` for one. The wait is on the
+    /// run's own signal, outside the hub's lock, so an event of another run wakes nothing here, and a wakeup reads
+    /// only the ring's unread suffix.
     pub fn wait(&self, run_id: &str, cursor: Option<u64>, timeout: Duration) -> Vec<HubEvent> {
         let deadline = Instant::now() + timeout;
-        let mut state = lock(&self.state);
         loop {
-            let found: Vec<HubEvent> = state
-                .rings
-                .get(run_id)
-                .map(|ring| {
-                    ring.events
-                        .iter()
-                        .filter(|event| cursor.is_none_or(|cursor| event.index > cursor))
-                        .cloned()
-                        .collect()
-                })
-                .unwrap_or_default();
+            let (found, signal, seen) = {
+                let mut state = lock(&self.state);
+                let ring = Self::ring(&mut state, run_id);
+                (ring.after(cursor), Arc::clone(&ring.signal), ring.next)
+            };
+            self.inspected
+                .fetch_add(u64::try_from(found.len()).unwrap_or(u64::MAX), Ordering::Relaxed);
             let now = Instant::now();
             if !found.is_empty() || now >= deadline {
                 return found;
             }
-            state = wait_timeout(&self.wake, state, deadline - now).0;
+            if signal.wait_past(seen, deadline - now) {
+                self.wakeups.fetch_add(1, Ordering::Relaxed);
+            }
         }
     }
 

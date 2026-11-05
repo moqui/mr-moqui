@@ -631,12 +631,12 @@ impl AgentTool for Ask {
         let data = question.to_json();
         // the question row is run bookkeeping the runtime writes, as the budget question is, so the fence lifts for it
         // under the run's lease, in one transaction: a node that lost the run leaves no open question behind
-        let node = ctx.events.node().to_string();
+        let holder = ctx.events.holder().clone();
         let stored = {
             let _lifted = fence::lift();
             crate::run::quietly(|| {
                 crate::run::in_tx(&facade, || {
-                    crate::run::held(&facade, &run.run_id, &node, crate::run::Hold::Lease)?;
+                    crate::run::held(&facade, &run.run_id, &holder, crate::run::Hold::Lease)?;
                     let mut row = facade.make_value(QUESTION)?;
                     row.set_sequenced_id_primary(&facade)?;
                     row.set("runId", Value::string(&run.run_id));
@@ -688,10 +688,10 @@ impl AgentTool for Ask {
             super::apps::factory().ok().and_then(|factory| factory.entity()),
         ) {
             let _lifted = fence::lift();
-            let node = ctx.events.node().to_string();
+            let holder = ctx.events.holder().clone();
             let answered = crate::run::quietly(|| {
                 crate::run::in_tx(&facade, || {
-                    crate::run::held(&facade, &run.run_id, &node, crate::run::Hold::Lease)?;
+                    crate::run::held(&facade, &run.run_id, &holder, crate::run::Hold::Lease)?;
                     facade
                         .find(QUESTION)?
                         .eq("runId", Value::string(&run.run_id))

@@ -26,9 +26,9 @@ along with this software (see the LICENSE.md file). If not, see
         <default-response url="."/></transition>
     <transition name="deleteModelRow"><service-call name="delete#moqui.llm.LlmModel"/>
         <default-response url="../ModelList"/></transition>
-    <transition name="testModel"><service-call name="org.moqui.agent.AgentAdminServices.test#Endpoint" in-map="{modelId:modelId}"/>
+    <transition name="testModel" begin-transaction="false"><service-call name="org.moqui.agent.AgentAdminServices.test#Endpoint" in-map="{modelId:modelId}"/>
         <default-response url="."/></transition>
-    <transition name="probeModel"><service-call name="org.moqui.agent.AgentAdminServices.probe#Model" in-map="{modelId:modelId}"/>
+    <transition name="probeModel" begin-transaction="false"><service-call name="org.moqui.agent.AgentAdminServices.probe#Model" in-map="{modelId:modelId}"/>
         <default-response url="."/></transition>
     <transition name="setCapability"><service-call name="org.moqui.agent.AgentAdminServices.set#ModelCapability"/>
         <default-response url="."/></transition>

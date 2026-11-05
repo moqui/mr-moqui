@@ -459,8 +459,12 @@ One transaction spans both databases, as Moqui Java's transaction spans every da
 - **Rollback**: a rollback, or an error in either database, rolls back both.
 - **The edge case**: a file deleted in a transaction whose transactional commit then fails stays deleted.
 
-Each transaction can hold a connection to each database, so the content pool is the size of the transactional one (90).
-The embedded cluster makes room for both. A cluster of servers shares the content database as it shares the
+Each transaction can hold a connection to each database, so the content pool is the size of the transactional one (80).
+Its 72 ordinary connections (8 are reserve) hold the request and service workers' (8 + 25) × 2, one agent worker and a
+connection for each streamed download reading a window at once (the `webroot` webapp's `transfer-workers`, 4): 71. When
+the content shares an external transactional database, that pool holds the same 71. The embedded cluster makes room for
+both pools. Startup refuses a pool too small for the workers, and warns about one too small for the downloads' reads,
+which then read fewer at once. A cluster of servers shares the content database as it shares the
 transactional one, so it needs both external.
 
 ### Search
@@ -537,6 +541,9 @@ plain HTTP listener is HTTP/1.1 only. `webapp_http2=false` keeps HTTPS to HTTP/1
 - **Limits.** One HTTP/2 connection carries at most `webapp_http2_max_streams` (100) requests at once. One with no
   request for `webapp_header_timeout` (30 seconds) is closed with a GOAWAY, as an idle HTTP/1.1 connection is closed,
   and so is a client's connection when web protection refuses that client.
+- **Slow readers.** A connection whose client takes nothing of a response for `webapp_write_timeout` (60 seconds) is
+  closed, a WebSocket's included; a download that keeps moving is not. A WebSocket keeps its connection's place in
+  `webapp_max_connections` and web protection's `max-per-client` until it closes.
 - **Behind a proxy**, HTTP/2 is between the client and the proxy; the proxy may reach the server over HTTP/1.1 or, on
   the HTTPS port, over HTTP/2 (gRPC through a proxy needs HTTP/2 to the server).
 

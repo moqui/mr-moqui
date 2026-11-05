@@ -131,8 +131,9 @@ pub struct EventSink {
     facade: Option<EntityFacade>,
     hub: Arc<RunHub>,
     factory: Weak<ExecutionContextFactory>,
-    /// This node: a flush writes only while it holds the run's lease, or no one does.
-    node: String,
+    /// This node, at the lease generation its claim got: a flush writes only while it holds the run's lease, or no one
+    /// does ([`super::held`]).
+    holder: super::Holder,
     pending: Vec<(String, Json)>,
     signals: Vec<Json>,
     coalesce: Option<Coalesce>,
@@ -152,7 +153,7 @@ impl EventSink {
             facade: Some(facade.clone()),
             hub: super::engine(factory).hub(),
             factory: Arc::downgrade(factory),
-            node: super::engine(factory).node().to_string(),
+            holder: super::Holder::node_only(super::engine(factory).node()),
             pending: Vec::new(),
             signals: Vec::new(),
             coalesce: None,
@@ -171,7 +172,7 @@ impl EventSink {
             facade: None,
             hub: Arc::clone(&self.hub),
             factory: self.factory.clone(),
-            node: self.node.clone(),
+            holder: self.holder.clone(),
             pending: Vec::new(),
             signals: Vec::new(),
             coalesce: None,
@@ -197,7 +198,17 @@ impl EventSink {
     }
 
     pub fn node(&self) -> &str {
-        &self.node
+        self.holder.node()
+    }
+
+    /// Who this sink writes for: the node, and the lease generation of the claim it writes under.
+    pub fn holder(&self) -> &super::Holder {
+        &self.holder
+    }
+
+    /// Write under the claim at `generation` from now on, or (`None`) as a writer that claimed nothing.
+    pub(crate) fn hold_at(&mut self, generation: Option<i64>) {
+        self.holder.set_generation(generation);
     }
 
     /// Drop what is pending: the run's lease went to another node, which writes its events now.
@@ -312,7 +323,7 @@ impl EventSink {
         let in_place = tx.in_transaction();
         let pending = std::mem::take(&mut self.pending);
         let written = tx.run(TransactionAttribute::UseOrBegin, None, || {
-            write_events(&facade, &self.run_id, &self.node, &pending)
+            write_events(&facade, &self.run_id, &self.holder, &pending)
         });
         let stored = match written {
             Ok(stored) => stored,
@@ -361,13 +372,13 @@ impl EventSink {
 fn write_events(
     facade: &EntityFacade,
     run_id: &str,
-    node: &str,
+    holder: &super::Holder,
     events: &[(String, Json)],
 ) -> Result<Vec<(i64, String, Json)>, Error> {
     if events.is_empty() {
         return Ok(Vec::new());
     }
-    let mut run = super::held(facade, run_id, node, super::Hold::LeaseOrNone)?;
+    let mut run = super::held(facade, run_id, holder, super::Hold::LeaseOrNone)?;
     let mut seq = crate::int_of(&run, "lastEventSeq").unwrap_or_default();
     let now = moqui_core::user::stamp_value(jiff::Timestamp::now().as_millisecond());
     let mut stored = Vec::with_capacity(events.len());

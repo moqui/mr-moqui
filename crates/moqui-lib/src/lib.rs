@@ -32,6 +32,8 @@ pub mod json;
 pub mod markdown;
 pub mod node;
 pub mod object;
+pub mod reconnect;
+pub mod remote_login;
 pub mod resource;
 pub mod safe_html;
 pub mod signer;

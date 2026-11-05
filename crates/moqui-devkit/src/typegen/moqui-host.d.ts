@@ -223,6 +223,11 @@ interface EntityFind<N extends string = string> {
     count(): number;
     /** How many rows were deleted. */
     deleteAll(): number;
+    /**
+     * Delete the rows a chunk at a time by primary key, each chunk committed on its own; a failed chunk is logged and
+     * passed over, and no chunk begins after `maxSeconds`. How many rows the committed chunks deleted.
+     */
+    purge(maxSeconds?: number, chunkSize?: number): number;
     getLimit(): number | null;
     getOffset(): number | null;
     /** `offset / pageSize`, 0 with no offset. */

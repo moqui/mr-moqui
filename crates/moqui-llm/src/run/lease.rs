@@ -21,6 +21,16 @@
 //! The recovery sweep (on the scheduler's tick, and once at startup) takes over a Submitted or Working run whose lease
 //! expired or that has none: at most [`MAX_ATTEMPTS`](super::MAX_ATTEMPTS) attempts in all, then it fails. The run
 //! resumes from its last stored step; a tool call left running becomes `UnknownOutcome` ([`super::step`]).
+//!
+//! Every claim but a renewal moves the run's `leaseGeneration` on, and the claimer writes at that generation
+//! ([`super::Holder`]): each write checks the owner and the generation under the run row's lock ([`super::held`]), so
+//! a node that lost the run without its keeper noticing (a renewal that failed past the lease) writes nothing more,
+//! even once it claims the run again (plans/High-Level-Review.md HL-042).
+//!
+//! Expiry is each node's own clock against the stored `leaseExpireDate`. A node whose clock runs ahead of the holder's
+//! by more than the lease less one heartbeat (45 seconds by default) takes over a healthy run; the generation fence
+//! makes that cost a takeover and an attempt (the old holder stops at its next write), never two writers. Keep the
+//! nodes' clocks within a few seconds of each other (NTP), well inside that bound.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -46,38 +56,50 @@ pub(crate) fn lease_millis(factory: &ExecutionContextFactory) -> i64 {
 ///
 /// Returns an error when the row cannot be written.
 pub fn claim(facade: &EntityFacade, run_id: &str, owner: &str, lease: i64) -> Result<bool, Error> {
+    Ok(claim_generation(facade, run_id, owner, lease)?.is_some())
+}
+
+/// [`claim`], with the lease generation `owner` holds the run at now; `None` when another node holds it. A renewal
+/// (the lease is `owner`'s already, lapsed or not) keeps the generation; any other claim (a free run, one whose lease
+/// another node let lapse) moves it on by one, so the writes of an older holding are refused ([`super::held`],
+/// plans/High-Level-Review.md HL-042). The row is read for update and written in a transaction of its own.
+///
+/// # Errors
+///
+/// Returns an error when the row cannot be read or written.
+pub fn claim_generation(facade: &EntityFacade, run_id: &str, owner: &str, lease: i64) -> Result<Option<i64>, Error> {
     let now = now_millis();
     facade
         .transactions_for(RUN)?
         .run(TransactionAttribute::ForceNew, None, || {
-            let updated = facade
+            let Some(mut row) = facade
                 .find(RUN)?
                 .eq("runId", Value::string(run_id))
-                .condition(Condition::is_null("externalHarnessId"))
-                .condition(Condition::or(vec![
-                    Condition::is_null("leaseOwner"),
-                    Condition::equals("leaseOwner", Value::string(owner)),
-                    Condition::less("leaseExpireDate", stamp(now)),
-                ]))
                 .for_update(true)
                 .disable_authz()
-                .update_all([
-                    ("leaseOwner".to_string(), Value::string(owner)),
-                    ("leaseExpireDate".to_string(), stamp(now + lease)),
-                ])?;
-            if updated > 0 {
-                return Ok(true);
-            }
-            // a renewal within the same millisecond changes nothing
-            Ok(facade
-                .find(RUN)?
-                .eq("runId", Value::string(run_id))
-                .condition(Condition::is_null("externalHarnessId"))
-                .disable_authz()
                 .one()?
-                .and_then(|row| crate::text_of(&row, "leaseOwner"))
-                .as_deref()
-                == Some(owner))
+            else {
+                return Ok(None);
+            };
+            // an external harness works the run, never this engine
+            if crate::text_of(&row, "externalHarnessId").is_some() {
+                return Ok(None);
+            }
+            let holder = crate::text_of(&row, "leaseOwner");
+            let renewal = holder.as_deref() == Some(owner);
+            let lapsed = row
+                .get("leaseExpireDate")
+                .and_then(crate::millis_of)
+                .is_some_and(|expires| expires < now);
+            if !renewal && holder.is_some() && !lapsed {
+                return Ok(None);
+            }
+            let generation = crate::int_of(&row, "leaseGeneration").unwrap_or(0) + i64::from(!renewal);
+            row.set("leaseOwner", Value::string(owner));
+            row.set("leaseExpireDate", stamp(now + lease));
+            row.set("leaseGeneration", Value::I64(generation));
+            row.update(facade)?;
+            Ok(Some(generation))
         })
 }
 
@@ -273,10 +295,11 @@ pub fn sweep(factory: &Arc<ExecutionContextFactory>) -> Result<usize, Error> {
 
 fn take_over(factory: &Arc<ExecutionContextFactory>, facade: &EntityFacade, run: &RunRow) -> Result<bool, Error> {
     let engine = engine(factory);
-    if !claim(facade, &run.run_id, engine.node(), lease_millis(factory))? {
+    let Some(generation) = claim_generation(facade, &run.run_id, engine.node(), lease_millis(factory))? else {
         return Ok(false);
-    }
+    };
     let mut sink = EventSink::new(factory, facade, &run.run_id, &run.user_id);
+    sink.hold_at(Some(generation));
     if run.cancel_requested {
         super::transition(
             facade,
@@ -323,7 +346,7 @@ fn take_over(factory: &Arc<ExecutionContextFactory>, facade: &EntityFacade, run:
         engine.node(),
         run.lease_owner.as_deref().unwrap_or("no one")
     );
-    engine.local(&run.run_id);
+    engine.claimed(&run.run_id, generation);
     if let Err(error) = super::pool::submit(factory, &run.run_id) {
         tracing::error!(
             "agent run {} could not be queued after its takeover: {error}",

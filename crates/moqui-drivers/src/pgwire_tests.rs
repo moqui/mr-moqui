@@ -16,7 +16,9 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
-use super::{has_error_message, tag_rows, Endpoint, Wire};
+use std::time::{Duration, Instant};
+
+use super::{cancel_within, has_error_message, tag_rows, Endpoint, Wire};
 
 fn provider() -> Arc<rustls::crypto::CryptoProvider> {
     Arc::new(rustls::crypto::aws_lc_rs::default_provider())
@@ -401,4 +403,97 @@ fn has_error_message_looks_only_into_whole_messages() {
     // An error whose kind and length came in is enough, and a length under 4 stops the scan.
     assert!(has_error_message(&[&notice[..], b"E\0\0\0\x20"].concat()));
     assert!(!has_error_message(&[b"N\0\0\0\x03".as_slice(), &error[..]].concat()));
+}
+
+/// A server that takes connections and then says nothing, as a host whose database has stopped answering. The streams
+/// are kept open until the test ends.
+fn stalled_server() -> (u16, Arc<std::sync::Mutex<Vec<TcpStream>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let held = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let keep = Arc::clone(&held);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { return };
+            keep.lock().unwrap().push(stream);
+        }
+    });
+    (port, held)
+}
+
+fn tls_endpoint(port: u16) -> Endpoint {
+    let client_config = rustls::ClientConfig::builder_with_provider(provider())
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(rustls::RootCertStore::empty())
+        .with_no_client_auth();
+    Endpoint::Tcp {
+        host: "localhost".to_string(),
+        port,
+        tls: Some(Arc::new(client_config)),
+    }
+}
+
+/// A server that accepts TCP and then stalls, in the startup or in the TLS request: the connection and a cancel each
+/// end within their own time (plans/High-Level-Review.md HL-019).
+#[test]
+fn a_server_that_stalls_after_accepting_bounds_connect_and_cancel() {
+    let (port, _held) = stalled_server();
+    let limit = Duration::from_millis(300);
+    let plain = Endpoint::Tcp {
+        host: "127.0.0.1".to_string(),
+        port,
+        tls: None,
+    };
+    for endpoint in [plain, tls_endpoint(port)] {
+        let started = Instant::now();
+        let err = Wire::connect_within(&endpoint, "moqui", "moqui", None, None, limit)
+            .err()
+            .expect("no answer");
+        assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+        // the startup's "did not answer in time", or the TLS request's read that timed out
+        assert!(err.to_string().starts_with("postgres"), "{err}");
+    }
+    let started = Instant::now();
+    let err = cancel_within(&tls_endpoint(port), 7, 9, limit).expect_err("no TLS answer");
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+    assert!(err.to_string().contains("postgres"), "{err}");
+}
+
+/// After the startup a read waits no longer than the read timeout the manager sets, and the connection is then
+/// closed: its reply can no longer be told from the next.
+#[test]
+fn a_read_past_its_timeout_fails_and_closes_the_connection() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut tcp, _) = listener.accept().unwrap();
+        let mut len = [0u8; 4];
+        tcp.read_exact(&mut len).unwrap();
+        let mut startup = vec![0u8; u32::from_be_bytes(len) as usize - 4];
+        tcp.read_exact(&mut startup).unwrap();
+        let mut reply = message(b'R', &0_i32.to_be_bytes());
+        reply.extend(message(b'K', &[0, 0, 0, 7, 0, 0, 0, 9]));
+        reply.extend(message(b'Z', b"I"));
+        tcp.write_all(&reply).unwrap();
+        let (tag, _) = read_message(&mut tcp);
+        assert_eq!(tag, b'Q');
+        // no answer: hold the connection until the client lets go of it
+        let mut rest = Vec::new();
+        let _ = tcp.read_to_end(&mut rest);
+    });
+    let endpoint = Endpoint::Tcp {
+        host: "127.0.0.1".to_string(),
+        port,
+        tls: None,
+    };
+    let mut wire = Wire::connect(&endpoint, "moqui", "moqui", None, None).unwrap();
+    wire.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
+    let started = Instant::now();
+    let err = wire.simple("SELECT 1", "query").expect_err("no answer");
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+    assert!(err.to_string().contains("no answer"), "{err}");
+    assert!(wire.is_dead());
+    drop(wire);
+    server.join().unwrap();
 }

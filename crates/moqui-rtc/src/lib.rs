@@ -39,6 +39,6 @@ pub mod tap;
 pub mod turn;
 
 pub use sfu::{
-    Layer, LegKey, Proto, RelayMessage, RelayRole, Sfu, SfuConfig, SfuError, SfuEvent, SfuOutput, Source, TapId,
-    Transmit,
+    Layer, LegKey, Proto, RelayMessage, RelayRole, Sfu, SfuConfig, SfuError, SfuEvent, SfuOutput, SfuStats, Source,
+    TapId, Transmit,
 };

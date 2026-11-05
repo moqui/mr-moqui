@@ -18,7 +18,8 @@
 //! - **Listeners.** `xmpp_port` (STARTTLS) on `xmpp_host` and `xmpp_tls_port` (direct TLS, ALPN `xmpp-client`) on
 //!   `xmpp_tls_host`, each off while empty, on a small Tokio runtime of their own; the certificates from `runtime/cert`
 //!   by the name the client asks for ([`crate::tls::CertStore`]: the domain, `rooms.` and `upload.`, else `default`).
-//!   At most [`PER_SOURCE`] connections from one address at once and [`MAX_CONNECTIONS`] in all, WebSockets included.
+//!   At most [`PER_SOURCE`] connections from one source at once (an IPv6 /64 is one, an IPv4-mapped address is its IPv4
+//!   one, [`moqui_lib::source_guard::source_key`]) and [`MAX_CONNECTIONS`] in all, WebSockets included.
 //!   `/xmpp-websocket` (RFC 7395) on the HTTP listener
 //!   when `xmpp_websocket_enabled` ([`ws`]), and `/xmpp-upload/` for files ([`upload`]).
 //! - **Settings.** External services (XEP-0215) hand out TURN credentials only with `xmpp_turn_enabled`; the SCRAM salts
@@ -35,7 +36,7 @@
 pub(crate) mod upload;
 pub(crate) mod ws;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
@@ -50,16 +51,15 @@ use serde_json::Value as Json;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
-/// Connections from one address at once.
+/// Connections from one source (an IPv4 address, an IPv6 /64) at once.
 const PER_SOURCE: usize = 20;
 /// Connections at once in all (TCP and WebSocket).
 const MAX_CONNECTIONS: usize = 10_000;
 
-/// Open connections by source address.
-type Sources = Arc<Mutex<HashMap<IpAddr, usize>>>;
+/// Open connections by source, against [`PER_SOURCE`] and [`MAX_CONNECTIONS`].
+type Sources = moqui_lib::source_guard::SourceSlots;
 
 /// The running server of this process, for the HTTP routes and the tests.
-#[derive(Default)]
 pub struct XmppSlot {
     pub server: Mutex<Option<Arc<Server>>>,
     /// The STARTTLS and direct TLS listeners' addresses.
@@ -68,6 +68,17 @@ pub struct XmppSlot {
     sources: Sources,
     /// What a stream tunneled from an edge node is served with, while the server runs.
     intake: Mutex<Option<Intake>>,
+}
+
+impl Default for XmppSlot {
+    fn default() -> Self {
+        XmppSlot {
+            server: Mutex::default(),
+            addresses: Mutex::default(),
+            sources: Sources::new(MAX_CONNECTIONS, PER_SOURCE),
+            intake: Mutex::default(),
+        }
+    }
 }
 
 /// The TLS settings of both kinds of client connection and the server's runtime, so a tunneled stream is served as a
@@ -101,40 +112,12 @@ impl Intake {
 }
 
 /// A connection counted against its source and the total; dropping it gives the place back.
-pub(crate) struct Admitted {
-    sources: Sources,
-    ip: IpAddr,
-}
+pub(crate) type Admitted = moqui_lib::source_guard::SourceSlot;
 
-impl Drop for Admitted {
-    fn drop(&mut self) {
-        let mut open = lock(&self.sources);
-        if let Some(count) = open.get_mut(&self.ip) {
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                open.remove(&self.ip);
-            }
-        }
-    }
-}
-
-/// A place for a connection from `ip`; None when that source has [`PER_SOURCE`] open or the server
+/// A place for a connection from `ip`; None when its source (an IPv6 /64) has [`PER_SOURCE`] open or the server
 /// [`MAX_CONNECTIONS`].
 fn admit(sources: &Sources, ip: IpAddr) -> Option<Admitted> {
-    let mut open = lock(sources);
-    let total: usize = open.values().sum();
-    let count = open.entry(ip).or_insert(0);
-    if *count >= PER_SOURCE || total >= MAX_CONNECTIONS {
-        if *count == 0 {
-            open.remove(&ip);
-        }
-        return None;
-    }
-    *count += 1;
-    Some(Admitted {
-        sources: Arc::clone(sources),
-        ip,
-    })
+    sources.take(ip).ok()
 }
 
 /// A place for a WebSocket connection from `ip`, counted with the TCP ones.
@@ -291,7 +274,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> 
     let slot = factory.extension(|_| XmppSlot::default());
     *lock(&slot.server) = Some(Arc::clone(&server));
     let runtime_dir = factory.runtime_dir().to_path_buf();
-    let sources = Arc::clone(&slot.sources);
+    let sources = slot.sources.clone();
     // both kinds' TLS, made for a listener here or for the first stream an edge node tunnels here
     let intake = Intake {
         runtime_dir: Arc::from(runtime_dir.as_path()),
@@ -350,7 +333,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<XmppNode> 
             Arc::clone(&server),
             acceptor,
             direct,
-            Arc::clone(&sources),
+            sources.clone(),
         ));
     }
     *lock(&slot.addresses) = addresses;
@@ -510,3 +493,6 @@ fn run_service(caller: &Caller, service: &str, parameters: &Json) -> Result<Resu
         .collect();
     Ok(Ok(Json::Object(map)))
 }
+
+#[cfg(test)]
+mod tests;

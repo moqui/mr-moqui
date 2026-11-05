@@ -3392,15 +3392,16 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="send" noun="Draft">
+    <service verb="send" noun="Draft" transaction="ignore">
         <description>
             Send a draft (or retry a send that failed) from an account the user may send from, through the account's server
             (org.moqui.impl.EmailServices.send#EmailMessage). With a scheduledSendDate in the future it waits in the Outbox
             as ES_SCHEDULED; with holdSeconds (the undo-send hold) it waits that long; cancel#ScheduledSend takes either
-            back to Drafts, and send#DueDrafts sends it when the time comes. Otherwise it goes now: once sent it is in the
-            Sent folder (and the message it answers is marked answered); a send that fails waits in the Outbox (ES_READY)
-            with sendError, for a retry. It runs in one transaction, the caller's when there is one, so a draft saved
-            earlier in the same transaction sends.
+            back to Drafts, and send#DueDrafts sends it when the time comes. Otherwise it goes now (deliver#DraftMessage):
+            once sent it is in the Sent folder (and the message it answers is marked answered); a send that fails waits in
+            the Outbox (ES_READY) with sendError, for a retry. Called in a transaction (a draft saved earlier in it, which
+            only that transaction sees), the message is claimed in it and sent once it commits (deliver#ClaimedDraft):
+            the answer is ES_READY with sent false and no sendError, as for a send under way.
         </description>
         <in-parameters>
             <parameter name="emailMessageId" required="true"/>
@@ -3462,6 +3463,18 @@ along with this software (see the LICENSE.md file). If not, see
                 scheduledSendDate = sendAt
                 return
             }
+            if (ec.transaction.isTransactionInPlace()) {
+                // the caller's transaction may hold the draft it saved: claimed in it, and sent after it commits, with no
+                // transaction held during the SMTP session
+                const claimed = ec.service.sync().name('org.moqui.impl.EmailClientServices.claim#DraftSend').parameters({
+                    emailMessageId: emailMessageId, fromStatusIdList: ['ES_DRAFT', 'ES_READY'], toStatusId: 'ES_READY'}).disableAuthz().call()
+                if (ec.message.hasError()) return
+                if (!claimed.claimed) { ec.message.addError(`Email message ${emailMessageId} is not a draft`); return }
+                ec.service.special().name('org.moqui.impl.EmailClientServices.deliver#ClaimedDraft')
+                        .parameters({emailMessageId: emailMessageId, claimDate: claimed.sendClaimDate}).registerOnCommit()
+                statusId = 'ES_READY'
+                return
+            }
             const result = ec.service.sync().name('org.moqui.impl.EmailClientServices.deliver#DraftMessage')
                     .parameters({emailMessageId: emailMessageId, fromStatusIdList: ['ES_DRAFT', 'ES_READY']}).disableAuthz().call()
             if (ec.message.hasError()) return
@@ -3500,16 +3513,20 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Internal (authorization disabled): move a message from one of fromStatusIdList to toStatusId
             (ES_SCHEDULED with its scheduledSendDate, or ES_READY to send now) under a row lock, out of its folder (the
             Outbox), and set its server from its account. claimed is false when its status was not one of them, as when
-            another send or a cancel got there first.</description>
+            another send or a cancel got there first. sendClaimDate is the claim's, which record#SendResult checks.</description>
         <in-parameters>
             <parameter name="emailMessageId" required="true"/>
             <parameter name="fromStatusIdList" type="List"/>
             <parameter name="toStatusId" required="true"/>
             <parameter name="scheduledSendDate" type="Timestamp"/>
         </in-parameters>
-        <out-parameters><parameter name="claimed" type="Boolean"/></out-parameters>
+        <out-parameters>
+            <parameter name="claimed" type="Boolean"/>
+            <parameter name="sendClaimDate" type="Timestamp"/>
+        </out-parameters>
         <actions><script><![CDATA[
             claimed = false
+            sendClaimDate = null
             if (!ec.artifactExecution.authzDisabled()) { ec.message.addError(ec.l10n.localize('claim#DraftSend is internal')); return }
             const from = fromStatusIdList && fromStatusIdList.length ? fromStatusIdList : ['ES_DRAFT', 'ES_READY']
             const message = ec.entity.find('moqui.basic.email.EmailMessage').condition('emailMessageId', emailMessageId).forUpdate(true).one()
@@ -3524,23 +3541,34 @@ along with this software (see the LICENSE.md file). If not, see
                 emailServerId: account?.emailServerId || message.emailServerId}, true, null, null)
             message.update()
             claimed = true
+            sendClaimDate = message.sendClaimDate ?? null
         ]]></script></actions>
     </service>
-    <service verb="deliver" noun="DraftMessage">
-        <description>Internal (authorization disabled), for send#Draft and send#DueDrafts: claim the message (claim#DraftSend
-            to ES_READY, from fromStatusIdList), send it (org.moqui.impl.EmailServices.send#EmailMessage), then record the
-            result (record#SendResult), all in one transaction: send#EmailMessage writes a client message's Sent status in
-            it and gives its failures as sendError, not as errors. An error of the send itself rolls the claim back, so the
-            message is as it was.</description>
+    <service verb="deliver" noun="DraftMessage" transaction="ignore">
+        <description>Internal (authorization disabled), for send#Draft and send#DueDrafts, in three steps that each hold
+            a transaction only while they write: claim the message (claim#DraftSend to ES_READY, from fromStatusIdList)
+            and commit the claim; send it (org.moqui.impl.EmailServices.send#EmailMessage with markSent false) with no
+            transaction, within the SMTP session limit; then record the result (record#SendResult) in a new transaction,
+            if the claim is still the message's. A send that went out is never rolled back to be sent again: when the
+            result cannot be recorded the message stays claimed (ES_READY, no sendError) until send#DueDrafts finds it
+            stopped and shows it in the Outbox. An error of the send itself, or a session whose outcome is not known, is
+            its sendError: it waits in the Outbox and is not sent again on its own. claimDate is a claim made already
+            (deliver#ClaimedDraft): the message is sent only while that claim is its own. deliveryOutcome is
+            send#EmailMessage's (retryable, permanent, uncertain) when the send failed. Called in a transaction (by a
+            service that made the message in it: a rule's forward, an unsubscribe, an automatic reply, a test message),
+            the claim, the send and its result are all in that transaction, which alone sees the message; send#Draft
+            instead claims in its caller's transaction and sends after the commit.</description>
         <in-parameters>
             <parameter name="emailMessageId" required="true"/>
             <parameter name="fromStatusIdList" type="List"/>
+            <parameter name="claimDate" type="Timestamp"/>
         </in-parameters>
         <out-parameters>
             <parameter name="sent" type="Boolean"/>
             <parameter name="claimed" type="Boolean"/>
             <parameter name="messageId"/>
             <parameter name="sendError"/>
+            <parameter name="deliveryOutcome"/>
             <parameter name="statusId"/>
         </out-parameters>
         <actions><script><![CDATA[
@@ -3548,39 +3576,121 @@ along with this software (see the LICENSE.md file). If not, see
             claimed = false
             messageId = null
             sendError = null
+            deliveryOutcome = null
             statusId = null
             if (!ec.artifactExecution.authzDisabled()) { ec.message.addError(ec.l10n.localize('deliver#DraftMessage is internal')); return }
-            const claim = ec.service.sync().name('org.moqui.impl.EmailClientServices.claim#DraftSend').parameters({
-                emailMessageId: emailMessageId, fromStatusIdList: fromStatusIdList, toStatusId: 'ES_READY'}).call()
-            if (ec.message.hasError()) return
-            claimed = claim.claimed === true
-            if (!claimed) return
-            const result = ec.service.sync().name('org.moqui.impl.EmailServices.send#EmailMessage').parameter('emailMessageId', emailMessageId).call()
-            if (ec.message.hasError()) return
-            messageId = result?.messageId || null
-            sendError = result?.sendError || (messageId ? null : 'The message was not sent')
+            const MESSAGE = 'moqui.basic.email.EmailMessage'
+            if (ec.transaction.isTransactionInPlace() && claimDate == null) {
+                // a caller's transaction, which may hold the message it made (a rule's forward, an automatic reply): the
+                // claim, the send and its result all in it, as only that transaction sees the message
+                const claim = ec.service.sync().name('org.moqui.impl.EmailClientServices.claim#DraftSend').parameters({
+                    emailMessageId: emailMessageId, fromStatusIdList: fromStatusIdList, toStatusId: 'ES_READY'}).call()
+                if (ec.message.hasError()) return
+                claimed = claim.claimed === true
+                if (!claimed) return
+                const result = ec.service.sync().name('org.moqui.impl.EmailServices.send#EmailMessage').parameter('emailMessageId', emailMessageId).call()
+                if (ec.message.hasError()) return
+                messageId = result?.messageId || null
+                sendError = result?.sendError || (messageId ? null : 'The message was not sent')
+                deliveryOutcome = sendError ? (result?.deliveryOutcome || null) : null
+                const recorded = ec.service.sync().name('org.moqui.impl.EmailClientServices.record#SendResult').parameters({
+                    emailMessageId: emailMessageId, messageId: messageId, sendError: sendError}).call()
+                if (ec.message.hasError()) return
+                sent = sendError == null
+                statusId = recorded.statusId ?? null
+                if (!sent) ec.logger.warn(`Email message ${emailMessageId} was not sent: ${sendError}`)
+                return
+            }
+            // 1. the claim, committed before the session, so a send that goes out is never claimed again
+            let sendClaimDate = claimDate
+            if (sendClaimDate == null) {
+                const claim = ec.service.sync().name('org.moqui.impl.EmailClientServices.claim#DraftSend').parameters({
+                    emailMessageId: emailMessageId, fromStatusIdList: fromStatusIdList, toStatusId: 'ES_READY'}).requireNewTransaction(true).call()
+                if (ec.message.hasError()) return
+                claimed = claim.claimed === true
+                if (!claimed) return
+                sendClaimDate = claim.sendClaimDate
+            } else {
+                const row = ec.entity.find(MESSAGE).condition('emailMessageId', emailMessageId).useCache(false).one()
+                claimed = row != null && row.statusId === 'ES_READY' && !row.sendError && Number(row.sendClaimDate) === Number(sendClaimDate)
+                if (!claimed) return
+            }
+            // 2. the session, with no transaction or connection held; an error of the send is its sendError
+            ec.message.pushErrors()
+            let result = null
+            let failure = null
+            try {
+                result = ec.service.sync().name('org.moqui.impl.EmailServices.send#EmailMessage').parameters({emailMessageId: emailMessageId, markSent: false})
+                        .ignoreTransaction(true).requireNewTransaction(true).call()
+                if (ec.message.hasError()) failure = ec.message.errorsString
+            } catch (err) {
+                failure = String(err?.message || err)
+            }
+            ec.message.clearErrors()
+            ec.message.popErrors()
+            if (failure) {
+                ec.logger.log('error', `The send of email message ${emailMessageId} failed: ${failure}`)
+                sendError = failure
+            } else {
+                messageId = result?.messageId || null
+                sendError = result?.sendError || (messageId ? null : 'The message was not sent')
+                deliveryOutcome = sendError ? (result?.deliveryOutcome || null) : null
+            }
+            // 3. the result, in a new transaction, while the claim is still the message's
             const recorded = ec.service.sync().name('org.moqui.impl.EmailClientServices.record#SendResult').parameters({
-                emailMessageId: emailMessageId, messageId: messageId, sendError: sendError}).call()
-            if (ec.message.hasError()) return
+                emailMessageId: emailMessageId, messageId: messageId, sendError: sendError, claimDate: sendClaimDate}).requireNewTransaction(true).call()
+            if (ec.message.hasError()) {
+                ec.logger.log('error', `The result of the send of email message ${emailMessageId} (${sendError ? 'not sent: ' + sendError : 'sent'}) could not be recorded; it waits as being sent until send#DueDrafts shows it in the Outbox: ${ec.message.errorsString}`)
+                return
+            }
             sent = sendError == null
             statusId = recorded.statusId ?? null
             if (!sent) ec.logger.warn(`Email message ${emailMessageId} was not sent: ${sendError}`)
         ]]></script></actions>
     </service>
+    <service verb="deliver" noun="ClaimedDraft" transaction="ignore" allow-remote="false">
+        <description>Internal: for send#Draft called in a transaction, registered to run once it commits, the send of the
+            message it claimed (deliver#DraftMessage with claimDate, the claim's sendClaimDate). Nothing is sent when the
+            claim is no longer the message's.</description>
+        <in-parameters>
+            <parameter name="emailMessageId" required="true"/>
+            <parameter name="claimDate" type="Timestamp" required="true"/>
+        </in-parameters>
+        <actions><script><![CDATA[
+            const result = ec.service.sync().name('org.moqui.impl.EmailClientServices.deliver#DraftMessage')
+                    .parameters({emailMessageId: emailMessageId, claimDate: claimDate}).disableAuthz().call()
+            if (ec.message.hasError()) return
+            if (!result.claimed) ec.logger.warn(`Email message ${emailMessageId} was not sent: its send claim is no longer its own`)
+        ]]></script></actions>
+    </service>
     <service verb="record" noun="SendResult">
         <description>Internal (authorization disabled): after send#EmailMessage, a sent message goes to its account's Sent
             folder, read, dated when it was sent, and the message it replies to is marked answered; one that failed stays
-            in the Outbox (ES_READY, no folder) with sendError.</description>
+            in the Outbox (ES_READY, no folder) with sendError. With claimDate, only while that send claim is the message's:
+            ES_READY with that sendClaimDate, or with the sendError fail#StoppedSend gave it meanwhile, which the result
+            replaces. Otherwise (taken back to Drafts, or claimed by another send) nothing changes and recorded is false.</description>
         <in-parameters>
             <parameter name="emailMessageId" required="true"/>
             <parameter name="messageId" allow-html="any"/>
             <parameter name="sendError" allow-html="any"/>
+            <parameter name="claimDate" type="Timestamp"/>
         </in-parameters>
-        <out-parameters><parameter name="statusId"/></out-parameters>
+        <out-parameters>
+            <parameter name="statusId"/>
+            <parameter name="recorded" type="Boolean"/>
+        </out-parameters>
         <actions><script><![CDATA[
+            recorded = false
             if (!ec.artifactExecution.authzDisabled()) { ec.message.addError(ec.l10n.localize('record#SendResult is internal')); return }
             const message = ec.entity.find('moqui.basic.email.EmailMessage').condition('emailMessageId', emailMessageId).forUpdate(true).one()
-            if (message == null) return
+            if (message == null) { ec.logger.warn(`Email message ${emailMessageId} is gone; its send result is not recorded`); return }
+            statusId = message.statusId
+            if (claimDate != null && !(message.statusId === 'ES_READY' && (message.sendClaimDate != null
+                    ? Number(message.sendClaimDate) === Number(claimDate) : !!message.sendError))) {
+                ec.logger.warn(`The send claim of email message ${emailMessageId} is no longer its own (now ${message.statusId}); its send result (${sendError ? 'not sent: ' + sendError : 'sent'}) is not recorded`)
+                return
+            }
+            recorded = true
             if (sendError) {
                 message.setFields({sendError: String(sendError).substring(0, 4000), emailFolderId: null, sendClaimDate: null}, true, null, null)
                 if (message.statusId !== 'ES_SENT') message.set('statusId', 'ES_READY')
@@ -3639,10 +3749,14 @@ along with this software (see the LICENSE.md file). If not, see
             that fails is logged, waits in the Outbox with its error, and the rest go on. The job run (no emailMessageId)
             first finds mail client sends that stopped without a result, claimed more than 15 minutes ago and still being
             sent, and gives each a sendError (fail#StoppedSend) so it waits in the Outbox; it does not send them again, as
-            they may have gone out.</description>
+            they may have gone out. Each message is claimed, sent and recorded on its own (deliver#DraftMessage), so no
+            transaction is held during a session. One account cannot hold up the others: the due messages go in turn
+            across the accounts, an account whose server failed (retryable or uncertain) sends no more in this run, and
+            no send starts after timeBudgetSeconds; what is left goes at the next run.</description>
         <in-parameters>
             <parameter name="emailMessageId"/>
             <parameter name="limit" type="Integer" default="200"/>
+            <parameter name="timeBudgetSeconds" type="Integer" default="45"/>
         </in-parameters>
         <out-parameters>
             <parameter name="sentCount" type="Integer"/>
@@ -3655,6 +3769,7 @@ along with this software (see the LICENSE.md file). If not, see
             stoppedCount = 0
             const MESSAGE = 'moqui.basic.email.EmailMessage'
             const nowMillis = Number(ec.user.nowTimestamp)
+            const accountOf = new Map()
             let ids
             if (emailMessageId) {
                 const message = ec.entity.find(MESSAGE).condition('emailMessageId', emailMessageId).one()
@@ -3696,23 +3811,54 @@ along with this software (see the LICENSE.md file). If not, see
                     ec.message.clearErrors()
                     ec.message.popErrors()
                 }
-                ids = Array.from(ec.entity.find(MESSAGE).condition('statusId', 'ES_SCHEDULED')
+                const due = Array.from(ec.entity.find(MESSAGE).condition('statusId', 'ES_SCHEDULED')
                         .condition(ec.entity.conditionFactory.makeCondition('scheduledSendDate', 'less-equals', ec.user.nowTimestamp))
-                        .selectField('emailMessageId').orderBy('scheduledSendDate').orderBy('emailMessageId').limit(limit > 0 ? limit : 200).list())
-                        .map((row) => row.emailMessageId)
+                        .selectField('emailMessageId').selectField('emailAccountId').orderBy('scheduledSendDate').orderBy('emailMessageId')
+                        .limit(limit > 0 ? limit : 200).list())
+                // in turn across the accounts, each account's oldest first
+                const byAccount = new Map()
+                for (const row of due) {
+                    const key = row.emailAccountId || ''
+                    accountOf.set(row.emailMessageId, key)
+                    if (!byAccount.has(key)) byAccount.set(key, [])
+                    byAccount.get(key).push(row.emailMessageId)
+                }
+                ids = []
+                for (let turn = 0; ids.length < due.length; turn++) {
+                    for (const list of byAccount.values()) if (turn < list.length) ids.push(list[turn])
+                }
             }
+            const troubled = new Set()
+            const budgetMillis = Math.max(1, timeBudgetSeconds ?? 45) * 1000
+            const started = Date.now()
+            let left = 0
             for (const id of ids) {
+                if (Date.now() - started > budgetMillis) { left++; continue }
+                const account = accountOf.get(id) || ''
+                if (troubled.has(account)) { left++; continue }
                 ec.message.pushErrors()
-                const result = ec.service.sync().name('org.moqui.impl.EmailClientServices.deliver#DraftMessage')
-                        .parameters({emailMessageId: id, fromStatusIdList: ['ES_SCHEDULED']}).disableAuthz().call()
-                if (ec.message.hasError()) {
-                    ec.logger.log('error', `Could not send scheduled email message ${id}: ${ec.message.errorsString}`)
+                try {
+                    // with no transaction (a caller's suspended): the claim commits before the session
+                    const result = ec.service.sync().name('org.moqui.impl.EmailClientServices.deliver#DraftMessage')
+                            .parameters({emailMessageId: id, fromStatusIdList: ['ES_SCHEDULED']}).ignoreTransaction(true).requireNewTransaction(true)
+                            .disableAuthz().call()
+                    if (ec.message.hasError()) {
+                        ec.logger.log('error', `Could not send scheduled email message ${id}: ${ec.message.errorsString}`)
+                        failedCount++
+                    } else if (result.claimed && result.sent) sentCount++
+                    else if (result.claimed) {
+                        failedCount++
+                        // the server is down or slow: the account's other messages wait for the next run
+                        if (account && result.deliveryOutcome !== 'permanent' && result.deliveryOutcome != null) troubled.add(account)
+                    }
+                } catch (err) {
+                    ec.logger.log('error', `Could not send scheduled email message ${id}: ${err.message || err}`)
                     failedCount++
-                } else if (result.claimed && result.sent) sentCount++
-                else if (result.claimed) failedCount++
+                }
                 ec.message.clearErrors()
                 ec.message.popErrors()
             }
+            if (left) ec.logger.info(`${left} due email messages wait for the next run of send#DueDrafts`)
         ]]></script></actions>
     </service>
 

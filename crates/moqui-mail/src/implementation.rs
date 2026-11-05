@@ -229,10 +229,11 @@ pub(super) fn send_template(
 /// In-Reply-To and References headers. A delivery that fails is a message, not an error, as Java's, and its text is
 /// the `sendError` result, so the mail client can keep it for a retry.
 ///
-/// A client message is the mail client's to keep in its own transaction: whatever stops it after the status checks
-/// (no address, no server, a host not allowed, an attachment that cannot be read, the delivery) is its `sendError`,
-/// not an error that would roll back the caller, and its Sent status is written in the caller's transaction, which
-/// holds its row, where a template's message is written in a new one as Java does.
+/// A client message is the mail client's to keep: whatever stops it after the status checks (no address, no server, a
+/// host not allowed, an attachment that cannot be read, the delivery) is its `sendError`, not an error that would roll
+/// back the caller, and its Sent status is written in the caller's transaction, where a template's message is written
+/// in a new one as Java does. With `markSent` false a client message's status is left to the caller: the mail client's
+/// deliver#DraftMessage records it after the session, in a transaction of its own.
 pub(super) fn send_message(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -370,7 +371,10 @@ pub(super) fn send_message(
     }
     if status == "ES_READY" || status == "ES_BOUNCED" {
         if client {
-            mark_sent(facade, &email_message_id, &letter.message_id)?;
+            // the mail client's deliver#DraftMessage records the result itself, in a transaction of its own
+            if param_text(parameters, "markSent") != "false" {
+                mark_sent(facade, &email_message_id, &letter.message_id)?;
+            }
         } else {
             update_sent(facade, &email_message_id, &letter.message_id)?;
         }
@@ -1381,9 +1385,12 @@ pub(super) fn send_built(
         .parse::<lettre::Address>()
         .map_err(|err| Error::new(format!("{to} is not an address: {err}")))?;
     let envelope = lettre::address::Envelope::new(None, vec![recipient]).map_err(|err| Error::new(err.to_string()))?;
-    smtp_send_retry(facade, &server, Some(Duration::from_secs(30)), |transport| {
-        lettre::Transport::send_raw(transport, &envelope, raw).map(|_| ())
-    })
+    smtp_send_retry(
+        facade,
+        &server,
+        Some(Duration::from_secs(30)),
+        Payload::Raw(envelope, raw.to_vec()),
+    )
 }
 
 /// Whether a test sink or `mail_capture_sends` kept `letter` instead of sending it.
@@ -1429,14 +1436,10 @@ fn lettre_send(facade: &EntityFacade, letter: &Letter, server: &EntityValue) -> 
             super::auth::is_hosted_domain(facade, domain)
         });
         if signed.len() != formatted.len() {
-            return smtp_send_retry(facade, server, None, |transport| {
-                lettre::Transport::send_raw(transport, message.envelope(), &signed).map(|_| ())
-            });
+            return smtp_send_retry(facade, server, None, Payload::Raw(message.envelope().clone(), signed));
         }
     }
-    smtp_send_retry(facade, server, None, |transport| {
-        lettre::Transport::send(transport, &message).map(|_| ())
-    })
+    smtp_send_retry(facade, server, None, Payload::Message(message))
 }
 
 /// Whether `server` is this node's own SMTP listener: a loopback host at a port the listener is bound to
@@ -1454,29 +1457,126 @@ fn own_listener(server: &EntityValue) -> bool {
     loopback && port.is_some_and(super::auth::is_own_listener)
 }
 
-/// Authentication refusal happens before SMTP accepts the message, so only that failure is safe to retry.
+/// What an SMTP session sends: a message lettre formats, or one formatted already (DKIM-signed, a built notice).
+enum Payload {
+    Message(lettre::Message),
+    Raw(lettre::address::Envelope, Vec<u8>),
+}
+
+impl Payload {
+    fn send(&self, transport: &lettre::SmtpTransport) -> Result<(), lettre::transport::smtp::Error> {
+        match self {
+            Self::Message(message) => lettre::Transport::send(transport, message).map(|_| ()),
+            Self::Raw(envelope, raw) => lettre::Transport::send_raw(transport, envelope, raw).map(|_| ()),
+        }
+    }
+}
+
+/// The most an SMTP session (with its one retry) takes, beyond lettre's timeout of each command, so a server that
+/// keeps answering slowly does not hold a send, and the sends after it, without end (High-Level-Review HL-028).
+const SMTP_SESSION_LIMIT: Duration = Duration::from_secs(120);
+
+#[cfg(test)]
+thread_local! {
+    static SESSION_LIMIT: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+}
+
+/// A shorter SMTP session limit for the sends of this thread while the guard lives.
+#[cfg(test)]
+pub(crate) struct SessionLimitGuard(Option<Duration>);
+
+#[cfg(test)]
+impl SessionLimitGuard {
+    pub(crate) fn set(limit: Duration) -> Self {
+        Self(SESSION_LIMIT.with(|slot| slot.replace(Some(limit))))
+    }
+}
+
+#[cfg(test)]
+impl Drop for SessionLimitGuard {
+    fn drop(&mut self) {
+        SESSION_LIMIT.with(|slot| slot.set(self.0));
+    }
+}
+
+fn session_limit() -> Duration {
+    #[cfg(test)]
+    if let Some(limit) = SESSION_LIMIT.with(std::cell::Cell::get) {
+        return limit;
+    }
+    SMTP_SESSION_LIMIT
+}
+
+/// Why a session did not send: the server's answer, or a session that did not end in time or stopped.
+enum SessionError {
+    Smtp(lettre::transport::smtp::Error),
+    Stopped(Error),
+}
+
+impl From<SessionError> for Error {
+    fn from(err: SessionError) -> Self {
+        match err {
+            SessionError::Smtp(err) => Error::new(err.to_string()).with_source(err),
+            SessionError::Stopped(err) => err,
+        }
+    }
+}
+
+/// Run one SMTP session on a thread of its own, waiting for it until `deadline`. A session past it is left to end on
+/// its own (lettre's command timeout) and is an error with no SMTP answer, so its outcome is uncertain: the message
+/// may have gone.
+fn send_within(
+    transport: lettre::SmtpTransport,
+    payload: &Arc<Payload>,
+    deadline: std::time::Instant,
+) -> Result<(), SessionError> {
+    let (done, result) = std::sync::mpsc::sync_channel(1);
+    let payload = Arc::clone(payload);
+    std::thread::Builder::new()
+        .name("smtp-session".to_string())
+        .spawn(move || {
+            let _ = done.send(payload.send(&transport));
+        })
+        .map_err(|err| SessionError::Stopped(Error::new(format!("could not start the SMTP session: {err}"))))?;
+    let wait = deadline.saturating_duration_since(std::time::Instant::now());
+    match result.recv_timeout(wait) {
+        Ok(sent) => sent.map_err(SessionError::Smtp),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(SessionError::Stopped(Error::new(format!(
+            "The SMTP session did not end within {} seconds; the message may have been sent",
+            session_limit().as_secs()
+        )))),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(SessionError::Stopped(Error::new(
+            "The SMTP session stopped before its end; the message may have been sent",
+        ))),
+    }
+}
+
+/// Send `payload` through `server` within [`SMTP_SESSION_LIMIT`]. Authentication refusal happens before SMTP accepts
+/// the message, so only that failure is safe to retry.
 fn smtp_send_retry(
     facade: &EntityFacade,
     server: &EntityValue,
     timeout: Option<Duration>,
-    send: impl Fn(&lettre::SmtpTransport) -> Result<(), lettre::transport::smtp::Error>,
+    payload: Payload,
 ) -> Result<(), Error> {
+    let deadline = std::time::Instant::now() + session_limit();
+    let payload = Arc::new(payload);
     let auth = smtp_auth(facade, server, None)?;
     let transport = smtp_transport(server, &auth, timeout)?;
-    match send(&transport) {
+    match send_within(transport, &payload, deadline) {
         Ok(()) => Ok(()),
-        Err(err) if matches!(auth, SmtpAuth::OAuth(..)) && smtp_auth_refused(&err) => {
+        Err(SessionError::Smtp(err)) if matches!(auth, SmtpAuth::OAuth(..)) && smtp_auth_refused(&err) => {
             let SmtpAuth::OAuth(_, rejected) = &auth else {
                 unreachable!()
             };
             let fresh = smtp_auth(facade, server, Some(rejected))?;
             if matches!(&fresh, SmtpAuth::OAuth(_, token) if token == rejected) {
-                return Err(Error::new(err.to_string()).with_source(err));
+                return Err(SessionError::Smtp(err).into());
             }
             let transport = smtp_transport(server, &fresh, timeout)?;
-            send(&transport).map_err(|err| Error::new(err.to_string()).with_source(err))
+            send_within(transport, &payload, deadline).map_err(Error::from)
         }
-        Err(err) => Err(Error::new(err.to_string()).with_source(err)),
+        Err(err) => Err(err.into()),
     }
 }
 

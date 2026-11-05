@@ -169,3 +169,75 @@ fn the_browser_terminal_runs_the_apps_as_the_signed_in_user() {
     assert_eq!(reason, "the session ended");
     assert!(seen.ends_with(b"\x1b[?1049l"), "the terminal is put back");
 }
+
+/// Read `socket` on a thread of its own until it closes: when it did, and the close reason (a close frame's, or the
+/// read's error).
+fn closed_at(mut socket: Ws) -> std::thread::JoinHandle<(Instant, String)> {
+    std::thread::spawn(move || {
+        if let MaybeTlsStream::Plain(stream) = socket.get_mut() {
+            stream.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+        }
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while Instant::now() < deadline {
+            match socket.read() {
+                Ok(Message::Close(frame)) => {
+                    return (
+                        Instant::now(),
+                        frame.map(|frame| frame.reason.to_string()).unwrap_or_default(),
+                    )
+                }
+                Ok(_) => {}
+                Err(tungstenite::Error::Io(err))
+                    if matches!(
+                        err.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) => {}
+                Err(err) => return (Instant::now(), format!("read: {err}")),
+            }
+        }
+        (Instant::now(), "never closed".to_string())
+    })
+}
+
+/// A stop closes every kind of upgraded socket at once (HL-027: the HTTP listener's drain waits for them): a terminal
+/// running a session, one still waiting for the page's size, and an XMPP WebSocket; so the stop does not wait out the
+/// shutdown timeout.
+#[test]
+fn a_stop_closes_terminal_and_xmpp_websockets_at_once() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let gate = crate::common::start_with_conf_properties(
+        "termws-stop",
+        Some(PLAIN_USER),
+        "",
+        &[("xmpp_domain", "stop.example"), ("xmpp_websocket_enabled", "true")],
+    );
+    let address = gate.server.address();
+    let cookie = crate::common::sign_in(address, "john.doe", "moqui");
+    let plain = crate::common::sign_in(address, "plain.user", "moqui");
+    gate.server.factory().flush_sessions().unwrap();
+    let mut running = open(address, &cookie, 120, 40);
+    read_until(&mut running, &mut Vec::new(), "john.doe").unwrap();
+    let (waiting, response) = connect(request(address, Some(&plain))).unwrap();
+    assert_eq!(response.status().as_u16(), 101);
+    let uri: tungstenite::http::Uri = format!("ws://{address}/xmpp-websocket").parse().unwrap();
+    let (xmpp, response) = connect(ClientRequestBuilder::new(uri).with_sub_protocol("xmpp")).unwrap();
+    assert_eq!(response.status().as_u16(), 101);
+    let readers = [closed_at(running), closed_at(waiting), closed_at(xmpp)];
+    let stopping = Instant::now();
+    drop(gate);
+    let stopped = stopping.elapsed();
+    for (kind, reader) in ["running terminal", "waiting terminal", "XMPP"].iter().zip(readers) {
+        let (at, reason) = reader.join().unwrap();
+        let after = at.saturating_duration_since(stopping);
+        assert!(
+            after < Duration::from_secs(1),
+            "the {kind} socket closed {after:?} after the stop: {reason}"
+        );
+        if kind.contains("terminal") {
+            assert_eq!(reason, "the server is stopping", "{kind}");
+        }
+    }
+    assert!(stopped < Duration::from_secs(15), "the stop took {stopped:?}");
+}

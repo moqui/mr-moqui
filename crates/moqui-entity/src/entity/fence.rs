@@ -56,7 +56,8 @@ pub const FENCE_ERROR: &str = "read fence:";
 /// Entities written under the fence: the sequence banks, authorization failures and
 /// tarpit locks, visits, visitors and sessions, and the login history a step job's login writes; and the run
 /// bookkeeping the agent runtime writes while a tool runs (its events and the run's event sequence, the run's steps,
-/// messages and tool calls, a provider call a tool makes and its usage). Nothing else of `moqui.agent` or `moqui.llm`:
+/// messages and tool calls, a provider call a tool makes, its usage and its quota reservation). Nothing else of
+/// `moqui.agent` or `moqui.llm`:
 /// approvals, policies, memory and endpoints are not a read tool's to write.
 pub const ALLOWED_ENTITIES: &[&str] = &[
     "moqui.entity.SequenceValueItem",
@@ -74,6 +75,8 @@ pub const ALLOWED_ENTITIES: &[&str] = &[
     "moqui.agent.AgentToolCall",
     "moqui.llm.LlmCall",
     "moqui.llm.LlmUsageDaily",
+    "moqui.llm.LlmQuotaReservation",
+    "moqui.llm.LlmQuotaLock",
 ];
 
 /// A side effect sim mode also stops.

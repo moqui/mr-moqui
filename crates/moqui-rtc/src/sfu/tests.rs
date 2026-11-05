@@ -24,7 +24,7 @@ use str0m::media::MediaKind;
 use str0m::net::Protocol;
 
 use super::testnet::{Net, LAYER_BYTES, ROOM, SCREEN_BYTES};
-use super::{Layer, LegKey, SfuConfig, SfuError, SfuEvent, Source};
+use super::{Layer, LegKey, SfuConfig, SfuError, SfuEvent, SfuOutput, Source};
 use crate::tap::{Kind, MediaTap, TapFrame};
 
 fn secs(s: u64) -> Duration {
@@ -95,7 +95,8 @@ fn a_subscriber_below_the_floor_gets_audio_only() {
     net.join("B", false);
     net.run(secs(2));
     net.client_mut("B").downlink_bps = Some(60_000);
-    net.run(secs(8));
+    // the switch to audio only comes about 4 s in; what was queued before it is then paced out at the low estimate
+    net.run(secs(10));
     let video = net.received("B", "A", MediaKind::Video);
     let audio = net.received("B", "A", MediaKind::Audio);
     net.run(secs(2));
@@ -418,4 +419,143 @@ fn a_room_s_publishers_are_asked_for_keyframes() {
     net.run(Duration::from_millis(300));
     let after = before(&net);
     assert!(after[0] > start[0] && after[1] > start[1], "{start:?} then {after:?}");
+}
+
+/// HL-008 measurement, opt-in: independent two-party rooms on one node at the same traffic per room (audio every
+/// 20 ms and video every 34 ms each way), with the work per received datagram: peers asked whether they accept it,
+/// peers polled by the all-peer drive, and the SFU's time per datagram. Linear growth in the per-datagram counts with
+/// the number of rooms is the node-wide work the finding describes. Run it with
+/// `cargo test -p moqui-rtc --lib sfu_work_per_packet_by_rooms -- --ignored --nocapture` (times are
+/// of whatever profile it is built in; the counts do not depend on it).
+#[test]
+#[ignore = "measurement: prints SFU work per packet as independent rooms grow"]
+fn sfu_work_per_packet_by_rooms() {
+    for rooms in [1, 4, 16, 48] {
+        let mut net = Net::new();
+        for room in 0..rooms {
+            net.join_room(&format!("R{room}"), &format!("A{room}"));
+            net.join_room(&format!("R{room}"), &format!("B{room}"));
+        }
+        net.run(secs(2));
+        let connected = net.clients.iter().filter(|c| c.connected).count();
+        let frames = |net: &Net| -> usize { net.clients.iter().map(|c| c.received.values().sum::<usize>()).sum() };
+        let (stats, frames_before) = (net.sfu.stats(), frames(&net));
+        let (receive_time, receive_polls, timeout_time) = (net.receive_time, net.receive_polls, net.timeout_time);
+        net.run(secs(3));
+        let after = net.sfu.stats();
+        let received = (after.received - stats.received).max(1);
+        let accepted = after.accepted - stats.accepted;
+        let checks = after.accept_checks - stats.accept_checks;
+        let polls = after.peer_polls - stats.peer_polls;
+        let drives = after.drives - stats.drives;
+        let receive_micros = (net.receive_time - receive_time).as_secs_f64() * 1e6;
+        let timeout_micros = (net.timeout_time - timeout_time).as_secs_f64() * 1e6;
+        let receive_polls = net.receive_polls - receive_polls;
+        let frames_per_room = (frames(&net) - frames_before) as f64 / rooms as f64;
+        println!(
+            "{rooms:>3} rooms ({connected}/{} connected): {received} datagrams in ({accepted} accepted); per datagram \
+             {:.1} accept checks, {:.1} peer polls in its receive ({:.1} with timeouts), {:.2} drives, \
+             {:.1} us in receive, {:.1} us in timeouts; {frames_per_room:.0} frames delivered per room in 3 s",
+            rooms * 2,
+            checks as f64 / received as f64,
+            receive_polls as f64 / received as f64,
+            polls as f64 / received as f64,
+            drives as f64 / received as f64,
+            receive_micros / received as f64,
+            timeout_micros / received as f64,
+        );
+    }
+}
+
+/// HL-008: a datagram drives the peers it reaches, not every peer of the node: with one busy room and ten idle ones,
+/// the polls per datagram received are those of the busy room.
+#[test]
+fn an_idle_rooms_peers_are_not_polled_by_another_rooms_traffic() {
+    let mut net = Net::new();
+    for room in 0..11 {
+        net.join_room(&format!("R{room}"), &format!("A{room}"));
+        net.join_room(&format!("R{room}"), &format!("B{room}"));
+    }
+    net.run(secs(2));
+    assert!(net.clients.iter().all(|c| c.connected));
+    // the other rooms stop sending media
+    for c in net.clients.iter_mut().filter(|c| &*c.key.room != "R0") {
+        c.audio_mid = None;
+        c.video_mid = None;
+    }
+    net.run(secs(1));
+    let (received, polls) = (net.sfu.stats().received, net.receive_polls);
+    net.run(secs(2));
+    let received = net.sfu.stats().received - received;
+    let polls = net.receive_polls - polls;
+    let per_datagram = polls as f64 / received as f64;
+    // two peers in the busy room, a few passes; every peer of the node would be 22 a pass
+    assert!(per_datagram < 6.0, "{per_datagram:.1} peer polls per datagram");
+    assert!(
+        net.received("B0", "A0", MediaKind::Video) > 50,
+        "the busy room's media flows"
+    );
+}
+
+/// HL-008: a peer's own timer fires with no datagram: its deadline is kept, and a timeout before it polls no one.
+#[test]
+fn a_peers_timer_fires_with_no_traffic() {
+    let mut net = Net::new();
+    net.join("A", false);
+    net.run(secs(1));
+    let deadline = loop {
+        if let SfuOutput::Timeout(t) = net.sfu.poll_output() {
+            break t;
+        }
+    };
+    let polls = net.sfu.stats().peer_polls;
+    let received = net.sfu.stats().received;
+    if deadline > net.now + Duration::from_millis(1) {
+        net.sfu.handle_timeout(net.now);
+        assert_eq!(net.sfu.stats().peer_polls, polls, "nothing is due yet");
+    }
+    net.sfu.handle_timeout(deadline);
+    assert!(net.sfu.stats().peer_polls > polls, "the due peer was polled");
+    assert_eq!(net.sfu.stats().received, received, "with no datagram");
+    assert!(matches!(
+        net.sfu.poll_output(),
+        SfuOutput::Transmit(_) | SfuOutput::Event(_) | SfuOutput::Timeout(_)
+    ));
+}
+
+/// HL-008: the address index is a first guess. When the peer it names does not take a datagram (the leg moved, an
+/// ICE restart), every peer is asked, the one that takes it is found, and the index follows it; a peer that leaves is
+/// dropped from it.
+#[test]
+fn the_address_index_follows_a_moved_peer_and_forgets_one_that_left() {
+    let mut net = Net::new();
+    net.join("A", false);
+    net.join("B", false);
+    net.run(secs(2));
+    let id = |net: &Net, leg: &str| net.sfu.by_leg[&LegKey::new(ROOM, leg)];
+    let (a, b) = (id(&net, "A"), id(&net, "B"));
+    assert!(net.sfu.by_addr.values().any(|peer| *peer == a));
+    // the index points A's addresses at B, as after A moved to addresses B had
+    for peer in net.sfu.by_addr.values_mut() {
+        if *peer == a {
+            *peer = b;
+        }
+    }
+    let video = net.received("B", "A", MediaKind::Video);
+    net.run(secs(1));
+    assert!(
+        net.received("B", "A", MediaKind::Video) > video + 10,
+        "A's media still goes through"
+    );
+    assert!(
+        net.sfu.by_addr.values().any(|peer| *peer == a),
+        "the index found A again"
+    );
+    let now = net.now;
+    net.sfu.leave(now, &LegKey::new(ROOM, "A"), 1).unwrap();
+    assert!(
+        net.sfu.by_addr.values().all(|peer| *peer != a),
+        "A is gone from the index"
+    );
+    assert!(!net.sfu.deadline_of.contains_key(&a) && !net.sfu.pending.contains(&a));
 }

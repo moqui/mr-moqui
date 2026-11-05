@@ -16,10 +16,13 @@
 //! The HTTPS listener and the peer client are installed later. This wave posts through [`Sender`].
 //!
 //! Fan-out is not done on the thread that published: the message goes on a queue, and one sender thread posts it to
-//! the live peers, as `plans/archive/Cluster.md` says. Invalidations waiting together are sent once per entity, since a peer
-//! clears the entity's whole cache for one. Each peer gets what was waiting as one batch, in order
+//! the live peers, as `plans/archive/Cluster.md` says. An invalidation joins the one already waiting for its entity, which
+//! then carries every key written, up to [`KEYS_PER_ENTITY`], and the whole entity past it ([`Queue::push`],
+//! plans/High-Level-Review.md HL-017). A peer that may have missed an invalidation (a failed post, a skip while it was
+//! down, a return to the live set) gets a clear of every entity cache before anything else ([`PeerCache::dirty`],
+//! HL-018). Each peer gets what was waiting as one batch, in order
 //! ([`Sender::post_batch`]: one gRPC call, or one POST after another), and several peers are posted to at once. The
-//! peer list is kept and read again on the heartbeat tick.
+//! peer list is kept and read again on each heartbeat.
 //!
 //! Each factory keeps its own state (sender, member id, queue, peers): a write or notification fans out only to the
 //! peers of the factory whose entity facade made it, so two factories in one process do not post for each other.
@@ -72,13 +75,21 @@ const DEFAULT_PORT: u16 = 8444;
 const RETRIES: u32 = 3;
 /// Waits between tries of one post: a busy peer answers 503 and is given a moment.
 const RETRY_WAITS: [Duration; 2] = [Duration::from_millis(100), Duration::from_millis(500)];
-/// Messages waiting for the sender thread. Past this a message is dropped and counted; an invalidation is safe to
-/// lose this way, since every peer still drops its own cache on its own writes and on the next invalidation.
+/// Messages of topics other than the entity cache invalidation waiting for the sender thread. Past this one is dropped
+/// and counted. Invalidations are bounded apart, so a burst of other topics does not push them out.
 const OUTBOX_LIMIT: usize = 10_000;
+/// Entities with an invalidation waiting. Past this the waiting invalidations become one clear of every entity cache.
+const INVALIDATION_ENTITIES: usize = 2_000;
+/// Keys one waiting invalidation carries. Past this it invalidates the whole entity.
+const KEYS_PER_ENTITY: usize = 100;
 /// A peer whose post failed every try is skipped this long, so a peer that is down does not slow every message.
 const PEER_BACKOFF: Duration = Duration::from_secs(5);
 /// A member row with no heartbeat in this many liveness windows is deleted.
 const DEAD_WINDOWS: i64 = 10;
+
+/// How long a read that found no live peer is trusted. A member that joins is then seen at the next write after this,
+/// rather than at the next heartbeat or liveness window: until then, writes here are not posted to it.
+const EMPTY_PEERS_TRUSTED_MS: i64 = 250;
 
 /// How long the sender thread waits for more before it ends. The next message starts another.
 const SENDER_IDLE: Duration = Duration::from_secs(30);
@@ -98,6 +109,11 @@ pub(crate) struct ClusterState {
     /// Batches the sender thread has taken and not finished, so a test can wait for the posts.
     in_flight: AtomicUsize,
     loopback_warned: AtomicBool,
+    /// The row [`start`] wrote, which the heartbeat writes again when peers deleted it.
+    member: Mutex<Option<Member>>,
+    /// The heartbeat's interval instead of the scheduler's, for tests.
+    #[cfg(test)]
+    heartbeat_every: Mutex<Option<Duration>>,
     /// The messages for one member each ([`send_to`]), and their thread.
     direct: Mutex<direct::DirectQueue>,
     direct_ready: Condvar,
@@ -107,7 +123,150 @@ pub(crate) struct ClusterState {
 #[derive(Default)]
 struct Queue {
     messages: VecDeque<(&'static str, TopicMessage)>,
+    /// Where in `messages` each entity's invalidation is, so a later write to the entity joins it.
+    invalidations: HashMap<String, usize>,
+    /// Where in `messages` a clear of every entity cache is: it covers every invalidation queued after it.
+    clear_all: Option<usize>,
+    /// Messages of other topics in `messages`, against [`OUTBOX_LIMIT`].
+    others: usize,
+    /// A pass is wanted with nothing queued, to send the dirty peers their clear ([`request_resync`]).
+    resync: bool,
     sending: bool,
+}
+
+/// The bounds of a [`Queue`]: [`OUTBOX_LIMIT`], [`INVALIDATION_ENTITIES`] and [`KEYS_PER_ENTITY`], smaller in tests.
+#[derive(Clone, Copy)]
+struct Limits {
+    others: usize,
+    entities: usize,
+    keys: usize,
+}
+
+const LIMITS: Limits = Limits {
+    others: OUTBOX_LIMIT,
+    entities: INVALIDATION_ENTITIES,
+    keys: KEYS_PER_ENTITY,
+};
+
+/// What [`Queue::push`] did with a message.
+#[derive(Debug, PartialEq, Eq)]
+enum Queued {
+    /// A new message, or one joined to the invalidation of its entity or a waiting clear of every entity.
+    Taken,
+    /// Dropped: the queue holds [`Limits::others`] messages of other topics.
+    Dropped,
+}
+
+impl Queue {
+    /// Queue `message` (plans/High-Level-Review.md HL-017). An entity cache invalidation joins the one waiting for its
+    /// entity: that one then carries every key, in `primaryKeys`, up to `limits.keys`, and no key (the whole entity) past
+    /// it or when a write had no usable key. A clear of every entity cache waiting covers it. With `limits.entities`
+    /// entities waiting, the invalidations become one clear of every entity cache. Other topics are kept in order, up to
+    /// `limits.others`.
+    fn push(&mut self, topic: &'static str, message: TopicMessage, limits: Limits) -> Queued {
+        if topic != ENTITY_CACHE_INVALIDATE {
+            if self.others >= limits.others {
+                return Queued::Dropped;
+            }
+            self.others += 1;
+            self.messages.push_back((topic, message));
+            return Queued::Taken;
+        }
+        if self.clear_all.is_some() {
+            return Queued::Taken;
+        }
+        if is_clear_all(&message.body) {
+            self.collapse(message);
+            return Queued::Taken;
+        }
+        let name = entity_of(&message.body).to_string();
+        if let Some(&at) = self.invalidations.get(&name) {
+            if let Some((_, waiting)) = self.messages.get_mut(at) {
+                join_keys(&mut waiting.body, &message.body, limits.keys);
+            }
+            return Queued::Taken;
+        }
+        if self.invalidations.len() >= limits.entities {
+            let all = TopicMessage {
+                body: serde_json::json!({ "clearAll": true }),
+                ..message
+            };
+            self.collapse(all);
+            return Queued::Taken;
+        }
+        let mut message = message;
+        whole_without_key(&mut message.body);
+        self.invalidations.insert(name, self.messages.len());
+        self.messages.push_back((topic, message));
+        Queued::Taken
+    }
+
+    /// Put one clear of every entity cache, `all`, in the place of the waiting invalidations.
+    fn collapse(&mut self, all: TopicMessage) {
+        self.messages.retain(|(topic, _)| *topic != ENTITY_CACHE_INVALIDATE);
+        self.invalidations.clear();
+        self.clear_all = Some(self.messages.len());
+        self.messages.push_back((ENTITY_CACHE_INVALIDATE, all));
+    }
+
+    /// Everything waiting, in order, leaving the queue empty.
+    fn take(&mut self) -> Vec<(&'static str, TopicMessage)> {
+        self.invalidations.clear();
+        self.clear_all = None;
+        self.others = 0;
+        self.resync = false;
+        self.messages.drain(..).collect()
+    }
+}
+
+/// The entity an invalidation body names; empty for none.
+fn entity_of(body: &serde_json::Value) -> &str {
+    body.get("entityName").and_then(serde_json::Value::as_str).unwrap_or("")
+}
+
+/// A body that clears every entity cache.
+fn is_clear_all(body: &serde_json::Value) -> bool {
+    body.get("clearAll").and_then(serde_json::Value::as_bool) == Some(true)
+}
+
+/// A body whose `primaryKey` is empty invalidates the whole entity: drop the key, so a later write does not narrow it.
+fn whole_without_key(body: &mut serde_json::Value) {
+    let Some(map) = body.as_object_mut() else {
+        return;
+    };
+    let empty = map
+        .get("primaryKey")
+        .is_some_and(|key| key.as_object().is_none_or(serde_json::Map::is_empty));
+    if empty {
+        map.remove("primaryKey");
+    }
+}
+
+/// Add the key of `added` to the waiting invalidation `waiting`: it then lists its keys in `primaryKeys`. With no
+/// usable key, or past `cap` keys, it carries none and invalidates the whole entity; a whole one stays whole.
+fn join_keys(waiting: &mut serde_json::Value, added: &serde_json::Value, cap: usize) {
+    let Some(map) = waiting.as_object_mut() else {
+        return;
+    };
+    let Some(mut keys) = (match (map.remove("primaryKeys"), map.remove("primaryKey")) {
+        (Some(serde_json::Value::Array(keys)), _) => Some(keys),
+        (None, Some(key)) => Some(vec![key]),
+        _ => None,
+    }) else {
+        return;
+    };
+    let Some(key) = added
+        .get("primaryKey")
+        .filter(|key| key.as_object().is_some_and(|key| !key.is_empty()))
+    else {
+        return;
+    };
+    if !keys.contains(key) {
+        keys.push(key.clone());
+    }
+    if keys.len() <= cap {
+        map.insert("primaryKeys".to_string(), serde_json::Value::Array(keys));
+    }
 }
 
 #[derive(Default)]
@@ -117,6 +276,19 @@ struct PeerCache {
     read_at: i64,
     /// Peers to skip until the time given, after every try of a post failed.
     down_until: HashMap<String, Instant>,
+    /// Peers that may have missed an entity cache invalidation (plans/High-Level-Review.md HL-018): a post that failed
+    /// every try, a batch skipped while the peer was down, or a return to the live set. Each gets a clear of every entity
+    /// cache ahead of its next batch, and stays here until one is delivered; the heartbeat asks for that pass, so no
+    /// write is needed. The value is the gap's number, so a gap found while a clear was on its way is not forgotten.
+    dirty: HashMap<String, u64>,
+    gaps: u64,
+}
+
+impl PeerCache {
+    fn mark_dirty(&mut self, base_url: &str) {
+        self.gaps += 1;
+        self.dirty.insert(base_url.to_string(), self.gaps);
+    }
 }
 
 /// The entity facade's link to the cluster state of the factory that started it, for [`note_write`].
@@ -136,6 +308,9 @@ impl ClusterState {
             dropped: AtomicU64::new(0),
             in_flight: AtomicUsize::new(0),
             loopback_warned: AtomicBool::new(false),
+            member: Mutex::new(None),
+            #[cfg(test)]
+            heartbeat_every: Mutex::new(None),
             direct: Mutex::new(direct::DirectQueue::default()),
             direct_ready: Condvar::new(),
         }
@@ -220,7 +395,7 @@ pub fn instance_id(factory: &ExecutionContextFactory) -> Option<String> {
 /// Register this instance, check live peers, and link the entity facade to `factory`'s fan-out.
 ///
 /// The host calls this after [`ExecutionContextFactory::set_entity`]. A second call refreshes the
-/// member row and does not add another heartbeat hook.
+/// member row and does not start another heartbeat thread.
 ///
 /// # Errors
 ///
@@ -234,24 +409,33 @@ pub fn start(factory: &Arc<ExecutionContextFactory>) -> Result<(), Error> {
     let fingerprints = configured_fingerprints()?;
     let base_url = cluster_base_url()?;
     reject_peer_mismatch(&facade, factory, &instance_id, &fingerprints)?;
-    write_member(
-        &facade,
-        &Member {
-            instance_id: instance_id.clone(),
-            base_url,
-            heartbeat: millis_value(db_now(&facade)),
-            session_fp: fingerprints.session,
-            cert_fp: fingerprints.cert,
-            ssh_fp: env::get_prop_or_env(SSH_FINGERPRINT_PROPERTY),
-        },
-    )?;
+    let member = Member {
+        instance_id: instance_id.clone(),
+        base_url,
+        heartbeat: millis_value(db_now(&facade)),
+        session_fp: fingerprints.session,
+        cert_fp: fingerprints.cert,
+        ssh_fp: env::get_prop_or_env(SSH_FINGERPRINT_PROPERTY),
+    };
+    write_member(&facade, &member)?;
     let state = ClusterState::of(factory);
+    *lock(&state.member) = Some(member);
     *lock(&state.factory) = Arc::downgrade(factory);
     lock(&state.instance_id).clone_from(&instance_id);
-    // The member list is read again on the next send: this start may have joined a cluster or left one.
-    *lock(&state.peers) = PeerCache::default();
+    // The member list is read again on the next send: this start may have joined a cluster or left one. A peer that
+    // missed an invalidation still gets its clear.
+    {
+        let mut peers = lock(&state.peers);
+        let dirty = std::mem::take(&mut peers.dirty);
+        let gaps = peers.gaps;
+        *peers = PeerCache {
+            dirty,
+            gaps,
+            ..PeerCache::default()
+        };
+    }
     facade.with_slot(ClusterLink::default, |link| link.0 = Arc::downgrade(&state));
-    install_heartbeat(factory, instance_id);
+    install_heartbeat(factory);
     Ok(())
 }
 
@@ -261,7 +445,10 @@ pub(crate) fn wait_for_sends(factory: &ExecutionContextFactory, timeout: Duratio
     let state = ClusterState::of(factory);
     let until = Instant::now() + timeout;
     while Instant::now() < until {
-        let empty = lock(&state.queue).messages.is_empty();
+        let empty = {
+            let queue = lock(&state.queue);
+            queue.messages.is_empty() && !queue.resync
+        };
         if empty && state.in_flight.load(Ordering::SeqCst) == 0 {
             return true;
         }
@@ -278,28 +465,44 @@ pub(crate) fn wait_for_sends(factory: &ExecutionContextFactory, timeout: Duratio
 /// Returns an error when `topic` is unknown, or the cache body has no entity name.
 pub fn apply_remote(facade: &EntityFacade, topic: &str, message: &TopicMessage) -> Result<(), Error> {
     if topic == ENTITY_CACHE_INVALIDATE {
-        let name = message
-            .body
-            .get("entityName")
-            .and_then(serde_json::Value::as_str)
-            .filter(|name| !name.is_empty())
-            .ok_or_else(|| Error::new("entity-cache-invalidate body has no entityName"))?;
-        // With the written row's key, only the cached finds it may have changed go.
-        let primary_key: Option<crate::entity::FieldMap> = message
-            .body
-            .get("primaryKey")
-            .and_then(serde_json::Value::as_object)
-            .filter(|keys| !keys.is_empty())
-            .map(|keys| {
-                keys.iter()
-                    .map(|(name, value)| (std::sync::Arc::from(name.as_str()), moqui_lib::json::from_json(value)))
-                    .collect()
-            });
-        crate::entity::cache::clear_one_cache(facade, name, primary_key.as_ref()).map_err(Error::from)?;
+        apply_invalidation(facade, &message.body)?;
     } else if !notify::TOPICS.contains(&topic) {
         return Err(Error::new(format!("unknown topic {topic}")));
     }
     notify::publish(topic, message)
+}
+
+/// An `entity-cache-invalidate` body: `clearAll` clears every entity cache (a sender that may have lost invalidations,
+/// plans/High-Level-Review.md HL-018); `primaryKeys` evicts by each key (several writes joined, HL-017), `primaryKey` by
+/// one; with no usable key the entity's caches go whole. A key that does not apply is logged and the others still are.
+fn apply_invalidation(facade: &EntityFacade, body: &serde_json::Value) -> Result<(), Error> {
+    if is_clear_all(body) {
+        return crate::entity::cache::clear_all_list_caches(facade).map_err(Error::from);
+    }
+    let name = Some(entity_of(body))
+        .filter(|name| !name.is_empty())
+        .ok_or_else(|| Error::new("entity-cache-invalidate body has no entityName"))?;
+    let key_of = |key: &serde_json::Value| -> Option<crate::entity::FieldMap> {
+        key.as_object().filter(|keys| !keys.is_empty()).map(|keys| {
+            keys.iter()
+                .map(|(name, value)| (std::sync::Arc::from(name.as_str()), moqui_lib::json::from_json(value)))
+                .collect()
+        })
+    };
+    let keys: Vec<Option<crate::entity::FieldMap>> = match body.get("primaryKeys").and_then(serde_json::Value::as_array)
+    {
+        Some(keys) if !keys.is_empty() => keys.iter().map(key_of).collect(),
+        // With the written row's key, only the cached finds it may have changed go.
+        _ => vec![body.get("primaryKey").and_then(key_of)],
+    };
+    let mut first_error = None;
+    for key in &keys {
+        if let Err(err) = crate::entity::cache::clear_one_cache(facade, name, key.as_ref()) {
+            tracing::warn!("cluster invalidation of {name} failed for one key: {err}");
+            first_error.get_or_insert(Error::from(err));
+        }
+    }
+    first_error.map_or(Ok(()), Err)
 }
 
 /// Publish `message` on this process's bus, then queue it for the peers of the factory that started `facade`. A
@@ -374,8 +577,12 @@ pub(crate) fn note_write(
     pk_fields: &[String],
     values: &crate::entity::FieldMap,
 ) -> Result<(), Error> {
+    // No member caches what this entity's writes change (`cache="never"` and in no cacheable view): the peers are not
+    // told (plans/High-Level-Review.md HL-017), though a local listener still is.
+    let to_peers = is_linked(facade)
+        && (crate::user::is_authz_entity(entity_name) || crate::entity::cache::peers_may_cache(facade, entity_name));
     // No peer and no local listener: there is no one to tell, so the message (a UUID and a JSON body) is not built.
-    if !is_linked(facade) && !notify::has_listeners(ENTITY_CACHE_INVALIDATE) {
+    if !to_peers && !notify::has_listeners(ENTITY_CACHE_INVALIDATE) {
         return Ok(());
     }
     let message = TopicMessage {
@@ -387,14 +594,22 @@ pub(crate) fn note_write(
     if tx.in_transaction() {
         let facade = facade.clone();
         tx.on_commit(move || {
-            if let Err(err) = publish(&facade, ENTITY_CACHE_INVALIDATE, &message) {
+            if let Err(err) = publish_invalidation(&facade, &message, to_peers) {
                 tracing::warn!("cluster cache publish failed: {err}");
             }
         })
         .map_err(Error::from)?;
         return Ok(());
     }
-    publish(facade, ENTITY_CACHE_INVALIDATE, &message)
+    publish_invalidation(facade, &message, to_peers)
+}
+
+fn publish_invalidation(facade: &EntityFacade, message: &TopicMessage, to_peers: bool) -> Result<(), Error> {
+    if to_peers {
+        publish(facade, ENTITY_CACHE_INVALIDATE, message)
+    } else {
+        notify::publish(ENTITY_CACHE_INVALIDATE, message)
+    }
 }
 
 /// One self-signed pair. Both values are standard base64 of DER, one line each.
@@ -442,6 +657,7 @@ struct Fingerprints {
     cert: String,
 }
 
+#[derive(Clone)]
 struct Member {
     instance_id: String,
     base_url: String,
@@ -578,50 +794,127 @@ fn reject_peer_mismatch(
     Ok(())
 }
 
-fn install_heartbeat(factory: &Arc<ExecutionContextFactory>, instance_id: String) {
-    if factory.cluster_heartbeat.swap(true, Ordering::AcqRel) {
+/// Start the heartbeat thread: [`heartbeat`] every scheduler interval. It runs on a thread of its own, not as a
+/// scheduler hook, so a long job pass or maintenance hook does not hold it past the liveness window and drop this member
+/// out of its peers' fan-out (`plans/High-Level-Review.md` HL-020). Pools with no threads (inline, idle) run no
+/// scheduler, so they get no heartbeat, as before.
+fn install_heartbeat(factory: &Arc<ExecutionContextFactory>) {
+    if !factory.service_pools().is_threaded() || factory.cluster_heartbeat.swap(true, Ordering::AcqRel) {
         return;
     }
     let weak = Arc::downgrade(factory);
-    factory.service_pools().add_tick_hook(move || {
-        let Some(factory) = weak.upgrade() else {
+    let spawned = factory.spawn_background("moqui-cluster-heartbeat", move || loop {
+        let every = match weak.upgrade() {
+            Some(factory) => heartbeat_interval(&factory),
+            None => return,
+        };
+        let Some(factory) = ExecutionContextFactory::sleep_while_running(&weak, every) else {
             return;
         };
-        let Some(facade) = factory.entity() else {
-            tracing::warn!("cluster heartbeat has no entity facade");
-            return;
-        };
-        // The database's clock, so members whose clocks differ still see each other as live.
-        let now = db_now(&facade);
-        if let Err(err) = touch_member(&facade, &instance_id, now) {
-            tracing::warn!("cluster heartbeat failed: {err}");
-        }
-        if let Err(err) = delete_dead_members(&facade, now.saturating_sub(window_millis(&factory) * DEAD_WINDOWS)) {
-            tracing::warn!("cluster member cleanup failed: {err}");
-        }
-        let state = ClusterState::of(&factory);
-        refresh_peers(&state, &factory);
-        warn_loopback_peers(&state);
+        let context = factory.new_context();
+        let _entered = context.enter();
+        heartbeat(&factory);
     });
+    if let Err(err) = spawned {
+        factory.cluster_heartbeat.store(false, Ordering::Release);
+        tracing::error!("the cluster heartbeat did not start: {err}");
+    }
+}
+
+fn heartbeat_interval(factory: &ExecutionContextFactory) -> Duration {
+    #[cfg(test)]
+    if let Some(every) = *lock(&ClusterState::of(factory).heartbeat_every) {
+        return every;
+    }
+    factory.service_pools().check_interval()
+}
+
+/// One heartbeat: move this member's heartbeat, or write its row again when peers deleted it as dead; delete members
+/// dead for [`DEAD_WINDOWS`] windows; and read the live peers again. A step that fails is logged and the next still runs.
+/// The heartbeat thread runs it every scheduler interval; a test can run it at once.
+pub fn heartbeat(factory: &ExecutionContextFactory) {
+    let Some(facade) = factory.entity() else {
+        tracing::warn!("cluster heartbeat has no entity facade");
+        return;
+    };
+    let state = ClusterState::of(factory);
+    let instance_id = state.instance_id();
+    if instance_id.is_empty() {
+        return;
+    }
+    // The database's clock, so members whose clocks differ still see each other as live.
+    let now = db_now(&facade);
+    match touch_member(&facade, &instance_id, now) {
+        Ok(0) => rejoin(&state, &facade, now),
+        Ok(_) => {}
+        Err(err) => tracing::warn!("cluster heartbeat failed: {err}"),
+    }
+    if let Err(err) = delete_dead_members(&facade, now.saturating_sub(window_millis(factory) * DEAD_WINDOWS)) {
+        tracing::warn!("cluster member cleanup failed: {err}");
+    }
+    refresh_peers(&state, factory);
+    warn_loopback_peers(&state);
+    request_resync(&state);
+}
+
+/// Start a send pass for the peers that may have missed an invalidation, with nothing else queued, so they get their
+/// clear without waiting for another write (plans/High-Level-Review.md HL-018).
+fn request_resync(state: &Arc<ClusterState>) {
+    if lock(&state.peers).dirty.is_empty() {
+        return;
+    }
+    let mut queue = lock(&state.queue);
+    queue.resync = true;
+    wake_sender(state, &mut queue);
+}
+
+/// The heartbeat found no row: peers deleted it after this member's heartbeat stopped for [`DEAD_WINDOWS`] windows.
+/// Write it again, so the member is back in their fan-out without a restart.
+fn rejoin(state: &ClusterState, facade: &EntityFacade, now: i64) {
+    let Some(mut member) = lock(&state.member).clone() else {
+        return;
+    };
+    member.heartbeat = millis_value(now);
+    match write_member(facade, &member) {
+        Ok(()) => tracing::warn!(
+            "cluster member {} had no row (peers took it for dead); registered it again",
+            member.instance_id
+        ),
+        Err(err) => tracing::error!("cluster member {} could not register again: {err}", member.instance_id),
+    }
+}
+
+/// Run `factory`'s heartbeat every `every` instead of the scheduler interval. Call before [`start`].
+#[cfg(test)]
+pub(crate) fn set_heartbeat_interval(factory: &ExecutionContextFactory, every: Duration) {
+    *lock(&ClusterState::of(factory).heartbeat_every) = Some(every);
 }
 
 fn fan_out(state: &Arc<ClusterState>, topic: &'static str, message: &TopicMessage) {
     {
-        // A single member has no one to tell: with no peers at the last read, nothing is queued.
+        // A single member has no one to tell: with no peers at a recent read, nothing is queued. An older read is not
+        // trusted, so a member that joined since is found by the send (and first sent a clear, as a new peer).
         let peers = lock(&state.peers);
-        if peers.read_at != 0 && peers.urls.is_empty() {
+        if peers.read_at != 0
+            && peers.urls.is_empty()
+            && now_millis().saturating_sub(peers.read_at) < EMPTY_PEERS_TRUSTED_MS
+        {
             return;
         }
     }
     let mut queue = lock(&state.queue);
-    if queue.messages.len() >= OUTBOX_LIMIT {
+    if queue.push(topic, message.clone(), LIMITS) == Queued::Dropped {
         let dropped = state.dropped.fetch_add(1, Ordering::Relaxed) + 1;
         if dropped.is_power_of_two() {
             tracing::warn!("cluster fan-out queue is full; {dropped} messages dropped");
         }
         return;
     }
-    queue.messages.push_back((topic, message.clone()));
+    wake_sender(state, &mut queue);
+}
+
+/// Wake the sender thread for what `queue` holds, or start it.
+fn wake_sender(state: &Arc<ClusterState>, queue: &mut Queue) {
     if queue.sending {
         state.ready.notify_one();
         return;
@@ -643,19 +936,19 @@ fn send_loop(state: &ClusterState) {
     loop {
         let batch: Vec<(&'static str, TopicMessage)> = {
             let mut queue = lock(&state.queue);
-            while queue.messages.is_empty() {
+            while queue.messages.is_empty() && !queue.resync {
                 let (next, waited) = wait_timeout(&state.ready, queue, SENDER_IDLE);
                 queue = next;
-                if waited.timed_out() && queue.messages.is_empty() {
+                if waited.timed_out() && queue.messages.is_empty() && !queue.resync {
                     queue.sending = false;
                     return;
                 }
             }
             state.in_flight.fetch_add(1, Ordering::SeqCst);
-            queue.messages.drain(..).collect()
+            queue.take()
         };
         // A panic in one batch must not end the thread that every later message waits on.
-        let sent = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| send_batch(state, &coalesce(batch))));
+        let sent = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| send_batch(state, &batch)));
         if sent.is_err() {
             tracing::error!("cluster fan-out batch panicked");
         }
@@ -687,17 +980,50 @@ fn send_batch(state: &ClusterState, batch: &[(&'static str, TopicMessage)]) {
             }
         })
         .collect();
-    if payloads.is_empty() {
-        return;
+    let invalidates = batch.iter().any(|(topic, _)| *topic == ENTITY_CACHE_INVALIDATE);
+    let mut live: Vec<&str> = Vec::new();
+    for base_url in &peers {
+        if !peer_down(state, base_url) {
+            live.push(base_url);
+        } else if invalidates {
+            // Skipped while down: it misses these invalidations.
+            lock(&state.peers).mark_dirty(base_url);
+        }
     }
-    let live: Vec<&str> = peers
-        .iter()
-        .map(String::as_str)
-        .filter(|base_url| !peer_down(state, base_url))
-        .collect();
+    let any_dirty = !lock(&state.peers).dirty.is_empty();
+    let clear_all = if any_dirty {
+        match clear_all_payload() {
+            Ok(payload) => Some(payload),
+            Err(err) => {
+                tracing::warn!("cluster clear of every entity cache could not be made: {err}");
+                None
+            }
+        }
+    } else {
+        None
+    };
     let send = |base_url: &str| {
-        if !post_batch_with_retry(&sender, base_url, &payloads) {
+        // A peer that may have missed an invalidation gets a clear of every entity cache first.
+        let gap = lock(&state.peers).dirty.get(base_url).copied();
+        let messages: Vec<(&str, Vec<u8>)> = match (gap, &clear_all) {
+            (Some(_), Some(all)) => std::iter::once((ENTITY_CACHE_INVALIDATE, all.clone()))
+                .chain(payloads.iter().cloned())
+                .collect(),
+            _ => payloads.clone(),
+        };
+        if messages.is_empty() {
+            return;
+        }
+        if post_batch_with_retry(&sender, base_url, &messages) {
+            let mut peers = lock(&state.peers);
+            if gap.is_some() && clear_all.is_some() && peers.dirty.get(base_url) == gap.as_ref() {
+                peers.dirty.remove(base_url);
+            }
+        } else {
             mark_peer_down(state, base_url);
+            if invalidates || gap.is_some() {
+                lock(&state.peers).mark_dirty(base_url);
+            }
         }
     };
     // Each peer gets the whole batch in order; with more than one they are posted to at once, so a slow or unreachable
@@ -719,32 +1045,28 @@ fn send_batch(state: &ClusterState, batch: &[(&'static str, TopicMessage)]) {
     }
 }
 
-/// One invalidation for each entity, in the place of the first: a peer clears the entity's cache whatever the key.
-/// Notifications are all kept, in order.
-fn coalesce(batch: Vec<(&'static str, TopicMessage)>) -> Vec<(&'static str, TopicMessage)> {
-    let mut seen = std::collections::HashSet::new();
-    batch
-        .into_iter()
-        .filter(|(topic, message)| {
-            *topic != ENTITY_CACHE_INVALIDATE
-                || seen.insert(
-                    message
-                        .body
-                        .get("entityName")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or("")
-                        .to_string(),
-                )
-        })
-        .collect()
+/// The payload of a clear of every entity cache, for a peer that may have missed an invalidation.
+fn clear_all_payload() -> Result<Vec<u8>, Error> {
+    payload_bytes(&TopicMessage {
+        origin_id: notify::origin_id().to_string(),
+        message_id: crate::entity::uuid_v4().map_err(Error::from)?,
+        body: serde_json::json!({ "clearAll": true }),
+    })
 }
 
-/// The live peers, read again when the heartbeat tick has not refreshed them within a liveness window.
+/// The live peers, read again when the heartbeat has not refreshed them within a liveness window, or when the last
+/// read found none and is older than [`EMPTY_PEERS_TRUSTED_MS`].
 fn current_peers(state: &ClusterState, factory: &ExecutionContextFactory) -> Vec<String> {
     let window = window_millis(factory);
     {
         let peers = lock(&state.peers);
-        if peers.read_at != 0 && now_millis().saturating_sub(peers.read_at) < window {
+        let age = now_millis().saturating_sub(peers.read_at);
+        let trusted = if peers.urls.is_empty() {
+            EMPTY_PEERS_TRUSTED_MS
+        } else {
+            window
+        };
+        if peers.read_at != 0 && age < trusted {
             return peers.urls.clone();
         }
     }
@@ -759,6 +1081,16 @@ fn refresh_peers(state: &ClusterState, factory: &ExecutionContextFactory) {
     match live_peer_urls(state, factory, &facade) {
         Ok(urls) => {
             let mut peers = lock(&state.peers);
+            // A peer not in the last list was out of this member's fan-out (its heartbeat fell behind, or its row was
+            // deleted and written again) and may have missed invalidations; a new member's clear costs nothing.
+            if peers.read_at != 0 {
+                let returned: Vec<String> = urls.iter().filter(|url| !peers.urls.contains(url)).cloned().collect();
+                for url in returned {
+                    peers.mark_dirty(&url);
+                }
+            }
+            // A peer that left is marked again if it returns, so its marker need not be kept meanwhile.
+            peers.dirty.retain(|url, _| urls.contains(url));
             peers.urls = urls;
             peers.read_at = now_millis();
         }
@@ -1054,7 +1386,8 @@ fn warn_loopback_peers(state: &ClusterState) {
     }
 }
 
-fn touch_member(facade: &EntityFacade, instance_id: &str, now: i64) -> Result<(), Error> {
+/// Move this member's heartbeat. Out: the rows changed, zero when the row is gone.
+fn touch_member(facade: &EntityFacade, instance_id: &str, now: i64) -> Result<u64, Error> {
     let _authz = entered_authz();
     let condition = Condition::equals("instanceId", Value::string(instance_id));
     let sql = facade
@@ -1064,11 +1397,7 @@ fn touch_member(facade: &EntityFacade, instance_id: &str, now: i64) -> Result<()
         .map_err(Error::from)?;
     let params = [millis_value(now), Value::string(instance_id)];
     let tx = facade.transactions_for(MEMBER).map_err(Error::from)?;
-    with_reserve_tx(&tx, |conn| {
-        conn.execute(&sql, &params)?;
-        Ok(())
-    })
-    .map_err(Error::from)
+    with_reserve_tx(&tx, |conn| conn.execute(&sql, &params)).map_err(Error::from)
 }
 
 /// Keep a message too large for a NOTIFY payload, and answer the id the NOTIFY carries instead.

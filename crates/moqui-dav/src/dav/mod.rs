@@ -73,14 +73,58 @@ impl DavRequest {
 }
 
 /// The answer.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
 pub struct DavResponse {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// A file's content to send in place of `body`, read a window at a time as the client takes it, so a download is
+    /// never held whole (plans/High-Level-Review.md HL-010).
+    pub stream: Option<moqui_core::web::ResponseStream>,
+}
+
+impl std::fmt::Debug for DavResponse {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DavResponse")
+            .field("status", &self.status)
+            .field("headers", &self.headers)
+            .field("body", &self.body.len())
+            .field(
+                "stream",
+                &self.stream.as_ref().map(|stream| (stream.offset, stream.length)),
+            )
+            .finish()
+    }
 }
 
 impl DavResponse {
+    /// The whole body: `body`, or the bytes of `stream` read now, for a caller that needs them in memory (the
+    /// service form of a request, the tests).
+    ///
+    /// # Errors
+    ///
+    /// When the stream's source cannot be read.
+    pub fn body_bytes(&self) -> Result<Vec<u8>, moqui_lib::error::Error> {
+        let Some(stream) = &self.stream else {
+            return Ok(self.body.clone());
+        };
+        let mut bytes = Vec::new();
+        let end = stream.offset.saturating_add(stream.length).min(stream.source.len());
+        let mut at = stream.offset;
+        while at < end {
+            let want = usize::try_from(end - at)
+                .unwrap_or(usize::MAX)
+                .min(moqui_core::resource::source::READ_WINDOW);
+            let window = stream.source.read_at(at, want)?;
+            if window.is_empty() {
+                break;
+            }
+            at += window.len() as u64;
+            bytes.extend_from_slice(&window);
+        }
+        Ok(bytes)
+    }
+
     pub(crate) fn status(status: u16) -> Self {
         Self {
             status,
@@ -93,6 +137,7 @@ impl DavResponse {
             status,
             headers: vec![("Content-Type".into(), "text/plain; charset=utf-8".into())],
             body: text.as_bytes().to_vec(),
+            stream: None,
         }
     }
 
@@ -101,6 +146,7 @@ impl DavResponse {
             status,
             headers: vec![("Content-Type".into(), "application/xml; charset=utf-8".into())],
             body: body.into_bytes(),
+            stream: None,
         }
     }
 

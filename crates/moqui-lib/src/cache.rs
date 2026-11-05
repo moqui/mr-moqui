@@ -352,11 +352,21 @@ where
     }
 
     pub fn put(&self, key: K, value: V) -> Result<(), Error> {
+        self.put_if(key, value, || true).map(|_| ())
+    }
+
+    /// [`Self::put`] when `keep` is true, asked under the write lock that a removal or clear also takes. A value read
+    /// before a change that a removal follows is then either refused here or removed after: the caller's `keep`
+    /// compares a count the change moves before it removes (the entity cache's store fence). True when stored.
+    pub fn put_if(&self, key: K, value: V, keep: impl FnOnce() -> bool) -> Result<bool, Error> {
         self.ensure_open()?;
         let now = self.inner.clock.now_millis();
         let mut expired = false;
         let len = {
             let mut entries = write(&self.inner.entries);
+            if !keep() {
+                return Ok(false);
+            }
             if entries.get(&key).is_some_and(|entry| self.entry_expired(entry, now)) {
                 entries.remove(&key);
                 expired = true;
@@ -378,7 +388,7 @@ where
         }
         bump(&self.inner.stats.puts, 1);
         self.evict_inline_if_needed(len);
-        Ok(())
+        Ok(true)
     }
 
     /// JCache `putIfAbsent`: store `value` only when `key` has no live entry, checked and stored under one write lock,

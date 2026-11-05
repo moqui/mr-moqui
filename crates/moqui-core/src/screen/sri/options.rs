@@ -32,10 +32,11 @@ use crate::{l10n, script};
 /// Returns an error when an `entity-find` or `list-options` expression fails.
 pub fn get_field_options(state: &RenderState, widget: &NodeLit) -> Result<Vec<(String, String)>, Error> {
     let field_name = widget.field().map_or("", |field| field.attr("name"));
-    let mut options: Vec<(String, String)> = Vec::new();
-    let mut put = |key: String, text: String| match options.iter_mut().find(|(existing, _)| *existing == key) {
-        Some(slot) => slot.1 = text,
-        None => options.push((key, text)),
+    // A key given again keeps the place it was first given and takes the last label (plans/High-Level-Review.md
+    // HL-005): what `IndexMap::insert` does, without a scan of the options so far.
+    let mut options: IndexMap<String, String> = IndexMap::new();
+    let mut put = |key: String, text: String| {
+        options.insert(key, text);
     };
     for child in &widget.children {
         match child.name.as_str() {
@@ -86,10 +87,30 @@ pub fn get_field_options(state: &RenderState, widget: &NodeLit) -> Result<Vec<(S
     }
     if options.is_empty() {
         if let Some(dynamic) = widget.child("dynamic-options") {
-            options = dynamic_options(state, dynamic)?;
+            return dynamic_options(state, dynamic);
         }
     }
-    Ok(options)
+    Ok(options.into_iter().collect())
+}
+
+/// Render `transition` as a test render from the root screen of `state`, with `parameters`, as the widget's browser
+/// would ask for it. The caller checks its dependencies first and reads the response its own way.
+fn render_transition(
+    state: &RenderState,
+    transition: &str,
+    parameters: IndexMap<String, Value>,
+) -> Result<crate::screen::screen_test::TestRender, Error> {
+    let url = crate::screen::urls::build_url(state, transition)?;
+    let root = state
+        .url_info
+        .path_defs
+        .first()
+        .map(|def| def.location.clone())
+        .ok_or_else(|| Error::new("no root screen"))?;
+    let parameters: std::collections::BTreeMap<String, Value> = parameters.into_iter().collect();
+    crate::screen::screen_test::ScreenTest::new(&state.factory)
+        .root_screen(root)
+        .render(&url.path_with_params(), parameters)
 }
 
 /// The options of a `dynamic-options` element, from its transition called as a test render with the
@@ -113,17 +134,7 @@ fn dynamic_options(state: &RenderState, node: &NodeLit) -> Result<Vec<(String, S
     if !has_all_depends {
         return Ok(Vec::new());
     }
-    let url = crate::screen::urls::build_url(state, node.attr("transition"))?;
-    let root = state
-        .url_info
-        .path_defs
-        .first()
-        .map(|def| def.location.clone())
-        .ok_or_else(|| Error::new("no root screen"))?;
-    let parameters: std::collections::BTreeMap<String, Value> = parameters.into_iter().collect();
-    let rendered = crate::screen::screen_test::ScreenTest::new(&state.factory)
-        .root_screen(root)
-        .render(&url.path_with_params(), parameters)?;
+    let rendered = render_transition(state, node.attr("transition"), parameters)?;
     let json = rendered.json_value()?;
     let list = match &json {
         Value::List(items) => items.clone(),
@@ -133,7 +144,7 @@ fn dynamic_options(state: &RenderState, node: &NodeLit) -> Result<Vec<(String, S
         },
         _ => Vec::new(),
     };
-    let mut options: Vec<(String, String)> = Vec::new();
+    let mut options: IndexMap<String, String> = IndexMap::new();
     for entry in &list {
         let Value::Map(entry) = entry else {
             continue;
@@ -141,13 +152,10 @@ fn dynamic_options(state: &RenderState, node: &NodeLit) -> Result<Vec<(String, S
         let value = entry.get(&value_field).map(to_plain_string).unwrap_or_default();
         let label = entry.get(&label_field).map(to_plain_string).unwrap_or_default();
         if !value.is_empty() && !label.is_empty() {
-            match options.iter_mut().find(|(key, _)| *key == value) {
-                Some(slot) => slot.1 = label,
-                None => options.push((value, label)),
-            }
+            options.insert(value, label);
         }
     }
-    Ok(options)
+    Ok(options.into_iter().collect())
 }
 
 /// Run an `entity-find` element as actions and return the rows.
@@ -241,17 +249,7 @@ pub fn field_transition_value(
         return Ok(None);
     }
     parameters.insert("term".to_string(), Value::string(term));
-    let url = crate::screen::urls::build_url(state, transition)?;
-    let root = state
-        .url_info
-        .path_defs
-        .first()
-        .map(|def| def.location.clone())
-        .ok_or_else(|| Error::new("no root screen"))?;
-    let parameters: std::collections::BTreeMap<String, Value> = parameters.into_iter().collect();
-    let rendered = crate::screen::screen_test::ScreenTest::new(&state.factory)
-        .root_screen(root)
-        .render(&url.path_with_params(), parameters)?;
+    let rendered = render_transition(state, transition, parameters)?;
     let first_label = |item: &Value| match item {
         Value::Map(entry) => entry.get(label_field).map(to_plain_string),
         other => Some(to_plain_string(other)),

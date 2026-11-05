@@ -1074,12 +1074,13 @@ fn a_completion_keeps_its_usage_when_the_callers_transaction_rolls_back() {
     let result: Result<(), moqui_lib::error::Error> =
         transactions.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
             assert!(transactions.in_transaction());
-            // the provider call runs with the transaction suspended (a debug build asserts it), then resumes it
+            // an opted-in call runs with the transaction suspended (a debug build asserts it), then resumes it
             let answer = llm.complete(
                 &facade,
                 &crate::CompleteRequest {
                     model: Some("complete-model".to_string()),
                     prompt: Some("Hello".to_string()),
+                    allow_in_transaction: true,
                     ..crate::CompleteRequest::default()
                 },
             )?;
@@ -1133,4 +1134,142 @@ fn a_completion_ends_by_its_timeout() {
         .unwrap_err();
     assert!(error.to_string().contains("timeout"), "{error}");
     assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+}
+
+/// HL-041: a completion with the caller's transaction open is refused, nothing sent and no connection parked; one that
+/// opts in is cut to the time the transaction has left, not its own 300 seconds.
+#[test]
+fn a_completion_in_a_transaction_is_refused_unless_it_opts_in_and_then_ends_with_the_transaction() {
+    let facade = moqui_core::testing::open();
+    let llm =
+        crate::LlmFacade::new(LlmConf::from_conf_text(&COMPLETE_CONF.replace("complete-fake", "in-tx-fake")).unwrap());
+    fake::clear("in-tx-fake");
+    let transactions = facade.transactions_for("moqui.llm.LlmCall").unwrap();
+    let ask = |allow: bool| crate::CompleteRequest {
+        model: Some("complete-model".to_string()),
+        prompt: Some("Hello".to_string()),
+        allow_in_transaction: allow,
+        ..crate::CompleteRequest::default()
+    };
+    let parked_before = transactions.stats().parked;
+    let refused: Result<(), moqui_lib::error::Error> =
+        transactions.run(moqui_core::transaction::TransactionAttribute::UseOrBegin, None, || {
+            // a read first, so the transaction holds a connection
+            facade.find("moqui.basic.Enumeration")?.limit(1).list()?;
+            let error = llm.complete(&facade, &ask(false)).unwrap_err();
+            assert!(error.to_string().contains(super::IN_TRANSACTION), "{error}");
+            assert_eq!(transactions.stats().parked, parked_before, "nothing was suspended");
+            assert!(transactions.in_transaction());
+            Ok(())
+        });
+    refused.unwrap();
+    assert!(fake::requests("in-tx-fake").is_empty(), "nothing was sent");
+
+    fake::script(
+        "in-tx-fake",
+        vec![fake::Reply::steps(vec![
+            Step::Hang(5000),
+            Step::Finish("stop".to_string()),
+        ])],
+    );
+    let started = Instant::now();
+    let opted: Result<(), moqui_lib::error::Error> = transactions.run(
+        moqui_core::transaction::TransactionAttribute::UseOrBegin,
+        Some(Duration::from_millis(400)),
+        || {
+            let error = llm.complete(&facade, &ask(true)).unwrap_err();
+            assert!(error.to_string().contains("timeout"), "{error}");
+            Ok(())
+        },
+    );
+    // the transaction's own deadline passed meanwhile, so it ends rolled back; the call did not outlast it
+    let _ = opted;
+    assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+    assert_eq!(fake::requests("in-tx-fake").len(), 1);
+}
+
+const QUOTA_CONF: &str = r#"<llm-facade>
+    <endpoint id="quota-fake" protocol="fake"/>
+    <model id="quota-model" endpoint="quota-fake" name="fake-1" max-output="1000"/>
+    <limits user-daily-tokens="1500"/>
+</llm-facade>"#;
+
+/// Agent calls of one user at once, whose quota fits one attempt's prompt and output limit: the first admitted holds
+/// its reservation while the fake holds its reply at a gate, and the others end with the quota's refusal, which the
+/// run stops on (plans/High-Level-Review.md HL-030).
+#[test]
+fn one_of_concurrent_agent_calls_takes_the_room_left() {
+    let facade = moqui_core::testing::open();
+    let llm = crate::LlmFacade::new(LlmConf::from_conf_text(QUOTA_CONF).unwrap());
+    let mut target = fake_target("quota-fake");
+    target.model.max_output = Some(1000);
+    fake::script(
+        "quota-fake",
+        (0..4)
+            .map(|_| {
+                fake::Reply::steps(vec![
+                    Step::Gate("quota-held".to_string()),
+                    Step::Text("Done".to_string()),
+                    Step::Finish("stop".to_string()),
+                ])
+            })
+            .collect(),
+    );
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+    let replies: Vec<Reply> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let (facade, llm, target, barrier) = (&facade, &llm, &target, &barrier);
+                scope.spawn(move || {
+                    let mut options = fast(CallSource::Agent);
+                    options.idle = Some(Duration::from_secs(10));
+                    options.user_id = Some("QA1".to_string());
+                    options.quota = Some("agent");
+                    options.recorder = Some(Recorder { llm, facade });
+                    barrier.wait();
+                    call(target, &simple_request(), &mut options)
+                })
+            })
+            .collect();
+        // the refused ones end at once; then the admitted one is let through
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while handles.iter().filter(|handle| handle.is_finished()).count() < 3 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        fake::open_gate("quota-held");
+        handles.into_iter().map(|handle| handle.join().unwrap()).collect()
+    });
+    let answered = replies.iter().filter(|reply| reply.finish == Finish::Stop).count();
+    let refused = replies.iter().filter(|reply| quota_refused(&reply.finish)).count();
+    assert_eq!(
+        (answered, refused),
+        (1, 3),
+        "{:?}",
+        replies.iter().map(|reply| &reply.finish).collect::<Vec<_>>()
+    );
+    // the reservation went once the call's row was written
+    let open = facade
+        .find(usage::LLM_QUOTA_RESERVATION)
+        .unwrap()
+        .eq("userId", moqui_lib::object::Value::string("QA1"))
+        .count()
+        .unwrap();
+    assert_eq!(open, 0);
+}
+
+/// The content log of an agent or API call keeps at most 1 MiB of a streamed reply, as the gateway's does.
+#[test]
+fn the_content_log_of_a_stream_is_capped() {
+    let mut log = EventsLog::default();
+    let piece = json!({"type": "text", "delta": "x".repeat(10_000)});
+    for _ in 0..200 {
+        log.push(piece.clone());
+    }
+    let text = log.into_json();
+    assert!(text.len() <= MAX_LOGGED_EVENTS + 100, "{}", text.len());
+    assert!(
+        text.ends_with(r#"{"maxBytes":1048576,"type":"log_cut"}]"#),
+        "{}",
+        &text[text.len() - 60..]
+    );
 }

@@ -311,7 +311,7 @@ pub(super) fn start(
         row.create(facade)?;
         let handoff_id = text_of(&row, "handoffId").unwrap_or_default();
         // the run waits for the user's save now
-        let mut paused = run::held(facade, &run.run_id, sink.node(), Hold::LeaseOrNone)?;
+        let mut paused = run::held(facade, &run.run_id, sink.holder(), Hold::LeaseOrNone)?;
         paused.set("pauseKindEnumId", Value::string(PauseKind::Handoff.enum_id()));
         paused.set("pauseRef", Value::string(&handoff_id));
         paused.set("pauseExpireDate", run::stamp(expires));

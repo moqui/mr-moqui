@@ -1154,3 +1154,54 @@ async fn a_trunk_that_does_not_register_is_pinged_with_options_and_shows_up_or_d
     }
     ua.shutdown();
 }
+
+/// Whether the peer closed `stream` within `wait` (rather than keeping it open).
+async fn closed_within(stream: &mut tokio::net::TcpStream, wait: Duration) -> bool {
+    use tokio::io::AsyncReadExt as _;
+    let mut byte = [0_u8; 1];
+    matches!(
+        tokio::time::timeout(wait, stream.read(&mut byte)).await,
+        Ok(Ok(0) | Err(_))
+    )
+}
+
+/// A TLS client is counted from its accept: one past the per-source handshake cap is closed at once, and one that
+/// does not finish its handshake is closed by the deadline (HL-031).
+#[tokio::test]
+async fn a_tls_handshake_is_counted_from_accept_and_has_a_deadline() {
+    let issued = rcgen::generate_simple_self_signed(vec!["127.0.0.1".to_string()]).unwrap();
+    let cert = pem("CERTIFICATE", issued.cert.der());
+    let key = pem("PRIVATE KEY", &issued.signing_key.serialize_der());
+    let (tx, _events) = mpsc::unbounded_channel();
+    let ua = Ua::start(
+        UaConfig {
+            tls: Some(("127.0.0.1:0".parse().unwrap(), cert, key)),
+            tls_handshake: Some(Duration::from_millis(600)),
+            ..Default::default()
+        },
+        tx,
+    )
+    .await
+    .unwrap();
+    let address = ua.bound().tls.unwrap();
+    let mut waiting = Vec::new();
+    for _ in 0..TLS_HANDSHAKES_PER_SOURCE {
+        waiting.push(tokio::net::TcpStream::connect(address).await.unwrap());
+    }
+    let mut past = tokio::net::TcpStream::connect(address).await.unwrap();
+    assert!(
+        closed_within(&mut past, Duration::from_millis(300)).await,
+        "past the share"
+    );
+    let started = tokio::time::Instant::now();
+    assert!(
+        !closed_within(&mut waiting[0], Duration::from_millis(100)).await,
+        "within the share, waiting for its handshake"
+    );
+    assert!(
+        closed_within(&mut waiting[0], Duration::from_secs(2)).await,
+        "the deadline"
+    );
+    assert!(started.elapsed() < Duration::from_secs(1));
+    ua.shutdown();
+}

@@ -18,14 +18,27 @@
 //! WebDAV client is. A lock covers its own location, and with depth infinity everything under a folder; nothing else
 //! is held, so writes of the files beside a locked one go on. Deleting or moving a folder is refused when anything
 //! under it is locked by another user, as it would change that file. The owner may write without the token (clients
-//! lose it); a delete or move that is done drops the locks of what it took away. Locks are held in memory on this
-//! server for their timeout (at most an hour): in a cluster a client stays on one server for its session.
+//! lose it); a delete or move that is done drops the locks of what it took away.
+//!
+//! Locks are `moqui.resource.ResourceLock` rows, so every member of a cluster holds them (plans/High-Level-Review.md
+//! HL-036), each until its expiry (at most an hour, which WebDAV's LOCK sets). A row's key is a hash of its location,
+//! so a write's check is one query by primary key of its location and the folders above it; a delete or move of a
+//! folder also looks for the locks under it by path. Expired rows hold nothing and are removed as locks are taken.
+//! A check that cannot read the locks refuses the write.
 
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use base64::Engine as _;
+use moqui_lib::error::Error;
+use moqui_lib::object::Value;
+use sha2::{Digest as _, Sha256};
+
+use crate::entity::{Condition, EntityFacade, EntityValue};
+use crate::transaction::TransactionAttribute;
+use crate::user::{now_millis, stamp_value, value_millis};
 
 /// The end of the message of a write refused by a lock (the message starts with the name of what is locked).
 pub const LOCKED_ERROR: &str = "locked by another user";
+
+const LOCK_ENTITY: &str = "moqui.resource.ResourceLock";
 
 #[derive(Clone, Debug)]
 pub struct Lock {
@@ -35,22 +48,16 @@ pub struct Lock {
     pub owner: String,
     pub depth_infinity: bool,
     pub seconds: u64,
-    pub expires: std::time::Instant,
+    /// When it ends, epoch milliseconds.
+    pub expires_millis: i64,
 }
 
-fn table() -> &'static Mutex<HashMap<String, Lock>> {
-    static TABLE: OnceLock<Mutex<HashMap<String, Lock>>> = OnceLock::new();
-    TABLE.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-/// The table with expired locks dropped.
-fn live() -> std::sync::MutexGuard<'static, HashMap<String, Lock>> {
-    let mut table = moqui_lib::sync::lock(table());
-    if !table.is_empty() {
-        let now = std::time::Instant::now();
-        table.retain(|_, lock| lock.expires > now);
+impl Lock {
+    /// A lock taken now for `seconds`.
+    #[must_use]
+    pub fn expiry(seconds: u64) -> i64 {
+        now_millis().saturating_add(i64::try_from(seconds.saturating_mul(1000)).unwrap_or(i64::MAX))
     }
-    table
 }
 
 /// The lock key of a location: no `#version`, no trailing slash.
@@ -62,39 +69,113 @@ pub fn key(location: &str) -> String {
     location.trim_end_matches('/').to_string()
 }
 
-/// The lock on `location` or on a folder above it with depth infinity.
-pub fn holding(location: &str) -> Option<Lock> {
-    let key = key(location);
-    let table = live();
-    if let Some(lock) = table.get(&key) {
-        return Some(lock.clone());
+/// The primary key of the row of the lock of `key`: SHA-256 of it, base64url, so a long location fits an index.
+fn row_key(key: &str) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(key.as_bytes()))
+}
+
+/// `key` and every folder above it, nearest first.
+fn with_ancestors(key: &str) -> Vec<String> {
+    let mut keys = vec![key.to_string()];
+    let mut rest = key;
+    while let Some((parent, _)) = rest.rsplit_once('/') {
+        let parent = parent.trim_end_matches('/');
+        if parent.is_empty() || parent.ends_with(':') {
+            break;
+        }
+        keys.push(parent.to_string());
+        rest = parent;
     }
-    table
+    keys
+}
+
+fn lock_of(row: &EntityValue) -> (String, Lock) {
+    let text = |name: &str| {
+        row.get(name)
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default()
+    };
+    (
+        text("lockPath"),
+        Lock {
+            token: text("lockToken"),
+            user_id: text("userId"),
+            owner: text("ownerXml"),
+            depth_infinity: text("depthInfinity") == "Y",
+            seconds: text("lockSeconds").parse().unwrap_or(0),
+            expires_millis: row.get("expiresDate").and_then(value_millis).unwrap_or(0),
+        },
+    )
+}
+
+/// The live locks of `key` and the folders above it (by row key), and with `tree` those under it, as (path, lock).
+fn live_around(facade: &EntityFacade, key: &str, tree: bool) -> Result<Vec<(String, Lock)>, Error> {
+    let keys: Vec<Value> = with_ancestors(key)
         .iter()
-        .find(|(path, lock)| lock.depth_infinity && key.starts_with(&format!("{path}/")))
-        .map(|(_, lock)| lock.clone())
+        .map(|key| Value::string(row_key(key)))
+        .collect();
+    let mut near = Condition::is_in("lockKey", keys);
+    if tree {
+        // narrows by path; what is really under the folder is decided below (`_` and `%` in a name match more)
+        near = Condition::or(vec![
+            near,
+            Condition::like("lockPath", Value::string(format!("{key}/%"))),
+        ]);
+    }
+    let rows = facade
+        .find(LOCK_ENTITY)?
+        .condition(near)
+        .condition(Condition::greater("expiresDate", stamp_value(now_millis())))
+        .disable_authz()
+        .list()?;
+    Ok(rows.values().iter().map(lock_of).collect())
+}
+
+fn applies(path: &str, lock: &Lock, key: &str, tree: bool) -> bool {
+    path == key
+        || (lock.depth_infinity && key.starts_with(&format!("{path}/")))
+        || (tree && path.starts_with(&format!("{key}/")))
+}
+
+/// The lock on `location` or on a folder above it with depth infinity.
+///
+/// # Errors
+///
+/// When the locks cannot be read.
+pub fn holding(facade: &EntityFacade, location: &str) -> Result<Option<Lock>, Error> {
+    let key = key(location);
+    let mut found = live_around(facade, &key, false)?;
+    // its own first, then the nearest folder above
+    found.sort_by_key(|(path, _)| std::cmp::Reverse(path.len()));
+    Ok(found
+        .into_iter()
+        .find(|(path, lock)| applies(path, lock, &key, false))
+        .map(|(_, lock)| lock))
 }
 
 /// The lock of exactly `location`.
-pub fn get(location: &str) -> Option<Lock> {
-    live().get(&key(location)).cloned()
+///
+/// # Errors
+///
+/// When the locks cannot be read.
+pub fn get(facade: &EntityFacade, location: &str) -> Result<Option<Lock>, Error> {
+    let key = key(location);
+    Ok(live_around(facade, &key, false)?
+        .into_iter()
+        .find(|(path, _)| *path == key)
+        .map(|(_, lock)| lock))
 }
 
 /// Whether `user_id` may change `location`: an error when another user (or no user) holds a lock on it or on a folder
-/// above it with depth infinity, or with `tree` (a delete or move of a folder) on anything under it.
-pub fn check(location: &str, user_id: Option<&str>, tree: bool) -> Result<(), String> {
+/// above it with depth infinity, or with `tree` (a delete or move of a folder) on anything under it; and when the
+/// locks cannot be read, as a write that might lose another user's change is not let through.
+pub fn check(facade: &EntityFacade, location: &str, user_id: Option<&str>, tree: bool) -> Result<(), String> {
     let key = key(location);
-    let table = live();
-    if table.is_empty() {
-        return Ok(());
-    }
-    let below = format!("{key}/");
-    let refused = table.iter().find(|(path, lock)| {
-        user_id != Some(lock.user_id.as_str())
-            && (**path == key
-                || (lock.depth_infinity && key.starts_with(&format!("{path}/")))
-                || (tree && path.starts_with(&below)))
-    });
+    let found =
+        live_around(facade, &key, tree).map_err(|err| format!("the locks of {key} could not be read: {err}"))?;
+    let refused = found
+        .iter()
+        .find(|(path, lock)| user_id != Some(lock.user_id.as_str()) && applies(path, lock, &key, tree));
     match refused {
         // the name of what is locked, not its storage location
         Some((path, _)) => Err(format!("{} is {LOCKED_ERROR}", path.rsplit('/').next().unwrap_or(path))),
@@ -103,110 +184,111 @@ pub fn check(location: &str, user_id: Option<&str>, tree: bool) -> Result<(), St
 }
 
 /// [`check`] for the current user.
-pub fn check_current(location: &str, tree: bool) -> Result<(), String> {
-    if moqui_lib::sync::lock(table()).is_empty() {
-        return Ok(());
-    }
+pub fn check_current(facade: &EntityFacade, location: &str, tree: bool) -> Result<(), String> {
     let user_id = crate::user::current_user_id().ok().flatten();
-    check(location, user_id.as_deref(), tree)
+    check(facade, location, user_id.as_deref(), tree)
 }
 
-/// Set the lock of `location`, replacing any there.
-pub fn put(location: &str, lock: Lock) {
-    live().insert(key(location), lock);
+fn in_own_transaction<T>(facade: &EntityFacade, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
+    facade
+        .transactions_for(LOCK_ENTITY)?
+        .run(TransactionAttribute::ForceNew, None, body)
 }
 
-/// Change the lock of exactly `location` in place; `None` when there is none.
-pub fn update<T>(location: &str, change: impl FnOnce(&mut Lock) -> T) -> Option<T> {
-    live().get_mut(&key(location)).map(change)
+/// Set the lock of `location`, replacing any there, in a transaction of its own; the expired rows go with it.
+///
+/// # Errors
+///
+/// When the lock cannot be written.
+pub fn put(facade: &EntityFacade, location: &str, lock: &Lock) -> Result<(), Error> {
+    let key = key(location);
+    in_own_transaction(facade, || {
+        facade
+            .find(LOCK_ENTITY)?
+            .condition(Condition::less_equal("expiresDate", stamp_value(now_millis())))
+            .disable_authz()
+            .delete_all()?;
+        let mut row = facade.make_value(LOCK_ENTITY)?;
+        row.set("lockKey", Value::string(row_key(&key)));
+        row.set("lockPath", Value::string(&key));
+        row.set("lockToken", Value::string(&lock.token));
+        row.set("userId", Value::string(&lock.user_id));
+        row.set("ownerXml", Value::string(&lock.owner));
+        row.set(
+            "depthInfinity",
+            Value::string(if lock.depth_infinity { "Y" } else { "N" }),
+        );
+        row.set(
+            "lockSeconds",
+            Value::I64(i64::try_from(lock.seconds).unwrap_or(i64::MAX)),
+        );
+        row.set("expiresDate", stamp_value(lock.expires_millis));
+        row.create_or_update(facade)
+    })
+}
+
+/// Change the lock of exactly `location`, if it is live, and keep the change; `None` when there is none.
+///
+/// # Errors
+///
+/// When the lock cannot be read or written.
+pub fn update<T>(
+    facade: &EntityFacade,
+    location: &str,
+    change: impl FnOnce(&mut Lock) -> T,
+) -> Result<Option<T>, Error> {
+    let Some(mut lock) = get(facade, location)? else {
+        return Ok(None);
+    };
+    let changed = change(&mut lock);
+    put(facade, location, &lock)?;
+    Ok(Some(changed))
 }
 
 /// Remove the lock of exactly `location`.
-pub fn remove(location: &str) -> Option<Lock> {
-    live().remove(&key(location))
+///
+/// # Errors
+///
+/// When the lock cannot be removed.
+pub fn remove(facade: &EntityFacade, location: &str) -> Result<(), Error> {
+    let key = key(location);
+    in_own_transaction(facade, || {
+        facade
+            .find(LOCK_ENTITY)?
+            .eq("lockKey", Value::string(row_key(&key)))
+            .disable_authz()
+            .delete_all()
+            .map(|_| ())
+    })
 }
 
-/// A moved or deleted location takes its locks, and those of everything under it, with it.
-pub fn release(location: &str) {
+/// A moved or deleted location takes its locks, and those of everything under it, with it. One that cannot be
+/// removed is logged; it ends at its expiry.
+pub fn release(facade: &EntityFacade, location: &str) {
     let key = key(location);
     let below = format!("{key}/");
-    let mut table = live();
-    if !table.is_empty() {
-        table.retain(|path, _| path != &key && !path.starts_with(&below));
+    let released = in_own_transaction(facade, || {
+        let rows = facade
+            .find(LOCK_ENTITY)?
+            .condition(Condition::or(vec![
+                Condition::equals("lockKey", Value::string(row_key(&key))),
+                Condition::like("lockPath", Value::string(format!("{below}%"))),
+            ]))
+            .disable_authz()
+            .list()?;
+        for row in rows.values() {
+            let (path, _) = lock_of(row);
+            if path == key || path.starts_with(&below) {
+                row.delete(facade)?;
+            }
+        }
+        Ok(())
+    });
+    if let Err(err) = released {
+        tracing::error!("The WebDAV locks of {key} were not released: {err}");
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn lock(user_id: &str, depth_infinity: bool) -> Lock {
-        Lock {
-            token: format!("opaquelocktoken:{user_id}"),
-            user_id: user_id.to_string(),
-            owner: String::new(),
-            depth_infinity,
-            seconds: 60,
-            expires: std::time::Instant::now() + std::time::Duration::from_secs(60),
-        }
-    }
-
-    #[test]
-    fn a_lock_holds_its_own_location_and_nothing_beside_it() {
-        let root = "dbresource://locks-test-one";
-        put(&format!("{root}/docs/a.txt"), lock("alice", false));
-        put(&format!("{root}/shared/"), lock("alice", true));
-        assert!(check(&format!("{root}/docs/a.txt"), Some("bob"), false).is_err());
-        assert!(
-            check(&format!("{root}/docs/a.txt#v2"), None, false).is_err(),
-            "no user is another user"
-        );
-        assert!(
-            check(&format!("{root}/docs/a.txt"), Some("alice"), true).is_ok(),
-            "the owner writes"
-        );
-        assert!(
-            check(&format!("{root}/docs/b.txt"), Some("bob"), false).is_ok(),
-            "the file beside it"
-        );
-        assert!(
-            check(&format!("{root}/docs"), Some("bob"), false).is_ok(),
-            "a write in the folder"
-        );
-        assert!(
-            check(&format!("{root}/docs"), Some("bob"), true).is_err(),
-            "a move of the folder takes the file"
-        );
-        assert!(check(&format!("{root}/docs/a.txt.bak"), Some("bob"), true).is_ok());
-        assert!(
-            check(&format!("{root}/shared/deep/c.txt"), Some("bob"), false).is_err(),
-            "depth infinity"
-        );
-        assert!(check(&format!("{root}/shared-not"), Some("bob"), false).is_ok());
-        release(&format!("{root}/docs"));
-        assert!(
-            check(&format!("{root}/docs/a.txt"), Some("bob"), false).is_ok(),
-            "released with its folder"
-        );
-        release(&format!("{root}/shared"));
-        assert!(holding(&format!("{root}/shared/deep/c.txt")).is_none());
-    }
-
-    #[test]
-    fn an_expired_lock_holds_nothing() {
-        let location = "dbresource://locks-test-two/a.txt";
-        let mut expired = lock("alice", false);
-        expired.expires = std::time::Instant::now() - std::time::Duration::from_secs(1);
-        put(location, expired);
-        assert!(check(location, Some("bob"), false).is_ok());
-        assert!(get(location).is_none());
-    }
-
-    #[test]
-    fn a_key_drops_the_version_and_trailing_slashes() {
-        assert_eq!(key("dbresource://é/a.txt#v2#v3"), "dbresource://é/a.txt");
-        assert_eq!(key("dbresource://docs//"), "dbresource://docs");
-        assert_eq!(key("#v2/"), "#v2");
-        assert_eq!(key("dbresource://a.txt"), "dbresource://a.txt");
-    }
-}
+#[path = "locks_tests.rs"]
+mod tests;

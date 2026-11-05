@@ -127,18 +127,18 @@ fn call_future_without_a_context_names_it() {
 #[test]
 fn default_conf_sizes_and_drop_joins() {
     let text = std::fs::read_to_string(framework_dir().join("conf/MoquiDefaultConf.xml")).unwrap();
-    // `worker-pool-max` 32, less the 2 job workers of `job-pool-core`.
+    // `worker-pool-max` 25, less the 2 job workers of `job-pool-core`.
     let pools = super::super::start_pools(&text).unwrap();
-    assert_eq!(pools.sizes(), (30, 65_535));
+    assert_eq!(pools.sizes(), (23, 65_535));
     drop(pools);
     // With no `worker-queue`, Java's code default.
     let missing = super::super::start_pools("<moqui-conf/>").unwrap();
-    assert_eq!(missing.sizes(), (30, 65_536));
+    assert_eq!(missing.sizes(), (23, 65_536));
     drop(missing);
     let junk =
         super::super::start_pools(r#"<moqui-conf><tools worker-pool-max="nope" worker-queue="nope"/></moqui-conf>"#)
             .unwrap();
-    assert_eq!(junk.sizes(), (30, 65_536));
+    assert_eq!(junk.sizes(), (23, 65_536));
     drop(junk);
     let none = super::super::start_pools(r#"<moqui-conf><tools worker-pool-max="0"/></moqui-conf>"#);
     assert!(none.is_err(), "a pool with no workers can never run anything");
@@ -399,6 +399,37 @@ fn a_job_with_a_bad_cron_is_skipped_and_the_next_job_runs() {
         runs(&world, "J1").iter().any(|run| text(run, "hasError") == "N")
     });
     assert!(runs(&world, "A0").is_empty());
+}
+
+/// With every execution slot taken, a pass reads no job's lock or history: the bad cron, which fails only once its
+/// readiness is checked, is not reached. With a slot free again the same pass checks and runs them.
+#[test]
+fn a_pass_with_no_free_slot_checks_no_job() {
+    let world = jobs_world(2, 8);
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    add_job(&world, "A0", "echo#Note", "not a cron", &[]);
+    add_job(&world, "J1", "echo#Note", "* * * * * *", &[]);
+    let pools = world.ctx.factory().service_pools();
+    let shared = pools.shared_handle();
+    let busy = usize::try_from(shared.job_slots()).unwrap();
+    moqui_lib::sync::lock(&shared.state).jobs_active += busy;
+    let report = pools.tick();
+    moqui_lib::sync::lock(&shared.state).jobs_active -= busy;
+    assert_eq!(
+        report,
+        super::super::jobs::PassReport {
+            jobs_not_checked: 2,
+            ..Default::default()
+        }
+    );
+    assert!(runs(&world, "J1").is_empty());
+    let report = pools.tick();
+    assert_eq!(
+        (report.jobs_failed, report.jobs_run, report.jobs_not_checked),
+        (1, 1, 0),
+        "{report:?}"
+    );
 }
 
 #[test]
@@ -666,21 +697,11 @@ fn a_call_that_finds_the_queue_full_is_stored_as_a_job_and_run_later() {
     assert_eq!(stored.len(), 2);
     let services: Vec<String> = stored.iter().map(|job| text(job, "serviceName")).collect();
     assert!(services.contains(&"mark#Row".to_string()), "{services:?}");
-    let caller_rows = world
-        .facade
-        .find("moqui.service.job.ServiceJobParameter")
-        .unwrap()
-        .eq("jobName", Value::string(text(&stored[0], "jobName")))
-        .list()
-        .unwrap();
-    let caller: BTreeMap<String, String> = caller_rows
-        .values()
-        .iter()
-        .map(|row| (text(row, "parameterName"), text(row, "parameterValue")))
-        .collect();
-    assert_eq!(caller.get("_moquiUsername").map(String::as_str), Some("queued-caller"));
-    assert_eq!(caller.get("_originAgentId").map(String::as_str), Some("queue-agent"));
-    assert_eq!(caller.get("_originRunId").map(String::as_str), Some("QUEUE_RUN_1"));
+    let call: serde_json::Value = serde_json::from_str(&text(&stored[0], "queuedCall")).unwrap();
+    assert_eq!(call["userName"], "queued-caller");
+    assert_eq!(call["agentId"], "queue-agent");
+    assert_eq!(call["agentRunId"], "QUEUE_RUN_1");
+    assert_eq!(call["parameters"]["note"], "queued-call");
     // Jobs run on their own workers, as Java's `jobWorkerPool`, so the stored call runs while the service queue
     // is still full.
     let mut submitted = 0;
@@ -813,4 +834,376 @@ impl Drop for Hold {
 
 fn framework_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework")
+}
+
+// ---- queued tx rules and job locks (HL-025, HL-026) ---------------------------------------
+
+const MAP_SERVICE: &str = r#"<services>
+        <service verb="commit" noun="Map">
+            <in-parameters>
+                <parameter name="items" type="Map"/>
+                <parameter name="tags" type="List"/>
+            </in-parameters>
+            <out-parameters><parameter name="note"/></out-parameters>
+            <actions><set field="note" value="done"/></actions>
+        </service>
+    </services>"#;
+
+/// The tx-commit rule of `commit#Map` writes a row from a map entry, a list item and a result.
+const MAP_RULE: &str = r#"<secas>
+        <seca service="commit#Map" when="tx-commit">
+            <actions>
+                <entity-make-value entity-name="moqui.test.TestEntity" value-field="made"/>
+                <script>made.set("testId", "MAP_RULE"); made.set("testMedium", parameters.items.color + "-" + parameters.tags[1] + "-" + results.note)</script>
+                <entity-create value-field="made"/>
+            </actions>
+        </seca>
+    </secas>"#;
+
+fn map_rule_world(workers: usize, queue: usize) -> Jobs {
+    jobs_world_with(workers, queue, Some(MAP_SERVICE), |factory| {
+        crate::service::eca_rules::install(factory, crate::service::eca_rules::from_xml(MAP_RULE, ""));
+    })
+}
+
+fn commit_map() {
+    let mut items = indexmap::IndexMap::new();
+    items.insert("color".to_string(), Value::string("blue"));
+    let mut params = BTreeMap::new();
+    params.insert("items".to_string(), Value::Map(items));
+    params.insert(
+        "tags".to_string(),
+        Value::List(vec![Value::string("a"), Value::string("b")]),
+    );
+    crate::service::call::sync("commit#Map", &params).unwrap();
+}
+
+fn queued_jobs(facade: &EntityFacade) -> Vec<crate::entity::EntityValue> {
+    facade
+        .find("moqui.service.job.ServiceJob")
+        .unwrap()
+        .list()
+        .unwrap()
+        .values()
+        .iter()
+        .filter(|job| text(job, "jobName").starts_with(super::super::jobs::QUEUE_PREFIX))
+        .cloned()
+        .collect()
+}
+
+fn rule_row(facade: &EntityFacade) -> Option<String> {
+    facade
+        .find("moqui.test.TestEntity")
+        .unwrap()
+        .eq("testId", Value::string("MAP_RULE"))
+        .one()
+        .unwrap()
+        .map(|row| text(&row, "testMedium"))
+}
+
+/// The rule's run is stored as a job when the queue is full, with the phase, the results and the map and list
+/// parameters as they were, and a job worker runs it while the queue is still full.
+#[test]
+fn tx_commit_rules_that_find_the_queue_full_run_later_as_a_job_with_their_maps() {
+    let world = map_rule_world(1, 1);
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    let pools = world.ctx.factory().service_pools();
+    let hold = Hold::new();
+    fill_queue(pools, &hold);
+    commit_map();
+    let stored = queued_jobs(&world.facade);
+    assert_eq!(stored.len(), 1);
+    let call: serde_json::Value = serde_json::from_str(&text(&stored[0], "queuedCall")).unwrap();
+    assert_eq!(call["when"], "tx-commit");
+    assert_eq!(call["parameters"]["items"]["color"], "blue");
+    assert_eq!(call["parameters"]["tags"][1], "b");
+    assert_eq!(call["results"]["note"], "done");
+    // Registered with authorization disabled, the rules run so.
+    assert_eq!(call["authz"]["disabled"], true);
+    assert_eq!(text(&stored[0], "serviceName"), "commit#Map");
+    assert!(rule_row(&world.facade).is_none());
+    wait_for("the queued rules to run", || {
+        pools.tick();
+        rule_row(&world.facade).is_some()
+    });
+    assert_eq!(rule_row(&world.facade).as_deref(), Some("blue-b-done"));
+    wait_for("the queued job to be removed", || queued_jobs(&world.facade).is_empty());
+    hold.open();
+}
+
+/// Rules still in the queue when the pool stops with no wait are stored as a job, which a later pool runs.
+#[test]
+fn tx_commit_rules_queued_at_a_zero_wait_stop_are_kept_as_a_job() {
+    let world = map_rule_world(1, 4);
+    {
+        let _entered = world.ctx.enter();
+        let _authz = world.ctx.disable_authz();
+        let pools = world.ctx.factory().service_pools();
+        let hold = Hold::new();
+        let task_hold = hold.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        pools
+            .submit_task(move || {
+                started_tx.send(()).unwrap();
+                task_hold.wait();
+            })
+            .unwrap();
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        commit_map();
+        assert!(queued_jobs(&world.facade).is_empty(), "the queue had room");
+        let stopping = {
+            let factory = Arc::clone(world.ctx.factory());
+            std::thread::spawn(move || factory.service_pools().shutdown_now())
+        };
+        wait_for("the rules to be stored at the stop", || {
+            queued_jobs(&world.facade).len() == 1
+        });
+        hold.open();
+        stopping.join().unwrap();
+    }
+    assert!(rule_row(&world.facade).is_none());
+    let later = map_rule_world(1, 4);
+    later.ctx.factory().set_entity(world.facade.clone());
+    let _entered = later.ctx.enter();
+    let pools = later.ctx.factory().service_pools();
+    wait_for("the stored rules to run", || {
+        pools.tick();
+        rule_row(&world.facade).is_some()
+    });
+    assert_eq!(rule_row(&world.facade).as_deref(), Some("blue-b-done"));
+}
+
+fn lock_row_of(facade: &EntityFacade, name: &str) -> Option<crate::entity::EntityValue> {
+    facade
+        .find("moqui.service.job.ServiceJobRunLock")
+        .unwrap()
+        .eq("jobName", Value::string(name))
+        .one()
+        .unwrap()
+}
+
+/// A pass claims a lock only for a job worker that is idle: with both busy, the third due job's lock is left for
+/// another member.
+#[test]
+fn with_both_job_workers_busy_a_third_due_job_is_not_claimed() {
+    let hold = Hold::new();
+    let started = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let blocking = r#"<services>
+            <service verb="block" noun="Job" type="rust" location="test::blocking_job"/>
+        </services>"#;
+    let (job_hold, job_started) = (hold.clone(), Arc::clone(&started));
+    let world = jobs_world_with(1, 8, Some(blocking), move |factory| {
+        factory
+            .register_service("test::blocking_job", move |_ec, _info, _parameters| {
+                job_started.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                job_hold.wait();
+                Ok(BTreeMap::new())
+            })
+            .unwrap();
+    });
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    add_job(&world, "B1", "block#Job", "* * * * * *", &[]);
+    add_job(&world, "B2", "block#Job", "* * * * * *", &[]);
+    add_job(&world, "C3", "echo#Note", "* * * * * *", &[]);
+    let pools = world.ctx.factory().service_pools();
+    assert_eq!(pools.tick().jobs_run, 2);
+    wait_for("both job workers to be busy", || {
+        started.load(std::sync::atomic::Ordering::SeqCst) == 2
+    });
+    let report = pools.tick();
+    assert_eq!((report.jobs_run, report.jobs_not_checked), (0, 3), "{report:?}");
+    assert!(
+        lock_row_of(&world.facade, "C3").is_none(),
+        "the third job's lock is not claimed"
+    );
+    hold.open();
+    wait_for("a worker to be free and the third job to run", || {
+        pools.tick();
+        runs(&world, "C3").iter().any(|run| text(run, "hasError") == "N")
+    });
+}
+
+/// A lock held by a member that is not live is taken over before `expireLockTime`, and the run it named is ended as
+/// failed; a lock held by a live member is not.
+#[test]
+fn a_lock_held_by_a_gone_member_is_taken_over_before_it_expires() {
+    let world = jobs_world(1, 8);
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    let stamp = |ago: i64| {
+        moqui_lib::object::basic_convert(
+            &Value::I64(jiff::Timestamp::now().as_millisecond() - ago),
+            "java.sql.Timestamp",
+        )
+        .value
+    };
+    let now = stamp(0);
+    // Ten seconds ago: far from expiring, and the every-second schedule is due again.
+    let started = stamp(10_000);
+    for (job, run, instance) in [("GONE", "GONE-RUN", "gone-member"), ("LIVE", "LIVE-RUN", "live-member")] {
+        add_job(&world, job, "echo#Note", "* * * * * *", &[]);
+        create(
+            &world.facade,
+            "moqui.service.job.ServiceJobRun",
+            &[("jobRunId", run), ("jobName", job)],
+        );
+        let mut lock = world.facade.make_value("moqui.service.job.ServiceJobRunLock").unwrap();
+        lock.set("jobName", Value::string(job));
+        lock.set("jobRunId", Value::string(run));
+        lock.set("instanceId", Value::string(instance));
+        lock.set("lastRunTime", started.clone());
+        lock.create(&world.facade).unwrap();
+    }
+    let mut member = world.facade.make_value("moqui.server.ClusterMember").unwrap();
+    member.set("instanceId", Value::string("live-member"));
+    member.set("heartbeat", now.clone());
+    member.create(&world.facade).unwrap();
+    let report = world.ctx.factory().service_pools().tick();
+    assert_eq!(report.jobs_run, 1, "{report:?}");
+    let gone = lock_row_of(&world.facade, "GONE").unwrap();
+    assert_ne!(text(&gone, "jobRunId"), "GONE-RUN", "taken over");
+    let old = runs(&world, "GONE")
+        .into_iter()
+        .find(|run| text(run, "jobRunId") == "GONE-RUN")
+        .unwrap();
+    assert_eq!(text(&old, "hasError"), "Y");
+    let live = lock_row_of(&world.facade, "LIVE").unwrap();
+    assert_eq!(text(&live, "jobRunId"), "LIVE-RUN", "a live member keeps its lock");
+    wait_for("the taken-over job to run", || {
+        runs(&world, "GONE").iter().any(|run| text(run, "hasError") == "N")
+    });
+}
+
+/// plans/High-Level-Review.md HL-035: a job's `transactionTimeout` bounds its scripts though the service begins no
+/// transaction: a looping script ends interrupted, and the job's lock is released, within seconds.
+#[test]
+fn a_looping_job_script_ends_at_the_jobs_timeout_and_releases_its_lock() {
+    let world = jobs_world_with(
+        2,
+        8,
+        Some(
+            r#"<services>
+            <service verb="loop" noun="Forever" authenticate="false" transaction="ignore">
+                <actions><script>while (true) {}</script></actions>
+            </service>
+            <service verb="loop" noun="Declared" authenticate="false" transaction="ignore" transaction-timeout="1">
+                <actions><script>while (true) {}</script></actions>
+            </service>
+        </services>"#,
+        ),
+        |_| {},
+    );
+    let _entered = world.ctx.enter();
+    let _authz = world.ctx.disable_authz();
+    add_job(
+        &world,
+        "LOOPS",
+        "loop#Forever",
+        "* * * * * *",
+        &[("transactionTimeout", "1")],
+    );
+    let started = Instant::now();
+    let report = world.ctx.factory().service_pools().tick();
+    assert_eq!(report.jobs_run, 1, "{report:?}");
+    wait_for("the run to end", || {
+        runs(&world, "LOOPS").iter().any(|run| !text(run, "endTime").is_empty())
+    });
+    let run = &runs(&world, "LOOPS")[0];
+    assert_eq!(text(run, "hasError"), "Y");
+    assert!(text(run, "errors").contains("interrupted"), "{}", text(run, "errors"));
+    let lock = world
+        .facade
+        .find("moqui.service.job.ServiceJobRunLock")
+        .unwrap()
+        .eq("jobName", Value::string("LOOPS"))
+        .one()
+        .unwrap()
+        .expect("the lock row");
+    assert_eq!(text(&lock, "jobRunId"), "", "the lock is released");
+    assert!(started.elapsed() < Duration::from_secs(6), "{:?}", started.elapsed());
+    // Called directly, as an async call's worker calls it, a service that begins no transaction is bounded by the
+    // transaction-timeout it declares.
+    let started = Instant::now();
+    // The script's error is the call's message, as a service's error is.
+    let _ = super::super::call::sync("loop#Declared", &BTreeMap::new());
+    let errors = world.ctx.message().errors().join("\n");
+    assert!(errors.contains("interrupted"), "{errors}");
+    assert!(started.elapsed() < Duration::from_secs(4), "{:?}", started.elapsed());
+}
+
+/// A long batch job opts out of the job's time limit with `noTimeLimit`; otherwise the limit is `transactionTimeout`,
+/// 1800 seconds when it is empty.
+#[test]
+fn a_job_says_no_time_limit_to_run_its_scripts_without_one() {
+    let facade = crate::testing::open();
+    let job = |fields: &[(&str, &str)]| {
+        let mut row = facade.make_value("moqui.service.job.ServiceJob").unwrap();
+        for (name, text) in fields {
+            row.set(*name, Value::string(*text));
+        }
+        row
+    };
+    let limit = super::super::jobs::script_limit;
+    assert_eq!(limit(&job(&[])), Some(Duration::from_secs(1800)));
+    assert_eq!(
+        limit(&job(&[("transactionTimeout", "5")])),
+        Some(Duration::from_secs(5))
+    );
+    assert_eq!(limit(&job(&[("transactionTimeout", "5"), ("noTimeLimit", "Y")])), None);
+}
+
+/// plans/High-Level-Review.md HL-026: a pass reads every scheduled job but only as many queued calls as it has free
+/// slots, in priority order; a job with no priority comes after every job with one, on every database.
+#[test]
+fn a_pass_reads_only_the_queued_calls_its_free_slots_can_take() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = crate::testing::open_with_tape(Arc::clone(&tape));
+    let job = |name: &str, fields: &[(&str, &str)]| {
+        let mut row = facade.make_value("moqui.service.job.ServiceJob").unwrap();
+        row.set("jobName", Value::string(name));
+        row.set("serviceName", Value::string("echo#Note"));
+        for (field, text) in fields {
+            row.set(*field, Value::string(*text));
+        }
+        row.create(&facade).unwrap();
+    };
+    job("S_NONE", &[("cronExpression", "* * * * * *")]);
+    job("S_FIRST", &[("cronExpression", "* * * * * *"), ("priority", "1")]);
+    job("ADHOC", &[]);
+    for index in 0..40 {
+        job(&format!("ASYNC_QUEUE_{index:03}"), &[("priority", "9")]);
+    }
+    job("ASYNC_QUEUE_NULL", &[]);
+    let names = |slots: i64| -> Vec<String> {
+        super::super::jobs::discover(&facade, slots)
+            .unwrap()
+            .iter()
+            .map(|job| text(job, "jobName"))
+            .collect()
+    };
+    let before = tape.lock().unwrap().len();
+    assert_eq!(
+        names(3),
+        [
+            "S_FIRST",
+            "ASYNC_QUEUE_000",
+            "ASYNC_QUEUE_001",
+            "ASYNC_QUEUE_002",
+            "S_NONE"
+        ]
+    );
+    let reads: Vec<String> = tape.lock().unwrap()[before..]
+        .iter()
+        .filter(|sql| sql.starts_with("SELECT") && sql.contains("\"service_job\""))
+        .cloned()
+        .collect();
+    assert_eq!(reads.len(), 2, "the scheduled jobs, then three queued calls: {reads:?}");
+    assert!(reads[1].contains("LIMIT"), "{reads:?}");
+    assert_eq!(names(0), ["S_FIRST", "S_NONE"], "no free slot reads no queued call");
+    let all = names(100);
+    assert_eq!(all.len(), 43);
+    assert_eq!(all[..2], ["S_FIRST".to_string(), "ASYNC_QUEUE_000".to_string()]);
+    assert_eq!(all[41..], ["ASYNC_QUEUE_NULL".to_string(), "S_NONE".to_string()]);
 }

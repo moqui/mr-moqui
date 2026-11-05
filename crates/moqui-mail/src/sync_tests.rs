@@ -1296,6 +1296,103 @@ fn sent_mail_is_appended_to_sent_unless_the_server_kept_a_copy() {
     assert_eq!(imap.messages("Sent Mail").len(), 2);
 }
 
+/// A queued change that loses the connection (the server drops it on APPEND) is counted before its command goes, and
+/// the sync goes on with a new connection (plans/High-Level-Review.md HL-029): the new Inbox mail comes in that
+/// session, a later change of another message still goes, and the change is dropped once it has had its tries.
+#[test]
+fn a_change_that_loses_the_connection_counts_and_the_sync_goes_on() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let imap = FakeImap::start(&["UIDPLUS", "MOVE"]);
+    imap.add(
+        "INBOX",
+        &mail(
+            "<old@example.com>",
+            "bob@example.com",
+            "alice@example.com",
+            "Old",
+            "",
+            "Old",
+        ),
+        &[],
+    );
+    let account = imap_account(imap.port, "app-password");
+    sync(&account);
+    let old = field(
+        &by_message_id(&facade, &account, "<old@example.com>").unwrap(),
+        "emailMessageId",
+    );
+    let _sink = super::SinkGuard::install();
+    let draft = out_text(
+        &ok(
+            "save#Draft",
+            &[
+                ("emailAccountId", text(&account)),
+                ("toAddresses", text("bob@example.com")),
+                ("subject", text("Never appended")),
+                ("body", text("<p>Hello</p>")),
+            ],
+        ),
+        "emailMessageId",
+    );
+    assert_eq!(
+        ok("send#Draft", &[("emailMessageId", text(&draft))]).get("sent"),
+        Some(&Value::Bool(true))
+    );
+    // queued after the sent copy: a flag change of another message
+    ok(
+        "set#MessageFlags",
+        &[("emailMessageId", text(&old)), ("flagged", Value::Bool(true))],
+    );
+    assert_eq!(changes(&facade, &account), 2);
+    moqui_lib::sync::lock(&imap.state).drop_on = Some("APPEND".to_string());
+    imap.add(
+        "INBOX",
+        &mail(
+            "<new@example.com>",
+            "bob@example.com",
+            "alice@example.com",
+            "New",
+            "",
+            "New",
+        ),
+        &[],
+    );
+
+    sync(&account);
+    assert!(
+        by_message_id(&facade, &account, "<new@example.com>").is_some(),
+        "the new mail came in"
+    );
+    let flags = imap
+        .messages("INBOX")
+        .into_iter()
+        .find(|(_, _, mid)| mid == "<old@example.com>")
+        .map(|(_, flags, _)| flags)
+        .unwrap();
+    assert!(flags.contains(&"\\Flagged".to_string()), "{flags:?}");
+    let queued = rows(
+        &facade,
+        "moqui.basic.email.EmailRemoteChange",
+        &[("emailAccountId", &account)],
+    );
+    assert_eq!(queued.len(), 1);
+    assert_eq!(field(&queued[0], "changeType"), "sent");
+    assert_eq!(field(&queued[0], "attemptCount"), "1");
+    let error = field(&queued[0], "lastError");
+    assert!(error.contains("connection lost"), "{error}");
+
+    // one try a session, until it has had its tries
+    for _ in 1..super::remote::MAX_ATTEMPTS {
+        sync(&account);
+    }
+    assert_eq!(changes(&facade, &account), 0, "dropped after its tries");
+    assert!(imap.messages("Sent Mail").is_empty());
+}
+
 /// A sync that stops at email-client sync-batch with mail left is due again at the job's next run, before its interval, until
 /// the backlog is in; then the interval holds again.
 #[test]
@@ -1933,6 +2030,132 @@ fn import_mbox_and_eml_into_a_folder() {
         &[("emailFolderId", text(&archive)), ("messageText", text(MBOX))],
     );
     assert!(errors().contains("may not change"));
+}
+
+/// An mbox of messages with these Message-IDs (an empty one has none).
+fn mbox_of(ids: &[&str]) -> String {
+    let mut mbox = String::new();
+    for (index, id) in ids.iter().enumerate() {
+        mbox.push_str("From x@example.com Mon Oct 19 10:00:00 2026\n");
+        if !id.is_empty() {
+            mbox.push_str(&format!("Message-ID: {id}\n"));
+        }
+        mbox.push_str(&format!(
+            "From: x@example.com\nTo: alice@example.com\nSubject: Message {index}\n\nBody {index}\n"
+        ));
+    }
+    mbox
+}
+
+/// Imported a few messages at a time (HL-011): those already in the folder and those twice in the archive, in other
+/// batches, are imported once; those with no Message-ID always are.
+#[test]
+fn an_import_in_small_batches_skips_what_the_folder_and_the_archive_have() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let account = out_text(
+        &ok(
+            "create#EmailAccount",
+            &[
+                ("emailAddress", text("alice@example.com")),
+                ("accountName", text("Local")),
+            ],
+        ),
+        "emailAccountId",
+    );
+    let folder = folder_id(&facade, &account, "EfkArchive");
+    super::import::TEST_BATCH.with(|batch| batch.set(Some(2)));
+    let import = |ids: &[&str]| {
+        ok(
+            "import#EmailMessages",
+            &[("emailFolderId", text(&folder)), ("messageText", text(&mbox_of(ids)))],
+        )
+    };
+    let first = import(&["<b1@x>", "<b2@x>", "", "<b3@x>"]);
+    assert_eq!(out_number(&first, "importedCount"), 4, "{first:?}");
+    let second = import(&["<b4@x>", "<b2@x>", "<b5@x>", "", "<b4@x>", "<b1@x>", "<b6@x>", "<b5@x>"]);
+    super::import::TEST_BATCH.with(|batch| batch.set(None));
+    assert_eq!(
+        out_number(&second, "importedCount"),
+        4,
+        "b4, b5, b6 and the one with no id: {second:?}"
+    );
+    assert_eq!(out_number(&second, "duplicateCount"), 4, "{second:?}");
+    assert_eq!(out_number(&second, "failedCount"), 0, "{second:?}");
+    let in_folder = rows(&facade, MESSAGE, &[("emailFolderId", &folder)]);
+    assert_eq!(in_folder.len(), 8);
+    for id in ["<b1@x>", "<b2@x>", "<b4@x>", "<b5@x>"] {
+        assert_eq!(
+            in_folder.iter().filter(|row| field(row, "messageId") == id).count(),
+            1,
+            "{id}"
+        );
+    }
+}
+
+/// Peak memory of an mbox import as the archive grows: the import holds a window of messages, so the peak stays near
+/// that of a small archive (HL-011). Opt-in: it imports thousands of messages and reads `/proc/self/status`.
+#[test]
+#[ignore = "slow: imports thousands of messages to measure peak memory; run with --ignored"]
+fn an_mbox_import_holds_a_window_of_messages_not_the_archive() {
+    fn peak_kib() -> u64 {
+        std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|status| {
+                status
+                    .lines()
+                    .find_map(|line| line.strip_prefix("VmHWM:"))
+                    .and_then(|value| value.trim().trim_end_matches("kB").trim().parse().ok())
+            })
+            .unwrap_or(0)
+    }
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let account = out_text(
+        &ok(
+            "create#EmailAccount",
+            &[
+                ("emailAddress", text("alice@example.com")),
+                ("accountName", text("Local")),
+            ],
+        ),
+        "emailAccountId",
+    );
+    let folder = folder_id(&facade, &account, "EfkArchive");
+    // 2,000 entries of 64 KiB (125 MiB), none of them mail, so nothing is stored in the in-memory database and the
+    // peak shows only what the import holds while it reads (all of it, twice, before HL-011)
+    // written to a file a line at a time, so making it does not raise the peak itself
+    let entry = format!("{}\n", "x".repeat(64 * 1024));
+    let dir = std::env::temp_dir().join(format!("moqui-import-peak-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("large.mbox");
+    {
+        use std::io::Write as _;
+        let mut file = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
+        for _ in 0..2000 {
+            file.write_all(b"From x@example.com Mon Oct 19 10:00:00 2026\n")
+                .unwrap();
+            file.write_all(entry.as_bytes()).unwrap();
+        }
+    }
+    let location = format!("file://{}", path.display());
+    let before = peak_kib();
+    let out = ok(
+        "import#EmailMessages",
+        &[("emailFolderId", text(&folder)), ("location", text(&location))],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = errors();
+    assert_eq!(out_number(&out, "failedCount"), 2000, "{out:?}");
+    let after = peak_kib();
+    eprintln!("peak KiB: before the import {before}, after it {after}");
+    assert!(after.saturating_sub(before) < 32 * 1024, "{before} -> {after}");
 }
 
 /// An IDLE worker: new mail in the Inbox is stored without a sync being asked for, and the worker stops on demand.
@@ -2684,4 +2907,179 @@ fn an_idle_worker_takes_an_exists_before_the_continuation() {
     let stopping = Instant::now();
     super::idle::stop_all(ctx.factory());
     assert!(stopping.elapsed() < Duration::from_secs(5), "{:?}", stopping.elapsed());
+}
+
+/// A sync whose lease lapsed during a stalled fetch, while a second sync took the account, stops at its next renewal
+/// without storing what it fetched, and its release leaves the second sync's lock (HL-037).
+#[test]
+fn a_sync_whose_lease_lapsed_stops_and_leaves_the_lock_to_the_next() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let imap = FakeImap::start(&["UIDPLUS"]);
+    let account = imap_account(imap.port, "app-password");
+    sync(&account);
+    imap.add(
+        "INBOX",
+        &mail(
+            "<lapse@example.com>",
+            "x@example.com",
+            "alice@example.com",
+            "Lapse",
+            "",
+            "l",
+        ),
+        &[],
+    );
+    // the first body fetch outlasts the first sync's lease; the second keeps the second sync going past the first's end
+    imap.stall_on("BODY.PEEK[]", Duration::from_millis(400));
+    imap.stall_on("BODY.PEEK[]", Duration::from_millis(400));
+    let run = |lease_millis: i64| {
+        let factory = std::sync::Arc::clone(ctx.factory());
+        let facade = facade.clone();
+        let account = account.clone();
+        std::thread::spawn(move || {
+            let context = factory.new_context();
+            let _entered = context.enter();
+            let _authz = context.disable_authz();
+            let options = super::sync::SyncOptions {
+                lease_millis: Some(lease_millis),
+                ..super::sync::SyncOptions::default()
+            };
+            super::sync::run_sync(&facade, &account, &options)
+        })
+    };
+    let started = Instant::now();
+    let first = run(100);
+    // the second starts once the first's lease has lapsed, during its stalled fetch
+    loop {
+        let row = one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account);
+        let until = row.get("syncLockedUntil").and_then(moqui_core::user::value_millis);
+        if !field(&row, "syncLockedBy").is_empty() && until.is_some_and(|until| until < now()) {
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "the first sync's lease did not lapse"
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let second = run(600_000);
+    let first = first.join().unwrap();
+    assert_eq!(first.outcome, "busy", "{first:?}");
+    assert_eq!(first.new_count, 0, "{first:?}");
+    let held = one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account);
+    assert!(
+        !field(&held, "syncLockedBy").is_empty(),
+        "the second sync keeps its lock"
+    );
+    assert!(by_message_id(&facade, &account, "<lapse@example.com>").is_none());
+    let second = second.join().unwrap();
+    assert_eq!(second.outcome, "synced", "{second:?}");
+    assert_eq!(second.new_count, 1, "{second:?}");
+    assert_eq!(
+        rows(
+            &facade,
+            MESSAGE,
+            &[("emailAccountId", &account), ("messageId", "<lapse@example.com>")]
+        )
+        .len(),
+        1
+    );
+    let released = one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account);
+    assert!(field(&released, "syncLockedBy").is_empty());
+    assert!(
+        field(&released, "lastSyncError").is_empty(),
+        "the lapsed sync recorded nothing"
+    );
+    assert!(started.elapsed() < Duration::from_secs(5));
+}
+
+/// With QRESYNC a sync reads the local rows of the UIDs involved, not every row of the folder: one flag change, one
+/// new message and one expunge in a large Inbox each read a handful of rows (HL-038).
+#[test]
+fn a_flag_change_or_a_new_message_reads_only_the_rows_involved() {
+    const KEPT: u32 = 500;
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let imap = FakeImap::start(&["CONDSTORE", "QRESYNC", "ENABLE", "UIDPLUS"]);
+    let account = imap_account(imap.port, "app-password");
+    sync(&account);
+    let inbox = folder_id(&facade, &account, "EfkInbox");
+    // a large Inbox kept already: the server's messages and their rows
+    for uid in 1..=KEPT {
+        let message_id = format!("<kept{uid}@example.com>");
+        let added = imap.add(
+            "INBOX",
+            &mail(&message_id, "x@example.com", "alice@example.com", "Kept", "", "k"),
+            &[],
+        );
+        assert_eq!(added, uid);
+        row(
+            &facade,
+            MESSAGE,
+            &[
+                ("emailMessageId", text(&format!("kept{uid}"))),
+                ("emailAccountId", text(&account)),
+                ("emailFolderId", text(&inbox)),
+                ("remoteFolderId", text(&inbox)),
+                ("remoteUid", Value::I64(i64::from(uid))),
+                ("messageId", text(&message_id)),
+                ("statusId", text("ES_RECEIVED")),
+                ("isRead", text("N")),
+                ("isFlagged", text("N")),
+                ("isAnswered", text("N")),
+            ],
+        );
+    }
+    let (validity, modseq) = {
+        let state = moqui_lib::sync::lock(&imap.state);
+        let folder = state.folders.iter().find(|folder| folder.name == "INBOX").unwrap();
+        (folder.validity, state.modseq)
+    };
+    update(
+        &facade,
+        FOLDER,
+        ("emailFolderId", &inbox),
+        &[
+            ("remoteUidValidity", Value::I64(i64::from(validity))),
+            ("remoteUidNext", Value::I64(i64::from(KEPT + 1))),
+            ("remoteHighestModSeq", Value::I64(i64::try_from(modseq).unwrap())),
+            ("totalCount", Value::I64(i64::from(KEPT))),
+        ],
+    );
+    let read = |label: &str| {
+        super::sync::ROWS_READ.with(|count| count.set(0));
+        sync(&account);
+        let count = super::sync::ROWS_READ.with(std::cell::Cell::get);
+        assert!(count <= 5, "{label}: {count} rows read");
+    };
+    imap.set_flags("INBOX", 400, &["\\Flagged"]);
+    read("a flag change");
+    assert_eq!(
+        field(&one(&facade, MESSAGE, "emailMessageId", "kept400"), "isFlagged"),
+        "Y"
+    );
+    imap.add(
+        "INBOX",
+        &mail(
+            "<fresh@example.com>",
+            "x@example.com",
+            "alice@example.com",
+            "Fresh",
+            "",
+            "f",
+        ),
+        &[],
+    );
+    read("a new message");
+    assert!(by_message_id(&facade, &account, "<fresh@example.com>").is_some());
+    imap.expunge("INBOX", 300);
+    read("an expunge");
+    assert!(by_message_id(&facade, &account, "<kept300@example.com>").is_none());
 }

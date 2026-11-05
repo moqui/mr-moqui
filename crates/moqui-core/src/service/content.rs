@@ -24,6 +24,12 @@ use crate::context::ExecutionContext;
 use crate::entity::EntityFacade;
 use crate::resource::blob::{BlobGc, BlobStore};
 
+/// The transaction manager of the `content` group, which streamed database downloads read from: the group of the
+/// content blob entities, or `None` when it cannot be found.
+pub(crate) fn content_transactions(facade: &EntityFacade) -> Option<crate::transaction::TransactionManager> {
+    facade.transactions_for("moqui.resource.ContentBlobChunk").ok()
+}
+
 pub(in crate::service) fn register(
     map: &mut BTreeMap<&'static str, crate::service::rust_services::RustServiceFn>,
 ) -> Result<(), String> {

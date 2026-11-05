@@ -74,7 +74,7 @@ the user:
 | MKCOL | `create#Folder` |
 | MOVE, COPY | `rename#Resource`, `move#Resource`, `copy#Resource` (across drives a copy and a trash); `Overwrite: F` refuses a target that is there, else it goes to the trash first |
 | PROPPATCH | answered and not kept, so Finder and Windows go on; the server's own properties are refused |
-| LOCK, UNLOCK | exclusive write locks in memory, up to an hour, on the file or folder (its resource location, `resource/locks.rs`), not the href: another user is refused (423), the owner is not. Every other writer keeps the lock too: the Files screens, SFTP drives and the drive services fail that one file ("locked by another user") and write the rest; a delete or move of a folder fails when something under it is locked |
+| LOCK, UNLOCK | exclusive write locks kept in the database (`ResourceLock`, so every member of a cluster holds them), up to an hour, on the file or folder (its resource location, `resource/locks.rs`), not the href: another user is refused (423), the owner is not. Every other writer keeps the lock too: the Files screens, SFTP drives and the drive services fail that one file ("locked by another user") and write the rest; a delete or move of a folder fails when something under it is locked |
 
 `.DS_Store`, `._name`, `Thumbs.db` and `desktop.ini` are taken and not kept. A records drive is read below its managers, by
 the record visibility of its folder map.

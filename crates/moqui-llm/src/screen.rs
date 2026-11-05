@@ -447,7 +447,10 @@ pub fn load_state(facade: &EntityFacade, conversation_id: &str) -> Result<Option
 pub enum StateWriter<'a> {
     /// A step of the conversation's run on `node`: written only while `node` holds the run's lease (a node that lost
     /// it writes nothing, as every write of the engine).
-    Run { run_id: &'a str, node: &'a str },
+    Run {
+        run_id: &'a str,
+        holder: &'a super::run::Holder,
+    },
     /// The conversation's user (a drawer's sync-in): written only when the conversation is theirs.
     Owner(&'a str),
 }
@@ -469,8 +472,8 @@ pub fn store_state(
     let _lifted = moqui_core::entity::fence::lift();
     super::run::quietly(|| {
         super::run::in_tx(facade, || {
-            if let StateWriter::Run { run_id, node } = writer {
-                let run = super::run::held(facade, run_id, node, super::run::Hold::Lease)?;
+            if let StateWriter::Run { run_id, holder } = writer {
+                let run = super::run::held(facade, run_id, holder, super::run::Hold::Lease)?;
                 if super::text_of(&run, "conversationId").as_deref() != Some(conversation_id) {
                     return Err(Error::new(format!(
                         "agent run {run_id} is not of conversation {conversation_id}"
@@ -601,13 +604,13 @@ mod tests {
 
         let lost = StateWriter::Run {
             run_id: "SR1",
-            node: "node-b",
+            holder: &crate::run::Holder::node_only("node-b"),
         };
         let error = store_state(&facade, "SC1", lost, &state("/apps/lost")).unwrap_err();
         assert!(crate::run::is_lease_lost(&error), "{error}");
         let other = StateWriter::Run {
             run_id: "SR1",
-            node: "node-a",
+            holder: &crate::run::Holder::node_only("node-a"),
         };
         assert!(
             store_state(&facade, "SC2", other, &state("/apps/other")).is_err(),

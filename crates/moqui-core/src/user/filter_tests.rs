@@ -235,6 +235,90 @@ fn view_find_applies_user_org_and_skips_active_org_until_set() {
     session::reset_session();
 }
 
+/// HL-024: a cluster peer's change to the filter tables reaches this process only as a remote invalidation, or as the
+/// whole-cache clear after a LISTEN reconnect. Each moves the authorization generation, so the filter sets are read
+/// again. The generation is a process static other tests move too, so what this thread moved is counted apart.
+#[test]
+fn a_remote_invalidation_and_a_whole_clear_read_the_filter_sets_again() {
+    session::reset_session();
+    clear_context_stack();
+    let runtime = temp_dir("filter-remote-runtime");
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let factory = {
+        let _lock = crate::user::session::cookie_property_lock();
+        ExecutionContextFactory::boot_with_framework(runtime.path(), &framework).expect("boot")
+    };
+    let (facade, _model_dir) = product_facade();
+    factory.set_entity(facade.clone());
+    let context = factory.new_context();
+    let _entered = context.enter();
+    session::set_user("org-user", "org-user");
+    {
+        let _guard = context.disable_authz();
+        seed(&facade);
+        for (id, owner) in [("P1", "ORG1"), ("P2", "ORG9"), ("P3", "ORG2")] {
+            create(
+                &facade,
+                "test.product.Product",
+                &[("productId", id), ("ownerPartyId", owner)],
+            );
+        }
+    }
+    set_context_name(
+        "filterOrgIds",
+        Value::List(vec![Value::string("ORG1"), Value::string("ORG2")]),
+    )
+    .unwrap();
+    set_context_name("activeOrgId", Value::string("ORG1")).unwrap();
+    let ids = || -> Vec<String> {
+        let mut ids: Vec<String> = facade
+            .find(VIEW)
+            .unwrap()
+            .list()
+            .unwrap()
+            .values()
+            .iter()
+            .filter_map(|row| row.get("productId").and_then(Value::as_str).map(str::to_string))
+            .collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(ids(), ["P1"]);
+    // A peer's delete: the row goes from the database with no write through this facade.
+    let peer_delete = |filter_id: &str| {
+        let condition = Condition::equals("entityFilterId", Value::string(filter_id));
+        let statement = facade
+            .with_entity("moqui.security.EntityFilter", |entity, dialect, _| {
+                moqui_db::sql::delete(entity, dialect, Some(&condition))
+            })
+            .unwrap();
+        let tx = facade.transactions_for("moqui.security.EntityFilter").unwrap();
+        let deleted = crate::entity::exec::execute_tx(&tx, &statement.sql, &statement.params).unwrap();
+        assert_eq!(deleted, 1);
+    };
+
+    peer_delete("TEST_ACTIVE_ORG_A");
+    let moved = crate::user::authz::moved_here();
+    crate::entity::cache::clear_one_cache(&facade, "moqui.security.EntityFilter", None).unwrap();
+    assert!(
+        crate::user::authz::moved_here() > moved,
+        "a remote invalidation moves the generation"
+    );
+    assert_eq!(ids(), ["P1", "P3"], "the active org filter is gone");
+
+    peer_delete("TEST_USER_ORG_A");
+    let moved = crate::user::authz::moved_here();
+    crate::entity::cache::clear_all_list_caches(&facade).unwrap();
+    assert!(
+        crate::user::authz::moved_here() > moved,
+        "a whole-cache clear moves the generation"
+    );
+    assert_eq!(ids(), ["P1", "P2", "P3"], "the user org filter is gone");
+
+    clear_context_stack();
+    session::reset_session();
+}
+
 fn seed(facade: &EntityFacade) {
     create(
         facade,
