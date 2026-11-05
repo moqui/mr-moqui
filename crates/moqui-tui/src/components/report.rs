@@ -1958,9 +1958,7 @@ impl Component for LogTail {
 }
 
 #[cfg(test)]
-#[path = "report_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "report_gap_tests.rs"]
 mod gap_tests;

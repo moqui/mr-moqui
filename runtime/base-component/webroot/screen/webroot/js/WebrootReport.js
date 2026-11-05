@@ -1252,16 +1252,20 @@
     };
     components["m-report-playlist"] = {
         props: { source: String, items: {type:Array,default:()=>[]}, seconds: {type:Number,default:30} },
-        data: () => ({ at:0, paused:false, timer:null, loading:false, error:"", changed:false, dashboard:null, frames:{}, requestId:0, controller:null }),
+        data: () => ({ at:0, paused:false, pausedForError:false, timer:null, loading:false, error:"", changed:false, dashboard:null, frames:{}, requestId:0, controller:null }),
         computed: { selected() { return this.items[this.at]; } },
         watch: { selected:"load", source:"load" },
-        mounted() {
-            this.load();
-            this.timer=root.setInterval(()=>{ if (!this.paused && !this.loading && !root.document.hidden) this.move(1); }, Math.max(5,this.seconds)*1000);
-        },
+        mounted() { this.load(); this.restartTimer(); },
         beforeUnmount() { root.clearInterval(this.timer); this.requestId++; if (this.controller) this.controller.abort(); },
         methods: {
             move(delta) { if (this.items.length) this.at=(this.at+this.items.length+delta)%this.items.length; },
+            // a dashboard chosen by hand gets its full time before the playlist advances again
+            moveByHand(delta) { this.move(delta); this.restartTimer(); },
+            restartTimer() {
+                root.clearInterval(this.timer);
+                this.timer=root.setInterval(()=>{ if (!this.paused && !this.loading && !root.document.hidden) this.move(1); }, Math.max(5,this.seconds)*1000);
+            },
+            togglePause() { this.paused=!this.paused;this.pausedForError=false; if (!this.paused) this.restartTimer(); },
             async load() {
                 const requestId=++this.requestId,item=this.selected;
                 if (this.controller) this.controller.abort();
@@ -1292,10 +1296,12 @@
                     this.dashboard=Object.assign({},json.dashboard,{embedded:true,kiosk:false,refreshSeconds:0,title:item.title,
                         screenUrl:link.pathname,requestedTime:{from:link.searchParams.get("from") || "now-7d",thru:link.searchParams.get("thru") || "now"}});
                     this.frames=json.frames || {};
+                    // A pause the load failure made ends once a dashboard loads again (Retry); a pause by hand stays.
+                    if (this.pausedForError) { this.paused=false;this.pausedForError=false;this.restartTimer(); }
                 } catch (error) {
                     if (requestId===this.requestId) {
                         this.error=T("Could not load this dashboard. Retry or open it directly.");
-                        this.paused=true;
+                        if (!this.paused) { this.paused=true;this.pausedForError=true; }
                     }
                 } finally { if (requestId===this.requestId) { this.loading=false;this.controller=null; } }
             }
@@ -1304,9 +1310,9 @@
             const h=reportElement,item=this.selected;
             if (!item) return h("p",{role:"status"},T("No accessible dashboards in this playlist."));
             return h("section",[h("div",{class:"row items-center q-gutter-sm"},[
-                h("button",{type:"button","aria-label":T("Previous dashboard"),onClick:()=>this.move(-1)},T("Previous")),
-                h("button",{type:"button","aria-pressed":this.paused,onClick:()=>{this.paused=!this.paused;}},this.paused?T("Resume"):T("Pause")),
-                h("button",{type:"button","aria-label":T("Next dashboard"),onClick:()=>this.move(1)},T("Next")),
+                h("button",{type:"button","aria-label":T("Previous dashboard"),onClick:()=>this.moveByHand(-1)},T("Previous")),
+                h("button",{type:"button","aria-pressed":this.paused,onClick:this.togglePause},this.paused?T("Resume"):T("Pause")),
+                h("button",{type:"button","aria-label":T("Next dashboard"),onClick:()=>this.moveByHand(1)},T("Next")),
                 h("a",{href:report.safeLink(report.appPath(item.url))},item.title),h("span",{"aria-label":T("Dashboard {0} of {1}",this.at+1,this.items.length)},(this.at+1)+" / "+this.items.length)]),
                 this.loading ? h("p",{role:"status"},T("Loading {0}…",item.title)) : null,
                 this.error ? h("div",[h("p",{role:"alert"},this.error),this.changed
@@ -1334,6 +1340,11 @@
             colorFlameLabels() {
                 const svg = this.$el && this.$el.querySelector("svg.m-report-flame");
                 if (!svg) return;
+                // Other updates (a menu, a status line) leave the drawing as it was: recolor only for new frames, a zoom or a theme.
+                const drawn = [this.frame, JSON.stringify(this.flameFocus || null), this.themeDark, svg.childElementCount];
+                if (svg === this.flameSvg && this.flameDrawn && drawn.every((value, at) => value === this.flameDrawn[at])) return;
+                this.flameSvg = svg; this.flameDrawn = drawn;
+                const chosen = new Map();
                 const canvas = root.document.createElement("canvas"); canvas.width = canvas.height = 1;
                 const context = canvas.getContext("2d", { willReadFrequently: true });
                 if (!context) return;
@@ -1345,6 +1356,9 @@
                 const background = context.getImageData(0, 0, 1, 1);
                 for (const label of svg.querySelectorAll(".m-report-flame-label")) {
                     const rectangle = label.parentElement.querySelector("rect"), style = root.getComputedStyle(rectangle);
+                    // Frames share a few fills at a few self-time opacities: decide each composite once.
+                    const key = style.fill + "|" + (Number(style.opacity) * Number(style.fillOpacity)).toFixed(2);
+                    if (chosen.has(key)) { label.setAttribute("fill", chosen.get(key)); continue; }
                     context.putImageData(background, 0, 0);
                     context.globalAlpha = Number(style.opacity) * Number(style.fillOpacity);
                     context.fillStyle = style.fill; context.fillRect(0, 0, 1, 1);
@@ -1353,7 +1367,8 @@
                     });
                     const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
                     // Black or white always reaches 4.5:1. A presentation attribute leaves authored CSS overrides intact.
-                    label.setAttribute("fill", luminance > 0.1791287847 ? "#000" : "#fff");
+                    chosen.set(key, luminance > 0.1791287847 ? "#000" : "#fff");
+                    label.setAttribute("fill", chosen.get(key));
                 }
             },
             // A geomap waits for the bundled outline; the panel draws again once it is loaded.
@@ -1500,7 +1515,8 @@
                             style: { cursor: "pointer", overflow: "hidden" }, onClick: () => { this.flameFocus = rect.path; } }, [
                         h("title", (rect.path.join(" › ") || "all") + ": " + report.format(rect.total, flame.field) + " (" + rect.share.toFixed(1) + "%), self " + report.format(rect.self, flame.field)),
                         h("rect", { width: "100%", height: rowHeight - 1, style: { width: "max(0.5px, calc(100% - 1px))" }, fill: report.color(colors[rect.depth % colors.length]), opacity: 0.35 + 0.65 * (rect.self / rect.total || 0) }),
-                        h("text", { class: "m-report-flame-label", x: 3, y: 14, "font-size": "12", fill: "currentColor" }, rect.name)])))]);
+                        // a frame narrower than 1% of the graph keeps its title tooltip but draws no label
+                        rect.w >= 0.01 ? h("text", { class: "m-report-flame-label", x: 3, y: 14, "font-size": "12", fill: "currentColor" }, rect.name) : null])))]);
             } else if (visual === "geomap" && report.geomap(frame, this.panel, report.outline)) {
                 const map = report.geomap(frame, this.panel, report.outline), formatted = (value) => report.format(value, map.field || { type: "number" });
                 const base = map.countries.map((country, at) => h("path", { key: "c" + at, d: report.countryPath(country), fill: country.value != null ? "var(--q-primary)" : "rgba(127,127,127,0.18)", "fill-opacity": country.value != null ? country.shade : 1,

@@ -3987,7 +3987,7 @@
               }, 8, ["onSubmit", "onReset"]))
             }
         } },
-        "m-form-column-config": { hash: "44142213", make: function (Vue) {
+        "m-form-column-config": { hash: "5a209068", make: function (Vue) {
             const { createElementVNode: _createElementVNode, renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, createBlock: _createBlock, createCommentVNode: _createCommentVNode, resolveDirective: _resolveDirective, withDirectives: _withDirectives, withModifiers: _withModifiers } = Vue
 
             return function render(_ctx, _cache) {
@@ -4042,6 +4042,7 @@
                                           dense: "",
                                           size: "sm",
                                           icon: "close",
+                                          "data-action": "hide",
                                           "aria-label": "Hide field",
                                           onClick: $event => (_ctx.hideField(columnIdx, fieldIdx))
                                         }, {
@@ -4081,6 +4082,7 @@
                                           flat: "",
                                           "no-caps": "",
                                           label: "Display",
+                                          "data-action": "display",
                                           "aria-label": "Display field",
                                           class: "m-btn-tonal"
                                         }, {
@@ -4144,6 +4146,7 @@
                                               flat: "",
                                               size: "sm",
                                               icon: "west",
+                                              "data-action": "previous-column",
                                               "aria-label": "Move to previous column",
                                               onClick: $event => (_ctx.moveToCol(columnIdx, fieldIdx, columnIdx-1))
                                             }, {
@@ -4163,6 +4166,7 @@
                                               flat: "",
                                               size: "sm",
                                               icon: "expand_less",
+                                              "data-action": "up",
                                               "aria-label": "Move up within column",
                                               onClick: $event => (_ctx.moveInCol(columnIdx, fieldIdx, fieldIdx-1))
                                             }, {
@@ -4182,6 +4186,7 @@
                                               flat: "",
                                               size: "sm",
                                               icon: "expand_more",
+                                              "data-action": "down",
                                               "aria-label": "Move down within column",
                                               onClick: $event => (_ctx.moveInCol(columnIdx, fieldIdx, fieldIdx+1))
                                             }, {
@@ -4200,6 +4205,7 @@
                                               flat: "",
                                               size: "sm",
                                               icon: "east",
+                                              "data-action": "next-column",
                                               "aria-label": "Move to next column",
                                               onClick: $event => (_ctx.moveToCol(columnIdx, fieldIdx, columnIdx+1))
                                             }, {
