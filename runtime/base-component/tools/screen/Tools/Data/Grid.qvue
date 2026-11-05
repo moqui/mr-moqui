@@ -17,12 +17,19 @@ along with this software (see the LICENSE.md file). If not, see
     copy and paste, new and deleted rows; Save sends only the edited fields of each row with its stamp, in one transaction,
     and a refused row keeps its edits with the field errors on its cells. The source is an entity (entityName or
     selectedEntity, the other URL parameters its conditions), a saved view (viewId), or a SQL result the SQL screen hands
-    over (sqlKey); DataDocument.<id> and DbViewEntity sources are read only, with Related opening Data › Browse. -->
+    over (sqlKey); DataDocument.<id> and DbViewEntity sources are read only, with Related opening Data › Browse. File opens
+    an uploaded or placed CSV or spreadsheet (its sheet and header row), read only, and Load into… maps its columns to a
+    target's fields (match#EtlFields), shows the first 200 rows converted (check#EtlSample), and saves the mapping, checks
+    the whole file or loads it, over the JSON transitions of Tools/Etl (Etl.xml). -->
 <template><div class="q-pa-sm">
     <div class="row items-center q-col-gutter-sm q-mb-sm">
         <div class="col-12 col-sm-5 col-md-4">
             <q-select dense outlined use-input fill-input hide-selected input-debounce="250" v-model="chosenEntity" :options="entityOptions"
                     label="Entity" @filter="filterEntities" @update:model-value="openEntity" :hint="sourceLabel"></q-select>
+        </div>
+        <div class="col-auto row items-center q-gutter-xs">
+            <q-btn flat dense no-caps icon="upload_file" label="File" @click="fileOpen = true"><q-tooltip>Open a CSV or spreadsheet: upload one, or one at a location</q-tooltip></q-btn>
+            <q-btn v-if="source && source.type === 'file'" unelevated dense no-caps color="primary" icon="move_down" label="Load into…" @click="openLoad"></q-btn>
         </div>
         <q-space></q-space>
         <div class="col-auto row items-center q-gutter-xs">
@@ -91,6 +98,71 @@ along with this software (see the LICENSE.md file). If not, see
                 <q-btn unelevated no-caps color="primary" label="Export" :disable="!exportLocation" @click="exportRows(exportFormat, exportLocation)"></q-btn></q-card-actions>
         </q-card>
     </q-dialog>
+
+    <!-- a file source: upload one or name a location, then its sheet and header row -->
+    <q-dialog v-model="fileOpen">
+        <q-card style="min-width:420px;max-width:90vw">
+            <q-card-section><div class="text-h6">Open a file</div></q-card-section>
+            <q-card-section class="q-pt-none q-gutter-sm">
+                <div class="row items-center q-col-gutter-xs">
+                    <div class="col"><q-input dense outlined v-model="file.location" label="Location" @change="readFile"
+                            hint="Your uploads, dbresource://moqui/etl/… or runtime://import/…"></q-input></div>
+                    <div class="col-auto"><q-btn flat dense no-caps icon="upload" label="Upload" :loading="uploading" @click="$refs.fileUpload.click()"></q-btn>
+                        <input ref="fileUpload" type="file" style="display:none" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods" @change="uploadFile"></div>
+                </div>
+                <div class="row q-col-gutter-xs">
+                    <div class="col-5"><q-select dense outlined v-model="file.sheet" :options="file.sheetNames" label="Sheet" :disable="!file.sheetNames.length" @update:model-value="readFile"></q-select></div>
+                    <div class="col-3"><q-input dense outlined type="number" v-model.number="file.headerRow" label="Header row" min="0" @change="readFile"></q-input></div>
+                    <div class="col-4"><q-select dense outlined v-model="file.format" :options="['auto', 'csv', 'xlsx']" label="Format" @update:model-value="readFile"></q-select></div>
+                </div>
+                <div v-if="file.rowCount != null" class="text-caption" :class="mutedClass">{{Number(file.rowCount).toLocaleString()}} rows; columns {{file.columns.join(', ')}}</div>
+            </q-card-section>
+            <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn>
+                <q-btn unelevated no-caps color="primary" label="Open" :disable="!file.location || file.rowCount == null" @click="openFile"></q-btn></q-card-actions>
+        </q-card>
+    </q-dialog>
+
+    <!-- "Load into…": the file's columns to a target's fields, the first 200 rows converted, then Save mapping, Check or Load -->
+    <q-dialog v-model="loadOpen" full-width>
+        <q-card>
+            <q-card-section class="row items-center"><div class="text-h6 col">Load {{sourceLabel}} into…</div>
+                <q-btn flat round dense icon="close" aria-label="Close" v-close-popup></q-btn></q-card-section>
+            <q-card-section class="q-pt-none row q-col-gutter-sm">
+                <div class="col-12 col-sm-3"><q-option-group v-model="load.targetTypeEnumId" inline dense :options="[{label: 'Entity', value: 'EtltEntity'}, {label: 'Service', value: 'EtltService'}]"
+                        @update:model-value="load.targetName = ''; load.targetFields = []"></q-option-group></div>
+                <div class="col-12 col-sm-5"><q-select dense outlined use-input fill-input hide-selected input-debounce="250" v-model="load.targetName" :options="load.targetOptions"
+                        :label="load.targetTypeEnumId === 'EtltService' ? 'Service' : 'Entity'" @filter="filterTargets" @update:model-value="matchTarget"></q-select></div>
+                <div class="col-12 col-sm-4" v-if="load.targetTypeEnumId === 'EtltEntity'"><q-option-group v-model="load.loadModeEnumId" inline dense
+                        :options="[{label: 'Create', value: 'EtllCreate'}, {label: 'Create or update', value: 'EtllStore'}, {label: 'Update', value: 'EtllUpdate'}]"></q-option-group></div>
+            </q-card-section>
+            <q-card-section class="q-pt-none" style="max-height:55vh;overflow:auto">
+                <q-markup-table flat dense separator="horizontal" wrap-cells>
+                    <thead><tr><th class="text-left">Column</th><th class="text-left">Target field</th><th class="text-left">Converted (first rows)</th></tr></thead>
+                    <tbody>
+                        <tr v-for="row in load.columns" :key="row.column">
+                            <td>{{row.column}}</td>
+                            <td style="min-width:200px"><q-select dense borderless clearable v-model="row.targetField" :options="load.targetFields" placeholder="not loaded"
+                                    @update:model-value="load.checked = false"></q-select>
+                                <div v-if="row.how && row.how !== 'none' && row.how !== 'name'" class="text-caption" :class="mutedClass">matched by {{row.how === 'prettyName' ? 'its words' : 'a near name'}}</div></td>
+                            <td>
+                                <div v-for="(item, at) in load.sample[row.targetField] || []" :key="at" class="text-caption" :class="item.error ? 'text-negative' : ''">
+                                    {{item.error ? 'Row ' + item.rowNumber + ': ' + item.error : (item.value == null ? 'null' : typeof item.value === 'object' ? JSON.stringify(item.value) : String(item.value))}}</div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </q-markup-table>
+                <div v-for="(item, at) in load.rowErrors" :key="'r' + at" class="text-caption text-negative">Row {{item.rowNumber}}: {{item.message}}</div>
+                <div v-if="load.sampleRows != null" class="text-caption q-mt-xs" :class="mutedClass">The first {{load.sampleRows}} rows: {{load.sampleErrorRows}} with errors</div>
+            </q-card-section>
+            <q-card-actions align="right">
+                <q-btn flat no-caps icon="science" label="Convert sample" :disable="!load.targetName || load.busy" :loading="load.busy === 'sample'" @click="checkSample"></q-btn>
+                <q-btn flat no-caps icon="save" label="Save mapping" :disable="!load.targetName || load.busy" :loading="load.busy === 'save'" @click="saveLoadMapping"></q-btn>
+                <q-btn flat no-caps icon="fact_check" label="Check" :disable="!load.targetName || load.busy" :loading="load.busy === 'check'" @click="runLoad(true)">
+                    <q-tooltip>Convert the whole file and report every error; nothing is written</q-tooltip></q-btn>
+                <q-btn unelevated no-caps color="primary" icon="move_down" label="Load" :disable="!load.targetName || load.busy" :loading="load.busy === 'run'" @click="runLoad(false)"></q-btn>
+            </q-card-actions>
+        </q-card>
+    </q-dialog>
 </div></template>
 
 <script>
@@ -100,7 +172,10 @@ module.exports = {
             source: null, sourceLabel: '', columnMeta: [], saveEntity: null, readOnlyReason: '', hasStamp: false, keyColumns: null, stampColumn: null,
             related: null, ready: false, saving: false, counting: false, countText: '', changeCount: 0, filtersShown: true, hiddenColumns: [],
             chosenEntity: null, entityOptions: [], userId: '', gridViews: [], viewOpen: false, viewDescription: '', viewShared: false, viewId: null,
-            exportOpen: false, exportLocation: '', exportFormat: 'csv', pendingLayout: null
+            exportOpen: false, exportLocation: '', exportFormat: 'csv', pendingLayout: null,
+            fileOpen: false, uploading: false, file: { location: '', sheet: null, headerRow: 1, format: 'auto', sheetNames: [], columns: [], rowCount: null },
+            loadOpen: false, load: { targetTypeEnumId: 'EtltEntity', targetName: '', loadModeEnumId: 'EtllCreate', targetOptions: [], targetFields: [], columns: [],
+                sample: {}, rowErrors: [], sampleRows: null, sampleErrorRows: 0, busy: '' }
         };
     },
     computed: {
@@ -170,7 +245,8 @@ module.exports = {
             this.source = source;
             this.pendingLayout = layout || null;
             this.keyColumns = null; this.stampColumn = null; this.countText = '';
-            this.sourceLabel = source.type === 'sql' ? 'SQL result on ' + (source.db || 'the default database') : source.entityName;
+            this.sourceLabel = source.type === 'sql' ? 'SQL result on ' + (source.db || 'the default database')
+                : source.type === 'file' ? String(source.location || '').split('/').pop() + (source.sheet ? ' › ' + source.sheet : '') : source.entityName;
             this.chosenEntity = source.type === 'entity' ? source.entityName : null;
             const entityName = source.type === 'entity' ? source.entityName : '';
             return Promise.all([this.call('gridColumns', this.sourceParams()),
@@ -599,6 +675,126 @@ module.exports = {
         deleteView(view) {
             this.$q.dialog({ title: 'Delete view', message: 'Delete "' + (view.description || view.viewId) + '"?', cancel: true, persistent: true })
                 .onOk(() => this.call('deleteView', { viewId: view.viewId }, 'POST').then((out) => { if (out) this.loadViews(); }));
+        },
+        // ---- a file source and "Load into…", over the JSON transitions of Tools/Etl (Etl.xml) ----
+        etlUrl(name) { return this.$root.basePath + '/' + this.$root.currentPathList.slice(0, -2).concat(['Etl', name]).join('/'); },
+        etlScreen(name, search) { this.$root.setUrl(this.$root.linkBasePath + '/' + this.$root.currentPathList.slice(0, -2).concat(['Etl', name]).join('/') + '?' + search); },
+        etlCall(name, params, method) {
+            return moqui.request(this.etlUrl(name), { method: method || 'POST', params: params || {} }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) { moqui.notifyMessages(null, json.errors); return null; }
+                if (!result.ok) { moqui.handleAjaxError(result); return null; }
+                return json;
+            }, (err) => { moqui.handleAjaxError(err); return null; });
+        },
+        uploadFile(event) {
+            const chosen = event.target.files && event.target.files[0];
+            event.target.value = '';
+            if (!chosen) return;
+            const form = new FormData();
+            form.append('file', chosen, chosen.name);
+            this.uploading = true;
+            this.etlCall('etlUpload', form).then((out) => {
+                if (!out || !out.location) return;
+                Object.assign(this.file, { location: out.location, sheet: null, sheetNames: [] });
+                this.readFile();
+            }).finally(() => { this.uploading = false; });
+        },
+        // the file's sheets, header and row count, for the dialog
+        readFile() {
+            if (!this.file.location) return Promise.resolve();
+            return this.etlCall('etlFileInfo', { location: this.file.location, sheet: this.file.sheet || '', headerRow: this.file.headerRow == null ? 1 : this.file.headerRow,
+                format: this.file.format || 'auto', limit: 1 }, 'GET').then((out) => {
+                if (!out) { this.file.rowCount = null; return; }
+                this.file.sheetNames = out.sheetNames || [];
+                if (!this.file.sheet && this.file.sheetNames.length) this.file.sheet = this.file.sheetNames[0];
+                this.file.columns = (out.columns || []).map((column) => column.title || column.name);
+                this.file.rowCount = out.rowCount;
+            });
+        },
+        openFile() {
+            if (!this.mayLeave('Open the file')) return;
+            this.fileOpen = false;
+            this.viewId = null;
+            const source = { type: 'file', location: this.file.location, headerRow: this.file.headerRow == null ? 1 : this.file.headerRow, format: this.file.format || 'auto' };
+            if (this.file.sheet) source.sheet = this.file.sheet;
+            this.open(source);
+        },
+        // the mapping "Load into…" makes of the file source and the chosen fields
+        loadMapping() {
+            const source = this.source || {};
+            const fields = this.load.columns.filter((row) => row.targetField).map((row) => ({ targetField: row.targetField, sourceColumn: row.column, trim: 'Y' }));
+            return { description: 'Load ' + this.sourceLabel + ' into ' + this.load.targetName, sourceTypeEnumId: 'EtlsFile', sourceLocation: source.location,
+                fileFormat: source.format || 'auto', sheetName: source.sheet || '', headerRow: source.headerRow == null ? 1 : source.headerRow,
+                targetTypeEnumId: this.load.targetTypeEnumId, targetName: this.load.targetName, loadModeEnumId: this.load.loadModeEnumId, batchSize: 1000, stopOnError: 'N', fields };
+        },
+        openLoad() {
+            const columns = this.columnMeta.map((column) => column.title || column.name);
+            if (this.load.columns.map((row) => row.column).join('\u0000') !== columns.join('\u0000'))
+                this.load.columns = columns.map((column) => ({ column, targetField: null, how: null }));
+            this.loadOpen = true;
+        },
+        filterTargets(term, update) {
+            if (!term || term.length < 2) { update(() => { this.load.targetOptions = []; }); return; }
+            this.etlCall('etlInfo', { term, targetTypeEnumId: this.load.targetTypeEnumId }, 'GET').then((out) => update(() => { this.load.targetOptions = (out && out.targetNames) || []; }));
+        },
+        // each column's target field by its name (match#EtlFields), then the sample
+        matchTarget() {
+            if (!this.load.targetName) return;
+            this.etlCall('etlMatch', { columnsJson: JSON.stringify(this.load.columns.map((row) => row.column)), targetTypeEnumId: this.load.targetTypeEnumId, targetName: this.load.targetName }).then((out) => {
+                if (!out) return;
+                this.load.targetFields = out.targetFields || [];
+                const byColumn = new Map((out.matches || []).map((match) => [match.column, match]));
+                for (const row of this.load.columns) {
+                    const match = byColumn.get(row.column);
+                    row.targetField = match && match.how !== 'none' ? match.targetField || null : null;
+                    row.how = match ? match.how : null;
+                }
+                this.checkSample();
+            });
+        },
+        // the first 200 rows through the mapping: each field's converted values (three) and errors (three)
+        checkSample() {
+            this.load.busy = 'sample';
+            this.etlCall('etlCheck', { mappingJson: JSON.stringify(this.loadMapping()), maxRows: 200 }).then((out) => {
+                if (!out) return;
+                const sample = {}, rowErrors = [];
+                let errorRows = 0;
+                for (const row of out.rows || []) {
+                    const errors = row.errors || {};
+                    if (Object.keys(errors).length) errorRows++;
+                    if (errors._row && rowErrors.length < 20) rowErrors.push({ rowNumber: row.rowNumber, message: errors._row });
+                    for (const item of this.load.columns) {
+                        const name = item.targetField;
+                        if (!name) continue;
+                        const list = sample[name] || (sample[name] = []);
+                        const failed = list.filter((entry) => entry.error).length;
+                        if (errors[name]) { if (failed < 3) list.push({ rowNumber: row.rowNumber, error: errors[name] }); }
+                        else if (list.length - failed < 3 && row.values && name in row.values) list.push({ rowNumber: row.rowNumber, value: row.values[name] });
+                    }
+                }
+                this.load.sample = sample;
+                this.load.rowErrors = rowErrors;
+                this.load.sampleRows = (out.rows || []).length;
+                this.load.sampleErrorRows = errorRows;
+            }).finally(() => { this.load.busy = ''; });
+        },
+        saveLoadMapping() {
+            this.load.busy = 'save';
+            this.etlCall('etlStore', { mappingJson: JSON.stringify(this.loadMapping()) }).then((out) => {
+                if (!out || !out.mappingId) return;
+                this.loadOpen = false;
+                this.etlScreen('Mapping', 'mappingId=' + encodeURIComponent(out.mappingId));
+            }).finally(() => { this.load.busy = ''; });
+        },
+        runLoad(check) {
+            if (!check && !window.confirm('Load ' + this.sourceLabel + ' into ' + this.load.targetName + '?')) return;
+            this.load.busy = check ? 'check' : 'run';
+            this.etlCall('etlRun', { mappingJson: JSON.stringify(this.loadMapping()), check: !!check }).then((out) => {
+                if (!out || !out.runId) return;
+                this.loadOpen = false;
+                this.etlScreen('Run', 'runId=' + encodeURIComponent(out.runId));
+            }).finally(() => { this.load.busy = ''; });
         }
     },
     mounted() {

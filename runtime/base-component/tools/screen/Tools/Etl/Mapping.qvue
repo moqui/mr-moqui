@@ -1,0 +1,408 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One ETL mapping, served by Mapping.xml in the qvue render mode, every request through moqui.request to the JSON
+    transitions of Etl.xml: the source (an entity, a SQL query, a CSV or spreadsheet file, a flat XML file), the target
+    (an entity and how rows load, or a service called once a row), the column to field table with the converted value
+    and error of each field in the sample (check#EtlSample, the first 200 rows), a test against another file, and Save,
+    Check (the whole source, nothing written), Run, Schedule and the mapping's runs. An expression field needs
+    GROOVY_SHELL_WEB and a SQL source SQL_RUNNER_WEB: without them those inputs are disabled. -->
+<template><div class="q-pa-sm">
+    <q-card flat bordered class="q-mb-sm">
+        <q-card-section class="row items-center q-col-gutter-sm">
+            <div class="col">
+                <div class="text-h6">{{mapping.description || (mapping.mappingId ? 'Mapping ' + mapping.mappingId : 'New mapping')}}</div>
+                <div class="text-caption" :class="mutedClass"><span v-if="mapping.mappingId">{{mapping.mappingId}}</span><span v-if="ownerUserId"> · owner {{ownerUserId}}</span>
+                    <span v-if="dirty"> · not saved</span></div>
+            </div>
+            <div class="col-auto row q-gutter-xs">
+                <q-btn flat dense no-caps icon="list" label="Mappings" @click="go('Mappings')"></q-btn>
+                <q-btn flat dense no-caps icon="fact_check" label="Check" :disable="busy || !mapping.targetName" :loading="busy === 'check'" @click="runMapping(true)">
+                    <q-tooltip>Read and convert the whole source and report every error; nothing is written</q-tooltip></q-btn>
+                <q-btn flat dense no-caps icon="play_arrow" label="Run" :disable="busy || !mapping.mappingId || dirty" :loading="busy === 'run'" @click="runMapping(false)">
+                    <q-tooltip>{{dirty || !mapping.mappingId ? 'Save the mapping first' : 'Load the source into the target, on a worker'}}</q-tooltip></q-btn>
+                <q-btn flat dense no-caps icon="schedule" label="Schedule" :disable="!mapping.mappingId || dirty" @click="scheduleOpen = true"></q-btn>
+                <q-btn unelevated no-caps color="primary" icon="save" label="Save" :disable="busy || !mapping.targetName" :loading="busy === 'save'" @click="store"></q-btn>
+            </div>
+        </q-card-section>
+    </q-card>
+
+    <div class="row q-col-gutter-sm">
+        <div class="col-12 col-md-6">
+            <q-card flat bordered>
+                <q-card-section class="text-subtitle1 q-pb-none">Source</q-card-section>
+                <q-card-section class="q-gutter-sm">
+                    <q-input v-if="!mapping.mappingId || isNew" dense outlined v-model="mapping.mappingId" label="Mapping ID" hint="Empty for a new one" @update:model-value="touch"></q-input>
+                    <q-input dense outlined v-model="mapping.description" label="Description" @update:model-value="touch"></q-input>
+                    <q-option-group v-model="mapping.sourceTypeEnumId" inline dense :options="sourceTypes" @update:model-value="touch"></q-option-group>
+                    <template v-if="mapping.sourceTypeEnumId === 'EtlsEntity'">
+                        <q-select dense outlined use-input fill-input hide-selected input-debounce="250" v-model="mapping.sourceEntityName" :options="sourceEntityOptions"
+                                label="Entity" @filter="(term, update) => filterNames(term, update, 'EtltEntity', 'sourceEntityOptions')" @update:model-value="touch"
+                                @input-value="(value) => { if (value) mapping.sourceEntityName = value; }"></q-select>
+                        <q-input dense outlined v-model="mapping.sourceConditionsJson" label="Conditions" hint='A JSON object of field values, such as {"statusId": "ItemActive"}' @update:model-value="touch"></q-input>
+                    </template>
+                    <template v-if="mapping.sourceTypeEnumId === 'EtlsSql'">
+                        <q-input dense outlined v-model="mapping.sourceDb" label="Database" hint="group:(entity group), empty for the default" :disable="!info.canSql" @update:model-value="touch"></q-input>
+                        <q-input dense outlined type="textarea" autogrow v-model="mapping.sourceSql" label="SELECT statement" class="text-mono" :disable="!info.canSql"
+                                :hint="info.canSql ? 'Read only' : 'A SQL source needs the SQL_RUNNER_WEB permission'" @update:model-value="touch"></q-input>
+                    </template>
+                    <template v-if="mapping.sourceTypeEnumId === 'EtlsFile' || mapping.sourceTypeEnumId === 'EtlsFlatXml'">
+                        <div class="row items-center q-col-gutter-xs">
+                            <div class="col"><q-input dense outlined v-model="mapping.sourceLocation" label="Location" @change="readFile" @update:model-value="touch"
+                                    hint="Your uploads, dbresource://moqui/etl/…, runtime://import/…; ${date} is today"></q-input></div>
+                            <div class="col-auto"><q-btn flat dense no-caps icon="upload" label="Upload" :loading="uploading" @click="$refs.upload.click()"></q-btn>
+                                <input ref="upload" type="file" style="display:none" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods,.xml" @change="upload"></div>
+                        </div>
+                        <div v-if="mapping.sourceTypeEnumId === 'EtlsFile'" class="row q-col-gutter-xs">
+                            <div class="col-6 col-sm-3"><q-select dense outlined v-model="mapping.fileFormat" :options="['auto', 'csv', 'xlsx']" label="Format" @update:model-value="touch(); readFile()"></q-select></div>
+                            <div class="col-6 col-sm-3"><q-select dense outlined v-model="mapping.sheetName" :options="sheetNames" label="Sheet" clearable :disable="!sheetNames.length" @update:model-value="touch(); readFile()"></q-select></div>
+                            <div class="col-4 col-sm-2"><q-input dense outlined type="number" v-model.number="mapping.headerRow" label="Header row" @change="readFile" @update:model-value="touch"></q-input></div>
+                            <div class="col-4 col-sm-2"><q-input dense outlined v-model="mapping.csvDelimiter" label="Delimiter" hint="tab for a tab" @update:model-value="touch"></q-input></div>
+                            <div class="col-4 col-sm-2"><q-input dense outlined v-model="mapping.csvCharset" label="Charset" @update:model-value="touch"></q-input></div>
+                        </div>
+                        <div v-if="fileRowCount != null" class="text-caption" :class="mutedClass">{{fileRowCount.toLocaleString()}} rows, {{sourceColumns.length}} columns</div>
+                    </template>
+                </q-card-section>
+            </q-card>
+        </div>
+        <div class="col-12 col-md-6">
+            <q-card flat bordered>
+                <q-card-section class="text-subtitle1 q-pb-none">Target</q-card-section>
+                <q-card-section class="q-gutter-sm">
+                    <q-option-group v-model="mapping.targetTypeEnumId" inline dense :options="[{label: 'Entity', value: 'EtltEntity'}, {label: 'Service', value: 'EtltService'}]"
+                            @update:model-value="touch(); targetFields = []"></q-option-group>
+                    <q-select dense outlined use-input fill-input hide-selected input-debounce="250" v-model="mapping.targetName" :options="targetOptions"
+                            :label="mapping.targetTypeEnumId === 'EtltService' ? 'Service' : 'Entity'" @filter="(term, update) => filterNames(term, update, mapping.targetTypeEnumId, 'targetOptions')"
+                            @update:model-value="touch(); matchFields(false)" @input-value="(value) => { if (value) mapping.targetName = value; }"></q-select>
+                    <q-option-group v-if="mapping.targetTypeEnumId === 'EtltEntity'" v-model="mapping.loadModeEnumId" inline dense
+                            :options="[{label: 'Create', value: 'EtllCreate'}, {label: 'Create or update', value: 'EtllStore'}, {label: 'Update', value: 'EtllUpdate'}]" @update:model-value="touch"></q-option-group>
+                    <q-input v-if="mapping.targetTypeEnumId === 'EtltEntity' && mapping.loadModeEnumId !== 'EtllCreate'" dense outlined v-model="mapping.matchFields" label="Match fields"
+                            hint="Comma separated; empty matches on the primary key" @update:model-value="touch"></q-input>
+                    <div class="row q-col-gutter-xs">
+                        <div class="col-6"><q-input dense outlined type="number" v-model.number="mapping.batchSize" label="Batch size" hint="0 for one transaction" @update:model-value="touch"></q-input></div>
+                        <div class="col-6"><q-input dense outlined type="number" v-model.number="mapping.timeoutSeconds" label="Timeout (seconds)" @update:model-value="touch"></q-input></div>
+                    </div>
+                    <q-toggle v-model="mapping.stopOnError" true-value="Y" false-value="N" label="Stop at the first error" @update:model-value="touch"></q-toggle>
+                    <q-toggle v-if="mapping.targetTypeEnumId === 'EtltEntity'" v-model="mapping.dummyFks" true-value="Y" false-value="N" label="Make missing related records (dummy foreign keys)" @update:model-value="touch"></q-toggle>
+                </q-card-section>
+            </q-card>
+        </div>
+    </div>
+
+    <q-card flat bordered class="q-mt-sm">
+        <q-card-section class="row items-center q-col-gutter-sm q-pb-none">
+            <div class="col text-subtitle1">Fields</div>
+            <div class="col-auto row q-gutter-xs">
+                <q-btn flat dense no-caps icon="auto_fix_high" label="Match columns" :disable="!mapping.targetName || !sourceColumns.length" @click="matchFields(true)">
+                    <q-tooltip>Set each source column's target field by its name</q-tooltip></q-btn>
+                <q-btn flat dense no-caps icon="add" label="Add field" @click="addField"></q-btn>
+                <q-btn flat dense no-caps icon="science" label="Sample" :disable="busy || !mapping.targetName" :loading="busy === 'sample'" @click="sample()">
+                    <q-tooltip>Convert the first 200 rows and show each field's value and error</q-tooltip></q-btn>
+            </div>
+        </q-card-section>
+        <q-card-section>
+            <q-markup-table flat dense separator="horizontal" wrap-cells>
+                <thead><tr><th class="text-left">Target field</th><th class="text-left">Source column</th><th class="text-left">Constant or default</th>
+                    <th class="text-left">Value map</th><th class="text-left">Sample</th><th></th></tr></thead>
+                <tbody>
+                <template v-for="(field, index) in mapping.fields" :key="index">
+                    <tr>
+                        <td style="min-width:180px"><q-select dense borderless use-input fill-input hide-selected v-model="field.targetField" :options="targetFieldOptions" @filter="filterFields"
+                                @input-value="(value) => { if (value) field.targetField = value; }" @update:model-value="touch" placeholder="field"></q-select></td>
+                        <td style="min-width:160px"><q-select dense borderless clearable v-model="field.sourceColumn" :options="sourceColumns" @update:model-value="touch"
+                                use-input fill-input hide-selected @input-value="(value) => { if (value) field.sourceColumn = value; }" placeholder="column"></q-select></td>
+                        <td style="min-width:140px"><q-input dense borderless v-model="field.constantValue" placeholder="constant" @update:model-value="touch" v-if="!field.sourceColumn"></q-input>
+                            <q-input dense borderless v-model="field.defaultValue" placeholder="default when empty" @update:model-value="touch" v-else></q-input></td>
+                        <td style="min-width:120px"><q-select dense borderless clearable emit-value map-options v-model="field.valueMapId" :options="valueMapOptions" @update:model-value="touch"></q-select></td>
+                        <td>
+                            <div v-for="(item, at) in sampleOf(field.targetField)" :key="at" class="text-caption" :class="item.error ? 'text-negative' : ''">
+                                {{item.error ? 'Row ' + item.rowNumber + ': ' + item.error : display(item.value)}}</div>
+                        </td>
+                        <td class="text-right" style="white-space:nowrap">
+                            <q-btn flat round dense size="sm" :icon="expanded[index] ? 'expand_less' : 'tune'" :aria-label="'More of ' + (field.targetField || 'the field')" @click="expanded[index] = !expanded[index]"></q-btn>
+                            <q-btn flat round dense size="sm" icon="delete" :aria-label="'Remove ' + (field.targetField || 'the field')" @click="removeField(index)"></q-btn>
+                        </td>
+                    </tr>
+                    <tr v-if="expanded[index]"><td colspan="6">
+                        <div class="row q-col-gutter-xs">
+                            <div class="col-12 col-md-6"><q-input dense outlined type="textarea" autogrow v-model="field.expression" label="Expression" class="text-mono" :disable="!info.canExpression"
+                                    :hint="info.canExpression ? 'JavaScript of value, row and ec; its result is the value' : 'An expression needs the GROOVY_SHELL_WEB permission'" @update:model-value="touch"></q-input></div>
+                            <div class="col-6 col-md-3"><q-input dense outlined v-model="field.formatPattern" label="Format" hint="A date or number pattern" @update:model-value="touch"></q-input></div>
+                            <div class="col-6 col-md-3"><q-input dense outlined v-model="field.lookupEntityName" label="Look up in entity" @update:model-value="touch"></q-input></div>
+                            <div class="col-6 col-md-3"><q-input dense outlined v-model="field.lookupMatchField" label="Matching its field" @update:model-value="touch"></q-input></div>
+                            <div class="col-6 col-md-3"><q-input dense outlined v-model="field.lookupResultField" label="The value of its field" @update:model-value="touch"></q-input></div>
+                            <div class="col-12 col-md-6 row items-center">
+                                <q-toggle dense v-model="field.trim" true-value="Y" false-value="N" label="Trim" @update:model-value="touch" class="q-mr-md"></q-toggle>
+                                <q-toggle dense v-model="field.required" true-value="Y" false-value="N" label="Required" @update:model-value="touch" class="q-mr-md"></q-toggle>
+                                <q-toggle dense v-model="field.skipIfEmpty" true-value="Y" false-value="N" label="Skip the row when empty" @update:model-value="touch"></q-toggle>
+                            </div>
+                        </div>
+                    </td></tr>
+                </template>
+                <tr v-if="!mapping.fields.length"><td colspan="6" class="text-caption" :class="mutedClass">No fields. Choose a source and a target, then Match columns or Add field.</td></tr>
+                </tbody>
+            </q-markup-table>
+            <div v-if="rowErrors.length" class="q-mt-sm">
+                <div v-for="(item, at) in rowErrors" :key="at" class="text-caption text-negative">Row {{item.rowNumber}}: {{item.message}}</div>
+            </div>
+            <div v-if="sampleRows != null" class="text-caption q-mt-xs" :class="mutedClass">{{sampleRows}} sample rows, {{sampleErrorCount}} with errors{{testLocation ? ' (from ' + testLocation + ')' : ''}}</div>
+        </q-card-section>
+        <q-card-section class="q-pt-none row items-center q-col-gutter-xs">
+            <div class="col"><q-input dense outlined v-model="testLocation" label="Test against another file" hint="A location, or upload one: the sample is read from it in place of the mapping's"></q-input></div>
+            <div class="col-auto"><q-btn flat dense no-caps icon="upload" label="Upload" :loading="uploading" @click="$refs.testUpload.click()"></q-btn>
+                <input ref="testUpload" type="file" style="display:none" accept=".csv,.tsv,.txt,.xlsx,.xls,.ods,.xml" @change="(event) => upload(event, true)"></div>
+            <div class="col-auto"><q-btn flat dense no-caps label="Test" :disable="!testLocation || !mapping.targetName" @click="sample(testLocation)"></q-btn></div>
+        </q-card-section>
+    </q-card>
+
+    <q-card v-if="mapping.mappingId && !isNew" flat bordered class="q-mt-sm">
+        <q-card-section class="row items-center q-pb-none">
+            <div class="col text-subtitle1">Runs</div>
+            <q-btn flat dense no-caps icon="refresh" label="Refresh" @click="loadRuns"></q-btn>
+            <q-btn flat dense no-caps icon="history" label="All" @click="go('Runs', 'mappingId=' + encodeURIComponent(mapping.mappingId))"></q-btn>
+        </q-card-section>
+        <q-list separator>
+            <q-item v-for="run in runs" :key="run.runId" clickable @click="go('Run', 'runId=' + encodeURIComponent(run.runId))">
+                <q-item-section avatar><q-chip dense square class="q-ma-none m-tonal" :class="'text-' + statusColor(run.statusId)">{{statusText(run)}}</q-chip></q-item-section>
+                <q-item-section><q-item-label>Run {{run.runId}}</q-item-label>
+                    <q-item-label caption>{{when(run.startTime)}} · {{run.extractCount || 0}} read, {{run.loadCount || 0}} loaded<span v-if="run.errorCount">, {{run.errorCount}} with errors</span></q-item-label></q-item-section>
+            </q-item>
+            <q-item v-if="!runs.length"><q-item-section class="text-caption">No runs yet</q-item-section></q-item>
+        </q-list>
+    </q-card>
+
+    <q-dialog v-model="scheduleOpen">
+        <q-card style="min-width:360px">
+            <q-card-section><div class="text-h6">Schedule this mapping</div></q-card-section>
+            <q-card-section class="q-pt-none">
+                <q-input dense outlined v-model="cronExpression" label="Cron expression" hint="Seconds, minutes, hours, day, month, weekday: 0 0 2 * * ? is 2 a.m. daily"></q-input>
+                <div class="text-caption q-mt-sm" :class="mutedClass">A service job runs the saved mapping at these times, as its owner, who is told when each run ends; each run is in Runs. Change or pause it in System › Service Jobs.</div>
+            </q-card-section>
+            <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn>
+                <q-btn unelevated no-caps color="primary" label="Schedule" :disable="!cronExpression" @click="schedule"></q-btn></q-card-actions>
+        </q-card>
+    </q-dialog>
+</div></template>
+
+<script>
+module.exports = {
+    data() {
+        return {
+            mapping: this.blankMapping(), isNew: true, ownerUserId: '', dirty: false, busy: '', uploading: false,
+            info: { canExpression: false, canSql: false, valueMaps: [] }, sourceEntityOptions: [], targetOptions: [], targetFields: [], targetFieldOptions: [],
+            sourceColumns: [], sheetNames: [], fileRowCount: null, sampleByField: {}, rowErrors: [], sampleRows: null, sampleErrorCount: 0,
+            testLocation: '', expanded: {}, runs: [], scheduleOpen: false, cronExpression: '0 0 2 * * ?'
+        };
+    },
+    computed: {
+        mutedClass() { return this.$q.dark.isActive ? 'text-grey-5' : 'text-grey-7'; },
+        parameters() { return this.$root.currentParameters || {}; },
+        sourceTypes() {
+            return [{ label: 'File', value: 'EtlsFile' }, { label: 'Entity', value: 'EtlsEntity' }, { label: 'SQL', value: 'EtlsSql', disable: !this.info.canSql && this.mapping.sourceTypeEnumId !== 'EtlsSql' },
+                { label: 'Flat XML', value: 'EtlsFlatXml' }];
+        },
+        valueMapOptions() { return (this.info.valueMaps || []).map((item) => ({ label: item.description || item.valueMapId, value: item.valueMapId })); }
+    },
+    methods: {
+        blankMapping() {
+            return { mappingId: '', description: '', sourceTypeEnumId: 'EtlsFile', sourceEntityName: '', sourceConditionsJson: '', sourceDb: '', sourceSql: '', sourceLocation: '',
+                fileFormat: 'auto', sheetName: null, headerRow: 1, firstDataRow: 0, csvDelimiter: ',', csvCharset: 'UTF-8', targetTypeEnumId: 'EtltEntity', targetName: '',
+                loadModeEnumId: 'EtllCreate', matchFields: '', batchSize: 1000, stopOnError: 'N', dummyFks: 'N', timeoutSeconds: null, fields: [] };
+        },
+        // Etl.xml's transitions (this screen's parent) and its sibling screens
+        etlUrl(name) { return this.$root.basePath + '/' + this.$root.currentPathList.slice(0, -1).concat([name]).join('/'); },
+        go(screen, search) { this.$root.setUrl(this.$root.linkBasePath + '/' + this.$root.currentPathList.slice(0, -1).concat([screen]).join('/') + (search ? '?' + search : '')); },
+        // a transition's answer, its errors shown; a mapping (which may hold SQL) always goes in a POST body
+        call(name, params, method) {
+            return moqui.request(this.etlUrl(name), { method: method || 'POST', params: params instanceof FormData ? params : (params || {}) }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) { moqui.notifyMessages(null, json.errors); return null; }
+                if (!result.ok) { moqui.handleAjaxError(result); return null; }
+                return json;
+            }, (err) => { moqui.handleAjaxError(err); return null; });
+        },
+        touch() { this.dirty = true; },
+        // the mapping as the services take it: no empty fields, numbers as numbers, the conditions as JSON text
+        mappingSpec() {
+            const spec = Object.assign({}, this.mapping);
+            delete spec.sourceConditions;
+            if (!spec.mappingId) delete spec.mappingId;
+            spec.fields = (this.mapping.fields || []).filter((field) => field.targetField).map((field) => {
+                const out = {};
+                for (const [key, value] of Object.entries(field)) if (value != null && value !== '') out[key] = value;
+                return out;
+            });
+            return spec;
+        },
+        filterNames(term, update, kind, into) {
+            if (!term || term.length < 2) { update(() => { this[into] = []; }); return; }
+            this.call('etlInfo', { term, targetTypeEnumId: kind }, 'GET').then((out) => update(() => { this[into] = (out && out.targetNames) || []; }));
+        },
+        filterFields(term, update) {
+            const lower = String(term || '').toLowerCase();
+            update(() => { this.targetFieldOptions = this.targetFields.filter((name) => String(name).toLowerCase().includes(lower)); });
+        },
+        load() {
+            const id = this.parameters.mappingId;
+            const ready = this.call('etlInfo', {}, 'GET').then((out) => { if (out) this.info = out; });
+            if (!id) return ready;
+            return Promise.all([ready, this.call('etlMapping', { mappingId: id }, 'GET')]).then(([, out]) => {
+                if (!out || !out.mapping) return;
+                const mapping = Object.assign(this.blankMapping(), out.mapping);
+                mapping.sourceConditionsJson = out.mapping.sourceConditions && Object.keys(out.mapping.sourceConditions).length ? JSON.stringify(out.mapping.sourceConditions) : '';
+                delete mapping.sourceConditions;
+                if (!mapping.sheetName) mapping.sheetName = null;
+                mapping.fields = (out.mapping.fields || []).map((field) => Object.assign({ trim: 'N', required: 'N', skipIfEmpty: 'N' }, field));
+                this.mapping = mapping;
+                this.isNew = false;
+                this.ownerUserId = out.mapping.ownerUserId || '';
+                this.dirty = false;
+                this.loadRuns();
+                if (mapping.sourceTypeEnumId === 'EtlsFile' && mapping.sourceLocation && !/\$\{/.test(mapping.sourceLocation)) this.readFile();
+                this.matchFields(false);
+            });
+        },
+        // ---- the source ----
+        upload(event, forTest) {
+            const file = event.target.files && event.target.files[0];
+            event.target.value = '';
+            if (!file) return;
+            const form = new FormData();
+            form.append('file', file, file.name);
+            this.uploading = true;
+            this.call('etlUpload', form).then((out) => {
+                if (!out || !out.location) return;
+                if (forTest) { this.testLocation = out.location; this.sample(out.location); return; }
+                this.mapping.sourceLocation = out.location;
+                if (!this.mapping.description) this.mapping.description = out.fileName || '';
+                this.touch();
+                this.readFile();
+            }).finally(() => { this.uploading = false; });
+        },
+        // a file's sheets, header and row count
+        readFile() {
+            const m = this.mapping;
+            if (m.sourceTypeEnumId !== 'EtlsFile' || !m.sourceLocation) return Promise.resolve();
+            return this.call('etlFileInfo', { location: m.sourceLocation, sheet: m.sheetName || '', headerRow: m.headerRow || 1, format: m.fileFormat || 'auto', limit: 1 }, 'GET').then((out) => {
+                if (!out) return;
+                this.sheetNames = out.sheetNames || [];
+                this.sourceColumns = (out.columns || []).map((column) => column.title || column.name);
+                this.fileRowCount = out.rowCount != null ? Number(out.rowCount) : null;
+            });
+        },
+        // ---- the fields ----
+        addField() { this.mapping.fields.push({ targetField: '', sourceColumn: null, trim: 'Y', required: 'N', skipIfEmpty: 'N' }); this.touch(); },
+        removeField(index) { this.mapping.fields.splice(index, 1); this.expanded = {}; this.touch(); },
+        // the target's fields, and with apply each source column not yet mapped given its matching field
+        matchFields(apply) {
+            if (!this.mapping.targetName) return Promise.resolve();
+            return this.call('etlMatch', { columnsJson: JSON.stringify(this.sourceColumns), targetTypeEnumId: this.mapping.targetTypeEnumId, targetName: this.mapping.targetName }).then((out) => {
+                if (!out) return;
+                this.targetFields = out.targetFields || [];
+                this.targetFieldOptions = this.targetFields;
+                if (!apply) return;
+                const used = new Set(this.mapping.fields.map((field) => field.sourceColumn).filter(Boolean));
+                const taken = new Set(this.mapping.fields.map((field) => field.targetField).filter(Boolean));
+                let added = 0;
+                for (const match of out.matches || []) {
+                    if (!match.targetField || match.how === 'none' || used.has(match.column) || taken.has(match.targetField)) continue;
+                    this.mapping.fields.push({ targetField: match.targetField, sourceColumn: match.column, trim: 'Y', required: 'N', skipIfEmpty: 'N' });
+                    taken.add(match.targetField); added++;
+                }
+                if (added) this.touch();
+                moqui.notifyMessages(added ? 'Matched ' + added + ' columns' : 'No more columns match a field');
+            });
+        },
+        // the first 200 rows through the mapping as it is now (not saved), from location when given
+        sample(location) {
+            this.busy = 'sample';
+            return this.call('etlCheck', { mappingJson: JSON.stringify(this.mappingSpec()), location: location || '', maxRows: 200 }).then((out) => {
+                if (!out) return;
+                if (out.columns && out.columns.length) this.sourceColumns = out.columns;
+                const byField = {}, rowErrors = [];
+                let errorRows = 0;
+                for (const row of out.rows || []) {
+                    const errors = row.errors || {};
+                    if (Object.keys(errors).length) errorRows++;
+                    if (errors._row) rowErrors.push({ rowNumber: row.rowNumber, message: errors._row });
+                    for (const field of this.mapping.fields) {
+                        const name = field.targetField;
+                        if (!name) continue;
+                        const list = byField[name] || (byField[name] = []);
+                        if (errors[name]) list.push({ rowNumber: row.rowNumber, error: errors[name] });
+                        else if (list.length < 3 && row.values && name in row.values) list.push({ rowNumber: row.rowNumber, value: row.values[name] });
+                    }
+                }
+                // a field's errors first, then up to three values
+                for (const name of Object.keys(byField)) byField[name] = byField[name].filter((item) => item.error).slice(0, 3).concat(byField[name].filter((item) => !item.error)).slice(0, 4);
+                this.sampleByField = byField;
+                this.rowErrors = rowErrors.slice(0, 20);
+                this.sampleRows = (out.rows || []).length;
+                this.sampleErrorCount = errorRows;
+            }).finally(() => { this.busy = ''; });
+        },
+        sampleOf(name) { return (name && this.sampleByField[name]) || []; },
+        display(value) { return value == null ? 'null' : typeof value === 'object' ? JSON.stringify(value) : String(value); },
+        // ---- save, run, schedule ----
+        store() {
+            this.busy = 'save';
+            return this.call('etlStore', { mappingJson: JSON.stringify(this.mappingSpec()) }).then((out) => {
+                if (!out || !out.mappingId) return;
+                const first = this.isNew;
+                this.mapping.mappingId = out.mappingId;
+                this.isNew = false; this.dirty = false;
+                if (!this.ownerUserId) this.ownerUserId = this.info.userId || '';
+                moqui.notifyMessages('Mapping ' + out.mappingId + ' saved');
+                if (first) this.go('Mapping', 'mappingId=' + encodeURIComponent(out.mappingId));
+            }).finally(() => { this.busy = ''; });
+        },
+        runMapping(check) {
+            // a check may run on the form as it is; a run is of the saved mapping
+            const params = check ? { mappingJson: JSON.stringify(this.mappingSpec()), check: true } : { mappingId: this.mapping.mappingId };
+            if (!check && !window.confirm('Load the source of ' + (this.mapping.description || this.mapping.mappingId) + ' into ' + this.mapping.targetName + '?')) return;
+            this.busy = check ? 'check' : 'run';
+            return this.call('etlRun', params).then((out) => {
+                if (!out || !out.runId) return;
+                moqui.notifyMessages((check ? 'Check ' : 'Run ') + out.runId + ' queued');
+                this.go('Run', 'runId=' + encodeURIComponent(out.runId));
+            }).finally(() => { this.busy = ''; });
+        },
+        schedule() {
+            this.call('etlSchedule', { mappingId: this.mapping.mappingId, cronExpression: this.cronExpression }).then((out) => {
+                if (!out) return;
+                this.scheduleOpen = false;
+                moqui.notifyMessages('Scheduled as service job ' + out.jobName);
+            });
+        },
+        loadRuns() {
+            if (!this.mapping.mappingId) return;
+            this.call('etlRuns', { mappingId: this.mapping.mappingId, limit: 10 }, 'GET').then((out) => { this.runs = (out && out.runs) || []; });
+        },
+        statusText(run) {
+            const names = { EtlrPending: 'Pending', EtlrRunning: 'Running', EtlrDone: 'Done', EtlrFailed: 'Failed' };
+            return (names[run.statusId] || run.statusId || '') + (run.isCheck === 'Y' || run.isCheck === true ? ' (check)' : '');
+        },
+        statusColor(statusId) { return statusId === 'EtlrDone' ? 'positive' : statusId === 'EtlrFailed' ? 'negative' : 'primary'; },
+        when(value) {
+            if (value == null || value === '') return '';
+            try { return moqui.l10n ? moqui.l10n.formatTimestamp(value) : new Date(value).toLocaleString(); } catch (_) { return String(value); }
+        }
+    },
+    mounted() {
+        this.unloadGuard = (event) => { if (this.dirty) { event.preventDefault(); event.returnValue = ''; } };
+        window.addEventListener('beforeunload', this.unloadGuard);
+        this.load();
+    },
+    beforeUnmount() { window.removeEventListener('beforeunload', this.unloadGuard); }
+};
+</script>

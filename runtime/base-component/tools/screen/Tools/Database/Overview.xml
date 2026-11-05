@@ -64,7 +64,14 @@ along with this software (see the LICENSE.md file). If not, see
                 : ec.l10n.format(size / 1048576, '#,##0.0') + ' MiB'
             isEmbedded = capabilities?.backend == 'embedded-postgres'
             backupJob = isEmbedded ? ec.entity.find('moqui.service.job.ServiceJob').condition('jobName', 'backup_EmbeddedDatabase_daily').one() : null
-            databaseRows = databaseList.map((database) => ({db: database.db, groups: database.groupNames.join(', '),
+            // External databases (Connections): // whether the server offers external databases to this user (find#DatabaseConnections refuses with "Not available"
+            // on production or without DATABASE_EXTERNAL); asked only of a DATABASE_EXTERNAL holder
+            canExternal = false
+            if (ec.user.hasPermission('DATABASE_EXTERNAL')) {
+                try { ec.service.sync().name('org.moqui.impl.DatabaseServices.find#DatabaseConnections').call(); canExternal = !ec.message.hasError() } catch (e) { canExternal = false }
+                ec.message.clearErrors()
+            }
+            databaseRows = databaseList.map((database) => ({db: database.db, groups: database.label,
                 databaseConf: database.databaseConf}))
         ]]></script>
     </actions>
@@ -74,6 +81,8 @@ along with this software (see the LICENSE.md file). If not, see
         <container-box><box-header title="${selectedDatabase?.groupNames.join(', ') || 'Database'}"/>
             <box-toolbar>
                 <link url="refresh" text="Refresh" icon="refresh" tooltip="Ask the database again for what it allows" parameter-map="{db: db}"/>
+                <link url="../Settings" text="Settings" icon="tune" parameter-map="{db: db}"/>
+                <link url="../Connections" text="External databases" icon="cable" condition="canExternal"/>
             </box-toolbar>
             <box-body>
                 <section name="Refused" condition="capabilitiesError"><widgets>
