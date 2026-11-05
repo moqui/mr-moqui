@@ -251,9 +251,11 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
     <entity entity-name="EtlRun" package="moqui.etl" use="nontransactional" cache="never">
         <description>One run (or check) of a mapping, saved or inline (mappingId empty). Its counts are written every
-            1,000 rows in a transaction of their own, so the Run screen shows progress. lastCommittedRow is where a rerun
-            starts (startRow). errorLocation is a CSV of every failed row with its error; the first 1,000 errors are also
-            EtlRunError rows.</description>
+            1,000 rows in a transaction of their own, so the Run screen shows progress: extractCount the rows read,
+            loadCount the rows committed, errorCount the rows with an error. lastCommittedRow is the last row of the last
+            batch committed before any batch failed; a rerun starts after it (startRow = lastCommittedRow + 1, the run's
+            nextStartRow). errorLocation is a CSV of every failed row with its error; the first 1,000 errors are also
+            EtlRunError rows. mappingId has no foreign key, so the runs of a deleted mapping stay.</description>
         <field name="runId" type="id" is-pk="true"/>
         <field name="mappingId" type="id"/>
         <field name="userId" type="id"/>
@@ -271,7 +273,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="lastCommittedRow" type="number-integer"/>
         <field name="errorLocation" type="text-medium"/>
         <field name="failureText" type="text-very-long"/>
-        <relationship type="one" related="moqui.etl.EtlMapping"/>
+        <!-- no foreign key: the runs stay when their mapping is deleted -->
+        <relationship type="one-nofk" related="moqui.etl.EtlMapping"/>
         <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
         <relationship type="many" related="moqui.etl.EtlRunError" short-alias="errors">
             <key-map field-name="runId"/></relationship>

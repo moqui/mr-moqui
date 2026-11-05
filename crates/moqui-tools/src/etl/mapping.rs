@@ -238,6 +238,20 @@ impl MappingField {
         map.insert("trim".to_string(), flag(self.trim));
         map.insert("required".to_string(), flag(self.required));
         map.insert("skipIfEmpty".to_string(), flag(self.skip_if_empty));
+        // an inline value map (one not named by id) stays with its field
+        if let (None, Some(entries)) = (&self.value_map_id, &self.value_map) {
+            let mut sorted: Vec<(&String, &String)> = entries.iter().collect();
+            sorted.sort();
+            map.insert(
+                "valueMap".to_string(),
+                Value::Map(
+                    sorted
+                        .into_iter()
+                        .map(|(from, to)| (from.clone(), Value::string(to)))
+                        .collect(),
+                ),
+            );
+        }
         Value::Map(map)
     }
 }
@@ -320,6 +334,44 @@ impl Mapping {
             return Err(Error::new("An ETL mapping needs a targetName"));
         }
         Ok(mapping)
+    }
+
+    /// Whether a field has an `expression`, which needs the `GROOVY_SHELL_WEB` permission to save, check or run.
+    #[must_use]
+    pub fn has_expression(&self) -> bool {
+        self.fields.iter().any(|field| field.expression.is_some())
+    }
+
+    /// Refuse what no mapping may reach ([`super::access`]): a restricted entity as the source, the target or a
+    /// lookup, and a `UserAccount` password field as a target field or a lookup's match or result field.
+    ///
+    /// # Errors
+    ///
+    /// An error naming what is refused.
+    pub fn validate(&self) -> Result<(), Error> {
+        use super::access::{is_secret_field, refuse_restricted};
+        if self.source_kind == SourceKind::Entity {
+            refuse_restricted(&self.source_entity_name, "source")?;
+        }
+        if self.target_kind == TargetKind::Entity {
+            refuse_restricted(&self.target_name, "target")?;
+        }
+        for field in &self.fields {
+            if is_secret_field(&field.target_field) {
+                return Err(Error::new(format!(
+                    "{} is not available as an ETL target field",
+                    field.target_field
+                )));
+            }
+            if let Some(entity) = &field.lookup_entity_name {
+                refuse_restricted(entity, "lookup")?;
+            }
+            let lookup_fields = [&field.lookup_match_field, &field.lookup_result_field];
+            if let Some(name) = lookup_fields.into_iter().flatten().find(|name| is_secret_field(name)) {
+                return Err(Error::new(format!("{name} is not available in an ETL lookup")));
+            }
+        }
+        Ok(())
     }
 
     /// The saved mapping `mapping_id` with its fields, in `fieldSeqId` order.
@@ -411,6 +463,7 @@ impl Mapping {
             "csvDelimiter".to_string(),
             text(&char::from(self.csv_delimiter).to_string()),
         );
+        map.insert("csvCharset".to_string(), text(&self.csv_charset));
         map.insert(
             "targetTypeEnumId".to_string(),
             text(match self.target_kind {
@@ -434,6 +487,11 @@ impl Mapping {
             text(if self.stop_on_error { "Y" } else { "N" }),
         );
         map.insert("dummyFks".to_string(), text(if self.dummy_fks { "Y" } else { "N" }));
+        map.insert(
+            "timeoutSeconds".to_string(),
+            self.timeout_seconds
+                .map_or(Value::Null, |seconds| Value::I64(i64::from(seconds))),
+        );
         map.insert(
             "fields".to_string(),
             Value::List(self.fields.iter().map(MappingField::to_value).collect()),

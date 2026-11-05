@@ -16,7 +16,6 @@ moqui-core = { workspace = true }
 moqui-lib = { workspace = true }
 # The DDL builders and the schema comparison's catalog queries (Schema and jobs).
 moqui-db = { workspace = true }
-csv = { workspace = true }
 indexmap = { workspace = true }
 jiff = { workspace = true }
 serde_json = { workspace = true }

@@ -18,8 +18,15 @@ along with this software (see the LICENSE.md file). If not, see
         mappingId (a saved moqui.etl.EtlMapping) or mapping, an inline map of EtlMapping's field names with fields, a
         list of maps of EtlMappingField's (a field may have valueMap, a map from value to value, in place of a
         valueMapId). A refusal is a message-facade error and no out parameters. Each service refuses a user the Tools
-        app's authorization (TOOLS_APP) does not let view component://tools/screen/Tools.xml; writes and runs need
-        authorization for all actions on it, and a SQL source the SQL_RUNNER_WEB permission. No Java counterpart. -->
+        app's authorization (TOOLS_APP) does not let view component://tools/screen/Tools.xml; writes, checks and runs
+        need authorization for all actions on it, a SQL source the SQL_RUNNER_WEB permission, and an expression field
+        the GROOVY_SHELL_WEB permission (to save, check or run it). A run is the user's own with authorization on, also
+        on the worker pool or as a ServiceJob's user, so its writes and service calls run the security rules. Only a
+        mapping's owner or a DATABASE_ADMIN holder may change, copy over or delete it. A file is read only from the
+        user's own uploads (dbresource://moqui/database/upload/(userId)/), dbresource://moqui/etl/ and
+        runtime://import/, or any dbresource:// location with DATABASE_ADMIN; anything else is "Not available". An
+        identity-admin, secret-config or audit entity is no source, target or lookup, and a UserAccount password field
+        no target or lookup field. No Java counterpart. -->
 
     <service verb="run" noun="EtlMapping" type="rust" location="moqui_tools::etl::service::run_etl_mapping"
             transaction="ignore">
@@ -27,13 +34,19 @@ along with this software (see the LICENSE.md file). If not, see
             source's rows go through the mapping's fields into the target, an entity (loadModeEnumId) or a service (one
             call per row). With no batch size the run is one transaction: any error rolls it back, the extract and
             transform errors are all reported, and the first database error ends the loading. With a batch size a failed
-            batch is rolled back and recorded, and the mapping's stopOnError decides whether the run goes on;
-            lastCommittedRow is where a rerun starts (startRow). check extracts and transforms only, and reports each
-            row's errors, the foreign keys with no related record, and for an entity target the diff against the
-            database. location overrides the mapping's (expanding ${date}, ${yesterday}, ${now}); contentBytes is the
-            file itself. The EtlRun row has the counts (written every 1,000 rows), the status, the first 1,000 errors as
-            EtlRunError rows and an error file of every failed row (errorLocation). A DbaEtlRun DatabaseAudit row is
-            written. A ServiceJob that calls this with a mappingId runs a mapping on a schedule.</description>
+            batch is rolled back and recorded (failedRanges), and the mapping's stopOnError decides whether the run goes
+            on; with stopOnError any error ends the run Failed, the batch it was in rolled back. loadCount is the rows
+            committed. lastCommittedRow is the last row of the last batch committed before any batch failed; startRow is
+            the first row read, so a rerun from nextStartRow (lastCommittedRow + 1) loads no committed row again. check
+            extracts and transforms only, never stopping at an error, and reports each row's errors, the foreign keys
+            with no related record (a parent an earlier row of the file would create is reported missing: a check
+            writes nothing), and for an entity target the diff against the database (the first 1,000 rows). location
+            overrides the mapping's (${date}, ${yesterday}, ${now} and ${nowMillis} replaced; nothing else);
+            contentBytes is the file itself. With wait the caller's transaction is suspended so the batches commit. The
+            EtlRun row has the counts (written every 1,000 rows), the status, the first 1,000 errors as EtlRunError rows
+            and an error file of every failed row (errorLocation). A DbaEtlRun DatabaseAudit row is written, and a DbaSql
+            row for a SQL source. A ServiceJob that calls this with a mappingId runs a mapping on a schedule, as the
+            job's user.</description>
         <in-parameters>
             <parameter name="mappingId"/>
             <parameter name="mapping" type="Map"/>
@@ -53,9 +66,12 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="skipCount" type="Long"/>
             <parameter name="loadCount" type="Long"/>
             <parameter name="errorCount" type="Long"/>
+            <parameter name="fieldErrorCount" type="Long"/>
             <parameter name="lastCommittedRow" type="Long"/>
+            <parameter name="nextStartRow" type="Long"/>
             <parameter name="committedBatches" type="Long"/>
             <parameter name="failedBatches" type="Long"/>
+            <parameter name="failedRanges" type="List"><parameter name="range" type="Map"/></parameter>
             <parameter name="errors" type="List"><parameter name="error" type="Map"/></parameter>
             <parameter name="errorLocation"/>
             <parameter name="failure"/>
@@ -67,7 +83,7 @@ along with this software (see the LICENSE.md file). If not, see
         <description>The first rows of a mapping's source (maxRows, 200 by default) through its fields, for "Load
             into…" in the grid: each row's rowNumber, its source cells, the converted values by target field, and the
             errors by target field (_row for the row as a whole, such as a value not of its field's type). columns is the
-            source's header.</description>
+            source's header. Needs what a run needs: authorization for all actions on the Tools app.</description>
         <in-parameters>
             <parameter name="mappingId"/>
             <parameter name="mapping" type="Map"/>
@@ -175,6 +191,10 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             const me = ec.user.userId
             if (!me) { ec.message.addError('Uploading a file for the grid needs a signed-in user'); return }
+            // the Tools app, and at most 100 MB
+            const checked = ec.service.sync().name('org.moqui.impl.EtlServices.check#GridUpload')
+                .parameters({ size: Number(file.getSize()) }).call()
+            if (!checked || !checked.allowed || ec.message.hasError()) return
             let name = String(file.getName() || '').split(/[\\/]/).pop().replace(/[\u0000-\u001f]/g, '').trim()
             if (!name || name === '.' || name === '..') name = 'file'
             if (name.length > 200) name = name.slice(-200)
@@ -184,11 +204,19 @@ along with this software (see the LICENSE.md file). If not, see
             file.write(location)
         ]]></script></actions>
     </service>
+    <service verb="check" noun="GridUpload" type="rust" location="moqui_tools::files::check_grid_upload"
+            transaction="ignore">
+        <description>Whether the user may upload a file of size bytes for the grid: the Tools app's authorization, and
+            at most 100 MB. upload#GridFile's check before it writes.</description>
+        <in-parameters><parameter name="size" type="Long" required="true"/></in-parameters>
+        <out-parameters><parameter name="allowed" type="Boolean"/></out-parameters>
+    </service>
     <service verb="get" noun="GridFileInfo" type="rust" location="moqui_tools::files::get_grid_file_info"
             transaction="ignore">
         <description>A file source's columns with their inferred types (number, date, date-time, boolean, text), its
-            sheet names, its row count and its first limit rows (100 by default). A sheet is read whole and cached per
-            node (64 MB, by location, last-modified time, sheet and header row); a CSV is streamed.</description>
+            sheet names, its row count and its first limit rows (100 by default), from a place the user may read (as an
+            ETL run's file). A sheet is read whole and cached per node (64 MB, by location, last-modified time, sheet and
+            header row); a CSV is read once per call.</description>
         <in-parameters>
             <parameter name="location" required="true"/>
             <parameter name="sheet"/>

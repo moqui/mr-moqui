@@ -250,6 +250,58 @@ fn a_failed_entry_rolls_back_its_batch_and_the_rest_commit() {
     }
 }
 
+/// Extracts `count` EnumerationType rows, `<prefix>1` … in order, stopping when the run stops.
+struct Prefixed(&'static str, usize);
+
+impl moqui_lib::etl::Extractor for Prefixed {
+    fn extract(&mut self, etl: &mut SimpleEtl) -> Result<(), moqui_lib::error::Error> {
+        for number in 1..=self.1 {
+            let mut values = std::collections::BTreeMap::new();
+            values.insert("enumTypeId".to_string(), Value::string(format!("{}{number}", self.0)));
+            values.insert("description".to_string(), Value::string("batched"));
+            if etl
+                .process_entry(moqui_lib::etl::SimpleEntry::new("moqui.basic.EnumerationType", values))
+                .is_err()
+            {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// With stop-on-error, a transform error ends the run and the batch it was in is rolled back, not committed.
+#[test]
+fn a_transform_error_that_stops_the_run_rolls_back_its_batch() {
+    let facade = testing::open();
+    let loader = facade.make_etl_loader().batch_size(3);
+    let mut etl = SimpleEtl::new(Prefixed("EtlStop", 8), loader);
+    etl.add_transformer(|transform: &mut moqui_lib::etl::EntryTransform| {
+        if transform.entry().values.get("enumTypeId") == Some(&Value::string("EtlStop5")) {
+            return Err(moqui_lib::error::Error::new("bad row"));
+        }
+        Ok(())
+    });
+    etl.stop_on_error();
+    etl.process();
+    assert!(etl.stopped());
+    let present = |number: usize| {
+        text(
+            &facade,
+            "moqui.basic.EnumerationType",
+            ("enumTypeId", &format!("EtlStop{number}")),
+            "description",
+        )
+        .is_some()
+    };
+    for number in [1, 2, 3] {
+        assert!(present(number), "row {number}");
+    }
+    for number in [4, 5, 6, 7, 8] {
+        assert!(!present(number), "row {number}");
+    }
+}
+
 /// Joining the caller's transaction: nothing is begun.
 #[test]
 fn a_joining_loader_begins_no_transaction() {

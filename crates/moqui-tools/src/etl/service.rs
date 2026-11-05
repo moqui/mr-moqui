@@ -15,8 +15,10 @@
 //! `org.moqui.impl.EtlServices` (plans/Tools-Database.md §10, §14.1): running a mapping (a job on the worker pool, or
 //! here with `wait`), the check of a file's first rows for "Load into…", matching columns to target fields, storing,
 //! copying and deleting mappings and value maps, the runs, and `load#SpreadsheetEntity`'s inline mapping. A refusal
-//! is a message-facade error and no out parameters. Writes and runs need authorization for all actions on the Tools
-//! app; a SQL source also needs `SQL_RUNNER_WEB`.
+//! is a message-facade error and no out parameters. Writes, checks and runs need authorization for all actions on the
+//! Tools app; a SQL source also needs `SQL_RUNNER_WEB`, and an `expression` field `GROOVY_SHELL_WEB`. A run is the
+//! user's own, with authorization on, also on a worker or in a ServiceJob ([`super::access::run_as_user`]). Only a
+//! mapping's owner, or a `DATABASE_ADMIN` holder, may change, copy over or delete it.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -30,6 +32,7 @@ use moqui_core::context::ExecutionContext;
 use moqui_core::entity::EntityFacade;
 use moqui_core::transaction::TransactionAttribute;
 
+use super::access;
 use super::mapping::{
     Mapping, MappingField, SourceKind, TargetKind, MAPPING, MAPPING_FIELD, VALUE_MAP, VALUE_MAP_ENTRY,
 };
@@ -84,6 +87,54 @@ fn may_change(what: &str) -> bool {
     }
 }
 
+/// What every use of a mapping checks first: what it reaches ([`Mapping::validate`]), `SQL_RUNNER_WEB` for a SQL
+/// source and `GROOVY_SHELL_WEB` for an expression. False with an error added.
+fn mapping_allowed(mapping: &Mapping) -> bool {
+    if let Err(err) = mapping.validate() {
+        add_error(err.to_string());
+        return false;
+    }
+    if mapping.source_kind == SourceKind::Sql && !moqui_core::user::has_permission("SQL_RUNNER_WEB").unwrap_or(false) {
+        add_error("An ETL from a SQL source needs the SQL_RUNNER_WEB permission");
+        return false;
+    }
+    if mapping.has_expression() && !access::may_run_scripts() {
+        add_error(access::SCRIPTS_REFUSED);
+        return false;
+    }
+    true
+}
+
+/// Whether the current user may change, copy over or delete the saved mapping `mapping_id`: its owner, or a
+/// `DATABASE_ADMIN` holder. True for a mapping not saved yet. False with an error added.
+fn may_change_mapping(facade: &EntityFacade, mapping_id: Option<&str>, what: &str) -> bool {
+    let Some(mapping_id) = mapping_id.filter(|id| !id.is_empty()) else {
+        return true;
+    };
+    let owner = {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        facade
+            .find(MAPPING)
+            .and_then(|find| find.eq("mappingId", Value::string(mapping_id)).one())
+    };
+    let owner = match owner {
+        Ok(Some(row)) => row.get("ownerUserId").map(to_plain_string).unwrap_or_default(),
+        Ok(None) => return true,
+        Err(err) => {
+            add_error(err.to_string());
+            return false;
+        }
+    };
+    let me = moqui_core::user::current_user_id().ok().flatten().unwrap_or_default();
+    if (!me.is_empty() && owner == me) || moqui_core::user::has_permission("DATABASE_ADMIN").unwrap_or(false) {
+        return true;
+    }
+    add_error(format!(
+        "{what} needs to be its owner or to have the DATABASE_ADMIN permission"
+    ));
+    false
+}
+
 fn now() -> Value {
     Value::Timestamp(jiff::Timestamp::now())
 }
@@ -124,6 +175,7 @@ fn source_options(parameters: &BTreeMap<String, Value>) -> SourceOptions {
         max_rows: number(parameters, "maxRows")
             .filter(|rows| *rows > 0)
             .map(|rows| rows as usize),
+        check: flag(parameters, "check"),
     }
 }
 
@@ -243,27 +295,38 @@ fn end_status(outcome: &RunOutcome, check: bool) -> &'static str {
 
 /// `run#EtlMapping`: run a mapping (`mappingId`, or an inline `mapping`) as a job on the worker pool, or here with
 /// `wait`. In: `check` (extract and transform only: the row errors, the foreign keys with no related record, and for an
-/// entity target the diff against the database), `startRow` (a rerun from the last committed row), `location` (in
-/// place of the mapping's; `${date}` and the like expanded), `contentBytes`, `sheetIndex`, `maxRows`, `wait`. Out:
-/// `runId`, `statusId` (`EtlrPending` when queued), and with `wait` the counts (`extractCount`, `skipCount`,
-/// `loadCount`, `errorCount`, `lastCommittedRow`, `committedBatches`, `failedBatches`), `errors` (the first 100:
-/// `rowNumber`, `fieldName`, `message`, `row`), `errorLocation` (the error file), `failure`, and for a check `diff`.
+/// entity target the diff against the database), `startRow` (the first row read, from 1: a rerun from the last run's
+/// `nextStartRow`), `location` (in place of the mapping's; `${date}`, `${yesterday}`, `${now}` and `${nowMillis}`
+/// replaced), `contentBytes`, `sheetIndex`, `maxRows`, `wait`. Out: `runId`, `statusId` (`EtlrPending` when queued),
+/// and with `wait` the counts (`extractCount` rows read, `skipCount`, `loadCount` rows committed, `errorCount` rows
+/// with an error, `fieldErrorCount` errors, `lastCommittedRow`, `nextStartRow`, `committedBatches`, `failedBatches`),
+/// `failedRanges` (each rolled-back batch's `fromRow`, `toRow`, `message`), `errors` (the first 100: `rowNumber`,
+/// `fieldName`, `message`, `row`), `errorLocation` (the error file), `failure`, and for a check `diff`.
+///
+/// The run is the user's (also on the worker, or as a ServiceJob as the job's user): authorization on for the run, its
+/// writes and its service calls, the Tools app's authorization for all actions checked again as the user. With
+/// `wait` the caller's transaction is suspended, so batches commit.
 pub(crate) fn run_etl_mapping(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
+    let _user = match access::run_as_user() {
+        Ok(user) => user,
+        Err(err) => {
+            add_error(err.to_string());
+            return Ok(Out::new());
+        }
+    };
     if !may_change("Running an ETL mapping") {
         return Ok(Out::new());
     }
     let Some(mapping) = mapping_of(parameters, facade) else {
         return Ok(Out::new());
     };
-    if mapping.source_kind == SourceKind::Sql && !moqui_core::user::has_permission("SQL_RUNNER_WEB").unwrap_or(false) {
-        add_error("An ETL from a SQL source needs the SQL_RUNNER_WEB permission");
+    if !mapping_allowed(&mapping) {
         return Ok(Out::new());
     }
     let check = flag(parameters, "check");
-    let mut run_id = text(parameters, "runId");
     let mut out = Out::new();
     if !flag(parameters, "wait") {
         let created = match create_run(facade, &mapping, check, PENDING) {
@@ -276,7 +339,7 @@ pub(crate) fn run_etl_mapping(
         let mut queued = parameters.clone();
         queued.insert("runId".to_string(), Value::string(&created));
         queued.insert("wait".to_string(), Value::Bool(true));
-        // checked here as the caller; the run on the worker checks again as the user
+        // the worker's call is made with authorization disabled; the run turns it on again, as the user
         let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
         if let Err(err) = moqui_core::service::call::async_call(RUN_SERVICE, &queued) {
             add_error(format!("Could not start ETL run {created}: {err}"));
@@ -291,12 +354,30 @@ pub(crate) fn run_etl_mapping(
         out.insert("statusId".to_string(), Value::string(PENDING));
         return Ok(out);
     }
+    // the caller's transaction is set aside, so the run's batches commit on their own
+    match facade.default_transactions() {
+        Ok(tx) => tx.run(TransactionAttribute::IgnoreSuspend, None, || {
+            Ok(run_waiting(parameters, facade, &mapping, check))
+        }),
+        Err(_) => Ok(run_waiting(parameters, facade, &mapping, check)),
+    }
+}
+
+/// `run#EtlMapping` with `wait`: the run here, its `EtlRun` row written as it goes.
+fn run_waiting(
+    parameters: &BTreeMap<String, Value>,
+    facade: &EntityFacade,
+    mapping: &Mapping,
+    check: bool,
+) -> BTreeMap<String, Value> {
+    let mut out = Out::new();
+    let mut run_id = text(parameters, "runId");
     if run_id.is_empty() {
-        run_id = match create_run(facade, &mapping, check, RUNNING) {
+        run_id = match create_run(facade, mapping, check, RUNNING) {
             Ok(run_id) => run_id,
             Err(err) => {
                 add_error(format!("Could not create the ETL run: {err}"));
-                return Ok(out);
+                return out;
             }
         };
     } else {
@@ -326,7 +407,7 @@ pub(crate) fn run_etl_mapping(
         })),
     };
     let started = std::time::Instant::now();
-    let outcome = run(facade, &mapping, &options);
+    let outcome = run(facade, mapping, &options);
     let status = end_status(&outcome, check);
     let error_location = record_errors(facade, &run_id, &outcome);
     write_run(
@@ -383,12 +464,27 @@ pub(crate) fn run_etl_mapping(
     out.insert("skipCount".to_string(), Value::I64(outcome.skip_count as i64));
     out.insert("loadCount".to_string(), Value::I64(outcome.load_count as i64));
     out.insert("errorCount".to_string(), Value::I64(outcome.error_count as i64));
+    out.insert(
+        "fieldErrorCount".to_string(),
+        Value::I64(outcome.field_error_count as i64),
+    );
     out.insert("lastCommittedRow".to_string(), Value::I64(outcome.last_committed_row));
+    out.insert("nextStartRow".to_string(), Value::I64(outcome.next_start_row));
     out.insert(
         "committedBatches".to_string(),
         Value::I64(outcome.committed_batches as i64),
     );
     out.insert("failedBatches".to_string(), Value::I64(outcome.failed_batches as i64));
+    out.insert(
+        "failedRanges".to_string(),
+        Value::List(
+            outcome
+                .failed_ranges
+                .iter()
+                .map(super::run::FailedRange::to_value)
+                .collect(),
+        ),
+    );
     out.insert("errors".to_string(), error_values(&outcome, 100));
     out.insert(
         "errorLocation".to_string(),
@@ -404,7 +500,7 @@ pub(crate) fn run_etl_mapping(
             Value::List(outcome.diff.into_iter().map(Value::Map).collect()),
         );
     }
-    Ok(out)
+    out
 }
 
 /// The rows of a source as read, before any mapping.
@@ -421,23 +517,31 @@ impl Loader for Collect {
 
 /// `check#EtlSample`: the first rows of a source (`maxRows`, default 200) through a mapping (`mappingId` or `mapping`),
 /// for "Load into…" in the grid (§10.4): each row's `rowNumber`, its `source` cells, the converted `values` by target
-/// field, and `errors` by target field (`_row` for the row as a whole). Out: `columns` (the header), `rows`.
+/// field, and `errors` by target field (`_row` for the row as a whole). Out: `columns` (the header), `rows`. Needs what
+/// a run needs: authorization for all actions on the Tools app, as the user.
 pub(crate) fn check_etl_sample(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
-    if !crate::service::may_view_tools() {
+    let _user = match access::run_as_user() {
+        Ok(user) => user,
+        Err(err) => {
+            add_error(err.to_string());
+            return Ok(Out::new());
+        }
+    };
+    if !may_change("Checking an ETL mapping") {
         return Ok(Out::new());
     }
     let Some(mapping) = mapping_of(parameters, facade) else {
         return Ok(Out::new());
     };
-    if mapping.source_kind == SourceKind::Sql && !moqui_core::user::has_permission("SQL_RUNNER_WEB").unwrap_or(false) {
-        add_error("A SQL source needs the SQL_RUNNER_WEB permission");
+    if !mapping_allowed(&mapping) {
         return Ok(Out::new());
     }
     let mut options = source_options(parameters);
     options.max_rows = Some(options.max_rows.unwrap_or(SAMPLE_ROWS).min(10_000));
+    options.check = true;
     let source = match source::open(facade, &mapping, &options) {
         Ok(source) => source,
         Err(err) => {
@@ -690,7 +794,10 @@ fn save_mapping(facade: &EntityFacade, mapping: &Mapping) -> Result<String, LibE
         };
         let mapping_id = row.get("mappingId").map(to_plain_string).unwrap_or_default();
         for (name, value) in &map {
-            if matches!(name.as_str(), "mappingId" | "fields" | "sourceConditions") {
+            if matches!(
+                name.as_str(),
+                "mappingId" | "fields" | "sourceConditions" | "ownerUserId"
+            ) {
                 continue;
             }
             row.set(name.as_str(), value.clone());
@@ -714,9 +821,28 @@ fn save_mapping(facade: &EntityFacade, mapping: &Mapping) -> Result<String, LibE
             .eq("mappingId", Value::string(&mapping_id))
             .delete_all()?;
         for (index, field) in mapping.fields.iter().enumerate() {
-            let Value::Map(values) = field.to_value() else {
+            let Value::Map(mut values) = field.to_value() else {
                 continue;
             };
+            // an inline value map is saved as a value map of its own
+            if let Some(Value::Map(entries)) = values.shift_remove("valueMap") {
+                let mut value_map = facade.make_value(VALUE_MAP)?;
+                value_map.set_sequenced_id_primary(facade)?;
+                value_map.set(
+                    "description",
+                    Value::string(format!("{} {}", mapping.description, field.target_field).trim()),
+                );
+                value_map.create(facade)?;
+                let value_map_id = value_map.get("valueMapId").map(to_plain_string).unwrap_or_default();
+                for (from, to) in entries {
+                    let mut entry = facade.make_value(VALUE_MAP_ENTRY)?;
+                    entry.set("valueMapId", Value::string(&value_map_id));
+                    entry.set("fromValue", Value::String(from));
+                    entry.set("toValue", to);
+                    entry.create(facade)?;
+                }
+                values.insert("valueMapId".to_string(), Value::String(value_map_id));
+            }
             let mut field_row = facade.make_value(MAPPING_FIELD)?;
             field_row.set("mappingId", Value::string(&mapping_id));
             field_row.set("fieldSeqId", Value::string(format!("{:06}", index + 1)));
@@ -730,7 +856,9 @@ fn save_mapping(facade: &EntityFacade, mapping: &Mapping) -> Result<String, LibE
 }
 
 /// `store#EtlMapping`: create or update a mapping and its fields from `mapping` (an inline map, `mappingId` to
-/// update). Out: `mappingId`. Needs authorization for all actions on the Tools app.
+/// update; an inline `valueMap` of a field is saved as an `EtlValueMap`). Out: `mappingId`. Needs authorization for
+/// all actions on the Tools app; updating needs the mapping's owner or `DATABASE_ADMIN`; a mapping with an expression
+/// needs `GROOVY_SHELL_WEB`.
 pub(crate) fn store_etl_mapping(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -742,8 +870,20 @@ pub(crate) fn store_etl_mapping(
         Some(Value::Map(map)) => Mapping::from_map(map),
         _ => Err(LibError::new("store#EtlMapping needs a mapping")),
     };
+    let mapping = match mapping {
+        Ok(mapping) => mapping,
+        Err(err) => {
+            add_error(err.to_string());
+            return Ok(Out::new());
+        }
+    };
+    if !may_change_mapping(facade, mapping.mapping_id.as_deref(), "Changing that ETL mapping")
+        || !mapping_allowed(&mapping)
+    {
+        return Ok(Out::new());
+    }
     let mut out = Out::new();
-    match mapping.and_then(|mapping| save_mapping(facade, &mapping)) {
+    match save_mapping(facade, &mapping) {
         Ok(mapping_id) => {
             out.insert("mappingId".to_string(), Value::String(mapping_id));
         }
@@ -761,18 +901,29 @@ pub(crate) fn copy_etl_mapping(
     if !may_change("Copying an ETL mapping") {
         return Ok(Out::new());
     }
+    let new_id = text(parameters, "newMappingId");
+    if !may_change_mapping(facade, Some(&new_id), "Copying over that ETL mapping") {
+        return Ok(Out::new());
+    }
+    let mut mapping = match Mapping::load(facade, &text(parameters, "mappingId")) {
+        Ok(mapping) => mapping,
+        Err(err) => {
+            add_error(err.to_string());
+            return Ok(Out::new());
+        }
+    };
+    if !mapping_allowed(&mapping) {
+        return Ok(Out::new());
+    }
     let mut out = Out::new();
-    let copied = Mapping::load(facade, &text(parameters, "mappingId")).and_then(|mut mapping| {
-        mapping.mapping_id = Some(text(parameters, "newMappingId")).filter(|id| !id.is_empty());
-        let description = text(parameters, "description");
-        mapping.description = if description.is_empty() {
-            format!("Copy of {}", mapping.description)
-        } else {
-            description
-        };
-        save_mapping(facade, &mapping)
-    });
-    match copied {
+    mapping.mapping_id = Some(new_id).filter(|id| !id.is_empty());
+    let description = text(parameters, "description");
+    mapping.description = if description.is_empty() {
+        format!("Copy of {}", mapping.description)
+    } else {
+        description
+    };
+    match save_mapping(facade, &mapping) {
         Ok(mapping_id) => {
             out.insert("mappingId".to_string(), Value::String(mapping_id));
         }
@@ -781,7 +932,8 @@ pub(crate) fn copy_etl_mapping(
     Ok(out)
 }
 
-/// `delete#EtlMapping`: delete mapping `mappingId` and its fields; its runs stay.
+/// `delete#EtlMapping`: delete mapping `mappingId` and its fields; its runs stay, their `mappingId` naming it still
+/// (`EtlRun.mappingId` has no foreign key). Needs the mapping's owner or `DATABASE_ADMIN`.
 pub(crate) fn delete_etl_mapping(
     parameters: &BTreeMap<String, Value>,
     facade: &EntityFacade,
@@ -790,6 +942,9 @@ pub(crate) fn delete_etl_mapping(
         return Ok(Out::new());
     }
     let mapping_id = text(parameters, "mappingId");
+    if !may_change_mapping(facade, Some(&mapping_id), "Deleting that ETL mapping") {
+        return Ok(Out::new());
+    }
     let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
     let deleted = facade.transactions_for(MAPPING).and_then(|tx| {
         tx.run(TransactionAttribute::UseOrBegin, None, || {

@@ -16,8 +16,9 @@
 //! runs the source again.
 //!
 //! - **Sources** ([`Source`]): an entity find (a view entity, `DbViewEntity` or `DataDocument.<id>` read only) with
-//!   conditions by the `search-form-inputs` rules, or a SQL query wrapped as `SELECT * FROM (<sql>) q`, run read only
-//!   and audited through [`crate::sql::grid_query`].
+//!   conditions by the `search-form-inputs` rules, a SQL query wrapped as `SELECT * FROM (<sql>) q`, run read only
+//!   and audited through [`crate::sql::grid_query`], or a CSV or spreadsheet file, read only, through
+//!   [`crate::files`] from the places `etl::access` allows.
 //! - **Calls:** [`columns`], [`rows`] (Tabulator's progressive load, never counting), [`count`], [`export`] (CSV
 //!   streamed, XLSX capped at [`MAX_XLSX_ROWS`]), [`lookup`] (a related entity's options) and [`save`] (one
 //!   transaction of entity-auto calls, with the stamp checked).
@@ -112,6 +113,9 @@ pub enum Source {
         key_columns: Vec<String>,
         stamp_column: Option<String>,
     },
+    /// A CSV or spreadsheet file, read only: `{type: file, location, sheet, headerRow, format, delimiter}`. Sorted and
+    /// filtered in memory, at most [`crate::files::MAX_QUERY_ROWS`] rows.
+    File { spec: crate::files::FileSpec },
 }
 
 fn list_of(value: Option<&Value>) -> Vec<String> {
@@ -126,12 +130,13 @@ fn list_of(value: Option<&Value>) -> Vec<String> {
 }
 
 impl Source {
-    /// Read the spec's `source` map: `{type: entity, entityName, conditions}` or `{type: sql, db, sql, keyColumns,
-    /// stampColumn}`.
+    /// Read the spec's `source` map: `{type: entity, entityName, conditions}`, `{type: sql, db, sql, keyColumns,
+    /// stampColumn}` or `{type: file, location, sheet, headerRow, format, delimiter}`.
     ///
     /// # Errors
     ///
-    /// Returns the refusal of a spec that names no source, an unknown group, or an external database.
+    /// Returns the refusal of a spec that names no source, an unknown group, an external database, or a file in a
+    /// place the user may not read (`Not available`).
     pub fn parse(source: Option<&Value>, facade: &EntityFacade) -> Result<Self, Refusal> {
         let Some(Value::Map(map)) = source else {
             return Err(refusal(
@@ -163,7 +168,12 @@ impl Source {
                 Ok(crate::DbRef::External(_)) => Err(refusal(crate::NOT_AVAILABLE)),
                 Err(message) => Err(refusal(message)),
             },
-            other => Err(refusal(format!("source type {other:?} is neither entity nor sql"))),
+            "file" => {
+                let spec = crate::files::FileSpec::from_map(map);
+                crate::etl::access::readable(&spec.location).map_err(|err| refusal(err.to_string()))?;
+                Ok(Self::File { spec })
+            }
+            other => Err(refusal(format!("source type {other:?} is not entity, sql or file"))),
         }
     }
 
@@ -402,7 +412,50 @@ pub fn columns(
             })
         }
         Source::Sql { group, sql, .. } => sql_columns(facade, group, sql, requested, actor),
+        Source::File { spec } => {
+            let (columns, _) = crate::files::file_columns(spec).map_err(|err| file_refusal(&err))?;
+            Ok(ColumnsOutcome {
+                columns: columns
+                    .into_iter()
+                    .filter(|column| requested.is_empty() || requested.contains(&column.name))
+                    .filter(|column| !is_secret(&column.name))
+                    .map(|column| Column {
+                        name: column.name,
+                        title: column.title,
+                        kind: column.kind,
+                        ..Column::default()
+                    })
+                    .collect(),
+                read_only_reason: Some("A file source is read only".to_string()),
+                ..ColumnsOutcome::default()
+            })
+        }
     }
+}
+
+/// The refusal of a file source that did not read: `Not available` as it is, else the error's first line.
+fn file_refusal(err: &Error) -> Refusal {
+    tracing::info!(error = %err, "A data grid file source did not read");
+    refusal(
+        err.message()
+            .lines()
+            .next()
+            .unwrap_or("The file could not be read")
+            .to_string(),
+    )
+}
+
+/// A file source's rows as the grid's: the `columns` asked for (all when empty), no secret.
+fn file_row_values(rows: Vec<IndexMap<String, Value>>, columns: &[String]) -> Vec<Value> {
+    rows.into_iter()
+        .map(|row| {
+            Value::Map(
+                row.into_iter()
+                    .filter(|(name, _)| (columns.is_empty() || columns.contains(name)) && !is_secret(name))
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 /// The grid's wrapped query: `SELECT * FROM (<sql>) q`, with the filters and order, and the values of the filters'
@@ -1090,6 +1143,15 @@ pub fn rows(
                 .map_err(|err| db_refusal(&err))?;
             (sql_rows(result, columns, stamp_column.as_deref()), None)
         }
+        Source::File { spec } => {
+            let rows = if sort.is_empty() && filter.is_empty() {
+                crate::files::file_rows(spec, offset, size + 1).map_err(|err| file_refusal(&err))?
+            } else {
+                let (rows, _) = crate::files::file_query(spec, sort, filter).map_err(|err| file_refusal(&err))?;
+                rows.into_iter().skip(offset).take(size + 1).collect()
+            };
+            (file_row_values(rows, columns), None)
+        }
     };
     let more = data.len() > size;
     data.truncate(size);
@@ -1141,6 +1203,16 @@ pub fn count(facade: &EntityFacade, source: &Source, filter: &[Filter], actor: &
                 .map(to_plain_string)
                 .and_then(|text| text.parse().ok())
                 .ok_or_else(|| refusal("The count gave no number"))
+        }
+        Source::File { spec } => {
+            let counted = if filter.is_empty() {
+                crate::files::file_count(spec)
+            } else {
+                crate::files::file_query(spec, &[], filter).map(|(rows, _)| rows.len())
+            };
+            counted
+                .map(|count| i64::try_from(count).unwrap_or(i64::MAX))
+                .map_err(|err| file_refusal(&err))
         }
     }
 }
@@ -1237,6 +1309,14 @@ pub fn export(
     let base = match source {
         Source::Entity { entity_name, .. } => entity_name.rsplit('.').next().unwrap_or("export").to_string(),
         Source::Sql { .. } => "query".to_string(),
+        Source::File { spec } => spec
+            .location
+            .rsplit('/')
+            .next()
+            .and_then(|name| name.rsplit_once('.').map(|(stem, _)| stem).or(Some(name)))
+            .filter(|stem| !stem.is_empty())
+            .unwrap_or("file")
+            .to_string(),
     };
     let file_name = format!("{base}.{extension}");
     let location = if location.trim().is_empty() {
@@ -1251,6 +1331,7 @@ pub fn export(
     let cap = match source {
         Source::Sql { .. } => MAX_SQL_EXPORT_ROWS,
         Source::Entity { .. } => usize::MAX,
+        Source::File { .. } => crate::files::MAX_QUERY_ROWS,
     };
     let cap = if format == ExportFormat::Xlsx {
         cap.min(MAX_XLSX_ROWS)
@@ -1322,6 +1403,26 @@ pub fn export(
                 let cells: Vec<Value> = keep
                     .iter()
                     .map(|index| record.get(*index).cloned().unwrap_or(Value::Null))
+                    .collect();
+                writer.row(&cells).map_err(|err| refusal(err.to_string()))?;
+            }
+            writer
+        }
+        Source::File { spec } => {
+            let (file_columns, _) = crate::files::file_columns(spec).map_err(|err| file_refusal(&err))?;
+            let names: Vec<String> = file_columns
+                .into_iter()
+                .map(|column| column.name)
+                .filter(|name| (columns.is_empty() || columns.contains(name)) && !is_secret(name))
+                .collect();
+            let (rows, more) = crate::files::file_query(spec, sort, filter).map_err(|err| file_refusal(&err))?;
+            truncated = more || rows.len() > cap;
+            let mut writer = TableWriter::new(format).map_err(|err| refusal(err.to_string()))?;
+            writer.header(&names).map_err(|err| refusal(err.to_string()))?;
+            for row in rows.iter().take(cap) {
+                let cells: Vec<Value> = names
+                    .iter()
+                    .map(|name| row.get(name).cloned().unwrap_or(Value::Null))
                     .collect();
                 writer.row(&cells).map_err(|err| refusal(err.to_string()))?;
             }

@@ -265,14 +265,20 @@ impl Loader for EtlLoader {
         let batching = self.batching();
         let pending = self.in_batch;
         let began = std::mem::take(&mut self.began);
-        // In batches each failure rolled its own batch back; the last batch commits.
+        // In batches each failure rolled its own batch back, and the last batch commits, unless an error stopped the
+        // run: then the batch it was in is rolled back too, its entries not committed past the error.
+        let stopped_batch = batching && pending > 0 && etl.stopped();
         let mut failed = !batching && etl.has_error();
-        if batching && pending > 0 {
+        if stopped_batch {
+            self.failed_batches += 1;
+        } else if batching && pending > 0 {
             self.commits += 1;
         }
         for tx in self.facade.group_transactions() {
             let owned = began.iter().any(|known| known.shares_stack(&tx));
-            let outcome = if failed {
+            let outcome = if stopped_batch && owned {
+                tx.rollback()
+            } else if failed {
                 if owned {
                     tx.rollback()
                 } else if tx.in_transaction() {

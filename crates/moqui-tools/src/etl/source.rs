@@ -15,16 +15,18 @@
 //! The extractors of an ETL run (plans/Tools-Database.md §10.3): a CSV file streamed (`moqui_lib::etl::CsvExtractor`),
 //! a spreadsheet's sheet ([`SheetExtractor`], over `moqui_core::service::spreadsheet::read_sheet_bytes`), an entity
 //! find read a page at a time, a SQL query on an entity group's database run read only, and a flat record XML file.
-//! Each entry carries its row number under `ROW_NUMBER_KEY`.
+//! Each entry carries its row number under `ROW_NUMBER_KEY`. A file is read only from the places
+//! [`super::access`] allows; an entity source is not a restricted entity and its rows leave out the `UserAccount`
+//! password fields; a SQL source writes a `DbaSql` audit row.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::sync::Arc;
 
-use indexmap::IndexMap;
 use moqui_lib::error::Error;
 use moqui_lib::etl::{
-    column_number_name, CsvExtractor, CsvOptions, Extractor, SharedHeaders, SimpleEntry, SimpleEtl, ROW_NUMBER_KEY,
+    column_number_name, unique_column_names, CsvExtractor, CsvOptions, Extractor, SharedHeaders, SimpleEntry,
+    SimpleEtl, ROW_NUMBER_KEY,
 };
 use moqui_lib::object::{to_plain_string, Value};
 use moqui_lib::sync::lock;
@@ -43,7 +45,7 @@ pub const ENTITY_PAGE: i64 = 1000;
 /// What a run reads, beyond its mapping.
 #[derive(Clone, Debug, Default)]
 pub struct SourceOptions {
-    /// In place of the mapping's `sourceLocation`; `${}` is expanded with the run's date.
+    /// In place of the mapping's `sourceLocation`; `${date}` and the like are expanded ([`expand_location`]).
     pub location: Option<String>,
     /// The file's bytes, in place of a location (an upload, `load#SpreadsheetEntity`'s `contentBytes`).
     pub content: Option<Vec<u8>>,
@@ -53,6 +55,8 @@ pub struct SourceOptions {
     pub start_row: usize,
     /// At most this many rows.
     pub max_rows: Option<usize>,
+    /// A check, not a run: what a SQL source's audit row says.
+    pub check: bool,
 }
 
 /// An opened source: the extractor, the header it reads, and the source as resolved.
@@ -62,27 +66,7 @@ pub struct Source {
     pub resolved: String,
 }
 
-/// `location` with `${}` expanded: `date` (`2026-11-05`), `yesterday`, `now` (the run's time) and `nowMillis`, so a
-/// nightly file can be named for its day.
-///
-/// # Errors
-///
-/// Returns an error when the expansion fails.
-pub fn expand_location(location: &str) -> Result<String, Error> {
-    if !location.contains("${") {
-        return Ok(location.to_string());
-    }
-    let now = jiff::Zoned::now().with_time_zone(moqui_core::l10n::time_zone());
-    let date = now.date();
-    let yesterday = date.yesterday().unwrap_or(date);
-    let mut entries = IndexMap::new();
-    entries.insert("date".to_string(), Value::string(date.to_string()));
-    entries.insert("yesterday".to_string(), Value::string(yesterday.to_string()));
-    entries.insert("now".to_string(), Value::Timestamp(now.timestamp()));
-    entries.insert("nowMillis".to_string(), Value::I64(now.timestamp().as_millisecond()));
-    let _frame = moqui_core::script::ContextFrame::push_entries(entries);
-    moqui_core::script::expand(location).map_err(|err| Error::new(err.to_string()))
-}
+pub use super::access::expand_location;
 
 /// Whether a file is CSV: `fileFormat` `csv`, or `auto` and a `.csv`, `.tsv` or `.txt` name.
 #[must_use]
@@ -99,7 +83,8 @@ pub fn is_csv(format: &str, location: &str) -> bool {
     }
 }
 
-/// The bytes at `location`, through the resource facade.
+/// The bytes at `location`, through the resource facade, as the caller: no check of the place (see
+/// [`super::access::read_bytes`], which ETL runs and the grid use).
 ///
 /// # Errors
 ///
@@ -172,15 +157,14 @@ impl Extractor for SheetExtractor {
         } else {
             self.header_row + 1
         };
+        let mut header: Vec<String> = Vec::new();
         let mut names: Vec<String> = Vec::new();
         let mut taken = 0usize;
         for (cells, number) in sheet.rows.into_iter().zip(sheet.row_numbers) {
             let number = number as usize;
             if number == self.header_row {
-                names = cells
-                    .iter()
-                    .map(|cell| to_plain_string(cell).trim().to_string())
-                    .collect();
+                header = cells.iter().map(to_plain_string).collect();
+                names = unique_column_names(&header, header.len());
                 *lock(&self.headers) = names.clone();
                 continue;
             }
@@ -190,17 +174,16 @@ impl Extractor for SheetExtractor {
             if self.max_rows.is_some_and(|max| taken >= max) {
                 break;
             }
+            if cells.len() > names.len() {
+                names = unique_column_names(&header, cells.len());
+            }
             let mut values = BTreeMap::new();
             for (index, cell) in cells.into_iter().enumerate() {
                 if cell.is_null() {
                     continue;
                 }
-                let name = names
-                    .get(index)
-                    .filter(|name| !name.is_empty())
-                    .cloned()
-                    .unwrap_or_else(|| column_number_name(index));
-                values.entry(name).or_insert(cell);
+                let name = names.get(index).cloned().unwrap_or_else(|| column_number_name(index));
+                values.insert(name, cell);
             }
             taken += 1;
             values.insert(ROW_NUMBER_KEY.to_string(), Value::I64(number as i64));
@@ -274,6 +257,7 @@ impl Extractor for EntityExtractor {
                 let mut values: BTreeMap<String, Value> = value
                     .fields()
                     .iter()
+                    .filter(|(name, _)| !super::access::is_secret_field(name))
                     .map(|(name, field)| (name.to_string(), field.clone()))
                     .collect();
                 values.insert(ROW_NUMBER_KEY.to_string(), Value::I64(offset));
@@ -306,7 +290,7 @@ pub fn open(facade: &EntityFacade, mapping: &Mapping, options: &SourceOptions) -
             let bytes = match &options.content {
                 Some(bytes) => bytes.clone(),
                 None if location.is_empty() => return Err(Error::new("An ETL file source needs a location")),
-                None => read_location(&location)?,
+                None => super::access::read_bytes(&location)?,
             };
             if mapping.source_kind == SourceKind::FlatXml {
                 let rows = flat_xml_rows(&location, &bytes)?;
@@ -352,17 +336,20 @@ pub fn open(facade: &EntityFacade, mapping: &Mapping, options: &SourceOptions) -
                 resolved,
             })
         }
-        SourceKind::Entity => Ok(Source {
-            extractor: Box::new(EntityExtractor {
-                facade: facade.clone(),
-                entity_name: mapping.source_entity_name.clone(),
-                conditions: mapping.source_conditions.clone(),
-                start_row: options.start_row,
-                max_rows: options.max_rows,
-            }),
-            headers,
-            resolved: format!("entity {}", mapping.source_entity_name),
-        }),
+        SourceKind::Entity => {
+            super::access::refuse_restricted(&mapping.source_entity_name, "source")?;
+            Ok(Source {
+                extractor: Box::new(EntityExtractor {
+                    facade: facade.clone(),
+                    entity_name: mapping.source_entity_name.clone(),
+                    conditions: mapping.source_conditions.clone(),
+                    start_row: options.start_row,
+                    max_rows: options.max_rows,
+                }),
+                headers,
+                resolved: format!("entity {}", mapping.source_entity_name),
+            })
+        }
         SourceKind::Sql => {
             let group = match DbRef::parse(&mapping.source_db, facade.default_group()) {
                 Ok(DbRef::Group(group)) => group,
@@ -370,7 +357,8 @@ pub fn open(facade: &EntityFacade, mapping: &Mapping, options: &SourceOptions) -
                 Err(message) => return Err(Error::new(message)),
             };
             let limit = options.max_rows.unwrap_or(MAX_SQL_ROWS).min(MAX_SQL_ROWS);
-            let result = moqui_core::entity::info::run_sql_with(
+            let started = std::time::Instant::now();
+            let ran = moqui_core::entity::info::run_sql_with(
                 facade,
                 &group,
                 &mapping.source_sql,
@@ -379,7 +367,28 @@ pub fn open(facade: &EntityFacade, mapping: &Mapping, options: &SourceOptions) -
                     read_only: true,
                     ..Default::default()
                 },
-            )?;
+            );
+            crate::audit::record(
+                facade,
+                &crate::audit::AuditEntry {
+                    action: "DbaSql",
+                    db: Some(DbRef::Group(group.clone()).text()),
+                    statement_text: Some(mapping.source_sql.clone()),
+                    is_change: false,
+                    rows_returned: ran.as_ref().ok().map(|result| result.records.len() as i64),
+                    duration_ms: Some(i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX)),
+                    error_text: ran.as_ref().err().map(ToString::to_string),
+                    detail_json: Some(
+                        serde_json::json!({
+                            "etl": if options.check { "check" } else { "run" },
+                            "mappingId": mapping.mapping_id,
+                        })
+                        .to_string(),
+                    ),
+                    ..crate::audit::AuditEntry::default()
+                },
+            );
+            let result = ran?;
             let rows = result
                 .records
                 .into_iter()

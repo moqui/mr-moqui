@@ -41,7 +41,8 @@ use moqui_lib::node::MNode;
 use super::facade::EntityFacade;
 
 pub use check::{
-    check_entity_data, check_entity_record, check_entity_xml_text, check_info_with, check_with, list_with, CheckResult,
+    check_entity_data, check_entity_record, check_entity_xml_text, check_info_limited, check_info_with, check_with,
+    list_with, CheckResult,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use eca::add_eca_rules;

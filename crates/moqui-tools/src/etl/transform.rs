@@ -14,8 +14,9 @@
 
 //! `MappingTransformer` (plans/Tools-Database.md §10.3): a row of the source becomes an entry of the target, field by
 //! field: the source column (or a constant), trimmed, its default when empty, a value map (case-insensitive), a
-//! format pattern for dates and numbers, a lookup (one cached find per distinct value per run), an expression
-//! (JavaScript with `row`, `value` and `ec`, compiled once per run by the script cache), and `required` /
+//! format pattern for dates and numbers, a lookup (one cached find per distinct value per run, as the user), an
+//! expression (JavaScript with `row`, `value` and `ec`, compiled once per run by the script cache; only for a user with
+//! `GROOVY_SHELL_WEB`), and `required` /
 //! `skipIfEmpty`. For an entity target the values are then converted to the fields' types. A row with an error is
 //! not loaded; each of its errors is kept with its row number and field ([`ErrorLog`]).
 
@@ -28,7 +29,6 @@ use moqui_lib::etl::{EntryTransform, SharedHeaders, Transformer, ROW_NUMBER_KEY}
 use moqui_lib::object::{to_plain_string, Value};
 use moqui_lib::sync::lock;
 
-use moqui_core::context::ExecutionContext;
 use moqui_core::entity::EntityFacade;
 
 use super::mapping::{Mapping, MappingField, TargetKind};
@@ -53,7 +53,12 @@ pub struct RowError {
 #[derive(Debug, Default)]
 pub struct ErrorLog {
     pub kept: Vec<RowError>,
+    /// The errors, one per field (a row may have several).
     pub count: u64,
+    /// The rows with an error: what a run's `errorCount` is.
+    pub rows: u64,
+    /// The row of the error added last; rows come in order, so a new row number is a new row.
+    last_row: Option<i64>,
     /// Rows of the error file: the row number, the field, the message and the source row as JSON.
     pub csv_lines: Vec<String>,
 }
@@ -61,6 +66,10 @@ pub struct ErrorLog {
 impl ErrorLog {
     pub fn add(&mut self, error: RowError) {
         self.count += 1;
+        if self.last_row != Some(error.row_number) {
+            self.rows += 1;
+            self.last_row = Some(error.row_number);
+        }
         self.csv_lines.push(csv_line(&[
             &error.row_number.to_string(),
             &error.field,
@@ -182,8 +191,40 @@ fn is_date_pattern(pattern: &str) -> bool {
         .any(|ch| matches!(ch, 'y' | 'M' | 'd' | 'H' | 'h' | 'm' | 's'))
 }
 
+/// The decimal separator of a number pattern, as Java's `DecimalFormat` reads one: of `.` and `,`, the last that is
+/// followed by digits (`0`, `#`) and is not a grouping separator. A separator is grouping when the other separator
+/// comes after it, or when it is the only kind, follows a `#` and every group after it is three digits (`#,##0`,
+/// `#.##0`): so `#,##0` and `#.##0` are whole numbers, `#,##0.00` and `0.000` have `.`, and `#.##0,00` has `,`.
+fn decimal_separator(pattern: &str) -> Option<char> {
+    let digits_after = |at: usize| {
+        pattern[at + 1..]
+            .chars()
+            .take_while(|ch| matches!(ch, '0' | '#'))
+            .count()
+    };
+    let (at, last) = pattern.char_indices().rfind(|(_, ch)| matches!(ch, '.' | ','))?;
+    if digits_after(at) == 0 {
+        return None;
+    }
+    let other = if last == '.' { ',' } else { '.' };
+    if pattern[..at].contains(other) {
+        // `#,##0.00`, `#.##0,00`: the other kind before it groups, so this one is the decimal separator
+        return Some(last);
+    }
+    // the only kind of separator: grouping when each group after one is three digits
+    let groups: Vec<usize> = pattern
+        .char_indices()
+        .filter(|(_, ch)| *ch == last)
+        .map(|(at, _)| digits_after(at))
+        .collect();
+    let first = pattern.find(last).unwrap_or(at);
+    let grouping = groups.iter().all(|digits| *digits == 3) && pattern[..first].ends_with('#');
+    (!grouping).then_some(last)
+}
+
 /// Parse `text` by `pattern`: a date pattern gives a timestamp (in the user's zone) or, with no time letters, a date;
-/// a number pattern (`#,##0.00`, `#.##0,00`) gives a decimal, its grouping separators dropped.
+/// a number pattern (`#,##0`, `#,##0.00`, `#.##0,00`) gives a decimal, its grouping separators dropped
+/// ([`decimal_separator`]).
 ///
 /// # Errors
 ///
@@ -205,19 +246,16 @@ pub fn parse_formatted(text: &str, pattern: &str) -> Result<Value, String> {
             .map_err(|err| format!("{text} does not match the date pattern {pattern}: {err}"))?;
         return Ok(Value::Date(date));
     }
-    // the decimal separator is the last of `.` and `,` in the pattern that has a digit after it
-    let decimal = pattern
-        .char_indices()
-        .rfind(|(at, ch)| matches!(ch, '.' | ',') && pattern[at + 1..].starts_with(['0', '#']))
-        .map(|(_, ch)| ch);
+    let decimal = decimal_separator(pattern);
     let grouping = match decimal {
         Some('.') => ',',
         Some(',') => '.',
+        // a whole number: its pattern's separator groups (`#.##0` reads `1.234`), `,` when it has none
         _ => {
             if pattern.contains('.') {
-                ','
-            } else {
                 '.'
+            } else {
+                ','
             }
         }
     };
@@ -244,6 +282,8 @@ pub struct MappingTransformer {
     /// Each lookup field's results by its value: one find per distinct value per run.
     lookups: Mutex<HashMap<(usize, String), Option<Value>>>,
     errors: SharedErrors,
+    /// The user may run scripts (`GROOVY_SHELL_WEB`), for the `expression` fields.
+    scripts_allowed: bool,
 }
 
 impl MappingTransformer {
@@ -259,6 +299,7 @@ impl MappingTransformer {
             headers,
             lookups: Mutex::new(HashMap::new()),
             errors,
+            scripts_allowed: !mapping.has_expression() || super::access::may_run_scripts(),
         }
     }
 
@@ -291,9 +332,18 @@ impl MappingTransformer {
                 .clone()
                 .ok_or_else(|| format!("no {entity} with {match_field} {text}"));
         }
+        super::access::refuse_restricted(entity, "lookup").map_err(|err| err.to_string())?;
+        if super::access::is_secret_field(match_field)
+            || field
+                .lookup_result_field
+                .as_deref()
+                .is_some_and(super::access::is_secret_field)
+        {
+            return Err(format!("lookup in {entity}: that field is not available"));
+        }
         let result_field = field.lookup_result_field.clone();
+        // as the user: a lookup reads what the user may read
         let found = {
-            let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
             self.facade
                 .find(entity)
                 .and_then(|find| find.eq(match_field, Value::string(&text)).limit(1).list())
@@ -361,6 +411,9 @@ impl MappingTransformer {
             }
         }
         if let Some(expression) = &field.expression {
+            if !self.scripts_allowed {
+                return Err(super::access::SCRIPTS_REFUSED.to_string());
+            }
             let mut entries = IndexMap::new();
             entries.insert(
                 "row".to_string(),

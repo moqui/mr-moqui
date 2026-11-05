@@ -331,3 +331,23 @@ fn csv_rows_are_entries_by_header_with_their_row_numbers() {
     let firsts: Vec<String> = loaded.borrow().iter().filter_map(|entry| text_of(entry, "1")).collect();
     assert_eq!(firsts, ["i"]);
 }
+
+/// A repeated or blank header is named as the data grid names it: `id`, `id_2`, then the column's number.
+#[test]
+fn csv_headers_repeated_or_blank_get_unique_names() {
+    let (load, loaded, _) = loader(None);
+    let extractor = CsvExtractor::new("id,id,,name\n1,2,3,Ann,extra\n".as_bytes(), CsvOptions::default());
+    let headers = extractor.headers();
+    let mut etl = SimpleEtl::new(extractor, load);
+    etl.process();
+    assert_eq!(*headers.lock().unwrap(), ["id", "id_2", "3", "name"]);
+    let entry = &loaded.borrow()[0];
+    assert_eq!(text_of(entry, "id").as_deref(), Some("1"));
+    assert_eq!(text_of(entry, "id_2").as_deref(), Some("2"));
+    assert_eq!(text_of(entry, "3").as_deref(), Some("3"));
+    assert_eq!(text_of(entry, "5").as_deref(), Some("extra"));
+    assert_eq!(
+        super::unique_column_names(&["a".to_string(), " a ".to_string()], 3),
+        ["a", "a_2", "3"]
+    );
+}
