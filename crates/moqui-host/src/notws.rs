@@ -53,9 +53,51 @@ type CoreError = moqui_core::context::Error;
 static PUSH: OnceLock<moqui_core::notify::Subscription> = OnceLock::new();
 static NEXT_SOCKET: AtomicU64 = AtomicU64::new(1);
 
-fn sockets() -> &'static Mutex<HashMap<u64, Arc<Slot>>> {
-    static SOCKETS: OnceLock<Mutex<HashMap<u64, Arc<Slot>>>> = OnceLock::new();
-    SOCKETS.get_or_init(|| Mutex::new(HashMap::new()))
+/// The open sockets of this node: by id, for direct call signaling ([`push_to_socket`]), and by user, so a notification
+/// for a few users visits only their sockets, not every socket of the node (plans/High-Level-Review.md HL-009). Both
+/// change together under the one lock.
+#[derive(Default)]
+struct Registry {
+    by_id: HashMap<u64, Arc<Slot>>,
+    by_user: HashMap<String, Vec<u64>>,
+}
+
+impl Registry {
+    fn insert(&mut self, slot: &Arc<Slot>) {
+        self.by_id.insert(slot.id, Arc::clone(slot));
+        self.by_user.entry(slot.user_id.clone()).or_default().push(slot.id);
+    }
+
+    /// Remove socket `id`, whenever it goes: closed, or its queue overflowed during a fan-out. A second removal does
+    /// nothing.
+    fn remove(&mut self, id: u64) {
+        let Some(slot) = self.by_id.remove(&id) else {
+            return;
+        };
+        if let Some(ids) = self.by_user.get_mut(&slot.user_id) {
+            ids.retain(|known| *known != id);
+            if ids.is_empty() {
+                self.by_user.remove(&slot.user_id);
+            }
+        }
+    }
+
+    /// The sockets of `users`, each once.
+    fn of_users(&self, users: &[String]) -> Vec<Arc<Slot>> {
+        let mut seen = HashSet::new();
+        users
+            .iter()
+            .filter(|user_id| seen.insert(user_id.as_str()))
+            .filter_map(|user_id| self.by_user.get(user_id))
+            .flatten()
+            .filter_map(|id| self.by_id.get(id).cloned())
+            .collect()
+    }
+}
+
+fn sockets() -> &'static Mutex<Registry> {
+    static SOCKETS: OnceLock<Mutex<Registry>> = OnceLock::new();
+    SOCKETS.get_or_init(|| Mutex::new(Registry::default()))
 }
 
 /// Notifications waiting for one socket. A client that falls this far behind is closed rather than letting its queue
@@ -548,7 +590,7 @@ fn offline_when_gone(factory: &Arc<ExecutionContextFactory>, user_id: &str) {
 /// Sends `text` to the socket `slot_id` of this server, when it is open; false when it is not, or its queue is full
 /// (a call frame is dropped then, and the client renegotiates).
 pub(crate) fn push_to_socket(slot_id: u64, text: String) -> bool {
-    let Some(slot) = lock(sockets()).get(&slot_id).cloned() else {
+    let Some(slot) = lock(sockets()).by_id.get(&slot_id).cloned() else {
         return false;
     };
     slot.tx
@@ -560,7 +602,7 @@ pub(crate) fn push_to_socket(slot_id: u64, text: String) -> bool {
 }
 
 fn has_socket(user_id: &str) -> bool {
-    lock(sockets()).values().any(|slot| slot.user_id == user_id)
+    lock(sockets()).by_user.contains_key(user_id)
 }
 
 /// `disconnect#UserStatus` of `user_id`, as internal work. Its errors are the call's error.
@@ -606,7 +648,18 @@ fn deliver_notice(message: &TopicMessage) {
     }
 }
 
-fn fan_out_notice(message: &TopicMessage) {
+/// Queue the notification on the sockets of its recipients that follow its topic. Out: the sockets visited, which are
+/// only the recipients' (none for no recipients), whatever else is open.
+fn fan_out_notice(message: &TopicMessage) -> usize {
+    let users = json_users(&message.body);
+    if users.is_empty() {
+        return 0;
+    }
+    // only the recipients' handles are taken under the registry's lock
+    let slots = lock(sockets()).of_users(&users);
+    if slots.is_empty() {
+        return 0;
+    }
     // The client gets Java's wrapped message: the recipients are for routing here only.
     let mut client_body = message.body.clone();
     if let Some(object) = client_body.as_object_mut() {
@@ -615,12 +668,8 @@ fn fan_out_notice(message: &TopicMessage) {
     let text = client_body.to_string();
     let topic = json_str(&message.body, "topic");
     let message_id = json_str(&message.body, "notificationMessageId");
-    let users = json_users(&message.body);
-    let slots: Vec<Arc<Slot>> = lock(sockets()).values().cloned().collect();
+    let visited = slots.len();
     for slot in slots {
-        if !users.iter().any(|user_id| user_id == &slot.user_id) {
-            continue;
-        }
         let wanted = {
             let topics = lock(&slot.topics);
             topics.contains("ALL") || (!topic.is_empty() && topics.contains(&topic))
@@ -641,6 +690,7 @@ fn fan_out_notice(message: &TopicMessage) {
             Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => unregister(slot.id),
         }
     }
+    visited
 }
 
 fn json_str(body: &serde_json::Value, field: &str) -> String {
@@ -666,9 +716,13 @@ fn json_users(body: &serde_json::Value) -> Vec<String> {
 /// Every socket is registered, so each tab of a session gets the notifications. Java keys its endpoints by the WebSocket
 /// session, which is one per connection.
 fn register(slot: &Arc<Slot>) {
-    lock(sockets()).insert(slot.id, Arc::clone(slot));
+    lock(sockets()).insert(slot);
 }
 
 fn unregister(id: u64) {
-    lock(sockets()).remove(&id);
+    lock(sockets()).remove(id);
 }
+
+#[cfg(test)]
+#[path = "notws_tests.rs"]
+mod tests;
