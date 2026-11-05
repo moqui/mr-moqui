@@ -406,3 +406,79 @@ fn a_restarted_step_replaces_the_streamed_text() {
     assert_eq!(again[0]["artifactUpdate"]["append"], false);
     assert!(project("run.done", json!({})).1);
 }
+
+/// A push config is read or deleted only through its own task and by its own user: the id of another task's config,
+/// or of another user's, given with the caller's own task is not found (the lookup by id once ignored the task and the
+/// user, `EntityFind::one` dropping them beside the full key).
+#[test]
+fn a_push_config_is_found_only_through_its_own_task_and_user() {
+    use super::ops::Ctx;
+    use super::{push, Caller, Failure};
+    let context =
+        moqui_core::context::ExecutionContextFactory::test_context_with_conf("<moqui-conf><llm-facade/></moqui-conf>");
+    let facade = moqui_core::testing::open();
+    context.factory().set_entity(facade.clone());
+    let _entered = context.enter();
+    let row = |entity: &str, fields: &[(&str, &str)]| {
+        let mut value = facade.make_value(entity).unwrap();
+        for (field, text) in fields {
+            value.set(*field, moqui_lib::object::Value::string(*text));
+        }
+        value.create(&facade).unwrap();
+    };
+    for (run_id, user_id) in [("task-ann", "ann"), ("task-ann-2", "ann"), ("task-bob", "bob")] {
+        row(
+            "moqui.agent.AgentRun",
+            &[
+                ("runId", run_id),
+                ("userId", user_id),
+                ("surfaceEnumId", "AgsfA2a"),
+                ("statusId", "AgrWorking"),
+            ],
+        );
+        row(
+            "moqui.agent.AgentPushConfig",
+            &[
+                ("pushConfigId", &format!("push-{run_id}")),
+                ("runId", run_id),
+                ("userId", user_id),
+                ("url", "https://hooks.example.com/a"),
+            ],
+        );
+    }
+    let ann = Caller {
+        user_id: "ann".to_string(),
+        base_url: "https://moqui.example.com".to_string(),
+    };
+    let ctx = Ctx::new(context.factory(), &ann).unwrap();
+    let ask = |task: &str, config: &str| json!({"taskId": task, "id": config});
+    let not_found = |result: Result<serde_json::Value, Failure>| match result {
+        Err(Failure::A2a(error)) => error.code,
+        Err(Failure::Reply(_)) => panic!("a reply, not an A2A error"),
+        Ok(found) => panic!("found {found}"),
+    };
+    let Ok(own) = push::get_op(&ctx, &ask("task-ann", "push-task-ann")) else {
+        panic!("the own config was not found");
+    };
+    assert_eq!(own["id"], "push-task-ann", "{own}");
+    // another task's config of the same user, and another user's config, through the caller's own task
+    assert_eq!(
+        not_found(push::get_op(&ctx, &ask("task-ann", "push-task-ann-2"))),
+        -32001
+    );
+    assert_eq!(not_found(push::get_op(&ctx, &ask("task-ann", "push-task-bob"))), -32001);
+    // another user's task is not found at all
+    assert!(push::get_op(&ctx, &ask("task-bob", "push-task-bob")).is_err());
+    // and none of them can be deleted that way
+    assert_eq!(
+        not_found(push::delete_op(&ctx, &ask("task-ann", "push-task-bob"))),
+        -32001
+    );
+    let still = facade
+        .find("moqui.agent.AgentPushConfig")
+        .unwrap()
+        .eq("pushConfigId", moqui_lib::object::Value::string("push-task-bob"))
+        .one()
+        .unwrap();
+    assert!(still.is_some(), "bob's config is still there");
+}
