@@ -52,6 +52,56 @@ fn call(verb_noun: &str, parameters: &[(&str, Value)]) -> Result<BTreeMap<String
     result
 }
 
+/// `run#EtlMapping` with `wait` of a mapping from `ext:EXTSPEC`'s `ext_note` into an `EnumerationType`.
+fn etl_from_external(check: bool) -> Result<BTreeMap<String, Value>, String> {
+    let text = |pairs: &[(&str, &str)]| {
+        Value::Map(
+            pairs
+                .iter()
+                .map(|(name, value)| ((*name).to_string(), Value::string(*value)))
+                .collect(),
+        )
+    };
+    let Value::Map(mut mapping) = text(&[
+        ("description", "from the second database"),
+        ("sourceTypeEnumId", "EtlsSql"),
+        ("sourceDb", "ext:EXTSPEC"),
+        (
+            "sourceSql",
+            "SELECT 'ExtEtlType' AS type_id, note FROM ext_note ORDER BY note LIMIT 1",
+        ),
+        ("targetTypeEnumId", "EtltEntity"),
+        ("targetName", "moqui.basic.EnumerationType"),
+    ]) else {
+        unreachable!()
+    };
+    mapping.insert(
+        "fields".to_string(),
+        Value::List(vec![
+            text(&[("targetField", "enumTypeId"), ("sourceColumn", "type_id")]),
+            text(&[("targetField", "description"), ("sourceColumn", "note")]),
+        ]),
+    );
+    let parameters: BTreeMap<String, Value> = [
+        ("mapping".to_string(), Value::Map(mapping)),
+        ("check".to_string(), Value::Bool(check)),
+        ("wait".to_string(), Value::Bool(true)),
+    ]
+    .into_iter()
+    .collect();
+    let result = moqui_core::service::call::sync_checked(
+        "org.moqui.impl.EtlServices.run#EtlMapping",
+        &parameters,
+        &moqui_core::service::call::CallOptions {
+            disable_authz: true,
+            ..moqui_core::service::call::CallOptions::default()
+        },
+    )
+    .map_err(|err| err.message().to_string());
+    moqui_core::context::ExecutionContext::with_current(|ec| ec.message().clear_errors());
+    result
+}
+
 fn entity_auto(name: &str, parameters: &[(&str, Value)]) {
     let parameters: BTreeMap<String, Value> = parameters
         .iter()
@@ -455,8 +505,42 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     login("john.doe");
     assert!(gated.unwrap_err().contains("Tools app"));
 
+    // an ETL from a SQL source reads ext: (its first note, "changed" by EXTRW) through the same gate and pool,
+    // read only, audited as DbaSql
+    let checked = etl_from_external(true).unwrap();
+    assert_eq!(checked.get("extractCount"), Some(&Value::I64(1)), "{checked:?}");
+    let ran = etl_from_external(false).unwrap();
+    assert_eq!(ran.get("loadCount"), Some(&Value::I64(1)), "{ran:?}");
+    let authz_off = context.disable_authz();
+    let loaded = facade
+        .find("moqui.basic.EnumerationType")
+        .unwrap()
+        .eq("enumTypeId", Value::string("ExtEtlType"))
+        .use_cache(false)
+        .one()
+        .unwrap()
+        .expect("the row the ETL loaded");
+    let etl_audited = facade
+        .find("moqui.database.DatabaseAudit")
+        .unwrap()
+        .eq("db", Value::string("ext:EXTSPEC"))
+        .eq("actionEnumId", Value::string("DbaSql"))
+        .list()
+        .unwrap()
+        .iter()
+        .filter(|row| {
+            row.get("detailJson")
+                .map(to_plain_string)
+                .is_some_and(|detail| detail.contains("\"etl\""))
+        })
+        .count();
+    drop(authz_off);
+    assert_eq!(to_plain_string(loaded.get("description").unwrap_or(&Value::Null)), "changed");
+    assert_eq!(etl_audited, 2);
+
     // a production instance refuses ext: and the connection services with the one vague error
     let production = Purpose::set("production");
+    let etl_refused = etl_from_external(false);
     let refused = run_sql("ext:EXTSPEC", "SELECT note FROM ext_note", &[]).unwrap_err();
     let listed = call("find#DatabaseConnections", &[]).unwrap_err();
     let databases = call("get#DatabaseList", &[]).unwrap();
@@ -464,6 +548,11 @@ fn sql_runs_on_a_second_database_through_a_connection_row_and_production_refuses
     drop(purpose);
     assert_eq!(refused, "Not available");
     assert_eq!(listed, "Not available");
+    let etl_refused = match etl_refused {
+        Ok(out) => to_plain_string(&Value::Map(out.into_iter().collect())),
+        Err(message) => message,
+    };
+    assert!(etl_refused.contains("Not available"), "{etl_refused}");
     assert!(!rows(&databases, "databases")
         .iter()
         .any(|db| field(db, "db") == Value::string("ext:EXTSPEC")));
