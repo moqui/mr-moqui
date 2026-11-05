@@ -164,7 +164,129 @@ along with this software (see the LICENSE.md file). If not, see
     </entity>
 
     <!-- ========== moqui.etl ========== -->
-    <!-- The ETL mappings and their runs (plans/Tools-Database.md §10.2): EtlMapping, EtlMappingField, EtlValueMap,
-        EtlValueMapEntry, EtlRun and EtlRunError go here. -->
+    <!-- The ETL mappings and their runs (plans/Tools-Database.md §10.2), run by org.moqui.impl.EtlServices
+        (crates/moqui-tools/src/etl). -->
+    <entity entity-name="EtlMapping" package="moqui.etl" use="configuration" cache="never">
+        <description>A saved mapping from a source to a target. The source: an entity find (sourceEntityName with
+            sourceConditionsJson, equality by field), a SQL query (sourceDb, sourceSql; needs SQL_RUNNER_WEB), a file
+            (sourceLocation, which may expand ${date}, ${yesterday} or ${now}; fileFormat csv, xlsx or auto by the
+            extension; sheetName, headerRow and firstDataRow from 1, csvDelimiter, csvCharset) or a flat record XML file.
+            The target: an entity or a service (one call per row). loadModeEnumId for an entity; matchFields (comma
+            separated) find an existing record by a natural key when the row has no primary key. batchSize 0 or empty is
+            one transaction for the run; with a batch size a failed batch is rolled back and stopOnError (Y by default)
+            decides whether the run goes on.</description>
+        <field name="mappingId" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="sourceTypeEnumId" type="id"/>
+        <field name="sourceEntityName" type="text-medium"/>
+        <field name="sourceConditionsJson" type="text-very-long"/>
+        <field name="sourceDb" type="text-medium"/>
+        <field name="sourceSql" type="text-very-long"/>
+        <field name="sourceLocation" type="text-medium"/>
+        <field name="fileFormat" type="text-short"/>
+        <field name="sheetName" type="text-medium"/>
+        <field name="headerRow" type="number-integer"/>
+        <field name="firstDataRow" type="number-integer"/>
+        <field name="csvDelimiter" type="text-short"/>
+        <field name="csvCharset" type="text-short"/>
+        <field name="targetTypeEnumId" type="id"/>
+        <field name="targetName" type="text-medium"/>
+        <field name="loadModeEnumId" type="id"/>
+        <field name="matchFields" type="text-medium"/>
+        <field name="batchSize" type="number-integer"/>
+        <field name="stopOnError" type="text-indicator"/>
+        <field name="dummyFks" type="text-indicator"/>
+        <field name="timeoutSeconds" type="number-integer"/>
+        <relationship type="one" title="EtlSourceType" related="moqui.basic.Enumeration" short-alias="sourceType">
+            <key-map field-name="sourceTypeEnumId"/></relationship>
+        <relationship type="one" title="EtlTargetType" related="moqui.basic.Enumeration" short-alias="targetType">
+            <key-map field-name="targetTypeEnumId"/></relationship>
+        <relationship type="one" title="EtlLoadMode" related="moqui.basic.Enumeration" short-alias="loadMode">
+            <key-map field-name="loadModeEnumId"/></relationship>
+        <relationship type="one" title="Owner" related="moqui.security.UserAccount">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <relationship type="many" related="moqui.etl.EtlMappingField" short-alias="fields">
+            <key-map field-name="mappingId"/></relationship>
+    </entity>
+    <entity entity-name="EtlMappingField" package="moqui.etl" use="configuration" cache="never">
+        <description>One target field of a mapping. Its value: constantValue, else the source column (sourceColumn: a
+            header, ignoring case, or a column letter or number; else the target field's own name), trimmed when trim is
+            Y, defaultValue when empty, mapped by the value map (case-insensitive), parsed by formatPattern (a Java date
+            pattern such as dd/MM/yyyy, or a number pattern such as #,##0.00 or #.##0,00), looked up (the
+            lookupResultField, or the primary key, of the lookupEntityName record whose lookupMatchField is the value),
+            and then the expression's result (JavaScript with row, value and ec). An empty value is an error when
+            required, left out when skipIfEmpty, else set empty.</description>
+        <field name="mappingId" type="id" is-pk="true"/>
+        <field name="fieldSeqId" type="id" is-pk="true"/>
+        <field name="targetField" type="text-medium"/>
+        <field name="sourceColumn" type="text-medium"/>
+        <field name="constantValue" type="text-medium"/>
+        <field name="defaultValue" type="text-medium"/>
+        <field name="expression" type="text-very-long"/>
+        <field name="valueMapId" type="id"/>
+        <field name="lookupEntityName" type="text-medium"/>
+        <field name="lookupMatchField" type="text-medium"/>
+        <field name="lookupResultField" type="text-medium"/>
+        <field name="formatPattern" type="text-medium"/>
+        <field name="trim" type="text-indicator"/>
+        <field name="required" type="text-indicator"/>
+        <field name="skipIfEmpty" type="text-indicator"/>
+        <relationship type="one" related="moqui.etl.EtlMapping"/>
+        <relationship type="one" related="moqui.etl.EtlValueMap"/>
+    </entity>
+    <entity entity-name="EtlValueMap" package="moqui.etl" use="configuration" cache="never">
+        <description>A map of source values to target values ("Active" to ACTIVE_STATUS), matched
+            case-insensitively.</description>
+        <field name="valueMapId" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <relationship type="many" related="moqui.etl.EtlValueMapEntry" short-alias="entries">
+            <key-map field-name="valueMapId"/></relationship>
+    </entity>
+    <entity entity-name="EtlValueMapEntry" package="moqui.etl" use="configuration" cache="never">
+        <field name="valueMapId" type="id" is-pk="true"/>
+        <field name="fromValue" type="text-medium" is-pk="true"/>
+        <field name="toValue" type="text-medium"/>
+        <relationship type="one" related="moqui.etl.EtlValueMap"/>
+    </entity>
+    <entity entity-name="EtlRun" package="moqui.etl" use="nontransactional" cache="never">
+        <description>One run (or check) of a mapping, saved or inline (mappingId empty). Its counts are written every
+            1,000 rows in a transaction of their own, so the Run screen shows progress. lastCommittedRow is where a rerun
+            starts (startRow). errorLocation is a CSV of every failed row with its error; the first 1,000 errors are also
+            EtlRunError rows.</description>
+        <field name="runId" type="id" is-pk="true"/>
+        <field name="mappingId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="instanceId" type="id-long"/>
+        <field name="jobRunId" type="id"/>
+        <field name="isCheck" type="text-indicator"/>
+        <field name="statusId" type="id"/>
+        <field name="startTime" type="date-time"/>
+        <field name="endTime" type="date-time"/>
+        <field name="sourceDescription" type="text-medium"/>
+        <field name="extractCount" type="number-integer"/>
+        <field name="skipCount" type="number-integer"/>
+        <field name="loadCount" type="number-integer"/>
+        <field name="errorCount" type="number-integer"/>
+        <field name="lastCommittedRow" type="number-integer"/>
+        <field name="errorLocation" type="text-medium"/>
+        <field name="failureText" type="text-very-long"/>
+        <relationship type="one" related="moqui.etl.EtlMapping"/>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="many" related="moqui.etl.EtlRunError" short-alias="errors">
+            <key-map field-name="runId"/></relationship>
+        <index name="ETL_RUN_MAPPING"><index-field name="mappingId"/><index-field name="startTime"/></index>
+    </entity>
+    <entity entity-name="EtlRunError" package="moqui.etl" use="nontransactional" cache="never">
+        <description>An error of a run: its source row number, the target field (empty for the row as a whole: its load
+            or its type conversion), the message and the source row as JSON.</description>
+        <field name="runId" type="id" is-pk="true"/>
+        <field name="errorSeqId" type="id" is-pk="true"/>
+        <field name="rowNumber" type="number-integer"/>
+        <field name="fieldName" type="text-medium"/>
+        <field name="message" type="text-very-long"/>
+        <field name="rowJson" type="text-very-long"/>
+        <relationship type="one" related="moqui.etl.EtlRun"/>
+    </entity>
 
 </entities>

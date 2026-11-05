@@ -67,7 +67,10 @@ mod speech;
 pub(crate) mod semaphore;
 pub mod shell;
 #[cfg(feature = "xlsx")]
-pub(crate) mod spreadsheet;
+pub mod spreadsheet;
+#[cfg(not(feature = "xlsx"))]
+#[path = "spreadsheet_off.rs"]
+pub mod spreadsheet;
 mod sso;
 mod sso_app;
 mod system_sync;

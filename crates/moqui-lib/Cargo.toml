@@ -25,6 +25,8 @@ bytes = { workspace = true, optional = true }
 pulldown-cmark = { workspace = true }
 # HTML cleaned to the safe set (src/safe_html.rs), for the framework and the client alike.
 ammonia = { workspace = true }
+# The ETL CsvExtractor (src/etl.rs), streamed.
+csv = { workspace = true }
 tracing = { workspace = true }
 
 [features]

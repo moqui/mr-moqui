@@ -51,4 +51,33 @@ along with this software (see the LICENSE.md file). If not, see
     <moqui.service.job.ServiceJob jobName="DatabaseAuditPurge" description="Delete DatabaseAudit rows older than database_audit_days"
             serviceName="org.moqui.impl.DatabaseServices.purge#DatabaseAudit" cronExpression="0 41 3 * * ?" paused="N"
             errorHistoryOnly="Y"/>
+
+    <!-- ========== ETL (crates/moqui-tools/src/etl, plans/Tools-Database.md §10.2) ========== -->
+    <!-- EtlMapping.sourceTypeEnumId -->
+    <moqui.basic.EnumerationType enumTypeId="EtlSourceType" description="ETL Source Type"/>
+    <moqui.basic.Enumeration enumId="EtlsEntity" enumTypeId="EtlSourceType" sequenceNum="1" description="Entity"/>
+    <moqui.basic.Enumeration enumId="EtlsSql" enumTypeId="EtlSourceType" sequenceNum="2" description="SQL"/>
+    <moqui.basic.Enumeration enumId="EtlsFile" enumTypeId="EtlSourceType" sequenceNum="3" description="File (CSV or Spreadsheet)"/>
+    <moqui.basic.Enumeration enumId="EtlsFlatXml" enumTypeId="EtlSourceType" sequenceNum="4" description="Flat XML File"/>
+    <!-- EtlMapping.targetTypeEnumId -->
+    <moqui.basic.EnumerationType enumTypeId="EtlTargetType" description="ETL Target Type"/>
+    <moqui.basic.Enumeration enumId="EtltEntity" enumTypeId="EtlTargetType" sequenceNum="1" description="Entity"/>
+    <moqui.basic.Enumeration enumId="EtltService" enumTypeId="EtlTargetType" sequenceNum="2" description="Service"/>
+    <!-- EtlMapping.loadModeEnumId -->
+    <moqui.basic.EnumerationType enumTypeId="EtlLoadMode" description="ETL Load Mode"/>
+    <moqui.basic.Enumeration enumId="EtllCreate" enumTypeId="EtlLoadMode" sequenceNum="1" description="Create"/>
+    <moqui.basic.Enumeration enumId="EtllStore" enumTypeId="EtlLoadMode" sequenceNum="2" description="Create or Update"/>
+    <moqui.basic.Enumeration enumId="EtllUpdate" enumTypeId="EtlLoadMode" sequenceNum="3" description="Update"/>
+    <!-- EtlRun.statusId; the runner sets them, there is no status flow -->
+    <moqui.basic.StatusType statusTypeId="EtlRun" description="ETL Run"/>
+    <moqui.basic.StatusItem statusId="EtlrPending" statusTypeId="EtlRun" sequenceNum="1" description="Pending"/>
+    <moqui.basic.StatusItem statusId="EtlrRunning" statusTypeId="EtlRun" sequenceNum="2" description="Running"/>
+    <moqui.basic.StatusItem statusId="EtlrDone" statusTypeId="EtlRun" sequenceNum="3" description="Done" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="EtlrFailed" statusTypeId="EtlRun" sequenceNum="4" description="Failed" statusColor="negative"/>
+
+    <!-- ========== The grid's file source (crates/moqui-tools/src/files.rs, §9.1) ========== -->
+    <!-- uploads after seven days, and the grid's export files after a day, daily -->
+    <moqui.service.job.ServiceJob jobName="clean_GridUploads_daily" description="Remove old grid uploads and export files"
+            serviceName="org.moqui.impl.EtlServices.clean#GridUploads" cronExpression="0 35 3 * * ?" paused="N"
+            errorHistoryOnly="Y"/>
 </entity-facade-xml>

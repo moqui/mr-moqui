@@ -184,6 +184,26 @@ pub(super) fn check_file(
     Ok(records)
 }
 
+/// Check one record of `entity` against the database, inside a [`check_with`] or [`check_info_with`] body: an ETL
+/// check's diff (plans/Tools-Database.md §10.3). Outside a check it does nothing.
+///
+/// # Errors
+///
+/// Returns an error for an unknown entity, or when the record cannot be read.
+pub fn check_entity_record(facade: &EntityFacade, entity: &str, fields: FieldMap) -> Result<u64, Error> {
+    if !checking() {
+        return Ok(0);
+    }
+    check_record(
+        facade,
+        &Record {
+            entity: entity.to_string(),
+            fields,
+            children: Vec::new(),
+        },
+    )
+}
+
 /// Check one record read from the data and its nested records. Returns how many records it read, as a store
 /// returns how many it wrote.
 pub(super) fn check_record(facade: &EntityFacade, record: &Record) -> Result<u64, Error> {

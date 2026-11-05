@@ -613,6 +613,16 @@ pub(super) fn convert_fields(facade: &EntityFacade, entity_name: &str, fields: &
     convert_with(&*shape_of(facade, entity_name)?, fields)
 }
 
+/// Convert each of `fields` that is not of its field's type from its text, as a data file's values are: what an ETL
+/// mapping does to a row for an entity target (plans/Tools-Database.md §10.3), so a type error is the row's.
+///
+/// # Errors
+///
+/// Returns an error for an unknown entity, or naming the first value that is not valid for its field's type.
+pub fn convert_entity_fields(facade: &EntityFacade, entity_name: &str, fields: &mut FieldMap) -> Result<(), Error> {
+    convert_fields(facade, entity_name, fields)
+}
+
 fn convert_with(shape: &Shape, fields: &mut FieldMap) -> Result<(), Error> {
     for (name, java) in &shape.java_types {
         let Some(value) = fields.get_mut(name.as_str()).filter(|value| !value.is_null()) else {

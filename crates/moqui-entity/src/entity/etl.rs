@@ -32,10 +32,36 @@ use crate::transaction::{TransactionAttribute, TransactionManager};
 /// each and the others see a transaction in place. The run still begins on each manager not in a
 /// transaction, for managers that are not linked. An error rolls back all of them. Commit is one
 /// manager after another, with no two-phase commit, as everywhere in this port.
+///
+/// With [`Self::batch_size`] the transactions it began are committed after every N entries and begun again; an entry
+/// that fails rolls back its batch only, and the next entry starts a new one (plans/Tools-Database.md §10.3, decision
+/// 7). With [`EtlTransactions::JoinCaller`] it begins nothing: each write joins the caller's transaction, as a service
+/// call does, and an error marks that transaction rollback-only. [`Self::writer`] replaces the entity write, for a
+/// loader that calls a service per row.
 pub struct EtlLoader {
     facade: EntityFacade,
     began: Vec<TransactionManager>,
     dummy_fks: bool,
+    transactions: EtlTransactions,
+    batch_size: usize,
+    in_batch: usize,
+    timeout: Option<std::time::Duration>,
+    commits: u64,
+    failed_batches: u64,
+    writer: Option<EtlWriter>,
+}
+
+/// A loader's own write of one entry, in place of the entity write.
+pub type EtlWriter = Box<dyn FnMut(&EntityFacade, &mut SimpleEntry) -> Result<(), Error>>;
+
+/// Whose transaction an [`EtlLoader`] writes in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EtlTransactions {
+    /// One of its own on each group not in a transaction, joining the ones in progress (the default).
+    #[default]
+    Run,
+    /// The caller's, begun by no one here: `load#SpreadsheetEntity` in the transaction of the service that calls it.
+    JoinCaller,
 }
 
 impl EntityFacade {
@@ -44,6 +70,13 @@ impl EntityFacade {
             facade: self.clone(),
             began: Vec::new(),
             dummy_fks: false,
+            transactions: EtlTransactions::Run,
+            batch_size: 0,
+            in_batch: 0,
+            timeout: None,
+            commits: 0,
+            failed_batches: 0,
+            writer: None,
         }
     }
 
@@ -71,6 +104,66 @@ impl EtlLoader {
     pub fn dummy_fks(mut self) -> Self {
         self.dummy_fks = true;
         self
+    }
+
+    /// Commit after every `size` entries loaded and begin again; 0 is one transaction for the run. Only the
+    /// transactions this loader began are committed: in a caller's transaction there are no batches.
+    #[must_use]
+    pub fn batch_size(mut self, size: usize) -> Self {
+        self.batch_size = size;
+        self
+    }
+
+    /// Whose transaction the writes are in.
+    #[must_use]
+    pub fn transactions(mut self, transactions: EtlTransactions) -> Self {
+        self.transactions = transactions;
+        self
+    }
+
+    /// Write each entry with `writer` instead of into the entity its type names: a service call per row.
+    #[must_use]
+    pub fn writer(mut self, writer: EtlWriter) -> Self {
+        self.writer = Some(writer);
+        self
+    }
+
+    /// How many batches have been committed.
+    #[must_use]
+    pub fn commit_count(&self) -> u64 {
+        self.commits
+    }
+
+    /// How many batches failed and were rolled back.
+    #[must_use]
+    pub fn failed_batch_count(&self) -> u64 {
+        self.failed_batches
+    }
+
+    fn batching(&self) -> bool {
+        self.batch_size > 0 && !self.began.is_empty()
+    }
+
+    /// End the batch on each transaction this loader began (commit, or roll back when `commit` is false) and begin
+    /// the next. The first failure is returned; the rest still end and begin.
+    fn end_batch(&mut self, commit: bool) -> Result<(), Error> {
+        self.in_batch = 0;
+        let mut first = None;
+        for tx in &self.began {
+            let ended = if commit { tx.commit() } else { tx.rollback() };
+            if let Err(err) = ended {
+                tracing::warn!(error = %err, "ETL batch did not end its transaction");
+                first.get_or_insert(err);
+            }
+            if let Err(err) = tx.begin(self.timeout) {
+                tracing::warn!(error = %err, "ETL batch could not begin the next transaction");
+                first.get_or_insert(err);
+            }
+        }
+        match first {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
     }
 
     fn write(&self, entity_name: &str, entry: &mut SimpleEntry) -> Result<(), Error> {
@@ -113,6 +206,10 @@ impl Drop for EtlLoader {
 impl Loader for EtlLoader {
     fn init(&mut self, timeout: Option<u32>) {
         let timeout = timeout.map(|seconds| std::time::Duration::from_secs(u64::from(seconds)));
+        self.timeout = timeout;
+        if self.transactions == EtlTransactions::JoinCaller {
+            return;
+        }
         for tx in self.facade.group_transactions() {
             if tx.in_transaction() {
                 continue;
@@ -126,19 +223,53 @@ impl Loader for EtlLoader {
     }
 
     fn load(&mut self, entry: &mut SimpleEntry) -> Result<(), Error> {
-        let entity_name = entry.etl_type.clone();
-        if self.facade.with_entity(&entity_name, |_, _, _| Ok(())).is_err() {
-            tracing::info!(entity = %entity_name, "Tried to load ETL entry with invalid entity name");
-            return Ok(());
+        let written = {
+            // Dummy foreign keys are on for this thread and this write only, as for the data loader.
+            let _scope = super::fk::FkScope::enter(self.dummy_fks, false);
+            match self.writer.as_mut() {
+                Some(writer) => writer(&self.facade, entry),
+                None => {
+                    let entity_name = entry.etl_type.clone();
+                    if self.facade.with_entity(&entity_name, |_, _, _| Ok(())).is_err() {
+                        tracing::info!(entity = %entity_name, "Tried to load ETL entry with invalid entity name");
+                        return Ok(());
+                    }
+                    self.write(&entity_name, entry)
+                }
+            }
+        };
+        if !self.batching() {
+            return written;
         }
-        // Dummy foreign keys are on for this thread and this write only, as for the data loader.
-        let _scope = super::fk::FkScope::enter(self.dummy_fks, false);
-        self.write(&entity_name, entry)
+        match written {
+            Ok(()) => {
+                self.in_batch += 1;
+                if self.in_batch >= self.batch_size {
+                    self.end_batch(true)?;
+                    self.commits += 1;
+                }
+                Ok(())
+            }
+            Err(err) => {
+                // the batch is rolled back; the next entry starts a new one
+                self.failed_batches += 1;
+                if let Err(ended) = self.end_batch(false) {
+                    tracing::warn!(error = %ended, "ETL batch rollback after a failed entry did not complete");
+                }
+                Err(err)
+            }
+        }
     }
 
     fn complete(&mut self, etl: &SimpleEtl) {
+        let batching = self.batching();
+        let pending = self.in_batch;
         let began = std::mem::take(&mut self.began);
-        let mut failed = etl.has_error();
+        // In batches each failure rolled its own batch back; the last batch commits.
+        let mut failed = !batching && etl.has_error();
+        if batching && pending > 0 {
+            self.commits += 1;
+        }
         for tx in self.facade.group_transactions() {
             let owned = began.iter().any(|known| known.shares_stack(&tx));
             let outcome = if failed {

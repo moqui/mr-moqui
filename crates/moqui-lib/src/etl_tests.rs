@@ -271,3 +271,63 @@ fn copied_configuration_runs_and_is_not_changed() {
     assert_eq!(etl.skip_count(), 1);
     assert!(config.type_transformers.is_empty());
 }
+
+/// A CSV with a title line above its header: rows by header with their row numbers, quoted commas and line breaks
+/// kept, empty rows and cells left out, and a rerun from a row.
+#[test]
+fn csv_rows_are_entries_by_header_with_their_row_numbers() {
+    let text = "Exported 2026\nid,name,note\n1,Ann,\"a, b\"\n\n2,Bo,\"two\nlines\"\n3,,\n";
+    let options = CsvOptions {
+        header_row: 2,
+        etl_type: "Row".to_string(),
+        ..CsvOptions::default()
+    };
+    let (load, loaded, _) = loader(None);
+    let extractor = CsvExtractor::new(text.as_bytes(), options.clone());
+    let headers = extractor.headers();
+    let mut etl = SimpleEtl::new(extractor, load);
+    etl.process();
+    assert_eq!(*headers.lock().unwrap(), ["id", "name", "note"]);
+    let rows: Vec<(String, String, Option<String>, Value)> = loaded
+        .borrow()
+        .iter()
+        .map(|entry| {
+            (
+                entry.etl_type.clone(),
+                text_of(entry, "id").unwrap_or_default(),
+                text_of(entry, "note"),
+                entry.values[ROW_NUMBER_KEY].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (
+                "Row".to_string(),
+                "1".to_string(),
+                Some("a, b".to_string()),
+                Value::I64(3)
+            ),
+            (
+                "Row".to_string(),
+                "2".to_string(),
+                Some("two\nlines".to_string()),
+                Value::I64(4)
+            ),
+            ("Row".to_string(), "3".to_string(), None, Value::I64(7)),
+        ]
+    );
+    // a rerun from row 5, with no header: columns by number
+    let (load, loaded, _) = loader(None);
+    let rerun = CsvOptions {
+        header_row: 0,
+        start_row: 5,
+        delimiter: b';',
+        ..CsvOptions::default()
+    };
+    let mut etl = SimpleEtl::new(CsvExtractor::new("a;b\nc;d\ne;f\ng;h\ni;j\n".as_bytes(), rerun), load);
+    etl.process();
+    let firsts: Vec<String> = loaded.borrow().iter().filter_map(|entry| text_of(entry, "1")).collect();
+    assert_eq!(firsts, ["i"]);
+}

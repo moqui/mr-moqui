@@ -122,6 +122,46 @@ pub(crate) fn enforce(
     Ok(())
 }
 
+/// A foreign key of a record with no related record: what an ETL check reports (plans/Tools-Database.md §10.3).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MissingRelated {
+    pub relationship: String,
+    pub related: String,
+    pub keys: FieldMap,
+}
+
+/// The foreign keys of `values` (a record of `entity_name`) whose related record is not there, by the rule
+/// [`enforce`] uses to make dummies: each `type="one"` relationship whose keys fill the related primary key, a record
+/// that names itself satisfied by its own insert. Read whatever the dummy flags say.
+///
+/// # Errors
+///
+/// Returns an error for an unknown entity, or when a related record cannot be read.
+pub fn missing_related(
+    facade: &EntityFacade,
+    entity_name: &str,
+    values: &FieldMap,
+) -> Result<Vec<MissingRelated>, Error> {
+    let jobs = facade.with_entity(entity_name, |entity, _, model| fk_jobs(entity, model, values))?;
+    let own_keys = facade.pk_map(entity_name, values).ok();
+    let own_name = facade.with_entity(entity_name, |entity, _, _| Ok(entity.full_name.clone()))?;
+    let mut missing = Vec::new();
+    for job in jobs {
+        let related_name = facade.with_entity(&job.related, |entity, _, _| Ok(entity.full_name.clone()))?;
+        if related_name == own_name && own_keys.as_ref() == Some(&job.keys) {
+            continue;
+        }
+        if !row_exists(facade, &job.related, &job.keys)? {
+            missing.push(MissingRelated {
+                relationship: job.relationship,
+                related: job.related,
+                keys: job.keys,
+            });
+        }
+    }
+    Ok(missing)
+}
+
 fn fk_jobs(entity: &EntityDefinition, model: &EntityModel, values: &FieldMap) -> Result<Vec<FkJob>, Error> {
     let mut jobs = Vec::new();
     for relationship in &entity.relationships {

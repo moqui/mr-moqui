@@ -20,12 +20,17 @@ indexmap = { workspace = true }
 jiff = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+# ETL and the grid's file source (etl/, files.rs): CSV read directly, format patterns to decimals.
+csv = { workspace = true }
+rust_decimal = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 # moqui_core::testing, and the embedded cluster the capabilities test probes.
-moqui-core = { workspace = true, features = ["test-support"] }
+moqui-core = { workspace = true, features = ["test-support", "xlsx"] }
 moqui-drivers = { workspace = true, features = ["embedded-postgres"] }
+# a workbook for the load#SpreadsheetEntity test
+rust_xlsxwriter = { workspace = true }
 
 [lints]
 workspace = true

@@ -4974,6 +4974,7 @@ dependencies = [
  "ammonia",
  "base64 0.23.1",
  "bytes",
+ "csv",
  "datamatrix",
  "getrandom 0.4.3",
  "indexmap",
@@ -5108,12 +5109,15 @@ dependencies = [
 name = "moqui-tools"
 version = "0.1.0"
 dependencies = [
+ "csv",
  "indexmap",
  "jiff",
  "moqui-core",
  "moqui-db",
  "moqui-drivers",
  "moqui-lib",
+ "rust_decimal",
+ "rust_xlsxwriter",
  "serde_json",
  "sha2 0.11.1",
  "tracing",

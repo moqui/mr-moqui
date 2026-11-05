@@ -40,14 +40,20 @@ pub mod jobs;
 pub mod schema;
 pub mod tables;
 
-/// The services of the schema, job, table and activity screens.
+// ---------- ETL and the grid's file source (plans/Tools-Database.md §9.1, §10) ----------
+pub mod etl;
+pub mod files;
+
+/// The services of the schema, job, table and activity screens, and of ETL and the grid's file source.
 fn register_schema_and_jobs(
     map: &mut std::collections::BTreeMap<&'static str, moqui_core::extension::RustServiceFn>,
 ) -> Result<(), String> {
     schema::register(map)?;
     jobs::register(map)?;
     tables::register(map)?;
-    activity::register(map)
+    activity::register(map)?;
+    etl::service::register(map)?;
+    files::register(map)
 }
 
 moqui_core::extension::submit! {
