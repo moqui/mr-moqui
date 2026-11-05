@@ -295,7 +295,7 @@ impl HostFind {
                 let property: JsValue = object.get(key.as_str())?;
                 let host = js_to_host(&ctx, &property)?;
                 let condition = comparison(&key, "equals", host).map_err(|err| throw_lib(&ctx, &err))?;
-                find = find.condition(condition);
+                find = find.condition_from_map(condition);
             }
             wrap_find(&ctx, find)
         })

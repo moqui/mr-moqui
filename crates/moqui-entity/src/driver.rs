@@ -85,8 +85,18 @@ pub trait DbConnection: Send {
 
     fn query_once(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error>;
 
+    /// Open a stream of the rows of `sql`, read with [`Self::next_row`] until it gives `None` or
+    /// [`Self::close_stream`]. One stream per connection; it lives on the transaction's enlisted connection
+    /// (the entity iterator begins a transaction when none is in place), and the pool discards a connection
+    /// that comes back with one open.
+    ///
+    /// How much a stream holds in memory is the driver's: Postgres fetches through a cursor a batch at a time
+    /// and MySQL reads an active result, so memory stays bounded; the browser's SQLite reads the whole result
+    /// here, before the first row, so a stream there costs as much memory as a list and an early stop still
+    /// pays for every row (plans/High-Level-Review.md HL-003).
     fn open_stream(&mut self, sql: &str, params: &[Value]) -> Result<(), Error>;
 
+    /// The next row of the open stream; `None` at its end, or with no stream open.
     fn next_row(&mut self) -> Result<Option<DbRow>, Error>;
 
     fn close_stream(&mut self) -> Result<(), Error>;
