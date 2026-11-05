@@ -1,0 +1,78 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The server settings of the chosen database (plans/Tools-Database.md §4.4, org.moqui.impl.DatabaseServices.get#DatabaseSettings),
+    read only: Postgres pg_settings with where each value comes from and whether a change waits for a restart, MySQL and
+    MariaDB SHOW VARIABLES. On the embedded cluster the memory settings the datasource conf sets show the conf's value and
+    whether the running one differs: a restart of the server applies a changed conf value. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Settings" default-menu-index="6">
+
+    <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
+
+    <actions>
+        <script><![CDATA[
+            let found = null
+            settingsError = null
+            try { found = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DatabaseSettings').parameters({db, filter: context.nameFilter || null}).call() }
+            catch (e) { settingsError = String(e.message || e) }
+            if (ec.message.hasError()) { settingsError = ec.message.errorsString; ec.message.clearErrors() }
+            embedded = !!(found && found.embedded)
+            settingsNote = (found && found.note) || ''
+            settingList = ((found && found.settings) || []).map((row) => ({name: row.name, setting: row.setting == null ? '' : String(row.setting) + (row.unit ? ' ' + row.unit : ''),
+                category: row.category || '', description: row.short_desc || '', source: row.source || '',
+                pendingRestart: row.pending_restart === true || row.pending_restart === 't' ? 'yes' : '',
+                confAttribute: row.confAttribute || '', confValue: row.confAttribute ? (row.confValue == null ? 'not set' : String(row.confValue)) : '',
+                differs: row.confAttribute ? (row.differs === true ? 'differs: a restart applies the conf' : row.differs === false ? 'same' : '') : ''}))
+            isPostgres = settingList.some((row) => row.category || row.source)
+            confRows = settingList.filter((row) => row.confAttribute)
+        ]]></script>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Server settings"/><box-body>
+            <section-include name="DatabasePicker" location="component://tools/template/DatabaseParts.xml"/>
+            <label text="${settingsError}" type="p" style="text-negative" condition="settingsError"/>
+            <section name="ConfSection" condition="embedded &amp;&amp; confRows.length"><widgets>
+                <container-box type="info"><box-header title="The embedded cluster's datasource conf"/><box-body>
+                    <label text="${settingsNote}" type="p" condition="settingsNote"/>
+                    <form-list name="ConfList" list="confRows" skip-form="true" paginate="false">
+                        <field name="name"><default-field title="Setting"><display/></default-field></field>
+                        <field name="setting"><default-field title="Running"><display/></default-field></field>
+                        <field name="confAttribute"><default-field title="Conf attribute"><display/></default-field></field>
+                        <field name="confValue"><default-field title="Conf value"><display/></default-field></field>
+                        <field name="differs"><default-field title=""><display/></default-field></field>
+                    </form-list>
+                </box-body></container-box>
+            </widgets></section>
+            <form-single name="FilterForm" transition=".">
+                <field name="db"><default-field><hidden/></default-field></field>
+                <field name="nameFilter"><default-field title="Name holds"><text-line size="30"/></default-field></field>
+                <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+                <field-layout><field-row-big><field-ref name="nameFilter"/><field-ref name="submitButton"/></field-row-big></field-layout>
+            </form-single>
+            <form-list name="SettingList" list="settingList" skip-form="true">
+                <field name="name"><default-field><display/></default-field></field>
+                <field name="setting"><default-field title="Value"><display/></default-field></field>
+                <field name="category" hide="!isPostgres"><default-field><display/></default-field></field>
+                <field name="source" hide="!isPostgres"><default-field title="From"><display/></default-field></field>
+                <field name="pendingRestart" hide="!isPostgres"><default-field title="Restart pending"><display/></default-field></field>
+                <field name="description" hide="!isPostgres"><default-field><display/></default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="name"/></column>
+                    <column><field-ref name="setting"/></column>
+                </columns>
+            </form-list>
+        </box-body></container-box>
+    </widgets>
+</screen>

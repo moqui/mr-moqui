@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The saved ETL mappings (plans/Tools-Database.md §10.4): find by description or target, copy and delete; a mapping's
+    owner or a DATABASE_ADMIN holder may change or delete it, anyone with the Tools app may copy it as their own. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Mappings" default-menu-index="1">
+
+    <parameter name="term"/>
+
+    <transition name="copyMapping" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.EtlServices.copy#EtlMapping').parameters({mappingId: String(context.mappingId || ''),
+                newMappingId: context.newMappingId || null, description: context.description || null}).call() || {}
+            if (!ec.message.hasError()) { newMappingId = out.mappingId; ec.message.addMessage(ec.resource.expand('Copied as ${id}', '', {id: out.mappingId}), 'success') }
+        ]]></script></actions>
+        <default-response url="../Mapping"><parameter name="mappingId" from="newMappingId"/></default-response>
+        <error-response url="."/>
+    </transition>
+    <transition name="deleteMapping" method="post" begin-transaction="false" authz-action="all">
+        <actions><service-call name="org.moqui.impl.EtlServices.delete#EtlMapping" in-map="{mappingId: mappingId}"/>
+            <message>Mapping deleted; its runs stay</message></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <script><![CDATA[
+            let find = ec.entity.find('moqui.etl.EtlMapping').orderBy('description').orderBy('mappingId')
+            const text = String(context.term || '').trim()
+            if (text) find = find.condition(ec.entity.conditionFactory.makeCondition([
+                ec.entity.conditionFactory.makeCondition('description', 'like', '%' + text + '%').ignoreCase(),
+                ec.entity.conditionFactory.makeCondition('targetName', 'like', '%' + text + '%').ignoreCase(),
+                ec.entity.conditionFactory.makeCondition('mappingId', 'like', '%' + text + '%').ignoreCase()], 'or'))
+            const sources = {EtlsEntity: 'Entity', EtlsSql: 'SQL', EtlsFile: 'File', EtlsFlatXml: 'Flat XML'}
+            const isAdmin = ec.user.hasPermission('DATABASE_ADMIN')
+            mappingList = find.limit(200).list().map((row) => ({mappingId: row.mappingId, description: row.description || row.mappingId,
+                sourceText: (sources[row.sourceTypeEnumId] || row.sourceTypeEnumId || '') + (row.sourceEntityName ? ': ' + row.sourceEntityName
+                    : row.sourceLocation ? ': ' + String(row.sourceLocation).split('/').pop() : ''),
+                targetText: (row.targetTypeEnumId == 'EtltService' ? 'Service ' : '') + (row.targetName || ''),
+                ownerUserId: row.ownerUserId, mayChange: isAdmin || row.ownerUserId == ec.user.userId}))
+        ]]></script>
+    </actions>
+    <widgets>
+        <container-box><box-header title="ETL mappings"/>
+            <box-toolbar>
+                <link url="../Mapping" text="New mapping" btn-type="primary" icon="add"/>
+                <link url="../Runs" text="Runs" icon="history"/>
+                <link url="../ValueMaps" text="Value maps" icon="swap_horiz"/>
+            </box-toolbar>
+            <box-body>
+                <form-single name="FindMappings" transition="." extra-parameters="false">
+                    <field name="term"><default-field title="Find" tooltip="A part of the description, the target or the ID"><text-line size="30"/></default-field></field>
+                    <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+                    <field-layout><field-row-big><field-ref name="term"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                </form-single>
+                <label text="No mappings yet. Make one here, or from a file in Data › Grid with Load into…" type="p" style="m-muted" condition="!mappingList.length"/>
+                <form-list name="MappingList" list="mappingList" skip-form="true" paginate="false">
+                    <field name="description"><default-field title="Mapping"><link url="../Mapping" text="${description}" link-type="anchor" parameter-map="{mappingId: mappingId}"/></default-field></field>
+                    <field name="sourceText"><default-field title="Source"><display/></default-field></field>
+                    <field name="targetText"><default-field title="Target"><display/></default-field></field>
+                    <field name="ownerUserId"><default-field title="Owner"><display-entity entity-name="moqui.security.UserAccount" key-field-name="userId" text="${username}"/></default-field></field>
+                    <field name="actions"><default-field title="">
+                        <link url="../Runs" text="Runs" parameter-map="{mappingId: mappingId}"/>
+                        <container-dialog id="CopyMapping_${mappingId}" button-text="Copy">
+                            <form-single name="CopyMapping_${mappingId}" transition="copyMapping" map="{mappingId: mappingId, description: 'Copy of ' + description}">
+                                <field name="mappingId"><default-field><hidden/></default-field></field>
+                                <field name="newMappingId"><default-field title="New ID" tooltip="Empty for a new one"><text-line size="30"/></default-field></field>
+                                <field name="description"><default-field><text-line size="40"/></default-field></field>
+                                <field name="submitButton"><default-field title="Copy"><submit/></default-field></field>
+                            </form-single>
+                        </container-dialog>
+                        <link url="deleteMapping" text="Delete" link-type="hidden-form" btn-type="danger" condition="mayChange"
+                                parameter-map="{mappingId: mappingId}" confirmation="Delete mapping ${description}? Its runs stay."/>
+                    </default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="description"/><field-ref name="targetText"/></column>
+                        <column><field-ref name="actions"/></column>
+                    </columns>
+                </form-list>
+            </box-body>
+        </container-box>
+    </widgets>
+</screen>

@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One ETL run (get#EtlRun): its status and counts as it goes, the first errors, the error file of every failed row as
+    a download, and a rerun (rerun#EtlRun: the saved mapping from the run's nextStartRow, reading the location that run
+    read), offered only when get#EtlRun says canRerun. Only the run's user or a DATABASE_ADMIN holder sees it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Run" default-menu-include="false">
+
+    <parameter name="runId" required="true"/>
+
+    <!-- the error file (every failed row) as CSV -->
+    <transition name="errorFile" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.EtlServices.get#EtlRun').parameters({runId: String(context.runId || ''), includeErrorFile: true}).call() || {}
+            if (!ec.message.hasError()) {
+                if (out.errorFile == null) ec.message.addError(ec.l10n.localize('This run has no error file'))
+                else ec.web.sendTextResponse(String(out.errorFile), 'text/csv', 'etl-run-' + String(context.runId).replace(/[^A-Za-z0-9_-]/g, '_') + '-errors.csv')
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+        <error-response url="."/>
+    </transition>
+    <!-- the run again where it stopped, queued on the worker pool; the server picks the start row and the source -->
+    <transition name="rerun" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.EtlServices.rerun#EtlRun').parameters({runId: String(context.runId || '')}).call() || {}
+            if (!ec.message.hasError()) { runId = out.runId; ec.message.addMessage(ec.resource.expand('Run ${id} queued', '', {id: out.runId}), 'success') }
+        ]]></script></actions>
+        <default-response url="."><parameter name="runId"/></default-response>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.EtlServices.get#EtlRun').parameters({runId: String(context.runId || '')}).call() || {}
+            runError = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            run = out.run || null
+            errorList = out.errors || []
+            const statuses = {EtlrPending: 'Pending', EtlrRunning: 'Running', EtlrDone: 'Done', EtlrFailed: 'Failed'}
+            statusText = run ? (statuses[run.statusId] || run.statusId || '') : ''
+            isCheck = !!run && (run.isCheck == 'Y' || run.isCheck === true)
+            isRunning = !!run && (run.statusId == 'EtlrPending' || run.statusId == 'EtlrRunning')
+            // the server says whether a rerun is possible (not a check, a run still going, a done run with no errors, an
+            // inline or deleted mapping, or uploaded content) and where it starts
+            mayRerun = !!run && out.canRerun === true
+            nextStartRow = run && run.nextStartRow != null ? ec.l10n.format(Number(run.nextStartRow), '#,##0') : ''
+            const number = (value) => value == null ? '' : ec.l10n.format(Number(value), '#,##0')
+            countRows = !run ? [] : [{label: 'Read', value: number(run.extractCount)}, {label: 'Loaded (committed)', value: number(run.loadCount)},
+                {label: 'Skipped', value: number(run.skipCount)}, {label: 'Rows with errors', value: number(run.errorCount)},
+                {label: 'Started at row', value: number(run.startRow)}, {label: 'Last committed row', value: number(run.lastCommittedRow)}]
+        ]]></script>
+    </actions>
+    <widgets>
+        <section name="NoRun" condition="!run"><widgets>
+            <label text="${runError || 'No such run'}" type="p" style="text-negative"/>
+            <link url="../Runs" text="ETL runs"/>
+        </widgets><fail-widgets>
+            <container-box><box-header title="ETL run ${runId}: ${statusText}${isCheck ? ' (check)' : ''}"/>
+                <box-toolbar>
+                    <link url="." text="Refresh" icon="refresh" parameter-map="{runId: runId}"/>
+                    <link url="errorFile" text="Error file" icon="download" condition="run.errorLocation" parameter-map="{runId: runId}" link-type="anchor"/>
+                    <link url="rerun" text="Run again from row ${nextStartRow}" icon="replay" link-type="hidden-form" condition="mayRerun"
+                            parameter-map="{runId: runId}" confirmation="Run mapping ${run.mappingId} again from row ${nextStartRow}?"/>
+                    <link url="../Mapping" text="Mapping" icon="edit" condition="run.mappingId" parameter-map="{mappingId: run.mappingId}"/>
+                </box-toolbar>
+                <box-body>
+                    <label text="Still running: the counts are written every 1,000 rows. Refresh to see more." type="p" style="m-muted" condition="isRunning"/>
+                    <container-row>
+                        <row-col md="6">
+                            <form-single name="RunInfo" map="run">
+                                <field name="mappingId"><default-field title="Mapping"><display/></default-field></field>
+                                <field name="sourceDescription"><default-field title="Source"><display/></default-field></field>
+                                <field name="sourceLocation"><default-field title="File read"><display/></default-field></field>
+                                <field name="userId"><default-field title="User"><display-entity entity-name="moqui.security.UserAccount" key-field-name="userId" text="${username}"/></default-field></field>
+                                <field name="startTime"><default-field title="Started"><display/></default-field></field>
+                                <field name="endTime"><default-field title="Ended"><display/></default-field></field>
+                                <field name="failureText"><default-field title="Failure"><display/></default-field></field>
+                            </form-single>
+                        </row-col>
+                        <row-col md="6">
+                            <form-list name="Counts" list="countRows" skip-form="true" paginate="false">
+                                <field name="label"><default-field title="Rows"><display/></default-field></field>
+                                <field name="value"><default-field title="Count"><display/></default-field></field>
+                            </form-list>
+                        </row-col>
+                    </container-row>
+                </box-body>
+            </container-box>
+            <container-box><box-header title="Errors"/><box-body>
+                <label text="No errors." type="p" style="m-muted" condition="!errorList.length"/>
+                <label text="The first 1,000 errors; the error file has every failed row." type="p" style="m-muted" condition="errorList.length &gt;= 1000"/>
+                <form-list name="ErrorList" list="errorList" skip-form="true" paginate="false">
+                    <field name="rowNumber"><default-field title="Row"><display/></default-field></field>
+                    <field name="fieldName"><default-field title="Field"><display/></default-field></field>
+                    <field name="message"><default-field><display/></default-field></field>
+                    <field name="rowJson"><default-field title="Row values"><display/></default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="rowNumber"/><field-ref name="fieldName"/></column>
+                        <column><field-ref name="message"/></column>
+                    </columns>
+                </form-list>
+            </box-body></container-box>
+        </fail-widgets></section>
+    </widgets>
+</screen>

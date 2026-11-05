@@ -27,6 +27,16 @@ along with this software (see the LICENSE.md file). If not, see
     <actions>
         <set field="canServiceLoadRunner" from="ec.user.hasPermission('SERVICE_LOAD_RUNNER')"/>
         <set field="canSql" from="ec.user.hasPermission('SQL_RUNNER_WEB')"/>
+        <!-- Database › Connections, when the server offers external databases to this user -->
+        <script><![CDATA[
+            // whether the server offers external databases to this user (find#DatabaseConnections refuses with "Not available"
+            // on production or without DATABASE_EXTERNAL); asked only of a DATABASE_EXTERNAL holder
+            canExternal = false
+            if (ec.user.hasPermission('DATABASE_EXTERNAL')) {
+                try { ec.service.sync().name('org.moqui.impl.DatabaseServices.find#DatabaseConnections').call(); canExternal = !ec.message.hasError() } catch (e) { canExternal = false }
+                ec.message.clearErrors()
+            }
+        ]]></script>
     </actions>
 
     <widgets>
@@ -40,6 +50,12 @@ along with this software (see the LICENSE.md file). If not, see
                     <link url="../Data/Load" text="Load data"/>
                     <link url="../Data/Export" text="Export data"/>
                     <link url="../Data/Snapshots" text="Data snapshots"/>
+                </box-body></container-box>
+                <container-box><box-header title="ETL"/><box-body>
+                    <label text="Saved mappings that load a file, a query result or entity data into an entity or a service, run now or on a schedule." type="p" style="m-muted"/>
+                    <link url="../Etl/Mappings" text="Mappings"/>
+                    <link url="../Etl/Runs" text="Runs"/>
+                    <link url="../Etl/ValueMaps" text="Value maps"/>
                 </box-body></container-box>
                 <section name="SqlSection" condition="canSql"><widgets>
                     <container-box><box-header title="SQL"/><box-body>
@@ -59,6 +75,8 @@ along with this software (see the LICENSE.md file). If not, see
                     <link url="../Database/Tables" text="Tables"/>
                     <link url="../Database/Jobs" text="Database jobs"/>
                     <link url="../Database/SpeedTest" text="Entity speed test"/>
+                    <link url="../Database/Settings" text="Database settings"/>
+                    <link url="../Database/Connections" text="External databases" condition="canExternal"/>
                 </box-body></container-box>
                 <container-box><box-header title="Services and diagnostics"/><box-body>
                     <label text="Inspect service inputs and results, run a service, and see status flows and artifact use." type="p" style="m-muted"/>

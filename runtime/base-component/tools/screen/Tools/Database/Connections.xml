@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- External databases (plans/Tools-Database.md §4.3): connections to databases the entity groups do not use, which SQL,
+    the data grid and Database › Overview then offer as ext:<connectionId>. Only with DATABASE_EXTERNAL, and never on a
+    production instance: every refusal there reads "Not available". A connection's owner, or a DATABASE_ADMIN holder,
+    may change, test or delete it. Saving replaces it whole; a change of its type, host, port, user, TLS mode or root
+    certificate without a new password clears the stored one. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Connections" default-menu-index="7" default-menu-include="false">
+
+    <transition name="storeConnection" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.store#DatabaseConnection').parameters({
+                connectionId: String(context.connectionId || ''), description: context.description || null, dbType: String(context.dbType || ''),
+                host: context.host || null, port: context.port || null, databaseName: context.databaseName || null, userName: context.userName || null,
+                password: ec.web.secureRequestParameters.password || null, sslMode: context.sslMode || null, sslRootCert: context.sslRootCert || null,
+                readOnly: String(context.readOnly) != 'false'}).call() || {}
+            if (!ec.message.hasError()) {
+                ec.message.addMessage(ec.resource.expand('Connection ${id} saved', '', {id: out.connectionId}), 'info')
+                if (out.passwordCleared) ec.message.addMessage(ec.l10n.localize('The type, host, port, user or TLS settings changed, so the stored password was cleared: enter it again'), 'warning')
+            }
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="deleteConnection" method="post" begin-transaction="false" authz-action="all">
+        <actions><service-call name="org.moqui.impl.DatabaseServices.delete#DatabaseConnection" in-map="{connectionId: connectionId}"/>
+            <message>Connection deleted</message></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="testConnection" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.test#DatabaseConnection').parameters({connectionId: String(context.connectionId || '')}).call() || {}
+            if (!ec.message.hasError()) {
+                if (out.connected) ec.message.addMessage(ec.resource.expand('Connected: ${version}', '', {version: out.version || ''}), 'success')
+                else ec.message.addMessage(ec.resource.expand('Not connected: ${reason}', '', {reason: out.reason || ''}), 'warning')
+            }
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <script><![CDATA[
+            // the screen is for DATABASE_EXTERNAL holders on an instance that is not production: the server decides (its
+            // gate answers every refusal with the one error "Not available"), so the screen does not work out production
+            allowed = ec.user.hasPermission('DATABASE_EXTERNAL')
+            connectionList = []
+            connectionsError = null
+            if (allowed) {
+                try { connectionList = (ec.service.sync().name('org.moqui.impl.DatabaseServices.find#DatabaseConnections').call() || {}).connections || [] }
+                catch (e) { connectionsError = String(e.message || e) }
+                if (ec.message.hasError()) { connectionsError = ec.message.errorsString; ec.message.clearErrors() }
+                if (connectionsError && connectionsError.includes('Not available')) { allowed = false; connectionsError = null }
+            }
+            canAdmin = ec.user.hasPermission('DATABASE_ADMIN')
+            for (const row of connectionList) {
+                row.mayChange = canAdmin || row.ownerUserId == ec.user.userId
+                row.where = [row.host, row.port].filter(Boolean).join(':') + (row.databaseName ? '/' + row.databaseName : '')
+                row.passwordText = row.hasPassword ? 'set' : 'none'
+                row.readOnlyText = row.readOnly === false || row.readOnly === 'N' ? 'changes allowed' : 'read only'
+            }
+            dbTypeOptions = [{key: 'postgres', text: 'PostgreSQL'}, {key: 'mysql8', text: 'MySQL 8'}, {key: 'mysql', text: 'MySQL or MariaDB'}]
+            sslModeOptions = [{key: '', text: 'Default (verify-full for a remote host)'}, {key: 'verify-full', text: 'Verify the certificate and host'},
+                {key: 'verify-ca', text: 'Verify the certificate'}, {key: 'require', text: 'Require TLS, no verification'}, {key: 'disable', text: 'No TLS'}]
+        ]]></script>
+    </actions>
+    <widgets>
+        <section name="NotAllowed" condition="!allowed"><widgets>
+            <label text="Not available" type="p"/>
+        </widgets><fail-widgets>
+            <container-box><box-header title="External databases"/>
+                <box-toolbar>
+                    <container-dialog id="NewConnectionDialog" button-text="New connection" type="primary">
+                        <form-single name="NewConnection" transition="storeConnection" body-parameters="password">
+                            <field name="connectionId"><default-field title="Connection ID" tooltip="1 to 40 letters, digits, _ or -"><text-line size="30"/></default-field></field>
+                            <field name="description"><default-field><text-line size="40"/></default-field></field>
+                            <field name="dbType"><default-field title="Type"><drop-down><list-options list="dbTypeOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="host"><default-field tooltip="A host name or address, reached over TCP (no socket path)"><text-line size="30"/></default-field></field>
+                            <field name="port"><default-field><text-line size="6"/></default-field></field>
+                            <field name="databaseName"><default-field title="Database"><text-line size="30"/></default-field></field>
+                            <field name="userName"><default-field title="User"><text-line size="30"/></default-field></field>
+                            <field name="password"><default-field><password size="30"/></default-field></field>
+                            <field name="sslMode"><default-field title="TLS"><drop-down><list-options list="sslModeOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                            <field name="sslRootCert"><default-field title="Root certificate file" tooltip="The path of a PEM file of the authorities to trust"><text-line size="40"/></default-field></field>
+                            <field name="readOnly"><default-field title="Read only"><radio no-current-selected-key="true"><option key="true" text="Read only"/><option key="false" text="Allow changes"/></radio></default-field></field>
+                            <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                        </form-single>
+                    </container-dialog>
+                </box-toolbar>
+                <box-body>
+                    <label text="Connections to databases the entity groups do not use, for SQL and the data grid. Each is offered as a database once saved." type="p" style="m-muted"/>
+                    <label text="${connectionsError}" type="p" style="text-negative" condition="connectionsError"/>
+                    <form-list name="ConnectionList" list="connectionList" skip-form="true" paginate="false">
+                        <field name="connectionId"><header-field title="Connection"/><default-field><display/></default-field></field>
+                        <field name="description"><default-field><display/></default-field></field>
+                        <field name="dbType"><default-field title="Type"><display/></default-field></field>
+                        <field name="where"><default-field title="Host and database"><display/></default-field></field>
+                        <field name="userName"><default-field title="User"><display/></default-field></field>
+                        <field name="sslMode"><default-field title="TLS"><display/></default-field></field>
+                        <field name="passwordText"><default-field title="Password"><display/></default-field></field>
+                        <field name="readOnlyText"><default-field title=""><display/></default-field></field>
+                        <field name="actions"><default-field title="">
+                            <section name="ConnectionActions" condition="mayChange"><widgets>
+                                <link url="testConnection" text="Test" link-type="hidden-form" parameter-map="{connectionId: connectionId}"/>
+                                <container-dialog id="EditConnection_${connectionId}" button-text="Edit">
+                                    <form-single name="EditConnection_${connectionId}" transition="storeConnection" body-parameters="password" map="{connectionId, description, dbType, host, port, databaseName, userName, sslMode, sslRootCert, readOnly: String(readOnly !== false &amp;&amp; readOnly !== 'N')}">
+                                        <field name="connectionId"><default-field title="Connection ID"><display also-hidden="true"/></default-field></field>
+                                        <field name="description"><default-field><text-line size="40"/></default-field></field>
+                                        <field name="dbType"><default-field title="Type"><drop-down><list-options list="dbTypeOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                                        <field name="host"><default-field><text-line size="30"/></default-field></field>
+                                        <field name="port"><default-field><text-line size="6"/></default-field></field>
+                                        <field name="databaseName"><default-field title="Database"><text-line size="30"/></default-field></field>
+                                        <field name="userName"><default-field title="User"><text-line size="30"/></default-field></field>
+                                        <field name="password"><default-field tooltip="Empty keeps the stored password, unless the type, host, port, user or TLS settings change"><password size="30"/></default-field></field>
+                                        <field name="sslMode"><default-field title="TLS"><drop-down><list-options list="sslModeOptions" key="${key}" text="${text}"/></drop-down></default-field></field>
+                                        <field name="sslRootCert"><default-field title="Root certificate file"><text-line size="40"/></default-field></field>
+                                        <field name="readOnly"><default-field title="Read only"><radio><option key="true" text="Read only"/><option key="false" text="Allow changes"/></radio></default-field></field>
+                                        <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                                    </form-single>
+                                </container-dialog>
+                                <link url="deleteConnection" text="Delete" link-type="hidden-form" btn-type="danger" parameter-map="{connectionId: connectionId}"
+                                        confirmation="Delete connection ${connectionId}?"/>
+                            </widgets></section>
+                        </default-field></field>
+                        <columns type="mobile">
+                            <column><field-ref name="connectionId"/><field-ref name="where"/></column>
+                            <column><field-ref name="dbType"/><field-ref name="actions"/></column>
+                        </columns>
+                    </form-list>
+                </box-body>
+            </container-box>
+        </fail-widgets></section>
+    </widgets>
+</screen>

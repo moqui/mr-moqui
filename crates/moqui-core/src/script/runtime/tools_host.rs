@@ -117,9 +117,6 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     ec.entity.getAllEntitiesInfo = host.getAllEntitiesInfo;
     ec.entity.getAllEntityInfo = host.getAllEntityInfo;
     ec.entity.getDatasourceGroupNames = host.getDatasourceGroupNames;
-    // The databases of the entity groups, each once, the default group's first: `[{db, groupNames, databaseConf}]`,
-    // `db` being `group:<name>` of its first group. Tools' database selector lists these.
-    ec.entity.getDatabaseList = host.getDatabaseList;
     // The table check of the named entities (of the entity groups `groups` when given), whatever the groups'
     // add-missing settings say, after forgetting what is known of the tables: `{ddl: [the statements run], errors,
     // failed: [{entityName, error}]}`, a name that fails skipped. Tools' Check Tables.
@@ -1238,45 +1235,6 @@ fn eeca_rule_texts<'js>(ctx: Ctx<'js>, entity_name: String) -> rquickjs::Result<
             })
             .collect();
         js_texts(&ctx, texts)
-    })
-}
-
-/// The databases of the entity groups, each once, the default group's first. Groups whose transaction managers share
-/// a stack are on one database, the test of `EntityFacade::same_database`.
-fn get_database_list<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        let mut managers: std::collections::HashMap<String, (String, crate::transaction::TransactionManager)> = facade
-            .groups()
-            .map(|(name, dialect, transactions)| (name.to_string(), (dialect.name.clone(), transactions.clone())))
-            .collect();
-        let mut databases: Vec<(Vec<String>, String, crate::transaction::TransactionManager)> = Vec::new();
-        for name in facade.group_names() {
-            let Some((conf, transactions)) = managers.remove(&name) else {
-                continue;
-            };
-            match databases
-                .iter_mut()
-                .find(|(_, _, other)| other.shares_stack(&transactions))
-            {
-                Some((names, _, _)) => names.push(name),
-                None => databases.push((vec![name], conf, transactions)),
-            }
-        }
-        let rows = databases
-            .into_iter()
-            .map(|(names, conf, _)| {
-                let mut row = indexmap::IndexMap::new();
-                row.insert("db".to_string(), Value::string(format!("group:{}", names[0])));
-                row.insert(
-                    "groupNames".to_string(),
-                    Value::List(names.into_iter().map(Value::String).collect()),
-                );
-                row.insert("databaseConf".to_string(), Value::String(conf));
-                row
-            })
-            .collect();
-        js_list(&ctx, rows)
     })
 }
 
@@ -2893,7 +2851,6 @@ pub(super) fn install<'js>(
     method!("entityDefinitionInfo", entity_definition_info);
     method!("prettyName", pretty_name);
     method!("getDatasourceGroupNames", get_datasource_group_names);
-    method!("getDatabaseList", get_database_list);
     method!("checkTables", check_tables);
     method!("getEecaRuleCount", get_eeca_rule_count);
     method!("getQueryStatsList", get_query_stats_list);

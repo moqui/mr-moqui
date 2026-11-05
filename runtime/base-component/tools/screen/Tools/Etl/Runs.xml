@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The latest ETL runs, newest first (get#EtlRuns): the user's own, or everyone's with DATABASE_ADMIN; mappingId for one
+    mapping's. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Runs" default-menu-index="2">
+
+    <parameter name="mappingId"/>
+
+    <actions>
+        <script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.EtlServices.get#EtlRuns').parameters({mappingId: context.mappingId || null, limit: 100}).call() || {}
+            runsError = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            const statuses = {EtlrPending: 'Pending', EtlrRunning: 'Running', EtlrDone: 'Done', EtlrFailed: 'Failed'}
+            runList = (out.runs || []).map((run) => Object.assign({}, run, {statusText: (statuses[run.statusId] || run.statusId || '') + (run.isCheck == 'Y' || run.isCheck === true ? ' (check)' : ''),
+                countsText: [run.extractCount != null ? run.extractCount + ' read' : null, run.loadCount != null ? run.loadCount + ' loaded' : null,
+                    run.errorCount ? run.errorCount + ' with errors' : null, run.skipCount ? run.skipCount + ' skipped' : null].filter(Boolean).join(', ')}))
+        ]]></script>
+    </actions>
+    <widgets>
+        <container-box><box-header title="${mappingId ? 'Runs of ' + mappingId : 'ETL runs'}"/>
+            <box-toolbar>
+                <link url="." text="Refresh" icon="refresh" parameter-map="{mappingId: mappingId}"/>
+                <link url="../Mapping" text="Mapping" icon="edit" condition="mappingId" parameter-map="{mappingId: mappingId}"/>
+                <link url="." text="All runs" condition="mappingId"/>
+            </box-toolbar>
+            <box-body>
+                <label text="${runsError}" type="p" style="text-negative" condition="runsError"/>
+                <label text="No runs." type="p" style="m-muted" condition="!runsError &amp;&amp; !runList.length"/>
+                <form-list name="RunList" list="runList" skip-form="true" paginate="false">
+                    <field name="runId"><default-field title="Run"><link url="../Run" text="${runId}" link-type="anchor" parameter-map="{runId: runId}"/></default-field></field>
+                    <field name="mappingId"><default-field title="Mapping"><display/></default-field></field>
+                    <field name="statusText"><default-field title="Status"><display/></default-field></field>
+                    <field name="startTime"><default-field title="Started"><display/></default-field></field>
+                    <field name="endTime"><default-field title="Ended"><display/></default-field></field>
+                    <field name="countsText"><default-field title="Rows"><display/></default-field></field>
+                    <field name="userId"><default-field title="User"><display-entity entity-name="moqui.security.UserAccount" key-field-name="userId" text="${username}"/></default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="runId"/><field-ref name="statusText"/></column>
+                        <column><field-ref name="startTime"/><field-ref name="countsText"/></column>
+                    </columns>
+                </form-list>
+            </box-body>
+        </container-box>
+    </widgets>
+</screen>

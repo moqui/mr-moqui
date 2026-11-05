@@ -17,7 +17,8 @@ along with this software (see the LICENSE.md file). If not, see
         default-menu-title="Database" default-menu-index="6" menu-image="sym_o_database" menu-image-type="icon">
     <always-actions>
         <!-- the database: db, else the last choice, else the default group's (template/DatabaseParts.xml) -->
-        <set field="databaseList" from="ec.entity.getDatabaseList()"/>
+        <!-- the databases of get#DatabaseList, external connections included -->
+        <set field="databaseList" from="((ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DatabaseList').parameters({includeExternal: true}).call() || {}).databases || []).map((database) =&gt; Object.assign({}, database, {groupNames: database.groupNames || [], label: database.external ? (database.description || database.db) + ' (external)' : (database.groupNames || []).join(', ') + ' (' + database.databaseConf + ')'}))"/>
         <set field="db" from="[db, ec.user.getPreference('database.selected')].find((name) =&gt; databaseList.some((database) =&gt; database.db == name)) || databaseList[0]?.db"/>
         <set field="selectedDatabase" from="databaseList.find((database) =&gt; database.db == db)"/>
     </always-actions>
