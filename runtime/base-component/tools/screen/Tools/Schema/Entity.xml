@@ -22,7 +22,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="list"><default-response url="../Entities"/></transition>
     <transition name="find"><default-response url="../../Data/Grid"/></transition>
     <transition name="autoFind"><default-response url="../../Data/Browse/AutoFind"/></transition>
-    <transition name="checkTable" begin-transaction="false" authz-action="all">
+    <transition name="checkTable" method="post" begin-transaction="false" authz-action="all">
         <actions><script><![CDATA[
             const check = ec.entity.checkTables([String(selectedEntity)])
             ec.message.addMessage(`Checked the table: ${check.ddl.length} statements ran, ${check.errors} failed`,
@@ -55,7 +55,7 @@ along with this software (see the LICENSE.md file). If not, see
             <link url="list" text="Entity List"/>
             <link url="find" text="Entity Find"/>
             <link url="autoFind" text="Auto Screen Find" parameter-map="{aen:selectedEntity}"/>
-            <link url="checkTable" text="Check table" tooltip="Create the missing table, columns, indexes and foreign keys of this entity"/>
+            <link url="checkTable" link-type="hidden-form" text="Check table" tooltip="Create the missing table, columns, indexes and foreign keys of this entity"/>
         </container>
         <container><label text="Entity Detail for ${entityDefinition.getPrettyName(null, null)} (${entityDefinition.fullEntityName})" type="h3"/></container>
         <container-row>

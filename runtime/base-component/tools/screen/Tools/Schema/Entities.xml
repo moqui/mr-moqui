@@ -20,7 +20,7 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="detail"><default-response url="../Entity"/></transition>
     <transition name="autoScreen"><default-response url="../../Data/Browse/AutoFind"/></transition>
     <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
-    <transition name="checkTables" begin-transaction="false" authz-action="all">
+    <transition name="checkTables" method="post" begin-transaction="false" authz-action="all">
         <actions><script><![CDATA[
             // the entities of the chosen database's groups (Schema.xml's always-actions)
             const groupNames = selectedDatabase?.groupNames || []
@@ -83,7 +83,7 @@ along with this software (see the LICENSE.md file). If not, see
         <container-box><box-header title="Database maintenance"/><box-body>
             <section-include name="DatabasePicker" location="component://tools/template/DatabaseParts.xml"/>
             <label text="Check Tables creates the missing tables, columns, indexes and foreign keys of the entities on this database, and lists the statements it ran. It does not change or drop anything." type="p" style="m-muted"/>
-            <link url="checkTables" text="Check tables" confirmation="Check the tables on this database and create what is missing?"/>
+            <link url="checkTables" link-type="hidden-form" text="Check tables" confirmation="Check the tables on this database and create what is missing?"/>
         </box-body></container-box>
     </widgets>
 </screen>
