@@ -27,7 +27,10 @@
 //!   ([`crate::guard`]): at the limit everything from that address is dropped unanswered, before a transaction is made.
 //!   No account is locked. An `inbound` range wider than /8 (IPv4) or /32 (IPv6) is ignored.
 //! - **Floods.** New requests are held to a rate per source, and dropped while the endpoint runs its most
-//!   transactions; stream connections past their cap are closed ([`crate::guard::RequestGate`]).
+//!   transactions; stream connections past their cap are closed ([`crate::guard::RequestGate`]). A TLS client is
+//!   counted from its accept: at most [`MAX_TLS_HANDSHAKES`] handshakes at once, [`TLS_HANDSHAKES_PER_SOURCE`] from one
+//!   source, each within [`TLS_HANDSHAKE`] or closed (plans/High-Level-Review.md HL-031); this UA accepts TLS itself
+//!   and hands the stream to rsipstack, whose own TLS listener has no handshake deadline.
 //! - **Credentials.** A trunk's digest credentials answer only its realm and the algorithms its profile allows
 //!   ([`crate::digest::answer`]); a challenge for anything else fails the registration or the call, with the reason.
 //! - **Outbound.** CANCEL while ringing, forked answers (the first wins, the others are ACKed and ended with BYE) and
@@ -57,8 +60,9 @@ use rsipstack::transaction::transaction::Transaction;
 use rsipstack::transaction::{make_tag, random_text};
 use rsipstack::transport::connection::TransportEvent;
 use rsipstack::transport::tcp_listener::TcpListenerConnection;
+use rsipstack::transport::tls::TlsConnection;
 use rsipstack::transport::udp::UdpConnection;
-use rsipstack::transport::{SipAddr, SipConnection, TlsConfig, TlsListenerConnection, TransportLayer};
+use rsipstack::transport::{SipAddr, SipConnection, TlsConfig, TransportLayer};
 use rsipstack::EndpointBuilder;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -75,6 +79,12 @@ use phones::{Caller, Phones};
 
 /// How long a challenge's nonce lasts.
 const NONCE_SECONDS: u64 = 300;
+/// How long a TLS client has from its accept to the end of its handshake ([`UaConfig::tls_handshake`] in a test).
+pub const TLS_HANDSHAKE: Duration = Duration::from_secs(10);
+/// TLS handshakes under way at once; a connection past it is closed at once.
+pub const MAX_TLS_HANDSHAKES: usize = 128;
+/// Of [`MAX_TLS_HANDSHAKES`], those from one source (an IPv6 /64 is one).
+pub const TLS_HANDSHAKES_PER_SOURCE: usize = 8;
 /// How long the host has to decide an incoming call.
 const DECIDE_WAIT: Duration = Duration::from_secs(10);
 /// The registration interval asked of a trunk, and the longest wait after a failure.
@@ -214,6 +224,8 @@ pub struct UaConfig {
     /// How often a trunk that does not register is pinged with OPTIONS, so its status shows it up or down (60 seconds
     /// when `None`).
     pub trunk_ping: Option<Duration>,
+    /// How long a TLS client has to finish its handshake ([`TLS_HANDSHAKE`] when `None`).
+    pub tls_handshake: Option<Duration>,
 }
 
 /// The addresses the listeners bound.
@@ -629,21 +641,15 @@ impl Ua {
             bound.tcp = Some(addr);
             transport_layer.add_transport(SipConnection::TcpListener(tcp));
         }
+        let mut tls_listener = None;
         if let Some((addr, cert, key)) = &config.tls {
-            let addr = free_port(*addr).await?;
-            let tls = TlsListenerConnection::new(
-                addr,
-                None,
-                TlsConfig {
-                    cert: Some(cert.clone()),
-                    key: Some(key.clone()),
-                    ..Default::default()
-                },
-            )
-            .await
-            .map_err(sip_err)?;
+            let acceptor = tls_acceptor(cert, key)?;
+            let listener = tokio::net::TcpListener::bind(addr)
+                .await
+                .map_err(|e| format!("SIP TLS {addr}: {e}"))?;
+            let addr = listener.local_addr().map_err(|e| format!("SIP TLS {addr}: {e}"))?;
             bound.tls = Some(addr);
-            transport_layer.add_transport(SipConnection::TlsListener(tls));
+            tls_listener = Some((listener, acceptor, addr));
         }
         transport_layer.set_tls_config(TlsConfig {
             ca_certs: config.ca_pem.clone(),
@@ -670,6 +676,16 @@ impl Ua {
             .build();
         let mut incoming = endpoint.incoming_transactions().map_err(sip_err)?;
         let endpoint_inner = endpoint.inner.clone();
+        if let Some((listener, acceptor, local)) = tls_listener {
+            tokio::spawn(accept_tls(
+                listener,
+                acceptor,
+                local,
+                Arc::downgrade(&endpoint_inner),
+                config.tls_handshake.unwrap_or(TLS_HANDSHAKE),
+                stop.child_token(),
+            ));
+        }
         let _ = endpoint_slot.set(Arc::downgrade(&endpoint_inner));
         {
             let serve = endpoint_inner.clone();
@@ -891,6 +907,80 @@ impl Ua {
 
 /// A port of 0 for a stream listener is picked here, since rsipstack binds stream listeners when it serves them and
 /// would not tell the port.
+/// The TLS server settings of the listener: the certificate chain and key, PEM.
+fn tls_acceptor(cert: &[u8], key: &[u8]) -> Result<tokio_rustls::TlsAcceptor, String> {
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    let certs = CertificateDer::pem_slice_iter(cert)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("SIP TLS certificate: {e}"))?;
+    let key = PrivateKeyDer::from_pem_slice(key).map_err(|e| format!("SIP TLS key: {e}"))?;
+    let config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| format!("SIP TLS: {e}"))?;
+    Ok(tokio_rustls::TlsAcceptor::from(Arc::new(config)))
+}
+
+/// Accept TLS clients on `listener` until `stop`: each counted against the handshake slots before its handshake,
+/// which must end within `deadline`; then its stream is rsipstack's, as its own TLS listener would hand it over.
+async fn accept_tls(
+    listener: tokio::net::TcpListener,
+    acceptor: tokio_rustls::TlsAcceptor,
+    local: SocketAddr,
+    endpoint: std::sync::Weak<EndpointInner>,
+    deadline: Duration,
+    stop: CancellationToken,
+) {
+    let slots = moqui_lib::source_guard::SourceSlots::new(MAX_TLS_HANDSHAKES, TLS_HANDSHAKES_PER_SOURCE);
+    let local = SipAddr {
+        r#type: Some(rsipstack::sip::transport::Transport::Tls),
+        addr: local.into(),
+    };
+    loop {
+        let (stream, remote) = tokio::select! {
+            () = stop.cancelled() => return,
+            accepted = listener.accept() => match accepted {
+                Ok(accepted) => accepted,
+                Err(err) => {
+                    tracing::debug!("SIP TLS accept failed: {err}");
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    continue;
+                }
+            },
+        };
+        let Ok(slot) = slots.take(remote.ip()) else {
+            tracing::debug!("SIP TLS: a connection from {remote} closed: too many handshakes from there or in all");
+            continue;
+        };
+        let (acceptor, local, endpoint, stop) = (acceptor.clone(), local.clone(), endpoint.clone(), stop.clone());
+        tokio::spawn(async move {
+            let handshake = tokio::time::timeout(deadline, acceptor.accept(stream)).await;
+            drop(slot);
+            let tls = match handshake {
+                Ok(Ok(tls)) => tls,
+                Ok(Err(err)) => {
+                    tracing::debug!("SIP TLS handshake from {remote} failed: {err}");
+                    return;
+                }
+                Err(_) => {
+                    tracing::debug!("SIP TLS: {remote} did not finish its handshake within {deadline:?}");
+                    return;
+                }
+            };
+            let Some(endpoint) = endpoint.upgrade() else { return };
+            let remote = SipAddr {
+                r#type: Some(rsipstack::sip::transport::Transport::Tls),
+                addr: remote.into(),
+            };
+            match TlsConnection::from_server_stream(tls, local, remote.clone(), Some(stop.child_token())).await {
+                Ok(connection) => endpoint.transport_layer.add_connection(SipConnection::Tls(connection)),
+                Err(err) => tracing::warn!("SIP TLS connection from {remote} not served: {err}"),
+            }
+        });
+    }
+}
+
 async fn free_port(addr: SocketAddr) -> Result<SocketAddr, String> {
     if addr.port() != 0 {
         return Ok(addr);

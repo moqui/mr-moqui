@@ -452,6 +452,7 @@ pub(crate) fn start(factory: &Arc<ExecutionContextFactory>) -> Option<SipNode> {
             .registrar
             .map(|limits| phones::registrar_config(factory, limits, &settings.domain, dedicated, Arc::clone(&paired))),
         trunk_ping: None,
+        tls_handshake: None,
     };
     let ua = match runtime.block_on(Ua::start(config, events_tx)) {
         Ok(ua) => ua,

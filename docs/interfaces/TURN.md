@@ -27,6 +27,11 @@ Both need the `rtc` feature and a media node (`rtc_media_port`). Every listener 
 | `turn_max_allocations`, `turn_max_kbps` | `1000`, `4000` | Allocations in all, and each allocation's bandwidth each way |
 | `turn_allowed_peers` | empty | Other media nodes a relay may reach besides this one: `address:port` (their media port), or an address alone for this node's `rtc_media_port` |
 
+The TCP and TLS connections to TURN are bounded: 512 at once and 16 from one source (an IPv4 address or an IPv6 /64);
+one must send a whole message, its TLS handshake included, within 10 seconds, and one with nothing either way for 10
+minutes is closed, as is one that does not read what it is sent (512 messages waiting). ICE-TCP takes 1,000 connections,
+64 from one source, and closes one that sends nothing for 30 seconds.
+
 Open these ports on the firewall:
 
 - the TURN port, UDP and TCP;
