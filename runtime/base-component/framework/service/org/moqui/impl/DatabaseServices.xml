@@ -717,4 +717,26 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="includeExternal" type="Boolean"/></in-parameters>
         <out-parameters><parameter name="databases" type="List"/></out-parameters>
     </service>
+
+    <!-- ========== Settings (plans/Tools-Database.md §4.4; crates/moqui-tools/src/settings.rs) ========== -->
+    <service verb="get" noun="DatabaseSettings" type="rust" location="moqui_tools::settings::get_database_settings"
+            transaction="ignore">
+        <description>The settings of db (an entity group's database, or ext: through its gate) whose name holds filter,
+            ignoring case; read only, nothing is written. Postgres rows are pg_settings: name, setting, unit, category,
+            short_desc, source, pending_restart, context. MySQL and MariaDB rows are SHOW VARIABLES: name, setting. On the
+            embedded cluster (embedded true) shared_buffers, work_mem, maintenance_work_mem and effective_cache_size also
+            have confAttribute (the datasource attribute: shared-buffers, work-mem, maintenance-work-mem,
+            effective-cache-size), confValue (the transactional datasource's value, null when the conf does not set it)
+            and differs (the running value is not the conf's, compared as sizes; null when the conf sets none): a restart
+            of the server applies a changed conf value. note says so.</description>
+        <in-parameters>
+            <parameter name="db"/>
+            <parameter name="filter"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="settings" type="List"/>
+            <parameter name="embedded" type="Boolean"/>
+            <parameter name="note"/>
+        </out-parameters>
+    </service>
 </services>

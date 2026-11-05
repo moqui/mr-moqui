@@ -1340,7 +1340,10 @@
         -->
         <!-- pg-stat-statements: on Postgres, load pg_stat_statements (the embedded cluster preloads it; an external
             server must have it in shared_preload_libraries) and create the extension; ignored on MySQL. Turned on for
-            development in runtime/conf/MoquiDevConf.xml. -->
+            development in runtime/conf/MoquiDevConf.xml.
+            The embedded cluster's shared-buffers, work-mem, maintenance-work-mem and effective-cache-size (sizes such as
+            64MB) may be set on the transactional datasource; when not set the defaults from code apply (shared_buffers
+            16MB), and a change applies when the server starts the cluster. -->
         <datasource group-name="transactional" database-conf-name="${entity_ds_db_conf}" schema-name="${entity_ds_schema}"
                 runtime-add-missing="${entity_add_missing_runtime}" startup-add-missing="${entity_add_missing_startup}"
                 pg-stat-statements="false">

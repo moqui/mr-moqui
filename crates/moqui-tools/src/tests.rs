@@ -174,6 +174,51 @@ fn the_embedded_cluster_allows_everything_with_pg_stat_statements_loaded() {
         Some(&moqui_lib::object::Value::string("embedded-postgres"))
     );
 
+    // the settings, filtered, with the conf's settings of the embedded cluster marked
+    let db = crate::group_db::GroupDb::named(&facade, "transactional").unwrap();
+    let conf = moqui_core::entity::datasource::EmbeddedSettings {
+        work_mem: Some("7MB".to_string()),
+        ..Default::default()
+    };
+    let read = crate::settings::read(&db, "WORK_MEM", Some(&conf)).unwrap();
+    assert!(read.embedded);
+    assert!(read.settings.len() >= 2);
+    let name =
+        |row: &indexmap::IndexMap<String, moqui_lib::object::Value>| moqui_lib::object::to_plain_string(&row["name"]);
+    assert!(read.settings.iter().all(|row| name(row).contains("work_mem")));
+    let work_mem = read.settings.iter().find(|row| name(row) == "work_mem").unwrap();
+    assert_eq!(
+        work_mem.get("confAttribute"),
+        Some(&moqui_lib::object::Value::string("work-mem"))
+    );
+    assert_eq!(
+        work_mem.get("confValue"),
+        Some(&moqui_lib::object::Value::string("7MB"))
+    );
+    assert_eq!(
+        work_mem.get("differs"),
+        Some(&moqui_lib::object::Value::Bool(true)),
+        "the cluster runs 4MB"
+    );
+    assert!(work_mem.contains_key("pending_restart") && work_mem.contains_key("source"));
+    let maintenance = read
+        .settings
+        .iter()
+        .find(|row| name(row) == "maintenance_work_mem")
+        .unwrap();
+    assert_eq!(maintenance.get("confValue"), Some(&moqui_lib::object::Value::Null));
+    let same = moqui_core::entity::datasource::EmbeddedSettings {
+        work_mem: Some("4096kB".to_string()),
+        ..Default::default()
+    };
+    let read = crate::settings::read(&db, "work_mem", Some(&same)).unwrap();
+    let work_mem = read.settings.iter().find(|row| name(row) == "work_mem").unwrap();
+    assert_eq!(
+        work_mem.get("differs"),
+        Some(&moqui_lib::object::Value::Bool(false)),
+        "4096kB is 4MB"
+    );
+
     // an unknown group answers, with the reason
     let none = probe_group(&facade, "nothing", true);
     assert!(none.error.as_deref().is_some_and(|error| error.contains("nothing")));

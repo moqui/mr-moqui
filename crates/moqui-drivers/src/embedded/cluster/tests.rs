@@ -64,6 +64,35 @@ fn the_shipped_version_is_of_the_shipped_major() {
     assert!(SHIPPED_VERSION.starts_with(&format!("{SHIPPED_MAJOR}.")));
 }
 
+/// The conf's `work-mem` reaches the cluster it starts; a setting not given keeps the default from code.
+#[test]
+fn a_cluster_started_with_work_mem_runs_with_it() {
+    let dir = temp_cluster_dir();
+    let _guard = DirGuard(dir.clone());
+    let options = StartOptions {
+        settings: moqui_core::entity::datasource::EmbeddedSettings {
+            work_mem: Some("7MB".to_string()),
+            ..Default::default()
+        },
+        ..StartOptions::new(20)
+    };
+    let (cluster, driver) = EmbeddedCluster::start_with(&dir, &options).unwrap();
+    let mut conn = driver.connect_postgres().unwrap();
+    let rows = conn
+        .query_once(
+            "SELECT setting, unit, source FROM pg_settings WHERE name = 'work_mem'",
+            &[],
+        )
+        .unwrap();
+    // pg_settings gives work_mem in kB
+    assert_eq!(rows[0].get("setting"), Some(&Value::string("7168")), "{rows:?}");
+    assert_eq!(rows[0].get("unit"), Some(&Value::string("kB")));
+    let buffers = show(&mut conn, "shared_buffers");
+    assert!(buffers == "16MB" || buffers == "16384kB", "shared_buffers={buffers}");
+    drop(conn);
+    drop(cluster);
+}
+
 /// A datasource with `pg-stat-statements` on starts the cluster with the library preloaded and `track_io_timing` on,
 /// and its database has the extension, whose view then reads (it refuses to without the preload).
 #[test]

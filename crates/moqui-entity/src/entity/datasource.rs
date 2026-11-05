@@ -130,6 +130,73 @@ impl DatasourceConf {
     }
 }
 
+/// The settings of the embedded cluster a datasource's conf gives (plans/Tools-Database.md §4.4): `shared-buffers`,
+/// `work-mem`, `maintenance-work-mem` and `effective-cache-size`, as Postgres writes a size (`64MB`). `None` keeps the
+/// cluster's default from code. They apply when this process starts the cluster.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EmbeddedSettings {
+    pub shared_buffers: Option<String>,
+    pub work_mem: Option<String>,
+    pub maintenance_work_mem: Option<String>,
+    pub effective_cache_size: Option<String>,
+}
+
+impl EmbeddedSettings {
+    /// Each setting as (its `datasource` attribute, its Postgres name, its value).
+    #[must_use]
+    pub fn entries(&self) -> [(&'static str, &'static str, Option<&str>); 4] {
+        [
+            ("shared-buffers", "shared_buffers", self.shared_buffers.as_deref()),
+            ("work-mem", "work_mem", self.work_mem.as_deref()),
+            (
+                "maintenance-work-mem",
+                "maintenance_work_mem",
+                self.maintenance_work_mem.as_deref(),
+            ),
+            (
+                "effective-cache-size",
+                "effective_cache_size",
+                self.effective_cache_size.as_deref(),
+            ),
+        ]
+    }
+
+    /// Whether any is set.
+    #[must_use]
+    pub fn any(&self) -> bool {
+        self.entries().iter().any(|(_, _, value)| value.is_some())
+    }
+
+    /// Read the four attributes of a `datasource` node. A value that is not a size (digits, then an optional unit of
+    /// letters, as `64MB`) is refused, so nothing but a size reaches the cluster's configuration.
+    ///
+    /// # Errors
+    ///
+    /// Names the attribute whose value is not a size.
+    pub fn of(node: &MNode) -> Result<Self, Error> {
+        let read = |name: &str| -> Result<Option<String>, Error> {
+            let value = expanded(node, name);
+            if value.is_empty() {
+                return Ok(None);
+            }
+            let digits = value.chars().take_while(char::is_ascii_digit).count();
+            let unit = &value[digits..];
+            if digits == 0 || !unit.chars().all(|ch| ch.is_ascii_alphabetic()) || unit.len() > 2 {
+                return Err(Error::new(format!(
+                    "datasource {name} \"{value}\" is not a size such as 64MB"
+                )));
+            }
+            Ok(Some(value))
+        };
+        Ok(Self {
+            shared_buffers: read("shared-buffers")?,
+            work_mem: read("work-mem")?,
+            maintenance_work_mem: read("maintenance-work-mem")?,
+            effective_cache_size: read("effective-cache-size")?,
+        })
+    }
+}
+
 /// One datasource, with `${}` expanded.
 #[derive(Clone)]
 pub struct DatasourceConf {
@@ -168,6 +235,9 @@ pub struct DatasourceConf {
     /// `pg-stat-statements`, or for `transactional` on the embedded cluster that of any embedded datasource
     /// (`moqui_drivers::entity_db::transactional_conf` sets it), since the cluster's databases share one postmaster.
     pub preload_pg_stat_statements: bool,
+    /// The embedded cluster's settings this datasource gives (`shared-buffers`, `work-mem`, `maintenance-work-mem`,
+    /// `effective-cache-size`). The cluster takes the transactional datasource's.
+    pub embedded_settings: EmbeddedSettings,
     /// The `inline-jdbc` `read-timeout` in seconds: the most one read from the database waits, for a driver that sets
     /// it once per connection (MySQL). `None` when not given (the driver's default); `Some(ZERO)` for no limit.
     pub read_timeout: Option<Duration>,
@@ -196,6 +266,7 @@ impl std::fmt::Debug for DatasourceConf {
             .field("runtime_add_fks", &self.runtime_add_fks)
             .field("pg_stat_statements", &self.pg_stat_statements)
             .field("preload_pg_stat_statements", &self.preload_pg_stat_statements)
+            .field("embedded_settings", &self.embedded_settings)
             .field("read_timeout", &self.read_timeout)
             .finish()
     }
@@ -285,6 +356,7 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
         },
         pg_stat_statements: expanded(&datasource, "pg-stat-statements") == "true",
         preload_pg_stat_statements: false,
+        embedded_settings: EmbeddedSettings::of(&datasource)?,
         read_timeout: read_timeout(inline.as_ref())?,
     };
     conf.preload_pg_stat_statements = conf.pg_stat_statements;
