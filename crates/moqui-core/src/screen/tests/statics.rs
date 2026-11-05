@@ -187,6 +187,11 @@ fn the_template_holds_no_request_data_and_compiles_without_with() {
     golden("Items.script.js", &script);
     golden("Items.template.html", &html);
     assert!(html.contains("<m-static-form-list name=\"ItemList\""), "{html}");
+    assert!(html.contains(":aria-current="), "{html}");
+    assert!(
+        html.contains("Sort {field} ascending") && html.contains("Sort {field} descending"),
+        "{html}"
+    );
     assert!(html.contains("v-for=\"(tag, tag_index) in (tags)\""), "{html}");
     assert!(html.contains("<template v-if=\"(item != null)\">"), "{html}");
 }

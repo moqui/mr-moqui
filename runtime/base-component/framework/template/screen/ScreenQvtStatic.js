@@ -1263,8 +1263,15 @@
                 if (f.orderBy) {
                     const insensitive = f.orderBy === "case-insensitive";
                     const ascName = (insensitive ? "^" : "") + f.name;
-                    out += '<span class="form-order-by"><a href="#" @click.prevent="hs.sortBy(' + e(sq(ascName)) + ')"' + ' :class="{active: hs.orderBy(' + e(sq(ascName)) + ') === \'asc\'}"><q-icon name="arrow_drop_up"></q-icon></a>' +
-                        '<a href="#" @click.prevent="hs.sortBy(' + e(sq("-" + ascName)) + ')"' + ' :class="{active: hs.orderBy(' + e(sq("-" + ascName)) + ') === \'desc\'}"><q-icon name="arrow_drop_down"></q-icon></a></span>';
+                    const ascState = "hs.orderBy(" + sq(ascName) + ") === 'asc'";
+                    const descState = "hs.orderBy(" + sq("-" + ascName) + ") === 'desc'";
+                    const ascLabel = "ec.l10n.localize('Sort {field} ascending').split('{field}').join(" + f.title + ")";
+                    const descLabel = "ec.l10n.localize('Sort {field} descending').split('{field}').join(" + f.title + ")";
+                    out += '<span class="form-order-by"><a' + A({ href: "#", "@click.prevent": "hs.sortBy(" + sq(ascName) + ")",
+                        ":class": "{active: " + ascState + "}", ":aria-current": "(" + ascState + ") ? 'true' : null", ":aria-label": ascLabel, ":title": ascLabel }) +
+                        '><q-icon name="arrow_drop_up" aria-hidden="true"></q-icon></a><a' + A({ href: "#", "@click.prevent": "hs.sortBy(" + sq("-" + ascName) + ")",
+                        ":class": "{active: " + descState + "}", ":aria-current": "(" + descState + ") ? 'true' : null", ":aria-label": descLabel, ":title": descLabel }) +
+                        '><q-icon name="arrow_drop_down" aria-hidden="true"></q-icon></a></span>';
                 }
                 out += "</div>";
                 w(out);

@@ -1190,9 +1190,32 @@
             setPageIndex(index) { this.searchObj = Object.assign({}, this.searchObj, { pageIndex: index }); this.fetchRows(); },
             sortBy(field) { this.searchObj = Object.assign({}, this.searchObj, { orderByField: field, pageIndex: 0 }); this.fetchRows(); },
             orderBy(field) {
-                const current = this.searchObj.orderByField || (this.pkg && this.pkg.orderByField) || "";
-                if (current !== field) return "";
-                return field.charAt(0) === "-" ? "desc" : "asc";
+                const order = this.searchObj.orderByField || (this.pkg && this.pkg.orderByField) || "";
+                // Match OrderBy::parse: signs/case prefix, optional direction/null placement, then UPPER/LOWER.
+                const parseOrder = (value) => {
+                    let name = String(value).trimStart(), descending = false;
+                    while (name && "-+^ ".includes(name.charAt(0))) {
+                        if (name.charAt(0) === "-") descending = true;
+                        else if (name.charAt(0) === "+") descending = false;
+                        name = name.slice(1);
+                    }
+                    name = name.trimEnd().replace(/ NULLS (FIRST|LAST)$/i, "");
+                    const direction = / (ASC|DESC)$/i.exec(name);
+                    if (direction) {
+                        descending = direction[1].toUpperCase() === "DESC";
+                        name = name.slice(0, -direction[0].length);
+                    }
+                    if (name.includes("(")) {
+                        if (/^(UPPER|LOWER)\(/i.test(name)) name = name.slice(6);
+                        if (name.endsWith(")")) name = name.slice(0, -1);
+                    }
+                    name = name.trim();
+                    return name ? {name, descending} : null;
+                };
+                const requested = parseOrder(field);
+                const current = requested && String(order).split(",").map(parseOrder).find((part) => part && part.name === requested.name);
+                if (!current || current.descending !== requested.descending) return "";
+                return current.descending ? "desc" : "asc";
             }
         },
         created() { this.searchObj = {}; this.fetchRows(); },
@@ -1383,17 +1406,25 @@
         name: "mContainerBox",
         props: { type: { type: String, default: "default" }, title: String, initialOpen: { type: Boolean, default: true } },
         data() { return { isBodyOpen: this.initialOpen }; },
-        computed: { boxClass() { const color = moqui.getQuasarColor(this.type); return color && color !== "default" ? "m-box-" + color : ""; } },
+        computed: {
+            boxClass() { const color = moqui.getQuasarColor(this.type); return color && color !== "default" ? "m-box-" + color : ""; },
+            toggleLabel() {
+                return this.title ? localized(this.isBodyOpen ? "Collapse {title}" : "Expand {title}").replace("{title}", () => this.title)
+                    : localized(this.isBodyOpen ? "Collapse section" : "Expand section");
+            }
+        },
         template:
             '<q-card flat bordered class="q-ma-sm m-container-box" :class="boxClass">' +
-                '<div class="m-box-head row items-center no-wrap q-py-xs q-px-sm" @click.self="toggleBody">' +
-                    '<div v-if="title && title.length" class="text-subtitle1 text-weight-medium ellipsis cursor-pointer" @click="toggleBody">{{title}}</div>' +
-                    '<slot name="header"></slot>' +
-                    '<q-space></q-space>' +
-                    '<slot name="toolbar"></slot>' +
-                    '<q-btn flat round dense size="sm" color="grey-7" :icon="isBodyOpen ? \'expand_less\' : \'expand_more\'" @click="toggleBody"></q-btn>' +
+                '<div class="m-box-head row items-center q-py-xs q-px-sm" :class="{\'m-box-has-toolbar\': !!$slots.toolbar}" @click.self="toggleBody">' +
+                    '<div class="m-box-heading row items-center">' +
+                        '<div v-if="title && title.length" class="m-box-title text-subtitle1 text-weight-medium cursor-pointer" @click="toggleBody">{{title}}</div>' +
+                        '<slot name="header"></slot>' +
+                    '</div>' +
+                    '<div v-if="$slots.toolbar" class="m-box-toolbar row items-center"><slot name="toolbar"></slot></div>' +
+                    '<q-btn class="m-box-toggle m-muted" flat round dense size="sm" :aria-label="toggleLabel" :aria-expanded="String(isBodyOpen)"' +
+                        ' :icon="isBodyOpen ? \'expand_less\' : \'expand_more\'" @click="toggleBody"></q-btn>' +
                 '</div>' +
-                '<q-slide-transition><div v-show="isBodyOpen"><q-separator></q-separator><q-card-section><slot></slot></q-card-section></div></q-slide-transition>' +
+                '<q-slide-transition><div v-show="isBodyOpen" class="m-box-content"><q-separator></q-separator><q-card-section><slot></slot></q-card-section></div></q-slide-transition>' +
             '</q-card>',
         methods: { toggleBody() { this.isBodyOpen = !this.isBodyOpen; } }
     });
@@ -2622,8 +2653,8 @@
                 '<q-icon class="q-my-auto" name="remove"></q-icon>' +
                 '<m-date-time :name="name+\'_thru\'" :id="id+\'_thru\'" :label="label+\' Thru\'" :form="form" :type="fromThruType" v-model="fields[name+\'_thru\']">' +
                     '<template v-slot:after>' +
-                        '<q-btn flat round dense size="sm" icon="calendar_view_day" @click="toggleMode"><q-tooltip>Period Select Mode</q-tooltip></q-btn>' +
-                        '<q-btn flat round dense size="sm" icon="clear" @click="clearAll"><q-tooltip>Clear</q-tooltip></q-btn>' +
+                        '<q-btn flat round dense size="sm" icon="calendar_view_day" :aria-label="controlLabels.periodMode" @click="toggleMode"><q-tooltip>{{controlLabels.periodMode}}</q-tooltip></q-btn>' +
+                        '<q-btn flat round dense size="sm" icon="clear" :aria-label="controlLabels.clear" @click="clearAll"><q-tooltip>{{controlLabels.clear}}</q-tooltip></q-btn>' +
                     '</template>' +
                 '</m-date-time>' +
             '</div>' +
@@ -2641,8 +2672,8 @@
                     '</q-icon>' +
                 '</template>' +
                 '<template v-slot:append>' +
-                    '<q-btn flat dense no-caps size="sm" icon="event_repeat" :round="!periodText" :label="periodText || undefined" :color="periodText ? \'primary\' : \'grey-6\'">' +
-                        '<q-tooltip>Period</q-tooltip>' +
+                    '<q-btn flat dense no-caps size="sm" icon="event_repeat" :aria-label="controlLabels.choosePeriod" :round="!periodText" :label="periodText || undefined" :color="periodText ? \'primary\' : \'grey-6\'">' +
+                        '<q-tooltip>{{controlLabels.choosePeriod}}</q-tooltip>' +
                         '<q-menu class="m-date-period-options q-pa-sm"><div class="column q-gutter-y-xs">' +
                             '<q-select dense outlined options-dense emit-value map-options hide-bottom-space v-model="fields[name+\'_period\']"' +
                                 ' :name="name+\'_period\'" :bg-color="changed(name+\'_period\')" stack-label label="Period" :options="datePeriods" :form="form" behavior="menu"></q-select>' +
@@ -2652,11 +2683,16 @@
                     '</q-btn>' +
                 '</template>' +
                 '<template v-slot:after>' +
-                    '<q-btn flat round dense size="sm" icon="date_range" @click="toggleMode"><q-tooltip>Date Range Mode</q-tooltip></q-btn>' +
-                    '<q-btn flat round dense size="sm" icon="clear" @click="clearAll"><q-tooltip>Clear</q-tooltip></q-btn>' +
+                    '<q-btn flat round dense size="sm" icon="date_range" :aria-label="controlLabels.rangeMode" @click="toggleMode"><q-tooltip>{{controlLabels.rangeMode}}</q-tooltip></q-btn>' +
+                    '<q-btn flat round dense size="sm" icon="clear" :aria-label="controlLabels.clear" @click="clearAll"><q-tooltip>{{controlLabels.clear}}</q-tooltip></q-btn>' +
                 '</template>' +
             '</q-input></div>',
         computed: {
+            controlLabels() {
+                const label = (text) => fieldControlLabel(text, this.label, this.name);
+                return { periodMode: label("Use a period for {field}"), rangeMode: label("Use a date range for {field}"),
+                    choosePeriod: label("Choose a period for {field}"), clear: label("Clear {field} filter") };
+            },
             // the choice as its labels, "Last Month"; empty until a period or an offset is chosen
             periodText() {
                 const labelOf = (list, value) => { const found = list.find((option) => option.value === String(value)); return found ? found.label : String(value); };
@@ -3347,12 +3383,15 @@
             return { operators: [{ value: "equals", label: "Equals" }, { value: "like", label: "Like" }, { value: "contains", label: "Contains" },
                 { value: "begins", label: "Begins With" }, { value: "empty", label: "Empty" }] };
         },
-        computed: { optionsActive() { const op = this.fields[this.name + "_op"]; return this.fields[this.name + "_not"] === "Y" || (!!op && op !== "contains"); } },
+        computed: {
+            optionsActive() { const op = this.fields[this.name + "_op"]; return this.fields[this.name + "_not"] === "Y" || (!!op && op !== "contains"); },
+            optionsLabel() { return fieldControlLabel("Find options for {field}", this.label, this.name); }
+        },
         template:
             '<m-text-line :label="label" :name="name" :id="id" :size="size" :maxlength="maxlength" :form="form" :tooltip="tooltip" v-model="fields[name]">' +
                 '<template v-if="hideOptions !== \'true\'" v-slot:append>' +
-                    '<q-btn flat round dense size="sm" icon="tune" :color="optionsActive ? \'primary\' : \'grey-6\'">' +
-                        '<q-tooltip>Find Options</q-tooltip>' +
+                    '<q-btn flat round dense size="sm" icon="tune" :aria-label="optionsLabel" :color="optionsActive ? \'primary\' : \'grey-6\'">' +
+                        '<q-tooltip>{{optionsLabel}}</q-tooltip>' +
                         '<q-menu class="m-text-find-options q-pa-sm"><div class="column q-gutter-y-xs">' +
                             '<q-select v-if="hideOptions !== \'operator\'" dense outlined options-dense emit-value map-options stack-label hide-bottom-space label="Operator" :name="name + \'_op\'" v-model="fields[name + \'_op\']" :options="operators" :form="form" behavior="menu"></q-select>' +
                             '<q-toggle v-if="hideOptions !== \'operator\'" dense size="sm" :name="name + \'_not\'" label="Not" true-value="Y" false-value="N" v-model="fields[name + \'_not\']" :form="form"></q-toggle>' +
@@ -4929,6 +4968,7 @@
     /* ========== wizard and stack panels, and the split container ========== */
 
     const localized = (text) => (moqui.l10n && moqui.l10n.localize ? moqui.l10n.localize(text) : text);
+    const fieldControlLabel = (text, label, name) => localized(text).replace("{field}", () => label || name || localized("field"));
 
     // The URL of a step: its path with the current parameters, then its own, then those the step's answer gave (screenParameters),
     // without the session token and the form name. Pure, for the node tests.

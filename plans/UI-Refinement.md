@@ -192,14 +192,14 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-048 | G09 Editor → Home | P2 fixed and retested | Existing explicit-null wire sentinel distinguishes Home from omitted default Welcome | Welcome → Home → reload → unchanged Save retains root page/version01; server and browser acceptance pass, including TUI literal sentinel. |
 | UI-049 | G09 Editor → save appended Markdown → compare | P3 fixed and retested | Normalize Markdown at Editor input and comparison presentation; retained resource history/restores stay byte-exact | Existing mixed-line-ending versions02/03 now show2 added/0 removed, live light/dark1920; resource/Git server and browser acceptance pass. |
 | UI-050 | Gallery guide text | P3 corrected | Task links current Handheld example; Editor describes real writes; List distinguishes demonstration row actions from stored finds/preferences | Task/Editor acceptance render passes; final List copy linted and covered by framework gate. |
-| UI-051 | S06 Audit Log / Visit Detail, shared list controls | P2 observed missing accessible names / follow-up | Sort arrows, filter operator buttons and active-filter removal buttons have no accessible name | Material default light 1920, DOM/AX inspection; investigate shared generator/widget ownership before correction. |
-| UI-052 | S06 Visit Detail request history | P2 observed misleading metadata / follow-up | Static requests show literal undefined Type; hostname and instance UUID are labeled Server IP Address / Server Host Name; timestamps mix local and raw UTC | Visit 100001, default light 1920; local screenshot and trace payload confirm the values. Screen/data mapping investigation pending. |
-| UI-053 | S06 → M02 Trace Detail selected error span | P2 measured contrast; P3 information hierarchy / follow-up | Duration text overlaps red timing bar at 3.28:1; selected span exposes full duplicated JSON without a concise diagnostic summary | POST validation failure, default light 1920. Separate duration from bars; summarize status/error/request context with raw data still available. |
-| UI-054 | S12 Models → Model default | P3 observed configuration hierarchy / follow-up | More than 30 override controls form one uninterrupted column; Save is far below the viewport while the capabilities column becomes empty | Default light 1920 screenshot. Group identity, context/pricing, execution and advanced limits; distinguish effective configuration from overrides and keep the save action easy to reach. |
+| UI-051 | S06 Audit Log / Visit Detail, shared list controls | P2 fixed and retested | Named field/filter controls; ascending and descending arrows request their stated direction and recognize legacy sort syntax | Live Material Visit and Standard Audit Log: repeating descending stays descending, ascending updates aria-current; focused QVT/static/generator checks pass. |
+| UI-052 | S06 Visit Detail request history | P2 fixed and retested | Static requests show HTTP request; host and instance have truthful labels; timestamps use local millisecond precision and timezone | Live visit100000/light1920 and existing monitor-reader integration pass; zero byte counts remain zero. |
+| UI-053 | S06 → M02 Trace Detail selected span | P2/P3 fixed and retested | Durations sit outside timing bars; concise selected-span status/request/time summary precedes collapsible raw data | Live GET trace in both themes at1920/390; mounted ERROR-span fixture verifies contrast, geometry and unchanged raw data. |
+| UI-054 | S12 Models → Model default | P3 fixed and retested | Group identity, context/pricing, execution and advanced limits; keep Save Row above the override form | Invalid Temperature retains Description; valid save retains advanced JSON through collapse/reopen; disposable override removed after Cancel/Confirm checks. Light/dark1920,390 and dark1280 inspected. |
 
-| UI-055 | G09 Editor History → Publish | P2 observed action safeguard / follow-up | Publish immediately changes the published marker without confirmation, unlike Restore | John Doe/default light1920, EXAMPLE Welcome03 published successfully; original marker01 restored. Add a version/page-specific confirmation and cancellation check. |
-| UI-056 | G09 Editor Edit dialog | P2 observed accessibility / follow-up | Markdown content textbox has an empty accessible name because pageText has an empty title | Live default light1920 on EXGIT; version note is named. Supply a meaningful content title through the existing text-area label. |
-| UI-057 | G09 Git-backed Editor comparison | P3 design judgment / follow-up | Full commit hashes size the two line-number columns to about150px each, wasting reading width | Light1920 Git diff; title already shows short hashes. Use short comparison display names while preserving full version parameters and history. |
+| UI-055 | G09 Editor History → Publish | P2 fixed and retested | Confirmation identifies page, version and space before changing the published marker | Existing Gallery browser acceptance verifies Cancel causes zero writes and Confirm exactly one, then verifies the marker. |
+| UI-056 | G09 Editor Edit dialog | P2 fixed and retested | Markdown content has an explicit accessible name | Existing Gallery browser acceptance locates and edits the named textbox. |
+| UI-057 | G09 Git-backed Editor comparison | P3 corrected and tested | Short comparison headings preserve reading width; full version IDs remain in data and navigation | Existing Gallery acceptance checks short headings and full version parameters; resource/Git lifecycle coverage passes. |
 
 | UI-058 | S05 Job Run Detail after safe manual run | P3 observed information hierarchy / follow-up | A full-width stack of read-only fields buries outcome/results/timing and repeats User; minute-only times cannot explain short runs | John Doe/light1920, run101012, removedCount0. Evidence `system-job-run-light-before-1920.png`; group outcome/results and runtime metadata, preserve diagnostic links. |
 | UI-059 | Shared navigation: Find → immediate result link | P2 suspected race; source gap confirmed, deterministic retest pending | Older menu-data completion can overwrite the newer route; Find→job link once settled back at the list | Repeating the link after Find settled opens detail. Source shows unguarded menu-data completion; Run Job→Job Runs succeeded and is not a second reproduction. Prepare deferred-response fixture before claiming correction. |
@@ -208,6 +208,15 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-061 | B04 hosted mail setup and Account | P3 observed misleading controls/copy / follow-up | Import window, Start syncing, Last sync and provider-removal wording imply an incoming provider for a gateway-delivered account | Light1920, hosted account100001. Evidence `comms-hosted-options-light-before-1920.png`; condition remote-import controls and clarify activation/local storage. |
 | UI-062 | B04 Account → Open Inbox | P2 observed broken navigation / follow-up | Both Open Inbox links are disabled; source uses obsolete //Comms/Inbox instead of framework-relative route | John Doe/light1920, hosted account100001. Preserve account filter while resolving the current app mount. |
 | UI-063 | B02 thread reading | P2 observed keyboard exclusion / follow-up | Older collapsed message and recipient-details disclosure are click-only; row accessible name concatenates nested actions | John Doe/light1920, two imported synthetic messages. Evidence `comms-thread-light-before-1920.png`; provide named disclosure buttons and focus continuity. |
+| UI-064 | B05 Text Blocks and Identities row actions | P2 observed unnamed actions / follow-up | Delete icons have no accessible name; tooltip alone is insufficient | John Doe/light1920, own block and alias. Add visible Delete text and retain record-specific confirmation. |
+| UI-065 | B05 Text Blocks / Identities Edit → Escape | Suspected focus loss / not reproduced with controlled focus | Earlier direct locator activation ended with BODY focused; explicit focus before Enter returns to Edit correctly | John Doe/light1920: plain Name and rich Signature Escape paths both pass after establishing active Edit. Rules Edit and Gallery History also pass. No speculative product correction; retain a real-Tab follow-up. |
+| UI-066 | M02 trace flame graph | P2 fixed and retested | Label foreground follows actual composited fill; clipped percentage frames preserve12px text without horizontal scaling | Live light/dark1920/390 and switches both ways; mounted fixture checks contrast, palette, zoom and responsive geometry. Yellow labels are black in both themes. |
+| UI-067 | M02 Trace Detail title at390 | P3 fixed and retested | Shared wrapping utility keeps the full trace ID within the viewport | Live light/dark390: document scrollWidth390; title readable and selected-span controls retained. |
+| UI-068 | Shared box headers, observed S12 ModelDetail at390 | P2 fixed and retested | Title remains above wrapping phone actions; Collapse/Expand controls name their section and expose expanded state | Live Model title width100.83px at390, keyboard toggle works; dark1280 and desktop grouping retained; mounted layout regression passes. |
+| UI-069 | B02 thread message flag | P2 observed misleading accessible name / follow-up | A flagged message still exposes Flag with no pressed state; the list row correctly says Remove flag | Dark1920, imported thread100000: row flag marks Alex message, opened Flagged and removed it. Light icon foreground is already readable (#6d5619); fix message action name to match actual state. |
+| UI-070 | B05 Out of office save → reload | P2 observed timestamp drift / investigation | Entered09:00 From/Until return as03:00 after save/reload | John Doe/light1920, disabled hosted account100001:2026-11-08 to2026-11-09. Invalid reversed range is rejected correctly. Evidence comms-away-light-1920.png; inspect service formatting, timestamp alias and shared conversion. Reply remains off. |
+| UI-071 | D07 Reports overview | P3 observed grouping / prepared follow-up | Empty playlist and schedule tables show only headers; eight full-width schedule fields separate unrelated lists without section headings | John Doe/dark1920. Evidence dashboard-reports-dark-before-1920.png. Group downloads, playlists and scheduling; bound forms and explain empty lists. |
+| UI-072 | D07 playlist playback | P1 observed functional failure / investigation | Counter and dashboard link advance but same-origin dashboard iframe refuses to connect | John Doe/dark1920, disposable ui-d07-playlist, monitor-overview/monitor-services. Pause and keyboard Previous work; embedded dashboard is unavailable. Investigate response framing policy before choosing a correction. |
 
 ## Running implementation notes
 
@@ -724,6 +733,125 @@ Verification to date:
   Log `/tmp/moqui-ui-framework-gate10.log`. `git diff --check` passes and the evidence directory has no tracked files.
   Actual200%browser zoom remains unverified; a narrow viewport is not recorded as zoom.
 
+
+### Batch 6 — named list controls and readable diagnostic detail
+
+Batch5 committed locally as `b1a2ffc2`. This batch addresses UI-051–057: explicit ascending/descending controls,
+field-specific filter names, truthful Visit Detail metadata, readable trace bars/durations and selected-span context,
+grouped model overrides, named Markdown content, publish confirmation and compact version headings. Routes, saved
+column/filter values and full version identifiers are preserved.
+
+Cross-review identified valid legacy sort syntax (`NULLS LAST`, ASC/DESC, UPPER/LOWER wrappers) that the initial
+exact-token parser did not recognize. Correct this before generator verification. Trace duration columns can grow
+with long values; text remains outside the timing bar. Existing focused fixtures are extended rather than adding
+application renders or another sweep. Broader Comms findings UI-060–063 remain a separate prepared batch.
+
+- Initial focused WebrootReport:47/47 in1.10s, including both default-theme text/bar contrast and unchanged raw
+  span data; log `/tmp/ui-batch6-report.log`. A subsequent duration-column CSS adjustment will be covered by the gate.
+- During build, B05/default light1920: Text Blocks initial empty state → nonexistent search → New by Enter → blank
+  name error → bad shortcut error retained all fields → correct/save → edit/save/reopen retained revised rich text and
+  Just me scope. Screenshot `comms-text-block-light-1920.png`; UI-064/065 remain follow-ups. Compose text-block menu
+  matches the saved entry and has a useful no-match state; inserting it, entering a subject, Close → Drafts → reopen
+  retains both subject and body, with Saved status. No recipients or Send action; fixture retained for later checks.
+- Generator regeneration325passed/1ignored; precompiled clients3/3; debug build passed (existing large unwind-table
+  linker warning). Initial list-control fixture33/34: cleared range fields retain Quasar's empty mask rather than null;
+  form serialization already omits unfilled masks. Corrected this fixture expectation, without product behavior change.
+- Focused list controls34/34 in12.84s; static sorting26/26 in1.26s; Visit readers2passed/1external-OpenSearch-ignored
+  in10.73s; existing LLM integration1/1 in3.84s. Complete Gallery acceptance59/59server in6.85s and23/23browser in42.90s.
+  First Gallery run22/23 failed an order-sensitive JSON-object comparison in the new assertion; compare request fields
+  directly instead, retaining the exact-one-write check. Native QVT rows also require `tr, .tr` in that fixture.
+  Workspace Clippy and host no-default-feature Clippy passed. Logs `/tmp/ui-batch6-*.log`.
+- Live8096/default light1920: Visit100000 shows HTTP request for static assets, localized millisecond timestamps,
+  labeled host/instance and no undefined type. Started descending remains descending on repeat; ascending changes
+  direction and aria-current correctly. Find Options names each field control; Request options open by Enter and
+  close by Escape. Request trace link retains its bounded time window and opens matching selected-span details.
+- Trace38ddbf4d default light/dark1920: readable separate duration/track, HTTP200, GET, /Login and local start summary;
+  Raw span data opens/closes with Enter. Mobile retest found UI-066/067, so narrow trace coverage is not yet passing.
+  Evidence `visit-detail-light-after-1920.png`, `trace-detail-{light,dark}-after-1920.png`.
+- Model default/dark1920: related controls group visibly; invalid Temperature reports a field error and retains
+  Description. Correct0.5, set API patch{}, collapse advanced section and Save Row; database override created and
+  reopening advanced shows{}. At390 values persist and form does not overflow, but header title shrinks away (UI-068).
+  All changes are disposable; remove the override after follow-up retest, without calling a real provider.
+- Follow-up UI-066–068 fixes are now retested: final trace screenshots in light/dark at1920/390 show readable flame
+  labels with fixed12px text; scrollWidth equals390. Both theme-switch directions work, selected-span keyboard
+  expansion works, and console error/warning collection is empty. Evidence `trace-detail-{light,dark}-final-{1920,390}.png`.
+- Model phone title now measures100.83px with wrapping actions; Collapse/Expand works by Enter. Dark1280 retains
+  side-by-side groups without overflow (`model-detail-dark-final-1280.png`), and light1920/390 screenshots show the
+  final header. Remove Row → Cancel retains the override; Confirm returns to ModelList with Source conf, and reopening
+  shows an empty Description. No provider Test/Probe action was invoked.
+- Standard `/apps/system/AuditLog` names Date ascending/descending; repeated descending preserves the URL and
+  ascending changes it correctly. Full-page navigation was awaited between clicks; empty Standard table remains an
+  inspection, not a completed audit investigation.
+- Final WebrootReport47/47 in1.12s; header layout7/7 in2.94s. The initial header fixture lacked the Material Icons font
+  and displayed expand_less as overflowing text; loading the production icon stylesheet corrected the fixture.
+  Precompiled client regeneration passed. Screen lint scans362 files/5484 expression sites with zero parse failures
+  (87 existing idiom/hazard sites;202 fancy templates compiled). `git diff --check` passes.
+- Source frozen for complete gate11, command `env -u MOQUI_RUNTIME MOQ_TEST_WORKERS=2 CARGO_BUILD_JOBS=4
+  RUST_TEST_THREADS=1 ./moq test-framework --nobuild`; log `/tmp/moqui-ui-framework-gate11.log`. The gate's CLI specs
+  use the existing release binary; changed embedded generators are additionally covered by rebuilt debug core tests,
+  updated goldens, complete Gallery acceptance and live8096. Comms private patches remain separate.
+
+
+- B05 rule activity during the gate: default light1280/1920, hosted account100001. New rule → disable On and select
+  Flag it → blank Name refusal retains conditions → subject Planning lunch dry run matches2/2; nonexistent subject
+  returns0/2. Cancel creates no rule and returns focus to New rule. Save a uniquely named disabled rule → reopen
+  retains Off/Subject/Flag/account → dry run still2/2; Escape returns focus to Edit. Dark390 fits without horizontal
+  overflow and Tab from Test scrolls Save into view. Delete → Cancel keeps the row and permits reopening; Delete
+  confirmation removes it and returns No rules yet. Rule was never enabled or executed. Both imported messages
+  remained unflagged before the separate triage test. Evidence `comms-rule-test-light-{1280,1920}.png` and
+  `comms-rule-dark-390.png`. No console warnings/errors collected.
+- B02 triage: row Flag → Flagged view contains the fixture → Remove flag → Nothing flagged. Row action labels and
+  filtered results update correctly; message control lacks the matching Remove flag name (UI-069). State restored.
+- Gate11 exposed two old framework expectations: the HTML active arrow formerly toggled direction, and QVT reset
+  tooltip formerly said Reset to Default. Updated these existing fixtures to assert named directions/current state
+  and the new Reset filters to default accessible name. The existing built devkit template test passes1/1 in1.95s.
+  Gate11's first Cargo stage stopped at the obsolete assertion (core1458+4+12 passed); server specs349/350 identified
+  the reset-copy assertion. A clean final gate will follow after all gate11 stages finish.
+
+
+- The final served gate11 failure was HandheldScan's substring locator for Confirm: the newly named Collapse Put away:
+  scan the bin, then confirm header also matched. Select the exact Confirm action. Existing HandheldScan now passes3/3
+  in13.35s wall time/4.8s feature time. Gate11 otherwise passed shell342, demo10, offline webroot392 and Dev AIDE48;
+  served147/148. No budget was raised. Gate12 reruns the complete gate after these fixture corrections, with source frozen.
+- B05 Identities: default light1920, non-default `UI review alias <ui.alias@example.invalid>`, Signature UI review
+  signature, placement above the quote. Invalid address blocks submission and retains Name; corrected Add saves,
+  Edit reopens with signature/placement intact. Delete confirmation identifies the alias and fallback identity behavior;
+  Cancel retains it. Alias retained for UI-064/065 retests. Escape from the keyboard-opened Edit leaves BODY focused,
+  reproducing UI-065 beyond Text Blocks.
+- B05 OutOfOffice: explicit no-server warning and Off status; reversed From/Until rejected with The automatic reply
+  ends before it starts, preserving subject/body/dates. Correct Until saves while disabled. Reload retains subject/body
+  but changes09:00 to03:00 on both dates (UI-070). Keep the disabled fixture for the correction; no automatic reply or
+  outbound mail was sent. Wide form grouping remains a design-review opportunity, separate from the functional defect.
+
+- UI-065 qualification: explicitly focus the Identities Edit button before Enter, confirm active BUTTON, then Escape
+  from either Name or the rich Signature editor. Both return focus to Edit. Earlier direct locator activation did not
+  establish the same precondition; a product focus-loss cause is not established. Do not add speculative focus code.
+- S12 endpoint/model lifecycle,8096/dark1920: Add Endpoint with blank optional fields creates100000 and shows the
+  default path. Set Description UI review inert endpoint, Base URL http://127.0.0.1:1 and Disabled Y; save/reopen
+  retains values. Add model ui-review-model, endpoint100000, provider model ui-review-inert. Usable and Test both
+  explain that the endpoint is disabled. This exercises refusal without a real provider request. Model removal Cancel
+  retains it; Confirm removes it; remove the endpoint and verify both fixtures disappear. Alias/client flows remain pending.
+- Runtime preservation: logical save-db backup of8094 completed with both PGDMP files, then load-save restored them
+  successfully into /tmp/mui-8094-b7-restore/db/embedded. The original8094 remains alive and has received no further
+  fixture writes after backup. Cut over only after the next binary builds; preserve the backup and original until
+  known fixture IDs are verified. This avoids copying a live database or losing the existing manual-review state.
+- D07 initial activity,8096/dark1920: inspected Reports grouping (UI-071). New playlist blank Save reports Choose
+  between one and fifty dashboards; duration4 reports Choose a duration from five to3600 seconds, preserving fields.
+  Correct5 creates ui-d07-playlist with monitor-overview/monitor-services. Timed title/counter advances, Pause and
+  keyboard Previous work, but iframe refuses to connect (UI-072). Retain the fixture for diagnosis/retest; do not claim
+  successful playback or close D07. CSV/PDF/schedules remain separate pending activities.
+- Gate12 completed: shell342/342; framework350/350 in45.62s; demo10/10; offline webroot392/392 in60.84s;
+  Dev AIDE48/48; served browser148/148 in49.73s. Webroot feature time44.4s warns above34s but stays below
+  the51s failure limit; no budget changed. Cargo passed core/devkit/host integration and the other completed packages,
+  then failed only the same three unrelated moqui-sip tests with macOS AddrNotAvailable at ua_tests.rs:46
+  (additional loopback address unavailable). Consequently the overall gate exits1; this is not an all-green gate.
+  Affected UI regressions, Gallery acceptance, screen lint and diff checks pass. Log /tmp/moqui-ui-framework-gate12.log.
+- D07 report composition: ui-d07-report saves Services then Monitor overview after Move up, landscape/A4/rows,
+  Appendix on and absolute2026-11-04T00:00:00Z through2026-11-06T00:00:00Z ranges. Reload retains all settings.
+  Native change-bound fields needed actual typing and Tab in the browser harness; fill alone changed the DOM value
+  without committing the change event. CSV preview generates a Download report link named report.zip. The browser
+  download action was rejected because data: URLs are disallowed, after waiting on the permission harness. Do not
+  bypass that policy or claim the ZIP contents/download have been verified. Keep the saved report for later review.
 
 ### Verification environment corrections
 

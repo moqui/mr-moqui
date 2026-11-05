@@ -96,7 +96,7 @@ feature("the put-away bin waits for Confirm", {
         page.keyboard.type("B-01-07")
         page.keyboard.press("Enter")
         page.waitFor(() => !!document.querySelector(".m-scan-confirm"))
-        page.getByRole("button", { name: "Confirm" }).click()
+        page.getByRole("button", { name: "Confirm", exact: true }).click()
         page.waitFor(() => /Put away to B-01-07, operation [0-9a-f-]{8,}/.test(document.body.innerText))
     },
 })

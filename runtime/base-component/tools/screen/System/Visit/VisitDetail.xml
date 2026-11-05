@@ -54,15 +54,26 @@ along with this software (see the LICENSE.md file). If not, see
             }).call()
             // A trace link searches a minute either side of its request.
             const spanTime = (span, shift) => { const start = millisOf(span.start); return Number.isFinite(start) ? new Date(start + shift).toISOString() : null }
-            artifactHitList = (result.hits || []).map(hit=>{const span=hit.body;return {
-                traceFrom:spanTime(span,-60000),traceThru:spanTime(span,Number(span.duration_nano || 0)/1000000+60000),
-                startDateTime:span.start,userId:span['user.id'],artifactType:span['moqui.artifact.type'],artifactSubType:span['moqui.artifact.sub_type'],
-                artifactName:span['moqui.artifact.name'] || span.name,parameterString:span['url.query'] || '',runningTimeMillis:Number(span.duration_nano || 0)/1000000,
-                isSlowHit:span['moqui.artifact.slow']===true?'Y':span['moqui.artifact.slow']===false?'N':'',outputSize:span['http.response.body.size'],
-                wasError:span.status_code==='ERROR'?'Y':'N',errorMessage:span['exception.message'] || span.status_message || '',
-                requestUrl:span['url.path'] || '',referrerUrl:span['http.request.header.referer'] || '',serverIpAddress:span['server.address'] || '',
-                serverHostName:span['host.name'] || span['service.instance.id'] || '',traceId:span.trace_id,visitId:String(visitId)
-            }})
+            const artifactTypeLabels = {AT_XML_SCREEN:'Screen',AT_XML_SCREEN_CONTENT:'Screen resource',AT_XML_SCREEN_TRANS:'Screen action',
+                AT_SERVICE:'Service',AT_ENTITY:'Entity'}
+            artifactHitList = (result.hits || []).map(hit=>{
+                const span=hit.body,started=millisOf(span.start),type=span['moqui.artifact.type'] || ''
+                const host=span['host.name'],instance=span['service.instance.id']
+                return {
+                    traceFrom:spanTime(span,-60000),traceThru:spanTime(span,Number(span.duration_nano || 0)/1000000+60000),
+                    startDateTime:span.start,startDateTimeText:Number.isFinite(started) ? ec.l10n.format(new Date(started),'yyyy-MM-dd HH:mm:ss.SSS z') : ec.l10n.localize('Unavailable'),
+                    userId:span['user.id'],artifactType:type,artifactTypeText:ec.l10n.localize(artifactTypeLabels[type] || type || 'HTTP request'),
+                    artifactSubType:span['moqui.artifact.sub_type'] || '',artifactName:span['moqui.artifact.name'] || span.name || '',
+                    parameterString:span['url.query'] || '',runningTimeMillis:span.duration_nano == null ? null : Number(span.duration_nano)/1000000,
+                    isSlowHit:span['moqui.artifact.slow']===true?'Y':span['moqui.artifact.slow']===false?'N':'',outputSize:span['http.response.body.size'],
+                    wasError:span.status_code==='ERROR'?'Y':'N',errorMessage:span['exception.message'] || span.status_message || '',
+                    requestUrl:span['url.path'] || '',referrerUrl:span['http.request.header.referer'] || '',
+                    // Keep the list's field keys for saved column preferences; label the actual telemetry values.
+                    serverIpAddress:span['server.address'] || '',serverHostName:host ? ec.l10n.localize('Host')+': '+host :
+                        instance ? ec.l10n.localize('Instance')+': '+instance : ec.l10n.localize('Not recorded'),
+                    traceId:span.trace_id,visitId:String(visitId)
+                }
+            })
             artifactHitListCount=result.total || 0;artifactHitListPageIndex=parseInt(pageIndex || '0',10);artifactHitListPageSize=parseInt(pageSize || '50',10)
             artifactHitListPageMaxIndex=Math.max(0,Math.ceil(artifactHitListCount/artifactHitListPageSize)-1)
             artifactHitListPageRangeLow=artifactHitList.length?artifactHitListPageIndex*artifactHitListPageSize+1:0
@@ -135,53 +146,54 @@ along with this software (see the LICENSE.md file). If not, see
             </box-body></container-box>
         </widgets></section>
 
+        <label type="p" style="m-muted" text="Retained requests · Times in ${ec.user.timeZone}, with millisecond precision"/>
         <form-list name="VisitRequestTraceList" list="artifactHitList" skip-form="true" header-dialog="true" select-columns="true">
             <field name="visitId"><header-field><hidden/></header-field></field>
 
-            <field name="startDateTime"><header-field show-order-by="true"><date-period time="true"/></header-field>
-                <default-field><display/></default-field></field>
-            <field name="userId"><default-field><display/></default-field></field>
+            <field name="startDateTime"><header-field title="Started" show-order-by="true"><date-period time="true"/></header-field>
+                <default-field><display text="${startDateTimeText}"/></default-field></field>
+            <field name="userId"><default-field><display text="User: ${userId || 'Not recorded'}" style="text-caption m-muted m-wrap-anywhere"/></default-field></field>
 
             <field name="artifactType">
                 <header-field show-order-by="true"><drop-down allow-multiple="true">
                     <option key="AT_XML_SCREEN"/><option key="AT_XML_SCREEN_CONTENT"/><option key="AT_XML_SCREEN_TRANS"/>
                     <option key="AT_SERVICE"/><option key="AT_ENTITY"/>
                 </drop-down></header-field>
-                <default-field title="Type"><display text="${artifactType?.replace('-',' - ')}"/></default-field>
+                <default-field title="Type"><display text="${artifactTypeText}"/></default-field>
             </field>
-            <field name="artifactSubType"><default-field title="Sub Type"><display/></default-field></field>
+            <field name="artifactSubType"><default-field title="Sub Type"><display text="${artifactSubType ? 'Subtype: '+artifactSubType : ''}" style="text-caption m-muted m-wrap-anywhere"/></default-field></field>
 
-            <field name="artifactName"><header-field show-order-by="true"><text-find/></header-field>
-                <default-field><display/></default-field></field>
+            <field name="artifactName"><header-field title="Request" show-order-by="true"><text-find/></header-field>
+                <default-field><display style="text-weight-medium m-wrap-anywhere"/></default-field></field>
             <field name="parameterString"><header-field><text-find/></header-field>
-                <default-field><display text="${parameterString?.replace(',',' , ') || 'N/A'}"/></default-field></field>
+                <default-field><display text="${parameterString ? 'Query: '+parameterString : ''}" style="text-caption m-muted m-wrap-anywhere"/></default-field></field>
 
-            <field name="runningTimeMillis"><header-field title="Time" show-order-by="true"/>
-                <default-field><display text="${ec.l10n.format(runningTimeMillis, '0.00')}ms"/></default-field></field>
+            <field name="runningTimeMillis"><header-field title="Duration" show-order-by="true"/>
+                <default-field><display text="${runningTimeMillis == null ? 'Unavailable' : ec.l10n.format(runningTimeMillis, '0.00')+' ms'}"/></default-field></field>
             <field name="isSlowHit">
                 <header-field title="Slow" show-order-by="true"><drop-down allow-empty="true"><option key="Y"/><option key="N"/></drop-down></header-field>
-                <default-field><display/></default-field>
+                <default-field><display text="${isSlowHit ? 'Slow: '+(isSlowHit === 'Y' ? 'Yes' : 'No') : ''}" style="text-caption m-muted"/></default-field>
             </field>
-            <field name="outputSize"><default-field title="Size"><display text="${outputSize || 'Unknown'}"/></default-field></field>
+            <field name="outputSize"><default-field title="Response size"><display text="${outputSize == null ? 'Bytes not recorded' : ec.l10n.format(outputSize, '#,##0')+' bytes'}" style="text-caption m-muted"/></default-field></field>
 
             <field name="wasError">
-                <header-field title="Error" show-order-by="true"><drop-down allow-empty="true"><option key="Y"/><option key="N"/></drop-down></header-field>
-                <default-field><display/></default-field>
+                <header-field title="Outcome" show-order-by="true"><drop-down allow-empty="true"><option key="Y" text="Error"/><option key="N" text="No error"/></drop-down></header-field>
+                <default-field><display text="${wasError === 'Y' ? 'Error' : 'No error recorded'}"/></default-field>
             </field>
             <field name="errorMessage"><header-field><text-find/></header-field>
-                <default-field title="Message"><display/></default-field></field>
+                <default-field title="Message"><display style="m-wrap-anywhere"/></default-field></field>
 
-            <field name="requestUrl"><header-field show-order-by="true"/>
-                <default-field><display/></default-field></field>
-            <field name="referrerUrl"><default-field><display text="${referrerUrl || 'N/A'}"/></default-field></field>
+            <field name="requestUrl"><header-field title="Path" show-order-by="true"/>
+                <default-field><display text="${requestUrl ? 'Path: '+requestUrl : ''}" style="text-caption m-muted m-wrap-anywhere"/></default-field></field>
+            <field name="referrerUrl"><default-field><display text="${referrerUrl ? 'Referrer: '+referrerUrl : ''}" style="text-caption m-muted m-wrap-anywhere"/></default-field></field>
 
-            <field name="serverIpAddress"><default-field><display/></default-field></field>
-            <field name="serverHostName"><default-field><display/></default-field></field>
+            <field name="serverIpAddress"><default-field title="Request host"><display text="${serverIpAddress || 'Not recorded'}" style="m-wrap-anywhere"/></default-field></field>
+            <field name="serverHostName"><default-field title="Server identity"><display style="text-caption m-muted m-wrap-anywhere"/></default-field></field>
 
-            <field name="traceId"><default-field title="Trace"><link url="traceDetail" text="${traceId}" link-type="anchor"><parameter name="traceId"/><parameter name="from" from="traceFrom"/><parameter name="thru" from="traceThru"/></link></default-field></field>
+            <field name="traceId"><default-field title="Trace"><link url="traceDetail" text="Trace: ${traceId}" link-type="anchor" style="text-caption m-wrap-anywhere"><parameter name="traceId"/><parameter name="from" from="traceFrom"/><parameter name="thru" from="traceThru"/></link></default-field></field>
             <field name="findButton"><header-field title="Find"><submit/></header-field></field>
 
-            <!-- NOTE: maybe go to 3-4 rows per record instead of two -->
+            <!-- Six data columns: start/user, type, timing, request/context, outcome, and server identity. -->
             <form-list-column><field-ref name="startDateTime"/><field-ref name="userId"/></form-list-column>
             <form-list-column><field-ref name="artifactType"/><field-ref name="artifactSubType"/></form-list-column>
             <form-list-column><field-ref name="runningTimeMillis"/><field-ref name="isSlowHit"/><field-ref name="outputSize"/></form-list-column>

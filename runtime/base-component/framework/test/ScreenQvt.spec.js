@@ -205,7 +205,8 @@ feature('filter summary uses all fields, escapes labels and keeps hidden reset p
     assert.ok(reset);
     assert.match(reset, /organizationPartyId/);
     assert.doesNotMatch(reset, /statusId|PmntProposed/);
-    assert.match(html, /<q-tooltip>Reset to Default<\/q-tooltip>/);
+    assert.match(html, /aria-label="Reset filters to default"/);
+    assert.match(html, /<q-tooltip>Reset filters to default<\/q-tooltip>/);
 })(); } });
 
 feature('empty filters have no reset control; inline headers and hidden navigation have no summary', { expect() { (function () {

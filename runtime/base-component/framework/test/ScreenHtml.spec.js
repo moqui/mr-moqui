@@ -109,16 +109,18 @@ feature('dialog headers retain an empty summary row between navigation and colum
     }
 })(); } });
 
-feature('sortable HTML titles keep Java whitespace and active direction toggles', { expect() { (function () {
+feature('sortable HTML titles preserve spacing and request their named direction', { expect() { (function () {
     const columns = [[{ name: 'orderId', title: () => 'ID <&>', orderBy: 'case-insensitive' }]];
     const html = renderList({ columns });
     assert.match(html, /ID &lt;&amp;&gt; <span class="order-by"> <a/);
     assert.match(html, /<\/a> <a/);
     assert.match(html, /href="\/apps\/FindOrder\?orderByField=%5EorderId"/);
     assert.match(html, /href="\/apps\/FindOrder\?orderByField=-%5EorderId"/);
-    for (const [orderBy, target] of [['^orderId', '-%5EorderId'], ['-^orderId', '%5EorderId']]) {
+    for (const [orderBy, target, direction] of [['^orderId', '%5EorderId', 'ascending'], ['-^orderId', '-%5EorderId', 'descending']]) {
         const active = renderList({ columns, orderBy }).match(/<a[^>]*class="active"[^>]*>/)[0];
         assert.ok(active.includes('orderByField=' + target + '"'));
+        assert.ok(active.includes('aria-label="Sort ID &lt;&amp;&gt; ' + direction + '"'));
+        assert.ok(active.includes('aria-current="true"'));
     }
     assert.doesNotMatch(renderList({ columns: [[{ title: () => 'Name' }]] }), /class="order-by"/);
 })(); } });

@@ -258,6 +258,7 @@ const activities = {
         assert(page.evaluate(() => new URL(location.href).searchParams.get("pagePath")) === "\u00a0", "Reload retains Home")
         page.getByRole("button", { name: "Edit", exact: true }).click()
         page.locator(".q-dialog #EditPage_pageText").waitFor()
+        assert(page.locator(".q-dialog").getByRole("textbox", { name: "Content", exact: true }).count() === 1, "The Markdown editor has an accessible Content name")
         assert(page.locator("#EditPage_pageText").value().startsWith("# Example Wiki"), "Edit opens the root page's Markdown")
         page.getByRole("button", { name: "Save as a new version", exact: true }).click()
         page.waitFor(() => !document.querySelector(".q-dialog #EditPage_pageText"))
@@ -288,6 +289,60 @@ const activities = {
         page.waitFor(() => !document.querySelector(".q-dialog #EditPage_pageText"))
         page.waitFor(text => document.querySelector(".q-page").innerText.includes(text), { arg: marker })
         page.getByRole("button", { name: "History", exact: true }).click()
+        page.locator(".q-dialog").getByRole("button", { name: "Publish", exact: true }).first().waitFor()
+        const published = page.locator(".q-dialog").getByRole("button", { name: "Publish", exact: true }).first().evaluate(element => {
+            const fields = new FormData(element.form)
+            window.galleryPublishButton = element
+            const version = fields.get("publishedVersionName")
+            return { version, pageId: fields.get("wikiPageId"), shortName: version.length > 12 ? version.substring(0, 10) : version }
+        })
+        // Watch real requests; cancellation must not submit the hidden form or change the published marker.
+        page.evaluate(() => {
+            window.galleryPublishWrites = []
+            window.galleryPublishFetch = window.fetch
+            window.fetch = function(input, init) {
+                const url = typeof input === "string" ? input : input && input.url || String(input)
+                const body = init && init.body
+                if (/\/publishVersion(?:\?|$)/.test(url) && body && typeof body.get === "function") {
+                    window.galleryPublishWrites.push({ version: body.get("publishedVersionName"), pageId: body.get("wikiPageId") })
+                }
+                return window.galleryPublishFetch.apply(this, arguments)
+            }
+            return true
+        })
+        try {
+            page.locator(".q-dialog").getByRole("button", { name: "Publish", exact: true }).first().press("Enter")
+            page.locator(".q-dialog-plugin").waitFor()
+            assert(page.locator(".q-dialog-plugin").text().includes("Publish version " + published.shortName + " of Welcome in EXAMPLE?"), "Publish confirmation identifies the page, space and selected version")
+            page.locator(".q-dialog-plugin").getByRole("button", { name: "Cancel", exact: true }).click()
+            page.waitFor(() => !document.querySelector(".q-dialog-plugin") && document.activeElement === window.galleryPublishButton)
+            assert(page.evaluate(() => window.galleryPublishWrites.length) === 0, "Cancel sends no publish request")
+            assert(page.evaluate(() => window.galleryPublishButton.isConnected && !window.galleryPublishButton.closest("tr, .tr").innerText.includes("published")), "The cancelled version remains unpublished")
+            page.locator(".q-dialog").getByRole("button", { name: "Publish", exact: true }).first().press("Enter")
+            page.locator(".q-dialog-plugin").getByRole("button", { name: "Confirm", exact: true }).press("Enter")
+            page.waitFor(() => window.galleryPublishWrites.length === 1 && !document.querySelector(".q-dialog-plugin"))
+            page.waitFor(shortName => {
+                const box = document.querySelector(".q-page")
+                return box && box.innerText.includes("· published " + shortName) && !window.moqui.webrootVue.loading
+            }, { arg: published.shortName })
+            const writes = page.evaluate(() => window.galleryPublishWrites)
+            assert(writes.length === 1 && writes[0].version === published.version && writes[0].pageId === published.pageId,
+                "Confirm publishes this page's full version ID exactly once: " + JSON.stringify(writes))
+        } finally {
+            page.evaluate(() => {
+                if (typeof window.galleryPublishFetch === "function") window.fetch = window.galleryPublishFetch
+                delete window.galleryPublishFetch
+                delete window.galleryPublishWrites
+                delete window.galleryPublishButton
+                return true
+            })
+        }
+        page.getByRole("button", { name: "History", exact: true }).click()
+        page.locator(".q-dialog").getByRole("link", { name: published.shortName, exact: true }).waitFor()
+        assert(page.locator(".q-dialog").getByRole("link", { name: published.shortName, exact: true }).evaluate(element => {
+            const row = element.closest("tr, .tr")
+            return row.innerText.includes("published") && !Array.from(row.querySelectorAll("button")).some(button => button.textContent.trim() === "Publish")
+        }), "History marks the published version and no longer offers Publish on that row")
         page.locator(".q-dialog").getByRole("link", { name: "prev", exact: true }).first().click()
         page.waitFor(() => !!new URL(location.href).searchParams.get("versionNameLhs"))
         assert(page.text().includes("2 added, 0 removed"), "Appending a paragraph does not replace lines because of browser CRLF endings")

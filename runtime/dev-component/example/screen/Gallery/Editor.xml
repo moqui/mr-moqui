@@ -128,8 +128,9 @@ along with this software (see the LICENSE.md file). If not, see
                     const lhsText = pageReference.getText(versionNameLhs)
                     const rhsText = versionNameRhs ? pageReference.getText(versionNameRhs) : pageReference.getText()
                     if (lhsText == null || rhsText == null) throw new Error('A requested version is unavailable')
-                    const diff = ec.resource.textDiff(markdownText(lhsText), markdownText(rhsText), versionNameLhs,
-                            versionNameRhs || 'current')
+                    // Only the diff headings use short names; version reads and navigation retain the full IDs.
+                    const diff = ec.resource.textDiff(markdownText(lhsText), markdownText(rhsText), short(versionNameLhs),
+                            versionNameRhs ? short(versionNameRhs) : 'current')
                     diffHtml = diff.html
                     diffText = diff.unifiedDiff
                     diffTitle = 'Compare ' + short(diff.fromName) + ' with ' + short(diff.toName) + ': ' + diff.stats.insertions +
@@ -175,7 +176,7 @@ along with this software (see the LICENSE.md file). If not, see
                             <form-single name="EditPage" transition="savePage">
                                 <field name="wikiSpaceId"><default-field><hidden/></default-field></field>
                                 <field name="pagePath"><default-field><hidden/></default-field></field>
-                                <field name="pageText"><default-field title="">
+                                <field name="pageText"><default-field title="Content">
                                     <text-area rows="18" cols="100" editor-type="md"/></default-field></field>
                                 <field name="versionNote"><default-field title="Version note"><text-line size="60"/></default-field></field>
                                 <field name="submitButton"><default-field title="Save as a new version"><submit/></default-field></field>
@@ -205,6 +206,7 @@ along with this software (see the LICENSE.md file). If not, see
                                             confirmation="Restore version ${shortName} as the newest version?"
                                             parameter-map="Object.assign({}, currentPageParameters, {versionName:versionName})"/>
                                     <link url="publishVersion" text="Publish" condition="!isPublished &amp;&amp; pageInfo.wikiPageId" link-type="hidden-form-link"
+                                            confirmation="Publish version ${shortName} of ${pagePath || 'Home'} in ${wikiSpaceId}?"
                                             parameter-map="Object.assign({}, currentPageParameters, {versionName:versionName, wikiPageId:pageInfo.wikiPageId, publishedVersionName:versionName})"/>
                                 </default-field></field>
                             </form-list>

@@ -8,15 +8,15 @@
         <set field="rowListPageMaxIndex" from="5"/>
         <set field="rowListPageRangeLow" from="41"/>
         <set field="rowListPageRangeHigh" from="60"/>
-        <set field="orderByField" value="-id"/>
+        <set field="orderByField" value="-id NULLS LAST,-^UPPER(title) ASC NULLS FIRST,LOWER(status) DESC,-qtyTotal"/>
     </actions>
     <widgets>
         <form-list name="Rich" list="rowList" show-csv-button="true" show-all-button="true" style="wide">
             <field name="id"><header-field show-order-by="true"><text-find/></header-field><default-field><display/></default-field></field>
-            <field name="title" align="center"><header-field container-style="head"><drop-down><option key="A"/></drop-down></header-field>
+            <field name="title" align="center"><header-field container-style="head" show-order-by="case-insensitive"><drop-down><option key="A"/></drop-down></header-field>
                 <default-field container-style="titled"><text-line/></default-field></field>
-            <field name="qty" align="right"><default-field><display format="0.0"/></default-field></field>
-            <field name="status">
+            <field name="qty" align="right"><header-field show-order-by="true"/><default-field><display format="0.0"/></default-field></field>
+            <field name="status"><header-field show-order-by="true"/>
                 <conditional-field condition="status == 'X'"><display text="Excluded"/></conditional-field>
                 <default-field><display/></default-field>
             </field>

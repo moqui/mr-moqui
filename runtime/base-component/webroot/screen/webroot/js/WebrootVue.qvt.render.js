@@ -2806,11 +2806,10 @@
               ], 8, ["data-state"]))
             }
         } },
-        "m-container-box": { hash: "faa2a157", make: function (Vue) {
-            const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, renderSlot: _renderSlot, resolveComponent: _resolveComponent, createVNode: _createVNode, withModifiers: _withModifiers, createElementVNode: _createElementVNode, withCtx: _withCtx, vShow: _vShow, withDirectives: _withDirectives, normalizeClass: _normalizeClass, createBlock: _createBlock } = Vue
+        "m-container-box": { hash: "7c77d94e", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, renderSlot: _renderSlot, createElementVNode: _createElementVNode, resolveComponent: _resolveComponent, createVNode: _createVNode, withModifiers: _withModifiers, normalizeClass: _normalizeClass, withCtx: _withCtx, vShow: _vShow, withDirectives: _withDirectives, createBlock: _createBlock } = Vue
 
             return function render(_ctx, _cache) {
-              const _component_q_space = _resolveComponent("q-space")
               const _component_q_btn = _resolveComponent("q-btn")
               const _component_q_separator = _resolveComponent("q-separator")
               const _component_q_card_section = _resolveComponent("q-card-section")
@@ -2824,32 +2823,42 @@
               }, {
                 default: _withCtx(() => [
                   _createElementVNode("div", {
-                    class: "m-box-head row items-center no-wrap q-py-xs q-px-sm",
+                    class: _normalizeClass(["m-box-head row items-center q-py-xs q-px-sm", {'m-box-has-toolbar': !!_ctx.$slots.toolbar}]),
                     onClick: _withModifiers(_ctx.toggleBody, ["self"])
                   }, [
-                    (_ctx.title && _ctx.title.length)
+                    _createElementVNode("div", { class: "m-box-heading row items-center" }, [
+                      (_ctx.title && _ctx.title.length)
+                        ? (_openBlock(), _createElementBlock("div", {
+                            key: 0,
+                            class: "m-box-title text-subtitle1 text-weight-medium cursor-pointer",
+                            onClick: _ctx.toggleBody
+                          }, _toDisplayString(_ctx.title), 9, ["onClick"]))
+                        : _createCommentVNode("", true),
+                      _renderSlot(_ctx.$slots, "header")
+                    ]),
+                    (_ctx.$slots.toolbar)
                       ? (_openBlock(), _createElementBlock("div", {
                           key: 0,
-                          class: "text-subtitle1 text-weight-medium ellipsis cursor-pointer",
-                          onClick: _ctx.toggleBody
-                        }, _toDisplayString(_ctx.title), 9, ["onClick"]))
+                          class: "m-box-toolbar row items-center"
+                        }, [
+                          _renderSlot(_ctx.$slots, "toolbar")
+                        ]))
                       : _createCommentVNode("", true),
-                    _renderSlot(_ctx.$slots, "header"),
-                    _createVNode(_component_q_space),
-                    _renderSlot(_ctx.$slots, "toolbar"),
                     _createVNode(_component_q_btn, {
+                      class: "m-box-toggle m-muted",
                       flat: "",
                       round: "",
                       dense: "",
                       size: "sm",
-                      color: "grey-7",
+                      "aria-label": _ctx.toggleLabel,
+                      "aria-expanded": String(_ctx.isBodyOpen),
                       icon: _ctx.isBodyOpen ? 'expand_less' : 'expand_more',
                       onClick: _ctx.toggleBody
-                    }, null, 8, ["icon", "onClick"])
-                  ], 8, ["onClick"]),
+                    }, null, 8, ["aria-label", "aria-expanded", "icon", "onClick"])
+                  ], 10, ["onClick"]),
                   _createVNode(_component_q_slide_transition, null, {
                     default: _withCtx(() => [
-                      _withDirectives(_createElementVNode("div", null, [
+                      _withDirectives(_createElementVNode("div", { class: "m-box-content" }, [
                         _createVNode(_component_q_separator),
                         _createVNode(_component_q_card_section, null, {
                           default: _withCtx(() => [
@@ -3005,8 +3014,8 @@
               ], 10, ["id", "data-stacked"]))
             }
         } },
-        "m-date-period": { hash: "9a3df286", make: function (Vue) {
-            const { resolveComponent: _resolveComponent, createVNode: _createVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createBlock: _createBlock, createElementVNode: _createElementVNode } = Vue
+        "m-date-period": { hash: "7e6e9c", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, createVNode: _createVNode, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, withCtx: _withCtx, openBlock: _openBlock, createElementBlock: _createElementBlock, createCommentVNode: _createCommentVNode, createBlock: _createBlock, createElementVNode: _createElementVNode } = Vue
 
             return function render(_ctx, _cache) {
               const _component_m_date_time = _resolveComponent("m-date-time")
@@ -3053,36 +3062,38 @@
                           dense: "",
                           size: "sm",
                           icon: "calendar_view_day",
+                          "aria-label": _ctx.controlLabels.periodMode,
                           onClick: _ctx.toggleMode
                         }, {
                           default: _withCtx(() => [
                             _createVNode(_component_q_tooltip, null, {
                               default: _withCtx(() => [
-                                _createTextVNode("Period Select Mode")
+                                _createTextVNode(_toDisplayString(_ctx.controlLabels.periodMode), 1)
                               ]),
                               _: 1
                             })
                           ]),
                           _: 1
-                        }, 8, ["onClick"]),
+                        }, 8, ["aria-label", "onClick"]),
                         _createVNode(_component_q_btn, {
                           flat: "",
                           round: "",
                           dense: "",
                           size: "sm",
                           icon: "clear",
+                          "aria-label": _ctx.controlLabels.clear,
                           onClick: _ctx.clearAll
                         }, {
                           default: _withCtx(() => [
                             _createVNode(_component_q_tooltip, null, {
                               default: _withCtx(() => [
-                                _createTextVNode("Clear")
+                                _createTextVNode(_toDisplayString(_ctx.controlLabels.clear), 1)
                               ]),
                               _: 1
                             })
                           ]),
                           _: 1
-                        }, 8, ["onClick"])
+                        }, 8, ["aria-label", "onClick"])
                       ]),
                       _: 1
                     }, 8, ["name", "id", "label", "form", "type", "modelValue", "onUpdate:modelValue"])
@@ -3141,6 +3152,7 @@
                           "no-caps": "",
                           size: "sm",
                           icon: "event_repeat",
+                          "aria-label": _ctx.controlLabels.choosePeriod,
                           round: !_ctx.periodText,
                           label: _ctx.periodText || undefined,
                           color: _ctx.periodText ? 'primary' : 'grey-6'
@@ -3148,7 +3160,7 @@
                           default: _withCtx(() => [
                             _createVNode(_component_q_tooltip, null, {
                               default: _withCtx(() => [
-                                _createTextVNode("Period")
+                                _createTextVNode(_toDisplayString(_ctx.controlLabels.choosePeriod), 1)
                               ]),
                               _: 1
                             }),
@@ -3195,7 +3207,7 @@
                             })
                           ]),
                           _: 1
-                        }, 8, ["round", "label", "color"])
+                        }, 8, ["aria-label", "round", "label", "color"])
                       ]),
                       after: _withCtx(() => [
                         _createVNode(_component_q_btn, {
@@ -3204,36 +3216,38 @@
                           dense: "",
                           size: "sm",
                           icon: "date_range",
+                          "aria-label": _ctx.controlLabels.rangeMode,
                           onClick: _ctx.toggleMode
                         }, {
                           default: _withCtx(() => [
                             _createVNode(_component_q_tooltip, null, {
                               default: _withCtx(() => [
-                                _createTextVNode("Date Range Mode")
+                                _createTextVNode(_toDisplayString(_ctx.controlLabels.rangeMode), 1)
                               ]),
                               _: 1
                             })
                           ]),
                           _: 1
-                        }, 8, ["onClick"]),
+                        }, 8, ["aria-label", "onClick"]),
                         _createVNode(_component_q_btn, {
                           flat: "",
                           round: "",
                           dense: "",
                           size: "sm",
                           icon: "clear",
+                          "aria-label": _ctx.controlLabels.clear,
                           onClick: _ctx.clearAll
                         }, {
                           default: _withCtx(() => [
                             _createVNode(_component_q_tooltip, null, {
                               default: _withCtx(() => [
-                                _createTextVNode("Clear")
+                                _createTextVNode(_toDisplayString(_ctx.controlLabels.clear), 1)
                               ]),
                               _: 1
                             })
                           ]),
                           _: 1
-                        }, 8, ["onClick"])
+                        }, 8, ["aria-label", "onClick"])
                       ]),
                       default: _withCtx(() => [
                         (_ctx.tooltip)
@@ -9332,8 +9346,8 @@
                         }, 16, ["label", "model-value", "onUpdate:modelValue", "name", "for", "rows", "cols", "readonly", "autogrow", "maxlength", "disable", "form", "bg-color"]))
             }
         } },
-        "m-text-find": { hash: "77d978ad", make: function (Vue) {
-            const { createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, createSlots: _createSlots } = Vue
+        "m-text-find": { hash: "852d4cb7", make: function (Vue) {
+            const { toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, resolveComponent: _resolveComponent, withCtx: _withCtx, createVNode: _createVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, createElementVNode: _createElementVNode, createSlots: _createSlots } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_tooltip = _resolveComponent("q-tooltip")
@@ -9364,12 +9378,13 @@
                           dense: "",
                           size: "sm",
                           icon: "tune",
+                          "aria-label": _ctx.optionsLabel,
                           color: _ctx.optionsActive ? 'primary' : 'grey-6'
                         }, {
                           default: _withCtx(() => [
                             _createVNode(_component_q_tooltip, null, {
                               default: _withCtx(() => [
-                                _createTextVNode("Find Options")
+                                _createTextVNode(_toDisplayString(_ctx.optionsLabel), 1)
                               ]),
                               _: 1
                             }),
@@ -9429,7 +9444,7 @@
                             })
                           ]),
                           _: 1
-                        }, 8, ["color"])
+                        }, 8, ["aria-label", "color"])
                       ]),
                       key: "0"
                     }

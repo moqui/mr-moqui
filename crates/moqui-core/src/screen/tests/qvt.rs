@@ -347,6 +347,27 @@ fn form_lists() {
     let out = check("lists", &[]);
     assert!(out.contains("<m-form-paginate"), "{out}");
     assert!(out.contains("class=\"tr\""), "{out}");
+    // Both arrows retain their advertised direction even when that direction is already active.
+    // Existing NULLS/direction suffixes and case wrappers follow OrderBy::parse; ASC overrides a leading minus.
+    // A similarly named sort token must not mark the Qty column active.
+    for (label, order, current) in [
+        ("Sort ID ascending", "id", false),
+        ("Sort ID descending", "-id", true),
+        ("Sort Title ascending", "%5Etitle", true),
+        ("Sort Title descending", "-%5Etitle", false),
+        ("Sort Qty ascending", "qty", false),
+        ("Sort Qty descending", "-qty", false),
+        ("Sort Status ascending", "status", false),
+        ("Sort Status descending", "-status", true),
+    ] {
+        let label_at = out.find(&format!("aria-label=\"{label}\"")).unwrap();
+        let start = out[..label_at].rfind("<m-link ").unwrap();
+        let end = label_at + out[label_at..].find('>').unwrap();
+        let link = &out[start..end];
+        assert!(link.contains(&format!("orderByField={order}\"")), "{link}");
+        assert_eq!(link.contains("aria-current=\"true\""), current, "{link}");
+        assert!(link.contains(&format!("title=\"{label}\"")), "{link}");
+    }
 }
 
 /// An anchor to a transition that only redirects is a link to that screen. A transition with actions, and

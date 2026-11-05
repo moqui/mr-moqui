@@ -1349,7 +1349,7 @@
                 w('<div class="form-list-filter-summary text-center q-pa-sm" style="font-weight:normal;">' + summaries.join(" "));
                 if (summaries.length) {
                     w("<m-form-link" + A({ name: cfg.headerFormId + "_clr", id: cfg.headerFormId + "_clr", action: sri.getCurrentScreenUrl().path, ":fields-initial": initial(hiddenParams(n)) }) +
-                        '><q-btn flat round dense size="sm" type="submit" icon="clear" color="negative"><q-tooltip>' + t(L("Reset to Default")) + '</q-tooltip></q-btn></m-form-link>');
+                        '><q-btn flat round dense size="sm" type="submit" icon="clear" color="negative" aria-label="' + e(L("Reset filters to default")) + '"><q-tooltip>' + t(L("Reset filters to default")) + '</q-tooltip></q-btn></m-form-link>');
                 }
                 w("</div>");
             }
@@ -1497,21 +1497,39 @@
                 let out = '<div><div class="' + cls("form-title", f.headerStyle || null, align === "center" ? "text-center" : align === "right" ? "text-right" : null) + '">' + t(f.submit ? "" : f.title());
                 if (f.orderBy) {
                     const insensitive = f.orderBy === "case-insensitive";
-                    let current = ctx("orderByField") || "";
-                    if (current && String(current).indexOf(",") >= 0) {
-                        const hit = String(current).split(",").filter((part) => part && part.indexOf(f.name) >= 0);
-                        if (hit.length) current = hit[0];
-                    }
-                    current = String(current);
-                    const mentioned = current && current.indexOf(f.name) >= 0;
-                    const asc = mentioned && current.indexOf("-") !== 0;
-                    const desc = mentioned && current.indexOf("-") === 0;
-                    let ascUrl = pathUrl("orderByField", (insensitive ? "^" : "") + f.name);
-                    let descUrl = pathUrl("orderByField", "-" + (insensitive ? "^" : "") + f.name);
-                    if (asc) ascUrl = descUrl;
-                    if (desc) descUrl = ascUrl;
-                    out += ' <span class="form-order-by"><m-link href="' + e(ascUrl) + '"' + (asc ? ' class="active"' : "") + '><q-icon name="arrow_drop_up"></q-icon></m-link> <m-link href="' + e(descUrl) + '"' + (desc ? ' class="active"' : "") +
-                        '><q-icon name="arrow_drop_down"></q-icon></m-link></span>';
+                    // Match OrderBy::parse: signs/case prefix, optional direction/null placement, then UPPER/LOWER.
+                    const parseOrder = (value) => {
+                        let name = String(value).trimStart(), descending = false;
+                        while (name && "-+^ ".includes(name.charAt(0))) {
+                            if (name.charAt(0) === "-") descending = true;
+                            else if (name.charAt(0) === "+") descending = false;
+                            name = name.slice(1);
+                        }
+                        name = name.trimEnd().replace(/ NULLS (FIRST|LAST)$/i, "");
+                        const direction = / (ASC|DESC)$/i.exec(name);
+                        if (direction) {
+                            descending = direction[1].toUpperCase() === "DESC";
+                            name = name.slice(0, -direction[0].length);
+                        }
+                        if (name.includes("(")) {
+                            if (/^(UPPER|LOWER)\(/i.test(name)) name = name.slice(6);
+                            if (name.endsWith(")")) name = name.slice(0, -1);
+                        }
+                        name = name.trim();
+                        return name ? {name, descending} : null;
+                    };
+                    const current = String(ctx("orderByField") || "").split(",").map(parseOrder)
+                        .find((part) => part && part.name === f.name);
+                    const asc = !!current && !current.descending;
+                    const desc = !!current && current.descending;
+                    const ascUrl = pathUrl("orderByField", (insensitive ? "^" : "") + f.name);
+                    const descUrl = pathUrl("orderByField", "-" + (insensitive ? "^" : "") + f.name);
+                    const ascLabel = L("Sort {field} ascending").replace("{field}", () => f.title());
+                    const descLabel = L("Sort {field} descending").replace("{field}", () => f.title());
+                    out += ' <span class="form-order-by"><m-link' + A({ href: ascUrl, "aria-label": ascLabel, title: ascLabel,
+                        class: asc ? "active" : null, "aria-current": asc ? "true" : null }) + '><q-icon name="arrow_drop_up" aria-hidden="true"></q-icon></m-link> <m-link' +
+                        A({ href: descUrl, "aria-label": descLabel, title: descLabel, class: desc ? "active" : null, "aria-current": desc ? "true" : null }) +
+                        '><q-icon name="arrow_drop_down" aria-hidden="true"></q-icon></m-link></span>';
                 }
                 out += "</div>";
                 w(out);

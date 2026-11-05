@@ -186,3 +186,17 @@ Further patterns established during the review:
 - Explicitly distinguish a root-page bookmark from an omitted default route using the existing parameter convention.
   Comparison failures retain current content and a clear recovery action. Normalize text only at the editor boundary
   and diff presentation, without rewriting retained resource history or restore payloads.
+
+- Directional sort controls request the direction they name; clicking descending again does not silently reverse it.
+  Match complete field identifiers and retain supported legacy sort prefixes, suffixes and wrappers.
+- Diagnostic summaries describe the values actually available. Distinguish hostnames from instance IDs, preserve
+  zero counts, and include timestamp precision and timezone appropriate to short events.
+- Timing labels sit outside colored bars. Keep concise diagnostic context beside selected spans, with raw data in
+  a keyboard-accessible disclosure. SVG charts preserve text size while geometry responds to available width;
+  choose default text against the actual composited fill and preserve explicit author colors.
+- Section headers reserve room for their title and wrap related actions below it on phones. Collapse/Expand controls
+  name the section and expose their state. Layout fixtures load the same fonts and icons as production.
+- Group long configuration forms by the decisions users make, separate effective values from overrides, and keep
+  Save reachable. Collapsing advanced fields must preserve their values for the eventual submission.
+- Use exact accessible names for short action words such as Confirm in focused browser tests. A newly named section
+  toggle can legitimately contain the same word; substring matching must not activate a different control.

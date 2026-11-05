@@ -1200,19 +1200,39 @@
                 out += "<div" + A({ class: cls("title", sub), "data-align": align }) + ">" + e(field.submit ? "" : field.title());
                 if (field.orderBy) {
                     const insensitive = field.orderBy === "case-insensitive";
-                    let current = ec.context.get("orderByField") || "";
-                    if (current && current.indexOf(",") >= 0) {
-                        const hit = current.split(",").filter((part) => part && part.indexOf(field.name) >= 0);
-                        if (hit.length) current = hit[0];
-                    }
-                    const mentioned = current && current.indexOf(field.name) >= 0;
-                    const asc = mentioned && current.indexOf("-") !== 0;
-                    const desc = mentioned && current.indexOf("-") === 0;
-                    let ascUrl = pageUrl("orderByField", (insensitive ? "^" : "") + field.name);
-                    let descUrl = pageUrl("orderByField", "-" + (insensitive ? "^" : "") + field.name);
-                    if (asc) ascUrl = descUrl;
-                    if (desc) descUrl = ascUrl;
-                    out += ' <span class="order-by"> <a' + A({ href: ascUrl, class: asc ? "active" : null }) + '><i class="fa fa-caret-up"></i></a> <a' + A({ href: descUrl, class: desc ? "active" : null }) + '><i class="fa fa-caret-down"></i></a> </span>';
+                    // Match OrderBy::parse: signs/case prefix, optional direction/null placement, then UPPER/LOWER.
+                    const parseOrder = (value) => {
+                        let name = String(value).trimStart(), descending = false;
+                        while (name && "-+^ ".includes(name.charAt(0))) {
+                            if (name.charAt(0) === "-") descending = true;
+                            else if (name.charAt(0) === "+") descending = false;
+                            name = name.slice(1);
+                        }
+                        name = name.trimEnd().replace(/ NULLS (FIRST|LAST)$/i, "");
+                        const direction = / (ASC|DESC)$/i.exec(name);
+                        if (direction) {
+                            descending = direction[1].toUpperCase() === "DESC";
+                            name = name.slice(0, -direction[0].length);
+                        }
+                        if (name.includes("(")) {
+                            if (/^(UPPER|LOWER)\(/i.test(name)) name = name.slice(6);
+                            if (name.endsWith(")")) name = name.slice(0, -1);
+                        }
+                        name = name.trim();
+                        return name ? {name, descending} : null;
+                    };
+                    const current = String(ec.context.get("orderByField") || "").split(",").map(parseOrder)
+                        .find((part) => part && part.name === field.name);
+                    const asc = !!current && !current.descending;
+                    const desc = !!current && current.descending;
+                    const ascUrl = pageUrl("orderByField", (insensitive ? "^" : "") + field.name);
+                    const descUrl = pageUrl("orderByField", "-" + (insensitive ? "^" : "") + field.name);
+                    const ascLabel = L("Sort {field} ascending").replace("{field}", () => field.title());
+                    const descLabel = L("Sort {field} descending").replace("{field}", () => field.title());
+                    out += ' <span class="order-by"> <a' + A({ href: ascUrl, "aria-label": ascLabel, title: ascLabel,
+                        class: asc ? "active" : null, "aria-current": asc ? "true" : null }) + '><i class="fa fa-caret-up" aria-hidden="true"></i></a> <a' +
+                        A({ href: descUrl, "aria-label": descLabel, title: descLabel, class: desc ? "active" : null, "aria-current": desc ? "true" : null }) +
+                        '><i class="fa fa-caret-down" aria-hidden="true"></i></a> </span>';
                 }
                 out += "</div>";
                 if (field.find && !cfg.headerDialog) {

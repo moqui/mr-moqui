@@ -217,6 +217,43 @@ test("paging and sorting a static form-list change the request and fetch again",
     assert.deepEqual(listRequests()[2].params, { itemGroup: "G1", pageIndex: 0, orderByField: "-itemId" });
     assert.equal(list.orderBy("-itemId"), "desc");
     assert.equal(list.orderBy("itemId"), "");
+    const sortLink = (direction) => {
+        const label = "aria-label='Sort Item ID " + direction + "'";
+        return html(container).split("<a ").find((part) => part.split(">")[0].includes(label)).split(">")[0];
+    };
+    assert.ok(sortLink("descending").includes("aria-current='true'"));
+    assert.ok(!sortLink("ascending").includes("aria-current"));
+    list.sortBy("-itemId");
+    await flush();
+    assert.deepEqual(listRequests()[3].params, { itemGroup: "G1", pageIndex: 0, orderByField: "-itemId" });
+    list.sortBy("itemId");
+    await flush();
+    assert.deepEqual(listRequests()[4].params, { itemGroup: "G1", pageIndex: 0, orderByField: "itemId" });
+    assert.ok(sortLink("ascending").includes("aria-current='true'"));
+    assert.ok(!sortLink("descending").includes("aria-current"));
+    list.searchObj.orderByField = "-itemIdSuffix, ^itemId";
+    await flush();
+    assert.equal(list.orderBy("itemId"), "asc", "match complete comma-separated fields, including case-insensitive sorts");
+    assert.equal(list.orderBy("-itemId"), "");
+    // Saved/default orders accept the backend syntax too; only the indicator is normalized, never the request.
+    for (const [order, direction] of [
+        ["itemId ASC", "asc"],
+        ["-itemId NULLS LAST", "desc"],
+        ["-^UPPER(itemId) ASC NULLS FIRST", "asc"],
+        ["lower(itemId) desc nulls last", "desc"],
+        ["^ - +itemId DESC", "desc"],
+        ["-itemIdSuffix DESC NULLS FIRST, LOWER(itemId) ASC NULLS LAST", "asc"],
+        ["LOWER(itemIdSuffix) DESC", ""],
+        ["itemId DESC NULLS FIRST, itemId ASC", "desc"]
+    ]) {
+        list.searchObj.orderByField = order;
+        await flush();
+        assert.equal(list.orderBy("itemId"), direction === "asc" ? "asc" : "", order);
+        assert.equal(list.orderBy("-itemId"), direction === "desc" ? "desc" : "", order);
+        assert.equal(sortLink("ascending").includes("aria-current='true'"), direction === "asc", order);
+        assert.equal(sortLink("descending").includes("aria-current='true'"), direction === "desc", order);
+        assert.equal(list.searchObj.orderByField, order, "keep the caller's complete sort expression");
+    }
     // the screen package is not asked for again
     assert.equal(requests.filter((request) => request.url === "/Items/actions").length, 1);
 });

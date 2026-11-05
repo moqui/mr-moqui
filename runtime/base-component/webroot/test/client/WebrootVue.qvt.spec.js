@@ -55,6 +55,53 @@ feature("Material confirmations cancel cleanly and approve the original validate
     },
 })
 
+feature("find controls name their field and keyboard actions retain the other filters", {
+    expect() {
+        const page = browser.newPage()
+        page.setContent(`<!doctype html><html><head><link rel="stylesheet" href="/libs/quasar/quasar.prod.css"></head><body><div id="app">
+            <m-text-find id="entity-find" name="entity" label="Entity" :fields="fields"></m-text-find>
+            <m-text-find id="user-find" name="user" label="User" :fields="fields"></m-text-find>
+            <m-date-period id="date-find" name="changedDate" label="Date" :fields="fields"></m-date-period>
+            <m-date-period id="created-find" name="createdDate" label="Created" :fields="fields"></m-date-period>
+            </div><script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
+            <script src="/js/MoquiLib.js"></script><script src="/js/MoquiL10n.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
+            Quasar.QMenu.props.transitionDuration.default=0;
+            moqui.l10n.loadCatalog('en-US',()=>({messages:{'Find options for {field}':'Options for {field}',
+                'Clear {field} filter':'Clear filter: {field}'}})).then(()=>{
+                const app=Vue.createApp({data(){return {fields:{entity:'Order',user:'john.doe',changedDate_period:'day',
+                    changedDate_poffset:'0',changedDate_pdate:'2026-11-04',createdDate_pdate:'2026-11-01'}};}});
+                app.use(Quasar);['m-text-find','m-text-line','m-date-period','m-date-time'].forEach(name=>app.component(name,moqui.qvt.components[name]));
+                window.vm=app.mount('#app');
+            });
+            </script></body></html>`)
+        page.waitFor(() => window.vm && document.querySelector('[aria-label="Options for Entity"]'))
+        assert.equal(page.locator('button[aria-label="Options for User"]').count(), 1)
+        page.locator('button[aria-label="Options for Entity"]').press('Enter')
+        page.waitFor(() => document.querySelector('.m-text-find-options'))
+        assert.equal(page.locator('.m-text-find-options').evaluate(el => el.textContent.includes('Operator')), true)
+        page.keyboard.press('Escape')
+        page.waitFor(() => !document.querySelector('.m-text-find-options'))
+        page.locator('button[aria-label="Choose a period for Date"]').press('Enter')
+        page.waitFor(() => document.querySelector('.m-date-period-options'))
+        page.keyboard.press('Escape')
+        page.waitFor(() => !document.querySelector('.m-date-period-options'))
+        page.locator('button[aria-label="Use a date range for Date"]').press('Enter')
+        page.waitFor(() => document.getElementById('date-find_from'))
+        page.locator('#date-find_from').fill('2026-11-02')
+        page.locator('#date-find_thru').fill('2026-11-04')
+        page.locator('button[aria-label="Clear filter: Date"]').press('Enter')
+        assert.deepEqual(page.evaluate(() => ['_pdate','_poffset','_period','_from','_thru'].map(suffix=>vm.fields['changedDate'+suffix])),
+            // Quasar retains the empty date mask; m-form-link omits unfilled masks from the query.
+            [null,null,null,'____-__-__','____-__-__'])
+        assert.deepEqual(page.evaluate(() => [vm.fields.entity,vm.fields.user,vm.fields.createdDate_pdate]),
+            ['Order','john.doe','2026-11-01'])
+        page.locator('button[aria-label="Use a period for Date"]').press('Enter')
+        page.waitFor(() => document.getElementById('date-find'))
+        assert.equal(page.locator('button[aria-label="Choose a period for Date"]').count(), 1, 'the empty period control is still named')
+        assert.equal(page.locator('button[aria-label="Clear filter: Created"]').count(), 1)
+    },
+})
+
 feature("field validation and notification feedback retain readable text in both themes", {
     expect() {
         const page = browser.newPage({ viewport: { width: 1920, height: 1080 } })

@@ -502,14 +502,61 @@ test('a single-panel view says so and offers all panels',async()=>{
         assert.notEqual(Array.from(target.querySelectorAll('button')).find(button=>button.textContent==='All panels (Esc)'),undefined);
     } finally {app.unmount();target.remove();}
 });
-test('the waterfall names an ERROR span in its accessible label',async()=>{
+test('the waterfall separates readable duration from bars and summarizes the selected span before raw data',async()=>{
     const target=document.createElement('div');document.body.appendChild(target);
-    const app=Vue.createApp(moqui.qvtComponents['m-trace-waterfall'],{spans:[{span_id:'a',name:'GET /orders',status_code:'ERROR',start_nano:'1000',duration_nano:2000000},{span_id:'b',parent_span_id:'a',name:'find',status_code:'OK',start_nano:'2000',duration_nano:1000000}]});
+    const styles=['/libs/quasar/quasar.prod.css','/css/WebrootVue.qvt.css'].map(href=>{
+        const link=document.createElement('link');link.rel='stylesheet';link.href=href;return link;
+    });
+    await Promise.all(styles.map(link=>new Promise(resolve=>{link.onload=resolve;document.head.appendChild(link);})));
+    const wasDark=document.body.classList.contains('body--dark'),selections=[];
+    const spans=[{span_id:'a',name:'POST /orders',status_code:'ERROR',start_nano:'1800000000000000000',duration_nano:2000000,
+        'http.request.method':'POST',attributes:{'http.request.method':'POST','http.response.status_code':500,
+            'exception.message':'Enter the customer name','url.path':'/orders/save','custom.extra':'retained raw value'}},
+        {span_id:'b',parent_span_id:'a',name:'find',status_code:'OK',start_nano:'1800000000000001000',duration_nano:1000000}];
+    const original=JSON.stringify(spans);
+    const app=Vue.createApp(moqui.qvtComponents['m-trace-waterfall'],{spans,onSelect:span=>selections.push(span)});
+    const luminance=color=>{
+        const context=document.createElement('canvas').getContext('2d',{willReadFrequently:true});context.fillStyle=color;context.fillRect(0,0,1,1);
+        return Array.from(context.getImageData(0,0,1,1).data).slice(0,3).map(value=>{
+            const c=value/255;return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);
+        }).reduce((sum,value,index)=>sum+value*[.2126,.7152,.0722][index],0);
+    };
+    const contrast=(first,second)=>{const a=luminance(first),b=luminance(second);return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);};
     try {
         app.mount(target);await Vue.nextTick();
-        const labels=Array.from(target.querySelectorAll('button')).map(button=>button.getAttribute('aria-label'));
-        assert.deepEqual(labels,['GET /orders, ERROR, 2.00 milliseconds','find, 1.00 milliseconds']);
-    } finally {app.unmount();target.remove();}
+        const rows=Array.from(target.querySelectorAll('.m-trace-row'));
+        assert.deepEqual(rows.map(button=>button.getAttribute('aria-label')),['POST /orders, ERROR, 2.00 milliseconds','find, 1.00 milliseconds']);
+        rows[0].click();await Vue.nextTick();
+        assert.equal(rows[0].getAttribute('aria-pressed'),'true');
+        assert.deepEqual(selections,[spans[0]],'selection emits the unchanged span');
+        const detail=target.querySelector('.m-trace-detail');
+        assert.equal(detail.querySelector('.m-trace-status').textContent,'ERROR');
+        assert.equal(detail.querySelector('.m-trace-error').textContent,'Error: Enter the customer name');
+        const metadata=Object.fromEntries(Array.from(detail.querySelectorAll('.m-trace-metadata > div')).map(item=>[item.querySelector('dt').textContent,item.querySelector('dd').textContent]));
+        assert.deepEqual(metadata,{Duration:'2.00 ms','HTTP status':'500',Method:'POST',Route:'/orders/save',Started:report.format(1800000000000,{type:'time'})});
+        const raw=detail.querySelector('details');
+        assert.equal(raw.open,false,'raw JSON is collapsed initially');
+        assert.deepEqual(JSON.parse(raw.querySelector('pre').textContent),spans[0],'raw output retains both attribute shapes and unshown fields');
+        assert.equal(report.spanSummary({'http.response.status_code':0,attributes:{'http.response.status_code':500}}).httpStatus,0,'a flattened zero is not replaced');
+        for(const dark of [false,true]){
+            document.body.classList.toggle('body--dark',dark);
+            for(const row of rows){
+                const background=getComputedStyle(row).backgroundColor,track=row.querySelector('.m-trace-track'),duration=row.querySelector('.m-trace-duration');
+                assert.equal(track.contains(duration),false,'duration is not a child of the colored track');
+                assert.ok(duration.getBoundingClientRect().left>=track.getBoundingClientRect().right,'duration never overlays the bar');
+                for(const text of row.querySelectorAll('.m-trace-name-label,.m-trace-status,.m-trace-duration'))
+                    assert.ok(contrast(getComputedStyle(text).color,background)>=4.5,'row text in '+(dark?'dark':'light'));
+                assert.ok(contrast(getComputedStyle(row.querySelector('.m-trace-bar')).backgroundColor,background)>=3,'meaningful timing bar contrast');
+            }
+            const background=getComputedStyle(detail).backgroundColor;
+            for(const text of detail.querySelectorAll('h3,.m-trace-status,.m-trace-error,dt,dd'))
+                assert.ok(contrast(getComputedStyle(text).color,background)>=4.5,'selected span text in '+(dark?'dark':'light'));
+        }
+        raw.open=true;rows[1].click();await Vue.nextTick();
+        assert.equal(target.querySelector('.m-trace-raw').open,false,'a different span starts with its raw data collapsed');
+        assert.equal(target.querySelector('.m-trace-error'),null,'the prior error does not remain on the next selection');
+        assert.equal(JSON.stringify(spans),original,'summary and selection never modify source data');
+    } finally {app.unmount();target.remove();styles.forEach(link=>link.remove());document.body.classList.toggle('body--dark',wasDark);}
 });
 test('the report composition editor writes the paper size',async()=>{
     const target=document.createElement('div');document.body.appendChild(target);
@@ -716,13 +763,55 @@ test('flame graphs lay out paths by share and zoom into a clicked frame',async()
     const zoomed=report.flame(frame,{},['GET /','find']);assert.equal(zoomed.total,6);assert.deepEqual(zoomed.focus,['GET /','find']);
     assert.equal(report.suggestVisualizations(report.frameShape(frame))[0].visualization,'flameGraph');
     const target=document.createElement('div');document.body.appendChild(target);
-    const app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame,panel:{visualization:'flameGraph'}});
+    const styles=['/libs/quasar/quasar.prod.css','/css/WebrootVue.qvt.css'].map(href=>{
+        const link=document.createElement('link');link.rel='stylesheet';link.href=href;return link;
+    });
+    await Promise.all(styles.map(link=>new Promise(resolve=>{link.onload=resolve;document.head.appendChild(link);})));
+    const wasDark=document.body.classList.contains('body--dark'),theme=Vue.reactive({isActive:true});
+    document.body.classList.add('body--dark');
+    const original=JSON.stringify(frame),app=Vue.createApp(moqui.qvtComponents['m-report-panel'],{frame,panel:{visualization:'flameGraph'}});
+    app.config.globalProperties.$q={dark:theme};
+    const context=document.createElement('canvas').getContext('2d',{willReadFrequently:true});
+    const luminance=channels=>channels.slice(0,3).map(value=>{const c=value/255;return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);}).reduce((sum,value,index)=>sum+value*[.2126,.7152,.0722][index],0);
+    const measure=()=>{
+        for(const viewport of target.querySelectorAll('svg.m-report-flame [data-frame]')){
+            const rectangle=viewport.querySelector('rect'),label=viewport.querySelector('text'),style=getComputedStyle(rectangle);
+            context.globalAlpha=1;context.fillStyle=getComputedStyle(document.body).backgroundColor;context.fillRect(0,0,1,1);
+            context.globalAlpha=Number(style.opacity)*Number(style.fillOpacity);context.fillStyle=style.fill;context.fillRect(0,0,1,1);
+            const background=luminance(Array.from(context.getImageData(0,0,1,1).data));
+            context.globalAlpha=1;context.fillStyle=getComputedStyle(label).fill;context.fillRect(0,0,1,1);
+            const text=luminance(Array.from(context.getImageData(0,0,1,1).data));
+            assert.ok((Math.max(text,background)+.05)/(Math.min(text,background)+.05)>=4.5,'composited flame label contrast');
+            assert.equal(getComputedStyle(viewport).overflow,'hidden','labels clip to their own frame');
+            assert.equal(parseFloat(getComputedStyle(label).fontSize),12);
+            assert.ok(Math.abs(label.getScreenCTM().a-1)<.001,'label width is not scaled with the chart');
+        }
+    };
     try {
-        app.mount(target);await Vue.nextTick();
+        const vm=app.mount(target);await Vue.nextTick();
         assert.equal(target.querySelectorAll('svg.m-report-flame [data-frame]').length,5);
+        for(const dark of [true,false,true]){
+            document.body.classList.toggle('body--dark',dark);theme.isActive=dark;
+            await Vue.nextTick();await Vue.nextTick();await Vue.nextTick();
+            for(const width of [390,1920]){
+                target.style.width=width+'px';measure();
+                const chart=target.querySelector('svg.m-report-flame'),find=target.querySelector('[data-frame="GET /;find"]');
+                assert.equal(chart.hasAttribute('viewBox'),false);
+                assert.ok(Math.abs(find.width.baseVal.value/chart.getBoundingClientRect().width-.6)<.001,'responsive frame retains its share');
+                assert.ok(find.querySelector('rect').getBBox().width<find.width.baseVal.value,'one-pixel gap remains inside the frame');
+            }
+        }
+        const before=target.querySelector('[data-frame="GET /"] rect');
+        assert.equal(before.getAttribute('fill'),report.color(2),'the caller palette is preserved');
+        assert.equal(Number(before.getAttribute('opacity')),.35+.65*.2,'self-time opacity is unchanged');
         target.querySelector('[data-frame="GET /;find"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));await Vue.nextTick();
-        assert.equal(target.textContent.includes('Focused on GET / › find'),true);assert.equal(target.querySelectorAll('svg.m-report-flame [data-frame]').length,2);
-    } finally {app.unmount();target.remove();}
+        assert.equal(target.textContent.includes('Focused on GET / › find'),true);assert.equal(target.querySelectorAll('svg.m-report-flame [data-frame]').length,2);measure();
+        Array.from(target.querySelectorAll('button')).find(button=>button.textContent==='Reset zoom').click();await Vue.nextTick();
+        assert.equal(target.querySelectorAll('svg.m-report-flame [data-frame]').length,5);measure();
+        const label=target.querySelector('.m-report-flame-label');label.style.fill='rgb(0, 0, 0)';
+        vm.colorFlameLabels();assert.equal(getComputedStyle(label).fill,'rgb(0, 0, 0)','authored CSS label colors are not overwritten');
+        assert.equal(JSON.stringify(frame),original,'color and geometry leave frame values untouched');
+    } finally {app.unmount();target.remove();styles.forEach(link=>link.remove());document.body.classList.toggle('body--dark',wasDark);}
 });
 test('geomaps read the bundled outline, match Moqui, alpha-2 and numeric country codes and plot points',async()=>{
     assert.equal(report.countryNumeric('USA'),'840');assert.equal(report.countryNumeric('fr'),'250');assert.equal(report.countryNumeric(36),'036');assert.equal(report.countryNumeric('ZZZ'),null);

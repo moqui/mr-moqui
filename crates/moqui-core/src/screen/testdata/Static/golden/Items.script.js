@@ -258,17 +258,29 @@ return function render(_ctx, _cache) {
               _createElementVNode("a", {
                 href: "#",
                 onClick: _withModifiers($event => (hs.sortBy('itemId')), ["prevent"]),
-                class: _normalizeClass({active: hs.orderBy('itemId') === 'asc'})
+                class: _normalizeClass({active: hs.orderBy('itemId') === 'asc'}),
+                "aria-current": (hs.orderBy('itemId') === 'asc') ? 'true' : null,
+                "aria-label": _ctx.ec.l10n.localize('Sort {field} ascending').split('{field}').join(_ctx.ec.l10n.localize('Item ID')),
+                title: _ctx.ec.l10n.localize('Sort {field} ascending').split('{field}').join(_ctx.ec.l10n.localize('Item ID'))
               }, [
-                _createVNode(_component_q_icon, { name: "arrow_drop_up" })
-              ], 10, ["onClick"]),
+                _createVNode(_component_q_icon, {
+                  name: "arrow_drop_up",
+                  "aria-hidden": "true"
+                })
+              ], 10, ["onClick", "aria-current", "aria-label", "title"]),
               _createElementVNode("a", {
                 href: "#",
                 onClick: _withModifiers($event => (hs.sortBy('-itemId')), ["prevent"]),
-                class: _normalizeClass({active: hs.orderBy('-itemId') === 'desc'})
+                class: _normalizeClass({active: hs.orderBy('-itemId') === 'desc'}),
+                "aria-current": (hs.orderBy('-itemId') === 'desc') ? 'true' : null,
+                "aria-label": _ctx.ec.l10n.localize('Sort {field} descending').split('{field}').join(_ctx.ec.l10n.localize('Item ID')),
+                title: _ctx.ec.l10n.localize('Sort {field} descending').split('{field}').join(_ctx.ec.l10n.localize('Item ID'))
               }, [
-                _createVNode(_component_q_icon, { name: "arrow_drop_down" })
-              ], 10, ["onClick"])
+                _createVNode(_component_q_icon, {
+                  name: "arrow_drop_down",
+                  "aria-hidden": "true"
+                })
+              ], 10, ["onClick", "aria-current", "aria-label", "title"])
             ])
           ])
         ])

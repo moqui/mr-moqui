@@ -45,8 +45,12 @@ fn verify_readers(opensearch_url: Option<&str>) {
     moqui_host::logging::install();
     let now = jiff::Timestamp::now().as_millisecond();
     let start = jiff::Timestamp::from_millisecond(now - 60_000).unwrap();
+    let request_start = jiff::Timestamp::from_millisecond((now - 5000).div_euclid(1000) * 1000 + 123).unwrap();
     let fixture = format!(
-        r#"<entity-facade-xml type="seed"><moqui.server.Visit visitId="MONITOR_READER_VISIT" userId="EX_JOHN_DOE" fromDate="{start}"/></entity-facade-xml>"#
+        r#"<entity-facade-xml type="seed">
+            <moqui.security.UserAccount userId="EX_JOHN_DOE" timeZone="America/Chicago"/>
+            <moqui.server.Visit visitId="MONITOR_READER_VISIT" userId="EX_JOHN_DOE" fromDate="{start}"/>
+        </entity-facade-xml>"#
     );
     let prefix = format!("monitor_readers_{}_", std::process::id());
     let gate = match opensearch_url {
@@ -65,8 +69,8 @@ fn verify_readers(opensearch_url: Option<&str>) {
     };
     let facade = moqui_core::search::installed(gate.server.factory()).unwrap();
     facade.index_entries("otel_spans", vec![
-        document(json!({"_id":"reader-root-a","trace_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","span_id":"1111111111111111","kind":"SERVER","name":"Reader request A","start":now-5000,"start_nano":(now-5000)*1_000_000,"duration_nano":10000000,"status_code":"OK","sampled":false,"moqui.visit.id":"MONITOR_READER_VISIT","user.id":"EX_JOHN_DOE","moqui.artifact.type":"AT_XML_SCREEN","moqui.artifact.name":"Reader request A"})),
-        document(json!({"_id":"reader-root-b","trace_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","span_id":"2222222222222222","kind":"SERVER","name":"Reader request B","start":now-4000,"start_nano":(now-4000)*1_000_000,"duration_nano":20000000,"status_code":"ERROR","sampled":true,"moqui.visit.id":"MONITOR_READER_VISIT","user.id":"EX_JOHN_DOE","moqui.artifact.type":"AT_XML_SCREEN_TRANS","moqui.artifact.name":"Reader request B"})),
+        document(json!({"_id":"reader-root-a","trace_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","span_id":"1111111111111111","kind":"SERVER","name":"Reader request A","start":request_start.to_string(),"start_nano":request_start.as_millisecond()*1_000_000,"duration_nano":10000000,"status_code":"OK","sampled":false,"moqui.visit.id":"MONITOR_READER_VISIT","user.id":"EX_JOHN_DOE","moqui.artifact.name":"Reader request A","url.path":"/libs/review-fixture.js","server.address":"review.example:8094","service.instance.id":"00000000-0000-4000-8000-000000000052","http.response.body.size":0})),
+        document(json!({"_id":"reader-root-b","trace_id":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","span_id":"2222222222222222","kind":"SERVER","name":"Reader request B","start":now-4000,"start_nano":(now-4000)*1_000_000,"duration_nano":20000000,"status_code":"ERROR","sampled":true,"moqui.visit.id":"MONITOR_READER_VISIT","user.id":"EX_JOHN_DOE","moqui.artifact.type":"AT_XML_SCREEN_TRANS","moqui.artifact.name":"Reader request B","host.name":"review-worker.example"})),
         document(json!({"_id":"reader-child","trace_id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","span_id":"3333333333333333","parent_span_id":"1111111111111111","kind":"INTERNAL","name":"Reader child excluded","start":now-4900,"duration_nano":1000000,"moqui.visit.id":"MONITOR_READER_VISIT","user.id":"EX_JOHN_DOE"})),
     ]).unwrap();
     let same = jiff::Timestamp::from_millisecond(now - 3000).unwrap().to_string();
@@ -104,6 +108,35 @@ fn verify_readers(opensearch_url: Option<&str>) {
         visit.contains("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") && visit.contains("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
         "{visit}"
     );
+    // The same visit render covers unclassified HTTP requests and the telemetry metadata's actual meanings.
+    let request_row = visit
+        .split("</tr>")
+        .find(|row| row.contains("Reader request A") && row.contains("<td"))
+        .expect("request row");
+    let local_start = request_start.to_zoned(jiff::tz::TimeZone::get("America/Chicago").unwrap());
+    let expected_start = format!(
+        "{}.123 {}",
+        local_start.strftime("%Y-%m-%d %H:%M:%S"),
+        local_start.strftime("%Z")
+    );
+    for expected in [
+        "HTTP request",
+        "0 bytes",
+        "review.example:8094",
+        "Instance: 00000000-0000-4000-8000-000000000052",
+        expected_start.as_str(),
+    ] {
+        assert!(request_row.contains(expected), "{expected}: {request_row}");
+    }
+    assert!(!request_row.contains("undefined"), "{request_row}");
+    for expected in [
+        "Request host",
+        "Server identity",
+        "Host: review-worker.example",
+        "Times in America/Chicago",
+    ] {
+        assert!(visit.contains(expected), "{expected}: {visit}");
+    }
     let list = read("/System/Visit/VisitList.html?visitId=MONITOR_READER_VISIT");
     assert!(
         list.contains("Retained requests") && list.contains("MONITOR_READER_VISIT"),

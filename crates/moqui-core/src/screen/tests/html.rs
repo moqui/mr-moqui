@@ -58,19 +58,20 @@ fn render_path(name: &str, path: &str, parameters: &[(&str, &str)]) -> String {
     out
 }
 
-fn check(name: &str, parameters: &[(&str, &str)]) {
-    check_path(name, "", name, parameters);
+fn check(name: &str, parameters: &[(&str, &str)]) -> String {
+    check_path(name, "", name, parameters)
 }
 
-fn check_path(name: &str, screen_path: &str, golden: &str, parameters: &[(&str, &str)]) {
+fn check_path(name: &str, screen_path: &str, golden: &str, parameters: &[(&str, &str)]) -> String {
     let actual = render_path(name, screen_path, parameters);
     let path = render_dir().join(format!("{golden}.html"));
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
         std::fs::write(&path, &actual).unwrap();
-        return;
+        return actual;
     }
     let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| panic!("missing {}", path.display()));
     assert_eq!(actual, expected, "{name} differs from {}", path.display());
+    actual
 }
 
 #[test]
@@ -85,7 +86,28 @@ fn form_single_with_every_field_type() {
 
 #[test]
 fn form_lists() {
-    check("lists", &[]);
+    let out = check("lists", &[]);
+    // Both arrows retain their advertised direction even when that direction is already active.
+    // Existing NULLS/direction suffixes and case wrappers follow OrderBy::parse; ASC overrides a leading minus.
+    // A similarly named sort token must not mark the Qty column active.
+    for (label, order, current) in [
+        ("Sort ID ascending", "id", false),
+        ("Sort ID descending", "-id", true),
+        ("Sort Title ascending", "%5Etitle", true),
+        ("Sort Title descending", "-%5Etitle", false),
+        ("Sort Qty ascending", "qty", false),
+        ("Sort Qty descending", "-qty", false),
+        ("Sort Status ascending", "status", false),
+        ("Sort Status descending", "-status", true),
+    ] {
+        let label_at = out.find(&format!("aria-label=\"{label}\"")).unwrap();
+        let start = out[..label_at].rfind("<a ").unwrap();
+        let end = label_at + out[label_at..].find('>').unwrap();
+        let link = &out[start..end];
+        assert!(link.contains(&format!("orderByField={order}\"")), "{link}");
+        assert_eq!(link.contains("aria-current=\"true\""), current, "{link}");
+        assert!(link.contains(&format!("title=\"{label}\"")), "{link}");
+    }
 }
 
 /// A rich text-area is the cleaned note, not a textarea of the tags. `editor-type="html"` stays a textarea

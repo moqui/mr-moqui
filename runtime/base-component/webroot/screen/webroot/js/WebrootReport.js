@@ -250,6 +250,19 @@
         const model = value("gen_ai.response.model") || value("gen_ai.request.model") || "";
         return (model ? model + " · " : "") + (input == null ? "?" : input) + " → " + (output == null ? "?" : output) + " tokens";
     };
+    // Searchable attributes may also be retained in the original OTel attributes object. Read either shape without
+    // changing the source span; the raw disclosure remains an exact view of the document supplied to this widget.
+    report.spanSummary = (span) => {
+        const value = (key) => span[key] !== undefined ? span[key] : (span.attributes || {})[key];
+        const first = (...keys) => keys.map(value).find((item) => item !== undefined && item !== null && item !== "");
+        let start = value("start");
+        if (value("start_nano") !== undefined && value("start_nano") !== null) {
+            try { start = Number(BigInt(String(value("start_nano"))) / 1000000n); } catch (_) { /* use start when nanos are malformed */ }
+        }
+        return { status: first("status_code") || "UNSET", httpStatus: first("http.response.status_code", "http.status_code"),
+            method: first("http.request.method", "http.method"), route: first("url.path", "http.route"), start,
+            error: first("exception.message", "status_message") };
+    };
     report.waterfall = (spans) => {
         spans = (spans || []).map((span) => span.body || span);
         if (!spans.length) return [];
@@ -1154,18 +1167,39 @@
         render() {
             const h = reportElement, rows = report.waterfall(this.spans);
             if (!rows.length) return h("p", { role: "status" }, "No spans in this time range. Telemetry may be missing.");
+            const statusClass = (status) => status === "ERROR" ? "text-negative" : status === "OK" ? "text-positive" : "m-muted";
+            const selected = this.selected && rows.find((row) => row.span === this.selected || row.span.span_id === this.selected.span_id);
+            const summary = selected && report.spanSummary(selected.span);
+            const metadata = summary ? [[T("Duration"), selected.duration.toFixed(2) + " ms"], [T("HTTP status"), summary.httpStatus],
+                [T("Method"), summary.method], [T("Route"), summary.route], [T("Started"), report.format(summary.start, { type: "time" })]] : [];
             return h("div", { class: "m-trace-waterfall" }, [
-                ...rows.map((row) => h("button", { type: "button", class: "full-width text-left q-pa-sm", key: row.span.span_id,
-                    style: { display: "grid", gridTemplateColumns: "minmax(180px, 35%) 1fr", border: "0", background: "transparent", color: "inherit" },
-                    onClick: () => { this.selected = row.span; this.$emit("select", row.span); },
-                    "aria-label": row.span.name + (row.span.status_code === "ERROR" ? ", ERROR" : "") + ", " + row.duration.toFixed(2) + " milliseconds" }, [
-                    h("span", { style: { paddingLeft: row.depth * 12 + "px", overflow: "hidden", textOverflow: "ellipsis" } },
-                        row.span.name + (row.missingParent ? " (parent unavailable)" : "")),
-                    h("span", { style: { position: "relative", height: "22px", borderBottom: "1px solid var(--q-secondary)" } }, [
-                        h("span", { style: { position: "absolute", left: row.left + "%", width: row.width + "%", minWidth: "2px", height: "18px",
-                            background: row.span.status_code === "ERROR" ? "var(--q-negative)" : "var(--q-primary)", borderRadius: "2px" } }),
-                        h("span", { style: { position: "relative", textShadow: "0 0 3px var(--m-panel-bg)", paddingLeft: "4px" } }, row.duration.toFixed(2) + " ms" + (report.genAiLabel(row.span) ? " · " + report.genAiLabel(row.span) : "")) ]) ])),
-                this.selected ? h("details", { open: true, class: "q-pa-sm" }, [h("summary", this.selected.name), h("pre", { style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" } }, JSON.stringify(this.selected, null, 2))]) : null ]);
+                h("div", { class: "m-trace-columns m-muted", "aria-hidden": "true" }, [h("span", T("Span")), h("span", T("Timeline")), h("span", T("Duration"))]),
+                ...rows.map((row) => {
+                    const info = report.spanSummary(row.span), ai = report.genAiLabel(row.span);
+                    const name = row.span.name || T("Unnamed span");
+                    return h("button", { type: "button", class: "m-trace-row", key: row.span.span_id,
+                        onClick: () => { this.selected = row.span; this.$emit("select", row.span); },
+                        "aria-pressed": !!selected && selected.span.span_id === row.span.span_id,
+                        "aria-label": name + (info.status === "ERROR" ? ", ERROR" : "") + ", " + row.duration.toFixed(2) + " milliseconds" }, [
+                        h("span", { class: "m-trace-name", style: { "--m-trace-indent": Math.min(row.depth, 8) * 12 + "px" } }, [
+                            h("span", { class: "m-trace-name-label", title: name }, name + (row.missingParent ? " (parent unavailable)" : "")),
+                            info.status === "ERROR" ? h("span", { class: "m-trace-status text-negative" }, "ERROR") : null,
+                            ai ? h("span", { class: "m-trace-context m-muted" }, ai) : null]),
+                        h("span", { class: "m-trace-track", "aria-hidden": "true" }, [
+                            h("span", { class: ["m-trace-bar", info.status === "ERROR" ? "m-trace-bar-error" : ""],
+                                style: { left: row.left + "%", width: row.width + "%" } })]),
+                        h("span", { class: "m-trace-duration", "aria-hidden": "true" }, row.duration.toFixed(2) + " ms")]);
+                }),
+                selected ? h("section", { class: "m-trace-detail", "aria-label": T("Selected span") }, [
+                    h("div", { class: "m-trace-detail-heading" }, [h("h3", selected.span.name || T("Unnamed span")),
+                        h("span", { class: ["m-trace-status", statusClass(summary.status)] }, String(summary.status))]),
+                    summary.status === "ERROR" || (summary.error !== undefined && summary.error !== null && summary.error !== "") ? h("p", { class: "m-trace-error text-negative" },
+                        [h("strong", T("Error") + ": "), summary.error !== undefined && summary.error !== null && summary.error !== ""
+                            ? String(summary.error) : T("No error message was recorded.")]) : null,
+                    h("dl", { class: "m-trace-metadata" }, metadata.filter((entry) => entry[1] !== undefined && entry[1] !== null && entry[1] !== "").map(([label, value]) =>
+                        h("div", [h("dt", { class: "m-muted" }, label), h("dd", String(value))]))),
+                    h("details", { key: selected.span.span_id, class: "m-trace-raw" }, [h("summary", T("Raw span data")),
+                        h("pre", JSON.stringify(selected.span, null, 2))])]) : null ]);
         }
     };
     // A browser session replay (Monitor › Replays): rrweb's Replayer over the events `url` answers, with play, pause and a
@@ -1237,9 +1271,41 @@
             editable:Boolean, embedded:Boolean, single:Boolean },
         emits:["filter"],
         data: () => ({ sortField: -1, descending: false, inspector: false, inspection: null, busy: false, actionError: "", menu: false, shared: "", status: "", flameFocus: null, outlineReady: false, outlineError: "" }),
-        mounted() { this.needOutline(); },
-        updated() { this.needOutline(); },
+        computed: { themeDark() { return !!(this.$q && this.$q.dark && this.$q.dark.isActive); } },
+        mounted() { this.needOutline(); this.colorFlameLabels(); },
+        updated() { this.needOutline(); this.colorFlameLabels(); },
+        watch: {
+            themeDark() {
+                // Resolve the palette and translucent fills after Quasar has changed the body theme.
+                if ((this.panel.visualization || this.panel.type) === "flameGraph") this.$nextTick(() => { if (this.$el && this.$el.isConnected) this.$forceUpdate(); });
+            }
+        },
         methods: {
+            colorFlameLabels() {
+                const svg = this.$el && this.$el.querySelector("svg.m-report-flame");
+                if (!svg) return;
+                const canvas = root.document.createElement("canvas"); canvas.width = canvas.height = 1;
+                const context = canvas.getContext("2d", { willReadFrequently: true });
+                if (!context) return;
+                // SVG fills include self-time opacity. Composite over the actual inherited surfaces, not just a theme name.
+                const surfaces = [];
+                for (let element = svg; element; element = element.parentElement) surfaces.unshift(root.getComputedStyle(element).backgroundColor);
+                context.fillStyle = "#fff"; context.fillRect(0, 0, 1, 1);
+                for (const color of surfaces) { context.fillStyle = color; context.fillRect(0, 0, 1, 1); }
+                const background = context.getImageData(0, 0, 1, 1);
+                for (const label of svg.querySelectorAll(".m-report-flame-label")) {
+                    const rectangle = label.parentElement.querySelector("rect"), style = root.getComputedStyle(rectangle);
+                    context.putImageData(background, 0, 0);
+                    context.globalAlpha = Number(style.opacity) * Number(style.fillOpacity);
+                    context.fillStyle = style.fill; context.fillRect(0, 0, 1, 1);
+                    const channels = Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3).map(value => {
+                        const channel = value / 255; return channel <= 0.04045 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+                    });
+                    const luminance = channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+                    // Black or white always reaches 4.5:1. A presentation attribute leaves authored CSS overrides intact.
+                    label.setAttribute("fill", luminance > 0.1791287847 ? "#000" : "#fff");
+                }
+            },
             // A geomap waits for the bundled outline; the panel draws again once it is loaded.
             needOutline() {
                 if ((this.panel.visualization || this.panel.type) !== "geomap" || report.outline || this.outlineError || this.outlineRequested) return;
@@ -1370,13 +1436,16 @@
                         h("text", { "text-anchor": "middle", dy: "4", "font-size": "11", fill: "currentColor" }, report.format(item.calls, { type: "number" })),
                         h("text", { "text-anchor": "middle", y: graph.radius + 14, "font-size": "12", fill: "currentColor" }, item.id.length > 28 ? item.id.slice(0, 27) + "…" : item.id)]))])]);
             } else if (visual === "flameGraph" && report.flame(frame, this.panel, this.flameFocus)) {
-                const flame = report.flame(frame, this.panel, this.flameFocus), rowHeight = 20, width = 1000, colors = [0, 2, 3, 6, 1];
+                const flame = report.flame(frame, this.panel, this.flameFocus), rowHeight = 20, colors = [0, 2, 3, 6, 1];
                 content = h("div", [flame.focus.length ? h("p", { class: "row items-center q-gutter-sm q-my-xs" }, [h("span", "Focused on " + flame.focus.join(" › ")), E.button("Reset zoom", () => { this.flameFocus = null; })]) : null,
-                    h("svg", { class: "m-report-flame", viewBox: "0 0 " + width + " " + (flame.depth + 1) * rowHeight, width: "100%", height: (flame.depth + 1) * rowHeight, role: "img", preserveAspectRatio: "none",
-                        "aria-label": "Flame graph, total " + report.format(flame.total, flame.field) }, flame.rects.map((rect, at) => h("g", { key: at, "data-frame": rect.path.join(";"), style: { cursor: "pointer" }, onClick: () => { this.flameFocus = rect.path; } }, [
+                    // Percentage frame viewports retain the time shares without scaling or spilling the label text.
+                    h("svg", { class: "m-report-flame", width: "100%", height: (flame.depth + 1) * rowHeight, role: "img",
+                        "aria-label": "Flame graph, total " + report.format(flame.total, flame.field) }, flame.rects.map((rect, at) => h("svg", {
+                            key: at, "data-frame": rect.path.join(";"), x: rect.x * 100 + "%", y: rect.depth * rowHeight, width: rect.w * 100 + "%", height: rowHeight,
+                            style: { cursor: "pointer", overflow: "hidden" }, onClick: () => { this.flameFocus = rect.path; } }, [
                         h("title", (rect.path.join(" › ") || "all") + ": " + report.format(rect.total, flame.field) + " (" + rect.share.toFixed(1) + "%), self " + report.format(rect.self, flame.field)),
-                        h("rect", { x: rect.x * width, y: rect.depth * rowHeight, width: Math.max(0.5, rect.w * width - 1), height: rowHeight - 1, fill: report.color(colors[rect.depth % colors.length]), opacity: 0.35 + 0.65 * (rect.self / rect.total || 0) }),
-                        rect.w * width > 40 ? h("text", { x: rect.x * width + 3, y: rect.depth * rowHeight + 14, "font-size": "11", fill: "currentColor" }, rect.name.length > rect.w * width / 7 ? rect.name.slice(0, Math.max(1, Math.floor(rect.w * width / 7) - 1)) + "…" : rect.name) : null])))]);
+                        h("rect", { width: "100%", height: rowHeight - 1, style: { width: "max(0.5px, calc(100% - 1px))" }, fill: report.color(colors[rect.depth % colors.length]), opacity: 0.35 + 0.65 * (rect.self / rect.total || 0) }),
+                        h("text", { class: "m-report-flame-label", x: 3, y: 14, "font-size": "12", fill: "currentColor" }, rect.name)])))]);
             } else if (visual === "geomap" && report.geomap(frame, this.panel, report.outline)) {
                 const map = report.geomap(frame, this.panel, report.outline), formatted = (value) => report.format(value, map.field || { type: "number" });
                 const base = map.countries.map((country, at) => h("path", { key: "c" + at, d: report.countryPath(country), fill: country.value != null ? "var(--q-primary)" : "rgba(127,127,127,0.18)", "fill-opacity": country.value != null ? country.shade : 1,

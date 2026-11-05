@@ -56,6 +56,7 @@ along with this software (see the LICENSE.md file). If not, see
             <section name="UnknownSection" condition="!effective.modelId"><widgets>
                 <label text="No model ${modelId ?? ''} is configured in the conf or the database." type="p" style="text-warning"/>
             </widgets><fail-widgets>
+                <label text="Effective settings combine the configuration with the database overrides below." type="p"/>
                 <container-row>
                     <row-col md="2"><label text="Endpoint" type="strong"/></row-col>
                     <row-col md="4"><link url="endpointDetail" text="${effective.endpointId}" link-type="anchor"
@@ -84,43 +85,87 @@ along with this software (see the LICENSE.md file). If not, see
             </fail-widgets></section>
         </box-body></container-box>
 
-        <container-row><row-col md="6">
-            <container-box><box-header title="Database Row"/><box-toolbar>
-                <link url="deleteModelRow" text="Remove Row" condition="modelRow" parameter-map="{modelId:modelId}"
-                        confirmation="Remove the database row of this model? A conf model of this id applies again."/>
-            </box-toolbar><box-body>
-                <label text="Each field set here replaces the conf's value of this model; an empty one keeps it." type="p"/>
-                <form-single name="ModelRow" map="modelRowMap" transition="storeModel">
-                    <field name="modelId"><default-field><hidden/></default-field></field>
-                    <auto-fields-entity entity-name="moqui.llm.LlmModel" field-type="edit" include="nonpk"/>
-                    <field name="lastUpdatedByUserId"><default-field><ignored/></default-field></field>
-                    <field name="tier"><default-field><drop-down allow-empty="true">
-                        <option key="fast"/><option key="balanced"/><option key="thorough"/></drop-down></default-field></field>
-                    <field name="toolMode"><default-field><drop-down allow-empty="true"><option key="native"/><option key="json"/></drop-down></default-field></field>
-                    <field name="promptVariant"><default-field><drop-down allow-empty="true"><option key="standard"/><option key="small"/></drop-down></default-field></field>
-                    <field name="intentPrefilter"><default-field><drop-down allow-empty="true"><option key="none"/><option key="hint"/></drop-down></default-field></field>
-                    <field name="reasoningReplay"><default-field><drop-down allow-empty="true">
-                        <option key="none"/><option key="last"/><option key="all"/></drop-down></default-field></field>
-                    <field name="reasoningJson"><default-field tooltip="A JSON patch per level: {&quot;low&quot;: {...}, &quot;high&quot;: {...}}">
-                        <text-area rows="4" cols="60"/></default-field></field>
-                    <field name="apiConfigJson"><default-field tooltip="A JSON patch applied to every request"><text-area rows="3" cols="60"/></default-field></field>
-                    <field name="submitButton"><default-field title="Save Row"><submit/></default-field></field>
-                </form-single>
-            </box-body></container-box>
-        </row-col><row-col md="6">
-            <container-box><box-header title="Capabilities"/><box-body>
-                <label text="A probe's verdict comes with its evidence; a verdict set here is the admin's and no probe replaces it (empty removes it)." type="p"/>
-                <form-list name="CapabilityList" list="capabilityRows" transition="setCapability">
-                    <field name="modelId"><default-field><hidden/></default-field></field>
-                    <field name="capability"><default-field><display/></default-field></field>
-                    <field name="verdict"><default-field><drop-down allow-empty="true">
-                        <option key="yes"/><option key="no"/><option key="partial"/></drop-down></default-field></field>
-                    <field name="source"><default-field><display/></default-field></field>
-                    <field name="probeDate"><default-field title="Date"><display/></default-field></field>
-                    <field name="evidence"><default-field><display/></default-field></field>
-                    <field name="submitButton"><default-field title="Set"><submit/></default-field></field>
-                </form-list>
-            </box-body></container-box>
-        </row-col></container-row>
+        <container-box><box-header title="Database overrides"/><box-toolbar>
+            <link url="deleteModelRow" text="Remove Row" condition="modelRow" parameter-map="{modelId:modelId}"
+                    confirmation="Remove the database row of this model? A conf model of this id applies again."/>
+        </box-toolbar><box-body>
+            <label text="Set a field to override this model's configured value. Leave it empty to use the configuration, then the framework default. Prices are per million tokens in the selected currency." type="p"/>
+            <form-single name="ModelRow" map="modelRowMap" transition="storeModel">
+                <field name="modelId"><default-field><hidden/></default-field></field>
+                <auto-fields-entity entity-name="moqui.llm.LlmModel" field-type="edit" include="nonpk"/>
+                <field name="lastUpdatedByUserId"><default-field><ignored/></default-field></field>
+                <field name="tier"><default-field><drop-down allow-empty="true">
+                    <option key="fast"/><option key="balanced"/><option key="thorough"/></drop-down></default-field></field>
+                <field name="toolMode"><default-field><drop-down allow-empty="true"><option key="native"/><option key="json"/></drop-down></default-field></field>
+                <field name="promptVariant"><default-field><drop-down allow-empty="true"><option key="standard"/><option key="small"/></drop-down></default-field></field>
+                <field name="intentPrefilter"><default-field><drop-down allow-empty="true"><option key="none"/><option key="hint"/></drop-down></default-field></field>
+                <field name="reasoningReplay"><default-field><drop-down allow-empty="true">
+                    <option key="none"/><option key="last"/><option key="all"/></drop-down></default-field></field>
+                <field name="reasoningJson"><default-field tooltip="A JSON patch per level: {&quot;low&quot;: {...}, &quot;high&quot;: {...}}">
+                    <text-area rows="4" cols="60"/></default-field></field>
+                <field name="apiConfigJson"><default-field tooltip="A JSON patch applied to every request"><text-area rows="3" cols="60"/></default-field></field>
+                <field name="submitButton"><default-field title="Save Row"><submit/></default-field></field>
+                <field-layout>
+                    <field-ref name="modelId"/>
+                    <field-row-big><field-ref name="submitButton"/></field-row-big>
+                    <field-col-row>
+                        <field-col xs="12" md="6">
+                            <field-group title="Identity" box="true">
+                                <field-ref name="description"/>
+                                <field-row><field-ref name="endpointId"/><field-ref name="providerModel"/></field-row>
+                                <field-row><field-ref name="tier"/><field-ref name="disabled"/></field-row>
+                            </field-group>
+                        </field-col>
+                        <field-col xs="12" md="6">
+                            <field-group title="Context and pricing" box="true">
+                                <field-row><field-ref name="contextWindow"/><field-ref name="maxOutput"/></field-row>
+                                <field-row><field-ref name="priceInput"/><field-ref name="priceOutput"/></field-row>
+                                <field-row><field-ref name="priceCachedInput"/><field-ref name="priceCacheWrite"/></field-row>
+                                <field-ref name="currencyUomId"/>
+                            </field-group>
+                        </field-col>
+                    </field-col-row>
+                    <field-col-row>
+                        <field-col xs="12" md="6">
+                            <field-group title="Execution" box="true">
+                                <field-row><field-ref name="toolMode"/><field-ref name="parallelToolCalls"/></field-row>
+                                <field-row><field-ref name="promptVariant"/><field-ref name="reasoningReplay"/></field-row>
+                                <field-row><field-ref name="temperature"/><field-ref name="intentPrefilter"/></field-row>
+                                <field-ref name="sideCalls"/>
+                            </field-group>
+                        </field-col>
+                        <field-col xs="12" md="6">
+                            <field-group title="Advanced limits" box="true">
+                                <field-row><field-ref name="resultCapChars"/><field-ref name="screenSize"/></field-row>
+                                <field-row><field-ref name="listLimit"/><field-ref name="catalogSize"/></field-row>
+                                <field-row><field-ref name="maxToolCalls"/><field-ref name="maxConcurrency"/></field-row>
+                                <field-row><field-ref name="compactHighPercent"/><field-ref name="compactLowPercent"/></field-row>
+                                <field-ref name="charsPerToken"/>
+                                <fields-not-referenced/>
+                            </field-group>
+                        </field-col>
+                    </field-col-row>
+                    <field-accordion active="false">
+                        <field-group title="Request patches (advanced)">
+                            <field-row><field-ref name="reasoningJson"/><field-ref name="apiConfigJson"/></field-row>
+                        </field-group>
+                    </field-accordion>
+                </field-layout>
+            </form-single>
+        </box-body></container-box>
+
+        <container-box><box-header title="Capabilities"/><box-body>
+            <label text="A probe's verdict comes with its evidence; a verdict set here is the admin's and no probe replaces it (empty removes it)." type="p"/>
+            <form-list name="CapabilityList" list="capabilityRows" transition="setCapability">
+                <field name="modelId"><default-field><hidden/></default-field></field>
+                <field name="capability"><default-field><display/></default-field></field>
+                <field name="verdict"><default-field><drop-down allow-empty="true">
+                    <option key="yes"/><option key="no"/><option key="partial"/></drop-down></default-field></field>
+                <field name="source"><default-field><display/></default-field></field>
+                <field name="probeDate"><default-field title="Date"><display/></default-field></field>
+                <field name="evidence"><default-field><display/></default-field></field>
+                <field name="submitButton"><default-field title="Set"><submit/></default-field></field>
+            </form-list>
+        </box-body></container-box>
     </widgets>
 </screen>
