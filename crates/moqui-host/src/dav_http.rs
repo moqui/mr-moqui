@@ -102,7 +102,12 @@ pub(crate) async fn handle(
     for (name, value) in answer.headers {
         response = response.header(name, value);
     }
+    // a file's content streams a window at a time, as a web download's does
+    let body = match answer.stream {
+        Some(stream) => crate::source_body::body(factory, stream),
+        None => axum::body::Body::from(answer.body),
+    };
     response
-        .body(axum::body::Body::from(answer.body))
+        .body(body)
         .unwrap_or_else(|_| plain(500, "a DAV response header was not valid"))
 }

@@ -122,7 +122,7 @@ fn basic(username: &str, password: &str) -> String {
 }
 
 fn body(response: &DavResponse) -> String {
-    String::from_utf8_lossy(&response.body).into_owned()
+    String::from_utf8_lossy(&response.body_bytes().unwrap()).into_owned()
 }
 
 fn header<'a>(response: &'a DavResponse, name: &str) -> Option<&'a str> {
@@ -559,6 +559,51 @@ fn generated_urls_share_the_listener_port_and_keep_explicit_and_request_origins(
     check("https://public.example:10443");
     moqui_lib::env::set_property("dav_public_url", "https://dav.example/base/");
     assert_eq!(super::public_base_url(factory), "https://dav.example/base");
+}
+
+/// HEAD answers from the file's size and reads nothing of it: with its stored content gone (its size still kept),
+/// HEAD is answered while GET cannot be read; and GET's content is a stream, a range a window of it (HL-010).
+#[test]
+fn head_answers_without_reading_the_file_and_get_streams_it() {
+    let (context, facade) = setup();
+    let _entered = context.enter();
+    user(&facade, "alice");
+    let (_, password) = app_password("alice", "Laptop");
+    let alice = Client {
+        factory: context.factory(),
+        authorization: Some(basic("alice", &password)),
+    };
+    let file = "/dav/files/alice/My%20files/head.txt";
+    assert_eq!(alice.send("PUT", file, &[], "hello there").status, 201);
+    let got = alice.send("GET", file, &[("Range", "bytes=6-")], "");
+    assert_eq!(got.status, 206);
+    assert!(got.body.is_empty() && got.stream.is_some(), "{got:?}");
+    assert_eq!(body(&got), "there");
+    // the content goes, its size stays
+    {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let resource = facade
+            .find("moqui.resource.DbResource")
+            .unwrap()
+            .eq("filename", Value::string("head.txt"))
+            .one()
+            .unwrap()
+            .unwrap();
+        let mut stored = facade.make_value("moqui.resource.DbResourceFile").unwrap();
+        stored.set("resourceId", resource.get("resourceId").unwrap().clone());
+        stored.set("fileData", Value::Null);
+        stored.set("blobId", Value::string("GONE"));
+        stored.update(&facade).unwrap();
+    }
+    let head = alice.send("HEAD", file, &[], "");
+    assert_eq!(head.status, 200, "{head:?}");
+    assert_eq!(header(&head, "Content-Length"), Some("11"));
+    assert!(head.body.is_empty() && head.stream.is_none());
+    let got = alice.send("GET", file, &[], "");
+    assert!(
+        got.status != 200 || got.body_bytes().is_err(),
+        "the content cannot be read: {got:?}"
+    );
 }
 
 /// The SFTP view of the drives (`files::tree`), as the SSH server's `sftp-drives` serves it: a write is an upload that
