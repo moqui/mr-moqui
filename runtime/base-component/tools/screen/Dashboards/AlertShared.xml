@@ -53,7 +53,8 @@
         contactType=body.type || 'notification';topic=body.topic || 'ReportAlert';contactUserId=body.userId || '';contactGroupId=body.userGroupId || ''
         emailTemplateId=body.emailTemplateId || '';toAddresses=body.toAddresses || '';webhookUrl=body.url || '';urlProperty=body.urlProperty || ''
         headerPropertiesJson=body.headerProperties?JSON.stringify(body.headerProperties):'';groupBy=(body.groupBy || []).join(', ')
-        groupWaitSeconds=body.groupWaitSeconds ?? 30;repeatSeconds=body.repeatSeconds ?? 14400;matchersJson=JSON.stringify(body.matchers || {})
+        // Preserve the JSON number through text-line formatting and the save action's Number() parser.
+        groupWaitSeconds=String(body.groupWaitSeconds ?? 30);repeatSeconds=String(body.repeatSeconds ?? 14400);matchersJson=JSON.stringify(body.matchers || {})
         silenceFrom=body.from || new Date().toISOString();silenceThru=body.thru || new Date(Date.now()+3600000).toISOString();silenceComment=body.comment || '';silenceMatchers=JSON.stringify(body.matchers || {})
         weekdays=(body.weekdays || []).map(String);muteStart=body.start || '00:00';muteEnd=body.end || '24:00'
         usedIn=definitionId?(ec.service.sync().name('org.moqui.report.ReportServices.find#DefinitionUses').parameters({definitionId}).call().usedIn || []):[]
@@ -61,15 +62,31 @@
     <widgets>
         <link url="alerts" text="Back to alerts"/>
         <label text="${sharedKind}" type="h4"/>
+        <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[<div style="width:100%;max-width:1600px">]]></text>
+            <text type="tui" template="false">[]</text></render-mode>
         <label text="Alert rules name this by its ID. Each rule that references it uses it together with the rule's own contact points, silences and mute timings." type="p"/>
         <section name="ReadOnlyItem" condition="readOnly"><widgets>
-            <label text="This item is shipped by ${component}. Save a copy to edit it." type="p"/>
-            <form-single name="CopySharedItem" transition="copy"><field name="definitionId"><default-field><hidden/></default-field></field>
-                <field name="copyId"><default-field title="New ID"><text-line/></default-field></field><field name="copyTitle"><default-field title="Title"><text-line/></default-field></field>
-                <field name="copy"><default-field title=""><submit text="Save as copy"/></default-field></field></form-single>
+            <container-box><box-header title="Create an editable copy"/><box-body>
+                <label text="This item is shipped by ${component}. Save a copy to edit it." type="p"/>
+                <form-single name="CopySharedItem" transition="copy">
+                    <field name="definitionId"><default-field><hidden/></default-field></field>
+                    <field name="copyId"><default-field title="New ID"><text-line/></default-field></field>
+                    <field name="copyTitle"><default-field title="Title"><text-line/></default-field></field>
+                    <field name="copy"><default-field title=""><submit text="Save as copy"/></default-field></field>
+                    <field-layout>
+                        <field-ref name="definitionId"/>
+                        <field-row><field-ref name="copyId"/><field-ref name="copyTitle"/></field-row>
+                        <field-ref name="copy"/>
+                    </field-layout>
+                </form-single>
+            </box-body></container-box>
         </widgets><fail-widgets>
             <section name="ContactPointForm" condition="sharedType === 'contactPoint'"><widgets>
-                <form-single name="SharedContactPoint" transition="save"><field name="definitionId"><default-field><hidden/></default-field></field><field name="sharedType"><default-field><hidden/></default-field></field>
+                <label text="Choose the delivery type, then fill its section. Grouping, timing and label matchers apply to all delivery types." type="p"/>
+                <label text="Share with user group controls who can read and reuse this contact point. Notification user and Notification group choose who receives its notifications." type="p" style="m-muted"/>
+                <form-single name="SharedContactPoint" transition="save">
+                    <field name="definitionId"><default-field><hidden/></default-field></field>
+                    <field name="sharedType"><default-field><hidden/></default-field></field>
                     <field name="newId"><conditional-field condition="!definitionId" title="ID"><text-line/></conditional-field><default-field><hidden/></default-field></field>
                     <field name="sharedTitle"><default-field title="Title"><text-line/></default-field></field>
                     <field name="userGroupId"><default-field title="Share with user group"><text-line/></default-field></field>
@@ -88,10 +105,52 @@
                     <field name="matchersJson"><default-field title="Label matchers JSON"><text-area rows="2" cols="80"/></default-field></field>
                     <field name="note"><default-field title="Version note"><text-line/></default-field></field>
                     <field name="save"><default-field title=""><submit text="Save contact point"/></default-field></field>
+                    <field-layout>
+                        <field-ref name="definitionId"/><field-ref name="sharedType"/>
+                        <field-ref name="save"/>
+                        <field-col-row>
+                            <field-col xs="12" md="4">
+                                <field-group title="Identity and delivery type" box="true">
+                                    <field-ref name="newId"/><field-ref name="sharedTitle"/>
+                                    <field-ref name="userGroupId"/><field-ref name="contactType"/>
+                                </field-group>
+                            </field-col>
+                            <field-col xs="12" md="4">
+                                <field-group title="Notification (when selected)" box="true">
+                                    <field-ref name="topic"/><field-ref name="contactUserId"/><field-ref name="contactGroupId"/>
+                                </field-group>
+                            </field-col>
+                            <field-col xs="12" md="4">
+                                <field-group title="Email (when selected)" box="true">
+                                    <field-ref name="emailTemplateId"/><field-ref name="toAddresses"/>
+                                </field-group>
+                                <field-group title="Webhook (when selected)" box="true">
+                                    <field-ref name="webhookUrl"/><field-ref name="urlProperty"/><field-ref name="headerPropertiesJson"/>
+                                </field-group>
+                            </field-col>
+                        </field-col-row>
+                        <field-col-row>
+                            <field-col xs="12" md="6">
+                                <field-group title="Grouping and timing" box="true">
+                                    <field-ref name="groupBy"/>
+                                    <field-row><field-ref name="groupWaitSeconds"/><field-ref name="repeatSeconds"/></field-row>
+                                </field-group>
+                            </field-col>
+                            <field-col xs="12" md="6">
+                                <field-group title="Matching labels and revision" box="true">
+                                    <field-ref name="matchersJson"/><field-ref name="note"/>
+                                </field-group>
+                            </field-col>
+                        </field-col-row>
+                    </field-layout>
                 </form-single>
             </widgets></section>
             <section name="SilenceForm" condition="sharedType === 'silence'"><widgets>
-                <form-single name="SharedSilence" transition="save"><field name="definitionId"><default-field><hidden/></default-field></field><field name="sharedType"><default-field><hidden/></default-field></field>
+                <label text="With empty label matchers {}, this silence affects only rules that reference it. With matchers, it can also affect matching rules whose owners can read it, even without a reference." type="p"/>
+                <label text="Use ISO dates and times including Z or an explicit UTC offset. Silences suppress notifications while evaluation and state history continue." type="p" style="m-muted"/>
+                <form-single name="SharedSilence" transition="save">
+                    <field name="definitionId"><default-field><hidden/></default-field></field>
+                    <field name="sharedType"><default-field><hidden/></default-field></field>
                     <field name="newId"><conditional-field condition="!definitionId" title="ID"><text-line/></conditional-field><default-field><hidden/></default-field></field>
                     <field name="sharedTitle"><default-field title="Title"><text-line/></default-field></field>
                     <field name="userGroupId"><default-field title="Share with user group"><text-line/></default-field></field>
@@ -101,10 +160,32 @@
                     <field name="silenceMatchers"><default-field title="Label matchers JSON"><text-area rows="2" cols="80"/></default-field></field>
                     <field name="note"><default-field title="Version note"><text-line/></default-field></field>
                     <field name="save"><default-field title=""><submit text="Save silence"/></default-field></field>
+                    <field-layout>
+                        <field-ref name="definitionId"/><field-ref name="sharedType"/>
+                        <field-ref name="save"/>
+                        <field-col-row>
+                            <field-col xs="12" md="7">
+                                <field-group title="Time window" box="true">
+                                    <field-row><field-ref name="silenceFrom"/><field-ref name="silenceThru"/></field-row>
+                                    <field-ref name="silenceComment"/>
+                                </field-group>
+                                <field-group title="Matching labels" box="true"><field-ref name="silenceMatchers"/></field-group>
+                            </field-col>
+                            <field-col xs="12" md="5">
+                                <field-group title="Identity and sharing" box="true">
+                                    <field-ref name="newId"/><field-ref name="sharedTitle"/><field-ref name="userGroupId"/><field-ref name="note"/>
+                                </field-group>
+                            </field-col>
+                        </field-col-row>
+                    </field-layout>
                 </form-single>
             </widgets></section>
             <section name="MuteTimingForm" condition="sharedType === 'muteTiming'"><widgets>
-                <form-single name="SharedMuteTiming" transition="save"><field name="definitionId"><default-field><hidden/></default-field></field><field name="sharedType"><default-field><hidden/></default-field></field>
+                <label text="Choose recurring quiet periods in each alert rule owner's time zone. The start is inclusive and the end exclusive; 24:00 means the end of the day." type="p"/>
+                <label text="Mute timings suppress notifications for rules that reference them. Evaluation and state history continue." type="p" style="m-muted"/>
+                <form-single name="SharedMuteTiming" transition="save">
+                    <field name="definitionId"><default-field><hidden/></default-field></field>
+                    <field name="sharedType"><default-field><hidden/></default-field></field>
                     <field name="newId"><conditional-field condition="!definitionId" title="ID"><text-line/></conditional-field><default-field><hidden/></default-field></field>
                     <field name="sharedTitle"><default-field title="Name"><text-line/></default-field></field>
                     <field name="userGroupId"><default-field title="Share with user group"><text-line/></default-field></field>
@@ -113,19 +194,50 @@
                     <field name="muteEnd"><default-field title="End HH:mm"><text-line/></default-field></field>
                     <field name="note"><default-field title="Version note"><text-line/></default-field></field>
                     <field name="save"><default-field title=""><submit text="Save mute timing"/></default-field></field>
+                    <field-layout>
+                        <field-ref name="definitionId"/><field-ref name="sharedType"/>
+                        <field-ref name="save"/>
+                        <field-col-row>
+                            <field-col xs="12" md="7">
+                                <field-group title="Recurring quiet period" box="true">
+                                    <field-ref name="weekdays"/>
+                                    <field-row><field-ref name="muteStart"/><field-ref name="muteEnd"/></field-row>
+                                </field-group>
+                            </field-col>
+                            <field-col xs="12" md="5">
+                                <field-group title="Identity and sharing" box="true">
+                                    <field-ref name="newId"/><field-ref name="sharedTitle"/><field-ref name="userGroupId"/><field-ref name="note"/>
+                                </field-group>
+                            </field-col>
+                        </field-col-row>
+                    </field-layout>
                 </form-single>
-            </widgets></section>
-            <section name="DeleteSharedItem" condition="definitionId &amp;&amp; ownerId === ec.user.userId"><widgets>
-                <form-single name="DeleteShared" transition="delete"><field name="definitionId"><default-field><hidden/></default-field></field>
-                    <field name="delete"><default-field title=""><submit text="Delete" confirmation="Delete this shared item? Rules that still reference it must drop it first."/></default-field></field></form-single>
             </widgets></section>
         </fail-widgets></section>
         <section name="UsedIn" condition="definitionId"><widgets>
-            <label text="Used in" type="h5"/>
-            <form-list name="SharedItemUses" list="usedIn" skip-form="true" paginate="false">
-                <field name="title"><default-field title="Alert rule"><link url="rule" text="${title || id}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
-                <field name="type"><default-field title="Type"><display/></default-field></field>
-            </form-list>
+            <container-box><box-header title="Used in"/><box-body>
+                <section name="SharedItemReferences" condition="usedIn.length"><widgets>
+                    <form-list name="SharedItemUses" list="usedIn" skip-form="true" paginate="false">
+                        <field name="title"><default-field title="Alert rule"><link url="rule" text="${title || id}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+                        <field name="type"><default-field title="Type"><display/></default-field></field>
+                    </form-list>
+                </widgets><fail-widgets>
+                    <label text="No alert rules explicitly reference this item yet. Add it from an alert rule's Shared item selector." type="p"/>
+                </fail-widgets></section>
+                <label text="A shared silence with label matchers can also affect matching rules without an explicit reference." type="p" style="m-muted" condition="sharedType === 'silence'"/>
+            </box-body></container-box>
         </widgets></section>
+        <section name="DeleteSharedItem" condition="!readOnly &amp;&amp; definitionId &amp;&amp; ownerId === ec.user.userId"><widgets>
+            <container-box><box-header title="Delete shared item"/><box-body>
+                <label text="Remove this item from the rules listed in Used in before deleting it." type="p"/>
+                <form-single name="DeleteShared" transition="delete">
+                    <field name="definitionId"><default-field><hidden/></default-field></field>
+                    <field name="delete"><default-field title=""><submit text="Delete" confirmation="Delete this shared item? Rules that still reference it must drop it first."/></default-field></field>
+                    <field-layout><field-ref name="definitionId"/><field-ref name="delete"/></field-layout>
+                </form-single>
+            </box-body></container-box>
+        </widgets></section>
+        <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[</div>]]></text>
+            <text type="tui" template="false">[]</text></render-mode>
     </widgets>
 </screen>

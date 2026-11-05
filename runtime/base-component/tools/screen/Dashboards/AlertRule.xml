@@ -92,10 +92,11 @@
         }
         const body=ruleDefinition.body
         ruleId=ruleDefinition.id;ruleTitle=ruleDefinition.title;queryJson=JSON.stringify(body.query,null,2);valueField=body.field || '';reduce=body.reduce || 'last'
-        conditionType=(body.condition || {}).type || 'above';threshold=(body.condition || {}).threshold ?? 0;minimum=(body.condition || {}).min ?? 0;maximum=(body.condition || {}).max ?? 0
-        recoveryThreshold=(body.condition || {}).recoveryThreshold ?? '';pendingSeconds=body.pendingSeconds || 0;keepFiringSeconds=body.keepFiringSeconds || 0;intervalSeconds=body.intervalSeconds || 60
+        // These JSON numbers are edited with Number(), so use canonical text without locale grouping or display rounding.
+        conditionType=(body.condition || {}).type || 'above';threshold=String((body.condition || {}).threshold ?? 0);minimum=String((body.condition || {}).min ?? 0);maximum=String((body.condition || {}).max ?? 0)
+        recoveryThreshold=String((body.condition || {}).recoveryThreshold ?? '');pendingSeconds=String(body.pendingSeconds || 0);keepFiringSeconds=String(body.keepFiringSeconds || 0);intervalSeconds=String(body.intervalSeconds || 60)
         paused=body.paused?'Y':'N';labelFields=(body.labelFields || []).join(', ');labelsJson=JSON.stringify(body.labels || {},null,2)
-        contactList=(body.contactPoints || []).map((item,index)=>Object.assign({itemIndex:index},item));silenceList=(body.silences || []).map((item,index)=>Object.assign({itemIndex:index},item));muteList=(body.muteTimings || []).map((item,index)=>Object.assign({itemIndex:index},item))
+        contactList=(body.contactPoints || []).map((item,index)=>Object.assign({itemIndex:index},item));silenceList=(body.silences || []).map((item,index)=>Object.assign({itemIndex:index},item));muteList=(body.muteTimings || []).map((item,index)=>Object.assign({itemIndex:index},item,{weekdayNames:(item.weekdays || []).map(day=>ec.l10n.localize(['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'][Number(day)] || String(day))).join(', ')}))
         const kinds={contactPoint:'Contact point',silence:'Silence',muteTiming:'Mute timing'}
         const sharedItems=Object.keys(kinds).flatMap(type=>ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:type}).call().definitions || [])
         sharedChoices=sharedItems.map(item=>({id:item.id,label:kinds[item.type]+': '+(item.title || item.id)}))
@@ -105,12 +106,304 @@
         }))
         queryDatasets=ec.service.sync().name('org.moqui.report.ReportServices.list#Datasets').call().datasets || []
         silenceFrom=new Date().toISOString();silenceThru=new Date(Date.now()+3600000).toISOString()
-    ]]></script></actions>    <widgets><label text="Alert rule" type="h4"/><label text="Save the rule before adding contact points, silences or mute timings. No Data and Error never count as healthy." type="p"/>
-<form-single name="AlertCondition" transition="save"><field name="dashboardId"><default-field><hidden/></default-field></field><field name="panelId"><default-field><hidden/></default-field></field><field name="definitionId"><default-field><hidden/></default-field></field><field name="ruleId"><default-field title="New rule ID"><text-line/></default-field></field><field name="ruleTitle"><default-field title="Title"><text-line/></default-field></field><field name="queryJson"><default-field title="Report query"><section name="AlertQueryOptions"><widgets><render-mode>
-<text type="qvt"><![CDATA[<m-report-definition-editor name="queryJson" query-only :datasets="${WebUtilities.encodeHtml(JSON.stringify(queryDatasets))}"></m-report-definition-editor>]]></text>
-<text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'report-definition-editor',props:{value:JSON.parse(queryJson || '{}'),kind:'query',form:'AlertCondition',field:'queryJson',datasets:queryDatasets,queryOnly:true}})}]]></text>
-<text type="html,html-print,text"><![CDATA[<p>The query below uses the same authorized report query pipeline as dashboard panels.</p>]]></text>
-</render-mode></widgets></section><text-area rows="12" cols="100"/></default-field></field><field name="valueField"><default-field title="Numeric field (empty = each numeric field)"><text-line/></default-field></field><field name="reduce"><default-field title="Reduce"><drop-down><option key="last"/><option key="min"/><option key="max"/><option key="mean"/><option key="sum"/><option key="count"/><option key="delta"/><option key="p95"/></drop-down></default-field></field><field name="conditionType"><default-field title="Condition"><drop-down><option key="above"/><option key="below"/><option key="within"/><option key="outside"/></drop-down></default-field></field><field name="threshold"><default-field title="Threshold"><text-line/></default-field></field><field name="minimum"><default-field title="Range minimum"><text-line/></default-field></field><field name="maximum"><default-field title="Range maximum"><text-line/></default-field></field><field name="recoveryThreshold"><default-field title="Recovery threshold (optional)"><text-line/></default-field></field><field name="pendingSeconds"><default-field title="Pending seconds"><text-line/></default-field></field><field name="keepFiringSeconds"><default-field title="Keep firing seconds"><text-line/></default-field></field><field name="intervalSeconds"><default-field title="Evaluation interval seconds"><text-line/></default-field></field><field name="paused"><default-field title="Paused"><drop-down><option key="N"/><option key="Y"/></drop-down></default-field></field><field name="labelFields"><default-field title="Series label fields (comma separated, empty = safe bucket dimensions)"><text-line/></default-field></field><field name="labelsJson"><default-field title="Routing labels JSON"><text-area rows="3" cols="80"/></default-field></field><field name="note"><default-field title="Version note"><text-line/></default-field></field><field name="save"><default-field title=""><submit text="Save alert rule"/></default-field></field></form-single><section name="SavedRule" condition="definitionId"><widgets>
-<label text="Shared contact points, silences and mute timings" type="h5"/><form-single name="AddSharedRef" transition="addRef"><field name="definitionId"><default-field><hidden/></default-field></field><field name="sharedRef"><default-field title="Shared item"><drop-down><list-options list="sharedChoices" key="${id}" text="${label}"/></drop-down></default-field></field><field name="add"><default-field title=""><submit text="Use shared item"/></default-field></field></form-single><form-list name="SharedRefs" list="refList" skip-form="true" paginate="false"><field name="kind"><default-field title="Type"><display/></default-field></field><field name="title"><default-field title="Shared item"><link url="shared" text="${title}" link-type="anchor"><parameter name="definitionId" from="refId"/></link></default-field></field><field name="refId"><default-field title="ID"><display/></default-field></field><field name="remove"><default-field><link url="removeRef" text="Remove" link-type="hidden-form-link" parameter-map="{definitionId:definitionId,refKey:refKey,refId:refId}"/></default-field></field></form-list>
-<label text="Contact points" type="h5"/><form-single name="AddContact" transition="addContact"><field name="definitionId"><default-field><hidden/></default-field></field><field name="contactId"><default-field title="Contact ID"><text-line/></default-field></field><field name="contactType"><default-field title="Type"><drop-down><option key="notification"/><option key="email"/><option key="webhook"/></drop-down></default-field></field><field name="topic"><default-field title="Notification topic"><text-line/></default-field></field><field name="contactUserId"><default-field title="Notification user"><text-line/></default-field></field><field name="contactGroupId"><default-field title="Notification group"><text-line/></default-field></field><field name="emailTemplateId"><default-field title="Email template"><text-line/></default-field></field><field name="toAddresses"><default-field title="Email recipients"><text-line/></default-field></field><field name="webhookUrl"><default-field title="Webhook URL"><text-line/></default-field></field><field name="groupBy"><default-field title="Group by labels (comma separated)"><text-line/></default-field></field><field name="groupWaitSeconds"><default-field title="Group wait seconds"><text-line/></default-field></field><field name="repeatSeconds"><default-field title="Repeat seconds"><text-line/></default-field></field><field name="matchersJson"><default-field title="Label matchers JSON"><text-area rows="2" cols="80"/></default-field></field><field name="add"><default-field title=""><submit text="Add contact point"/></default-field></field></form-single><form-list name="Contacts" list="contactList" skip-form="true" paginate="false"><field name="id"><default-field title="ID"><display/></default-field></field><field name="type"><default-field title="Type"><display/></default-field></field><field name="topic"><default-field title="Topic"><display/></default-field></field><field name="userId"><default-field title="User"><display/></default-field></field><field name="userGroupId"><default-field title="User group"><display/></default-field></field><field name="toAddresses"><default-field title="Email recipients"><display/></default-field></field><field name="url"><default-field title="Webhook URL"><display/></default-field></field><field name="remove"><default-field><link url="removeItem" text="Remove" link-type="hidden-form-link" parameter-map="{definitionId:definitionId,collection:'contactPoints',itemIndex:itemIndex}"/></default-field></field></form-list><label text="One-off silence" type="h5"/><form-single name="AddSilence" transition="addSilence"><field name="definitionId"><default-field><hidden/></default-field></field><field name="silenceFrom"><default-field title="From (ISO time with offset)"><text-line/></default-field></field><field name="silenceThru"><default-field title="Through (ISO time with offset)"><text-line/></default-field></field><field name="silenceComment"><default-field title="Comment"><text-line/></default-field></field><field name="silenceMatchers"><default-field title="Label matchers JSON"><text-area rows="2" cols="80"/></default-field></field><field name="add"><default-field title=""><submit text="Add silence"/></default-field></field></form-single><form-list name="Silences" list="silenceList" skip-form="true" paginate="false"><field name="from"><default-field title="From"><display/></default-field></field><field name="thru"><default-field title="Through"><display/></default-field></field><field name="comment"><default-field title="Comment"><display/></default-field></field><field name="remove"><default-field><link url="removeItem" text="Remove" link-type="hidden-form-link" parameter-map="{definitionId:definitionId,collection:'silences',itemIndex:itemIndex}"/></default-field></field></form-list><label text="Recurring mute timing (rule owner time zone)" type="h5"/><form-single name="AddMute" transition="addMute"><field name="definitionId"><default-field><hidden/></default-field></field><field name="muteName"><default-field title="Name"><text-line/></default-field></field><field name="weekdays"><default-field title="Weekdays"><drop-down allow-multiple="true"><option key="0" text="Monday"/><option key="1" text="Tuesday"/><option key="2" text="Wednesday"/><option key="3" text="Thursday"/><option key="4" text="Friday"/><option key="5" text="Saturday"/><option key="6" text="Sunday"/></drop-down></default-field></field><field name="muteStart"><default-field title="Start HH:mm"><text-line/></default-field></field><field name="muteEnd"><default-field title="End HH:mm"><text-line/></default-field></field><field name="add"><default-field title=""><submit text="Add mute timing"/></default-field></field></form-single><form-list name="MuteTimings" list="muteList" skip-form="true" paginate="false"><field name="name"><default-field title="Name"><display/></default-field></field><field name="weekdays"><default-field title="Weekdays"><display/></default-field></field><field name="start"><default-field title="Start"><display/></default-field></field><field name="end"><default-field title="End"><display/></default-field></field><field name="remove"><default-field><link url="removeItem" text="Remove" link-type="hidden-form-link" parameter-map="{definitionId:definitionId,collection:'muteTimings',itemIndex:itemIndex}"/></default-field></field></form-list></widgets></section></widgets>
+    ]]></script></actions>
+    <widgets>
+        <container style="row items-center q-gutter-sm q-mb-sm">
+            <label text="Alert rule" type="h4" style="q-my-none" />
+            <link url="../Alerts" text="All alert rules" />
+        </container>
+        <label type="p" text="Save the rule before adding contact points, silences or mute timings. No Data and Error never count as healthy." style="m-muted" />
+        <form-single name="AlertCondition" transition="save">
+            <field name="dashboardId"><default-field><hidden /></default-field></field>
+            <field name="panelId"><default-field><hidden /></default-field></field>
+            <field name="definitionId"><default-field><hidden /></default-field></field>
+            <field name="ruleId"><default-field title="Rule ID" tooltip="Identifier used when creating a rule. An existing rule keeps its ID."><text-line /></default-field></field>
+            <field name="ruleTitle"><default-field title="Rule name"><text-line /></default-field></field>
+            <field name="queryJson">
+                <default-field title="Query JSON" tooltip="The editor and JSON describe the same query. Save the rule to keep changes.">
+                    <section name="AlertQueryOptions">
+                        <widgets>
+                            <render-mode>
+                                <text type="qvt"><![CDATA[<m-report-definition-editor name="queryJson" query-only heading="Alert query" save-hint="Options update the query below. Save alert rule to keep the changes." :datasets="${WebUtilities.encodeHtml(JSON.stringify(queryDatasets))}"></m-report-definition-editor>]]></text>
+                                <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'report-definition-editor',props:{value:JSON.parse(queryJson || '{}'),kind:'query',form:'AlertCondition',field:'queryJson',datasets:queryDatasets,queryOnly:true}})}]]></text>
+                                <text type="html,html-print,text"><![CDATA[<p>The query below uses the same authorized report query pipeline as dashboard panels.</p>]]></text>
+                            </render-mode>
+                        </widgets>
+                    </section>
+                    <text-area rows="8" cols="100" />
+                </default-field>
+            </field>
+            <field name="valueField"><default-field title="Numeric field" tooltip="Leave empty to evaluate each numeric field."><text-line /></default-field></field>
+            <field name="reduce"><default-field title="Reduce values"><drop-down><option key="last" text="Last value" /><option key="min" text="Minimum" /><option key="max" text="Maximum" /><option key="mean" text="Mean" /><option key="sum" text="Sum" /><option key="count" text="Count" /><option key="delta" text="Change (delta)" /><option key="p95" text="95th percentile" /></drop-down></default-field></field>
+            <field name="conditionType"><default-field title="Condition"><drop-down><option key="above" text="Above threshold" /><option key="below" text="Below threshold" /><option key="within" text="Within range" /><option key="outside" text="Outside range" /></drop-down></default-field></field>
+            <field name="threshold"><default-field title="Threshold (above or below)"><text-line size="12" /></default-field></field>
+            <field name="minimum"><default-field title="Range minimum"><text-line size="12" /></default-field></field>
+            <field name="maximum"><default-field title="Range maximum"><text-line size="12" /></default-field></field>
+            <field name="recoveryThreshold"><default-field title="Recovery threshold (optional)" tooltip="For above/below rules after firing. Leave empty to use the alert threshold."><text-line size="12" /></default-field></field>
+            <field name="pendingSeconds"><default-field title="Wait before firing (seconds)"><text-line size="12" /></default-field></field>
+            <field name="keepFiringSeconds"><default-field title="Keep firing after recovery (seconds)"><text-line size="12" /></default-field></field>
+            <field name="intervalSeconds"><default-field title="Evaluate every (seconds)" tooltip="Minimum 60 seconds. Lower values are saved as 60."><text-line size="12" /></default-field></field>
+            <field name="paused"><default-field title="Evaluation" tooltip="Paused rules are saved without scheduled evaluation."><drop-down><option key="N" text="Active" /><option key="Y" text="Paused" /></drop-down></default-field></field>
+            <field name="labelFields"><default-field title="Series label fields" tooltip="Comma-separated fields. Leave empty to use safe bucket dimensions."><text-line /></default-field></field>
+            <field name="labelsJson"><default-field title="Routing labels (JSON)"><text-area rows="3" cols="80" /></default-field></field>
+            <field name="note"><default-field title="Version note"><text-line /></default-field></field>
+            <field name="saveTop"><default-field title=""><submit text="Save alert rule" /></default-field></field>
+            <field name="save"><default-field title=""><submit text="Save alert rule" /></default-field></field>
+            <field-layout>
+                <field-ref name="dashboardId" />
+                <field-ref name="panelId" />
+                <field-ref name="definitionId" />
+                <field-group title="Rule identity and state" box="true">
+                    <field-row>
+                        <field-ref name="ruleTitle" />
+                        <field-ref name="ruleId" />
+                        <field-ref name="paused" />
+                    </field-row>
+                    <field-row-big>
+                        <field-ref name="saveTop" />
+                    </field-row-big>
+                </field-group>
+                <field-col-row>
+                    <field-col xs="12" md="8">
+                        <field-group title="Data to evaluate" box="true">
+                            <field-ref name="queryJson" />
+                        </field-group>
+                    </field-col>
+                    <field-col xs="12" md="4">
+                        <field-group title="Value and condition" box="true">
+                            <field-row>
+                                <field-ref name="valueField" />
+                                <field-ref name="reduce" />
+                            </field-row>
+                            <field-ref name="conditionType" />
+                        </field-group>
+                        <field-group title="Threshold: above or below" box="true">
+                            <field-row>
+                                <field-ref name="threshold" />
+                                <field-ref name="recoveryThreshold" />
+                            </field-row>
+                        </field-group>
+                        <field-group title="Range: within or outside" box="true">
+                            <field-row>
+                                <field-ref name="minimum" />
+                                <field-ref name="maximum" />
+                            </field-row>
+                        </field-group>
+                        <field-group title="Evaluation timing" box="true">
+                            <field-ref name="intervalSeconds" />
+                            <field-row>
+                                <field-ref name="pendingSeconds" />
+                                <field-ref name="keepFiringSeconds" />
+                            </field-row>
+                        </field-group>
+                        <field-group title="Routing labels (optional)" box="true">
+                            <field-ref name="labelFields" />
+                            <field-ref name="labelsJson" />
+                        </field-group>
+                    </field-col>
+                </field-col-row>
+                <field-group title="Save changes" box="true">
+                    <field-ref name="note" />
+                    <field-row-big>
+                        <field-ref name="save" />
+                    </field-row-big>
+                </field-group>
+            </field-layout>
+        </form-single>
+        <section name="SavedRule" condition="definitionId">
+            <widgets>
+                <container-box>
+                    <box-header title="Shared notification and quieting settings" />
+                    <box-body>
+                        <label type="p" text="Link reusable contact points, silences or mute timings to this rule." style="m-muted" />
+                        <form-single name="AddSharedRef" transition="addRef">
+                            <field name="definitionId"><default-field><hidden /></default-field></field>
+                            <field name="sharedRef"><default-field title="Shared item"><drop-down><list-options list="sharedChoices" key="${id}" text="${label}" /></drop-down></default-field></field>
+                            <field name="add"><default-field title=""><submit text="Use shared item" /></default-field></field>
+                            <field-layout>
+                                <field-ref name="definitionId" />
+                                <field-row>
+                                    <field-ref name="sharedRef" />
+                                    <field-ref name="add" />
+                                </field-row>
+                            </field-layout>
+                        </form-single>
+                        <section name="SharedRefsEmpty" condition="!refList.length">
+                            <widgets>
+                                <label type="p" text="No shared items are linked." style="m-muted" />
+                            </widgets>
+                        </section>
+                        <section name="SharedRefsRows" condition="refList.length">
+                            <widgets>
+                                <form-list name="SharedRefs" list="refList" skip-form="true" paginate="false">
+                                    <field name="kind"><default-field title="Type"><display /></default-field></field>
+                                    <field name="title"><default-field title="Shared item"><link url="shared" text="${title}" link-type="anchor"><parameter name="definitionId" from="refId" /></link></default-field></field>
+                                    <field name="refId"><default-field title="ID"><display /></default-field></field>
+                                    <field name="remove"><default-field><link url="removeRef" text="Remove" link-type="hidden-form-link" parameter-map="{definitionId:definitionId,refKey:refKey,refId:refId}" /></default-field></field>
+                                </form-list>
+                            </widgets>
+                        </section>
+                    </box-body>
+                </container-box>
+                <container-row>
+                    <row-col md="6">
+                        <container-box>
+                            <box-header title="Contact points" />
+                            <box-body>
+                                <label type="p" text="Add a delivery destination for state changes. Use the fields for its selected type; grouping and repeat settings apply to every type." style="m-muted" />
+                                <form-single name="AddContact" transition="addContact">
+                                    <field name="definitionId"><default-field><hidden /></default-field></field>
+                                    <field name="contactId"><default-field title="Contact ID"><text-line /></default-field></field>
+                                    <field name="contactType"><default-field title="Type"><drop-down no-current-selected-key="notification"><option key="notification" text="In-app notification" /><option key="email" text="Email" /><option key="webhook" text="Webhook" /></drop-down></default-field></field>
+                                    <field name="topic"><default-field title="Notification topic"><text-line /><visible-when field="contactType" value="notification" /></default-field></field>
+                                    <field name="contactUserId"><default-field title="Notification user" tooltip="User/group ID for this in-app notification."><text-line /><visible-when field="contactType" value="notification" /></default-field></field>
+                                    <field name="contactGroupId"><default-field title="Notification group" tooltip="User/group ID for this in-app notification."><text-line /><visible-when field="contactType" value="notification" /></default-field></field>
+                                    <field name="emailTemplateId"><default-field title="Email template"><text-line /><visible-when field="contactType" value="email" /></default-field></field>
+                                    <field name="toAddresses"><default-field title="Email recipients"><text-line /><visible-when field="contactType" value="email" /></default-field></field>
+                                    <field name="webhookUrl"><default-field title="Webhook URL"><text-line /><visible-when field="contactType" value="webhook" /></default-field></field>
+                                    <field name="groupBy"><default-field title="Group by labels (comma separated)"><text-line /></default-field></field>
+                                    <field name="groupWaitSeconds"><default-field title="Group wait seconds"><text-line /></default-field></field>
+                                    <field name="repeatSeconds"><default-field title="Repeat seconds"><text-line /></default-field></field>
+                                    <field name="matchersJson"><default-field title="Label matchers JSON"><text-area rows="2" cols="80" /></default-field></field>
+                                    <field name="add"><default-field title=""><submit text="Add contact point" /></default-field></field>
+                                    <field-layout>
+                                        <field-ref name="definitionId" />
+                                        <field-row>
+                                            <field-ref name="contactType" />
+                                            <field-ref name="contactId" />
+                                        </field-row>
+                                        <field-ref name="topic" />
+                                        <field-row>
+                                            <field-ref name="contactUserId" />
+                                            <field-ref name="contactGroupId" />
+                                        </field-row>
+                                        <field-row>
+                                            <field-ref name="emailTemplateId" />
+                                            <field-ref name="toAddresses" />
+                                        </field-row>
+                                        <field-ref name="webhookUrl" />
+                                        <field-ref name="groupBy" />
+                                        <field-row>
+                                            <field-ref name="groupWaitSeconds" />
+                                            <field-ref name="repeatSeconds" />
+                                        </field-row>
+                                        <field-ref name="matchersJson" />
+                                        <field-row-big>
+                                            <field-ref name="add" />
+                                        </field-row-big>
+                                    </field-layout>
+                                </form-single>
+                                <section name="ContactsEmpty" condition="!contactList.length">
+                                    <widgets>
+                                        <label type="p" text="No contact points have been added here." style="m-muted" />
+                                    </widgets>
+                                </section>
+                                <section name="ContactsRows" condition="contactList.length">
+                                    <widgets>
+                                        <form-list name="Contacts" list="contactList" skip-form="true" paginate="false">
+                                            <field name="id"><default-field title="ID"><display /></default-field></field>
+                                            <field name="type"><default-field title="Type"><display /></default-field></field>
+                                            <field name="topic"><default-field title="Topic"><display /></default-field></field>
+                                            <field name="userId"><default-field title="User"><display /></default-field></field>
+                                            <field name="userGroupId"><default-field title="User group"><display /></default-field></field>
+                                            <field name="toAddresses"><default-field title="Email recipients"><display /></default-field></field>
+                                            <field name="url"><default-field title="Webhook URL"><display /></default-field></field>
+                                            <field name="remove"><default-field><link url="removeItem" text="Remove" link-type="hidden-form-link" parameter-map="{definitionId:definitionId,collection:'contactPoints',itemIndex:itemIndex}" /></default-field></field>
+                                        </form-list>
+                                    </widgets>
+                                </section>
+                            </box-body>
+                        </container-box>
+                    </row-col>
+                    <row-col md="6">
+                        <container-box>
+                            <box-header title="One-off silences" />
+                            <box-body>
+                                <label type="p" text="Temporarily quiet matching alerts. Include Z or an explicit UTC offset in both timestamps." style="m-muted" />
+                                <form-single name="AddSilence" transition="addSilence">
+                                    <field name="definitionId"><default-field><hidden /></default-field></field>
+                                    <field name="silenceFrom"><default-field title="From (ISO time with offset)"><text-line /></default-field></field>
+                                    <field name="silenceThru"><default-field title="Through (ISO time with offset)"><text-line /></default-field></field>
+                                    <field name="silenceComment"><default-field title="Comment"><text-line /></default-field></field>
+                                    <field name="silenceMatchers"><default-field title="Label matchers JSON"><text-area rows="2" cols="80" /></default-field></field>
+                                    <field name="add"><default-field title=""><submit text="Add silence" /></default-field></field>
+                                    <field-layout>
+                                        <field-ref name="definitionId" />
+                                        <field-row>
+                                            <field-ref name="silenceFrom" />
+                                            <field-ref name="silenceThru" />
+                                        </field-row>
+                                        <field-ref name="silenceComment" />
+                                        <field-ref name="silenceMatchers" />
+                                        <field-row-big>
+                                            <field-ref name="add" />
+                                        </field-row-big>
+                                    </field-layout>
+                                </form-single>
+                                <section name="SilencesEmpty" condition="!silenceList.length">
+                                    <widgets>
+                                        <label type="p" text="No one-off silences have been added here." style="m-muted" />
+                                    </widgets>
+                                </section>
+                                <section name="SilencesRows" condition="silenceList.length">
+                                    <widgets>
+                                        <form-list name="Silences" list="silenceList" skip-form="true" paginate="false">
+                                            <field name="from"><default-field title="From"><display /></default-field></field>
+                                            <field name="thru"><default-field title="Through"><display /></default-field></field>
+                                            <field name="comment"><default-field title="Comment"><display /></default-field></field>
+                                            <field name="remove"><default-field><link url="removeItem" text="Remove" link-type="hidden-form-link" parameter-map="{definitionId:definitionId,collection:'silences',itemIndex:itemIndex}" /></default-field></field>
+                                        </form-list>
+                                    </widgets>
+                                </section>
+                            </box-body>
+                        </container-box>
+                        <container-box>
+                            <box-header title="Recurring mute timings" />
+                            <box-body>
+                                <label type="p" text="Quiet alerts on the chosen weekdays and times, in the rule owner’s time zone." style="m-muted" />
+                                <form-single name="AddMute" transition="addMute">
+                                    <field name="definitionId"><default-field><hidden /></default-field></field>
+                                    <field name="muteName"><default-field title="Name"><text-line /></default-field></field>
+                                    <field name="weekdays"><default-field title="Weekdays"><drop-down allow-multiple="true"><option key="0" text="Monday" /><option key="1" text="Tuesday" /><option key="2" text="Wednesday" /><option key="3" text="Thursday" /><option key="4" text="Friday" /><option key="5" text="Saturday" /><option key="6" text="Sunday" /></drop-down></default-field></field>
+                                    <field name="muteStart"><default-field title="Start HH:mm"><text-line /></default-field></field>
+                                    <field name="muteEnd"><default-field title="End HH:mm"><text-line /></default-field></field>
+                                    <field name="add"><default-field title=""><submit text="Add mute timing" /></default-field></field>
+                                    <field-layout>
+                                        <field-ref name="definitionId" />
+                                        <field-row>
+                                            <field-ref name="muteName" />
+                                            <field-ref name="weekdays" />
+                                        </field-row>
+                                        <field-row>
+                                            <field-ref name="muteStart" />
+                                            <field-ref name="muteEnd" />
+                                        </field-row>
+                                        <field-row-big>
+                                            <field-ref name="add" />
+                                        </field-row-big>
+                                    </field-layout>
+                                </form-single>
+                                <section name="MuteTimingsEmpty" condition="!muteList.length">
+                                    <widgets>
+                                        <label type="p" text="No recurring mute timings have been added here." style="m-muted" />
+                                    </widgets>
+                                </section>
+                                <section name="MuteTimingsRows" condition="muteList.length">
+                                    <widgets>
+                                        <form-list name="MuteTimings" list="muteList" skip-form="true" paginate="false">
+                                            <field name="name"><default-field title="Name"><display /></default-field></field>
+                                            <field name="weekdays"><default-field title="Weekdays"><display text="${weekdayNames}" /></default-field></field>
+                                            <field name="start"><default-field title="Start"><display /></default-field></field>
+                                            <field name="end"><default-field title="End"><display /></default-field></field>
+                                            <field name="remove"><default-field><link url="removeItem" text="Remove" link-type="hidden-form-link" parameter-map="{definitionId:definitionId,collection:'muteTimings',itemIndex:itemIndex}" /></default-field></field>
+                                        </form-list>
+                                    </widgets>
+                                </section>
+                            </box-body>
+                        </container-box>
+                    </row-col>
+                </container-row>
+            </widgets>
+        </section>
+    </widgets>
 </screen>

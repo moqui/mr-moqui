@@ -98,6 +98,63 @@ unverified.
   ledger, selected before/after evidence, test results and prioritized remaining work for continuing into addon
   applications.
 
+## Wrap-up — stopped after batch 12 at the user's request
+
+The user ended this review after the alert configuration batch. **This is a completed bounded review effort,
+not completion of the original six-wave plan.** No whole wave met its full coverage criteria. All unperformed
+activities, unresolved findings and private follow-up patches are deferred; no additional batch is scheduled.
+The detailed ledger and historical notes below retain the distinction between implementation, automated checks
+and activities actually observed. The reusable guide is [UI-Review.md](../docs/dev/UI-Review.md).
+
+| Wave | Delivered scope | Deferred scope |
+|---|---|---|
+| Shared foundations | Semantic contrast, list dialogs/controls, confirmation, focus, responsive choices, TUI navigation/forms; many Gallery activities | Remaining Gallery activity/recovery/mode cases, actual 200% browser zoom and remaining shared checks |
+| Administration | System/Tools entry points, service execution, SQL recovery, job/visit/model details | Deep user/group, reference-data, resource, LLM, edge, voice and bridge activity coverage |
+| Diagnosis/reporting | Diagnostic layouts, charts, settings, dashboard authoring, saved searches, playlists, report configuration and alerts | Replay capture/playback, synthetic release comparisons, incident/recovery refinements, Monitor-only access walk, Git sync and remaining report flows |
+| Development | Workspace/navigation/editor recovery and eight disposable-repository acceptance journeys | Remaining live modeling, simulation, screen building and mode-specific activity coverage |
+| Communication | Mail/draft/settings recovery, local two-user chat, threads, forwarding, membership, attachment and keyboard flows; call/history controls | Live encrypted-room/device recovery, Chat TUI, successful real-media/provider workflows and remaining settings |
+| Integration | Representative cross-app retests during shared changes | Final complete inventory and cross-app integration pass |
+
+The local commit sequence is below; none was pushed. The final batch is this commit. Screenshot files remain
+available only in ignored `plans/ui-refinement-evidence/`; no images from that directory are tracked.
+
+| Commit | Batch |
+|---|---|
+| `67d3270f` | Plan and baseline |
+| `883fffe8` | Shared readability and administration entry points; obsolete GroovyShell removed |
+| `da924d4b` | Retained UI work, diagnostic recovery and development navigation |
+| `1e88b494` | Diagnostic controls and aligned CSV export |
+| `8c8ce50b` | Shared feedback and Gallery keyboard recovery |
+| `b1a2ffc2` | In-app confirmations and editor recovery |
+| `92ca156a` | Named list controls and diagnostic details |
+| `2b9e7e5e` | Mail workflow/settings and job details |
+| `f26f815b` | Report-test and terminal-playlist module preparation |
+| `cc99c4ce` | Report playlists and terminal form content |
+| `bf10126a` | Terminal navigation, responsive choices and drawer text |
+| `aec0202f` | Chat pickers/keyboard actions and visible shared selections |
+| This commit | Alert configuration, numeric round trips and state feedback; final review record |
+
+Prioritized deferred work, if the review is resumed:
+
+1. **UI-088/089, P1/P2:** replay capture exceeds the receiver body limit; replay JSON requests use the wrong app
+   mount. Private proposals exist under `/tmp/ui-batch10-replay-{capture,url}.patch`, but are unapplied and untested.
+   Preserve masking, bounded ingestion and authorization when revisiting them.
+2. **UI-103/105/107, P2:** human-readable incident times, loaded policy/adapter editing and visible Manual recovery
+   instructions. UI-102/104/106 cover related grouping/recovery. Private `/tmp/ui102-104-incidents*.patch` and
+   `/tmp/ui105-106-recovery*.patch` were reviewed but not applied or run. They need fresh review and verification.
+3. **UI-084/085/092, P3:** replay/release list hierarchy and Standard report time formatting. Prepared proposals
+   remain outside the repository; no passing implementation is claimed.
+4. Complete access-limited, keyboard, narrow and actual 200% zoom checks, then the remaining application activities
+   in the ledger before expanding into addons. Browser download-policy refusal and unavailable integrations remain
+   unverified, not passing coverage.
+5. Resolve the recurring SIP source-address test environment failure separately. Do not conceal it by weakening
+   assertions or raising budgets. Full-gate results are recorded per batch.
+
+One final query-editor observation remains unclassified: locator typing/Tab left an aggregation field's visible
+text ahead of its generated JSON. Source inspection found the correct update path with native `change` semantics,
+matching a previously observed browser-automation event limitation. The explicit JSON field saved correctly.
+No new defect or fix is claimed without a reliable native-input reproduction.
+
 ## Baseline — 2026-11-04
 
 The repository started clean on `master`. The existing release/maximal binary was used for reconnaissance, with a
@@ -117,14 +174,14 @@ before/after evidence use the agreed 1920×1080 target.
 
 | Area | Activity groups | State | Evidence / remaining work |
 |---|---|---|---|
-| Shared shell and widgets | Navigation, lists, saved finds, columns, forms, preferences | In progress | Find/filter and save/update/default/reset observed; delete cancellation passed. Columns move/undo/hide/save/reset and keyboard move/hide/Display, 1280/390 Find, Escape focus return and appearance reload passed. Material confirmation Cancel/Escape/focus and approved saved-find deletion now pass in Gallery; real200% browser zoom remains unverified. |
+| Shared shell and widgets | Navigation, lists, saved finds, columns, forms, preferences | Partial; remainder deferred | Find/filter and save/update/default/reset observed; delete cancellation passed. Columns move/undo/hide/save/reset and keyboard move/hide/Display, 1280/390 Find, Escape focus return and appearance reload passed. Material confirmation Cancel/Escape/focus and approved saved-find deletion now pass in Gallery; real200% browser zoom remains unverified. |
 | Gallery | Archetypes and shared widget reference | Refined; partial activities | Server59/59 and browser23/23 acceptance pass. Live list/find confirmation, forms/dialogs, wizard, split, scan/task, board/calendar, message and Editor version/recovery activities recorded at1920 plus targeted390/keyboard checks. G03/G10/G11 and full recovery/mode coverage remain open. |
 | Embedded TUI | Navigation, dialogs, themes and focus | Refined; partial retest | System and F1 help readable across live light/dark switches; fresh light and dark launches and F1 help after saved appearance reload also passed. |
 | System and Tools | Administration and data/service tools | Refined; partial activities | Overview both themes, Components, SQL success/error/recovery, service XML and echo output/validation/retry observed. Deep administration groups remain pending. |
 | Monitor and Dashboards | Diagnosis, reporting and authoring | Refined; partial activities | Monitoring 19/19 at 1440×1000; dashboard copy/edit/save/open, CSV export and filter/remove visually observed at 1920; saved log search restores query/range. See assertion limits and screen map below. |
-| Dev AIDE | Artifact discovery, editing, simulation, previews and Git | Refined; verification in progress | Home, creation-dialog cancellation, search empty states, source navigation and Search → References → Docs/copy/package/diagram navigation observed. All eight disposable-repository journeys passed; detailed limits are recorded below. |
+| Dev AIDE | Artifact discovery, editing, simulation, previews and Git | Refined; remaining activities deferred | Home, creation-dialog cancellation, search empty states, source navigation and Search → References → Docs/copy/package/diagram navigation observed. All eight disposable-repository journeys passed; detailed limits are recorded below. |
 | BasicComms | Mail, chat, calls and settings | Refined; partial activities | Local fake-media/encrypted-call/chat10/10; draft recovery, captured mail, wizard/settings/Standard flows recorded below. Live two-user DM, forward, private-room membership/leave, thread/edit/attachment, picker recovery, keyboard actions and call-history resets pass. TUI rich bodies/dates and narrow radio labels are corrected; remaining chat TUI/encryption/media/provider activities stay explicit. |
-| Integration | Cross-app patterns and remaining routes | In progress | Shared styles observed in System, Tools, Dashboards and Dev AIDE; full remaining inventory is explicit below. |
+| Integration | Cross-app patterns and remaining routes | Partial; final pass deferred | Shared styles observed in System, Tools, Dashboards and Dev AIDE; full remaining inventory is explicit below. |
 
 ## Findings
 
@@ -224,21 +281,21 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-076 | D07 scheduled report state and actions | P3 fixed and retested | Active/Paused, Pause/Resume and Run now distinguish state from actions; confirmation names the saved delivery settings | Schedule100000, future2099/file-only: Resume→Active→Pause→Paused. Keyboard Run now/Cancel returns focus; no report executed. |
 
 
-| UI-077 | D06 Alerts empty overview | P3 observed grouping and empty states / prepared follow-up | No page/rules/instances title and five empty tables show only headers; shared sections have weak separation | John Doe/dark1920 on8096. Evidence dashboard-alerts-dark-before-1920.png. Group rule activity, instances and shared delivery/quieting definitions without changing actions. |
-| UI-078 | D06 AlertRule editor | P3 observed hierarchy and contextual copy / investigation | Long ungrouped form, generic Panel options/Save a version copy, raw paused N/Y, equally weighted threshold/range fields | John Doe/dark1920. Invalid threshold refuses and retains state; ui-d06-alert saved paused with value_count(trace_id) query and no contacts. Evidence dashboard-alert-rule-dark-before-1920.png. |
+| UI-077 | D06 Alerts empty overview | P3 fixed and retested in batch12 | No page/rules/instances title and five empty tables show only headers; shared sections have weak separation | John Doe/dark1920 on8096. Evidence dashboard-alerts-dark-before-1920.png. Group rule activity, instances and shared delivery/quieting definitions without changing actions. Final correction/retest: see Batch12. |
+| UI-078 | D06 AlertRule editor | P3 fixed and retested in batch12 | Long ungrouped form, generic Panel options/Save a version copy, raw paused N/Y, equally weighted threshold/range fields | John Doe/dark1920. Invalid threshold refuses and retains state; ui-d06-alert saved paused with value_count(trace_id) query and no contacts. Evidence dashboard-alert-rule-dark-before-1920.png. Final correction/retest: see Batch12. |
 
-| UI-079 | D06 shared contact editor | P3 observed grouping/contextual fields / prepared follow-up | Full-width form shows notification, email and webhook settings together; empty Used in shows bare headers | Dark1920, ui-d06-contact. Configured private local ReportAlert self-notification; no email/webhook. Evidence dashboard-alert-contact-dark-before-1920.png. |
-| UI-080 | D06 notification → Alerts → New alert rule | P2 observed inherited record context / prepared follow-up | Creation links inherit definitionId from the notification route; New alert rule reopens the existing record | Dark1920, ui-d06-alert notification. All four creation links carry the inherited ID; rule route also needs dashboard/panel context cleared. Existing detail links remain intact. |
-| UI-081 | D06 Evaluate now feedback | P2 observed misleading acknowledgment / prepared follow-up | Submit successful appears even when pause or the interval prevents a fresh evaluation | Dark1920, interval60. Evaluated timestamp remains unchanged on immediate repeat. Existing service counters include skipped claims; UI must describe the request without claiming fresh results. |
-| UI-082 | D06 firing → recovery notifications | P2 observed ambiguous state / investigation | Firing and Normal notifications have the same title and warning icon | Dark1920, local ReportAlert self-notifications at20:56/20:58. Evidence dashboard-alert-notification-states-dark-before-1920.png. Both remain navigable, but their state is indistinguishable. |
-| UI-083 | D06 AlertRule reload → change pause → save | P2 observed numeric round-trip failure / investigation | Saved1000000000 reloads as1,000,000,000 and fails finite-number validation on a later unrelated save | Dark1920, ui-d06-alert. Removing commas through the field permits Save and retains Paused Y. Inspect shared formatting and other JSON-backed numeric fields before selecting a correction. |
-| UI-084 | M08 Replays search | P3 observed layout/empty state / prepared review | User/Visit inputs span1920px and both initial empty and no-match result show only table headers | Dark1920, no recording fixture yet; filter ui-review-no-recording and clear both complete. Evidence monitor-replays-dark-before-1920.png. Playback and masking remain unverified. |
-| UI-085 | M09 Releases → Release Detail | P3 observed hierarchy/readability / prepared review | Empty regression list has no explanation or heading; revision/times are compressed into prose and error fingerprints dominate row labels | Dark1920, moqui0.1.0. Error link reaches the corresponding known schedule-validation error; Back retains release context. Evidence monitor-release-detail-dark-before-1920.png. Synthetic comparative regression/disposition remains pending. |
+| UI-079 | D06 shared contact editor | P3 fixed and retested in batch12 | Full-width form shows notification, email and webhook settings together; empty Used in shows bare headers | Dark1920, ui-d06-contact. Configured private local ReportAlert self-notification; no email/webhook. Evidence dashboard-alert-contact-dark-before-1920.png. Final correction/retest: see Batch12. |
+| UI-080 | D06 notification → Alerts → New alert rule | P2 fixed and retested in batch12 | Creation links inherit definitionId from the notification route; New alert rule reopens the existing record | Dark1920, ui-d06-alert notification. All four creation links carry the inherited ID; rule route also needs dashboard/panel context cleared. Existing detail links remain intact. Final correction/retest: see Batch12. |
+| UI-081 | D06 Evaluate now feedback | P2 fixed and retested in batch12 | Submit successful appears even when pause or the interval prevents a fresh evaluation | Dark1920, interval60. Evaluated timestamp remains unchanged on immediate repeat. Existing service counters include skipped claims; UI must describe the request without claiming fresh results. Final correction/retest: see Batch12. |
+| UI-082 | D06 firing → recovery notifications | P2 fixed and retested in batch12 | Firing and Normal notifications have the same title and warning icon | Dark1920, local ReportAlert self-notifications at20:56/20:58. Evidence dashboard-alert-notification-states-dark-before-1920.png. Both remain navigable, but their state is indistinguishable. Final correction/retest: see Batch12. |
+| UI-083 | D06 AlertRule reload → change pause → save | P2 fixed and retested in batch12 | Saved1000000000 reloads as1,000,000,000 and fails finite-number validation on a later unrelated save | Dark1920, ui-d06-alert. Removing commas through the field permits Save and retains Paused Y. Inspect shared formatting and other JSON-backed numeric fields before selecting a correction. Final correction/retest: see Batch12. |
+| UI-084 | M08 Replays search | P3 observed layout/empty state / deferred at wrap-up | User/Visit inputs span1920px and both initial empty and no-match result show only table headers | Dark1920, no recording fixture yet; filter ui-review-no-recording and clear both complete. Evidence monitor-replays-dark-before-1920.png. Playback and masking remain unverified. |
+| UI-085 | M09 Releases → Release Detail | P3 observed hierarchy/readability / deferred at wrap-up | Empty regression list has no explanation or heading; revision/times are compressed into prose and error fingerprints dominate row labels | Dark1920, moqui0.1.0. Error link reaches the corresponding known schedule-validation error; Back retains release context. Evidence monitor-release-detail-dark-before-1920.png. Synthetic comparative regression/disposition remains pending. |
 
 | UI-086 | TUI Ctrl+K → Apps → Comms | P2 fixed and retested | Normalize local shell navigation to /apps while preserving query and unrelated URLs | Comms/Gallery open, F3 returns, Gallery quick-note opens/cancels, and Contrived search opens EXT_CONTRIVED detail. Synthetic route fixtures also pass. |
 | UI-087 | B05 TUI Reply to at390/1280 | P2 fixed and retested | Shared radio layout wraps labels and reserves their rows within the field width | All three audience choices remain readable at1920/1280/390; arrows select each, Tab moves to frequency, restored Everyone saves and agrees with Material. |
-| UI-088 | M08 enable recording → Gallery interaction → Replays | P1 observed capture failure / design pending | Initial replay exceeds256KiB receiver body limit and capture stops without user feedback | Confirmed server log03:14:31 and Monitor error; no recording stored. All temporary settings restored. Preserve masking and bounded ingestion in the correction. |
-| UI-089 | M08 replay player data request | P2 source-confirmed route mismatch / prepared follow-up | report.appPath changes the /apps JSON transition into a /qapps HTML wrapper | Same distinction as playlist loading; focused private patch prepared. Live playback awaits a successful recording fixture. |
+| UI-088 | M08 enable recording → Gallery interaction → Replays | P1 observed capture failure / deferred at wrap-up | Initial replay exceeds256KiB receiver body limit and capture stops without user feedback | Confirmed server log03:14:31 and Monitor error; no recording stored. All temporary settings restored. Preserve masking and bounded ingestion in the correction. |
+| UI-089 | M08 replay player data request | P2 source-confirmed route mismatch / deferred at wrap-up | report.appPath changes the /apps JSON transition into a /qapps HTML wrapper | Same distinction as playlist loading; focused private patch prepared. Live playback awaits a successful recording fixture. |
 | UI-090 | Shared dark drawer current/on-path labels | P2 fixed and retested | Readable semantic text replaces the brand-fill color for current/on-path labels | Current row improves from2.77:1 to5.76:1 dark;4.97:1 light. Default/Warm, desktop/phone and selected-bar preservation checked. Focus fill remains separate UI096. |
 | UI-091 | D07 embedded playlist → Inspect panel | P2 fixed and retested | Keep the original server screenUrl for inspection/export transitions while navigation uses the Material mount | Reproduced JSON parse error, corrected, then live Inspect returns diagnostic data with no alert. Existing fixture clicks Inspect and asserts /apps endpoint plus definition/panel IDs;47/47 passes. |
 | UI-092 | Standard Dashboard tabular fallback | P3 observed readability / deferred | Time columns display epoch milliseconds instead of human-readable dates | Targeted /apps playlist link reaches Monitor overview and shows data, but time1793242800000 requires interpretation. Retain compatibility; refine shared fallback formatting later. |
@@ -251,12 +308,12 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-099 | B08 and shared multiple-choice inputs | P1 fixed and retested | Keep selected chips visible while retaining submitted IDs and cleared-value behavior | Calls recipient chip and hidden ID agree before and after unavailable-media refusal. Quick-chat clearing disables Start; fixture verifies keyboard clear and submitted values. Evidence shared-multiple-choice-visible-after-1920.png. |
 | UI-100 | B08/B09 History filter recovery | P2 fixed and retested | Explicit empty parameters remove inherited outcome/folder/heard/page filters | Voicemail→Trash→Heard→Inbox preserves heard; heard All clears only heard; overall All clears voicemail context and returns to No calls here yet. |
 | UI-101 | B06 direct-message and member pickers | P1 fixed and retested | Chat callers tolerate null cleared selections and main Start invokes its method without a click-event argument | Search/no-result/clear/reopen and quick/main Start pass; add-member succeeds and peer leave restores membership. Shared selection serialization remains unchanged. |
-| UI-102 | M10 Incidents list | P3 observed layout/readability / prepared follow-up | Full-width filters precede empty table headers; populated Detected dates show epoch milliseconds | John/light1920 on8094, empty list and incident100000. Evidence monitor-incidents-light-before-1920.png. |
-| UI-103 | M10 IncidentDetail | P2 observed readability; P3 grouping / prepared follow-up | Header and timeline show epoch milliseconds; update/note forms span the workspace and empty evidence/recovery sections provide no explanation | Minor incident100000, source and history agree but human-readable time and coherent sections are missing. Evidence monitor-incident-detail-light-before-1920.png. |
-| UI-104 | M10 unknown IncidentDetail bookmark | P3 observed recovery presentation / prepared follow-up | Main content contains only raw no incident ui-review-missing without a recovery link | Sidebar Incidents still returns to the list; preserve authorization and real error handling in the correction. |
-| UI-105 | M10 Recovery edit flow | P2 observed edit friction / prepared follow-up | Policies/adapters offer only Add or change; entering an existing ID does not load its values and rows have no Edit action | Entered DEFAULT in the policy dialog; Description/Steps remained blank. Canceled without saving. Provide explicit loaded edit state and preserve submitted values on refusal. |
-| UI-106 | M10 Recovery page/dialog hierarchy | P3 observed layout / prepared follow-up | Tall single-column policy form lacks logical groups; adapter form mixes all type-specific fields; Newest actions has empty headers | Default light1920; evidence monitor-recovery-policy-light-before-1920.png. Save remains reachable, but editing requires too much scanning/reentry. |
-| UI-107 | M10 approved Manual recovery action | P2 observed missing task information / prepared follow-up | AwaitingOperator shows Mark done/failed/Cancel but omits the saved manual instructions and adapter context | Action100000 correctly waits without infrastructure work; instructions exist in its requestJson but are not rendered. Display only the manual instructions, never arbitrary request payloads. Evidence monitor-recovery-waiting-light-before-1920.png. |
+| UI-102 | M10 Incidents list | P3 observed layout/readability / deferred at wrap-up | Full-width filters precede empty table headers; populated Detected dates show epoch milliseconds | John/light1920 on8094, empty list and incident100000. Evidence monitor-incidents-light-before-1920.png. |
+| UI-103 | M10 IncidentDetail | P2 observed readability; P3 grouping / deferred at wrap-up | Header and timeline show epoch milliseconds; update/note forms span the workspace and empty evidence/recovery sections provide no explanation | Minor incident100000, source and history agree but human-readable time and coherent sections are missing. Evidence monitor-incident-detail-light-before-1920.png. |
+| UI-104 | M10 unknown IncidentDetail bookmark | P3 observed recovery presentation / deferred at wrap-up | Main content contains only raw no incident ui-review-missing without a recovery link | Sidebar Incidents still returns to the list; preserve authorization and real error handling in the correction. |
+| UI-105 | M10 Recovery edit flow | P2 observed edit friction / deferred at wrap-up | Policies/adapters offer only Add or change; entering an existing ID does not load its values and rows have no Edit action | Entered DEFAULT in the policy dialog; Description/Steps remained blank. Canceled without saving. Provide explicit loaded edit state and preserve submitted values on refusal. |
+| UI-106 | M10 Recovery page/dialog hierarchy | P3 observed layout / deferred at wrap-up | Tall single-column policy form lacks logical groups; adapter form mixes all type-specific fields; Newest actions has empty headers | Default light1920; evidence monitor-recovery-policy-light-before-1920.png. Save remains reachable, but editing requires too much scanning/reentry. |
+| UI-107 | M10 approved Manual recovery action | P2 observed missing task information / deferred at wrap-up | AwaitingOperator shows Mark done/failed/Cancel but omits the saved manual instructions and adapter context | Action100000 correctly waits without infrastructure work; instructions exist in its requestJson but are not rendered. Display only the manual instructions, never arbitrary request payloads. Evidence monitor-recovery-waiting-light-before-1920.png. |
 
 ## Running implementation notes
 
@@ -1234,6 +1291,63 @@ the normal framework gate. This correction does not claim cleanup after every ex
   below the existing1.5× failure threshold; no budget is changed. The overall gate exits1 only because the same
   three moqui-sip source-address tests fail with AddrNotAvailable at ua_tests.rs:46. No new Rust/feature failure is
   present; the full gate is not represented as exit-zero. A final independent read-only diff review is clean.
+
+### Batch 12 — alert configuration and state feedback (final batch)
+
+Batch11 committed locally as `aec0202f`; screenshots remain ignored and untracked. This batch integrates the prepared
+UI077–083 changes: grouped alert lists and rule/shared-definition editors, query-specific labels, fresh-create context,
+accurate evaluation-request acknowledgment, canonical numeric edit values, and notification titles/tones that identify
+firing versus recovery. Notification payloads, contact delivery contracts, routes and saved definition IDs remain
+unchanged. Read-only/shared and editable states retain their distinct actions. The M10 incident/recovery patches are
+queued separately and are not part of this source batch.
+
+Verification and observed outcomes:
+
+- Report crate75/75, host report-alert tests3/3, WebrootReport47/47 and AdminOverview11/11 pass. Host assertions cover
+  persisted firing/recovery titles and tones while retaining original contact payloads; mixed/unknown states retain
+  conservative notification presentation. Clippy and minimal-feature lint pass. Debug and release/maximal builds
+  pass; the latter takes3m47s with four jobs.
+- Screen lint checks362files/5557sites with zero parse errors,87 existing idiom reports and202 fancy sites.
+  Logs: `/tmp/ui-batch12-{report,alert-host,report-client,admin,clippy,clippy-min,release-build}.log` and
+  `/tmp/ui-batch12-screen-lint.txt`. The required full gate is `/tmp/moqui-ui-framework-gate21.log`.
+- UI077–079: inspected the grouped overview, rule and contact forms in default light/dark at1920. The rule also
+  fits1280; rule/contact forms stack at390 without horizontal overflow. Keyboard collapse/expand works; save and
+  return actions remain available. Contact delivery sections stay explicit and preserve inactive fields.
+- UI080: all four New links remove inherited definitionId; New alert rule opens a blank ID, while detail links
+  retain their selected record. UI081: evaluating the paused8096rule reports no active rule was processed. The
+  active8094request explains skipped intervals/claims instead of claiming a fresh result.
+- UI083: threshold1000000000 reloads without grouping separators and survives an unrelated save; shared timing
+  values0/14400 also survive. Invalid contact matcher JSON retains the entered value and version note, shows the
+  parse error, and saves after correction. Only the expected invalid-JSON response occurs in that exercise.
+- UI082: a new8094fixture `ui-b12-state-alert` uses value_count(trace_id), threshold-1 and the local in-app contact
+  `ui-b12-local-contact` addressed only to EX_JOHN_DOE. Firing produces `Firing — UI review alert state delivery 35`
+  with an error icon; threshold1000000000 yields `Normal — ...` with a check icon. Both are visible in notification
+  history in light/dark. The list reflects Normal after navigation; this is not a claim of live list refresh.
+  The fixture is paused again and the final overview confirms Paused/Normal. No email/webhook/provider is used.
+  Measured dark notification contrast against#1d1d1d: title16.86:1, caption11.13:1 and recovery icon9.03:1.
+- Final evidence: `dashboard-alerts-empty-light-after-1920.png`, `dashboard-alerts-dark-after-1920.png`,
+  `dashboard-alert-rule-{light,dark}-after-1920.png`, `dashboard-alert-rule-dark-after-1280.png`,
+  `dashboard-alert-rule-{light,dark}-after-390.png`, `dashboard-alert-contact-{light,dark}-after-1920.png`,
+  `dashboard-alert-contact-light-after-390.png`, and `dashboard-alert-notification-states-{light,dark}-after-1920.png`.
+  These are inspected local evidence, not committed artifacts or an unattended screenshot suite.
+- No acceptance test is added/changed in this final batch. Previously requested named acceptance results remain
+  in their activity notes; no addon suite or accept-all was invoked. All remaining work is deferred by user request.
+- Independent final source review finds no introduced contract, authorization or data-loss blocker. This review
+  complements the recorded tests and live checks; it does not expand the claimed activity coverage.
+- Final gate21 runs `env -u MOQUI_RUNTIME -u MOQUI_CONF MOQ_TEST_WORKERS=2 CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=1
+  ./moq test-framework --nobuild` and exits1. Its only failing phase is cargo test: the same three moqui-sip
+  source-address tests fail with AddrNotAvailable at `crates/moqui-sip/src/ua_tests.rs:46` (57pass/3fail in that
+  crate). Host integration passes166 with23 explicitly ignored. No new Rust failure is observed.
+  Shell342/342, framework server355/355 (42.33s, all component budgets), demo10/10, offline webroot394/394
+  (60.85s), offline Dev AIDE48/48 (4.05s) and served148/148 (47.86s) pass. Webroot46.0/34s and served Comms6.6/6s
+  produce timing warnings below the existing1.5x failure threshold; budgets are unchanged. This is not an exit-zero
+  full-gate claim. Detailed results: `/tmp/moqui-ui-framework-gate21.log`.
+- Final lifecycle: both review servers8094/8096 stop gracefully with exit0; neither HTTP port remains listening.
+  Persistent8094data remains in `/tmp/mui-8094-b7-restore`. Before stopping disposable8096, `save-db` preserves both
+  databases at `/tmp/mui-8096-final-backup/{moqui,moqui_content}.dump`; PGDMP headers are verified and `load-save`
+  into `/tmp/mui-8096-final-runtime` succeeds. Protected runtime keys remain mode0600 and are never printed or
+  committed. Backup/restore logs are `/tmp/ui-final-{save-db,load-save}.log`. The restored runtime is stopped.
+  Review browser tabs are closed. Purchasing's runtime/database/addons are untouched.
 
 ### Next activity baseline — M10 incident lifecycle
 

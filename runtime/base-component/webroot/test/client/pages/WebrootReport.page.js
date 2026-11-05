@@ -152,8 +152,11 @@ test("panel option edits and unlinking a library reference update the draft unti
     const target = document.createElement("div"); document.body.appendChild(target);
     const form = { fields: Vue.reactive({ definitionJson: JSON.stringify({ panels: { first: { title: "Original", visualization: "table", queries: [{ datasetId: "otel_logs", mode: "documents" }] } } }) }) };
     const library = { id: "library-test", title: "Shared panel", body: { title: "Shared panel", visualization: "stat", queries: [] } };
-    const app = Vue.createApp({ provide() { return { mForm: form }; }, render() { return Vue.h(moqui.qvtComponents["m-report-definition-editor"], { libraries: [library], datasets: [{ id: "otel_logs" }] }); } });
+    const editorContext = Vue.reactive({});
+    const app = Vue.createApp({ provide() { return { mForm: form }; }, render() { return Vue.h(moqui.qvtComponents["m-report-definition-editor"], { libraries: [library], datasets: [{ id: "otel_logs" }], ...editorContext }); } });
     app.mount(target);
+    assert.equal(target.querySelector('h2').textContent, 'Panel options');
+    assert.equal(target.textContent.includes('Save a version to keep the changes.'), true);
     const title = Array.from(target.querySelectorAll("label")).find((label) => label.textContent === "Panel title").querySelector("input");
     title.value = "Edited title"; title.dispatchEvent(new Event("change")); await Vue.nextTick();
     assert.equal(JSON.parse(form.fields.definitionJson).panels.first.title, "Edited title");
@@ -175,6 +178,15 @@ test("panel option edits and unlinking a library reference update the draft unti
     assert.equal(unlinked.panelRef, undefined);
     assert.equal(unlinked.title, "Shared panel");
     assert.equal(library.body.title, "Shared panel");
+    const query = JSON.stringify({datasetId:'otel_logs',mode:'documents',queryString:'severity:ERROR'});
+    form.fields.definitionJson = query;
+    Object.assign(editorContext, {queryOnly:true,heading:'Alert query',saveHint:'Options update the query below. Save alert rule to keep the changes.'});
+    await Vue.nextTick();
+    assert.equal(target.querySelector('h2').textContent, 'Alert query');
+    assert.equal(target.querySelector('input[type="search"]').placeholder, 'Search query options');
+    assert.equal(target.textContent.includes('Save alert rule to keep the changes.'), true);
+    assert.equal(target.textContent.includes('Save a version'), false);
+    assert.equal(form.fields.definitionJson, query, 'context labels do not change query data');
     app.unmount(); target.remove();
 });
 test("annotations map to chart positions while out-of-range markers stay outside the view", () => {

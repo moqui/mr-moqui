@@ -149,3 +149,44 @@ fn shared_items_join_the_rule_body_for_muting() {
     assert!(muted(&body, &labels, monday_noon));
     assert!(!muted(&body, &json!({"team":"sales"}), monday_noon));
 }
+
+#[test]
+fn notification_titles_distinguish_mixed_and_unknown_health() {
+    for (states, title, tone) in [
+        (json!(["Pending"]), "Pending — Latency", "warning"),
+        (json!(["Recovering"]), "Recovering — Latency", "warning"),
+        (json!(["NoData"]), "No data — Latency", "warning"),
+        (json!(["Error"]), "Error — Latency", "danger"),
+        (
+            json!(["Normal", "Firing", "Firing"]),
+            "Firing, Normal — Latency",
+            "danger",
+        ),
+        (json!(["Normal", "NoData"]), "No data, Normal — Latency", "warning"),
+        (json!(["Normal", null]), "Normal, Unknown — Latency", "warning"),
+        (json!(["Normal", "FutureState"]), "Normal, Unknown — Latency", "warning"),
+    ] {
+        let events: Vec<Json> = states
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|state| json!({"state":state}))
+            .collect();
+        let payload = json!({"title":"Latency","events":events});
+        assert_eq!(
+            notification_presentation(&payload),
+            (title.to_string(), tone),
+            "{states}"
+        );
+    }
+    // The shared sender's recovery-action notifications have no alert events and retain their existing presentation.
+    let recovery = json!({"title":"Approval needed: incident","incidentId":"incident-1","status":"IstaOpen"});
+    assert_eq!(
+        notification_presentation(&recovery),
+        ("Approval needed: incident".into(), "warning")
+    );
+    assert_eq!(
+        notification_presentation(&json!({"title":"Empty","events":[]})),
+        ("Empty".into(), "warning")
+    );
+}

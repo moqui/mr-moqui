@@ -106,7 +106,7 @@ fn states(factory: &Arc<ExecutionContextFactory>, rule: &str) -> Vec<String> {
         .map(|row| row["state"].as_str().unwrap().to_owned())
         .collect()
 }
-fn notification_count(factory: &Arc<ExecutionContextFactory>, rule: &str) -> usize {
+fn notifications(factory: &Arc<ExecutionContextFactory>, rule: &str) -> Vec<Json> {
     with_owner(factory, |ec| {
         let _inspection = ec.disable_authz();
         let entity = factory.entity().unwrap();
@@ -117,14 +117,24 @@ fn notification_count(factory: &Arc<ExecutionContextFactory>, rule: &str) -> usi
             .list()
             .unwrap()
             .iter()
-            .filter(|row| {
-                row.get("messageJson")
+            .filter_map(|row| {
+                let message = row
+                    .get("messageJson")
                     .and_then(Value::as_str)
-                    .and_then(|body| serde_json::from_str::<Json>(body).ok())
-                    .is_some_and(|body| body["ruleId"] == rule)
+                    .and_then(|body| serde_json::from_str::<Json>(body).ok())?;
+                (message["ruleId"] == rule).then(|| {
+                    json!({
+                        "title": row.get("titleText").and_then(Value::as_str),
+                        "type": row.get("typeString").and_then(Value::as_str),
+                        "message": message
+                    })
+                })
             })
-            .count()
+            .collect()
     })
+}
+fn notification_count(factory: &Arc<ExecutionContextFactory>, rule: &str) -> usize {
+    notifications(factory, rule).len()
 }
 fn points(factory: &Arc<ExecutionContextFactory>, at: i64, value: f64) {
     let facade = search::installed(factory).unwrap();
@@ -215,11 +225,26 @@ fn alerts_persist_timers_serialize_workers_and_route_only_complete_observations(
     assert_eq!(states(gate.server.factory(), id), ["Recovering", "Recovering"]);
     concurrent(gate.server.factory(), id, at + 600_000);
     assert_eq!(states(gate.server.factory(), id), ["Normal", "Normal"]);
+    let delivered = notifications(gate.server.factory(), id);
     assert_eq!(
-        notification_count(gate.server.factory(), id),
+        delivered.len(),
         3,
         "resolution sends once without waiting for the firing repeat interval"
     );
+    for note in &delivered {
+        let payload = &note["message"];
+        let state = payload["events"][0]["state"].as_str().unwrap();
+        assert!(matches!(state, "Firing" | "Normal"), "{note}");
+        assert_eq!(note["title"], format!("{state} — {id}"));
+        assert_eq!(note["type"], if state == "Normal" { "success" } else { "danger" });
+        assert_eq!(
+            payload["title"], id,
+            "the original title remains in the contact payload"
+        );
+        assert_eq!(payload["link"], format!("/apps/dashboards/Alerts?definitionId={id}"));
+        assert_eq!(payload["labels"], json!({"team":"operations"}));
+        assert_eq!(payload["events"].as_array().unwrap().len(), 2);
+    }
     let history = search::installed(gate.server.factory())
         .unwrap()
         .search(

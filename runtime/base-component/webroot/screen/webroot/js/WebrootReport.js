@@ -947,7 +947,7 @@
     };
     components["m-report-definition-editor"] = {
         inject: { mForm: { default: null } },
-        props: { name: { type: String, default: "definitionJson" }, libraries: { type: Array, default: () => [] }, datasets: { type: Array, default: () => [] }, readOnly: Boolean, panelOnly: Boolean, queryOnly:Boolean },
+        props: { name: { type: String, default: "definitionJson" }, libraries: { type: Array, default: () => [] }, datasets: { type: Array, default: () => [] }, readOnly: Boolean, panelOnly: Boolean, queryOnly:Boolean, heading:String, saveHint:String },
         // The panel chosen first is the one the URL names (panelId, from a panel's Edit menu item).
         data: () => ({ selected: (() => { try { return new root.URL(root.location.href).searchParams.get("panelId") || ""; } catch (_) { return ""; } })(), optionSearch: "", libraryId: "", error: "",queryAt:0,transformScope:"panel",
             previewFrame: null, previewError: "", previewing: false }),
@@ -1100,7 +1100,7 @@
                         E.control(label, item[key], value => this.position(key, value), "number", null, this.readOnly, "col-12 col-sm-6 col-lg-4"));
                 }
             }
-            return h("section", { class: "m-report-editor q-pa-md", style: { border: "1px solid var(--m-border)", borderRadius: "4px" } }, [h("h2", {class:"text-h6 q-mt-none q-mb-sm"}, "Panel options"),
+            return h("section", { class: "m-report-editor q-pa-md", style: { border: "1px solid var(--m-border)", borderRadius: "4px" } }, [h("h2", {class:"text-h6 q-mt-none q-mb-sm"}, T(this.heading || (this.queryOnly ? "Query options" : "Panel options"))),
                 (this.panelOnly || this.queryOnly) ? null : h("div", { class: "row items-end q-gutter-sm" }, [
                     E.control("Selected panel", this.selectedId || "", value => { this.selected = value; }, "select", Object.keys(this.panels).map(id => ({value:id,text:this.panels[id].title || id}))),
                     E.button("Add panel", () => this.add(false), this.readOnly),
@@ -1114,13 +1114,13 @@
                     E.button("Add library reference", () => this.library(false), this.readOnly || !this.libraryId)]),
                 panel.panelRef ? h("p", ["Library panel: " + panel.panelRef + " ", h("a", { href: report.appPath("/apps/dashboards/Definition?definitionId=" + encodeURIComponent(panel.panelRef)) }, "Edit library panel"), " ",
                     E.button("Unlink as copy", () => this.library(true), this.readOnly)]) :
-                    h("div", [h("label", {class:"m-report-editor-control full-width q-my-sm"}, [h("span", "Search panel options"),
-                        h("input", { type: "search", placeholder: "Search panel options", value: this.optionSearch, onInput: (event) => { this.optionSearch = event.target.value; } })]),
+                    h("div", [h("label", {class:"m-report-editor-control full-width q-my-sm"}, [h("span", T(this.queryOnly ? "Search query options" : "Search panel options")),
+                        h("input", { type: "search", placeholder: T(this.queryOnly ? "Search query options" : "Search panel options"), value: this.optionSearch, onInput: (event) => { this.optionSearch = event.target.value; } })]),
                         h("div", {class:"row q-col-gutter-sm"}, options)]),
                 !this.queryOnly && !panel.panelRef && !this.optionSearch ? h('details',[h('summary','Field overrides, mappings and thresholds'),h(components['m-report-field-editor'],{value:panel.fieldConfig || {},disabled:this.readOnly,onChange:value=>this.update('fieldConfig',value)})]):null,
                 !this.panelOnly && !this.queryOnly ? h('details',[h('summary','Dashboard variables'),h(components['m-report-variable-editor'],{value:this.body.variables || [],datasets:this.datasets,disabled:this.readOnly,onChange:value=>this.updateBody('variables',value)})]):null,
                 !this.panelOnly && !this.queryOnly ? h('details',[h('summary','Nested rows, tabs and panel placements'),h(components['m-report-layout-editor'],{value:this.body.layout || E.layout('autoGrid',Object.keys(this.panels)),panelIds:Object.keys(this.panels),variableNames:(this.body.variables || []).map(variable=>variable.name).filter(Boolean),disabled:this.readOnly,onChange:value=>this.updateBody('layout',value)})]):null,
-                h("p", {class:"text-caption q-mt-md q-mb-none"}, this.readOnly ? "This definition is read only. Save a copy above to make changes." : "Options update the definition below. Save a version to keep the changes.")]);
+                h("p", {class:"text-caption q-mt-md q-mb-none"}, T(this.readOnly ? "This definition is read only. Save a copy above to make changes." : this.saveHint || (this.queryOnly ? "Options update the query below. Save the form to keep the changes." : "Options update the definition below. Save a version to keep the changes.")))]);
         }
     };
     components["m-log-tail"] = {

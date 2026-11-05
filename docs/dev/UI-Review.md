@@ -198,6 +198,13 @@ Further patterns established during the review:
   name the section and expose their state. Layout fixtures load the same fonts and icons as production.
 - Group long configuration forms by the decisions users make, separate effective values from overrides, and keep
   Save reachable. Collapsing advanced fields must preserve their values for the eventual submission.
+- Keep machine-parsed numeric edit values canonical. Localized grouping belongs in display text; an unchanged
+  large threshold must survive reopen and an unrelated save. Preserve invalid submitted values for correction.
+- A request acknowledgment describes what the service actually guarantees. Interval/claim skips are not fresh
+  evaluations; show the last evaluated time and state. Notifications identify firing, unknown and recovery states
+  in their text as well as their tone/icon, without changing the delivery payload contract.
+- Explicitly clear inherited record IDs on creation links. A New action reached from a notification or bookmarked
+  detail must open a new record; ordinary detail links continue to preserve their selected identity.
 - Use exact accessible names for short action words such as Confirm in focused browser tests. A newly named section
   toggle can legitimately contain the same word; substring matching must not activate a different control.
 - An unsaved wizard draft is an explicit form/field allowlist scoped to one mounted workflow and record. Keep

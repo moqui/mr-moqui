@@ -524,14 +524,47 @@ fn muted(body: &Json, labels: &Json, now: i64) -> bool {
     false
 }
 
+/// Notification metadata names the delivered event states; the payload is also used by email and webhooks unchanged.
+fn notification_presentation(payload: &Json) -> (String, &'static str) {
+    let title = text(payload, "title", "Report alert");
+    let Some(events) = payload["events"].as_array().filter(|events| !events.is_empty()) else {
+        // Recovery-action escalations use the same contact sender without alert events.
+        return (title.to_string(), "warning");
+    };
+    let states: BTreeSet<&str> = events
+        .iter()
+        .map(|event| match event["state"].as_str() {
+            Some("Normal") => "Normal",
+            Some("Pending") => "Pending",
+            Some("Firing") => "Firing",
+            Some("Recovering") => "Recovering",
+            Some("NoData") => "No data",
+            Some("Error") => "Error",
+            _ => "Unknown",
+        })
+        .collect();
+    let tone = if states.contains("Firing") || states.contains("Error") {
+        "danger"
+    } else if states.len() == 1 && states.contains("Normal") {
+        "success"
+    } else {
+        "warning"
+    };
+    (
+        format!("{} — {title}", states.into_iter().collect::<Vec<_>>().join(", ")),
+        tone,
+    )
+}
+
 pub(crate) fn send_contact(contact: &Json, payload: &Json) -> Result<(), Error> {
     match text(contact, "type", "notification") {
         "notification" => {
+            let (title, tone) = notification_presentation(payload);
             let mut note = moqui_core::notify::NotificationMessage::new();
             note.topic(text(contact, "topic", "ReportAlert"))
-                .title(text(payload, "title", "Report alert"))
+                .title(title)
                 .link(text(payload, "link", "/apps/dashboards/Alerts"))
-                .notification_type("warning")
+                .notification_type(tone)
                 .message_json(payload.to_string())
                 .persist(true);
             if let Some(user) = contact["userId"].as_str() {

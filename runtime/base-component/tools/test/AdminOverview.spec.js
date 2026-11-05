@@ -118,6 +118,35 @@ feature("thread counts and scheduler checks distinguish unavailable from zero an
     }
 })
 
+feature("alert creation links discard an incoming notification record identity", {
+    expect() {
+        // One focused render of Alerts; a notification's definitionId must not turn any New action into Edit.
+        const result = ec.screen.makeTest().rootScreen("component://webroot/screen/webroot.xml").renderMode("html")
+            .render("apps/dashboards/Alerts", {lastStandalone:"-2",definitionId:"ui080-stale-alert",dashboardId:"ui080-old-dashboard",panelId:"ui080-old-panel"}, null)
+        assert.equal(result.status, 200)
+        assert.equal(result.errorMessages.join(" | "), "")
+        const output = String(result.output || "")
+        assert(!/Error rendering|Exception in render/.test(output))
+        const links = Array.from(output.matchAll(/<a\b[^>]*\bhref="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g)).map(match => ({
+            url:match[1].replace(/&amp;/g, "&"),text:match[2].replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim()
+        }))
+        const create = (text) => {
+            const link = links.find(item => item.text === text)
+            assert(link, "creation link exists: " + text)
+            assert(!/[?&]definitionId=/.test(link.url), "New must not inherit a definition: " + link.url)
+            return link.url
+        }
+        const rule = create("New alert rule")
+        assert.equal(rule.split("?")[0].endsWith("/AlertRule"), true)
+        assert(!/[?&](dashboardId|panelId)=/.test(rule), "a new rule from the list has no inherited panel context")
+        for (const [text, kind] of [["New contact point","contactPoint"],["New silence","silence"],["New mute timing","muteTiming"]]) {
+            const url = create(text)
+            assert.equal(url.split("?")[0].endsWith("/AlertShared"), true)
+            assert(url.includes("sharedType=" + kind), "the chosen creation type remains in the URL")
+        }
+    }
+})
+
 feature("service inspection shows the XML Actions source exposed by its definition", {
     when() {
         return {page: render("Service/ServiceDetail", "Tools", {serviceName: "org.moqui.impl.BasicServices.echo#Data"})}
@@ -242,5 +271,82 @@ feature("job run outcome and timing distinguish incomplete history and retain di
         assert.equal(missing.logFrom, "now-1d")
         assert.equal(missing.traceFrom, "now-7d")
         assert.equal(missing.logQueryString, "")
+    }
+})
+
+
+feature("alert evaluation feedback distinguishes requests, skipped rules and reported failures", {
+    expect() {
+        // A service 'evaluated' count also includes interval/claim skips; no extra Alerts render is needed.
+        const source = ec.resource.getLocationText("component://tools/screen/Dashboards/Alerts.xml")
+        const transition = /<transition name="evaluate"[\s\S]*?<\/transition>/.exec(source)[0]
+        const actions = /<script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/.exec(transition)[1]
+        const inspect = (evaluation, hasError = false) => {
+            const messages = []
+            runInContext(actions, {evaluation, ec: {message: {
+                hasError: () => hasError,
+                addMessage: (text, type) => messages.push({text, type})
+            }}})
+            return messages
+        }
+        const processed = inspect({evaluated: 1, failed: 0, notices: []})
+        assert.equal(processed.length, 1)
+        assert.equal(processed[0].type, "info")
+        assert(processed[0].text.includes("Evaluation requested."))
+        assert(processed[0].text.includes("evaluation interval"))
+        assert(processed[0].text.includes("already being evaluated"))
+        assert(processed[0].text.includes("Evaluated time and state"))
+        assert(!/successful|completed|1 rule evaluated/i.test(processed[0].text))
+        const paused = inspect({evaluated: 0, failed: 0})
+        assert.equal(paused.length, 1)
+        assert(paused[0].text.includes("No active alert rule was processed."))
+        assert(paused[0].text.includes("paused"))
+        const failed = inspect({evaluated: 0, failed: 1, notices: [{message: "Fixture series limit"}]})
+        assert.equal(failed.length, 2)
+        assert.equal(failed[0].type, "warning")
+        assert(failed[0].text.includes("1 failed rule(s)"))
+        assert(failed[0].text.includes("server logs"))
+        assert.equal(failed[1].text, "Fixture series limit")
+        assert.equal(failed[1].type, "warning")
+        assert.equal(inspect({evaluated: 1, failed: 0}, true).length, 0)
+        assert.equal(inspect(null).length, 0)
+    }
+})
+
+
+feature("alert numeric edit values round trip without grouping or display precision loss", {
+    expect() {
+        // Execute the screens' actual field assignments and the formatter used by text-line, without another screen render.
+        const fields = [
+            ["AlertRule", "threshold", "threshold", true, 0],
+            ["AlertRule", "minimum", "min", true, 0],
+            ["AlertRule", "maximum", "max", true, 0],
+            ["AlertRule", "recoveryThreshold", "recoveryThreshold", true, ""],
+            ["AlertRule", "pendingSeconds", "pendingSeconds", false, 0],
+            ["AlertRule", "keepFiringSeconds", "keepFiringSeconds", false, 0],
+            ["AlertRule", "intervalSeconds", "intervalSeconds", false, 60],
+            ["AlertShared", "groupWaitSeconds", "groupWaitSeconds", false, 30],
+            ["AlertShared", "repeatSeconds", "repeatSeconds", false, 14400]
+        ]
+        const actions = {}
+        for (const screen of ["AlertRule", "AlertShared"]) {
+            const source = ec.resource.getLocationText("component://tools/screen/Dashboards/" + screen + ".xml")
+            actions[screen] = /^    <actions><script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/m.exec(source)[1]
+        }
+        for (const [screen, field, key, condition, fallback] of fields) {
+            const expression = new RegExp("(?:^|[;\\n])\\s*" + field + "=([^;\\n]+)").exec(actions[screen])[1]
+            for (const value of [1000000000, -12.12345678901234, 0.000000000000123, 0.1, 0, null]) {
+                const body = condition ? {condition: {[key]: value}} : {[key]: value}
+                const state = {body, actual: null}
+                runInContext("actual = " + expression, state)
+                const expected = value == null || (field === "intervalSeconds" && value === 0) ? fallback : value
+                assert.equal(typeof state.actual, "string", screen + "." + field)
+                assert.equal(state.actual, String(expected))
+                // String values bypass locale grouping/decimal conversion in every text-line renderer.
+                const shown = ec.l10n.format(state.actual, null)
+                assert.equal(shown, String(expected))
+                if (shown !== "") assert.equal(Number(shown), expected, "canonical numeric precision is retained")
+            }
+        }
     }
 })
