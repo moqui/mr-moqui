@@ -30,6 +30,23 @@ pub mod capabilities;
 pub mod catalog;
 pub mod service;
 
+// ---------- Schema and jobs (plans/Tools-Database.md §5, §6, §7.3, §7.4) ----------
+pub mod activity;
+pub mod group_db;
+pub mod jobs;
+pub mod schema;
+pub mod tables;
+
+/// The services of the schema, job, table and activity screens.
+fn register_schema_and_jobs(
+    map: &mut std::collections::BTreeMap<&'static str, moqui_core::extension::RustServiceFn>,
+) -> Result<(), String> {
+    schema::register(map)?;
+    jobs::register(map)?;
+    tables::register(map)?;
+    activity::register(map)
+}
+
 moqui_core::extension::submit! {
     moqui_core::extension::Extension {
         features: &["tools"],

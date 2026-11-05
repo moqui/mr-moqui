@@ -30,6 +30,8 @@ use crate::{capabilities, DbRef, NOT_AVAILABLE};
 pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Result<(), String> {
     rust_service!(map, get_capabilities)?;
     rust_service!(map, reset_query_stats)?;
+    // ---------- Schema and jobs (plans/Tools-Database.md §5, §6, §7.3, §7.4) ----------
+    crate::register_schema_and_jobs(map)?;
     Ok(())
 }
 
@@ -38,7 +40,7 @@ pub(crate) fn register(map: &mut BTreeMap<&'static str, RustServiceFn>) -> Resul
 const TOOLS_SCREEN: &str = "component://tools/screen/Tools.xml";
 
 /// Whether the current user may view the Tools app; when not, an error is added.
-fn may_view_tools() -> bool {
+pub(crate) fn may_view_tools() -> bool {
     match moqui_core::user::authorize_own("AT_XML_SCREEN", TOOLS_SCREEN, "view") {
         Ok(()) => true,
         Err(err) => {

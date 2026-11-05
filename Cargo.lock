@@ -5111,6 +5111,7 @@ dependencies = [
  "indexmap",
  "jiff",
  "moqui-core",
+ "moqui-db",
  "moqui-drivers",
  "moqui-lib",
  "tracing",

@@ -14,6 +14,8 @@ publish.workspace = true
 [dependencies]
 moqui-core = { workspace = true }
 moqui-lib = { workspace = true }
+# The DDL builders and the schema comparison's catalog queries (Schema and jobs).
+moqui-db = { workspace = true }
 indexmap = { workspace = true }
 jiff = { workspace = true }
 tracing = { workspace = true }

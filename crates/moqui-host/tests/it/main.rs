@@ -45,6 +45,7 @@ mod collab;
 mod component_deploy;
 mod component_load;
 mod create_or_update_race;
+mod database_jobs;
 mod devaide;
 #[cfg(all(feature = "rtc", feature = "sip"))]
 mod edge_allinone;
