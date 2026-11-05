@@ -279,11 +279,12 @@ fn a_run_streams_its_answer_as_numbered_events_and_completes() {
 
 #[test]
 fn tool_calls_run_in_model_order_with_independent_reads_in_parallel() {
-    // the in-memory pool (8, 2 reserve) with one request and one service worker leaves 2 connections: one agent
-    // worker and one more read beside its own
+    // the in-memory pool (8, 2 reserve) with one request worker (2) and 2 streamed download reads leaves 2
+    // connections: one agent worker and one more read beside its own
     let bed = bed_with(
         "tools",
-        r#"<tools request-pool-max="1" worker-pool-max="1"/>"#,
+        r#"<tools request-pool-max="1" worker-pool-max="0"/>
+            <webapp-list><webapp name="webroot" transfer-workers="2"/></webapp-list>"#,
         r#"<limits max-concurrent-runs="1"/>"#,
     );
     let _entered = bed.ctx.enter();

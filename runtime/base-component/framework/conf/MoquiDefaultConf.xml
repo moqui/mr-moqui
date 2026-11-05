@@ -530,7 +530,11 @@
     <default-property name="kibana_host" value="127.0.0.1"/>
     <default-property name="kibana_port" value="5601"/>
 
-    <tools worker-queue="65535" worker-pool-core="16" worker-pool-max="32" worker-pool-alive="60"
+    <!-- worker-pool-max and request-pool-max size the connection pools: (8 + 25) * 2 connections for their
+        transactions (each can hold a suspended one), one for an agent worker and the webroot webapp's 4
+        transfer-workers make 71, within the 72 ordinary connections of a pool of 80 less 8 reserve
+        (moqui_core::service::check_serve_caps). -->
+    <tools worker-queue="65535" worker-pool-core="16" worker-pool-max="25" worker-pool-alive="60"
             request-pool-max="8" request-queue="64"
             empty-db-load="${entity_empty_db_load}"
             on-start-load-types="${entity_on_start_load_types}" on-start-load-components="${entity_on_start_load_components}">
@@ -641,7 +645,7 @@
                 handle-cors="${webapp_handle_cors}" allow-origins="${webapp_allow_origins}"
                 require-session-token="${webapp_require_session_token}" upload-executable-allow="${webapp_upload_executable_allow}"
                 websocket-timeout="600000" client-ip-header="${webapp_client_ip_header}"
-                trusted-proxies="${webapp_trusted_proxies}" status-ips="${webapp_status_ips}" transfer-workers="16">
+                trusted-proxies="${webapp_trusted_proxies}" status-ips="${webapp_status_ips}" transfer-workers="4">
             <!-- root and error screens for OOTB runtime directory (moqui/moqui-runtime repository) -->
             <root-screen host=".*" location="component://webroot/screen/webroot.xml"/>
             <error-screen error="unauthorized" screen-path="error/Unauthorized"/>
@@ -1341,10 +1345,12 @@
 
         <!-- The content group's database (the content_ds_* properties above). One transaction spans it and the
             transactional database, which commits after it, without two-phase commit. pool-maxsize is the
-            transactional pool's: a transaction can hold a connection of each. -->
+            transactional pool's, 80: a transaction can hold a connection of each, and the 72 ordinary connections
+            hold the workers' 66, an agent worker and the webroot webapp's 4 transfer-workers, each reading a window
+            of a streamed download (71), as the transactional pool does when the content shares it. -->
         <datasource group-name="content" database-conf-name="${content_ds_db_conf}" schema-name="${content_ds_schema}"
                 runtime-add-missing="${entity_add_missing_runtime}" startup-add-missing="${entity_add_missing_startup}">
-            <inline-jdbc pool-maxsize="90"><xa-properties serverName="${content_ds_host ?: entity_ds_host}"
+            <inline-jdbc pool-maxsize="80"><xa-properties serverName="${content_ds_host ?: entity_ds_host}"
                     port="${content_ds_port ?: entity_ds_port}" databaseName="${content_ds_database}"
                     user="${content_ds_user ?: entity_ds_user}" password="${content_ds_password ?: entity_ds_password}"
                     sslmode="${content_ds_sslmode ?: entity_ds_sslmode}"
@@ -1714,8 +1720,9 @@
 
             <database-type type="binary-very-long" sql-type="BYTEA"/>
 
-            <!-- default max connections for PostgreSQL is 100 -->
-            <inline-jdbc pool-maxsize="90"><xa-properties serverName="${entity_ds_host}" portNumber="${entity_ds_port?:'5432'}"
+            <!-- default max connections for PostgreSQL is 100: 80 leaves room for other clients. The embedded
+                database takes this size too. -->
+            <inline-jdbc pool-maxsize="80"><xa-properties serverName="${entity_ds_host}" portNumber="${entity_ds_port?:'5432'}"
                     databaseName="${entity_ds_database}" user="${entity_ds_user}" password="${entity_ds_password}"
                     sslmode="${entity_ds_sslmode}" sslrootcert="${entity_ds_sslrootcert}"/></inline-jdbc>
         </database>

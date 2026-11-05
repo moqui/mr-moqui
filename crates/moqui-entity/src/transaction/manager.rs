@@ -258,6 +258,11 @@ impl TransactionManager {
         self.inner.pool.stats()
     }
 
+    /// See [`super::pool::PoolCounters`].
+    pub fn pool_counters(&self) -> super::pool::PoolCounters {
+        self.inner.pool.counters()
+    }
+
     /// Errors when `(request_cap + service_cap) * 2 > max - reserve`.
     pub fn check_caps(&self, request_cap: u32, service_cap: u32) -> Result<(), Error> {
         self.inner.pool.check_caps(request_cap, service_cap)
