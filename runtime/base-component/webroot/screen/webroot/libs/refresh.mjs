@@ -195,7 +195,7 @@ export { json } from '@codemirror/lang-json';
 export { css } from '@codemirror/lang-css';
 export { html } from '@codemirror/lang-html';
 export { vue } from '@codemirror/lang-vue';
-export { sql } from '@codemirror/lang-sql';
+export { sql, PostgreSQL, MySQL, MariaSQL, StandardSQL } from '@codemirror/lang-sql';
 export { yaml } from '@codemirror/lang-yaml';
 export { rust } from '@codemirror/lang-rust';
 export { tags } from '@lezer/highlight';
@@ -290,6 +290,17 @@ SIL Open Font License 1.1 (the fonts): the full text is in licenses/OFL-1.1.txt,
     copy: [
       ['dist/js/tom-select.complete.min.js', 'tom-select/tom-select.complete.min.js'],
       ['dist/css/tom-select.css', 'tom-select/tom-select.css'],
+    ],
+    licenseFiles: ['LICENSE'],
+  },
+  {
+    // The data grid of Tools › Data (plans/Tools-Database.md §9, §11): a plain global, Tabulator. Its optional Luxon,
+    // SheetJS and jsPDF are not vendored: dates are formatted by MoquiL10n.js and files are written by the server.
+    // 6.7.0 (Oct 21, 2026) is the newest at least two weeks old when pinned on Nov 5; 6.7.1 is from Oct 22.
+    id: 'tabulator', name: 'Tabulator', npm: 'tabulator-tables', version: '6.7.0', license: 'MIT',
+    copy: [
+      ['dist/js/tabulator.min.js', 'tabulator/tabulator.min.js'],
+      ['dist/css/tabulator.min.css', 'tabulator/tabulator.min.css'],
     ],
     licenseFiles: ['LICENSE'],
   },

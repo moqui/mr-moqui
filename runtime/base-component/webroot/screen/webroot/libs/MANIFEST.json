@@ -113,7 +113,7 @@
   },
   "notices": {
     "path": "NOTICES.md",
-    "sha256": "22a053e3c8e970b21100ec7a6dbe567dd8992abf0cec333e6df8a6dda45512fa"
+    "sha256": "148405788cff6929bfc5991e0cc8933b102e1b80d9af2b166e6795ac279dd04f"
   },
   "libraries": [
     {
@@ -184,6 +184,29 @@
           "from": "dist/css/tom-select.css",
           "size": 9913,
           "sha256": "9927adfdda16f802eed295c3dd0f4845cfb3db2038b62324546a3b6a96a15624"
+        }
+      ]
+    },
+    {
+      "id": "tabulator",
+      "name": "Tabulator",
+      "version": "6.7.0",
+      "license": "MIT",
+      "source": "https://registry.npmjs.org/tabulator-tables/-/tabulator-tables-6.7.0.tgz",
+      "npm": "tabulator-tables@6.7.0",
+      "tarballIntegrity": "sha512-JO4sU6BapqZiwlFHoXJY+PXQdqjgGaWafoDYJUAvdF/qpDp4ihp23psIYKwA+xEIqk5iHtY6pFWL8IOaARR3/w==",
+      "files": [
+        {
+          "path": "tabulator/tabulator.min.js",
+          "from": "dist/js/tabulator.min.js",
+          "size": 455553,
+          "sha256": "5b041cacadbb05fe0b3258e3cf365230100c03aa66daea27d161fd088c451839"
+        },
+        {
+          "path": "tabulator/tabulator.min.css",
+          "from": "dist/css/tabulator.min.css",
+          "size": 28383,
+          "sha256": "ff598d8e961398e09a8e52ab21740e5ed952c84feebbdacec8f8a362dd3f73db"
         }
       ]
     },
@@ -584,8 +607,8 @@
         {
           "path": "codemirror/codemirror.min.js",
           "from": "build",
-          "size": 807472,
-          "sha256": "49af63d80e7a66445bcd3d7c6fd12f90d36afc0eb0f5468e9c1b7d4d2e6e9268"
+          "size": 807538,
+          "sha256": "f64ca08c3a4b4c61de1d00dfb0b033da6289396e46638d300e1d4f3048c4e3b7"
         }
       ]
     },

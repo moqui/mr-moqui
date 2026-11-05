@@ -12,62 +12,108 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
+<!-- The entity facade's statement statistics of this instance (plans/Tools-Database.md §7.1): each statement's hits,
+    errors and times, and the screens, services and REST paths that ran it. Counted when the conf's entity-facade
+    query-stats is true. Reset (org.moqui.impl.DatabaseServices.reset#QueryStats) needs DATABASE_ADMIN. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
         xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Queries" default-menu-index="3">
 
-    <transition name="clearQueryStats"><actions><script>ec.entity.clearQueryStats()</script></actions>
-        <default-response url="."/></transition>
+    <transition name="resetStats" method="post" authz-action="all">
+        <actions>
+            <service-call name="org.moqui.impl.DatabaseServices.reset#QueryStats"/>
+            <message>Statement statistics reset</message>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
 
     <actions>
-        <set field="queryStatsList" from="ec.entity.getQueryStatsList(orderByField || '-totalTime', entityFilter, sqlFilter)"/>
+        <set field="orderByField" from="orderByField || '-totalTime'"/>
+        <set field="queryStatsList" from="ec.entity.getQueryStatsList(orderByField, entityFilter, sqlFilter)"/>
+        <set field="statementCount" from="queryStatsList.length"/>
+        <set field="filtered" from="!!(entityFilter || sqlFilter)"/>
+        <!-- each order the column headers give, so Find keeps the current one -->
+        <script><![CDATA[
+            orderOptions = []
+            for (const [field, label, numeric] of [['totalTime', 'Total time', true], ['average', 'Average time', true],
+                    ['maxTime', 'Longest time', true], ['minTime', 'Shortest time', true], ['stdDev', 'Std dev', true],
+                    ['hitCount', 'Hits', true], ['errorCount', 'Errors', true], ['entityName', 'Entity', false], ['sql', 'SQL', false]]) {
+                orderOptions.push({key: '-' + field, text: label + (numeric ? ', highest first' : ', Z to A')})
+                orderOptions.push({key: field, text: label + (numeric ? ', lowest first' : ', A to Z')})
+            }
+        ]]></script>
         <set field="pageSize" from="pageSize || '40'"/>
         <script>CollectionUtilities.paginateList("queryStatsList", null, context)</script>
+        <!-- read here, so a server-static template reads them from the screen package -->
+        <set field="instanceId" from="ec.factory.getInstanceId()"/>
+        <set field="canReset" from="ec.user.hasPermission('DATABASE_ADMIN')"/>
     </actions>
     <widgets>
-        <link url="clearQueryStats" text="Clear Stats"/>
-        <label text="Statistics for queries run since server start. All times are in microseconds."/>
-        <form-single name="FilterForm" transition=".">
-            <field name="entityFilter"><default-field><text-line size="30"/></default-field></field>
-            <field name="sqlFilter"><default-field title="SQL Filter"><text-line size="30"/></default-field></field>
-            <field name="submitButton"><default-field title="Filter"><submit/></default-field></field>
-            <field-layout><field-row-big><field-ref name="entityFilter"/><field-ref name="sqlFilter"/>
-                <field-ref name="submitButton"/></field-row-big></field-layout>
-        </form-single>
-        <form-list name="QueryStatsList" list="queryStatsList" skip-form="true">
-            <row-actions>
-                <set field="artifactInfoList" from="[]"/>
-                <iterate list="artifactCounts" entry="count" key="artifact">
-                    <script>artifactInfoList.push({artifact:artifact, count:count})</script></iterate>
-                <order-map-list list="artifactInfoList"><order-by field-name="-count"/></order-map-list>
-            </row-actions>
-            <field name="entityName"><header-field show-order-by="true"/><default-field><display/></default-field></field>
-            <field name="sql">
-                <header-field title="SQL" show-order-by="true"/>
-                <conditional-field condition="sql != null &amp;&amp; sql.length() &gt; 500">
-                    <display text="${sql.substring(0, 500)} "/>
-                    <container-dialog id="ViewSql" button-text="All" width="800"><label text="${sql}"/></container-dialog>
-                </conditional-field>
-                <default-field><display/></default-field>
-            </field>
-            <field name="artifactCounts"><default-field>
-                <section-iterate name="ArtifactCounts" list="artifactInfoList" entry="artifactInfo"><widgets>
-                    <label text="${artifactInfo.artifact} - ${artifactInfo.count}" type="div"/>
-                </widgets></section-iterate>
-            </default-field></field>
-            <field name="hitCount"><header-field title="Hits" show-order-by="true"/><default-field><display/></default-field></field>
-            <field name="errorCount"><header-field title="Errors" show-order-by="true"/><default-field><display/></default-field></field>
+        <container-box><box-header title="Statements on instance ${instanceId}"/>
+            <box-toolbar>
+                <section name="ResetSection" condition="canReset"><widgets>
+                    <link url="resetStats" text="Reset" icon="restart_alt" btn-type="danger" link-type="hidden-form"
+                            confirmation="Reset the statement statistics of instance ${instanceId}?"/>
+                </widgets></section>
+            </box-toolbar>
+            <box-body>
+                <label text="Statements run on this instance since it started or since the last reset. Times are in microseconds; each statement lists the screens, services and REST paths that ran it." type="p" style="m-muted"/>
+                <form-single name="FilterForm" transition=".">
+                    <field name="entityFilter"><default-field title="Entity"><text-line size="30"/></default-field></field>
+                    <field name="sqlFilter"><default-field title="SQL"><text-line size="30"/></default-field></field>
+                    <field name="orderByField"><default-field title="Order by">
+                        <drop-down><list-options list="orderOptions" key="${key}" text="${text}"/></drop-down>
+                    </default-field></field>
+                    <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+                    <field-layout><field-row-big><field-ref name="entityFilter"/><field-ref name="sqlFilter"/>
+                        <field-ref name="orderByField"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                </form-single>
+                <section name="NoMatch" condition="!statementCount &amp;&amp; filtered"><widgets>
+                    <label text="No statement matches the filter." type="p"/>
+                </widgets></section>
+                <section name="NoStatements" condition="!statementCount &amp;&amp; !filtered"><widgets>
+                    <label text="No statements counted. Statements are counted when the conf's entity-facade query-stats is true (the dev conf sets it)." type="p"/>
+                </widgets></section>
+                <form-list name="QueryStatsList" list="queryStatsList" skip-form="true">
+                    <row-actions>
+                        <set field="artifactInfoList" from="Object.entries(artifactCounts || {}).map(([artifact, count]) =&gt; ({artifact, count})).sort((a, b) =&gt; b.count - a.count)"/>
+                    </row-actions>
+                    <field name="entityName"><header-field title="Entity" show-order-by="true"/><default-field><display/></default-field></field>
+                    <field name="sql">
+                        <header-field title="SQL" show-order-by="true"/>
+                        <conditional-field condition="sql != null &amp;&amp; sql.length &gt; 500">
+                            <display text="${sql.substring(0, 500)} "/>
+                            <container-dialog id="ViewSql" button-text="All" width="800"><label text="${sql}"/></container-dialog>
+                        </conditional-field>
+                        <default-field><display/></default-field>
+                    </field>
+                    <field name="artifactCounts"><default-field title="Run by">
+                        <section-iterate name="ArtifactCounts" list="artifactInfoList" entry="artifactInfo"><widgets>
+                            <label text="${artifactInfo.artifact} (${artifactInfo.count})" type="div"/>
+                        </widgets></section-iterate>
+                    </default-field></field>
+                    <field name="hitCount" align="right"><header-field title="Hits" show-order-by="true"/><default-field><display format="#,##0"/></default-field></field>
+                    <field name="errorCount" align="right"><header-field title="Errors" show-order-by="true"/><default-field><display format="#,##0"/></default-field></field>
 
-            <field name="minTime"><header-field title="Min" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
-            <field name="maxTime"><header-field title="Max" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
-            <field name="totalTime"><header-field title="Total" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
-            <field name="average"><header-field title="Avg" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
-            <field name="stdDev"><header-field title="Std Dev" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
+                    <field name="minTime" align="right"><header-field title="Min" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
+                    <field name="maxTime" align="right"><header-field title="Max" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
+                    <field name="totalTime" align="right"><header-field title="Total" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
+                    <field name="average" align="right"><header-field title="Avg" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
+                    <field name="stdDev" align="right"><header-field title="Std Dev" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
 
-            <form-list-column><field-ref name="entityName"/><field-ref name="sql"/><field-ref name="artifactCounts"/></form-list-column>
-            <form-list-column><field-ref name="hitCount"/><field-ref name="errorCount"/></form-list-column>
-            <form-list-column><field-ref name="minTime"/><field-ref name="maxTime"/><field-ref name="average"/></form-list-column>
-            <form-list-column><field-ref name="totalTime"/><field-ref name="stdDev"/></form-list-column>
-        </form-list>
+                    <columns>
+                        <column><field-ref name="entityName"/><field-ref name="sql"/><field-ref name="artifactCounts"/></column>
+                        <column><field-ref name="hitCount"/><field-ref name="errorCount"/></column>
+                        <column><field-ref name="minTime"/><field-ref name="maxTime"/><field-ref name="average"/></column>
+                        <column><field-ref name="totalTime"/><field-ref name="stdDev"/></column>
+                    </columns>
+                    <columns type="mobile">
+                        <column><field-ref name="entityName"/><field-ref name="sql"/></column>
+                        <column><field-ref name="hitCount"/><field-ref name="totalTime"/></column>
+                    </columns>
+                </form-list>
+            </box-body>
+        </container-box>
     </widgets>
 </screen>

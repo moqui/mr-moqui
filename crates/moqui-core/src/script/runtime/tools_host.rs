@@ -846,6 +846,8 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     ec.factory.getStatusMap = host.getStatusMap;
     ec.factory.getComponentInfoList = host.getComponentInfoList;
     ec.factory.getRuntimePath = host.getRuntimePath;
+    // This server's instance id, as its telemetry and the database audit name it (Tools' Database › Queries).
+    ec.factory.getInstanceId = host.getInstanceId;
     Object.defineProperty(ec.factory, "workerPool", { get: poolInfo });
     Object.defineProperty(ec.factory, "versionMap", { get: () => ({ moqui: ec.factory.moquiVersion }) });
     ec.factory.getThreadList = host.getThreadList;
@@ -1843,6 +1845,14 @@ fn get_status_map<'js>(ctx: Ctx<'js>, include_sensitive: Opt<JsValue<'js>>) -> r
         let factory = factory_of(&ctx)?;
         let map = crate::context::status::status_map(&factory, opt_flag(&include_sensitive));
         host_to_js(&ctx, Value::Map(map))
+    })
+}
+
+/// `ec.factory.getInstanceId()`: this server's instance id ([`crate::drain::instance_id`]).
+fn get_instance_id(ctx: Ctx<'_>) -> rquickjs::Result<String> {
+    host_guard(&ctx, || {
+        let factory = factory_of(&ctx)?;
+        Ok(crate::drain::instance_id(&factory))
     })
 }
 
@@ -2853,6 +2863,7 @@ pub(super) fn install<'js>(
     method!("getStatusMap", get_status_map);
     method!("getComponentInfoList", get_component_info_list);
     method!("getRuntimePath", get_runtime_path);
+    method!("getInstanceId", get_instance_id);
     method!("getThreadList", get_thread_list);
     method!("waitWorkerPoolEmpty", wait_worker_pool_empty);
     method!("getRequestDetails", get_request_details);
