@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <!-- The Tools app's database administration (plans/Tools-Database.md), in crates/moqui-tools; the entities are in
+        framework/entity/DatabaseEntities.xml. A service that works on a database takes db: group:<groupName> for an
+        entity group's database (empty is the default group), or ext:<connectionId> for a moqui.database.DatabaseConnection,
+        which is refused with "Not available" on a production instance or without the DATABASE_EXTERNAL permission. No
+        Java counterpart. Each service refuses a user the Tools app's own authorization (TOOLS_APP) does not let view
+        component://tools/screen/Tools.xml, whatever calls it. -->
+    <service verb="get" noun="Capabilities" type="rust" location="moqui_tools::service::get_capabilities"
+            transaction="ignore">
+        <description>What the database db allows the Tools screens, and why the rest is not available ("needs the
+            pg_monitor role", "pg_stat_statements is not loaded"), probed once and kept five minutes; refresh probes again.
+            features maps each of statementStats, activity, cancel, terminate, lockWaits, tableSizes, bloatExact,
+            indexUsage, indexOnline, fkLightLock, maintenance, integrity, settings, settingsEdit and backups to available
+            and reason (why not, or what limits it). backend is embedded-postgres, postgres, mysql or mariadb. available is
+            false, with reason, when the database did not answer.</description>
+        <in-parameters>
+            <parameter name="db"/>
+            <parameter name="refresh" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="db"/>
+            <parameter name="available" type="Boolean"/>
+            <parameter name="reason"/>
+            <parameter name="backend"/>
+            <parameter name="version"/>
+            <parameter name="databaseName"/>
+            <parameter name="userName"/>
+            <parameter name="startTime"/>
+            <parameter name="uptimeSeconds" type="Long"/>
+            <parameter name="databaseSize" type="Long"/>
+            <parameter name="features" type="Map"/>
+        </out-parameters>
+    </service>
+    <service verb="reset" noun="QueryStats" type="rust" location="moqui_tools::service::reset_query_stats"
+            transaction="ignore">
+        <description>Forget the entity facade's statement stats of this instance (entity-facade@query-stats), as
+            ec.entity.clearQueryStats() does. Needs the DATABASE_ADMIN permission, and writes a DbaStatsReset
+            DatabaseAudit row.</description>
+    </service>
+</services>

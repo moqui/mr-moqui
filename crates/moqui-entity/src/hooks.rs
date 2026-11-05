@@ -45,6 +45,15 @@ pub trait StatementTrace {
     fn finish(self: Box<Self>, error: Option<&str>);
 }
 
+/// What a statement runs for, from the artifact stack: the entity of the `AT_ENTITY` frame on top, when the statement
+/// is an entity operation's, and the first artifact below it that is not an entity (a screen, service or REST path),
+/// as Java's query stats take the parent of the top frame.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct StatementArtifact {
+    pub entity: Option<String>,
+    pub artifact: Option<String>,
+}
+
 /// What the entity facade calls in the framework. Every entry answers for the context entered on this thread.
 // The entries spell out their signatures, which aliases would only hide.
 #[allow(clippy::type_complexity)]
@@ -121,6 +130,9 @@ pub struct EntityHooks {
     /// Publish a write to the cluster's caches.
     pub cluster_note_write: fn(&EntityFacade, &str, &[String], &FieldMap) -> Result<(), Error>,
     pub trace_statement: fn(&str) -> Option<Box<dyn StatementTrace>>,
+    /// The entity and artifact a statement runs for, for the query stats (`entity::query_stats`); only called while
+    /// they are on.
+    pub artifact_name: fn() -> StatementArtifact,
     /// No other thread returns a connection or fires a deadline (the inline executor).
     pub inline_executor: fn() -> bool,
 }
@@ -188,6 +200,7 @@ impl EntityHooks {
         registration_failures: |_| Vec::new(),
         cluster_note_write: |_, _, _, _| Ok(()),
         trace_statement: |_| None,
+        artifact_name: StatementArtifact::default,
         inline_executor: || false,
     };
 }
@@ -302,6 +315,11 @@ pub fn call(
     disable_authz: bool,
 ) -> Result<BTreeMap<String, Value>, Error> {
     (get().call)(name, parameters, disable_authz)
+}
+
+/// The entity and artifact the statement about to run is for.
+pub fn artifact_name() -> StatementArtifact {
+    (get().artifact_name)()
 }
 
 /// [`StatementTrace`] of one statement, inside a trace.

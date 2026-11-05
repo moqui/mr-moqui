@@ -20,7 +20,7 @@ use moqui_lib::object::Value;
 
 use crate::context::{Authz, ExecutionContext, Executor, Tarpit};
 use crate::telemetry::{ContextGuard, Span, SpanKind, Telemetry};
-use moqui_entity::hooks::{EntityHooks, Guard, StatementTrace};
+use moqui_entity::hooks::{EntityHooks, Guard, StatementArtifact, StatementTrace};
 
 moqui_entity::hooks::submit! {
     EntityHooks {
@@ -95,6 +95,11 @@ moqui_entity::hooks::submit! {
         registration_failures: crate::service::define::registration_failures,
         cluster_note_write: note_write,
         trace_statement,
+        artifact_name: || {
+            let (entity, artifact) =
+                ExecutionContext::with_current(ExecutionContext::statement_artifact).unwrap_or_default();
+            StatementArtifact { entity, artifact }
+        },
         inline_executor: || {
             ExecutionContext::with_current(|ec| ec.factory().executor() == Executor::Inline).unwrap_or(false)
         },

@@ -1404,6 +1404,16 @@ impl ExecutionContext {
         self.state.artifacts.borrow().name_string()
     }
 
+    /// The entity of the entity frame on top of the artifact stack, if one is, and the first other artifact below it
+    /// (the query stats' artifact). Both `None` while the stack is being changed (an authorization check's own find).
+    pub fn statement_artifact(&self) -> (Option<String>, Option<String>) {
+        self.state
+            .artifacts
+            .try_borrow()
+            .map(|stack| stack.statement_artifact())
+            .unwrap_or_default()
+    }
+
     pub fn authz_disabled(&self) -> bool {
         self.state.artifacts.borrow().authz_disabled()
     }

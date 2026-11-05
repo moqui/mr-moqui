@@ -1,0 +1,27 @@
+# The Tools app's server side (plans/Tools-Database.md §13): org.moqui.impl.DatabaseServices, with database
+# capabilities and the catalog queries per dialect now, and the jobs, SQL runs, data grid and ETL to come. On
+# moqui-core, which reaches it only through moqui_core::extension, so an edit here does not rebuild the framework; the
+# host links it in every build, and the browser build leaves it out.
+
+[package]
+name = "moqui-tools"
+description = "The Tools app's database services: capabilities, catalog queries, jobs, SQL, the data grid and ETL."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+moqui-core = { workspace = true }
+moqui-lib = { workspace = true }
+indexmap = { workspace = true }
+jiff = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+# moqui_core::testing, and the embedded cluster the capabilities test probes.
+moqui-core = { workspace = true, features = ["test-support"] }
+moqui-drivers = { workspace = true, features = ["embedded-postgres"] }
+
+[lints]
+workspace = true

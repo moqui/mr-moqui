@@ -1766,6 +1766,13 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="startup-add-missing" default="false" type="boolean-expandable"/>
             <xs:attribute name="runtime-add-missing" default="true" type="boolean-expandable"/>
             <xs:attribute name="runtime-add-fks" default="true" type="boolean-expandable"/>
+            <xs:attribute name="pg-stat-statements" default="false" type="boolean-expandable">
+                <xs:annotation><xs:documentation>On Postgres, load pg_stat_statements for this datasource's database:
+                    the embedded cluster preloads it (shared_preload_libraries, applied when this process starts the
+                    cluster) and turns on track_io_timing; an external server must preload it, else a warning says so.
+                    CREATE EXTENSION IF NOT EXISTS runs after start; a role that may not create it gets a warning.
+                    Ignored on MySQL, whose statement digests are in performance_schema.</xs:documentation></xs:annotation>
+            </xs:attribute>
             <xs:attribute name="object-factory" type="xs:string" default="org.moqui.impl.entity.EntityDatasourceFactoryImpl">
                 <xs:annotation><xs:documentation>The references class must implement the
                     org.moqui.entity.EntityDatasourceFactory interface.</xs:documentation></xs:annotation>

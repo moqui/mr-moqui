@@ -657,11 +657,18 @@ fn run_entity(
         ))
     };
     let result = match operation {
-        "list" | "one" | "count" if sensitive::is_identity_admin_entity(&full_name) => return refused("available"),
+        "list" | "one" | "count"
+            if sensitive::is_identity_admin_entity(&full_name)
+                // an external database's password, behind DATABASE_EXTERNAL and refused on production (§4.3)
+                || full_name == "moqui.database.DatabaseConnection" =>
+        {
+            return refused("available")
+        }
         "list" | "one" => find_entity(&facade, name, master_name, operation, params),
         "count" => count_entity(&facade, name, params),
         "create" | "update" | "store" | "delete" => {
             if sensitive::is_identity_admin_entity(&full_name)
+                || sensitive::is_audit_entity(&full_name)
                 || (sensitive::is_secret_config_entity(&full_name) && !crate::user::is_in_group("ADMIN")?)
             {
                 return refused("writable");

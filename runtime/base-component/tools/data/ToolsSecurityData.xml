@@ -20,6 +20,15 @@ along with this software (see the LICENSE.md file). If not, see
         <authz artifactAuthzId="TOOLS_APP_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
 
+    <!-- Tools database administration (plans/Tools-Database.md §14.1), both sealed (user-facade authz
+        sealed-permissions): DATABASE_ADMIN cancels or terminates sessions, runs DDL and maintenance jobs and resets
+        statement stats; DATABASE_EXTERNAL reaches databases the entity groups do not use (db=ext:...), never on a
+        production instance. -->
+    <moqui.security.UserPermission userPermissionId="DATABASE_ADMIN" description="Tools: Database Administration"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="DATABASE_ADMIN" fromDate="0"/>
+    <moqui.security.UserPermission userPermissionId="DATABASE_EXTERNAL" description="Tools: External Databases"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN_ADV" userPermissionId="DATABASE_EXTERNAL" fromDate="0"/>
+
     <!-- System App artifacts/authz -->
     <artifactGroups artifactGroupId="SYSTEM_APP" description="System App (via root screen)">
         <artifacts artifactName="component://tools/screen/System.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>

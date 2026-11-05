@@ -104,7 +104,11 @@
     </llm-facade>
 
     <entity-facade query-stats="true">
-        <!-- add datasource elements here to configure databases -->
+        <!-- add datasource elements here to configure databases; one with only attributes keeps the default conf's
+            inline-jdbc -->
+        <!-- pg_stat_statements for Tools › Database › Queries: the embedded cluster preloads it at its next start -->
+        <datasource group-name="transactional" pg-stat-statements="true"/>
+        <datasource group-name="content" pg-stat-statements="true"/>
     </entity-facade>
 
     <repository-list>

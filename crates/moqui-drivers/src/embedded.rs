@@ -72,6 +72,10 @@ mod cluster {
         pub role: ClusterRole,
         /// The theseus install. `None` is `install` under the cluster directory.
         pub install_dir: Option<PathBuf>,
+        /// Preload `pg_stat_statements` and turn on `track_io_timing` (a datasource's `pg-stat-statements`,
+        /// plans/Tools-Database.md §7.2). Postmaster-level: it applies when this process starts the cluster, not to
+        /// one it adopts. The extension itself is created per database ([`crate::entity_db::create_pg_stat_statements`]).
+        pub pg_stat_statements: bool,
     }
 
     impl StartOptions {
@@ -81,6 +85,7 @@ mod cluster {
                 max_connections,
                 role: ClusterRole::Entity,
                 install_dir: None,
+                pg_stat_statements: false,
             }
         }
     }
@@ -719,6 +724,7 @@ mod cluster {
             max_connections,
             role,
             ref install_dir,
+            pg_stat_statements,
         } = *options;
         let mut settings = Settings::new();
         // The unpacked install of this build's version (`install`), trusted as it is: nothing is looked up or
@@ -751,6 +757,15 @@ mod cluster {
             settings
                 .configuration
                 .insert("summarize_wal".to_string(), "on".to_string());
+        }
+        if pg_stat_statements {
+            // Postmaster-level, as summarize_wal; track_io_timing is not, but belongs with it (I/O time per statement).
+            settings
+                .configuration
+                .insert("shared_preload_libraries".to_string(), "pg_stat_statements".to_string());
+            settings
+                .configuration
+                .insert("track_io_timing".to_string(), "on".to_string());
         }
         settings
             .configuration

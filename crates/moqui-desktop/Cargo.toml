@@ -114,6 +114,10 @@ debug = true
 opt-level = 0
 debug = true
 
+[profile.dev.package.moqui-tools]
+opt-level = 0
+debug = true
+
 [profile.dev.package.moqui-rtc]
 opt-level = 0
 debug = true

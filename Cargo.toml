@@ -18,6 +18,7 @@ members = [
     "crates/moqui-mail",
     "crates/moqui-report",
     "crates/moqui-collab",
+    "crates/moqui-tools",
     "crates/moqui-rtc",
     "crates/moqui-sip",
     "crates/moqui-channels",
@@ -80,6 +81,9 @@ moqui-report = { path = "crates/moqui-report", default-features = false }
 # Co-edited documents and the collab services, on moqui-core (plans/archive/Crate-Split.md); the host links it in every
 # build.
 moqui-collab = { path = "crates/moqui-collab" }
+# The Tools app's server side (database capabilities, catalog queries, jobs, SQL runs, the data grid, ETL), on
+# moqui-core (plans/Tools-Database.md §13); the host links it in every build.
+moqui-tools = { path = "crates/moqui-tools" }
 # Calls: the WebRTC endpoint and the selective forwarding unit on str0m, sans-IO (plans/Comms-Framework.md §6); the host
 # links it under its rtc feature and owns the sockets.
 moqui-rtc = { path = "crates/moqui-rtc" }

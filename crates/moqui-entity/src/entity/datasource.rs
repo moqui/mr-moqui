@@ -161,6 +161,13 @@ pub struct DatasourceConf {
     pub runtime_add_missing: bool,
     /// `runtime-add-fks`, true unless set to something other than `true`.
     pub runtime_add_fks: bool,
+    /// `pg-stat-statements`, false unless `true`: on Postgres, load `pg_stat_statements` for this datasource's
+    /// database (plans/Tools-Database.md §7.2). Ignored on MySQL.
+    pub pg_stat_statements: bool,
+    /// Whether the embedded cluster preloads `pg_stat_statements` when it starts for this datasource: this one's
+    /// `pg-stat-statements`, or for `transactional` on the embedded cluster that of any embedded datasource
+    /// (`moqui_drivers::entity_db::transactional_conf` sets it), since the cluster's databases share one postmaster.
+    pub preload_pg_stat_statements: bool,
     /// The `inline-jdbc` `read-timeout` in seconds: the most one read from the database waits, for a driver that sets
     /// it once per connection (MySQL). `None` when not given (the driver's default); `Some(ZERO)` for no limit.
     pub read_timeout: Option<Duration>,
@@ -187,6 +194,8 @@ impl std::fmt::Debug for DatasourceConf {
             .field("startup_add_missing", &self.startup_add_missing)
             .field("runtime_add_missing", &self.runtime_add_missing)
             .field("runtime_add_fks", &self.runtime_add_fks)
+            .field("pg_stat_statements", &self.pg_stat_statements)
+            .field("preload_pg_stat_statements", &self.preload_pg_stat_statements)
             .field("read_timeout", &self.read_timeout)
             .finish()
     }
@@ -274,8 +283,11 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
             "" => true,
             value => value == "true",
         },
+        pg_stat_statements: expanded(&datasource, "pg-stat-statements") == "true",
+        preload_pg_stat_statements: false,
         read_timeout: read_timeout(inline.as_ref())?,
     };
+    conf.preload_pg_stat_statements = conf.pg_stat_statements;
     if kind == DatasourceKind::Embedded {
         // Only the database: a group other than `transactional` has a database of its own in the embedded cluster,
         // named by the datasource's own `databaseName` (the `database-list` one names the external server's).

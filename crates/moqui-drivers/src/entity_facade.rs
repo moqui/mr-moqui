@@ -208,6 +208,7 @@ fn other_groups(
                 let driver = super::entity_db::server_driver(&ds)?.unwrap_or_else(|| Arc::clone(main_driver));
                 (driver, format!("{} database {} on {}", ds.dialect, ds.database, ds.host))
             };
+            super::entity_db::create_pg_stat_statements(&ds, &*driver);
             let tx = moqui_core::transaction::TransactionManager::new(driver, ds.pool.clone())?;
             tx.configure_from_conf(conf)?;
             let snapshot_reads = ds.snapshot_reads();
