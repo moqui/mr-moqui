@@ -405,17 +405,16 @@ test('a tree move confirmation names the row and both parents, and cancellation 
     const known = {A:{row:{name:'Applications'},parent:'',order:0},B:{row:{name:'Industries'},parent:'',order:1},
         X:{row:{name:'Services',id:'X'},parent:'A',order:2}};
     let message='',posted=0,opened=0;
-    const saved=window.confirm;
+    const saved=moqui.confirmAction;
     const vm={known,children:moqui.listTree.childrenOf(known),tree:{confirmMove:true,columns:[{fields:['name']}],keyFields:['id'],parentField:'parent',transition:'move'},
         setOpen(){opened++},post(){posted++;return Promise.resolve(true)},$emit(){}};
     try {
-        window.confirm=text=>{message=text;return false};
-        tree.methods.postMove.call(vm,'X',{parent:'B',previous:''});
+        moqui.confirmAction=text=>{message=text;return Promise.resolve(false)};
+        await tree.methods.postMove.call(vm,'X',{parent:'B',previous:''});
         assert.equal(message,'Move "Services" from "Applications" to "Industries"?');
         assert.equal(posted,0);assert.equal(opened,0);
-        window.confirm=()=>true;
-        tree.methods.postMove.call(vm,'X',{parent:'B',previous:''});
-        await Promise.resolve();
+        moqui.confirmAction=()=>Promise.resolve(true);
+        await tree.methods.postMove.call(vm,'X',{parent:'B',previous:''});
         assert.equal(posted,1);assert.equal(opened,1);
-    }finally{window.confirm=saved}
+    }finally{moqui.confirmAction=saved}
 });

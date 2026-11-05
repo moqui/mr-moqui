@@ -424,8 +424,10 @@ feature('the dashboard time picker, panel menu and an embed work against the ser
         page.evaluate(monitoringPanelMenu,{title:'Job runs by outcome',item:'Duplicate'}).clicked
         page.waitFor(()=>!window.monitoringMenuClicked && !!document.querySelector('button[aria-label="Panel menu for Job runs by outcome (copy)"]'))
         page.evaluate(monitoringDefinitionPanels,{id,panelId:'jobs-copy'}).includes('jobs-copy')
-        page.evaluate(()=>{window.confirm=()=>true;return true})
         page.evaluate(monitoringPanelMenu,{title:'Job runs by outcome (copy)',item:'Remove'}).clicked
+        // Remove asks in the app's own confirmation dialog, not the browser's
+        page.waitFor(()=>!!document.querySelector('.q-dialog-plugin') && document.querySelector('.q-dialog-plugin').textContent.includes('Remove the panel'))
+        page.evaluate(()=>{Array.from(document.querySelectorAll('.q-dialog-plugin button')).find(button=>button.textContent.includes('Confirm')).click();return true})
         page.waitFor(()=>!window.monitoringMenuClicked && !!document.querySelector('button[aria-label="Panel menu for Job runs by outcome"]') && !document.querySelector('button[aria-label="Panel menu for Job runs by outcome (copy)"]'))
         page.goto('/qapps/dashboards/Panels?previewPanelId=monitor-overview').status==200
         page.waitFor(()=>!!document.querySelector('.m-report-embed') && Array.from(document.querySelectorAll('.m-report-embed a')).some(a=>a.textContent==='Open in Dashboards'))

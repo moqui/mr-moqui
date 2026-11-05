@@ -456,7 +456,8 @@ below): a locked choice has no control, and the dark mode toggle and the menu it
 body for light (`body:not(.body--dark)`) and dark (`body.body--dark`):
 - the brand colors, Quasar's `--q-primary`, `--q-secondary`, `--q-accent`, `--q-positive`, `--q-negative`, `--q-info` and `--q-warning`
 - `--m-page-bg`, `--m-panel-bg`, `--m-header-bg`, `--m-header-fg`, `--m-drawer-bg`
-- `--m-text`, `--m-text-muted`, `--m-link`, `--m-negative-text`
+- `--m-text`, `--m-text-muted`, `--m-link`, and the readable text of each semantic color: `--m-positive-text`,
+  `--m-negative-text`, `--m-warning-text`, `--m-info-text`, `--m-secondary-text`, `--m-accent-text`
 - `--m-border`, `--m-divider`
 
 The other borders and tints are black or white at a low alpha, so they read on any surface.

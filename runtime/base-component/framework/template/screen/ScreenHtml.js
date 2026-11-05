@@ -955,6 +955,8 @@
                 });
             }
             out += "<fieldset" + A({ disabled: url.getDisableLink() ? true : null }) + ">";
+            // A form the user may not submit says why its fields are disabled.
+            if (url.getDisableLink()) out += '<p class="text-muted" role="note">' + e(L("You do not have permission to submit this form, so its fields are read-only.")) + "</p>";
             w(out);
         };
 

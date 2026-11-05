@@ -64,7 +64,8 @@ pub const APPEARANCE_GROUPS: &[&str] = &["mode", "density", "scheme", "accent", 
 
 /// Quasar's brand colors: a scheme sets them as `--q-*`, `!important` over the brand the Quasar config writes.
 pub const BRAND_TOKENS: &[&str] = &["primary", "secondary", "accent", "positive", "negative", "info", "warning"];
-/// The surface and text colors of `WebrootVue.qvt.css` (`--m-*`).
+/// The surface and text colors of `WebrootVue.qvt.css` (`--m-*`), with the readable text of each semantic color (a
+/// scheme that darkens or lightens a brand color sets its text too; unset, the style sheet mixes one from the brand).
 pub const SURFACE_TOKENS: &[&str] = &[
     "page-bg",
     "panel-bg",
@@ -74,7 +75,12 @@ pub const SURFACE_TOKENS: &[&str] = &[
     "text",
     "text-muted",
     "link",
+    "positive-text",
     "negative-text",
+    "warning-text",
+    "info-text",
+    "secondary-text",
+    "accent-text",
     "border",
     "divider",
 ];

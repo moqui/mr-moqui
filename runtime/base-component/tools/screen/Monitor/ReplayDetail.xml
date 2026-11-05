@@ -21,7 +21,7 @@
         replayItems = []
         if (replayAllowed) {
             const replay = ec.service.sync().name('org.moqui.monitor.MonitorServices.get#BrowserReplay').parameters({replayId}).call()
-            const stamp = value => { const date = new Date(/^\d+$/.test(String(value)) ? Number(value) : value); return Number.isNaN(date.getTime()) ? String(value || '') : date.toISOString() }
+            const stamp = value => { if (value == null || value === '') return ''; const date = new Date(/^-?\d+$/.test(String(value)) ? Number(value) : value); return Number.isNaN(date.getTime()) ? String(value) : ec.l10n.format(date, 'yyyy-MM-dd HH:mm:ss') }
             replayInfo = {userId: replay.userId, visitId: replay.visitId, url: replay.url, start: stamp(replay.start), end: stamp(replay.end), events: (replay.events || []).length}
             replayItems = [{time: replayInfo.start, title: replayInfo.url || '', text: ec.l10n.localize('{0} events; user {1}, visit {2}').replace('{0}', replayInfo.events).replace('{1}', replay.userId || '').replace('{2}', replay.visitId || ''), kind: 'info'}]
                 .concat((replay.traceIds || []).map(traceId => ({time: '', title: 'Trace ' + traceId, text: '', kind: 'info', url: '/apps/monitor/TraceDetail?traceId=' + traceId})))
@@ -34,7 +34,7 @@
         <section name="NotAllowed" condition="!replayAllowed"><widgets>
             <label text="Session replays need the MONITOR_REPLAY permission." type="p"/>
         </widgets><fail-widgets>
-            <label text="${replayInfo.url} · ${replayInfo.userId} · ${replayInfo.start} to ${replayInfo.end}" type="p"/>
+            <label text="${replayInfo.url} · ${replayInfo.userId} · ${replayInfo.start} to ${replayInfo.end} (${ec.user.timeZone})" type="p"/>
             <render-mode>
                 <text type="qvt"><![CDATA[<m-session-replay url="${WebUtilities.encodeHtml('/apps/monitor/ReplayDetail/events?replayId=' + encodeURIComponent(replayId))}"></m-session-replay>]]></text>
                 <text type="tui"><![CDATA[${JSON.stringify({t:'component',name:'timeline',props:{items:replayItems}})}]]></text>

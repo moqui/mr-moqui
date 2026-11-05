@@ -89,7 +89,11 @@
         // run an action for an item; resolves true when it did something
         run(declared, item) {
             const params = ext.params(declared, item)
-            if (declared.confirm && !root.confirm(declared.confirm)) return Promise.resolve(false)
+            if (declared.confirm) {
+                // the shell's in-app confirmation where there is one, else the browser's
+                const asked = moqui.confirmAction ? moqui.confirmAction(declared.confirm) : Promise.resolve(!root.confirm || root.confirm(declared.confirm))
+                return asked.then(confirmed => confirmed ? ext.run(Object.assign({}, declared, {confirm: null}), item) : false)
+            }
             const shell = vm()
             if (declared.kind === "transition") {
                 return moqui

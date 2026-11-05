@@ -31,19 +31,28 @@ along with this software (see the LICENSE.md file). If not, see
         <if condition="quotaUserId">
             <service-call name="org.moqui.agent.AgentAdminServices.check#LlmQuota" in-map="{userId:quotaUserId}" out-map="quota"/>
         </if>
+        <script><![CDATA[
+            // A Check with no user asks for one rather than closing with nothing shown.
+            quotaUserMissing = quotaCheck === 'Y' && !quotaUserId
+            // Costs are summed in the models' price currencies: name the currency when the rows share one.
+            const currencies = Array.from(new Set(Array.from(summaryList || []).map(row => row.currencyUomId).filter(Boolean)))
+            quotaCurrency = currencies.length === 1 ? currencies[0] : currencies.length > 1 ? ec.l10n.localize('mixed currencies') : ec.l10n.localize("in the models' price currency")
+        ]]></script>
     </actions>
     <widgets>
         <container-box><box-header title="Totals by Model and Source"/><box-toolbar>
             <link url="rollupUsage" text="Roll Up Today" tooltip="Recompute today's and yesterday's rows now"/>
             <container-dialog id="QuotaDialog" button-text="Check a Quota">
                 <form-single name="QuotaForm" transition=".">
-                    <field name="quotaUserId"><default-field title="User ID"><text-line size="20"/></default-field></field>
+                    <field name="quotaCheck"><default-field><hidden default-value="Y"/></default-field></field>
+                    <field name="quotaUserId"><default-field title="User ID" tooltip="Required: the user whose quota to check"><text-line size="20"/></default-field></field>
                     <field name="submitButton"><default-field title="Check"><submit/></default-field></field>
                 </form-single>
             </container-dialog>
         </box-toolbar><box-body>
+            <label text="Enter the user ID whose quota to check, then choose Check again." type="p" style="text-warning" condition="quotaUserMissing"/>
             <section name="QuotaSection" condition="quota != null"><widgets>
-                <label text="Quota of ${quotaUserId ?? ''} (${quota?.limitFrom ?? ''}, ${quota?.period ?? ''}): ${quota?.usedTokens ?? 0} of ${quota?.maxTokens ?? 'no limit'} tokens, ${quota?.usedCost ?? 0} of ${quota?.maxCost ?? 'no limit'} cost. ${quota?.reason ?? 'Within the quota.'}" type="p"/>
+                <label text="Quota of ${quotaUserId ?? ''} (${quota?.limitFrom ?? ''}, ${quota?.period ?? ''}): ${quota?.usedTokens ?? 0} of ${quota?.maxTokens ?? 'no limit'} tokens, ${quota?.usedCost ?? 0} of ${quota?.maxCost ?? 'no limit'} cost${quotaCurrency ? ' (' + quotaCurrency + ')' : ''}. ${quota?.reason ?? 'Within the quota.'}" type="p"/>
             </widgets></section>
             <form-list name="SummaryList" list="summaryList" skip-form="true">
                 <field name="modelId"><default-field title="Model"><display/></default-field></field>

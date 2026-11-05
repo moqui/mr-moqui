@@ -305,7 +305,7 @@ along with this software (see the LICENSE.md file). If not, see
                     </default-field></field>
                 </form-list>
             </widgets><fail-widgets>
-                <label text="No component was loaded or deployed on this server." type="p"/>
+                <label text="No deployment history: no component has been loaded, deployed or removed from this screen. The components the server started with run as usual; the Overview lists them." type="p"/>
             </fail-widgets></section>
         </box-body></container-box>
 
