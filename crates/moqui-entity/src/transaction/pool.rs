@@ -474,6 +474,15 @@ impl Pool {
         result
     }
 
+    /// Waits for any return, loss or failed connect: every one wakes all waiters, and whoever takes the lock first
+    /// gets the connection, so a newer checkout can pass an older waiter. A pool sized by the startup check rarely
+    /// waits, and then this costs nothing; over-committed, it woke about 12 waiters per returned connection and passed
+    /// 64% of them (`transaction::load_tests`, HL-022). A fair pool, if over-commit proves common, would keep a FIFO of
+    /// waiter tickets per class and hand a returned connection to the head ticket under the lock. A discard, failed
+    /// test or failed connect (the HL-019 late-cancel and open-stream discards go through `discard_hold`) frees room
+    /// to open a connection rather than an idle one, so it must pass the head ticket the right to connect, or that
+    /// waiter sleeps to its deadline. A waiter that times out takes its ticket out, and if it was handed something as
+    /// it timed out, passes that on to the next ticket.
     fn wait_for_return(&self, started: Instant) -> Result<bool, Error> {
         let timeout = self.inner.config.acquire_timeout;
         if timeout.is_zero() {

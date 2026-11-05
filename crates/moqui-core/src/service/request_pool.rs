@@ -29,8 +29,8 @@ use crate::context::{Error, ErrorKind, ExecutionContextFactory};
 
 const DEFAULT_REQUEST_WORKERS: u32 = 8;
 const DEFAULT_REQUEST_QUEUE: u32 = 64;
-const DEFAULT_SERVICE_WORKERS: u32 = 32;
-const DEFAULT_TRANSFER_WORKERS: u32 = 16;
+const DEFAULT_SERVICE_WORKERS: u32 = 25;
+const DEFAULT_TRANSFER_WORKERS: u32 = 4;
 /// An entity of the `content` group: its manager is the pool streamed database downloads read from.
 const CONTENT_ENTITY: &str = "moqui.resource.ContentBlobChunk";
 
@@ -176,7 +176,7 @@ impl Drop for RequestPool {
     }
 }
 
-/// `(request-pool-max, worker-pool-max)`. Missing or non-integer attributes are 8 and 32.
+/// `(request-pool-max, worker-pool-max)`. Missing or non-integer attributes are 8 and 25.
 pub fn caps(conf_text: &str) -> (u32, u32) {
     let Ok(Some(tools)) = tools_of(conf_text) else {
         return (DEFAULT_REQUEST_WORKERS, DEFAULT_SERVICE_WORKERS);
@@ -230,7 +230,7 @@ fn agent_workers() -> u32 {
 }
 
 /// The `webroot` webapp's `transfer-workers`: how many reads of database sources streamed responses may run at once,
-/// each holding a connection of the `content` group's pool for one window. 16 when missing or not a positive number.
+/// each holding a connection of the `content` group's pool for one window. 4 when missing or not a positive number.
 pub fn transfer_workers(factory: &ExecutionContextFactory) -> u32 {
     factory
         .webapp_setting("webroot", "transfer-workers")

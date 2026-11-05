@@ -31,7 +31,7 @@ use tokio::sync::Semaphore;
 fn readers(factory: &ExecutionContextFactory) -> Arc<Semaphore> {
     static READERS: OnceLock<Arc<Semaphore>> = OnceLock::new();
     Arc::clone(READERS.get_or_init(|| {
-        let workers = usize::try_from(moqui_core::service::transfer_readers(factory)).unwrap_or(16);
+        let workers = usize::try_from(moqui_core::service::transfer_readers(factory)).unwrap_or(4);
         Arc::new(Semaphore::new(workers))
     }))
 }
