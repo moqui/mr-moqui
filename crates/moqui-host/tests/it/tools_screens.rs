@@ -331,14 +331,20 @@ fn every_tools_screen_renders_in_html_for_an_admin(gate: &crate::common::Gate) {
         &john,
         &format!("/Tools/Data/Grid/gridRows?sourceJson={source}"),
     );
-    assert!(doc.contains("Gate enum") && !doc.contains("\"errors\" : \""), "{doc}");
+    assert!(
+        doc.contains("Gate enum") && doc.contains("GATE_ENUM / Gate enum") && !doc.contains("\"errors\" : \""),
+        "{doc}"
+    );
     let (_, columns) = get(
         address,
         &john,
         &format!("/Tools/Data/Grid/gridColumns?sourceJson={source}"),
     );
-    // the document's fields are its columns (its expression field, enumLabel, is not among them yet)
-    assert!(columns.contains("\"description\""), "{columns}");
+    // the document's fields are its columns, its expression field among them
+    assert!(
+        columns.contains("\"description\"") && columns.contains("\"enumLabel\""),
+        "{columns}"
+    );
     // The conf caches, the screen definitions, and the entity list caches are listed together.
     let (_, cache) = get(address, &john, "/System/Cache/CacheList?filterRegexp=screen.def");
     assert!(cache.contains("cacheName=screen.definition"), "{cache}");
