@@ -55,12 +55,47 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
         <default-response url="."/>
     </transition>
-    <transition name="importSnapshot" begin-transaction="false" authz-action="update">
+    <!-- a POST with authorization for all actions: with wrapForeignKeys it plans DDL (plan#LoadWrap) and the import runs
+        between the drop and the restore of the keys on a worker (the DatabaseLoadWrap ServiceJob) -->
+    <transition name="importSnapshot" method="post" begin-transaction="false" authz-action="all">
         <actions>
             <if condition="!WebUtilities.isSafeSinglePathSegment(zipFilename)">
                 <message error="true">Snapshot not found</message><return/></if>
-            <script>jobRunId = ec.service.job("ImportEntityDataSnapshot").parameters(context).run()</script>
-            <message>Started Import Entity Data Snapshot ${zipFilename} (Job ID ${jobRunId})</message>
+            <script><![CDATA[
+                const importParameters = {zipFilename, dummyFks: String(context.dummyFks) == 'true', useTryInsert: String(context.useTryInsert) == 'true',
+                    disableEntityEca: String(context.disableEntityEca) != 'false', disableAuditLog: String(context.disableAuditLog) != 'false',
+                    disableFkCreate: String(context.disableFkCreate) != 'false', disableDataFeed: String(context.disableDataFeed) != 'false',
+                    transactionTimeout: parseInt(context.transactionTimeout || '3600', 10)}
+                if (String(context.wrapForeignKeys) != 'true') {
+                    jobRunId = ec.service.job("ImportEntityDataSnapshot").parameters(importParameters).run()
+                    ec.message.addMessage(`Started Import Entity Data Snapshot ${zipFilename} (Job ID ${jobRunId})`)
+                    return
+                }
+                if (!ec.user.hasPermission('DATABASE_ADMIN')) { ec.message.addError(ec.l10n.localize('A load with the foreign keys dropped needs the DATABASE_ADMIN permission')); return }
+                // the entities of the snapshot: its files, one per entity when it was exported that way, named in the zip's
+                // directory at its end; a snapshot of one file names none, and then every key of the database is dropped
+                const location = 'runtime://db/snapshot/' + zipFilename
+                const size = Number(ec.resource.getLocationReference(location)?.getSize() || 0)
+                const names = new Set()
+                let offset = Math.max(0, size - 4 * 1024 * 1024)
+                for (let reads = 0; reads < 64; reads++) {
+                    const part = ec.resource.readLines(location, offset, 5000, 1024 * 1024)
+                    for (const line of part.lines || []) for (const match of String(line).matchAll(/([A-Za-z_][\w.]*)\.(xml|json|csv)/g))
+                        if (ec.entity.isEntityDefined(match[1])) names.add(match[1])
+                    if (part.done || part.nextOffset == null || part.nextOffset <= offset) break
+                    offset = part.nextOffset
+                }
+                const entityNames = Array.from(names)
+                if (!entityNames.length) ec.message.addMessage(ec.l10n.localize('The snapshot is one file, not one per entity: every foreign key of the database is dropped around it'), 'warning')
+                const wrap = ec.service.sync().name('org.moqui.impl.DatabaseServices.plan#LoadWrap').parameters({db, entityNames,
+                    description: 'Foreign keys around the import of ' + zipFilename}).call() || {}
+                if (ec.message.hasError()) return
+                for (const warning of wrap.warnings || []) ec.message.addMessage(String(warning), 'warning')
+                if (!wrap.dropJobId || !wrap.restoreJobId) { ec.message.addError(String(wrap.jobReason || 'The foreign keys could not be planned')); return }
+                jobRunId = ec.service.job('DatabaseLoadWrap').parameters(Object.assign({dropJobId: wrap.dropJobId, restoreJobId: wrap.restoreJobId,
+                    loadKind: 'snapshot'}, importParameters)).run()
+                ec.message.addMessage(`Started the import of ${zipFilename} on a worker (job run ${jobRunId}): database job ${wrap.dropJobId} drops ${(wrap.dropStatements || []).length} foreign keys, then the snapshot is imported, then database job ${wrap.restoreJobId} makes them again. A notification says how it ended; Database › Jobs shows both jobs.`, 'info')
+            ]]></script>
         </actions>
         <default-response url="."/>
     </transition>
@@ -147,6 +182,8 @@ along with this software (see the LICENSE.md file). If not, see
                         <field name="disableDataFeed"><default-field><radio no-current-selected-key="true">
                             <option key="true"/><option key="false"/></radio></default-field></field>
                         <field name="transactionTimeout"><default-field><text-line size="6" default-value="3600"/></default-field></field>
+                        <field name="wrapForeignKeys" hide="!ec.user.hasPermission('DATABASE_ADMIN')"><default-field title="" tooltip="The foreign keys of the snapshot&apos;s tables are dropped, the snapshot imported on a worker, and the keys made again after it, as database jobs (DATABASE_ADMIN)">
+                            <check><option key="true" text="Drop foreign keys first and create them after"/></check></default-field></field>
                         <field name="submitButton"><default-field title="Import Snapshot"><submit/></default-field></field>
                     </form-single>
                 </container-dialog></row-col>

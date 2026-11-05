@@ -29,6 +29,26 @@ along with this software (see the LICENSE.md file). If not, see
         <error-response url="."/>
     </transition>
     <widgets>
+        <!-- the foreign keys a load wrap dropped and has not made again: its restore job pending (the load still running,
+            or never started) or failed -->
+        <section name="DroppedKeys"><actions><script><![CDATA[
+            droppedKeyJobs = []
+            try {
+                for (const statusId of ['DbjsPending', 'DbjsFailed']) {
+                    const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DatabaseJobs').parameters({statusId, limit: 50}).call() || {}
+                    for (const job of out.jobs || []) if (job.kindEnumId == 'DbjLoadWrap' && /restore/i.test(job.description || ''))
+                        droppedKeyJobs.push({jobId: job.jobId, db: job.db, failed: statusId == 'DbjsFailed'})
+                }
+            } catch (e) { droppedKeyJobs = [] }
+            ec.message.clearErrors()
+        ]]></script></actions><widgets>
+            <section-iterate name="DroppedKeyJobs" list="droppedKeyJobs" entry="droppedKeyJob"><widgets>
+                <container style="text-warning">
+                    <label text="Foreign keys are dropped on ${droppedKeyJob.db}: ${droppedKeyJob.failed ? 'making them again failed' : 'they are not made again yet'}. Run database job ${droppedKeyJob.jobId}." type="span"/>
+                    <link url="//apps/tools/Database/JobDetail" text="Open job ${droppedKeyJob.jobId}" link-type="anchor" parameter-map="{jobId: droppedKeyJob.jobId}"/>
+                </container>
+            </widgets></section-iterate>
+        </widgets></section>
         <section name="DatabasePicker" condition="databaseList?.length &gt; 1"><widgets>
             <form-single name="DatabasePickerForm" transition="selectDatabase" map="context">
                 <field name="db"><default-field title="Database">

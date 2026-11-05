@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- A result of the SQL screen as an XLSX file: the columns and rows the browser holds (resultJson, in the body), so a
+    statement is never run again to download it. The SQL screen posts here with renderMode=xlsx. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="SQL result" default-menu-include="false" render-modes="xlsx">
+
+    <actions>
+        <if condition="!ec.user.hasPermission('SQL_RUNNER_WEB')">
+            <return error="true" message="User does not have permission to use the SQL Runner"/></if>
+        <script><![CDATA[
+            let parsed = {}
+            try { parsed = JSON.parse(String(ec.web.secureRequestParameters.resultJson || '{}')) } catch (e) { parsed = {} }
+            resultColumns = Array.isArray(parsed.columns) ? parsed.columns.map(String) : []
+            resultRecords = Array.isArray(parsed.records) ? parsed.records.slice(0, 100000) : []
+            // a sheet name has none of the characters Excel refuses in one
+            sheetName = String(parsed.name || 'Result').replace(/[\x5b\x5d\x3a*?\/\\]/g, ' ').substring(0, 31) || 'Result'
+        ]]></script>
+    </actions>
+    <widgets>
+        <render-mode><text type="xlsx"><![CDATA[${(() => {
+            sri.xlsxSheet(sheetName)
+            for (const column of resultColumns) sri.xlsxHeader(column)
+            for (const record of resultRecords) {
+                for (let index = 0; index < resultColumns.length; index++) {
+                    const value = Array.isArray(record) ? record[index] : null
+                    sri.xlsxCell([value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : value], [''], false, typeof value === 'number')
+                }
+                sri.xlsxEndRow()
+            }
+            return ''
+        })()}]]></text></render-mode>
+    </widgets>
+</screen>

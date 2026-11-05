@@ -49,6 +49,36 @@ along with this software (see the LICENSE.md file). If not, see
             }
         ]]></script>
         <set field="entityDescription" from="entityNode.first('description')?.text"/>
+        <!-- the table against the model: compare#Schema of this entity, on its group's database -->
+        <script><![CDATA[
+            // the database of the entity's group, as the selector names it (a group sharing a database goes by the first)
+            const entityGroup = entityNode.attribute('group-name') || databaseList[0]?.groupNames[0]
+            entityDb = (databaseList.find((database) => database.groupNames.includes(entityGroup)) || databaseList[0])?.db
+            tableDiff = null
+            tableDiffError = null
+            if (!entityDefinition.isViewEntity) {
+                try {
+                    const diff = ec.service.sync().name('org.moqui.impl.DatabaseServices.compare#Schema').parameters({db: entityDb,
+                        entityNames: [String(selectedEntity)]}).call()
+                    tableDiff = ((diff && diff.tables) || [])[0] || null
+                } catch (e) { tableDiffError = String(e.message || e) }
+                if (ec.message.hasError()) { tableDiffError = ec.message.errorsString; ec.message.clearErrors() }
+            }
+            const names = (list) => (list || []).map((item) => item.name || item.column || String(item))
+            tableDiffRows = []
+            if (tableDiff) {
+                if (tableDiff.missingTable) tableDiffRows.push({what: 'Table', difference: 'missing', names: tableDiff.tableName})
+                for (const [key, what, difference] of [['missingColumns', 'Columns', 'missing'], ['extraColumns', 'Columns', 'not in the model'],
+                        ['missingIndexes', 'Indexes', 'missing'], ['invalidIndexes', 'Indexes', 'invalid'], ['extraIndexes', 'Indexes', 'not in the model'],
+                        ['missingForeignKeys', 'Foreign keys', 'missing'], ['extraForeignKeys', 'Foreign keys', 'not in the model'],
+                        ['unindexedForeignKeys', 'Foreign keys', 'no index leads with']]) {
+                    if ((tableDiff[key] || []).length) tableDiffRows.push({what, difference, names: names(tableDiff[key]).join(', ')})
+                }
+                for (const type of tableDiff.columnTypes || []) tableDiffRows.push({what: 'Column type', difference: type.column,
+                    names: type.actual + ' (model ' + type.expected + ')'})
+            }
+            canPlan = ec.user.hasPermission('DATABASE_ADMIN')
+        ]]></script>
     </actions>
     <widgets>
         <container>
@@ -73,6 +103,24 @@ along with this software (see the LICENSE.md file). If not, see
             <row-col md="3"><label text="Entity Audit Default: ${entityNode.attribute('enable-audit-log') || 'false'}" type="strong"/></row-col>
         </container-row>
         <label text="${entityDescription}" condition="entityDescription"/>
+
+        <section name="TableDiffSection" condition="!entityDefinition.isViewEntity"><widgets>
+            <container-box><box-header title="The table against the model"/>
+                <box-toolbar>
+                    <link url="../IndexesKeys/plan" text="Plan changes" link-type="hidden-form" condition="canPlan &amp;&amp; tableDiffRows.length"
+                            parameter-map="{db: entityDb, entityNames: selectedEntity}"/>
+                </box-toolbar>
+                <box-body>
+                    <label text="${tableDiffError}" type="p" style="text-negative" condition="tableDiffError"/>
+                    <label text="The table matches the model." type="p" condition="!tableDiffError &amp;&amp; !tableDiffRows.length"/>
+                    <form-list name="TableDiffList" list="tableDiffRows" skip-form="true" paginate="false">
+                        <field name="what"><default-field title=""><display/></default-field></field>
+                        <field name="difference"><default-field><display/></default-field></field>
+                        <field name="names"><default-field title="Names"><display/></default-field></field>
+                    </form-list>
+                </box-body>
+            </container-box>
+        </widgets></section>
 
         <form-list name="FieldList" list="fieldInfos" list-entry="fieldInfo">
             <field name="fieldName" from="fieldInfo.name"><default-field><display/></default-field></field>

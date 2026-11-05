@@ -10,10 +10,14 @@
 
     <!-- The sharp tools, replaced and left out of the menus. VIEW-only authorization does not stop SpeedTest or the
         Data Load check, which run as the screen renders; the others are stubbed as well so no one tries them.
-        Connections (external databases) is stubbed before it is built, as the other sharp tools are. -->
+        Connections (external databases) is stubbed before it is built, as the other sharp tools are; Activity and Queries show
+        the statements of every session and client of the database. The other database writes (plans, jobs, maintenance, resets) are
+        transitions that VIEW-only authorization and the missing DATABASE_ADMIN refuse. -->
     <screen-facade>
         <screen location="component://tools/screen/Tools.xml">
             <subscreens-item name="Sql" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+            <subscreens-item name="SqlTui" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+            <subscreens-item name="SqlDownload" menu-include="false" location="component://demo/screen/Disabled.xml"/>
         </screen>
         <screen location="component://tools/screen/Tools/Data.xml">
             <subscreens-item name="Load" menu-include="false" location="component://demo/screen/Disabled.xml"/>
@@ -22,6 +26,8 @@
         </screen>
         <screen location="component://tools/screen/Tools/Database.xml">
             <subscreens-item name="SpeedTest" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+            <subscreens-item name="Activity" menu-include="false" location="component://demo/screen/Disabled.xml"/>
+            <subscreens-item name="Queries" menu-include="false" location="component://demo/screen/Disabled.xml"/>
             <subscreens-item name="Connections" menu-include="false" location="component://demo/screen/Disabled.xml"/>
         </screen>
         <screen location="component://tools/screen/Tools/Service.xml">

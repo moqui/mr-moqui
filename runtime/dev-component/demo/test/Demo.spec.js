@@ -22,10 +22,14 @@ const JOHN = "EX_JOHN_DOE"
 
 const stubbed = [
     ["component://tools/screen/Tools.xml", "Sql"],
+    ["component://tools/screen/Tools.xml", "SqlTui"],
+    ["component://tools/screen/Tools.xml", "SqlDownload"],
     ["component://tools/screen/Tools.xml", "Data/Load"],
     ["component://tools/screen/Tools.xml", "Data/Export"],
     ["component://tools/screen/Tools.xml", "Data/Snapshots"],
     ["component://tools/screen/Tools.xml", "Database/SpeedTest"],
+    ["component://tools/screen/Tools.xml", "Database/Activity"],
+    ["component://tools/screen/Tools.xml", "Database/Queries"],
     ["component://tools/screen/Tools.xml", "Database/Connections"],
     ["component://tools/screen/Tools.xml", "Service/ServiceRun"],
     ["component://tools/screen/Tools.xml", "Service/ServiceLoadRunner"],
@@ -92,8 +96,8 @@ feature("the Tools, Data, Database and Service menus leave the stubs out", {
         !tools.includes(`"SQL"`)
         data.includes(`"Grid"`)
         !["Load", "Export", "Snapshots"].some((title) => data.includes(`"${title}"`))
-        database.includes(`"Queries"`)
-        !database.includes(`"Speed Test"`)
+        database.includes(`"Overview"`)
+        !["Speed Test", "Activity", "Queries"].some((title) => database.includes(`"${title}"`))
         ![tools, data, database].some((text) => text.includes(`"Disabled"`))
         service.includes(`"Service Reference"`)
         !["Service Run", "Service Load Runner"].some((title) => service.includes(`"${title}"`))

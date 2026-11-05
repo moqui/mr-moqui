@@ -178,10 +178,10 @@ feature("A01 the SQL Runner does not run a statement from the query string", {
         const s = formSession(USER, PASSWORD)
         const probe = "sec_sql_probe_col"
         const sql = "SELECT 1 AS " + probe
-        const get = s.get("/apps/tools/Sql", { params: { db: "group:transactional", sql } })
+        const get = s.get("/apps/tools/SqlTui", { params: { db: "group:transactional", sql } })
         if (get.status == 401 || get.status == 403) skip("logged-in user lacks SQL_RUNNER_WEB (need ADMIN_ADV / demo john.doe)")
         if (!s.token()) skip("no CSRF token after login")
-        const post = s.post("/apps/tools/Sql", {
+        const post = s.post("/apps/tools/SqlTui/run", {
             form: { db: "group:transactional", sql, moquiSessionToken: s.token() },
             follow: true,
         })
