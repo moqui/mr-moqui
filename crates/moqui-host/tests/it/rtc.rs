@@ -1151,6 +1151,11 @@ fn a_recorded_call_stores_each_leg_s_track_and_the_mixed_audio_in_segments() {
         assert!(bytes.len() > 200, "{location}: {} bytes", bytes.len());
     }
     // the spool is empty again, and the call went on
+    // the store thread removes it after the last segment, so on a busy machine it can still be going
     let spool = factory.runtime_dir().join("tmp/call-recording").join(&recording_id);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while spool.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
     assert!(!spool.exists(), "the spool of the recording is gone");
 }

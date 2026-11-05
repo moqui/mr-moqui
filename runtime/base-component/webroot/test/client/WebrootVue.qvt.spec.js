@@ -102,132 +102,6 @@ feature("find controls name their field and keyboard actions retain the other fi
     },
 })
 
-feature("field feedback and selected navigation retain readable text in both themes", {
-    expect() {
-        const page = browser.newPage({ viewport: { width: 1920, height: 1080 } })
-        page.allowProblems(/notification: warning negative feedback Supporting detail OPEN/)
-        page.setContent(`<!doctype html><html><head><link rel="stylesheet" href="/libs/quasar/quasar.prod.css">
-            <link rel="stylesheet" href="/css/WebrootVue.qvt.css">
-            <!-- Theme-transition timing is inspected live; this rule measures the settled colors. -->
-            <style>.m-drawer > .q-item, .m-drawer .q-focus-helper, .m-drawer .q-focus-helper::before, .m-drawer .q-focus-helper::after { transition:none; }</style></head><body><div id="app">
-            <q-card><m-form ref="form" action="/unused" :fields-initial="{name:'Original', explicit:'Original'}" v-slot="form">
-                <m-text-line id="feedback-field" name="name" label="Customer name" v-model="form.fields.name"></m-text-line>
-                <m-text-line id="explicit-field" name="explicit" label="Explicit fill" bg-color="blue-10" v-model="form.fields.explicit"></m-text-line>
-            </m-form></q-card>
-            <div class="q-layout"><aside class="q-drawer" :class="{'q-dark':$q.dark.isActive}" style="position:static;width:240px"><nav class="m-drawer">
-                <span id="drawer-start" tabindex="-1"></span>
-                <q-item id="drawer-app" clickable tag="a" class="m-drawer-app m-drawer-in-app m-drawer-on-path" href="#">Comms</q-item>
-                <q-item id="drawer-current" clickable tag="a" class="m-drawer-screen m-drawer-in-app m-drawer-current" href="#" aria-current="page">Accounts</q-item>
-            </nav></aside></div></div>
-            <script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
-            <script src="/js/MoquiLib.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
-            const app = Vue.createApp({}); app.use(Quasar, {config:{brand:{info:'#1e7b8e'}}});
-            ['m-form','m-text-line'].forEach(name=>app.component(name,moqui.qvt.components[name]));
-            window.vm=app.mount('#app');
-            window.measureContrast=(element,background,color)=>{
-                const ctx=document.createElement('canvas').getContext('2d'), style=getComputedStyle(element);
-                const luminance=()=>Array.from(ctx.getImageData(0,0,1,1).data).slice(0,3).map(v=>{
-                    const c=v/255;return c<=.04045?c/12.92:Math.pow((c+.055)/1.055,2.4);
-                }).reduce((sum,v,i)=>sum+v*[.2126,.7152,.0722][i],0);
-                ctx.fillStyle=background;ctx.fillRect(0,0,1,1);const bg=luminance();
-                ctx.globalAlpha=Number(style.opacity);ctx.fillStyle=color || style.color;ctx.fillRect(0,0,1,1);const fg=luminance();
-                return (Math.max(bg,fg)+.05)/(Math.min(bg,fg)+.05);
-            };
-            window.drawerBackground=(row,focused)=>{
-                const ctx=document.createElement('canvas').getContext('2d'), ancestors=[];
-                for (let node=row;node;node=node.parentElement) ancestors.unshift(node);
-                ctx.fillStyle='#fff';ctx.fillRect(0,0,1,1);
-                for (const node of ancestors) {ctx.fillStyle=getComputedStyle(node).backgroundColor;ctx.fillRect(0,0,1,1);}
-                const helper=row.querySelector('.q-focus-helper');
-                if (focused && helper) {
-                    // Its pseudo-elements paint inside the helper before its group opacity composites over the row.
-                    const layer=document.createElement('canvas'), fill=layer.getContext('2d');
-                    for (const pseudo of [null,'::before','::after']) {
-                        const style=getComputedStyle(helper,pseudo);
-                        fill.globalAlpha=pseudo ? Number(style.opacity) : 1;
-                        fill.fillStyle=style.backgroundColor;fill.fillRect(0,0,1,1);
-                    }
-                    ctx.globalAlpha=Number(getComputedStyle(helper).opacity);ctx.drawImage(layer,0,0);
-                }
-                return 'rgb('+Array.from(ctx.getImageData(0,0,1,1).data).slice(0,3).join(',')+')';
-            };
-            window.actions=0;
-            ['positive','negative','warning','info'].forEach(type=>Quasar.Notify.create({type,message:type+' feedback',caption:'Supporting detail',
-                attrs:{'data-feedback':type},actions:[{label:'Open',handler:()=>actions++}],timeout:0,group:false}));
-            Quasar.Notify.create({type:'positive',color:'purple',textColor:'white',message:'Custom feedback',attrs:{'data-feedback':'custom'},timeout:0,group:false});
-            </script></body></html>`)
-        page.waitFor(() => window.vm && document.querySelectorAll("[data-feedback]").length === 5)
-        page.evaluate(async () => {
-            vm.$refs.form.fields.name = "Changed"; vm.$refs.form.fields.explicit = "Changed"; await Vue.nextTick()
-            vm.$refs.form.setFieldErrors([{ field: "name", message: "Enter the customer name" }]); await Vue.nextTick()
-            return true
-        })
-        for (const dark of [false, true, false]) {
-            const results = page.evaluate(async mode => {
-                Quasar.Dark.set(mode); await Vue.nextTick()
-                const input = document.getElementById('feedback-field'), field = input.closest('.q-field'), control = field.querySelector('.q-field__control')
-                const panel = getComputedStyle(document.querySelector('.q-card')).backgroundColor
-                const results = []
-                for (const focus of [false,true]) {
-                    if (focus) input.focus(); else input.blur()
-                    await Vue.nextTick()
-                    results.push({role:'error label '+focus,ratio:measureContrast(field.querySelector('.q-field__label'),getComputedStyle(control).backgroundColor)})
-                    results.push({role:'error helper '+focus,ratio:measureContrast(field.querySelector('.q-field__bottom'),panel)})
-                }
-                for (const notification of document.querySelectorAll('[data-feedback]:not([data-feedback="custom"])')) {
-                    const background = getComputedStyle(notification).backgroundColor
-                    for (const selector of ['.q-notification__message','.q-notification__caption','button']) {
-                        results.push({role:notification.dataset.feedback+' '+selector,ratio:measureContrast(notification.querySelector(selector),background)})
-                    }
-                }
-                for (const row of document.querySelectorAll('.m-drawer > .q-item')) {
-                    // color-mix tints are translucent: measure against the painted ancestor stack, not transparent black.
-                    const ctx=document.createElement('canvas').getContext('2d'), ancestors=[];
-                    for (let node=row;node;node=node.parentElement) ancestors.unshift(node);
-                    ctx.fillStyle='#fff';ctx.fillRect(0,0,1,1);
-                    for (const node of ancestors) {ctx.fillStyle=getComputedStyle(node).backgroundColor;ctx.fillRect(0,0,1,1);}
-                    const rgb=Array.from(ctx.getImageData(0,0,1,1).data).slice(0,3);
-                    results.push({role:row.id,ratio:measureContrast(row,'rgb('+rgb.join(',')+')'),
-                        foreground:getComputedStyle(row).color,background:rgb,
-                        surfaces:ancestors.map(node=>[node.tagName,node.className,getComputedStyle(node).backgroundColor])});
-                }
-                return {results,explicit:getComputedStyle(document.getElementById('explicit-field').closest('.q-field').querySelector('.q-field__control')).backgroundColor,
-                    custom:getComputedStyle(document.querySelector('[data-feedback="custom"]')).backgroundColor,
-                    selectedIndicator:getComputedStyle(document.getElementById('drawer-current')).boxShadow}
-            }, dark)
-            for (const result of results.results) assert.ok(result.ratio >= 4.5, JSON.stringify({dark,...result}))
-            assert.equal(results.explicit, "rgb(13, 71, 161)", "the authored field background survives")
-            assert.equal(results.custom, "rgb(156, 39, 176)", "the authored notification color survives")
-            assert.ok(results.selectedIndicator.includes("rgb(25, 118, 210)"), "the selection bar keeps its brand accent")
-            page.evaluate(() => { document.getElementById('drawer-start').focus(); return true })
-            for (const id of ['drawer-app','drawer-current']) {
-                page.keyboard.press("Tab")
-                const ring=page.evaluate(() => {
-                    const row=document.activeElement, style=getComputedStyle(row);
-                    return {id:row.id,visible:row.matches(':focus-visible'),width:style.outlineWidth,style:style.outlineStyle,
-                        offset:style.outlineOffset,ratio:measureContrast(row,drawerBackground(row,true),style.outlineColor),
-                        selectedIndicator:getComputedStyle(document.getElementById('drawer-current')).boxShadow};
-                })
-                assert.equal(ring.id,id)
-                assert.equal(ring.visible,true)
-                assert.equal(ring.width,"2px")
-                assert.equal(ring.style,"solid")
-                assert.equal(ring.offset,"-5px")
-                assert.ok(ring.ratio>=3,JSON.stringify({dark,...ring}))
-                assert.ok(ring.selectedIndicator.includes("rgb(25, 118, 210)"),"keyboard focus preserves the selection bar")
-            }
-            page.evaluate(() => { document.activeElement.blur(); return true })
-            assert.equal(page.evaluate(() => getComputedStyle(document.getElementById('drawer-current')).outlineStyle),"none")
-        }
-        assert.equal(page.evaluate(() => {
-            const selected=document.getElementById('drawer-current');selected.style.setProperty('--m-drawer-current-fg','#123456');
-            return getComputedStyle(selected).color;
-        }), "rgb(18, 52, 86)", "an authored selected-text override remains supported")
-        page.locator('[data-feedback="positive"] button').click()
-        assert.equal(page.evaluate(() => actions), 1)
-    },
-})
-
 browser.runInPage({
     scripts: ["/js/MoquiLib.js", "/js/MoquiL10n.js", "/libs/vue/compiler-dom.cjs.js", "/js/WebrootVue.qvt.js"],
     test: "/files/runtime/base-component/webroot/test/client/pages/WebrootVue.qvt.page.js",
@@ -361,12 +235,17 @@ feature("routed shell menu items activate once from the keyboard", {
             <script src="/js/MoquiLib.js"></script>
             <script src="/js/WebrootVue.qvt.js"></script>
             <script>
+            // Menu animation timing belongs to acceptance; the keyboard and activation rules stay here.
+            Quasar.QMenu.props.transitionDuration.default = 0;
             // Mount the actual shell navigation markup, without fetching or rendering an application screen.
             const source = moqui.qvt.components['m-qapps-root'].template;
             const start = source.indexOf('<q-btn v-if="appScreenMenu"');
             const crumbs = source.indexOf('<q-breadcrumbs v-if="!handheld"');
             const template = source.slice(start, source.indexOf('</q-btn>', start) + 8) +
                 source.slice(crumbs, source.indexOf('</q-breadcrumbs>', crumbs) + 16) + '<button id="after-navigation">Search</button>';
+            // The slices end at the first closing tag: a nested q-btn in the menu button would cut it short, so say so.
+            const opened = (template.match(/<q-btn\\b/g) || []).length, closed = (template.match(/<\\/q-btn>/g) || []).length;
+            if (start < 0 || crumbs < 0 || opened !== closed) throw new Error('the shell navigation markup changed: update this fixture');
             window.menu = { subscreens: [{ name: 'Home', title: 'Home', pathWithParams: '/qapps/dev/Home' }] };
             window.visits = []; window.vueErrors = []; window.enterPrevented = [];
             const app = Vue.createApp({ template, data() { return { appScreenMenu: window.menu, headerTitle: 'Dev AIDE', handheld: false,

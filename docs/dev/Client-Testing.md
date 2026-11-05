@@ -184,7 +184,9 @@ its component, or by its file path. A whole-component run leaves it out. It can 
 `timeout`, `slow`, the setup and cleanup blocks, `where`, `ignore`), with `allowPageProblems` in place of
 `allowMessageErrors`: there is no `ec.message` to check. A regression client spec over 15 seconds fails the run: move
 it to `acceptance/client/` or delete it ([The two suites](../Build-Test.md#the-two-suites)). An acceptance client spec
-is `<component>/acceptance/client/<Name>.spec.js`, with `acceptance/client/suite.js` for its order and server.
+is `<component>/acceptance/client/<Name>.spec.js`, with `acceptance/client/suite.js` for its order and server. A
+suite.js that declares no server holds offline specs (`server: false`), which `./moq accept` runs with `--offline`
+(webroot's `ThemeLayout`, for one).
 
 **Fixtures are server specs.** Data a client suite needs is made by a `test/*.spec.js` of the same component that also
 asserts what it made, such as `framework/test/ClientFixtures.spec.js`, which makes the `sec.*` users and `test.load` as

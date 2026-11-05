@@ -1,3 +1,5 @@
 # The regression budget in seconds of feature time (docs/Build-Test.md, "The regression budget"), set from
 # the measured ./moq test-all of Nov 4, 2026 (on 4 workers). Raise it only with the user's agreement.
-client = 34
+# Nov 5, 2026: raised with the user's agreement to the UI refinement's measured 40.7 s, after its theme and layout
+# measurements moved to acceptance/client/ThemeLayout.spec.js.
+client = 44

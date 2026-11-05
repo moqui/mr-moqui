@@ -1378,7 +1378,33 @@ corrects what the review did find:
 
 Verification: AdminOverview 11/11, BasicComms 8/8, ArtifactIndex 6/6, ScreenHtml/ScreenQvt 29/29, DatePeriod 6/6,
 FieldTitle 6/6, WebrootVue.qvt client 33/33, moqui-report crate, core screen tests 330, devkit template specs, screen
-lint (0 parse failures). The full gate ran with Batch 14 (next commit).
+lint (0 parse failures). The full gate result is under Batch 14, which was gated with this batch.
+
+### Batch 14 — test time, suite placement and macOS loopback sources
+
+- Webroot client regression time was 46.9 s against its 34 s budget. The measured theme and layout checks moved to a
+  new offline acceptance suite, `webroot/acceptance/client/ThemeLayout.spec.js` (field feedback and drawer contrast in
+  both themes, Mermaid redraw on a color-mode change, box headers at phone width). QvtKeys waits for each outcome
+  instead of fixed sleeps, the routed-menu fixture turns off menu animation and fails loudly if the shell markup it
+  slices changes. The suite now measures about 40.7 s; with the user's agreement the webroot client budget is 44 s,
+  and basic-comms client is 7 s for its measured 6.6 s.
+- `./moq accept` ran only acceptance client suites that declare a server; one that declares none (offline specs) was
+  never run. It now runs those with `--offline --acceptance` (help and docs/dev/Client-Testing.md updated).
+  `./moq accept webroot`: ThemeLayout 3/3.
+- macOS routes only 127.0.0.1. The three moqui-sip tests of separate source addresses, upstream's HL-032 cluster-edge
+  share test and the HL-032 sub-checks of the SSH integration test say they are skipped there; on Linux a failure to
+  bind still fails. The rest of the SSH test runs. This removes the recurring SIP gate failure without weakening an
+  assertion where the addresses exist.
+- `rtc::a_recorded_call_stores_each_leg_s_track_and_the_mixed_audio_in_segments` failed once under full-gate load: the
+  store thread removes the spool after the last segment. The test waits up to 5 s for it.
+- Gate (Batches 13 and 14): `env -u MOQUI_RUNTIME -u MOQUI_CONF MOQ_TEST_WORKERS=2 CARGO_BUILD_JOBS=4
+  RUST_TEST_THREADS=1 ./moq test-framework` exits 0, the first exit-zero full gate of this review. Host integration
+  167 passed with 23 explicitly ignored (655.5 s); moqui-core lib 1505. Feature time: webroot client 40.6/44 s,
+  basic-comms client 6.6/7 s, framework server 8.5/12 s, dev-aide 17.2/30 s, tools 1.9/3 s. Clippy on moqui-report,
+  moqui-sip and moqui-host with tests is clean. Two earlier runs of this gate found the stubs that lacked `parseOrder`
+  (DatePeriod spec, devkit template specs) and the loopback and spool cases above.
+- Not changed: ShellSync's one confined `allowProblems()` (the in-page harness takes no pattern) and the wizard
+  supersession case, which drives a stand-in root through setUrl.
 
 ### Next activity baseline — M10 incident lifecycle
 

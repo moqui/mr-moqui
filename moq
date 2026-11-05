@@ -649,7 +649,8 @@ help_accept() {
     cat <<EOF
 Runs the acceptance suite of the components named, or of every component: moqui test --acceptance
 over those with acceptance/*.spec.js, then moqui test-client --serve --acceptance over those whose
-acceptance/client/suite.js declares a server. Then it lists which passed and exits 1 when any failed.
+acceptance/client/suite.js declares a server, and moqui test-client --offline --acceptance over those whose suite.js
+declares none. Then it lists which passed and exits 1 when any failed.
 Acceptance tests run on a schedule, before a release, or when asked; an agent runs them only when
 the user asks, or when it adds or changes one (AGENTS.md).
   ./moq accept mr-boss
@@ -2318,9 +2319,10 @@ has_spec_file() {
 # The acceptance suites of the components of ACCEPT_NAMES (all when empty).
 accept_suites() {
     local name
-    local -a server client spec junit demo
+    local -a server client offline spec junit demo
     server=()
     client=()
+    offline=()
     spec=()
     junit=()
     demo=()
@@ -2337,7 +2339,12 @@ accept_suites() {
         [ -z "$ACCEPT_SPECS" ] || has_spec_file acceptance/client "$name" || continue
         client+=("$name")
     done < <(served_components acceptance/client base-component component dev-component)
-    if [ ${#server[@]} -eq 0 ] && [ ${#client[@]} -eq 0 ]; then
+    while IFS= read -r name; do
+        in_names "$name" || continue
+        [ -z "$ACCEPT_SPECS" ] || has_spec_file acceptance/client "$name" || continue
+        offline+=("$name")
+    done < <(offline_components acceptance/client base-component component dev-component)
+    if [ ${#server[@]} -eq 0 ] && [ ${#client[@]} -eq 0 ] && [ ${#offline[@]} -eq 0 ]; then
         info "No acceptance specs${ACCEPT_SPECS:+ named $ACCEPT_SPECS} in ${ACCEPT_NAMES[*]:-any component}."
         return 0
     fi
@@ -2348,6 +2355,10 @@ accept_suites() {
     if [ ${#client[@]} -gt 0 ]; then
         suite "moqui test-client --serve --acceptance" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" --nobuild -- --serve \
             --acceptance "${client[@]}" "${spec[@]}" "${junit[@]}"
+    fi
+    if [ ${#offline[@]} -gt 0 ]; then
+        suite "moqui test-client --offline --acceptance" "$MOQ" test-client "${SUITE_MOQ_OPTS[@]}" --nobuild -- --offline \
+            --acceptance "${offline[@]}" "${spec[@]}" "${junit[@]}"
     fi
 }
 
@@ -4679,6 +4690,16 @@ served_components() {
     local tree=$1 d name
     while IFS= read -r d; do
         [ -f "$d/$tree/suite.js" ] && grep -Eq 'server *: *[{]' "$d/$tree/suite.js" || continue
+        name=$(component_name_of "$d")
+        case $name in *@*) ;; *) printf '%s\n' "$name" ;; esac
+    done < <(spec_component_dirs "$@")
+}
+
+# The components whose <tree>/suite.js declares no server: their specs are offline (server: false) pages.
+offline_components() {
+    local tree=$1 d name
+    while IFS= read -r d; do
+        [ -f "$d/$tree/suite.js" ] && ! grep -Eq 'server *: *[{]' "$d/$tree/suite.js" || continue
         name=$(component_name_of "$d")
         case $name in *@*) ;; *) printf '%s\n' "$name" ;; esac
     done < <(spec_component_dirs "$@")

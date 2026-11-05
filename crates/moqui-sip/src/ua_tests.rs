@@ -41,6 +41,23 @@ struct FakeTrunk {
     nonces: NonceBook,
 }
 
+/// Whether these loopback addresses can be bound. Linux routes all of 127/8 to lo, so there a failure is the test's; macOS
+/// has only 127.0.0.1 unless lo0 gets aliases (`sudo ifconfig lo0 alias 127.0.0.2 up`, and so on), so a test of separate
+/// source addresses says it is skipped and passes there.
+async fn loopback_sources(ips: &[&str]) -> bool {
+    for ip in ips {
+        match UdpSocket::bind(format!("{ip}:0")).await {
+            Ok(_) => {}
+            Err(err) if cfg!(not(target_os = "linux")) && err.kind() == std::io::ErrorKind::AddrNotAvailable => {
+                println!("skipping: {ip} is not a local address on this host; alias it on lo0 to run this test");
+                return false;
+            }
+            Err(err) => panic!("{ip}: {err}"),
+        }
+    }
+    true
+}
+
 impl FakeTrunk {
     async fn on(ip: &str) -> FakeTrunk {
         let socket = UdpSocket::bind(format!("{ip}:0")).await.unwrap();
@@ -666,6 +683,9 @@ async fn hold_by_reinvite_both_ways() {
 
 #[tokio::test]
 async fn failed_digests_block_the_source_and_never_the_trunk() {
+    if !loopback_sources(&["127.0.0.2", "127.0.0.3"]).await {
+        return;
+    }
     let trunk = FakeTrunk::on("127.0.0.1").await;
     let mut h = Harness::start().await;
     h.ua.set_trunks(vec![pbx_config(&trunk, "T1", "acct", "pw-of-acct")])
@@ -750,6 +770,9 @@ async fn failed_digests_block_the_source_and_never_the_trunk() {
 
 #[tokio::test]
 async fn a_provider_trunk_s_credentials_never_sign_a_call_in_and_a_pbx_trunk_s_do() {
+    if !loopback_sources(&["127.0.0.4", "127.0.0.5"]).await {
+        return;
+    }
     let provider = FakeTrunk::on("127.0.0.1").await;
     let pbx = FakeTrunk::on("127.0.0.4").await;
     let mut h = Harness::start().await;
@@ -777,6 +800,9 @@ async fn a_provider_trunk_s_credentials_never_sign_a_call_in_and_a_pbx_trunk_s_d
 
 #[tokio::test]
 async fn a_flood_from_one_source_is_dropped_while_another_source_is_answered() {
+    if !loopback_sources(&["127.0.0.6"]).await {
+        return;
+    }
     let (tx, mut events) = mpsc::unbounded_channel();
     let ua = Ua::start(
         UaConfig {

@@ -285,6 +285,15 @@ mod shares {
     /// member's address still gets in by the members' own slots (HL-032).
     #[test]
     fn a_peer_posts_while_another_source_holds_its_share_and_a_member_while_all_are_held() {
+        // Each source is its own loopback address. Linux routes all of 127/8 to lo; macOS only 127.0.0.1 unless lo0
+        // has aliases, so there the test says it is skipped (as smtp_tests does for 127.0.0.2).
+        if let Err(err) = std::net::TcpListener::bind("127.0.0.2:0") {
+            if cfg!(not(target_os = "linux")) && err.kind() == std::io::ErrorKind::AddrNotAvailable {
+                eprintln!("skipping: this host does not route 127.0.0.2 and the other loopback sources ({err})");
+                return;
+            }
+            panic!("127.0.0.2: {err}");
+        }
         let material = super::on_the_port::material();
         let seen = Arc::new(Mutex::new(Vec::<String>::new()));
         let kept = Arc::clone(&seen);

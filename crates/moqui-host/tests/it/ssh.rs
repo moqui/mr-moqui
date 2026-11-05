@@ -73,6 +73,9 @@ fn data(user_key: &PrivateKey) -> String {
 /// they wait to log in; returned once the server has taken or closed each of them.
 fn hold_preauth_slots(address: std::net::SocketAddr) -> Vec<std::net::TcpStream> {
     let held = connect_from(address, "127.0.0.2", 16);
+    if held.is_empty() {
+        return held;
+    }
     // the server answers each connection it keeps with its version line, and closes one past the share
     let mut kept = 0;
     for stream in &held {
@@ -86,17 +89,25 @@ fn hold_preauth_slots(address: std::net::SocketAddr) -> Vec<std::net::TcpStream>
     held
 }
 
-/// `count` connections to `address` from the loopback address `source`.
+/// `count` connections to `address` from the loopback address `source`. None where the host does not route `source`:
+/// Linux routes all of 127/8 to lo, macOS only 127.0.0.1 unless lo0 has aliases, so there the checks of separate
+/// sources are skipped (said on stderr) and the rest of the test runs.
 fn connect_from(address: std::net::SocketAddr, source: &str, count: usize) -> Vec<std::net::TcpStream> {
     let source: std::net::SocketAddr = format!("{source}:0").parse().unwrap();
-    (0..count)
-        .map(|_| {
-            let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
-            socket.bind(&source.into()).unwrap();
-            socket.connect(&address.into()).unwrap();
-            socket.into()
-        })
-        .collect()
+    let mut streams = Vec::new();
+    for _ in 0..count {
+        let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+        if let Err(err) = socket.bind(&source.into()) {
+            if cfg!(not(target_os = "linux")) && err.kind() == std::io::ErrorKind::AddrNotAvailable {
+                eprintln!("skipping the connections from {source}: this host does not route it ({err})");
+                return Vec::new();
+            }
+            panic!("{source}: {err}");
+        }
+        socket.connect(&address.into()).unwrap();
+        streams.push(socket.into());
+    }
+    streams
 }
 
 fn key(seed: [u8; 32]) -> PrivateKey {
