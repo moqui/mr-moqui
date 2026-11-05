@@ -327,3 +327,64 @@ fn the_services_register_at_the_locations_the_service_file_names() {
     named.dedup();
     assert_eq!(registered, named);
 }
+
+/// plans/High-Level-Review.md HL-015, opt-in: the phases of a service reload of one changed file as the loaded files
+/// grow: the reload's own parse check, path collection, reading and parsing, resolution, the screen cache clear and
+/// the artifact index update. Run: `cargo test -p moqui-devkit --lib service_reload_phases -- --ignored --nocapture`.
+#[test]
+#[ignore = "measurement; run with --ignored --nocapture"]
+fn service_reload_phases_as_loaded_files_grow() {
+    let ms = |duration: std::time::Duration| duration.as_secs_f64() * 1000.0;
+    println!("files | check(ms) collect(ms) load(ms) resolve(ms) screen-clear(ms) index(ms) | whole reload(ms)");
+    for count in [100_usize, 400, 1600] {
+        let bed = bed(&format!("reload-phases-{count}"));
+        let _entered = bed.ctx.enter();
+        let _authz = bed.ctx.disable_authz();
+        let body = |index: usize, value: &str| {
+            let mut text = String::new();
+            for verb in ["create", "update", "delete", "get", "find"] {
+                text.push_str(&format!(
+                    r#"<service verb="{verb}" noun="Thing{index}"><in-parameters><parameter name="id" required="true"/></in-parameters><actions><set field="from" value="{value}"/></actions></service>"#
+                ));
+            }
+            services(&text)
+        };
+        let paths: Vec<PathBuf> = (0..count)
+            .map(|index| bed.write(&format!("service/devtest/F{index:04}.xml"), &body(index, "first")))
+            .collect();
+        assert!(moqui_core::service::lint(&paths).unwrap().is_empty());
+        let changed = bed.write("service/devtest/F0000.xml", &body(0, "second"));
+        let started = std::time::Instant::now();
+        let root = moqui_lib::node::MNode::parse_file(&changed).unwrap();
+        let check = started.elapsed();
+        // As the reload does: the checked root is not read again.
+        let reload = moqui_core::service::reload_parsed_definitions(
+            std::slice::from_ref(&changed),
+            vec![(changed.clone(), root)],
+        )
+        .unwrap();
+        assert_eq!(reload.defined, 5);
+        assert_eq!(reload.phases.files, count);
+        let started = std::time::Instant::now();
+        moqui_core::screen::ScreenFacade::of(bed.factory()).clear();
+        let screen_clear = started.elapsed();
+        bed.factory().set_entity(moqui_core::testing::open());
+        let started = std::time::Instant::now();
+        let index = crate::index::update_files(bed.factory(), std::slice::from_ref(&changed));
+        let index_ms = index.map(|_| ms(started.elapsed()));
+        bed.write("service/devtest/F0000.xml", &body(0, "third"));
+        let whole = reload_paths(bed.factory(), std::slice::from_ref(&changed));
+        assert!(whole.problems().next().is_none(), "{:?}", whole.summary());
+        let phases = &reload.phases;
+        println!(
+            "{count:>5} | {:>9.2} {:>11.2} {:>8.2} {:>11.2} {:>16.3} {:>9} | {:>16}",
+            ms(check),
+            ms(phases.collect),
+            ms(phases.load),
+            ms(phases.resolve),
+            ms(screen_clear),
+            index_ms.map_or_else(|err| format!("({err})"), |ms| format!("{ms:.2}")),
+            whole.millis,
+        );
+    }
+}

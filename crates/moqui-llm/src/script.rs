@@ -16,7 +16,7 @@
 //!
 //! ```text
 //! ec.llm.complete({prompt, system, messages, model, feature, tier, schema, schemaName, reasoning, maxOutput,
-//!         timeoutSeconds})
+//!         timeoutSeconds, allowInTransaction})
 //!     -> {text, json, modelId, finish, inputTokens, cachedInputTokens, outputTokens, cost, callIds}
 //! ec.llm.isEnabled() -> boolean
 //! ec.llm.summarize(text, {maxWords}) -> string
@@ -27,6 +27,10 @@
 //!
 //! `summarize`, `classify` and `extract` are the typed AI tasks of `org.moqui.agent.AiTaskServices`
 //! ([`crate::ai_task`]), on their features' models.
+//!
+//! A model call is refused while a transaction is open (plans/High-Level-Review.md HL-041, [`crate::provider::call`]):
+//! call these from code with none open, or pass `allowInTransaction: true` to `complete`, which suspends the
+//! transaction for the call and cuts the call to the time it has left.
 //!
 //! `messages` are earlier turns, each `{role: "user" | "assistant", text}`; `schema` is a JSON schema (a map or its
 //! text), and with it `json` is the reply parsed and checked. The model is `model`, else the binding of `feature`, else
@@ -147,6 +151,7 @@ fn llm_complete<'js>(ctx: Ctx<'js>, args: JsValue<'js>) -> rquickjs::Result<JsVa
             })?);
         }
         ask.max_output = text_option(&map, "maxOutput").and_then(|text| text.parse().ok());
+        ask.allow_in_transaction = matches!(text_option(&map, "allowInTransaction").as_deref(), Some("true" | "Y"));
         ask.timeout = text_option(&map, "timeoutSeconds")
             .and_then(|text| text.parse::<u64>().ok())
             .map(std::time::Duration::from_secs);

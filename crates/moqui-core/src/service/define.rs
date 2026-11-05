@@ -14,7 +14,7 @@
 
 //! Service definition load. One bad service stays out of the registry.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
@@ -860,6 +860,28 @@ pub struct ServiceReload {
     pub defined: usize,
     /// The registration failures of the changed files and their services.
     pub failures: Vec<String>,
+    /// How long each part of the reload took (plans/High-Level-Review.md HL-015).
+    pub phases: ReloadPhases,
+}
+
+/// The time each part of a [`reload`] took, and how many files it read.
+#[derive(Clone, Debug, Default)]
+pub struct ReloadPhases {
+    /// Collecting the configured, loaded and changed paths.
+    pub collect: Duration,
+    /// Reading and parsing the files.
+    pub load: Duration,
+    /// Resolving the services (includes, `implements`).
+    pub resolve: Duration,
+    /// Files read.
+    pub files: usize,
+}
+
+/// The time a [`Registry::merge`] took to read its files and to resolve.
+#[derive(Clone, Copy, Debug, Default)]
+struct MergeTimes {
+    load: Duration,
+    resolve: Duration,
 }
 
 /// Rebuild the entered context's service registry from the configured service files and every file read so far (those
@@ -871,6 +893,16 @@ pub struct ServiceReload {
 ///
 /// Returns an error when no context is entered or the conf cannot be read.
 pub fn reload(changed: &[PathBuf]) -> Result<ServiceReload, Error> {
+    reload_parsed(changed, Vec::new())
+}
+
+/// [`reload`] with `parsed`, the changed files the caller parsed already (to check them), so they are not read twice.
+///
+/// # Errors
+///
+/// As [`reload`].
+pub fn reload_parsed(changed: &[PathBuf], parsed: Vec<(PathBuf, MNode)>) -> Result<ServiceReload, Error> {
+    let started = std::time::Instant::now();
     let shared = entered()?;
     let _loading = lock(&shared.load);
     let before = snapshot(&shared);
@@ -879,13 +911,27 @@ pub fn reload(changed: &[PathBuf]) -> Result<ServiceReload, Error> {
         tracing::error!(error = %err, "Could not read the configured service files; reloading the files read so far");
         Vec::new()
     });
-    for file in before.loaded.files.iter().chain(changed.iter()) {
+    // One canonical form of each path, made once (plans/High-Level-Review.md HL-015): the files loaded before are
+    // canonical already, as `load_file` keeps them.
+    let mut seen: HashSet<PathBuf> = paths.iter().map(|path| normalize(path)).collect();
+    for file in &before.loaded.files {
+        if seen.insert(file.clone()) && file.is_file() {
+            paths.push(file.clone());
+        }
+    }
+    for file in changed {
         let file = normalize(file);
-        if file.is_file() && !paths.iter().any(|path| normalize(path) == file) {
+        if seen.insert(file.clone()) && file.is_file() {
             paths.push(file);
         }
     }
-    let registry = build(&paths)?;
+    let collected = started.elapsed();
+    let mut parsed: HashMap<PathBuf, MNode> = parsed
+        .into_iter()
+        .map(|(path, root)| (normalize(&path), root))
+        .collect();
+    let mut registry = Registry::default();
+    let times = registry.merge_parsed(&paths, &mut parsed)?;
     let prefixes: Vec<String> = changed
         .iter()
         .map(|path| service_prefix(&normalize(path)))
@@ -933,6 +979,12 @@ pub fn reload(changed: &[PathBuf]) -> Result<ServiceReload, Error> {
         })
         .cloned()
         .collect();
+    report.phases = ReloadPhases {
+        collect: collected,
+        load: times.load,
+        resolve: times.resolve,
+        files: registry.loaded.files.len(),
+    };
     replace(&shared, registry);
     Ok(report)
 }
@@ -953,19 +1005,34 @@ fn build(paths: &[PathBuf]) -> Result<Registry, Error> {
 impl Registry {
     /// Read `paths` and the files they include, those not read already, and resolve the services again. A service
     /// resolved before keeps its definition, unless a new file defines a service of the same name: then all resolve again.
-    fn merge(&mut self, paths: &[PathBuf]) -> Result<(), Error> {
+    fn merge(&mut self, paths: &[PathBuf]) -> Result<MergeTimes, Error> {
+        self.merge_parsed(paths, &mut HashMap::new())
+    }
+
+    /// [`Self::merge`], taking a file's root from `parsed` instead of reading it when it is there.
+    fn merge_parsed(&mut self, paths: &[PathBuf], parsed: &mut HashMap<PathBuf, MNode>) -> Result<MergeTimes, Error> {
+        let started = std::time::Instant::now();
         let mut includes = Vec::new();
         let mut added = Vec::new();
         let mut pending: Vec<PathBuf> = paths.to_vec();
         let roots = service_roots();
         while let Some(path) = pending.pop() {
-            load_file(&path, &roots, &mut self.loaded, &mut includes, &mut pending, &mut added)?;
+            load_file(
+                &path,
+                &roots,
+                &mut self.loaded,
+                &mut includes,
+                &mut pending,
+                &mut added,
+                parsed,
+            )?;
         }
         for include in includes {
             let local = service_name(&include.prefix, &include.verb, &include.noun);
             let target = follow_include(&include, &[], 0);
             self.loaded.includes.push((local, target));
         }
+        let loaded = started.elapsed();
         let previous = if added.iter().any(|name| self.services.contains_key(name)) {
             BTreeMap::new()
         } else {
@@ -974,7 +1041,10 @@ impl Registry {
         let (services, failures) = resolve(&self.loaded, previous);
         self.services = services;
         self.failures = failures;
-        Ok(())
+        Ok(MergeTimes {
+            load: loaded,
+            resolve: started.elapsed().saturating_sub(loaded),
+        })
     }
 
     /// A service that implements one of a file not read yet failed to register: read that file, as Java looks the
@@ -1037,16 +1107,23 @@ fn load_file(
     includes: &mut Vec<ServiceInclude>,
     pending: &mut Vec<PathBuf>,
     added: &mut Vec<String>,
+    parsed: &mut HashMap<PathBuf, MNode>,
 ) -> Result<(), Error> {
     let path = normalize(path);
     if !loaded.files.insert(path.clone()) {
         return Ok(());
     }
-    #[cfg(test)]
-    PARSED.with(|parsed| parsed.borrow_mut().push(path.clone()));
     // A file that does not parse loses only its own services, as in Java, where a file is read when one of its
-    // services is first looked up.
-    let root = match MNode::parse_file(&path) {
+    // services is first looked up. A file the caller parsed already is not read again.
+    let read = parsed.remove(&path).map_or_else(
+        || {
+            #[cfg(test)]
+            PARSED.with(|parsed| parsed.borrow_mut().push(path.clone()));
+            MNode::parse_file(&path)
+        },
+        Ok,
+    );
+    let root = match read {
         Ok(root) => root,
         Err(err) => {
             tracing::error!(error = %err, "Could not read service file {}, its services are not registered", path.display());

@@ -17,13 +17,24 @@
 //! clearing of old content ([`clean_call_content`]); and the quota check before a run and each step ([`check_quota`]).
 //!
 //! Days are in the server's time zone. A quota counts today's calls from `LlmCall` itself, so it does not wait for the
-//! rollup; a monthly quota adds the earlier days of the month from `LlmUsageDaily`.
+//! rollup; a monthly quota adds the earlier days of the month from `LlmUsageDaily`. One check reads each distinct
+//! scope's calls once, and only their token and cost fields.
+//!
+//! A call is admitted ([`admit`]) under a lock row per user and per API client (`LlmQuotaLock`), which checks the
+//! quotas with what the call may use at most and writes that as an `LlmQuotaReservation` in the same short
+//! transaction: a total is the finished calls plus the open reservations, so concurrent calls of one user, on any
+//! node, cannot all pass against the same total (plans/High-Level-Review.md HL-012, HL-030). The reservation goes when
+//! the call's row is written ([`Reservation`] dropped), or stops counting at its `expiresDate` when a node stopped
+//! mid-call. No transaction is open across the call itself.
 //!
 //! Requests per minute (an `LlmQuota`'s or an `LlmApiClient`'s `requestsPerMinute`) are counted per node in memory, in a
-//! sliding minute ([`take_request`]): a cluster of `n` nodes lets up to `n` times the limit through.
+//! sliding minute ([`take_request`]): a cluster of `n` nodes lets up to `n` times the limit through. So are the calls
+//! in flight against an endpoint's `max-concurrent` and a model's `max-concurrency` (`provider::Slot`): each node
+//! allows that many, so `n` nodes give a one-slot server up to `n` calls at once.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use moqui_db::sql::Condition;
 use moqui_lib::error::Error;
@@ -39,6 +50,19 @@ use moqui_core::entity::EntityFacade;
 pub(crate) const LLM_CALL: &str = "moqui.llm.LlmCall";
 const LLM_USAGE_DAILY: &str = "moqui.llm.LlmUsageDaily";
 const LLM_QUOTA: &str = "moqui.llm.LlmQuota";
+pub(crate) const LLM_QUOTA_RESERVATION: &str = "moqui.llm.LlmQuotaReservation";
+const LLM_QUOTA_LOCK: &str = "moqui.llm.LlmQuotaLock";
+/// The fields of an `LlmCall` a total reads: never its content.
+const TOTAL_FIELDS: [&str; 8] = [
+    "inputTokens",
+    "cachedInputTokens",
+    "cacheWriteTokens",
+    "outputTokens",
+    "reasoningTokens",
+    "cost",
+    "currencyUomId",
+    "errorClass",
+];
 
 /// The user of a call that has none, in `LlmUsageDaily`.
 pub const NO_USER: &str = "_NA_";
@@ -441,9 +465,21 @@ pub struct Totals {
     pub usage: Usage,
     pub cost: Decimal,
     pub currency: Option<String>,
+    /// What the calls in flight may still use (open `LlmQuotaReservation` rows), counted against a quota with the rest.
+    pub reserved: Reserve,
 }
 
 impl Totals {
+    /// The tokens counted against a quota: those used and those reserved.
+    pub fn counted_tokens(&self) -> u64 {
+        self.usage.total().saturating_add(self.reserved.tokens)
+    }
+
+    /// The cost counted against a quota: that of the calls made and that reserved.
+    pub fn counted_cost(&self) -> Decimal {
+        self.cost + self.reserved.cost
+    }
+
     fn add_row(&mut self, row: &moqui_core::entity::EntityValue) {
         let tokens = |field: &str| int_of(row, field).and_then(|n| u64::try_from(n).ok()).unwrap_or(0);
         self.calls += 1;
@@ -462,6 +498,17 @@ impl Totals {
         }
         if self.currency.is_none() {
             self.currency = text_of(row, "currencyUomId");
+        }
+    }
+
+    /// Add `other`'s calls, use and cost (not its reservations).
+    fn add_totals(&mut self, other: &Totals) {
+        self.calls += other.calls;
+        self.errors += other.errors;
+        self.usage.add(&other.usage);
+        self.cost += other.cost;
+        if self.currency.is_none() {
+            self.currency.clone_from(&other.currency);
         }
     }
 
@@ -784,7 +831,8 @@ fn larger(left: QuotaLimit, right: QuotaLimit) -> QuotaLimit {
     }
 }
 
-/// The calls of `user_id` in `scope` (all for every source) from `start` until now, from `LlmCall`.
+/// The calls of `user_id` in `scope` (all for every source) from `start` until now, from `LlmCall`: their token and
+/// cost fields only.
 fn calls_since(facade: &EntityFacade, user_id: &str, scope: &str, start: i64) -> Result<Totals, Error> {
     let mut find = facade
         .find(LLM_CALL)?
@@ -797,11 +845,36 @@ fn calls_since(facade: &EntityFacade, user_id: &str, scope: &str, start: i64) ->
     if scope != "all" {
         find = find.eq("source", Value::string(scope));
     }
+    for field in TOTAL_FIELDS {
+        find = find.select_field(field);
+    }
     let mut totals = Totals::default();
     for row in find.list()?.iter() {
         totals.add_row(row);
     }
     Ok(totals)
+}
+
+/// The open reservations (not expired at `now`) of `field` (`userId` or `clientId`) `id`, of `scope` unless `all`.
+fn reserved(facade: &EntityFacade, field: &str, id: &str, scope: &str, now: i64) -> Result<Reserve, Error> {
+    let mut find = facade
+        .find(LLM_QUOTA_RESERVATION)?
+        .eq(field, Value::string(id))
+        .condition(Condition::greater("expiresDate", moqui_core::user::stamp_value(now)))
+        .select_field("tokens")
+        .select_field("cost")
+        .disable_authz();
+    if scope != "all" {
+        find = find.eq("source", Value::string(scope));
+    }
+    let mut total = Reserve::default();
+    for row in find.list()?.iter() {
+        total.tokens = total
+            .tokens
+            .saturating_add(int_of(row, "tokens").and_then(|n| u64::try_from(n).ok()).unwrap_or(0));
+        total.cost += decimal_of(row, "cost").unwrap_or_default();
+    }
+    Ok(total)
 }
 
 /// Whether `user_id` may make more calls in `scope` (all, agent, gateway, api) at `now_millis`: each limit of
@@ -832,7 +905,8 @@ impl Reserve {
     /// Whether `used` and this reserve go over `max_tokens` or `max_cost`: what is used reaching the limit, or with the
     /// reserve going past it.
     pub fn exceeds(&self, used: &Totals, max_tokens: Option<u64>, max_cost: Option<Decimal>) -> Option<String> {
-        let tokens = used.usage.total();
+        let tokens = used.counted_tokens();
+        let used_cost = used.counted_cost();
         match (max_tokens, max_cost) {
             (Some(max), _) if tokens >= max || (self.tokens > 0 && tokens.saturating_add(self.tokens) > max) => {
                 Some(if tokens >= max {
@@ -845,13 +919,13 @@ impl Reserve {
                     )
                 })
             }
-            (_, Some(max)) if used.cost >= max || (!self.cost.is_zero() && used.cost + self.cost > max) => {
-                Some(if used.cost >= max {
-                    format!("the cost quota of {max} is used up ({} used)", used.cost.normalize())
+            (_, Some(max)) if used_cost >= max || (!self.cost.is_zero() && used_cost + self.cost > max) => {
+                Some(if used_cost >= max {
+                    format!("the cost quota of {max} is used up ({} used)", used_cost.normalize())
                 } else {
                     format!(
                         "the cost quota of {max} has {} left, and this call may cost {}",
-                        (max - used.cost).normalize(),
+                        (max - used_cost).normalize(),
                         self.cost.normalize()
                     )
                 })
@@ -878,25 +952,30 @@ pub fn check_quota_reserving(
     let today = day_of(now_millis)?;
     let (today_start, _) = day_bounds(today)?;
     let mut first: Option<QuotaStatus> = None;
+    // each distinct scope's calls of today, and its earlier days of the month, read once in a check
+    let mut today_by_scope: HashMap<&str, Totals> = HashMap::new();
+    let mut month_by_scope: HashMap<&str, Totals> = HashMap::new();
     for limit in quota_limits(facade, limits, user_id, scope)? {
         let counted = if limit.all_sources { "all" } else { scope };
-        let mut used = calls_since(facade, user_id, counted, today_start)?;
+        let mut used = match today_by_scope.get(counted) {
+            Some(used) => used.clone(),
+            None => {
+                let mut used = calls_since(facade, user_id, counted, today_start)?;
+                used.reserved = reserved(facade, "userId", user_id, counted, now_millis)?;
+                today_by_scope.insert(counted, used.clone());
+                used
+            }
+        };
         if limit.period == "month" && today.day() > 1 {
-            let mut find = facade
-                .find(LLM_USAGE_DAILY)?
-                .eq("userId", Value::string(user_id))
-                .condition(Condition::greater_equal(
-                    "usageDate",
-                    Value::Date(today.first_of_month()),
-                ))
-                .condition(Condition::less("usageDate", Value::Date(today)))
-                .disable_authz();
-            if counted != "all" {
-                find = find.eq("source", Value::string(counted));
-            }
-            for row in find.list()?.iter() {
-                used.add_daily_row(row);
-            }
+            let earlier = match month_by_scope.get(counted) {
+                Some(earlier) => earlier.clone(),
+                None => {
+                    let earlier = month_before(facade, user_id, counted, today)?;
+                    month_by_scope.insert(counted, earlier.clone());
+                    earlier
+                }
+            };
+            used.add_totals(&earlier);
         }
         let period = if limit.period == "month" { "this month" } else { "today" };
         let exceeded = reserve.exceeds(&used, limit.max_tokens, limit.max_cost).map(|reason| {
@@ -915,6 +994,237 @@ pub fn check_quota_reserving(
         used: Totals::default(),
         exceeded: None,
     }))
+}
+
+/// The `LlmUsageDaily` totals of `user_id` in `counted` from the first of `today`'s month up to `today`.
+fn month_before(
+    facade: &EntityFacade,
+    user_id: &str,
+    counted: &str,
+    today: jiff::civil::Date,
+) -> Result<Totals, Error> {
+    let mut find = facade
+        .find(LLM_USAGE_DAILY)?
+        .eq("userId", Value::string(user_id))
+        .condition(Condition::greater_equal(
+            "usageDate",
+            Value::Date(today.first_of_month()),
+        ))
+        .condition(Condition::less("usageDate", Value::Date(today)))
+        .disable_authz();
+    if counted != "all" {
+        find = find.eq("source", Value::string(counted));
+    }
+    let mut totals = Totals::default();
+    for row in find.list()?.iter() {
+        totals.add_daily_row(row);
+    }
+    Ok(totals)
+}
+
+/// An API client's daily limits, checked with the user's at [`admit`].
+#[derive(Clone, Debug, Default)]
+pub struct ClientLimit {
+    pub client_id: String,
+    pub daily_tokens: Option<u64>,
+    pub daily_cost: Option<Decimal>,
+}
+
+/// What [`admit`] checks and reserves: a call of `user_id` (none for a call with no user) in `scope`, through
+/// `client`, which may use at most `reserve`, and whose reservation stops counting after `ttl`.
+#[derive(Clone, Debug)]
+pub struct Admission<'a> {
+    pub user_id: Option<&'a str>,
+    pub scope: &'a str,
+    pub client: Option<&'a ClientLimit>,
+    pub reserve: Reserve,
+    pub ttl: Duration,
+}
+
+/// Why [`admit`] refused a call: the reason, the limit over (the user's), or the client's daily limit.
+#[derive(Clone, Debug)]
+pub struct Refusal {
+    pub reason: String,
+    pub limit: QuotaLimit,
+    pub client: bool,
+}
+
+/// What a call admitted against the quotas holds: its `LlmQuotaReservation`, deleted (in a transaction of its own)
+/// when this is dropped, after the call's `LlmCall` row is written.
+pub struct Reservation {
+    facade: EntityFacade,
+    id: Option<String>,
+}
+
+impl Reservation {
+    /// A reservation of nothing, for a call no quota applies to.
+    pub fn none(facade: &EntityFacade) -> Self {
+        Self {
+            facade: facade.clone(),
+            id: None,
+        }
+    }
+
+    /// The `reservationId`, when one was written.
+    pub fn id(&self) -> Option<&str> {
+        self.id.as_deref()
+    }
+}
+
+impl std::fmt::Debug for Reservation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Reservation").field("id", &self.id).finish()
+    }
+}
+
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        let Some(id) = self.id.take() else {
+            return;
+        };
+        let deleted = self
+            .facade
+            .transactions_for(LLM_QUOTA_RESERVATION)
+            .and_then(|transactions| {
+                transactions.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
+                    self.facade
+                        .find(LLM_QUOTA_RESERVATION)?
+                        .eq("reservationId", Value::string(&id))
+                        .disable_authz()
+                        .delete_all()
+                        .map(|_| ())
+                })
+            });
+        if let Err(error) = deleted {
+            tracing::warn!("the LLM quota reservation {id} stays until it expires: {error}");
+        }
+    }
+}
+
+/// Admissions on this node take the stripe of each key they lock, so they wait for each other here rather than on the
+/// database's row lock, and a database without row locks (the tests' in-memory one) still admits one at a time.
+static STRIPES: [Mutex<()>; 64] = [const { Mutex::new(()) }; 64];
+
+fn stripe_of(key: &str) -> usize {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    key.hash(&mut hasher);
+    usize::try_from(hasher.finish() % STRIPES.len() as u64).unwrap_or(0)
+}
+
+/// Admit a call: under the lock rows of its user and its client, check the user's quotas (scope `admission.scope`)
+/// and the client's daily limits with what the call may use at most, counting the finished calls and the open
+/// reservations, and when it is within them write its reservation, all in one short transaction of its own. Expired
+/// reservations of the user and the client are deleted on the way.
+///
+/// # Errors
+///
+/// Returns an error when the rows cannot be read or written.
+pub fn admit(
+    facade: &EntityFacade,
+    limits: &LimitsConf,
+    admission: &Admission<'_>,
+    now_millis: i64,
+) -> Result<Result<Reservation, Box<Refusal>>, Error> {
+    let _authz =
+        moqui_core::context::ExecutionContext::with_current(moqui_core::context::ExecutionContext::disable_authz);
+    let mut keys: Vec<(String, &str, &str)> = Vec::new();
+    if let Some(user_id) = admission.user_id {
+        keys.push((format!("user:{user_id}"), "userId", user_id));
+    }
+    if let Some(client) = admission.client {
+        keys.push((
+            format!("client:{}", client.client_id),
+            "clientId",
+            client.client_id.as_str(),
+        ));
+    }
+    let mut stripes: Vec<usize> = keys.iter().map(|(key, _, _)| stripe_of(key)).collect();
+    stripes.sort_unstable();
+    stripes.dedup();
+    let _held: Vec<_> = stripes.iter().map(|stripe| lock(&STRIPES[*stripe])).collect();
+    let transactions = facade.transactions_for(LLM_QUOTA_RESERVATION)?;
+    transactions.run(moqui_core::transaction::TransactionAttribute::ForceNew, None, || {
+        let now = moqui_core::user::stamp_value(now_millis);
+        for (key, field, id) in &keys {
+            let mut lock_row = facade.make_value(LLM_QUOTA_LOCK)?;
+            lock_row.set("lockKey", Value::string(key));
+            lock_row.create_if_missing(facade)?;
+            facade
+                .find(LLM_QUOTA_LOCK)?
+                .eq("lockKey", Value::string(key))
+                .for_update(true)
+                .disable_authz()
+                .one()?;
+            facade
+                .find(LLM_QUOTA_RESERVATION)?
+                .eq(field, Value::string(*id))
+                .condition(Condition::less_equal("expiresDate", now.clone()))
+                .disable_authz()
+                .delete_all()?;
+        }
+        if let Some(user_id) = admission.user_id {
+            let status =
+                check_quota_reserving(facade, limits, user_id, admission.scope, now_millis, &admission.reserve)?;
+            if let Some(reason) = status.exceeded {
+                return Ok(Err(Box::new(Refusal {
+                    reason,
+                    limit: status.limit,
+                    client: false,
+                })));
+            }
+        }
+        if let Some(client) = admission.client {
+            if client.daily_tokens.is_some() || client.daily_cost.is_some() {
+                let (start, _) = day_of(now_millis).and_then(day_bounds)?;
+                let mut used = client_calls_since(facade, &client.client_id, start)?;
+                used.reserved = reserved(facade, "clientId", &client.client_id, "all", now_millis)?;
+                if let Some(reason) = admission.reserve.exceeds(&used, client.daily_tokens, client.daily_cost) {
+                    return Ok(Err(Box::new(Refusal {
+                        reason,
+                        limit: QuotaLimit {
+                            period: "day".to_string(),
+                            max_tokens: client.daily_tokens,
+                            max_cost: client.daily_cost,
+                            from: client.client_id.clone(),
+                            ..QuotaLimit::default()
+                        },
+                        client: true,
+                    })));
+                }
+            }
+        }
+        if keys.is_empty() {
+            return Ok(Ok(Reservation::none(facade)));
+        }
+        let mut row = facade.make_value(LLM_QUOTA_RESERVATION)?;
+        row.set_sequenced_id_primary(facade)?;
+        let id = text_of(&row, "reservationId").unwrap_or_default();
+        let ttl = i64::try_from(admission.ttl.as_millis()).unwrap_or(i64::MAX);
+        row.set("userId", admission.user_id.map_or(Value::Null, Value::string));
+        row.set(
+            "clientId",
+            admission
+                .client
+                .map_or(Value::Null, |client| Value::string(&client.client_id)),
+        );
+        row.set("source", Value::string(admission.scope));
+        row.set(
+            "tokens",
+            Value::I64(i64::try_from(admission.reserve.tokens).unwrap_or(i64::MAX)),
+        );
+        row.set("cost", Value::Decimal(admission.reserve.cost));
+        row.set("createdDate", now);
+        row.set(
+            "expiresDate",
+            moqui_core::user::stamp_value(now_millis.saturating_add(ttl)),
+        );
+        row.create(facade)?;
+        Ok(Ok(Reservation {
+            facade: facade.clone(),
+            id: Some(id),
+        }))
+    })
 }
 
 /// The smallest requests-per-minute limit of `limits`, if any sets one.
@@ -957,17 +1267,18 @@ pub fn take_request(key: &str, per_minute: u32, now_millis: i64) -> Result<(), u
 /// Returns an error when the calls cannot be read.
 pub fn client_calls_since(facade: &EntityFacade, client_id: &str, start: i64) -> Result<Totals, Error> {
     let mut totals = Totals::default();
-    for row in facade
+    let mut find = facade
         .find(LLM_CALL)?
         .eq("clientId", Value::string(client_id))
         .condition(Condition::greater_equal(
             "startDate",
             moqui_core::user::stamp_value(start),
         ))
-        .disable_authz()
-        .list()?
-        .iter()
-    {
+        .disable_authz();
+    for field in TOTAL_FIELDS {
+        find = find.select_field(field);
+    }
+    for row in find.list()?.iter() {
         totals.add_row(row);
     }
     Ok(totals)

@@ -28,7 +28,6 @@ use axum::middleware::Next;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
-use moqui_core::context::ErrorKind;
 use moqui_core::context::ExecutionContextFactory;
 use moqui_core::transaction::PoolStats;
 use moqui_core::web::{WebRequest, WebResponse};
@@ -38,6 +37,7 @@ use tokio::net::TcpListener;
 use crate::guard::{setting, Event, Guard, GuardConf};
 use crate::notws;
 
+pub(crate) mod admission;
 mod serve;
 #[cfg(feature = "edge")]
 pub(crate) use serve::h2_request_form;
@@ -76,8 +76,8 @@ pub(crate) struct ListenLimits {
     /// `request-timeout` (`webapp_request_timeout`), default 300: from the request head to the response head, or the
     /// answer is 504. `/notws` and `/termws` are exempt, and a response body, such as a long download, is sent after it.
     pub request: Option<Duration>,
-    /// `max` (`webapp_max_connections`), default 1024: connections served at once, HTTP and HTTPS together. Past it
-    /// the listeners stop accepting until one closes.
+    /// `max` (`webapp_max_connections`), default 4096: connections served at once, HTTP and HTTPS together, upgraded
+    /// WebSockets included until they close. Past it the listeners stop accepting until one closes.
     pub connections: usize,
     /// `shutdown-timeout` (`webapp_shutdown_timeout`), default 30: after a stop, how long open connections may take to
     /// finish before the listener stops without them.
@@ -91,6 +91,9 @@ pub(crate) struct ListenLimits {
     /// `http2-max-streams` (`webapp_http2_max_streams`), default 100: the requests one HTTP/2 connection may have
     /// open at once.
     pub http2_max_streams: u32,
+    /// `write-timeout` (`webapp_write_timeout`), default 60: a write to a client that takes nothing for this long fails
+    /// and the connection closes, a WebSocket's too; `TCP_USER_TIMEOUT` is set to it where the platform has it.
+    pub write: Option<Duration>,
 }
 
 /// The smallest read buffer hyper takes.
@@ -115,7 +118,7 @@ impl ListenLimits {
             body: seconds("requests", "body-timeout", "webapp_body_timeout", 60),
             upload_idle: seconds("requests", "upload-idle-timeout", "webapp_upload_idle_timeout", 60),
             request: seconds("requests", "request-timeout", "webapp_request_timeout", 300),
-            connections: count("connections", "max", "webapp_max_connections", 1024),
+            connections: count("connections", "max", "webapp_max_connections", 4096),
             shutdown: seconds("connections", "shutdown-timeout", "webapp_shutdown_timeout", 30),
             max_uri: count("requests", "max-uri-length", "", 8192),
             max_header_bytes: count("requests", "max-header-bytes", "", 64 * 1024).max(MIN_HEADER_BYTES),
@@ -127,6 +130,7 @@ impl ListenLimits {
                 100,
             ))
             .unwrap_or(u32::MAX),
+            write: seconds("connections", "write-timeout", "webapp_write_timeout", 60),
         }
     }
 
@@ -138,12 +142,13 @@ impl ListenLimits {
             body: None,
             upload_idle: None,
             request: None,
-            connections: 1024,
+            connections: 4096,
             shutdown: None,
             max_uri: 8192,
             max_header_bytes: 64 * 1024,
             max_headers: 100,
             http2_max_streams: 100,
+            write: None,
         }
     }
 }
@@ -513,17 +518,22 @@ async fn serve(
             continue;
         };
         let _ = stream.set_nodelay(true);
+        tune_socket(&stream, limits.write);
+        // the hold keeps a watch on `closing` too, so an upgraded socket (which outlives its connection's task) is one
+        // the stop's drain waits for, as it waits for a connection (plans/High-Level-Review.md HL-027)
+        let hold: serve::ConnectionHold = Box::new((slot, permit, closing_rx.clone()));
         let builder = builder.clone();
         let closing = closing_rx.clone();
         let tls = tls.clone();
         let web = web.clone();
         tokio::spawn(async move {
-            let serving = Serving {
+            let mut serving = Serving {
                 remote,
                 web,
                 builder,
                 closing,
                 exporter: None,
+                hold: Some(hold),
             };
             match tls {
                 None => run_connection(stream, false, Http::One, serving).await,
@@ -535,11 +545,14 @@ async fn serve(
                     };
                     match secured {
                         Some(Ok(crate::edge_link::Secured::Link(handoff))) => {
-                            // a link, or a passthrough tunnel: each ends with the listeners' stop on its own
+                            // a link, or a passthrough tunnel: each ends with the listeners' stop on its own, and holds
+                            // its connection slots until then
+                            let hold = serving.hold.take();
                             drop(serving);
                             if let Some(edge) = &tls.edge {
                                 edge.serve(handoff, remote).await;
                             }
+                            drop(hold);
                         }
                         Some(Ok(crate::edge_link::Secured::Http(stream))) => {
                             // the TLS session's exporter, for XMPP channel binding over /xmpp-websocket (RFC 9266)
@@ -556,8 +569,6 @@ async fn serve(
                     }
                 }
             }
-            drop(slot);
-            drop(permit);
         });
     }
     drop(closing_rx);
@@ -575,6 +586,22 @@ async fn serve(
         None => closing.closed().await,
     }
 }
+
+/// TCP keepalive, so a peer that is gone is found while a connection is idle, and `TCP_USER_TIMEOUT` of the write
+/// timeout where the platform has it, so data the peer does not acknowledge fails the connection (HL-027).
+fn tune_socket(stream: &tokio::net::TcpStream, write: Option<Duration>) {
+    let socket = socket2::SockRef::from(stream);
+    let _ = socket.set_tcp_keepalive(&socket2::TcpKeepalive::new().with_time(KEEPALIVE_IDLE));
+    #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
+    if let Some(limit) = write {
+        let _ = socket.set_tcp_user_timeout(Some(limit));
+    }
+    #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
+    let _ = write;
+}
+
+/// How long a connection is idle before TCP keepalive probes start.
+const KEEPALIVE_IDLE: Duration = Duration::from_secs(60);
 
 /// Ctrl-c or SIGTERM ends the binary gracefully. Failed handlers wait on `stop`, used by embedded servers.
 /// The watch tells open notification sockets to close so graceful shutdown can finish. A restart asked for from the
@@ -895,59 +922,40 @@ async fn dispatch_screen(
         };
         web.body = bytes.to_vec();
     }
-    let factory = Arc::clone(&state.factory);
-    let job_factory = Arc::clone(&factory);
-    let serve_factory = Arc::clone(&factory);
-    let (done, result) = tokio::sync::oneshot::channel::<Option<WebResponse>>();
+    // the shared admission (queue age, abandonment, overload; HL-006): a request whose client has gone (the deadline
+    // passed, the client went away) before a worker took it is not run
+    let serve_factory = Arc::clone(&state.factory);
     let guard = Arc::clone(&state.guard);
-    let queued = std::time::Instant::now();
-    let queue_timeout = state.guard.conf().queue_timeout;
     let worker_trace = trace_context.clone();
-    // The job owns `done`. A worker that panics or a pool that stops drops it, which ends the wait. A job nobody waits
-    // for any more (the deadline passed, the client went away) is not run, and one that waited past the queue timeout
-    // is answered `None`, a 503, instead.
-    let submitted = factory.request_pool().try_submit(job_factory, move || {
-        let _trace = moqui_core::telemetry::attach(worker_trace);
-        if done.is_closed() {
-            guard.counts.abandoned.fetch_add(1, Ordering::Relaxed);
-            return Ok(());
-        }
-        if queue_timeout.is_some_and(|wait| queued.elapsed() > wait) {
-            guard.counts.queue_expired.fetch_add(1, Ordering::Relaxed);
-            let _ = done.send(None);
-            return Ok(());
-        }
-        let response = moqui_core::screen::serve(&serve_factory, web);
-        if moqui_core::web::take_auth_failure() {
-            guard.record(client, Event::AuthFailure);
-        }
-        let _ = done.send(Some(response));
-        Ok(())
-    });
-    if let Err(err) = submitted {
-        if err.kind() == ErrorKind::Unavailable {
-            state.guard.counts.queue_full.fetch_add(1, Ordering::Relaxed);
-            return state.guard.unavailable("service unavailable");
-        }
-        return internal_error(err.message());
-    }
+    let served = admission::run(
+        Arc::clone(&state.factory),
+        Arc::clone(&state.guard),
+        state.guard.conf().queue_timeout,
+        move || {
+            let _trace = moqui_core::telemetry::attach(worker_trace);
+            let response = moqui_core::screen::serve(&serve_factory, web);
+            if moqui_core::web::take_auth_failure() {
+                guard.record(client, Event::AuthFailure);
+            }
+            response
+        },
+    );
     // an upload was exempt from the request deadline while it arrived; its screen has the deadline
-    let result = match state.limits.request.filter(|_| upload) {
-        Some(deadline) => match tokio::time::timeout(deadline, result).await {
-            Ok(result) => result,
+    let served = match state.limits.request.filter(|_| upload) {
+        Some(deadline) => match tokio::time::timeout(deadline, served).await {
+            Ok(served) => served,
             Err(_) => return plain(504, "the request took too long"),
         },
-        None => result.await,
+        None => served.await,
     };
-    match result {
-        Ok(Some(response)) => {
+    match served {
+        Ok(response) => {
             // Only the synchronous body construction uses this guard; the stream
             // captures an owned handle for its transfer workers before it returns.
             let _trace = moqui_core::telemetry::attach(trace_context);
             from_web(&state.factory, response)
         }
-        Ok(None) => state.guard.unavailable("the server is busy; try again"),
-        Err(_) => plain(500, "request worker stopped"),
+        Err(refusal) => refusal.response(&state.guard),
     }
 }
 

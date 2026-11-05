@@ -1275,7 +1275,7 @@ impl EntityFacade {
             operation
         };
         // Declared first, so it drops last: the authorization cache is invalidated after the write.
-        let _note = WriteNote(entity_name);
+        let _note = WriteNote(self, entity_name);
         let sub_type = if probe {
             RustOnlyEntityHits::UPDATE_PROBE
         } else if operation == "upsert" {
@@ -1774,12 +1774,12 @@ fn bind_columns(columns: &[&str], values: &FieldMap) -> Vec<Value> {
         .collect()
 }
 
-/// Tells the authorization cache an entity changed, once the write is over.
-struct WriteNote<'a>(&'a str);
+/// Sends the entity-changed notice ([`cache::note_changed`]) once the write is over, also when it ends early or fails.
+struct WriteNote<'a>(&'a EntityFacade, &'a str);
 
 impl Drop for WriteNote<'_> {
     fn drop(&mut self) {
-        (crate::hooks::get().note_write)(self.0);
+        cache::note_changed(self.0, Some(self.1));
     }
 }
 

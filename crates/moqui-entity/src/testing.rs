@@ -113,6 +113,15 @@ pub fn open_at(framework_dir: &std::path::Path) -> EntityFacade {
 }
 
 pub fn open_with(framework_dir: &std::path::Path, options: Options) -> EntityFacade {
+    open_group(framework_dir, options, false)
+}
+
+/// [`open`] with a group whose transactions read one snapshot ([`EntityGroup::with_snapshot_reads`]).
+pub fn open_snapshot_reads() -> EntityFacade {
+    open_group(&framework_dir(), Options::default(), true)
+}
+
+fn open_group(framework_dir: &std::path::Path, options: Options, snapshot_reads: bool) -> EntityFacade {
     let driver: Arc<dyn DbDriver> = Arc::new(MemDriver {
         store: Arc::new(Mutex::new(BTreeMap::new())),
         tape: options.tape,
@@ -132,7 +141,7 @@ pub fn open_with(framework_dir: &std::path::Path, options: Options) -> EntityFac
     let facade = EntityFacade::open(
         framework_dir,
         "transactional",
-        vec![EntityGroup::new("transactional", "postgres", transactions)],
+        vec![EntityGroup::new("transactional", "postgres", transactions).with_snapshot_reads(snapshot_reads)],
     )
     .expect("entity facade");
     facade.set_disable_audit_log(true);

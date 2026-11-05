@@ -16,9 +16,10 @@
 //! the agent pool, logged in as the run's user (`internal_login_user`) with the loop-guard origin set.
 //!
 //! A step takes the run's lease, folds in the input that came meanwhile (steering), finishes what the last step left:
-//! a tool call still waiting runs, a paused one resumes with its input, and one left running by a node that stopped is
-//! `UnknownOutcome` (a READ runs again; a write, destructive or external call never does, and the model is told to check
-//! its outcome). Then the budget is checked (an interactive run pauses with a "continue?" question, a background one
+//! a tool call still waiting runs, a paused one resumes with its input (taken in the transaction that marks it running,
+//! the decision on its approval by the approval's id), and one left running by a node that stopped is `UnknownOutcome`
+//! (a READ runs again; a write, destructive or external call never does, its begun approval is `UnknownOutcome` too,
+//! and the model is told to check its outcome). Then the budget is checked (an interactive run pauses with a "continue?" question, a background one
 //! fails `budget_exhausted`), the request is built from the conversation's frozen prefix, its history and the newest
 //! message's tail, compacted first when it is over the model's high watermark ([`crate::window`]), and the model is
 //! called with no transaction open. A JSON tool mode reply is read as its protocol object, and a native reply's calls
@@ -41,7 +42,7 @@ use serde_json::{json, Value as Json};
 use super::context::{Approvals, Exhausted, RunRef, ScreenHandle, Spill, ToolCallRef, UserRef};
 use super::{
     engine, held, in_tx, lease, load_run, now_millis, pool, quietly, stamp, transition, AgentDef, Budget, Change,
-    EventSink, Hold, LocalRun, RunRow, RunState, TurnContext, INPUT, MESSAGE, PART, QUESTION, RUN, TOOL_CALL,
+    EventSink, Hold, Holder, LocalRun, RunRow, RunState, TurnContext, INPUT, MESSAGE, PART, QUESTION, RUN, TOOL_CALL,
 };
 use crate::prompt::{self, Catalog, PrefixSpec, PromptTexts, PromptVars};
 use crate::provider::{
@@ -502,18 +503,79 @@ fn last_calls(facade: &EntityFacade, run_id: &str) -> Result<Vec<StoredCall>, Er
         .collect())
 }
 
-/// Close the tool calls a run that ended left open: each gets a result saying it did not run, so the conversation's
-/// history has a result for every call.
+/// The failure of a tool that panicked ([`invoke`]).
+const TOOL_PANICKED: &str = "the tool failed unexpectedly";
+
+/// What the model reads of a call that may or may not have taken effect.
+fn unknown_outcome_text(name: &str, why: &str) -> String {
+    format!("The outcome of this {name} call is unknown: {why}. Check whether it took effect before you call it again.")
+}
+
+/// The input a paused call resumes with (HL-040): the decision on its approval, picked by the approval's id; else an
+/// answer or a remote agent's reply (a question, a remote task, a delegated call past its approval); else, for a call
+/// with no approval, a message, which answers a question. A call with an approval never takes a message, so a message
+/// queued meanwhile reaches the conversation.
+fn resume_input(inputs: &[OpenInput], approval: Option<&crate::approval::ApprovalView>) -> Option<usize> {
+    let decision_on = |input: &OpenInput, approval_id: &str| {
+        input.kind == "decision"
+            && input
+                .data
+                .as_ref()
+                .and_then(|data| data.get("approvalId"))
+                .and_then(Json::as_str)
+                == Some(approval_id)
+    };
+    approval
+        .and_then(|view| inputs.iter().position(|input| decision_on(input, &view.approval_id)))
+        .or_else(|| {
+            inputs
+                .iter()
+                .position(|input| input.kind == "answer" || input.kind == "remote")
+        })
+        .or_else(|| {
+            approval
+                .is_none()
+                .then(|| inputs.iter().position(|input| input.kind == "message"))
+                .flatten()
+        })
+}
+
+/// Close the tool calls a run that ended left open, so the conversation's history has a result for every call: one
+/// still pending or waiting did not run; one left running (a write resumed or begun when the step stopped, panicked
+/// or was canceled) may have taken effect and is an unknown outcome (HL-040). A call whose result is stored already is
+/// left as it is.
 pub(crate) fn close_open_calls(facade: &EntityFacade, run_id: &str, sink: &mut EventSink) -> Result<(), Error> {
     let Some(run) = load_run(facade, run_id)? else {
         return Ok(());
     };
     for call in last_calls(facade, run_id)?.into_iter().filter(StoredCall::is_open) {
-        let text = "Not run: the run ended before this call.";
+        let (text, status) = match call.status.as_str() {
+            "AgtcRunning" | "AgtcUnknownOutcome" => {
+                if has_result(facade, &call.tool_call_id)? {
+                    continue;
+                }
+                (
+                    unknown_outcome_text(&call.name, "the run ended while it ran"),
+                    "AgtcUnknownOutcome",
+                )
+            }
+            _ => ("Not run: the run ended before this call.".to_string(), "AgtcFailed"),
+        };
         // in the transition's own transaction, which gave the lease up
-        store_result(facade, &run, &call, text, true, "AgtcFailed", sink, Hold::LeaseOrNone)?;
+        store_result(facade, &run, &call, &text, true, status, sink, Hold::LeaseOrNone)?;
     }
     Ok(())
+}
+
+/// Whether the call's result is stored (a tool message names it).
+fn has_result(facade: &EntityFacade, tool_call_id: &str) -> Result<bool, Error> {
+    Ok(facade
+        .find(PART)?
+        .eq("toolCallId", Value::string(tool_call_id))
+        .eq("partKindEnumId", Value::string("AgpkToolResult"))
+        .disable_authz()
+        .count()?
+        > 0)
 }
 
 /// Store a tool call's result: its row's status and summary, and the tool message the model reads; only while `hold`
@@ -546,14 +608,14 @@ fn store_result_with(
     hold: Hold,
     artifact: Option<&tools::spill::Artifact>,
 ) -> Result<(), Error> {
-    let node = sink.node().to_string();
+    let holder = sink.holder().clone();
     // the artifact is a resource of the run's factory
     let factory = match artifact {
         Some(_) => Some(sink.factory().ok_or_else(|| Error::new("the server is stopping"))?),
         None => None,
     };
     let stored = in_tx(facade, || {
-        held(facade, &run.run_id, &node, hold)?;
+        held(facade, &run.run_id, &holder, hold)?;
         if let (Some(artifact), Some(factory)) = (artifact, &factory) {
             artifact.write(factory.resource(), facade)?;
         }
@@ -613,12 +675,12 @@ fn store_result_with(
 fn set_call_status(
     facade: &EntityFacade,
     run_id: &str,
-    node: &str,
+    holder: &Holder,
     tool_call_id: &str,
     status_id: &str,
 ) -> Result<(), Error> {
     in_tx(facade, || {
-        held(facade, run_id, node, Hold::Lease)?;
+        held(facade, run_id, holder, Hold::Lease)?;
         let mut fields = vec![("statusId".to_string(), Value::string(status_id))];
         if status_id == "AgtcRunning" {
             fields.push(("startedDate".to_string(), stamp(now_millis())));
@@ -752,12 +814,17 @@ fn step(factory: &Arc<ExecutionContextFactory>, run_id: &str, local: &Arc<LocalR
         engine.forget_if(run_id, local);
         return Ok(Next::Stop);
     }
-    if !quietly(|| lease::claim(&facade, run_id, engine.node(), lease::lease_millis(factory)))? {
+    let claimed = quietly(|| lease::claim_generation(&facade, run_id, engine.node(), lease::lease_millis(factory)))?;
+    let Some(generation) = claimed else {
         tracing::info!("agent run {run_id} is held by another node, so this node leaves it");
         engine.forget_if(run_id, local);
         return Ok(Next::Stop);
-    }
+    };
+    // the step writes at the generation of this claim: once the run is claimed again, by another node or by a resume
+    // here, its writes are refused (HL-042)
+    local.set_generation(generation);
     let mut sink = EventSink::new(factory, &facade, run_id, &run.user_id);
+    sink.hold_at(Some(generation));
     if run.cancel_requested || local.cancel.is_canceled() {
         quietly(|| {
             transition(
@@ -871,8 +938,8 @@ fn step(factory: &Arc<ExecutionContextFactory>, run_id: &str, local: &Arc<LocalR
         return next;
     }
     let elapsed = i64::try_from(started.elapsed().as_millis()).unwrap_or(i64::MAX);
-    let node = engine.node().to_string();
-    if let Err(error) = quietly(|| add_active_time(&facade, run_id, &node, elapsed)) {
+    let holder = turn.sink.holder().clone();
+    if let Err(error) = quietly(|| add_active_time(&facade, run_id, &holder, elapsed)) {
         tracing::error!("the working time of agent run {run_id} could not be stored: {error}");
     }
     turn.sink.flush_logged();
@@ -880,10 +947,21 @@ fn step(factory: &Arc<ExecutionContextFactory>, run_id: &str, local: &Arc<LocalR
 }
 
 /// The record references the conversation's tool results and user messages hold (plan 7.7).
-fn seen_references(facade: &EntityFacade, conversation_id: &str) -> Result<tools::format::Seen, Error> {
+pub(crate) fn seen_references(facade: &EntityFacade, conversation_id: &str) -> Result<tools::format::Seen, Error> {
+    // the active window only, as the model reads it (HL-013): its summary stands for the compacted turns
+    let conversation = facade
+        .find(super::CONVERSATION)?
+        .eq("conversationId", Value::string(conversation_id))
+        .disable_authz()
+        .one()?;
+    let through = conversation.as_ref().and_then(|row| int_of(row, "compactedThroughSeq"));
+    let mut seen = tools::format::Seen::default();
+    if let Some(summary) = conversation.as_ref().and_then(|row| text_of(row, "compactionSummary")) {
+        seen.add(&summary);
+    }
     let messages = facade
         .find(MESSAGE)?
-        .eq("conversationId", Value::string(conversation_id))
+        .condition(window::active_messages(conversation_id, through))
         .condition(Condition::is_in(
             "role",
             vec![Value::string("tool"), Value::string("user")],
@@ -896,7 +974,6 @@ fn seen_references(facade: &EntityFacade, conversation_id: &str) -> Result<tools
         .filter_map(|row| text_of(row, "messageId"))
         .map(Value::string)
         .collect();
-    let mut seen = tools::format::Seen::default();
     if ids.is_empty() {
         return Ok(seen);
     }
@@ -959,10 +1036,10 @@ fn tool_counts(facade: &EntityFacade, run_id: &str) -> Result<HashMap<String, u3
     Ok(counts)
 }
 
-fn add_active_time(facade: &EntityFacade, run_id: &str, node: &str, millis: i64) -> Result<(), Error> {
+fn add_active_time(facade: &EntityFacade, run_id: &str, holder: &Holder, millis: i64) -> Result<(), Error> {
     in_tx(facade, || {
         // a step that paused or ended the run gave its lease up already
-        let mut row = held(facade, run_id, node, Hold::LeaseOrNone)?;
+        let mut row = held(facade, run_id, holder, Hold::LeaseOrNone)?;
         let carried = int_of(&row, "activeSeconds").unwrap_or(0) * 1000;
         row.set("activeSeconds", Value::I64((carried + millis + 500) / 1000));
         row.update(facade)
@@ -993,11 +1070,11 @@ impl Turn {
                 ToolsEnd::Canceled => return self.end_canceled(),
             }
         }
-        let node = self.sink.node().to_string();
+        let holder = self.sink.holder().clone();
         for input in inputs {
             let folded = quietly(|| {
                 in_tx(&facade, || {
-                    held(&facade, &run_id, &node, Hold::Lease)?;
+                    held(&facade, &run_id, &holder, Hold::Lease)?;
                     // read again under its lock: the user may have edited it (its text now) or canceled it (taken)
                     let Some(input) = locked_input(&facade, &input)? else {
                         return Ok(false);
@@ -1060,6 +1137,8 @@ impl Turn {
         self.call_model(target, started)
     }
 
+    /// The run's own caps, then whether the user's quota is used up (with the calls in flight); each attempt of the
+    /// step's model call is then admitted with what it may use at most (`CallOptions::quota`).
     fn exhausted(&self) -> Result<Option<Exhausted>, Error> {
         if let Some(exhausted) = self.budget.exhausted() {
             return Ok(Some(exhausted));
@@ -1079,10 +1158,10 @@ impl Turn {
             return fail(&facade, &mut self.sink, &run_id, "budget_exhausted", &text);
         }
         let text = format!("This run reached its limit of {}. Continue?", exhausted.as_str());
-        let node = self.sink.node().to_string();
+        let holder = self.sink.holder().clone();
         let question_id = quietly(|| {
             in_tx(&facade, || {
-                held(&facade, &run_id, &node, Hold::Lease)?;
+                held(&facade, &run_id, &holder, Hold::Lease)?;
                 let mut row = facade.make_value(QUESTION)?;
                 row.set_sequenced_id_primary(&facade)?;
                 row.set("runId", Value::string(&run_id));
@@ -1295,10 +1374,10 @@ impl Turn {
         let message_id = entry.message_id.clone();
         let mut metadata = entry.metadata.clone();
         metadata.insert("tail".to_string(), json!(tail));
-        let node = self.sink.node().to_string();
+        let holder = self.sink.holder().clone();
         let stored = quietly(|| {
             in_tx(&self.facade, || {
-                held(&self.facade, &self.run.run_id, &node, Hold::Lease)?;
+                held(&self.facade, &self.run.run_id, &holder, Hold::Lease)?;
                 self.facade
                     .find(MESSAGE)?
                     .eq("messageId", Value::string(&message_id))
@@ -1334,6 +1413,7 @@ impl Turn {
         options.cancel = self.local.cancel.clone();
         options.deadline = Some(Instant::now() + limit);
         options.length_retry = false;
+        options.quota = Some("agent");
         options.recorder = Some(Recorder {
             llm,
             facade: &self.facade,
@@ -1354,7 +1434,7 @@ impl Turn {
             None,
             target.reasoning != crate::conf::ReasoningLevel::None,
         );
-        let node = self.sink.node().to_string();
+        let holder = self.sink.holder().clone();
         let compactor = Compactor {
             factory: &self.factory,
             facade: &self.facade,
@@ -1362,7 +1442,7 @@ impl Turn {
             conversation_id: &self.run.conversation_id,
             user_id: &self.run.user_id,
             step_seq: self.run_ref.step_seq,
-            node: &node,
+            holder: &holder,
             cancel: &self.local.cancel,
             side: &self.side,
         };
@@ -1463,6 +1543,8 @@ impl Turn {
         options.cancel = self.local.cancel.clone();
         options.deadline = deadline;
         options.nudge = Some(provider::EMPTY_NUDGE.to_string());
+        // each attempt (a retry, the larger-output re-ask, the nudge) is admitted with what it may use
+        options.quota = Some("agent");
         options.compact = Some(&mut compact);
         options.recorder = Some(Recorder {
             llm: &llm,
@@ -1588,6 +1670,10 @@ impl Turn {
         if canceled {
             return self.end_canceled();
         }
+        // an attempt the quota refused (the user's other calls hold what was left): stopped as at a used-up quota
+        if provider::quota_refused(&reply.finish) {
+            return self.budget_stop(Exhausted::Quota);
+        }
         match &reply.finish {
             Finish::Stop | Finish::ToolCalls | Finish::Length => {
                 if reply.cut_tool_calls > 0 {
@@ -1678,10 +1764,10 @@ impl Turn {
         self.budget.cost += spent.cost;
         let facade = self.facade.clone();
         let run_id = self.run.run_id.clone();
-        let node = self.sink.node().to_string();
+        let holder = self.sink.holder().clone();
         quietly(|| {
             in_tx(&facade, || {
-                let mut row = held(&facade, &run_id, &node, Hold::LeaseOrNone)?;
+                let mut row = held(&facade, &run_id, &holder, Hold::LeaseOrNone)?;
                 let add = |row: &EntityValue, field: &str, value: u64| {
                     Value::I64(int_of(row, field).unwrap_or(0) + i64::try_from(value).unwrap_or(i64::MAX))
                 };
@@ -1799,9 +1885,9 @@ impl Turn {
                 Some(call.error.clone()),
             )
         }));
-        let node = self.sink.node().to_string();
+        let holder = self.sink.holder().clone();
         let (calls, bad) = in_tx(&facade, || {
-            held(&facade, &run.run_id, &node, Hold::Lease)?;
+            held(&facade, &run.run_id, &holder, Hold::Lease)?;
             let mut step = facade.make_value("moqui.agent.AgentRunStep")?;
             step.set("runId", Value::string(&run.run_id));
             step.set("stepSeq", Value::I64(step_seq));
@@ -1962,61 +2048,41 @@ impl Turn {
                 .cloned();
             match call.status.as_str() {
                 "AgtcRunning" | "AgtcUnknownOutcome" => {
+                    // reported already, by a step that stopped before the model's next reply
+                    if call.status == "AgtcUnknownOutcome" && quietly(|| has_result(&facade, &call.tool_call_id))? {
+                        index += 1;
+                        continue;
+                    }
                     let read = offered
                         .as_ref()
                         .is_some_and(|offered| offered.tool.spec().classification.is_read());
+                    let approval = quietly(|| crate::approval::of_call(&facade, &self.run.run_id, &call.tool_call_id))?;
+                    // a READ runs again; a write, or a read that holds a write for approval, never does
+                    if !read || approval.is_some() {
+                        self.close_stopped(call, approval.as_ref(), "the server working on it stopped")?;
+                        index += 1;
+                        continue;
+                    }
                     quietly(|| {
                         set_call_status(
                             &facade,
                             &self.run.run_id,
-                            self.sink.node(),
+                            self.sink.holder(),
                             &call.tool_call_id,
                             "AgtcUnknownOutcome",
                         )
                     })?;
-                    if !read {
-                        let text = format!(
-                            "The outcome of this {} call is unknown: the server working on it stopped before it finished. \
-                             Check whether it took effect before you call it again.",
-                            call.name
-                        );
-                        quietly(|| {
-                            store_result(
-                                &facade,
-                                &self.run,
-                                call,
-                                &text,
-                                true,
-                                "AgtcUnknownOutcome",
-                                &mut self.sink,
-                                Hold::Lease,
-                            )
-                        })?;
-                        index += 1;
-                        continue;
-                    }
-                    // a read runs again
                 }
                 "AgtcAwaiting" => {
-                    let at = inputs
-                        .iter()
-                        .position(|input| input.kind != "message")
-                        .or_else(|| (!inputs.is_empty()).then_some(0));
-                    let input = at.map(|at| inputs.remove(at));
+                    let approval = quietly(|| crate::approval::of_call(&facade, &self.run.run_id, &call.tool_call_id))?;
+                    let input = resume_input(inputs, approval.as_ref()).map(|at| inputs.remove(at));
                     let outcome = match (&offered, &input) {
-                        (Some(offered), Some(input)) => {
-                            let node = self.sink.node().to_string();
-                            quietly(|| {
-                                in_tx(&facade, || {
-                                    held(&facade, &self.run.run_id, &node, Hold::Lease)?;
-                                    consume_input(&facade, &input.input_id)
-                                })
-                            })?;
+                        (Some(offered), Some(input)) if self.take_input(call, input)? => {
                             let args = tools::repair::repair(&call.arguments, &offered.tool.spec().parameters).args;
                             self.invoke(call, offered, args, Some(&input.tool_input()))
                         }
                         (None, _) => ToolOutcome::Failed(format!("There is no tool named {} now.", call.name)),
-                        (_, None) => ToolOutcome::Failed("No answer came for this call.".to_string()),
+                        _ => ToolOutcome::Failed("No answer came for this call.".to_string()),
                     };
                     if let Some(pause) = self.finish_call(call, outcome)? {
                         return self.pause(pause);
@@ -2100,6 +2166,75 @@ impl Turn {
             quietly(|| self.sink.flush_logged());
         }
         Ok(ToolsEnd::Continue)
+    }
+
+    /// Take the input a paused call resumes with and mark the call running, in one transaction (HL-040): a step that
+    /// stops while the resumed call runs leaves it running, so the next holder reports its outcome as unknown and
+    /// never takes another input for it. False when the input was taken meanwhile.
+    fn take_input(&self, call: &StoredCall, input: &OpenInput) -> Result<bool, Error> {
+        let facade = &self.facade;
+        let holder = self.sink.holder();
+        quietly(|| {
+            in_tx(facade, || {
+                held(facade, &self.run.run_id, holder, Hold::Lease)?;
+                let taken = facade
+                    .find(INPUT)?
+                    .eq("inputId", Value::string(&input.input_id))
+                    .condition(Condition::is_null("consumedDate"))
+                    .for_update(true)
+                    .disable_authz()
+                    .update_all([("consumedDate".to_string(), stamp(now_millis()))])?;
+                if taken == 0 {
+                    return Ok(false);
+                }
+                facade
+                    .find(TOOL_CALL)?
+                    .eq("toolCallId", Value::string(&call.tool_call_id))
+                    .for_update(true)
+                    .disable_authz()
+                    .update_all([("statusId".to_string(), Value::string("AgtcRunning"))])?;
+                Ok(true)
+            })
+        })
+    }
+
+    /// Close a call that stopped while it ran (HL-040; `why`, as the model reads it: its step stopped, or the tool
+    /// panicked): a write whose approval never began (Pending, Approved) did not run; any other may have taken effect
+    /// and is an unknown outcome. Its approval closes with it ([`crate::approval::close_for_call`]), in the same
+    /// transaction.
+    fn close_stopped(
+        &mut self,
+        call: &StoredCall,
+        approval: Option<&crate::approval::ApprovalView>,
+        why: &str,
+    ) -> Result<(), Error> {
+        use crate::approval::ApprovalStatus;
+        let began =
+            approval.is_none_or(|view| !matches!(view.status, ApprovalStatus::Pending | ApprovalStatus::Approved));
+        let (text, status) = if began {
+            (
+                unknown_outcome_text(&call.name, &format!("{why} before it finished")),
+                "AgtcUnknownOutcome",
+            )
+        } else {
+            (
+                format!(
+                    "This {} call did not run: {why} before the approved write began. Propose it again if it is \
+                     still wanted.",
+                    call.name
+                ),
+                "AgtcFailed",
+            )
+        };
+        let facade = self.facade.clone();
+        let run = self.run.clone();
+        let sink = &mut self.sink;
+        quietly(|| {
+            in_tx(&facade, || {
+                store_result(&facade, &run, call, &text, true, status, sink, Hold::Lease)?;
+                crate::approval::close_for_call(&facade, sink, &run.run_id, &call.tool_call_id)
+            })
+        })
     }
 
     /// The checks before a call: the tool is offered, the run and the tool have calls left, the arguments fit.
@@ -2282,7 +2417,7 @@ impl Turn {
                 set_call_status(
                     &facade,
                     &self.run.run_id,
-                    self.sink.node(),
+                    self.sink.holder(),
                     &call.tool_call_id,
                     "AgtcRunning",
                 )?;
@@ -2428,6 +2563,20 @@ impl Turn {
 
     /// Store what a call came to; a pause is given back for the caller to make.
     fn finish_call(&mut self, call: &StoredCall, outcome: ToolOutcome) -> Result<Option<tools::Pause>, Error> {
+        // a tool that panicked may have taken effect: a write, or a read whose held write has an approval, is closed
+        // as a step that stopped inside it is, never reported as failed (HL-040)
+        if matches!(&outcome, ToolOutcome::Failed(text) if text == TOOL_PANICKED) {
+            let read = self
+                .offered
+                .iter()
+                .find(|offered| offered.tool.spec().name == call.name)
+                .is_some_and(|offered| offered.tool.spec().classification.is_read());
+            let approval = quietly(|| crate::approval::of_call(&self.facade, &self.run.run_id, &call.tool_call_id))?;
+            if !read || approval.is_some() {
+                self.close_stopped(call, approval.as_ref(), "the tool failed")?;
+                return Ok(None);
+            }
+        }
         let facade = self.facade.clone();
         let run = self.run.clone();
         let spill = Spill {
@@ -2495,7 +2644,7 @@ impl Turn {
                     set_call_status(
                         &facade,
                         &self.run.run_id,
-                        self.sink.node(),
+                        self.sink.holder(),
                         &call.tool_call_id,
                         "AgtcAwaiting",
                     )
@@ -2570,7 +2719,7 @@ struct Compactor<'a> {
     conversation_id: &'a str,
     user_id: &'a str,
     step_seq: i64,
-    node: &'a str,
+    holder: &'a Holder,
     cancel: &'a provider::CancelToken,
     side: &'a std::sync::Mutex<SideSpend>,
 }
@@ -2603,7 +2752,7 @@ impl Compactor<'_> {
         if outcome.changed() {
             quietly(|| {
                 in_tx(self.facade, || {
-                    held(self.facade, self.run_id, self.node, Hold::Lease)?;
+                    held(self.facade, self.run_id, self.holder, Hold::Lease)?;
                     window::persist(self.facade, self.conversation_id, history)
                 })
             })?;
@@ -2638,6 +2787,7 @@ impl Compactor<'_> {
         options.cancel = self.cancel.clone();
         options.deadline = Some(Instant::now() + Duration::from_secs(120));
         options.length_retry = false;
+        options.quota = Some("agent");
         options.recorder = Some(Recorder {
             llm: &llm,
             facade: self.facade,
@@ -2675,7 +2825,7 @@ pub(crate) fn invoke(
     }))
     .unwrap_or_else(|_| {
         tracing::error!("agent tool {name} panicked");
-        ToolOutcome::Failed("the tool failed unexpectedly".to_string())
+        ToolOutcome::Failed(TOOL_PANICKED.to_string())
     });
     if let Some(guard) = guard {
         let violations = guard.violations();

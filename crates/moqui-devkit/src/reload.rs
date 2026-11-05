@@ -492,14 +492,28 @@ fn reload_services(factory: &ExecutionContextFactory, files: &mut [FileReload]) 
     if changed.is_empty() {
         return false;
     }
-    if !parse_all(files, &changed, "reload.service") {
+    let started = std::time::Instant::now();
+    // Each changed file is parsed once: the check keeps its root, which the reload reads instead of the file.
+    let Some(parsed) = parse_kept(files, &changed, "reload.service") else {
         return false;
-    }
+    };
+    let checked = started.elapsed();
     let paths: Vec<PathBuf> = changed.iter().map(|&at| PathBuf::from(&files[at].path)).collect();
-    match moqui_core::service::reload_definitions(&paths) {
+    match moqui_core::service::reload_parsed_definitions(&paths, parsed) {
         Ok(reload) => {
             // forms built from a service's parameters (auto-fields-service) read the new ones on next use
+            let cleared = std::time::Instant::now();
             moqui_core::screen::ScreenFacade::of(factory).clear();
+            let phases = &reload.phases;
+            tracing::debug!(
+                check_ms = checked.as_secs_f64() * 1000.0,
+                collect_ms = phases.collect.as_secs_f64() * 1000.0,
+                load_ms = phases.load.as_secs_f64() * 1000.0,
+                resolve_ms = phases.resolve.as_secs_f64() * 1000.0,
+                screen_clear_ms = cleared.elapsed().as_secs_f64() * 1000.0,
+                files = phases.files,
+                "service reload phases"
+            );
             for &at in &changed {
                 let file = &mut files[at];
                 let prefix = service_prefix(&file.path);
@@ -668,23 +682,33 @@ fn indexes(files: &[FileReload], kinds: &[ArtifactKind]) -> Vec<usize> {
 /// Parse each changed file first. When one does not parse, none of them is reloaded, so the definitions loaded before
 /// stay; the file that does not parse has the parse error as its problem, the others say why they waited.
 fn parse_all(files: &mut [FileReload], changed: &[usize], rule: &str) -> bool {
+    parse_kept(files, changed, rule).is_some()
+}
+
+/// [`parse_all`], answering the root of each changed file that is there; `None` when one does not parse.
+fn parse_kept(files: &mut [FileReload], changed: &[usize], rule: &str) -> Option<Vec<(PathBuf, MNode)>> {
     let mut broken = Vec::new();
+    let mut kept = Vec::new();
     for &at in changed {
-        if let Err(problem) = parses(&files[at].path, rule) {
-            broken.push(short_name(&files[at].path).to_string());
-            files[at].summary = "not reloaded: the file does not parse; the definitions loaded before stay".into();
-            files[at].problems.push(problem);
+        match parses(&files[at].path, rule) {
+            Ok(Some(root)) => kept.push((PathBuf::from(&files[at].path), root)),
+            Ok(None) => {}
+            Err(problem) => {
+                broken.push(short_name(&files[at].path).to_string());
+                files[at].summary = "not reloaded: the file does not parse; the definitions loaded before stay".into();
+                files[at].problems.push(problem);
+            }
         }
     }
     if broken.is_empty() {
-        return true;
+        return Some(kept);
     }
     for &at in changed {
         if files[at].problems.is_empty() {
             files[at].summary = format!("not reloaded: {} does not parse", broken.join(", "));
         }
     }
-    false
+    None
 }
 
 fn fail_all(files: &mut [FileReload], changed: &[usize], rule: &str, message: &str) {
@@ -696,12 +720,13 @@ fn fail_all(files: &mut [FileReload], changed: &[usize], rule: &str, message: &s
 }
 
 /// The file's XML parses; a deleted file is no problem (its definitions go with the reload).
-fn parses(path: &str, rule: &str) -> Result<(), Problem> {
+/// The file's root; `None` for a file that is gone (its definitions are removed).
+fn parses(path: &str, rule: &str) -> Result<Option<MNode>, Problem> {
     if !Path::new(path).exists() {
-        return Ok(());
+        return Ok(None);
     }
     MNode::parse_file(Path::new(path))
-        .map(|_| ())
+        .map(Some)
         .map_err(|err| Problem::file_error(path, rule, err.to_string()))
 }
 

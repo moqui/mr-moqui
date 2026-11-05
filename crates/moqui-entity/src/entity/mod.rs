@@ -53,7 +53,7 @@ pub use etl::EtlLoader;
 // for the tests in moqui-core that run these with a context entered
 pub use exec::statement_stats;
 pub use facade::{EntityFacade, EntityFlags, EntityGroup, SimStarter};
-pub use find::{EntityFind, EntityListIterator};
+pub use find::{EntityFind, EntityListIterator, Purged, BULK_CHUNK};
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub use fk::FkScope;

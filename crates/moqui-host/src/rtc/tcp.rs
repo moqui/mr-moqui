@@ -15,22 +15,29 @@
 //! ICE-TCP, passive (plans/Comms-Framework.md §6.5, W4): a TCP listener on `rtc_media_tcp_port` for browsers that cannot
 //! reach the UDP media port, tried before a TURN relay. Each connection carries ICE and DTLS-SRTP datagrams framed as
 //! RFC 4571 says (a two-byte length before each). A thread per connection reads and hands each datagram to the driver;
-//! the driver writes back through the connection's stream. At most [`MAX_CONNECTIONS`] connections.
+//! the driver writes back through the connection's stream. At most [`MAX_CONNECTIONS`] connections, [`PER_SOURCE`] of
+//! them from one source (an IPv6 /64 is one), and one that sends nothing for [`IDLE`] is closed (a browser's ICE
+//! consent checks come every few seconds) (plans/High-Level-Review.md HL-032).
 
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use moqui_lib::source_guard::SourceSlots;
 use moqui_lib::sync::lock;
 
 use super::Command;
 
 /// The most ICE-TCP connections at once.
 const MAX_CONNECTIONS: usize = 1_000;
+/// Of [`MAX_CONNECTIONS`], those one source may hold (an office's browsers behind one address among them).
+const PER_SOURCE: usize = 64;
+/// A connection that sends nothing for this long is closed.
+const IDLE: Duration = Duration::from_secs(30);
 /// The largest datagram in a frame.
 const MAX_FRAME: usize = 2_048;
 
@@ -58,38 +65,33 @@ pub(crate) fn start(
     stop: Arc<AtomicBool>,
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
     listener.set_nonblocking(true)?;
-    let open = Arc::new(AtomicUsize::new(0));
+    let slots = SourceSlots::new(MAX_CONNECTIONS, PER_SOURCE);
     std::thread::Builder::new()
         .name("moqui-rtc-tcp".to_string())
         .spawn(move || {
             while !stop.load(Ordering::Acquire) {
                 match listener.accept() {
                     Ok((stream, peer)) => {
-                        if open.load(Ordering::Acquire) >= MAX_CONNECTIONS {
+                        let Ok(slot) = slots.take(peer.ip()) else {
+                            tracing::debug!("ICE-TCP connection from {peer} refused: too many from there or in all");
                             continue;
-                        }
+                        };
                         let _ = stream.set_nodelay(true);
                         let _ = stream.set_nonblocking(false);
                         let _ = stream.set_write_timeout(Some(Duration::from_millis(100)));
                         let Ok(writer) = stream.try_clone() else { continue };
                         lock(&streams).insert(peer, writer);
-                        open.fetch_add(1, Ordering::AcqRel);
-                        let (conn_streams, conn_commands, conn_stop, conn_open) = (
-                            Arc::clone(&streams),
-                            commands.clone(),
-                            Arc::clone(&stop),
-                            Arc::clone(&open),
-                        );
+                        let (conn_streams, conn_commands, conn_stop) =
+                            (Arc::clone(&streams), commands.clone(), Arc::clone(&stop));
                         let spawned = std::thread::Builder::new()
                             .name("moqui-rtc-tcp-conn".to_string())
                             .spawn(move || {
                                 read_frames(stream, peer, &conn_commands, &conn_stop);
                                 lock(&conn_streams).remove(&peer);
-                                conn_open.fetch_sub(1, Ordering::AcqRel);
+                                drop(slot);
                             });
                         if spawned.is_err() {
                             lock(&streams).remove(&peer);
-                            open.fetch_sub(1, Ordering::AcqRel);
                         }
                     }
                     Err(e) if e.kind() == ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(20)),
@@ -106,17 +108,25 @@ fn read_frames(mut stream: TcpStream, peer: SocketAddr, commands: &SyncSender<Co
     let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
     let mut buf: Vec<u8> = Vec::with_capacity(4_096);
     let mut chunk = [0u8; 4_096];
+    let mut heard = Instant::now();
     while !stop.load(Ordering::Acquire) {
         match stream.read(&mut chunk) {
             Ok(0) => return,
-            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            Ok(n) => {
+                heard = Instant::now();
+                buf.extend_from_slice(&chunk[..n]);
+            }
             Err(e)
                 if matches!(
                     e.kind(),
                     ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
                 ) =>
             {
-                continue
+                if heard.elapsed() >= IDLE {
+                    tracing::debug!("ICE-TCP connection from {peer} closed: nothing for {IDLE:?}");
+                    return;
+                }
+                continue;
             }
             Err(_) => return,
         }

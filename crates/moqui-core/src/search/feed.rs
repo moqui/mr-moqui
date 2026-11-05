@@ -38,8 +38,17 @@
 //!
 //! A feed's receive service defaults to `index#DataDocuments` and its delete service to
 //! `delete#DataDocument`. Other feeds, such as notifications, receive through their own service.
+//!
+//! A row that keeps failing stays, and the drain says so (plans/High-Level-Review.md HL-043): a row whose delivery
+//! fails when it has been pending for the drain's `stuck_after` or longer makes [`FeedReport::stuck`], which the drain
+//! service turns into an error, so its job run is kept and the job's error handling fires. Each drain also sets the
+//! gauges `moqui.search.feed.pending`, `moqui.search.feed.oldest_pending_seconds` and `moqui.search.feed.search_down`,
+//! and rows held while search is down are logged as a warning, at most once an hour while they stay.
 
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use indexmap::IndexMap;
 use jiff::Timestamp;
@@ -62,6 +71,10 @@ const DRAIN_BATCH: i64 = 1000;
 const HELD_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 /// How often a delivery looks again at the records another worker holds.
 const HELD_POLL: std::time::Duration = std::time::Duration::from_millis(20);
+/// How long a row may keep failing before the drain is an error, when its caller names no time.
+pub const DEFAULT_STUCK_AFTER: Duration = Duration::from_secs(60 * 60);
+/// How often the rows held while search is down are logged again while they stay.
+const HELD_LOG_EVERY: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FeedReport {
@@ -69,7 +82,105 @@ pub struct FeedReport {
     pub documents_deleted: usize,
     pub rows_done: usize,
     pub rows_left: usize,
+    /// Rows left because search is down (counted in `rows_left` too).
+    pub rows_held: usize,
+    /// Rows whose delivery failed in this drain after being pending for its `stuck_after` or longer.
+    pub rows_stuck: usize,
+    /// The document types of the stuck rows.
+    pub stuck_documents: Vec<String>,
+    /// Rows pending once the drain is done, and the age of the oldest, in seconds; a drain only.
+    pub rows_pending: usize,
+    pub oldest_pending_seconds: Option<u64>,
 }
+
+impl FeedReport {
+    /// The error of a drain with stuck rows, for the drain service to report; `None` when no row is stuck.
+    #[must_use]
+    pub fn stuck(&self, stuck_after: Duration) -> Option<String> {
+        (self.rows_stuck > 0).then(|| {
+            format!(
+                "{} data feed rows of {} keep failing delivery after {} minutes pending; they stay pending",
+                self.rows_stuck,
+                self.stuck_documents.join(", "),
+                stuck_after.as_secs() / 60
+            )
+        })
+    }
+}
+
+/// The feed gauges of a factory, as the last drain left them ([`FeedReport`]), and when the held rows were last logged.
+#[derive(Default)]
+struct FeedGauges {
+    pending: AtomicU64,
+    /// When the oldest pending row was made, in epoch milliseconds; 0 when none is pending or none has a stamp.
+    oldest_millis: AtomicI64,
+    search_down: AtomicBool,
+    held_logged: Mutex<Option<Instant>>,
+}
+
+impl FeedGauges {
+    /// The factory's gauges, registered on its telemetry when first made. The callbacks hold them weakly.
+    fn of(factory: &crate::context::ExecutionContextFactory) -> Arc<Self> {
+        factory
+            .extension(|factory| {
+                let gauges = Arc::new(Self::default());
+                let telemetry = crate::telemetry::for_factory(factory);
+                let weak = Arc::downgrade(&gauges);
+                telemetry.observe_gauge("moqui.search.feed.pending", move || {
+                    Some(weak.upgrade()?.pending.load(Ordering::Relaxed) as f64)
+                });
+                let weak = Arc::downgrade(&gauges);
+                telemetry.observe_gauge("moqui.search.feed.oldest_pending_seconds", move || {
+                    let oldest = weak.upgrade()?.oldest_millis.load(Ordering::Relaxed);
+                    if oldest == 0 {
+                        return Some(0.0);
+                    }
+                    let age = Timestamp::now().as_millisecond().saturating_sub(oldest).max(0);
+                    Some(age as f64 / 1000.0)
+                });
+                let weak = Arc::downgrade(&gauges);
+                telemetry.observe_gauge("moqui.search.feed.search_down", move || {
+                    Some(f64::from(u8::from(weak.upgrade()?.search_down.load(Ordering::Relaxed))))
+                });
+                FeedGaugesSlot(gauges)
+            })
+            .0
+            .clone()
+    }
+
+    fn record(&self, report: &FeedReport, oldest: Option<Timestamp>, search_down: bool) {
+        self.pending.store(
+            u64::try_from(report.rows_pending).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+        self.oldest_millis
+            .store(oldest.map_or(0, |stamp| stamp.as_millisecond()), Ordering::Relaxed);
+        self.search_down.store(search_down, Ordering::Relaxed);
+        self.log_held(report.rows_held, Instant::now());
+    }
+
+    /// A warning when rows are first held for search, again each [`HELD_LOG_EVERY`] while they stay, and a note when
+    /// none is held any more.
+    fn log_held(&self, held: usize, now: Instant) {
+        let mut logged = moqui_lib::sync::lock(&self.held_logged);
+        if held == 0 {
+            if logged.take().is_some() {
+                tracing::info!("search is up; no data feed rows are held for it");
+            }
+            return;
+        }
+        if logged.is_none_or(|at| now.duration_since(at) >= HELD_LOG_EVERY) {
+            tracing::warn!(
+                rows = held,
+                "search is not configured; data feed rows that go to it stay pending until it is"
+            );
+            *logged = Some(now);
+        }
+    }
+}
+
+/// The extension slot of [`FeedGauges`].
+struct FeedGaugesSlot(Arc<FeedGauges>);
 
 struct Feed {
     data_feed_id: String,
@@ -84,13 +195,15 @@ impl Feed {
     }
 }
 
-/// Deliver pending rows: the given ids, or every row, a page at a time, when `ids` is `None`.
+/// Deliver pending rows: the given ids, or every row, a page at a time, when `ids` is `None` (the drain). A drain counts
+/// the rows whose delivery fails after being pending `stuck_after` or longer ([`FeedReport::stuck`]), and sets the
+/// feed gauges.
 ///
 /// # Errors
 ///
 /// Returns an error when no context is entered or the pending rows cannot be read. A failed
 /// delivery is logged and its rows stay.
-pub fn process_pending(ids: Option<&[String]>) -> Result<FeedReport, Error> {
+pub fn process_pending(ids: Option<&[String]>, stuck_after: Duration) -> Result<FeedReport, Error> {
     let facade = ExecutionContext::with_current(|ec| ec.factory().entity())
         .flatten()
         .ok_or_else(|| Error::new("data feed processing needs an entity facade"))?;
@@ -124,9 +237,12 @@ pub fn process_pending(ids: Option<&[String]>) -> Result<FeedReport, Error> {
             return Ok(report);
         }
         let rows = pending_for_records(&facade, &records)?;
-        deliver_rows(&facade, &rows, &feeds, search_up, &mut report);
+        deliver_rows(&facade, &rows, &feeds, search_up, None, &mut report);
         return Ok(report);
     }
+    let stuck_before = Timestamp::now()
+        .checked_sub(jiff::SignedDuration::try_from(stuck_after).unwrap_or(jiff::SignedDuration::MAX))
+        .unwrap_or(Timestamp::MIN);
     // The drain leaves out the types that cannot be delivered now, reads in id order, and pages
     // past the rows that stay, so rows that keep failing never hide the rows behind them.
     let held: Vec<Value> = feeds
@@ -140,8 +256,9 @@ pub fn process_pending(ids: Option<&[String]>) -> Result<FeedReport, Error> {
             .condition(Condition::is_in("dataDocumentId", held.clone()))
             .count()?;
         if kept > 0 {
-            tracing::debug!(rows = kept, "search is not configured; data feed rows stay");
-            report.rows_left += usize::try_from(kept).unwrap_or(usize::MAX);
+            let kept = usize::try_from(kept).unwrap_or(usize::MAX);
+            report.rows_held += kept;
+            report.rows_left += kept;
         }
     }
     let mut after: Option<String> = None;
@@ -162,13 +279,56 @@ pub fn process_pending(ids: Option<&[String]>) -> Result<FeedReport, Error> {
             .last()
             .and_then(|row| row.get("dataFeedPendingId"))
             .map(to_plain_string);
-        deliver_rows(&facade, &rows, &feeds, search_up, &mut report);
+        deliver_rows(&facade, &rows, &feeds, search_up, Some(stuck_before), &mut report);
         match last {
             Some(last) if i64::try_from(rows.len()).unwrap_or(i64::MAX) >= DRAIN_BATCH => after = Some(last),
             _ => break,
         }
     }
+    // What stays, for the gauges; a failure to read it is logged and leaves the gauges as they were.
+    match pending_state(&facade) {
+        Ok((pending, oldest)) => {
+            report.rows_pending = pending;
+            report.oldest_pending_seconds =
+                oldest.map(|stamp| u64::try_from(Timestamp::now().duration_since(stamp).as_secs()).unwrap_or(0));
+            if let Some(factory) = ExecutionContext::with_current(|ec| Arc::clone(ec.factory())) {
+                FeedGauges::of(&factory).record(&report, oldest, !search_up);
+            }
+        }
+        Err(err) => tracing::warn!(error = %err, "the pending data feed rows could not be counted"),
+    }
+    if report.rows_stuck > 0 {
+        tracing::warn!(
+            rows = report.rows_stuck,
+            documents = %report.stuck_documents.join(", "),
+            "data feed rows keep failing delivery"
+        );
+    }
     Ok(report)
+}
+
+/// The rows pending, and when the oldest with a stamp was made.
+fn pending_state(facade: &EntityFacade) -> Result<(usize, Option<Timestamp>), Error> {
+    let pending = facade.find(PENDING)?.count()?;
+    let oldest = facade
+        .find(PENDING)?
+        .condition(Condition::is_not_null("lastUpdatedStamp"))
+        .select_field("lastUpdatedStamp")
+        .order_by("lastUpdatedStamp", false)
+        .limit(1)
+        .list()?
+        .iter()
+        .find_map(|row| row_stamp(row.get("lastUpdatedStamp")));
+    Ok((usize::try_from(pending).unwrap_or(usize::MAX), oldest))
+}
+
+/// A pending row's `lastUpdatedStamp`, when it has one.
+fn row_stamp(value: Option<&Value>) -> Option<Timestamp> {
+    match value? {
+        Value::Timestamp(stamp) => Some(*stamp),
+        Value::Null => None,
+        other => to_plain_string(other).parse().ok(),
+    }
 }
 
 /// The pending rows of these (document id, record id) pairs, in id order.
@@ -194,15 +354,17 @@ fn pending_for_records(
 
 /// Deliver pending rows by document type, each type in its own transaction, adding to `report`. A record with a row
 /// another worker holds is tried again once that worker's rows are gone, for up to [`HELD_WAIT`]; its rows then stay.
+/// A failed row made at or before `stuck_before` is counted stuck.
 fn deliver_rows(
     facade: &EntityFacade,
     rows: &crate::entity::EntityList,
     feeds: &IndexMap<String, Vec<Feed>>,
     search_up: bool,
+    stuck_before: Option<Timestamp>,
     report: &mut FeedReport,
 ) {
     let deadline = std::time::Instant::now() + HELD_WAIT;
-    let mut held = deliver_once(facade, rows, feeds, search_up, report);
+    let mut held = deliver_once(facade, rows, feeds, search_up, stuck_before, report);
     while !held.is_empty() {
         if std::time::Instant::now() >= deadline {
             let rows: usize = held.iter().map(|(_, count)| count).sum();
@@ -224,7 +386,7 @@ fn deliver_rows(
                 return;
             }
         };
-        held = deliver_once(facade, &rows, feeds, search_up, report);
+        held = deliver_once(facade, &rows, feeds, search_up, stuck_before, report);
     }
 }
 
@@ -235,6 +397,7 @@ fn deliver_once(
     rows: &crate::entity::EntityList,
     feeds: &IndexMap<String, Vec<Feed>>,
     search_up: bool,
+    stuck_before: Option<Timestamp>,
     report: &mut FeedReport,
 ) -> Vec<((String, String), usize)> {
     let mut held_records: Vec<((String, String), usize)> = Vec::new();
@@ -242,6 +405,8 @@ fn deliver_once(
     let mut by_document: IndexMap<String, IndexMap<String, Vec<String>>> = IndexMap::new();
     // The agent that made a pending row's writes (`originAgentId`), by row id.
     let mut row_origins: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    // When each row was made, by row id, to tell a stuck row.
+    let mut row_stamps: std::collections::HashMap<String, Timestamp> = std::collections::HashMap::new();
     for row in rows.iter() {
         let text = |name: &str| row.get(name).map(to_plain_string).unwrap_or_default();
         let (pending_id, document_id, record_id) =
@@ -252,6 +417,9 @@ fn deliver_once(
         let origin = text("originAgentId");
         if !origin.is_empty() {
             row_origins.insert(pending_id.clone(), origin);
+        }
+        if let Some(stamp) = row_stamp(row.get("lastUpdatedStamp")) {
+            row_stamps.insert(pending_id.clone(), stamp);
         }
         by_document
             .entry(document_id)
@@ -364,6 +532,19 @@ fn deliver_once(
                     ExecutionContext::with_current(|ec| ec.message().take_errors_since(mark));
                 }
                 report.rows_left += row_count;
+                if let Some(stuck_before) = stuck_before {
+                    let stuck = records
+                        .values()
+                        .flatten()
+                        .filter(|pending_id| row_stamps.get(*pending_id).is_some_and(|stamp| *stamp <= stuck_before))
+                        .count();
+                    if stuck > 0 {
+                        report.rows_stuck += stuck;
+                        if !report.stuck_documents.contains(&document_id) {
+                            report.stuck_documents.push(document_id.clone());
+                        }
+                    }
+                }
             }
         }
     }
@@ -598,145 +779,5 @@ pub fn rebuild_feed(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::context::ExecutionContextFactory;
-
-    fn create_row(facade: &EntityFacade, entity: &str, pairs: &[(&str, &str)]) {
-        let mut row = facade.make_value(entity).unwrap();
-        for (name, value) in pairs {
-            row.set(*name, Value::string(*value));
-        }
-        row.create(facade).unwrap();
-    }
-
-    fn pending(facade: &EntityFacade, id: &str, document_id: &str) {
-        create_row(
-            facade,
-            PENDING,
-            &[
-                ("dataFeedPendingId", id),
-                ("dataDocumentId", document_id),
-                ("primaryKey", "F1"),
-                ("operation", "index"),
-            ],
-        );
-    }
-
-    #[test]
-    fn the_drain_pages_past_rows_that_stay() {
-        let ctx = ExecutionContextFactory::test_context();
-        let facade = crate::testing::open();
-        ctx.factory().set_entity(facade.clone());
-        let _entered = ctx.enter();
-        // GOOD assembles (its record is gone, so it is a delete with no feed to tell); BAD has no
-        // definition, so its delivery fails; HELD goes to search, which is not configured.
-        create_row(
-            &facade,
-            "moqui.entity.document.DataDocument",
-            &[("dataDocumentId", "GOOD"), ("primaryEntityName", "moqui.test.Foo")],
-        );
-        create_row(
-            &facade,
-            "moqui.entity.feed.DataFeed",
-            &[("dataFeedId", "SEARCH"), ("dataFeedTypeEnumId", REALTIME_PUSH)],
-        );
-        create_row(
-            &facade,
-            "moqui.entity.feed.DataFeedDocument",
-            &[("dataFeedId", "SEARCH"), ("dataDocumentId", "HELD")],
-        );
-        pending(&facade, "A0000", "HELD");
-        let bad = usize::try_from(DRAIN_BATCH).unwrap() + 1;
-        for index in 0..bad {
-            pending(&facade, &format!("P{index:05}"), "BAD");
-        }
-        pending(&facade, "Q00000", "GOOD");
-
-        let report = process_pending(None).unwrap();
-        assert_eq!(report.rows_done, 1, "{report:?}");
-        assert_eq!(report.documents_deleted, 1, "{report:?}");
-        assert_eq!(report.rows_left, bad + 1, "{report:?}");
-        let left = facade.find(PENDING).unwrap().count().unwrap();
-        assert_eq!(left, i64::try_from(bad + 1).unwrap());
-        let good = facade
-            .find(PENDING)
-            .unwrap()
-            .eq("dataFeedPendingId", Value::string("Q00000"))
-            .one()
-            .unwrap();
-        assert!(good.is_none());
-    }
-
-    #[test]
-    fn a_row_another_worker_took_is_not_delivered_again() {
-        let ctx = ExecutionContextFactory::test_context();
-        let facade = crate::testing::open();
-        ctx.factory().set_entity(facade.clone());
-        let _entered = ctx.enter();
-        create_row(
-            &facade,
-            "moqui.entity.document.DataDocument",
-            &[("dataDocumentId", "GOOD"), ("primaryEntityName", "moqui.test.Foo")],
-        );
-        pending(&facade, "R00001", "GOOD");
-        // This worker read the row; another delivered it and deleted it before this one got to it.
-        let rows = facade.find(PENDING).unwrap().list().unwrap();
-        assert_eq!(rows.len(), 1);
-        let mut gone = facade.make_value(PENDING).unwrap();
-        gone.set("dataFeedPendingId", Value::string("R00001"));
-        gone.delete(&facade).unwrap();
-
-        let mut report = FeedReport::default();
-        deliver_rows(&facade, &rows, &realtime_feeds(&facade).unwrap(), false, &mut report);
-        assert_eq!(report, FeedReport::default(), "{report:?}");
-
-        // A row still there is claimed and delivered once; the second pass finds it gone.
-        pending(&facade, "R00002", "GOOD");
-        let rows = facade.find(PENDING).unwrap().list().unwrap();
-        let mut first = FeedReport::default();
-        deliver_rows(&facade, &rows, &realtime_feeds(&facade).unwrap(), false, &mut first);
-        assert_eq!((first.rows_done, first.documents_deleted), (1, 1), "{first:?}");
-        let mut second = FeedReport::default();
-        deliver_rows(&facade, &rows, &realtime_feeds(&facade).unwrap(), false, &mut second);
-        assert_eq!(second, FeedReport::default(), "{second:?}");
-
-        // A worker given the later row of a record takes the earlier one too (its own delivery waits on whoever has
-        // it), and leaves another record's row alone.
-        pending(&facade, "R00003", "GOOD");
-        pending(&facade, "R00004", "GOOD");
-        create_row(
-            &facade,
-            PENDING,
-            &[
-                ("dataFeedPendingId", "R00005"),
-                ("dataDocumentId", "GOOD"),
-                ("primaryKey", "F2"),
-                ("operation", "index"),
-            ],
-        );
-        let report = process_pending(Some(&["R00004".to_string()])).unwrap();
-        assert_eq!(report.rows_done, 2, "{report:?}");
-        let left: Vec<String> = facade
-            .find(PENDING)
-            .unwrap()
-            .list()
-            .unwrap()
-            .iter()
-            .filter_map(|row| row.get("dataFeedPendingId").map(to_plain_string))
-            .collect();
-        assert_eq!(left, vec!["R00005".to_string()]);
-    }
-
-    #[test]
-    fn a_failed_call_takes_back_only_its_own_errors() {
-        let ctx = ExecutionContextFactory::test_context();
-        ctx.factory().set_entity(crate::testing::open());
-        let _entered = ctx.enter();
-        ctx.message().add_message("kept");
-        ctx.message().add_error("earlier");
-        assert!(call_checked("moqui.test.NoSuchServices.receive#Documents", &BTreeMap::new()).is_err());
-        assert_eq!(ctx.message().errors(), ["earlier"]);
-        assert_eq!(ctx.message().messages(), ["kept"]);
-    }
-}
+#[path = "feed_tests.rs"]
+mod tests;

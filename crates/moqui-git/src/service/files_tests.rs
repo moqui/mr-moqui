@@ -2811,18 +2811,20 @@ fn an_external_user_reaches_no_records_drive() {
 }
 
 /// A WebDAV lock of alice's on `location`, as `dav::locks` takes it.
-fn webdav_lock(location: &str) {
+fn webdav_lock(facade: &EntityFacade, location: &str) {
     moqui_core::resource::locks::put(
+        facade,
         location,
-        moqui_core::resource::locks::Lock {
+        &moqui_core::resource::locks::Lock {
             token: "opaquelocktoken:files-test".to_string(),
             user_id: "alice".to_string(),
             owner: String::new(),
             depth_infinity: false,
             seconds: 60,
-            expires: std::time::Instant::now() + std::time::Duration::from_secs(60),
+            expires_millis: moqui_core::resource::locks::Lock::expiry(60),
         },
-    );
+    )
+    .unwrap();
 }
 
 #[test]
@@ -2857,7 +2859,7 @@ fn a_webdav_lock_holds_every_writer_of_that_file_and_nothing_beside_it() {
             other => panic!("no drive: {other:?}"),
         };
         let locked = format!("{root}/Docs/a.txt");
-        webdav_lock(&locked);
+        webdav_lock(&facade, &locked);
 
         login("bob");
         // only the locked file is refused: the file beside it in the same upload is written
@@ -2943,14 +2945,17 @@ fn a_webdav_lock_holds_every_writer_of_that_file_and_nothing_beside_it() {
         assert_eq!(read(&locked), "alice");
 
         // a trash by the owner drops the lock of what it took, and bob writes there again
-        webdav_lock(&locked);
+        webdav_lock(&facade, &locked);
         let trashed = ok("trash#Resource", &[("driveId", text(&id)), ("path", text("Docs"))]);
         assert_eq!(
             field(&maps(&trashed, "trashList")[0], "outcome"),
             "trashed",
             "{storage}"
         );
-        assert!(moqui_core::resource::locks::get(&locked).is_none(), "{storage}");
+        assert!(
+            moqui_core::resource::locks::get(&facade, &locked).unwrap().is_none(),
+            "{storage}"
+        );
         login("bob");
         ok(
             "upload#Resource",

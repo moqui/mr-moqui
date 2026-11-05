@@ -17,7 +17,7 @@
 use std::any::Any;
 use std::collections::VecDeque;
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::{self, JoinHandle};
 
@@ -29,7 +29,8 @@ use crate::context::{Error, ErrorKind, ExecutionContextFactory};
 
 const DEFAULT_REQUEST_WORKERS: u32 = 8;
 const DEFAULT_REQUEST_QUEUE: u32 = 64;
-const DEFAULT_SERVICE_WORKERS: u32 = 32;
+const DEFAULT_SERVICE_WORKERS: u32 = 25;
+const DEFAULT_TRANSFER_WORKERS: u32 = 4;
 
 /// Factory-owned request workers. [`RequestPool::idle`] starts no threads.
 ///
@@ -107,8 +108,27 @@ impl RequestPool {
     where
         T: Send + 'static,
     {
-        let shared = self.running()?;
         let (tx, rx) = mpsc::channel();
+        self.try_submit_then(factory, job, move |result| {
+            let _ = tx.send(result);
+        })?;
+        Ok(rx)
+    }
+
+    /// Queue `job` and hand its result to `done`, which runs on the worker once the job's context and cleanup have
+    /// ended: the completion hook an async caller finishes its own future from, so no thread waits on the reply
+    /// (`plans/High-Level-Review.md` HL-006). A full or stopped pool returns an error and calls neither; a job still
+    /// queued when the pool stops gets `done` with an error.
+    pub fn try_submit_then<T>(
+        &self,
+        factory: Arc<ExecutionContextFactory>,
+        job: impl FnOnce() -> Result<T, Error> + Send + 'static,
+        done: impl FnOnce(Result<T, Error>) + Send + 'static,
+    ) -> Result<(), Error>
+    where
+        T: Send + 'static,
+    {
+        let shared = self.running()?;
         {
             let mut state = lock(&shared.state);
             if state.stop {
@@ -117,10 +137,10 @@ impl RequestPool {
             if state.queue.len() >= shared.queue_cap {
                 return Err(Error::of_kind(ErrorKind::Unavailable, "request queue is full"));
             }
-            state.queue.push_back(pack(factory, job, tx));
+            state.queue.push_back(pack(factory, job, done));
         }
         shared.wake.notify_all();
-        Ok(rx)
+        Ok(())
     }
 
     /// Jobs waiting for a worker. A job a worker has already taken is not included.
@@ -154,7 +174,7 @@ impl Drop for RequestPool {
     }
 }
 
-/// `(request-pool-max, worker-pool-max)`. Missing or non-integer attributes are 8 and 32.
+/// `(request-pool-max, worker-pool-max)`. Missing or non-integer attributes are 8 and 25.
 pub fn caps(conf_text: &str) -> (u32, u32) {
     let Ok(Some(tools)) = tools_of(conf_text) else {
         return (DEFAULT_REQUEST_WORKERS, DEFAULT_SERVICE_WORKERS);
@@ -175,16 +195,81 @@ pub fn caps(conf_text: &str) -> (u32, u32) {
 /// to it (a database of its own that each transaction spans, such as `content`), with room for one agent worker more
 /// in a binary that links the agent runtime (crate::llm_hooks): the agent pool takes as many of its
 /// `max-concurrent-runs` as the rest of the pool leaves ([`spare_connections`]), at least one.
+///
+/// The pool the `content` group reads from also holds a connection for each streamed database download reading a
+/// window ([`transfer_readers`]). When the webapp's `transfer-workers` do not fit beside the workers and the agent
+/// worker, this warns and the downloads read fewer at once, at least one (`plans/High-Level-Review.md` HL-022).
 pub fn check_serve_caps(factory: &ExecutionContextFactory) -> Result<(), Error> {
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
     let (request_cap, service_cap) = caps(&factory.conf_text());
-    let agent_workers = u32::from(crate::llm_hooks::linked());
+    let agent_workers = agent_workers();
     for (group, manager) in linked_managers(&facade)? {
         manager
             .check_caps_with(request_cap, service_cap, agent_workers)
             .map_err(|err| Error::new(format!("datasource {group}: {err}")))?;
     }
+    let asked = transfer_workers(factory);
+    let fits = transfer_readers(factory);
+    if fits < asked {
+        let (group, manager) = content_manager(&facade)?;
+        let left = manager.spare_connections(request_cap, service_cap);
+        tracing::warn!(
+            "datasource {group}: the {asked} transfer-workers of webapp webroot do not fit: max - reserve less \
+             ({request_cap} + {service_cap}) * 2 leaves {left}, {agent_workers} of them for an agent worker; streamed \
+             database downloads read {fits} at a time (raise pool-maxsize to fit them)"
+        );
+    }
     Ok(())
+}
+
+/// One agent worker in a binary that links the agent runtime, else none.
+fn agent_workers() -> u32 {
+    u32::from(crate::llm_hooks::linked())
+}
+
+/// The `webroot` webapp's `transfer-workers`: how many reads of database sources streamed responses may run at once,
+/// each holding a connection of the `content` group's pool for one window. 4 when missing or not a positive number.
+pub fn transfer_workers(factory: &ExecutionContextFactory) -> u32 {
+    factory
+        .webapp_setting("webroot", "transfer-workers")
+        .parse::<u32>()
+        .ok()
+        .filter(|workers| *workers > 0)
+        .unwrap_or(DEFAULT_TRANSFER_WORKERS)
+}
+
+/// The streamed database reads that may run at once: [`transfer_workers`], or as many as the `content` group's pool
+/// leaves beside the request and service workers and an agent worker when that is fewer, at least one. Reserve
+/// connections are never counted. All of them with no entity facade.
+pub fn transfer_readers(factory: &ExecutionContextFactory) -> u32 {
+    let asked = transfer_workers(factory);
+    let Some(facade) = factory.entity() else {
+        return asked;
+    };
+    let Ok((_, manager)) = content_manager(&facade) else {
+        return asked;
+    };
+    let (request_cap, service_cap) = caps(&factory.conf_text());
+    let left = manager
+        .spare_connections(request_cap, service_cap)
+        .saturating_sub(agent_workers());
+    asked.min(left.max(1))
+}
+
+/// The manager the `content` group reads from, with the name of a group it serves: the group's own, or the default
+/// group's when the content shares the transactional database.
+fn content_manager(
+    facade: &crate::entity::EntityFacade,
+) -> Result<(String, crate::transaction::TransactionManager), Error> {
+    let manager = match crate::service::content::content_transactions(facade) {
+        Some(manager) => manager,
+        None => default_manager(facade)?,
+    };
+    let group = facade
+        .groups()
+        .find(|(_, _, transactions)| transactions.shares_stack(&manager))
+        .map_or_else(String::new, |(name, _, _)| name.to_string());
+    Ok((group, manager))
 }
 
 /// The default group's manager and the managers linked to it, each with the name of a group it serves.
@@ -213,29 +298,38 @@ fn default_manager(facade: &crate::entity::EntityFacade) -> Result<crate::transa
 }
 
 /// The connections of the default group's pool that the request and service workers leave (`max - reserve` less
-/// `(request cap + service cap) * 2`), the fewest of it and the pools linked to it; `None` with no entity facade.
+/// `(request cap + service cap) * 2`), and of the `content` group's pool the streamed downloads' reads leave too
+/// ([`transfer_readers`]): the fewest of it and the pools linked to it; `None` with no entity facade.
 pub fn spare_connections(factory: &ExecutionContextFactory) -> Option<u32> {
     let facade = factory.entity()?;
     let (request_cap, service_cap) = caps(&factory.conf_text());
+    let content = content_manager(&facade).ok().map(|(_, manager)| manager);
+    let transfers = transfer_readers(factory);
     linked_managers(&facade).ok().and_then(|managers| {
         managers
             .iter()
-            .map(|(_, manager)| manager.spare_connections(request_cap, service_cap))
+            .map(|(_, manager)| {
+                let spare = manager.spare_connections(request_cap, service_cap);
+                if content.as_ref().is_some_and(|content| content.shares_stack(manager)) {
+                    spare.saturating_sub(transfers)
+                } else {
+                    spare
+                }
+            })
             .min()
     })
 }
 
-fn pack<T, F>(factory: Arc<ExecutionContextFactory>, job: F, tx: Sender<Result<T, Error>>) -> Work
+fn pack<T, F, D>(factory: Arc<ExecutionContextFactory>, job: F, done: D) -> Work
 where
     T: Send + 'static,
     F: FnOnce() -> Result<T, Error> + Send + 'static,
+    D: FnOnce(Result<T, Error>) + Send + 'static,
 {
     Work {
         factory,
         run: Box::new(move || job().map(|value| Box::new(value) as JobOutput)),
-        finish: Box::new(move |result| {
-            let _ = tx.send(map_job_result(result));
-        }),
+        finish: Box::new(move |result| done(map_job_result(result))),
     }
 }
 

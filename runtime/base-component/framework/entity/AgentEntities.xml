@@ -194,6 +194,8 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="pauseExpireDate" type="date-time"/>
         <field name="leaseOwner" type="text-medium"/>
         <field name="leaseExpireDate" type="date-time"/>
+        <field name="leaseGeneration" type="number-integer"><description>Moved on by every claim of the lease but a
+            renewal; each write checks it with leaseOwner, so a node of an older holding writes nothing (llm/run/lease.rs)</description></field>
         <field name="attempt" type="number-integer"/>
         <field name="cancelRequested" type="text-indicator"/>
         <field name="lastEventSeq" type="number-integer"/>

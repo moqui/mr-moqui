@@ -14,15 +14,23 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
-    <service verb="clean" noun="ServiceJobRun" authenticate="false" transaction-timeout="600">
-        <in-parameters><parameter name="daysToKeep" type="Integer" default="90"/></in-parameters>
+    <service verb="clean" noun="ServiceJobRun" authenticate="false" transaction="ignore">
+        <description>
+            Delete job runs older than daysToKeep, a chunk of rows at a time, each chunk committed on its own, so a large
+            backlog is worked down over runs instead of rolling back whole. No chunk begins after maxSeconds
+            (plans/High-Level-Review.md HL-033).
+        </description>
+        <in-parameters>
+            <parameter name="daysToKeep" type="Integer" default="90"/>
+            <parameter name="maxSeconds" type="Integer" default="600"/>
+        </in-parameters>
         <out-parameters><parameter name="recordsRemoved" type="Long"/></out-parameters>
         <actions>
             <script>
                 const basisTimestamp = new Date(ec.user.timestampMillis(ec.user.nowTimestamp) - daysToKeep * 86400000).toISOString()
                 recordsRemoved = ec.entity.find("moqui.service.job.ServiceJobRun")
                         .condition(ec.entity.conditionFactory.makeCondition("startTime", "&lt;", basisTimestamp))
-                        .disableAuthz().deleteAll()
+                        .disableAuthz().purge(maxSeconds)
             </script>
             <log level="info" message="Removed ${recordsRemoved} ServiceJobRun records."/>
         </actions>

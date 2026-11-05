@@ -422,12 +422,13 @@ fn a_non_key_find_sees_the_sim_update_not_the_stale_row() {
     assert!(find_one(facade, "moqui.test.TestEntity", "testMedium", "npk-orig").is_none());
     let by_created = find_one(facade, "moqui.test.TestEntity", "testMedium", "npk-new").unwrap();
     assert_eq!(text(&by_created, "testId"), "TCNPK2");
-    // A find one with the whole primary key ignores the other condition, in production and in the sim.
+    // A find one with the whole primary key ignores another field from a map (the context of an `entity-find-one`), in
+    // production and in the sim.
     let key_plus_old = facade
         .find("moqui.test.TestEntity")
         .unwrap()
         .eq("testId", Value::string("TCNPK1"))
-        .eq("testMedium", Value::string("npk-orig"))
+        .condition_from_map(Condition::equals("testMedium", Value::string("npk-orig")))
         .one()
         .unwrap()
         .unwrap();

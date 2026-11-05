@@ -202,8 +202,8 @@ fn notws_push_and_one_cluster_invalidation() {
     let (session_fp, cert_fp) = member_fingerprints(&factory);
     let port = server.cluster_address().port();
     insert_peer(&factory, &session_fp, &cert_fp, port);
-    // A member that joins is seen on the next heartbeat tick, which reads the member list again.
-    factory.service_pools().tick();
+    // A member that joins is seen on the next heartbeat, which reads the member list again.
+    moqui_core::cluster::heartbeat(&factory);
     let before = server.cluster_posts().len();
     create_test_entity(&factory);
     // The post goes from the cluster sender thread after commit, not from the committing thread.

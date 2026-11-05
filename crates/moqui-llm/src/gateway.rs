@@ -1034,12 +1034,15 @@ fn call(
             ),
         )));
     }
+    // the reservation lasts the call's time and a minute more, should this node stop before the call ends
+    let ttl = Duration::from_secs(llm.conf().gateway.timeout.max(1) + 60);
     let held = admit(
         facade,
         &llm.conf().limits,
         caller,
         &alias.name,
         &prepared.reserve(&target),
+        ttl,
         open,
     )
     .map_err(Answer::Reply)?;
@@ -1073,49 +1076,50 @@ fn call(
     })
 }
 
-/// The quotas of the user and the client with what the call may use at most (`reserve`), then the host's room
-/// (`open`), then the requests per minute of both and the tarpit, which count only a call the host has room for.
+/// The quotas of the user and the client with what the call may use at most (`reserve`), admitted and reserved for
+/// `ttl` under their lock rows (`usage::admit`), then the host's room (`open`), then the requests per minute of both
+/// and the tarpit, which count only a call the host has room for. What is held keeps the reservation until the call
+/// ends, its `LlmCall` row written.
 fn admit(
     facade: &EntityFacade,
     limits: &super::conf::LimitsConf,
     caller: &Caller,
     alias: &str,
     reserve: &Reserve,
+    ttl: Duration,
     open: Open<'_>,
 ) -> Result<Held, Reply> {
     let now = jiff::Timestamp::now().as_millisecond();
     let failed = |error: &Error| internal(error, "quota check");
-    let status = usage::check_quota_reserving(facade, limits, &caller.user_id, "gateway", now, reserve)
-        .map_err(|error| failed(&error))?;
-    if let Some(reason) = &status.exceeded {
-        let seconds = usage::seconds_until_reset(&status.limit, now).unwrap_or(3600);
-        return Err(too_many(
-            "insufficient_quota",
-            &format!("the LLM quota does not allow the call: {reason}"),
-            seconds,
-        ));
-    }
-    if let Some(client) = &caller.client {
-        if client.daily_tokens.is_some() || client.daily_cost.is_some() {
-            let (start, _) = usage::day_of(now)
-                .and_then(usage::day_bounds)
-                .map_err(|error| failed(&error))?;
-            let used = usage::client_calls_since(facade, &client.client_id, start).map_err(|error| failed(&error))?;
-            if let Some(reason) = reserve.exceeds(&used, client.daily_tokens, client.daily_cost) {
-                let day = usage::QuotaLimit {
-                    period: "day".to_string(),
-                    ..usage::QuotaLimit::default()
-                };
-                let seconds = usage::seconds_until_reset(&day, now).unwrap_or(3600);
-                return Err(too_many(
-                    "insufficient_quota",
-                    &format!("the client's daily limit does not allow the call: {reason}"),
-                    seconds,
-                ));
-            }
+    let client = caller.client.as_ref().map(|client| usage::ClientLimit {
+        client_id: client.client_id.clone(),
+        daily_tokens: client.daily_tokens,
+        daily_cost: client.daily_cost,
+    });
+    let admission = usage::Admission {
+        user_id: Some(&caller.user_id),
+        scope: "gateway",
+        client: client.as_ref(),
+        reserve: reserve.clone(),
+        ttl,
+    };
+    let reservation = match usage::admit(facade, limits, &admission, now).map_err(|error| failed(&error))? {
+        Ok(reservation) => reservation,
+        Err(refusal) => {
+            let seconds = usage::seconds_until_reset(&refusal.limit, now).unwrap_or(3600);
+            let whose = if refusal.client {
+                "the client's daily limit"
+            } else {
+                "the LLM quota"
+            };
+            return Err(too_many(
+                "insufficient_quota",
+                &format!("{whose} does not allow the call: {}", refusal.reason),
+                seconds,
+            ));
         }
-    }
-    let held = open(&caller.user_id)?;
+    };
+    let held: Held = Box::new((open(&caller.user_id)?, reservation));
     let user_rate = usage::quota_limits(facade, limits, &caller.user_id, "gateway")
         .map(|limits| usage::requests_per_minute(&limits))
         .map_err(|error| failed(&error))?;

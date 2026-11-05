@@ -43,6 +43,59 @@ fn idle_rejects_and_runs_nothing() {
     assert_eq!(ran.load(Ordering::SeqCst), 0);
 }
 
+/// The completion hook gets the result on the worker, after the job's context has ended; a job still queued when the
+/// pool stops gets an error.
+#[test]
+fn the_completion_hook_gets_the_result_and_a_stop_fails_a_queued_job() {
+    let pool = RequestPool::idle();
+    pool.start(1, 4).unwrap();
+    let factory = test_factory();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let done_tx = tx.clone();
+    pool.try_submit_then(
+        Arc::clone(&factory),
+        || Ok::<_, Error>(7),
+        move |result| {
+            let entered = crate::context::ExecutionContext::is_entered();
+            let _ = done_tx.send((result.map_err(|err| err.to_string()), entered));
+        },
+    )
+    .unwrap();
+    let (result, entered) = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(result, Ok(7));
+    assert!(!entered, "the hook runs after the job's context ended");
+
+    let gate = Arc::new((Mutex::new(false), Condvar::new()));
+    let _release = NotifyOnDrop(Arc::clone(&gate));
+    let running = Arc::new((Mutex::new(false), Condvar::new()));
+    let (gate_job, running_job) = (Arc::clone(&gate), Arc::clone(&running));
+    pool.try_submit_then(
+        Arc::clone(&factory),
+        move || {
+            set_flag(&running_job);
+            wait_flag(&gate_job);
+            Ok::<_, Error>(0)
+        },
+        |_| {},
+    )
+    .unwrap();
+    wait_flag(&running);
+    let queued_tx = tx.clone();
+    pool.try_submit_then(
+        Arc::clone(&factory),
+        || Ok::<_, Error>(1),
+        move |result| {
+            let _ = queued_tx.send((result.map_err(|err| err.to_string()), false));
+        },
+    )
+    .unwrap();
+    let stopping = std::thread::spawn(move || pool.shutdown());
+    let (result, _) = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(result.unwrap_err().contains("not running"));
+    set_flag(&gate);
+    stopping.join().unwrap();
+}
+
 #[test]
 fn full_queue_rejects_without_running_the_job() {
     let pool = RequestPool::idle();
@@ -87,14 +140,14 @@ fn caps_read_request_and_service_max() {
     let text = r#"<tools request-pool-max="3" request-queue="5" worker-pool-max="9"/>"#;
     assert_eq!(caps(text), (3, 9));
     assert_eq!(super::request_sizes(text).unwrap(), (3, 5));
-    assert_eq!(caps("<moqui-conf/>"), (8, 32));
+    assert_eq!(caps("<moqui-conf/>"), (8, 25));
     assert_eq!(super::request_sizes("<moqui-conf/>").unwrap(), (8, 64));
     let junk =
         r#"<moqui-conf><tools request-pool-max="nope" request-queue="nope" worker-pool-max="nope"/></moqui-conf>"#;
-    assert_eq!(caps(junk), (8, 32));
+    assert_eq!(caps(junk), (8, 25));
     assert_eq!(super::request_sizes(junk).unwrap(), (8, 64));
     let conf = std::fs::read_to_string(framework_dir().join("conf/MoquiDefaultConf.xml")).unwrap();
-    assert_eq!(caps(&conf), (8, 32));
+    assert_eq!(caps(&conf), (8, 25));
     let root = MNode::parse_text("moqui-conf", &conf).unwrap();
     let tools = root.first_named("tools").unwrap();
     assert_eq!(tools.attribute("request-pool-max").as_deref(), Some("8"));
@@ -118,12 +171,12 @@ fn panic_is_an_error_and_the_worker_continues() {
 }
 
 #[test]
-fn serve_caps_reject_a_small_pool_and_accept_8_and_32() {
+fn serve_caps_reject_a_small_pool_and_accept_8_and_25() {
     let ctx = ExecutionContextFactory::test_context();
     let factory = ctx.factory();
     let missing = check_serve_caps(factory).unwrap_err();
     assert!(missing.to_string().contains("no entity facade"), "{missing}");
-    assert_eq!(caps(&factory.conf_text()), (8, 32));
+    assert_eq!(caps(&factory.conf_text()), (8, 25));
 
     factory.set_entity(facade(PoolConfig {
         min: 0,
@@ -133,18 +186,92 @@ fn serve_caps_reject_a_small_pool_and_accept_8_and_32() {
         ..Default::default()
     }));
     let err = check_serve_caps(factory).unwrap_err();
-    assert!(err.to_string().contains("(8 + 32) * 2"), "{err}");
+    assert!(err.to_string().contains("(8 + 25) * 2"), "{err}");
 
-    // 80 for the request and service workers, and one agent worker with the llm feature, within 90 less 8 reserve
-    factory.set_entity(facade(PoolConfig {
+    // 66 for the request and service workers, one agent worker with the llm feature, and the 4 transfer reads (the
+    // content shares this pool, as with an external transactional database) within 80 less 8 reserve
+    factory.set_entity(facade(sized(80)));
+    check_serve_caps(factory).unwrap();
+    assert_eq!(super::transfer_readers(factory), 4);
+    assert_eq!(super::spare_connections(factory), Some(2));
+}
+
+/// Streamed database downloads hold a connection of the content group's pool for each window they read: the startup
+/// check counts them there, and a pool that cannot hold them beside the workers warns and admits fewer, never a reserve
+/// connection (plans/High-Level-Review.md HL-022).
+#[test]
+fn transfer_reads_count_in_the_content_pool() {
+    let ctx = ExecutionContextFactory::test_context();
+    let factory = ctx.factory();
+    assert_eq!(super::transfer_workers(factory), 4);
+    let agent = u32::from(crate::llm_hooks::linked());
+
+    // the shipped pools, read as boot reads them: the embedded transactional database takes the postgres database
+    // conf's size, the same an external Postgres gets, and the embedded content database its own
+    let text = std::fs::read_to_string(framework_dir().join("conf/MoquiDefaultConf.xml")).unwrap();
+    let conf = MNode::parse_text("moqui-conf", &text).unwrap();
+    let transactional = crate::entity::datasource::datasource_conf(&conf, "transactional").unwrap();
+    let content = crate::entity::datasource::datasource_conf(&conf, "content").unwrap();
+    assert_eq!((transactional.pool.max, transactional.pool.reserve), (80, 8));
+    assert_eq!((content.pool.max, content.pool.reserve), (80, 8));
+    assert_eq!(caps(&text), (8, 25));
+    // (8 + 25) * 2 + 1 + 4 = 71 of 72: a content database of its own fits all 4 reads
+    factory.set_entity(two_groups(transactional.pool.clone(), content.pool.clone()));
+    check_serve_caps(factory).unwrap();
+    assert_eq!(super::transfer_readers(factory), 4);
+    assert_eq!(super::spare_connections(factory), Some(2));
+    // and so does content sharing the transactional pool
+    factory.set_entity(facade(transactional.pool));
+    check_serve_caps(factory).unwrap();
+    assert_eq!(super::transfer_readers(factory), 4);
+
+    // a content pool with 2 left beside the workers reads fewer at once
+    factory.set_entity(two_groups(sized(80), sized(76)));
+    check_serve_caps(factory).unwrap();
+    let readers = super::transfer_readers(factory);
+    assert_eq!(readers, (2 - agent).max(1));
+    assert_eq!(super::spare_connections(factory), Some(2u32.saturating_sub(readers)));
+
+    // the transactional pool is not the content's: transfers leave it alone
+    factory.set_entity(two_groups(sized(66 + agent + 8), sized(80)));
+    check_serve_caps(factory).unwrap();
+    assert_eq!(super::transfer_readers(factory), 4);
+
+    // a content pool that has no room past the workers and the agent worker still reads one at a time
+    factory.set_entity(two_groups(sized(80), sized(74 + agent)));
+    check_serve_caps(factory).unwrap();
+    assert_eq!(super::transfer_readers(factory), 1);
+}
+
+fn sized(max: u32) -> PoolConfig {
+    PoolConfig {
         min: 0,
-        max: 90,
+        max,
         reserve: 8,
         acquire_timeout: Duration::from_secs(1),
         ..Default::default()
-    }));
-    check_serve_caps(factory).unwrap();
-    assert_eq!(super::spare_connections(factory), Some(2));
+    }
+}
+
+/// `transactional` and a `content` group with a pool of its own, the content group's entities in it.
+fn two_groups(transactional: PoolConfig, content: PoolConfig) -> EntityFacade {
+    EntityFacade::open(
+        &framework_dir(),
+        "transactional",
+        vec![
+            EntityGroup::new(
+                "transactional",
+                "postgres",
+                TransactionManager::new(Arc::new(StubDriver), transactional).unwrap(),
+            ),
+            EntityGroup::new(
+                "content",
+                "postgres",
+                TransactionManager::new(Arc::new(StubDriver), content).unwrap(),
+            ),
+        ],
+    )
+    .unwrap()
 }
 
 #[test]

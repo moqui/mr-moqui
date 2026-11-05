@@ -26,7 +26,6 @@ use moqui_lib::error::Error;
 use moqui_lib::object::Value;
 use moqui_lib::sync::lock;
 
-use super::loader::canonical_name;
 use super::{error_chain, with_load_slot, with_load_slot_read, FeedServiceNames};
 use crate::driver::{DbConnection, DbRow};
 use crate::entity::facade::EntityFacade;
@@ -109,10 +108,7 @@ pub(crate) fn note_touch(
     {
         return;
     }
-    let keep_fields = !facade.flags().disable_data_feed
-        && entity_name != SKIP_FEED_ENTITY
-        && entity_name != PENDING_ENTITY
-        && feed_may_target(facade, entity_name);
+    let keep_fields = feed_keeps_values(facade, entity_name);
     let touch = Touch {
         entity_name: entity_name.to_string(),
         operation: operation.to_string(),
@@ -121,6 +117,15 @@ pub(crate) fn note_touch(
         origin_agent: keep_fields.then(|| (crate::hooks::get().agent_id)()).flatten(),
     };
     TOUCHES.with(|touches| touches.borrow_mut().entry(frame).or_default().push(touch));
+}
+
+/// Whether the data feed keeps the values of a write of `entity_name` ([`note_touch`]), so a bulk write that would
+/// read only the primary key reads whole rows (plans/High-Level-Review.md HL-033).
+pub(crate) fn feed_keeps_values(facade: &EntityFacade, entity_name: &str) -> bool {
+    !facade.flags().disable_data_feed
+        && entity_name != SKIP_FEED_ENTITY
+        && entity_name != PENDING_ENTITY
+        && feed_may_target(facade, entity_name)
 }
 
 /// False when the feed configuration, as last read and not older than the feed definitions, has no document on
@@ -135,13 +140,20 @@ fn feed_may_target(facade: &EntityFacade, entity_name: &str) -> bool {
     })
 }
 
+/// The full name of `name` in the file model only. The feed resolves its names inside the commit hook, which holds the
+/// transaction's connection: a name not in the model (an entity of a component taken out) would go on to a lookup as a
+/// database-defined view, which suspends the transaction and borrows that connection again. Such a name is left out.
+fn model_name(facade: &EntityFacade, name: &str) -> Option<String> {
+    crate::entity::info::entity_full_name(facade, name)
+}
+
 /// Whether an update of `entity_name` should read the row first for the data feed: a known feed configuration has
 /// a document on the entity. Before the configuration is first read, updates are fed without that check.
 pub(crate) fn feed_wants_old(facade: &EntityFacade, entity_name: &str) -> bool {
     if facade.flags().disable_data_feed || facade.sim_active() {
         return false;
     }
-    let Ok(full_name) = canonical_name(facade, entity_name) else {
+    let Some(full_name) = model_name(facade, entity_name) else {
         return false;
     };
     with_load_slot_read(facade, |slot| {
@@ -240,7 +252,7 @@ fn insert_pending(
     }
     // A frame that wrote a feed definition reads its own uncommitted rows, which no other frame may see.
     let own_definitions = aggs.keys().any(|entity_name| {
-        canonical_name(facade, entity_name).is_ok_and(|name| crate::entity::cache::is_feed_definition(&name))
+        model_name(facade, entity_name).is_some_and(|name| crate::entity::cache::is_feed_definition(&name))
     });
     let config = feed_config(facade, conn, !own_definitions)?;
     let targets = &config.targets;
@@ -251,6 +263,8 @@ fn insert_pending(
         return Ok(Vec::new());
     }
     let insert_sql = pending_insert_sql(facade)?;
+    // When the rows were made, so the drain can tell rows that keep failing from new ones.
+    let stamp = Value::Timestamp(jiff::Timestamp::now());
     let mut inserted = Vec::new();
     // Writes that carry their values: the document id is found from them, and the last write to
     // a document decides between index and delete.
@@ -316,6 +330,7 @@ fn insert_pending(
             Value::string(id),
             Value::string(*operation),
             origin,
+            stamp.clone(),
         ];
         probe_execute(conn, &insert_sql, &params)?;
         inserted.push(row_id);
@@ -367,6 +382,7 @@ fn insert_pending(
                     Value::string(&key),
                     Value::string(operation),
                     legacy_origin(&touches, entity_name).map_or(Value::Null, Value::String),
+                    stamp.clone(),
                 ];
                 probe_execute(conn, &insert_sql, &params)?;
                 inserted.push(row_id);
@@ -719,7 +735,7 @@ fn feed_targets(
         }) else {
             continue;
         };
-        let Ok(primary_full) = canonical_name(facade, &primary) else {
+        let Some(primary_full) = model_name(facade, &primary) else {
             tracing::warn!(entity = %primary, document = %document_id, "data document primary entity is not defined");
             continue;
         };
@@ -801,7 +817,7 @@ fn document_fields(
             for (key, _) in &pairs {
                 add(&current, key, None);
             }
-            let Ok(full) = canonical_name(facade, &related) else {
+            let Some(full) = model_name(facade, &related) else {
                 reached = false;
                 break;
             };
@@ -874,7 +890,7 @@ fn related_entities(facade: &EntityFacade, primary: &str, paths: &[String]) -> V
             let Some(next) = next else {
                 break;
             };
-            let Ok(full) = canonical_name(facade, &next) else {
+            let Some(full) = model_name(facade, &next) else {
                 break;
             };
             steps.push((current.clone(), (*rel_name).to_string()));
@@ -960,6 +976,7 @@ fn pending_insert_sql(facade: &EntityFacade) -> Result<String, Error> {
                 "primaryKey",
                 "operation",
                 "originAgentId",
+                "lastUpdatedStamp",
             ],
         )
     })

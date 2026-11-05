@@ -40,22 +40,19 @@ const AT_ENTITY: &str = "AT_ENTITY";
 /// The authorization-check list itself follows Java's current-user lifetime.
 static AUTHZ_GENERATION: AtomicU64 = AtomicU64::new(0);
 
-/// Entity writes call this. Only the authorization tables, the entity filter tables among them, change the generation.
+/// The entity facade's entity-changed notice calls this: for a write here, a cluster peer's invalidation, and a
+/// whole-cache clear (`None`, every entity). Only the authorization tables, the entity filter tables among them, change
+/// the generation.
 ///
 /// The generation moves at once, and again when the write's transaction ends: a session that
 /// reloaded in between read the rows from before the commit, or the writer's own rows that a
 /// rollback then undid, and must not keep them.
-pub(crate) fn note_entity_write(entity_name: &str) {
-    if !matches!(
-        entity_name,
-        "moqui.security.ArtifactAuthz"
-            | "moqui.security.ArtifactGroupMember"
-            | "moqui.security.UserGroupMember"
-            | "moqui.security.ArtifactTarpit"
-            | "moqui.security.ArtifactAuthzFilter"
-            | "moqui.security.EntityFilterSet"
-            | "moqui.security.EntityFilter"
-    ) {
+pub(crate) fn note_entity_write(entity_name: Option<&str>) {
+    let Some(entity_name) = entity_name else {
+        bump_generation();
+        return;
+    };
+    if !is_authz_entity(entity_name) {
         return;
     }
     bump_generation();
@@ -73,8 +70,36 @@ pub(crate) fn note_entity_write(entity_name: &str) {
     }
 }
 
+/// An authorization table (the entity filter tables among them), whose writes move the generation.
+pub(crate) fn is_authz_entity(entity_name: &str) -> bool {
+    matches!(
+        entity_name,
+        "moqui.security.ArtifactAuthz"
+            | "moqui.security.ArtifactGroupMember"
+            | "moqui.security.UserGroupMember"
+            | "moqui.security.ArtifactTarpit"
+            | "moqui.security.ArtifactAuthzFilter"
+            | "moqui.security.EntityFilterSet"
+            | "moqui.security.EntityFilter"
+    )
+}
+
 fn bump_generation() {
-    AUTHZ_GENERATION.fetch_add(1, Ordering::Relaxed);
+    AUTHZ_GENERATION.fetch_add(1, Ordering::SeqCst);
+    #[cfg(test)]
+    MOVED_HERE.with(|moved| moved.set(moved.get() + 1));
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The moves this thread made. The generation is a process static that other tests move too, so a test of what
+    /// moves it counts here.
+    static MOVED_HERE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(crate) fn moved_here() -> u64 {
+    MOVED_HERE.with(std::cell::Cell::get)
 }
 
 /// One row of `ArtifactAuthz` joined to a member of its artifact group.
@@ -118,6 +143,67 @@ impl StackAuthz {
         ancestor_deny: false,
         authz_disabled: true,
     };
+}
+
+/// The authorization in place where after-commit work was registered (the tx-commit and tx-rollback rules of a service
+/// call): the top frame's [`AuthInfo`], whether a frame on the stack carried a deny, and whether authorization was
+/// disabled. The work runs on a context of its own under it (`ExecutionContext::restore_authz`), so it may do what it
+/// could have done where it was registered, and no more. The default is the strictest: nothing to inherit, checked.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RegisteredAuthz {
+    pub(crate) top: Option<AuthInfo>,
+    pub(crate) ancestor_deny: bool,
+    pub(crate) disabled: bool,
+}
+
+impl RegisteredAuthz {
+    /// As kept in a queued job's `queuedCall`. The authorization record a frame matched is not kept: a decision reads
+    /// only its type, action, user and whether it is inheritable.
+    pub(crate) fn to_json(&self) -> serde_json::Value {
+        let mut root = serde_json::Map::new();
+        if let Some(top) = &self.top {
+            let mut frame = serde_json::Map::new();
+            frame.insert("userId".into(), top.user_id.clone().into());
+            if let Some(authz_type) = &top.authz_type {
+                frame.insert("authzType".into(), authz_type.clone().into());
+            }
+            if let Some(action) = &top.action {
+                frame.insert("action".into(), action.clone().into());
+            }
+            frame.insert("inheritable".into(), top.inheritable.into());
+            if let Some(granted) = top.granted {
+                frame.insert("granted".into(), granted.into());
+            }
+            root.insert("top".into(), serde_json::Value::Object(frame));
+        }
+        root.insert("ancestorDeny".into(), self.ancestor_deny.into());
+        root.insert("disabled".into(), self.disabled.into());
+        serde_json::Value::Object(root)
+    }
+
+    /// The authorization [`Self::to_json`] wrote. Anything missing is the strict default.
+    pub(crate) fn from_json(json: Option<&serde_json::Value>) -> Self {
+        let Some(json) = json else {
+            return Self::default();
+        };
+        let flag = |value: Option<&serde_json::Value>| value.and_then(serde_json::Value::as_bool).unwrap_or(false);
+        let top = json.get("top").map(|frame| {
+            let text = |name: &str| frame.get(name).and_then(serde_json::Value::as_str).map(str::to_string);
+            AuthInfo {
+                user_id: text("userId").unwrap_or_default(),
+                authz_type: text("authzType"),
+                action: text("action"),
+                inheritable: flag(frame.get("inheritable")),
+                granted: frame.get("granted").and_then(serde_json::Value::as_bool),
+                aacv: None,
+            }
+        });
+        Self {
+            top,
+            ancestor_deny: flag(json.get("ancestorDeny")),
+            disabled: flag(json.get("disabled")),
+        }
+    }
 }
 
 impl AuthInfo {
@@ -649,7 +735,7 @@ pub(crate) fn authz_enabled_for(artifact_type: &str) -> bool {
 }
 
 pub(super) fn generation() -> u64 {
-    AUTHZ_GENERATION.load(Ordering::Relaxed)
+    AUTHZ_GENERATION.load(Ordering::SeqCst)
 }
 
 /// Refresh generation-bound caches, retaining Java's current-user authorization-check list.

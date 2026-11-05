@@ -46,7 +46,7 @@
 //! `mail_mx_override` (testing and staging only) maps recipient domains to `host:port` (`example.net=127.0.0.1:2525`,
 //! `*` for any), skipping MX lookup and MTA-STS.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::net::{IpAddr, SocketAddr};
 use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -74,6 +74,8 @@ const BOUNCED: &str = "EmdBounced";
 const CONTENT_ROOT: &str = "dbresource://moqui/edge/mail/";
 /// The rows read in one round.
 const ROUND_ROWS: usize = 40;
+/// The rows of nodes no longer paired failed in one round; more wait for the next.
+const UNPAIRED_ROWS: i64 = 500;
 /// The most sessions at once, each a thread of its own.
 const MAX_IN_FLIGHT: usize = 8;
 /// How long a row tried now is held from another try (a crash mid-session leaves it to be tried after).
@@ -492,9 +494,11 @@ fn report_rows(facade: &EntityFacade) -> Result<Vec<String>, LibError> {
 }
 
 /// Stop delivering for local nodes that are no longer paired (revoked, or gone): their rows fail, logged, with no
-/// report (there is no node to tell), and their messages are removed.
-fn fail_unpaired(factory: &ExecutionContextFactory, facade: &EntityFacade) -> Result<(), LibError> {
-    let active: HashSet<String> = facade
+/// report (there is no node to tell), and their messages are removed. Only the pending rows of such nodes are read, at
+/// most [`UNPAIRED_ROWS`] a round: the paired nodes are few, so they go in the condition, and a backlog of a paired
+/// node's rows costs no row read a round (plans/High-Level-Review.md HL-039). The rows read, for the tests.
+fn fail_unpaired(factory: &ExecutionContextFactory, facade: &EntityFacade) -> Result<usize, LibError> {
+    let active: Vec<Value> = facade
         .find("moqui.edge.EdgeClient")?
         .eq("statusId", Value::string("EdgeClientActive"))
         .select_field("pairedNodeId")
@@ -503,20 +507,27 @@ fn fail_unpaired(factory: &ExecutionContextFactory, facade: &EntityFacade) -> Re
         .values()
         .iter()
         .map(|row| field_text(row, "pairedNodeId"))
+        .filter(|node| !node.is_empty())
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .map(Value::string)
         .collect();
-    let pending = facade
-        .find(DELIVERY)?
-        .eq("statusEnumId", Value::string(PENDING))
+    let mut find = facade.find(DELIVERY)?.eq("statusEnumId", Value::string(PENDING));
+    if !active.is_empty() {
+        find = find.condition(Condition::or(vec![
+            Condition::is_null("pairedNodeId"),
+            Condition::not_in("pairedNodeId", active),
+        ]));
+    }
+    let pending = find
         .select_field("mailDeliveryId")
         .select_field("pairedNodeId")
         .select_field("contentLocation")
+        .limit(UNPAIRED_ROWS)
         .disable_authz()
         .list()?;
     for row in pending.values() {
         let node = field_text(row, "pairedNodeId");
-        if active.contains(&node) {
-            continue;
-        }
         let id = field_text(row, "mailDeliveryId");
         tracing::error!("MX delivery {id} failed: its local node {node} is not paired now; not delivered");
         let failed = transaction(facade, || {
@@ -547,7 +558,7 @@ fn fail_unpaired(factory: &ExecutionContextFactory, facade: &EntityFacade) -> Re
             }
         }
     }
-    Ok(())
+    Ok(pending.values().len())
 }
 
 fn next_due(facade: &EntityFacade) -> Result<Option<i64>, LibError> {

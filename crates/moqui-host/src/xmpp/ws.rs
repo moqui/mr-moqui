@@ -72,12 +72,20 @@ pub(crate) async fn upgrade(
         return plain(429, "too many XMPP connections");
     };
     let limit = server.config.max_stanza_bytes;
+    let mut shutdown = state.shutdown.clone();
     ws.protocols(["xmpp"])
         .max_message_size(limit)
         .max_frame_size(limit)
         .on_upgrade(move |socket| async move {
             let frames: Box<dyn moqui_xmpp::conn::FrameIo> = Box::new(Frames(socket));
-            moqui_xmpp::conn::serve_frames(server, frames, client, secured.https, secured.exporter).await;
+            // the HTTP listener's stop closes the socket, as it does `/notws`, so its drain does not wait for the
+            // session (plans/High-Level-Review.md HL-027); the client reconnects to the server once it is back
+            tokio::select! {
+                () = moqui_xmpp::conn::serve_frames(server, frames, client, secured.https, secured.exporter) => {}
+                _ = shutdown.wait_for(|stopped| *stopped) => {
+                    tracing::debug!("XMPP WebSocket from {client} closed: the server is stopping");
+                }
+            }
             drop(admitted);
         })
 }

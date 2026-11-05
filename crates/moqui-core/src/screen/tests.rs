@@ -952,6 +952,7 @@ fn fop_sends_the_print_document_of_the_screen_as_pdf() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+mod anonymous;
 mod authc;
 mod decimal;
 mod files;

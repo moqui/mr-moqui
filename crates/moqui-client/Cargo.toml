@@ -14,7 +14,8 @@ base64 = { workspace = true }
 getrandom = { workspace = true }
 # The dates of a quoted message in the offline Compose (src/offline.rs), as moqui-lib's.
 jiff = { workspace = true }
-moqui-lib = { workspace = true }
+# http: the sign-in shared with `moqui tui --server` (moqui_lib::remote_login), on this crate's reqwest client.
+moqui-lib = { workspace = true, features = ["http"] }
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
 rustls = { workspace = true }

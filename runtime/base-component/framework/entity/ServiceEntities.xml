@@ -37,7 +37,12 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="jobName" type="text-short" is-pk="true"/>
         <field name="description" type="text-medium"/>
         <field name="serviceName" type="text-medium"/>
-        <field name="transactionTimeout" type="number-integer"/>
+        <field name="transactionTimeout" type="number-integer"><description>Seconds the run may take, 1800 when empty:
+            the timeout of the service's transaction, and the time its scripts may run whatever the service's
+            transaction attribute, after which a script ends with an interrupted error.</description></field>
+        <field name="noTimeLimit" type="text-indicator"><description>If Y the scripts of the run have no time limit
+            but the transaction's (a service with transaction="ignore" then none), for a long batch job that commits
+            its work in its own transactions.</description></field>
         <field name="topic" type="text-medium"><description>On completion send a notification to this topic</description></field>
         <field name="localOnly" type="text-indicator"><description>If Y this will be run local only. By default runs on any
             server in a cluster listening for async distributed services (if an async distributed executor is configured).</description></field>
@@ -66,6 +71,10 @@ along with this software (see the LICENSE.md file). If not, see
             and a run that is in progress still has a row. Empty or N keeps every run.</description></field>
         <field name="priority" type="number-integer">
             <description>Job execution priority, lower numbers run first among jobs that need to be run regardless of scheduled start time</description></field>
+        <field name="queuedCall" type="text-very-long"><description>Only for a queued call (jobName ASYNC_QUEUE_...),
+            stored when the service worker queue was full or stopping: the call as JSON, with its parameters keeping
+            their lists and maps, the user and agent run that made it, and for transaction rules the phase (when) and
+            the service results. Its ServiceJobParameter rows are not used.</description></field>
 
         <relationship type="one-nofk" related="moqui.security.user.NotificationTopic"/>
         <relationship type="many" related="moqui.service.job.ServiceJobParameter" short-alias="parameters"/>
@@ -108,6 +117,7 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="errors" type="text-long"/>
         <field name="hostAddress" type="text-short"/>
         <field name="hostName" type="text-medium"/>
+        <field name="instanceId" type="text-short"><description>The server instance (cluster member) that ran it.</description></field>
         <field name="runThread" type="text-medium"/>
         <field name="startTime" type="date-time"/>
         <field name="endTime" type="date-time"/>
@@ -120,6 +130,9 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="jobName" type="text-short" is-pk="true"/>
         <field name="jobRunId" type="id"><description>If not null this is the currently running job instance.</description></field>
         <field name="lastRunTime" type="date-time"/>
+        <field name="instanceId" type="text-short"><description>The server instance (cluster member) holding the lock.
+            A lock whose instance is not a live cluster member, or is this instance but not running the job here, is
+            taken over before expireLockTime.</description></field>
         <field name="runCount" type="number-integer"><description>How many runs have been started when the job's
             errorHistoryOnly is Y, including runs whose success row was removed. repeatCount uses this instead of
             counting ServiceJobRun rows. Empty until the first such run, or until older rows are counted once.</description></field>

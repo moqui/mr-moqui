@@ -471,11 +471,21 @@ pub fn invalidate(id: &str) {
     live.revision = next_revision();
 }
 
-/// Write every dirty live session on this factory. The bound thread is synced first.
+/// Write every dirty live session on this factory, in id order. The bound thread is synced first. Each session is
+/// written on its own: one that fails is logged by its id and stays dirty for the next flush, and the rest are still
+/// written.
+///
+/// # Errors
+///
+/// Returns an error, after the others are written, when the idle sweep or a session failed.
 pub(crate) fn flush_dirty(factory: &ExecutionContextFactory) -> Result<(), Error> {
     sync_bound(factory);
-    expire_idle(factory)?;
-    let ids: Vec<String> = {
+    let mut failed = 0_usize;
+    if let Err(err) = expire_idle(factory) {
+        tracing::error!("could not expire idle sessions: {err}");
+        failed += 1;
+    }
+    let mut ids: Vec<String> = {
         let table = lock_sessions(factory);
         table
             .sessions
@@ -484,8 +494,15 @@ pub(crate) fn flush_dirty(factory: &ExecutionContextFactory) -> Result<(), Error
             .map(|(id, _)| id.clone())
             .collect()
     };
+    ids.sort_unstable();
     for id in ids {
-        flush_id(factory, &id)?;
+        if let Err(err) = flush_id(factory, &id) {
+            tracing::error!("could not write session {id}: {err}");
+            failed += 1;
+        }
+    }
+    if failed > 0 {
+        return Err(Error::new(format!("{failed} session writes failed; each is logged")));
     }
     Ok(())
 }
@@ -1871,7 +1888,7 @@ fn flush_id(factory: &ExecutionContextFactory, id: &str) -> Result<(), Error> {
             return Ok(());
         };
         #[cfg(test)]
-        tests::flush_hook(id);
+        tests::flush_hook(id)?;
         let base = load_base(&facade, id, &plan, force_sql)?;
         if !base.exists && (row_seen || plan.snapshot.is_some()) {
             // The row was written and is gone: the session was ended elsewhere (another server's end#UserVisit), and

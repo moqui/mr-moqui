@@ -25,16 +25,13 @@ use moqui_core::web::ResponseStream;
 use tokio::sync::Semaphore;
 
 /// The reads of database sources that may run at once, for every streamed response of the process: the `webroot`
-/// webapp's `transfer-workers` of the first factory that streams one.
+/// webapp's `transfer-workers` of the first factory that streams one, fewer when its `content` pool cannot hold them
+/// beside the workers ([`moqui_core::service::transfer_readers`]). Each read holds one ordinary connection of that pool
+/// for one window, never a reserve one.
 fn readers(factory: &ExecutionContextFactory) -> Arc<Semaphore> {
     static READERS: OnceLock<Arc<Semaphore>> = OnceLock::new();
     Arc::clone(READERS.get_or_init(|| {
-        let workers = factory
-            .webapp_setting("webroot", "transfer-workers")
-            .parse::<usize>()
-            .ok()
-            .filter(|workers| *workers > 0)
-            .unwrap_or(16);
+        let workers = usize::try_from(moqui_core::service::transfer_readers(factory)).unwrap_or(4);
         Arc::new(Semaphore::new(workers))
     }))
 }

@@ -31,11 +31,13 @@
 //! on an `exec` channel with no pty, one command line at a time, for a user logged in by key or password.
 //!
 //! At most `ssh-server` `max-sessions` logged-in sessions are open at once; one with no user counts too. A connection that has
-//! not logged in has [`PREAUTH_TIMEOUT`] to do so, and at most [`MAX_PREAUTH`] such connections wait at once. One let in
+//! not logged in has [`PREAUTH_TIMEOUT`] to do so, and at most [`MAX_PREAUTH`] such connections wait at once, at most
+//! [`PREAUTH_PER_SOURCE`] of them from one source (an IPv6 /64 is one; an edge tunnel's connection counts as the client
+//! the edge node names), so one host cannot keep SFTP, Git, edge tunnels and the SSH cluster transport out. One let in
 //! with no user is closed when its dialog has not logged in within `crate::term::LOGIN_WAIT`.
 
 use std::collections::{BTreeMap, HashMap};
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -44,6 +46,7 @@ use moqui_core::context::{Error as CoreError, ExecutionContextFactory};
 use moqui_lib::error::Error;
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
+use moqui_lib::source_guard::{SlotRefused, SourceSlot, SourceSlots};
 use russh::keys::{HashAlg, PrivateKey};
 use russh::server::{Auth, ChannelOpenHandle, Msg, Session, VerifiedPublicKey};
 use russh::{Channel, ChannelId, ChannelOpenFailure};
@@ -65,6 +68,8 @@ pub(super) const IDLE: Duration = Duration::from_secs(600);
 const PREAUTH_TIMEOUT: Duration = Duration::from_secs(30);
 /// Connections that have not logged in yet, at once; one more is closed. They do not count toward `ssh-server` `max-sessions`.
 const MAX_PREAUTH: usize = 16;
+/// Of [`MAX_PREAUTH`], those one source may hold (plans/High-Level-Review.md HL-032).
+const PREAUTH_PER_SOURCE: usize = 4;
 /// The longest admin shell line, and the longest `js` block.
 const MAX_LINE: usize = 1024 * 1024;
 const PROMPT: &str = "moqui> ";
@@ -278,7 +283,7 @@ pub fn start(
         config,
         shared,
         counts: Arc::new(Counts {
-            preauth: AtomicUsize::new(0),
+            preauth: SourceSlots::new(MAX_PREAUTH, PREAUTH_PER_SOURCE),
             sessions: AtomicUsize::new(0),
             max_sessions,
         }),
@@ -305,7 +310,7 @@ fn positive(value: usize, default: usize) -> usize {
 
 /// The connections counted against the two limits.
 struct Counts {
-    preauth: AtomicUsize,
+    preauth: SourceSlots,
     sessions: AtomicUsize,
     max_sessions: usize,
 }
@@ -314,7 +319,8 @@ struct Counts {
 /// whichever it holds.
 struct Slot {
     counts: Arc<Counts>,
-    preauth: AtomicBool,
+    /// The pre-auth slot, until the login trades it for a session.
+    preauth: std::sync::Mutex<Option<SourceSlot>>,
     session: AtomicBool,
     /// Let in with no user: the login dialog must log in within `crate::term::LOGIN_WAIT`.
     dialog: AtomicBool,
@@ -323,15 +329,13 @@ struct Slot {
 }
 
 impl Slot {
-    /// A pre-auth slot, or `None` when [`MAX_PREAUTH`] connections are already waiting to log in.
-    fn preauth(counts: &Arc<Counts>) -> Option<Self> {
-        if counts.preauth.fetch_add(1, Ordering::AcqRel) >= MAX_PREAUTH {
-            counts.preauth.fetch_sub(1, Ordering::AcqRel);
-            return None;
-        }
-        Some(Self {
+    /// A pre-auth slot for a connection from `source`, or why there is none: [`MAX_PREAUTH`] connections are already
+    /// waiting to log in, or [`PREAUTH_PER_SOURCE`] from that source.
+    fn preauth(counts: &Arc<Counts>, source: IpAddr) -> Result<Self, SlotRefused> {
+        let preauth = counts.preauth.take(source)?;
+        Ok(Self {
             counts: Arc::clone(counts),
-            preauth: AtomicBool::new(true),
+            preauth: std::sync::Mutex::new(Some(preauth)),
             session: AtomicBool::new(false),
             dialog: AtomicBool::new(false),
             dialog_done: Arc::new(AtomicBool::new(false)),
@@ -348,9 +352,7 @@ impl Slot {
             return false;
         }
         self.session.store(true, Ordering::Release);
-        if self.preauth.swap(false, Ordering::AcqRel) {
-            self.counts.preauth.fetch_sub(1, Ordering::AcqRel);
-        }
+        moqui_lib::sync::lock(&self.preauth).take();
         true
     }
 
@@ -361,9 +363,6 @@ impl Slot {
 
 impl Drop for Slot {
     fn drop(&mut self) {
-        if self.preauth.swap(false, Ordering::AcqRel) {
-            self.counts.preauth.fetch_sub(1, Ordering::AcqRel);
-        }
         if self.session.swap(false, Ordering::AcqRel) {
             self.counts.sessions.fetch_sub(1, Ordering::AcqRel);
         }
@@ -453,10 +452,18 @@ impl Intake {
     where
         S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
-        let Some(slot) = Slot::preauth(&self.counts) else {
-            tracing::warn!("SSH connection from {peer} refused: {MAX_PREAUTH} connections are waiting to log in");
-            drop(stream);
-            return;
+        let slot = match Slot::preauth(&self.counts, peer.ip()) {
+            Ok(slot) => slot,
+            Err(SlotRefused::Full) => {
+                tracing::warn!("SSH connection from {peer} refused: {MAX_PREAUTH} connections are waiting to log in");
+                return;
+            }
+            Err(SlotRefused::Source) => {
+                tracing::warn!(
+                    "SSH connection from {peer} refused: {PREAUTH_PER_SOURCE} from there are waiting to log in"
+                );
+                return;
+            }
         };
         let slot = Arc::new(slot);
         let since = tokio::time::Instant::now();
@@ -1353,7 +1360,10 @@ mod tests {
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    use super::{conf_listen_target, interactive, listen_target, Counts, Slot, MAX_LINE, MAX_PREAUTH};
+    use super::{
+        conf_listen_target, interactive, listen_target, Counts, Slot, SlotRefused, SourceSlots, MAX_LINE, MAX_PREAUTH,
+        PREAUTH_PER_SOURCE,
+    };
 
     #[test]
     fn enabled_false_keeps_the_server_off_with_a_port_set() {
@@ -1411,20 +1421,46 @@ mod tests {
     #[test]
     fn a_login_trades_the_preauth_slot_for_a_session() {
         let counts = Arc::new(Counts {
-            preauth: AtomicUsize::new(0),
+            preauth: SourceSlots::new(MAX_PREAUTH, PREAUTH_PER_SOURCE),
             sessions: AtomicUsize::new(0),
             max_sessions: 1,
         });
-        let waiting: Vec<Slot> = (0..MAX_PREAUTH).map(|_| Slot::preauth(&counts).unwrap()).collect();
-        assert!(Slot::preauth(&counts).is_none(), "past MAX_PREAUTH");
+        let source = |n: usize| std::net::IpAddr::from([198, 51, 100, u8::try_from(n / PREAUTH_PER_SOURCE).unwrap()]);
+        let waiting: Vec<Slot> = (0..MAX_PREAUTH)
+            .map(|n| Slot::preauth(&counts, source(n)).unwrap())
+            .collect();
+        assert_eq!(
+            Slot::preauth(&counts, source(MAX_PREAUTH + PREAUTH_PER_SOURCE)).err(),
+            Some(SlotRefused::Full),
+            "past MAX_PREAUTH"
+        );
         assert!(waiting[0].log_in());
         // The login gave its pre-auth slot back, and took the one session.
-        let next = Slot::preauth(&counts).unwrap();
+        let next = Slot::preauth(&counts, source(0)).unwrap();
         assert!(!next.log_in(), "past ssh-server max-sessions");
         drop(waiting);
         assert!(next.log_in());
         drop(next);
-        assert_eq!(counts.preauth.load(Ordering::Acquire), 0);
+        assert_eq!(counts.preauth.held(), 0);
         assert_eq!(counts.sessions.load(Ordering::Acquire), 0);
+    }
+
+    /// One source holds at most its share of the pre-auth slots; another source still gets one (HL-032).
+    #[test]
+    fn one_source_holds_only_its_share_of_the_preauth_slots() {
+        let counts = Arc::new(Counts {
+            preauth: SourceSlots::new(MAX_PREAUTH, PREAUTH_PER_SOURCE),
+            sessions: AtomicUsize::new(0),
+            max_sessions: 8,
+        });
+        let busy: std::net::IpAddr = "2001:db8:9:9::1".parse().unwrap();
+        let held: Vec<Slot> = (0..PREAUTH_PER_SOURCE)
+            .map(|_| Slot::preauth(&counts, busy).unwrap())
+            .collect();
+        let same_64: std::net::IpAddr = "2001:db8:9:9::2".parse().unwrap();
+        assert_eq!(Slot::preauth(&counts, same_64).err(), Some(SlotRefused::Source));
+        let other: std::net::IpAddr = "203.0.113.20".parse().unwrap();
+        assert!(Slot::preauth(&counts, other).unwrap().log_in());
+        drop(held);
     }
 }

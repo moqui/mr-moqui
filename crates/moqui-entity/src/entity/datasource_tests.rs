@@ -50,6 +50,7 @@ fn h2_and_empty_are_embedded_with_the_postgres_pool() {
         assert_eq!(ds.pool.acquire_timeout, Duration::from_secs(30));
         assert_eq!(ds.pool.idle_timeout, Some(Duration::from_secs(60)));
         assert_eq!(ds.pool.test_query.as_deref(), Some("SELECT 1"));
+        assert_eq!(ds.read_timeout, None, "the driver's default");
         assert!(ds.host.is_empty());
     }
 }
@@ -141,7 +142,7 @@ fn the_datasource_inline_jdbc_wins_with_its_pool_and_uri() {
         r#"<datasource group-name="transactional" database-conf-name="postgres">
                 <inline-jdbc jdbc-uri="jdbc:postgresql://127.0.0.1:5433/other?sslmode=disable" jdbc-username="a"
                     jdbc-password="b" pool-maxsize="12" pool-minsize="2" pool-reserve="3" pool-time-wait="0"
-                    pool-time-idle="5" pool-test-query="SELECT 42"/>
+                    pool-time-idle="5" pool-test-query="SELECT 42" read-timeout="90"/>
             </datasource>"#,
     );
     let ds = datasource_conf(&node, "transactional").unwrap();
@@ -157,6 +158,7 @@ fn the_datasource_inline_jdbc_wins_with_its_pool_and_uri() {
     assert_eq!(ds.pool.acquire_timeout, Duration::ZERO);
     assert_eq!(ds.pool.idle_timeout, Some(Duration::from_secs(5)));
     assert_eq!(ds.pool.test_query.as_deref(), Some("SELECT 42"));
+    assert_eq!(ds.read_timeout, Some(Duration::from_secs(90)));
 }
 
 #[test]

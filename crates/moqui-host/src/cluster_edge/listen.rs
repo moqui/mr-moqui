@@ -17,19 +17,25 @@
 //! in a build with `grpc` and unless `cluster_protocol=rest`) or `POST /cluster/{topic}` on HTTP/1.1. Every message is
 //! applied through [`super::apply_topic`] on a blocking thread.
 //!
-//! Limits: [`MAX_CONNECTIONS`] at once (one more is closed, and its sender tries again); the TLS handshake in
+//! Limits: [`MAX_CONNECTIONS`] at once, at most [`PER_SOURCE`] of them from one source (an IPv6 /64 is one), so one
+//! host cannot hold every slot before its handshake (one more is closed, and its sender tries again). The addresses of
+//! the `ClusterMember` rows ([`Members`], read every [`MEMBERS_EVERY`]) have [`MAX_CONNECTIONS`] slots of their own
+//! besides, with no share, so connections from elsewhere cannot keep a member's posts out
+//! (plans/High-Level-Review.md HL-032). Mutual TLS still decides who is served. The TLS handshake in
 //! [`super::CLIENT_IO`], before which the peer is not known; then, from a peer that holds the cluster certificate, a
 //! request head within [`super::CONNECTION_IDLE`] of the last exchange on HTTP/1.1, and on HTTP/2 a connection with no
 //! request for that long is closed (GOAWAY). HTTP/2 PINGs find a peer that went away.
 
+use std::collections::HashSet;
 use std::convert::Infallible;
-use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::net::{IpAddr, SocketAddr};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use hyper::body::Incoming;
 use hyper_util::rt::{TokioExecutor, TokioIo, TokioTimer};
 use moqui_core::context::ExecutionContextFactory;
+use moqui_lib::source_guard::{SlotRefused, SourceSlot, SourceSlots};
 use tokio::sync::watch;
 
 use super::{HostError, Protocol, BODY_LIMIT, CLIENT_IO, CONNECTION_IDLE, HEADER_LIMIT};
@@ -37,6 +43,13 @@ use crate::http::Activity;
 
 /// Connections served at once; one more is closed, and the peer's post tries again.
 pub(super) const MAX_CONNECTIONS: usize = 64;
+/// Of [`MAX_CONNECTIONS`], those one source may hold.
+pub(super) const PER_SOURCE: usize = 8;
+/// How often the members' addresses are read again.
+const MEMBERS_EVERY: Duration = Duration::from_secs(30);
+
+/// The addresses of the cluster's members, canonical: their connections take the members' own slots.
+pub(super) type Members = Arc<RwLock<HashSet<IpAddr>>>;
 /// HTTP/2 streams open at once on one connection.
 const MAX_STREAMS: u32 = 64;
 /// HTTP/2 PINGs this often find a peer that went away; one not answered in [`PING_TIMEOUT`] closes the connection.
@@ -65,8 +78,66 @@ pub(crate) fn listen(
     let port = super::listen_port(&moqui_lib::env::get_prop_or_env("cluster_https_port"))?;
     let bind = SocketAddr::from((super::bind_address()?, port));
     let apply_posts = Arc::clone(&posts);
+    let members = Members::default();
+    crate::edge::handle().spawn(refresh_members(Arc::downgrade(&factory), Arc::clone(&members)));
     let apply: Apply = Arc::new(move |topic, body| super::apply_topic(&factory, &apply_posts, topic, body));
-    listen_with(bind, config, super::protocol()?, apply, posts)
+    listen_with(bind, config, super::protocol()?, apply, posts, members)
+}
+
+/// Read the members' addresses now and every [`MEMBERS_EVERY`], while the factory runs.
+async fn refresh_members(factory: std::sync::Weak<ExecutionContextFactory>, members: Members) {
+    let mut every = tokio::time::interval(MEMBERS_EVERY);
+    loop {
+        every.tick().await;
+        let factory = factory.clone();
+        let read =
+            tokio::task::spawn_blocking(move || factory.upgrade().map(|factory| member_addresses(&factory))).await;
+        match read {
+            Ok(Some(Ok(addresses))) => *moqui_lib::sync::write(&members) = addresses,
+            Ok(Some(Err(err))) => tracing::warn!("the cluster listener could not read its members' addresses: {err}"),
+            Ok(None) | Err(_) => return,
+        }
+    }
+}
+
+/// The addresses the members' `clusterBaseUrl` hosts resolve to. One that does not resolve is left out.
+fn member_addresses(factory: &Arc<ExecutionContextFactory>) -> Result<HashSet<IpAddr>, String> {
+    let facade = factory.entity().ok_or("no entity facade")?;
+    let context = factory.new_context();
+    let _entered = context.enter();
+    let _authz = context.disable_authz();
+    let rows = facade
+        .find("moqui.server.ClusterMember")
+        .and_then(|find| find.select_field("clusterBaseUrl").list())
+        .map_err(|err| err.to_string())?;
+    let mut addresses = HashSet::new();
+    for row in rows.values() {
+        let url = moqui_core::service::util::field_text(row, "clusterBaseUrl");
+        let Some((host, port)) = url_host(&url) else {
+            continue;
+        };
+        match std::net::ToSocketAddrs::to_socket_addrs(&(host.as_str(), port)) {
+            Ok(resolved) => addresses.extend(resolved.map(|address| address.ip().to_canonical())),
+            Err(err) => tracing::debug!("cluster member {url} does not resolve: {err}"),
+        }
+    }
+    Ok(addresses)
+}
+
+/// The host and port of a base URL (`https://host:port/...`, `ssh://[v6]:port`), the port 0 when it has none.
+pub(super) fn url_host(url: &str) -> Option<(String, u16)> {
+    let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority = rest.split(['/', '?']).next()?.rsplit('@').next()?;
+    if let Some(inner) = authority.strip_prefix('[') {
+        let (host, after) = inner.split_once(']')?;
+        let port = after.strip_prefix(':').and_then(|port| port.parse().ok()).unwrap_or(0);
+        return Some((host.to_string(), port));
+    }
+    let (host, port) = match authority.rsplit_once(':') {
+        Some((host, port)) => (host, port.parse().unwrap_or(0)),
+        None => (authority, 0),
+    };
+    (!host.is_empty()).then(|| (host.to_string(), port))
 }
 
 /// Bind `bind` and serve the cluster port with `config` (its ALPN set here for `protocol`), each message through
@@ -77,6 +148,7 @@ pub(super) fn listen_with(
     protocol: Protocol,
     apply: Apply,
     posts: Arc<Mutex<Vec<String>>>,
+    members: Members,
 ) -> Result<ClusterEdge, HostError> {
     config.alpn_protocols = super::alpn_protocols(protocol);
     let listener =
@@ -93,7 +165,7 @@ pub(super) fn listen_with(
         grpc: super::grpc::Server::new(Arc::clone(&apply)),
         apply,
     });
-    let task = crate::edge::handle().spawn(accept_loop(listener, Arc::new(config), app, stopped));
+    let task = crate::edge::handle().spawn(accept_loop(listener, Arc::new(config), app, members, stopped));
     Ok(ClusterEdge {
         address,
         posts,
@@ -150,6 +222,7 @@ async fn accept_loop(
     listener: std::net::TcpListener,
     config: Arc<rustls::ServerConfig>,
     app: Arc<App>,
+    members: Members,
     mut stopped: watch::Receiver<bool>,
 ) {
     let listener = match tokio::net::TcpListener::from_std(listener) {
@@ -160,7 +233,8 @@ async fn accept_loop(
         }
     };
     let acceptor = tokio_rustls::TlsAcceptor::from(config);
-    let permits = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+    let slots = SourceSlots::new(MAX_CONNECTIONS, PER_SOURCE);
+    let member_slots = SourceSlots::new(MAX_CONNECTIONS, 0);
     let mut connections = tokio::task::JoinSet::new();
     loop {
         let accepted = tokio::select! {
@@ -168,16 +242,15 @@ async fn accept_loop(
             accepted = listener.accept() => accepted,
         };
         while connections.try_join_next().is_some() {}
-        let stream = match accepted {
-            Ok((stream, _)) => stream,
+        let (stream, peer) = match accepted {
+            Ok(accepted) => accepted,
             Err(err) => {
                 tracing::warn!(error = %err, "cluster accept failed");
                 tokio::time::sleep(Duration::from_millis(20)).await;
                 continue;
             }
         };
-        let Ok(permit) = Arc::clone(&permits).try_acquire_owned() else {
-            tracing::warn!("cluster listener is at {MAX_CONNECTIONS} connections; one was closed");
+        let Some(permit) = admit(&slots, &member_slots, &members, peer.ip()) else {
             continue;
         };
         let (acceptor, app, stopped) = (acceptor.clone(), Arc::clone(&app), stopped.clone());
@@ -307,6 +380,27 @@ async fn run_h2<S>(
                     connection.as_mut().graceful_shutdown();
                 }
             }
+        }
+    }
+}
+
+/// A slot for a connection from `ip`: a member's own, else one of the shared slots within its source's share. None,
+/// logged, when there is none.
+fn admit(slots: &SourceSlots, member_slots: &SourceSlots, members: &Members, ip: IpAddr) -> Option<SourceSlot> {
+    if moqui_lib::sync::read(members).contains(&ip.to_canonical()) {
+        if let Ok(slot) = member_slots.take(ip) {
+            return Some(slot);
+        }
+    }
+    match slots.take(ip) {
+        Ok(slot) => Some(slot),
+        Err(SlotRefused::Full) => {
+            tracing::warn!("cluster listener is at {MAX_CONNECTIONS} connections; one from {ip} was closed");
+            None
+        }
+        Err(SlotRefused::Source) => {
+            tracing::warn!("cluster listener has {PER_SOURCE} connections from {ip}'s source; one more was closed");
+            None
         }
     }
 }

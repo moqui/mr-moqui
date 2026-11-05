@@ -554,6 +554,7 @@ impl Subscriber for LineSubscriber {
             target: metadata.target(),
             message: &fields.message,
             extra: &fields.extra,
+            error: fields.error.as_ref().map(|(_, message)| message.as_str()),
         };
         if log_filter::current().to_console(level) {
             let _ = writeln!(std::io::stderr(), "{}", console_line(&text, self.color));
@@ -677,6 +678,8 @@ struct LogText<'a> {
     target: &'a str,
     message: &'a str,
     extra: &'a [(String, String)],
+    /// The message of a field named `error`, written last on the line as `error=...`.
+    error: Option<&'a str>,
 }
 
 /// The file line. Same text the files have always stored: no color, full target.
@@ -687,7 +690,7 @@ fn plain_line(text: &LogText<'_>) -> String {
         "{} {:<5} [{}] {} - {}",
         text.stamp, text.level, text.thread, text.target, text.message
     );
-    append_extra(&mut line, text.extra, false);
+    append_extra(&mut line, text.extra, text.error, false);
     line
 }
 
@@ -712,7 +715,7 @@ fn console_line(text: &LogText<'_>, color: bool) -> String {
     col += target.len() + 2;
     push_spaces(&mut line, 2);
     write_console_message(&mut line, text.message, col, color);
-    append_extra(&mut line, text.extra, color);
+    append_extra(&mut line, text.extra, text.error, color);
     line
 }
 
@@ -791,8 +794,9 @@ fn write_console_message(out: &mut String, message: &str, message_col: usize, co
     }
 }
 
-fn append_extra(out: &mut String, extra: &[(String, String)], color: bool) {
-    for (name, value) in extra {
+fn append_extra(out: &mut String, extra: &[(String, String)], error: Option<&str>, color: bool) {
+    let error = error.map(|message| ("error", message));
+    for (name, value) in extra.iter().map(|(n, v)| (n.as_str(), v.as_str())).chain(error) {
         out.push(' ');
         paint(out, "2", name, color);
         out.push('=');

@@ -216,7 +216,34 @@ fn text<'a>(level: Level, target: &'a str, message: &'a str, extra: &'a [(String
         target,
         message,
         extra,
+        error: None,
     }
+}
+
+#[test]
+fn a_field_named_error_is_on_the_file_and_console_lines() {
+    // The cause of a failure was kept only for telemetry's thrown, so the log showed the message and no cause.
+    install();
+    let lines = tap(64);
+    let marked = format!("log-error-field-{}", std::process::id());
+    let cause = std::io::Error::other("disk full");
+    tracing::error!(error = %cause, table = "EMAIL_MESSAGE", "{marked}");
+    let line = lines
+        .try_iter()
+        .find(|line| line.contains(&marked))
+        .expect("the tap did not see the line");
+    assert!(
+        line.ends_with(&format!("{marked} table=EMAIL_MESSAGE error=disk full")),
+        "{line}"
+    );
+    let _ = take_app_log(&marked);
+
+    let event = LogText {
+        error: Some("disk full"),
+        ..text(Level::ERROR, "moqui_entity::entity::meta", "no table", &[])
+    };
+    assert!(plain_line(&event).ends_with("no table error=disk full"));
+    assert!(console_line(&event, false).ends_with("no table error=disk full"));
 }
 
 #[test]

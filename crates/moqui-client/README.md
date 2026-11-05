@@ -16,15 +16,16 @@ Each installed client is a device with its own login key. The host keeps the key
   `http://` only to this machine.
 - `keys`: where the keys are kept. `KeyStore` is filled by the host with the OS key store; `FileKeyStore`, a 0600 file,
   is the fallback where there is none.
-- `login`: password sign-in (REST `login` with `createLoginKey=true` and `deviceName`), the second factor's code,
+- `login`: password sign-in (REST `login` with `createLoginKey=true` and `deviceName`) and the second factor's code,
+  through `moqui_lib::remote_login`, which `moqui tui --server` shares, on this crate's client and TLS policy;
   sign-out that revokes the key (`/rest/logout` with `revokeLoginKey=true`), the server's `/qapps/clientConfig` and
   the `clientApi` this client knows (`CLIENT_API`, 4) and what a server supports of the sync (`ServerSync`: its
   `clientApi` and `server.features`), and the key's renewal: its life from the device list
   (`key_period`), renewed when less than a third is left (`renew_due`, `/qapps/renewClientDevice`).
 - `proxy`: a page's request forwarded to the same path on the server with the key. Only plain request headers pass;
   cookies are dropped from the answer and a redirect to the server is pointed back at the app scheme.
-- `socket`: `/notws` and `/callws` held by the host for a page, connecting again after a drop, but not after a close
-  for authentication.
+- `socket`: `/notws` and `/callws` held by the host for a page, connecting again after a drop with jittered waits
+  (`moqui_lib::reconnect`), but not after a close for authentication.
 - `cache`: the shell's settings, apps and counts as MD3 kept them in files, moved once into the account's store.
 - `store`: an account's data for offline use, one SQLite file per account (`data/<account>.db`, owner-only, WAL,
   migrated by `user_version`): cached answers by path and sorted query; chat rooms and events, with the seq ranges

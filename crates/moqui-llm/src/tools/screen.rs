@@ -184,7 +184,7 @@ fn keep_state(ctx: &TurnContext<'_>, factory: &ExecutionContextFactory, conversa
     let writer = match ctx.run {
         Some(run) => StateWriter::Run {
             run_id: &run.run_id,
-            node: ctx.events.node(),
+            holder: ctx.events.holder(),
         },
         None => StateWriter::Owner(&ctx.user.user_id),
     };

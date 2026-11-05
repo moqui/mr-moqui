@@ -67,9 +67,28 @@ pub struct Entry {
 /// A detached session's hand-over: send it a channel and it sends the session back.
 pub type Handover = oneshot::Sender<oneshot::Sender<Box<crate::session::Session>>>;
 
+/// The attached sessions: by id, and the ids of each user's, so a stanza or a push to a user looks at that user's
+/// sessions only, not every session of the node (plans/High-Level-Review.md HL-009). Both change together under the
+/// one lock.
+#[derive(Default)]
+struct Sessions {
+    by_id: HashMap<u64, Entry>,
+    by_user: HashMap<String, Vec<u64>>,
+}
+
+impl Sessions {
+    fn of_user<'a>(&'a self, user_id: &str) -> impl Iterator<Item = &'a Entry> + 'a {
+        self.by_user
+            .get(user_id)
+            .into_iter()
+            .flatten()
+            .filter_map(|id| self.by_id.get(id))
+    }
+}
+
 #[derive(Default)]
 pub struct Registry {
-    sessions: Mutex<HashMap<u64, Entry>>,
+    sessions: Mutex<Sessions>,
     detached: Mutex<HashMap<String, (String, Handover)>>,
     next: AtomicU64,
 }
@@ -80,30 +99,47 @@ impl Registry {
     }
 
     pub fn register(&self, entry: Entry) {
-        lock(&self.sessions).insert(entry.id, entry);
+        let mut sessions = lock(&self.sessions);
+        // a session registered again (the same id) is indexed once
+        if let Some(old) = sessions.by_id.remove(&entry.id) {
+            if let Some(ids) = sessions.by_user.get_mut(&old.user_id) {
+                ids.retain(|known| *known != old.id);
+            }
+        }
+        sessions
+            .by_user
+            .entry(entry.user_id.clone())
+            .or_default()
+            .push(entry.id);
+        sessions.by_id.insert(entry.id, entry);
     }
 
     pub fn unregister(&self, id: u64) {
-        lock(&self.sessions).remove(&id);
+        let mut sessions = lock(&self.sessions);
+        let Some(entry) = sessions.by_id.remove(&id) else {
+            return;
+        };
+        if let Some(ids) = sessions.by_user.get_mut(&entry.user_id) {
+            ids.retain(|known| *known != id);
+            if ids.is_empty() {
+                sessions.by_user.remove(&entry.user_id);
+            }
+        }
     }
 
     pub fn sessions_of(&self, user_id: &str) -> Vec<Entry> {
-        lock(&self.sessions)
-            .values()
-            .filter(|entry| entry.user_id == user_id)
-            .cloned()
-            .collect()
+        lock(&self.sessions).of_user(user_id).cloned().collect()
     }
 
     pub fn has_user(&self, user_id: &str) -> bool {
-        lock(&self.sessions).values().any(|entry| entry.user_id == user_id)
+        lock(&self.sessions).by_user.contains_key(user_id)
     }
 
     /// The session of a user's full JID resource.
     pub fn session(&self, user_id: &str, resource: &str) -> Option<Entry> {
         lock(&self.sessions)
-            .values()
-            .find(|entry| entry.user_id == user_id && entry.resource == resource)
+            .of_user(user_id)
+            .find(|entry| entry.resource == resource)
             .cloned()
     }
 
@@ -124,11 +160,13 @@ impl Registry {
             return;
         }
         let message = body.get("message").cloned().unwrap_or(Json::Null);
-        let targets: Vec<Entry> = lock(&self.sessions)
-            .values()
-            .filter(|entry| users.contains(entry.user_id.as_str()))
-            .cloned()
-            .collect();
+        let targets: Vec<Entry> = {
+            let sessions = lock(&self.sessions);
+            users
+                .iter()
+                .flat_map(|user_id| sessions.of_user(user_id).cloned())
+                .collect()
+        };
         for entry in targets {
             self.send(
                 &entry,
@@ -201,3 +239,7 @@ impl Entry {
 pub fn flags() -> (Arc<AtomicBool>, Arc<AtomicBool>) {
     (Arc::new(AtomicBool::new(false)), Arc::new(AtomicBool::new(false)))
 }
+
+#[cfg(test)]
+#[path = "registry_tests.rs"]
+mod tests;

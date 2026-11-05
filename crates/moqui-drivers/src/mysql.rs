@@ -13,12 +13,20 @@
  */
 
 //! Sync MySQL client behind [`moqui_core::driver::DbDriver`].
+//!
+//! Network waits are bounded (plans/High-Level-Review.md HL-019): a connection connects within `CONNECT_TIMEOUT`, each
+//! read waits at most `READ_TIMEOUT` (or the datasource's `read-timeout`) and each write `WRITE_TIMEOUT`, and TCP
+//! keepalive is on. The `mysql` crate sets a read timeout only when it connects, so it is one fixed bound, the
+//! handshake's among them, rather than the transaction's remaining time as for Postgres; the transaction deadline
+//! itself is enforced by `KILL QUERY` and the session's statement time. A cancel connects, signs in and sends
+//! `KILL QUERY` within `CANCEL_TIMEOUT` per step.
 
 #[cfg(feature = "mysql")]
 mod driver {
     use std::ptr::NonNull;
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::Arc;
+    use std::time::Duration;
 
     use moqui_core::driver::{DbCancel, DbConnection, DbDriver, DbRow};
     use moqui_lib::error::Error;
@@ -34,6 +42,20 @@ mod driver {
     const CHARSET_BINARY: u16 = 63;
     /// `ER_UNSUPPORTED_PS`: the statement cannot be prepared.
     const ER_UNSUPPORTED_PS: u16 = 1295;
+    /// `ER_CLIENT_INTERACTION_TIMEOUT`: MySQL 8 closed a session idle past `wait_timeout`.
+    const ER_CLIENT_INTERACTION_TIMEOUT: u16 = 4031;
+    /// The most a TCP connection takes.
+    pub(super) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+    /// The most one read waits, the sign-in's included, unless the datasource's `read-timeout` says otherwise: past the
+    /// longest transaction a statement is expected to run in, as the bound cannot follow each transaction's own time.
+    pub(super) const READ_TIMEOUT: Duration = Duration::from_secs(600);
+    pub(super) const WRITE_TIMEOUT: Duration = Duration::from_secs(60);
+    /// The most each step of a cancel (connect, sign in, `KILL QUERY`) waits.
+    pub(super) const CANCEL_TIMEOUT: Duration = Duration::from_secs(5);
+    /// TCP keepalive: probes start after this much quiet, and go every `KEEPALIVE_INTERVAL_SECS`.
+    const KEEPALIVE_IDLE_MS: u32 = 60_000;
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    const KEEPALIVE_INTERVAL_SECS: u32 = 10;
 
     #[derive(Clone)]
     struct Endpoint {
@@ -43,19 +65,32 @@ mod driver {
         password: String,
         database: String,
         tls: bool,
+        /// The most one read waits; `None` without a limit.
+        read_timeout: Option<Duration>,
         /// The session's isolation level as SQL writes it (`READ COMMITTED`); `None` leaves the server's default
         /// (InnoDB's is `REPEATABLE READ`).
         isolation: Option<&'static str>,
     }
 
     impl Endpoint {
+        /// A session's options: [`Endpoint::opts_within`] the driver's bounds.
         fn opts(&self) -> mysql::OptsBuilder {
+            self.opts_within(CONNECT_TIMEOUT, self.read_timeout, WRITE_TIMEOUT)
+        }
+
+        /// The options with these network bounds (`read` `None` waits without a limit), and keepalive on.
+        pub(super) fn opts_within(
+            &self,
+            connect: Duration,
+            read: Option<Duration>,
+            write: Duration,
+        ) -> mysql::OptsBuilder {
             let database = if self.database.is_empty() {
                 None
             } else {
                 Some(self.database.as_str())
             };
-            mysql::OptsBuilder::new()
+            let builder = mysql::OptsBuilder::new()
                 .ip_or_hostname(Some(self.host.as_str()))
                 .tcp_port(self.port)
                 .user(Some(self.username.as_str()))
@@ -65,6 +100,13 @@ mod driver {
                 .stmt_cache_size(0usize)
                 .ssl_opts(self.tls.then(mysql::SslOpts::default))
                 .init(self.init())
+                .tcp_connect_timeout(Some(connect))
+                .read_timeout(read)
+                .write_timeout(Some(write))
+                .tcp_keepalive_time_ms(Some(KEEPALIVE_IDLE_MS));
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            let builder = builder.tcp_keepalive_probe_interval_secs(Some(KEEPALIVE_INTERVAL_SECS));
+            builder
         }
 
         /// What each new connection runs first.
@@ -143,9 +185,18 @@ mod driver {
                     password: password.into(),
                     database: database.into(),
                     tls,
+                    read_timeout: Some(READ_TIMEOUT),
                     isolation: None,
                 },
             }
+        }
+
+        /// The most one read waits, the sign-in's included; [`Duration::ZERO`] waits without a limit. The default is
+        /// ten minutes. The datasource's `inline-jdbc` `read-timeout` sets it.
+        #[must_use]
+        pub fn read_timeout(mut self, timeout: Duration) -> Self {
+            self.endpoint.read_timeout = (!timeout.is_zero()).then_some(timeout);
+            self
         }
 
         /// Each connection sets its session's isolation level to `level`, as SQL writes it (`READ COMMITTED`), as
@@ -171,6 +222,7 @@ mod driver {
                 statements: StatementLru::new(STATEMENT_CACHE_CAP),
                 kill,
                 mariadb: version.as_deref().is_some_and(is_mariadb),
+                lost: false,
                 conn: NonNull::from(Box::leak(Box::new(conn))),
             })
         }
@@ -199,6 +251,9 @@ mod driver {
         kill: Arc<KillState>,
         /// The server is MariaDB, which bounds statements with `max_statement_time`.
         mariadb: bool,
+        /// A call lost the connection ([`connection_lost`]): [`DbConnection::is_closed`], so the pool discards it
+        /// rather than send a ROLLBACK that would wait out the read timeout again.
+        lost: bool,
         conn: NonNull<mysql::Conn>,
     }
 
@@ -329,7 +384,67 @@ mod driver {
             self.ensure_idle()?;
             let kill = Arc::clone(&self.kill);
             let _busy = BusyFlag::arm(&kill.busy);
-            self.conn().query_drop(sql).map_err(mysql_err)
+            let result = self.conn().query_drop(sql).map_err(mysql_err);
+            self.note(result)
+        }
+
+        /// `result`, remembering when its error lost the connection.
+        fn note<T>(&mut self, result: Result<T, Error>) -> Result<T, Error> {
+            if let Err(err) = &result {
+                self.lost |= connection_lost(err);
+            }
+            result
+        }
+
+        fn execute_rows(&mut self, sql: &str, params: &[Value]) -> Result<u64, Error> {
+            self.ensure_idle()?;
+            let mysql_params = to_params(params)?;
+            let kill = Arc::clone(&self.kill);
+            let _busy = BusyFlag::arm(&kill.busy);
+            match self.prep_cached(sql) {
+                Ok(()) => {
+                    self.cached_drain(sql, mysql_params)?;
+                    Ok(self.conn().affected_rows())
+                }
+                Err(err) if params.is_empty() && unsupported_prepared(&err) => {
+                    self.conn().query_drop(sql).map_err(mysql_err)?;
+                    Ok(self.conn().affected_rows())
+                }
+                Err(err) => Err(mysql_err(err)),
+            }
+        }
+
+        fn open_stream_rows(&mut self, sql: &str, params: &[Value]) -> Result<(), Error> {
+            self.ensure_idle()?;
+            let mysql_params = to_params(params)?;
+            let kill = Arc::clone(&self.kill);
+            let mut busy = BusyFlag::arm(&kill.busy);
+            self.prep_cached(sql).map_err(mysql_err)?;
+            let result = self.stream_result(sql, mysql_params)?;
+            self.stream = Some(result);
+            self.stream_names = None;
+            busy.keep();
+            Ok(())
+        }
+    }
+
+    /// True when the call that failed with `err` left the connection of no use: its socket failed or timed out (a read
+    /// past the read timeout), it fell out of step with the server, or the server closed an idle session (MySQL 8's
+    /// `ER_CLIENT_INTERACTION_TIMEOUT`, 4031). A statement's own error (a key, a killed query) leaves it usable.
+    fn connection_lost(err: &Error) -> bool {
+        use mysql::DriverError;
+        use std::error::Error as _;
+        match err.source().and_then(|source| source.downcast_ref::<mysql::Error>()) {
+            Some(mysql::Error::IoError(_) | mysql::Error::CodecError(_)) => true,
+            Some(mysql::Error::DriverError(driver)) => matches!(
+                driver,
+                DriverError::PacketOutOfSync
+                    | DriverError::PacketTooLarge
+                    | DriverError::UnexpectedPacket
+                    | DriverError::Timeout
+            ),
+            Some(mysql::Error::MySqlError(server)) => server.code == ER_CLIENT_INTERACTION_TIMEOUT,
+            _ => false,
         }
     }
 
@@ -362,43 +477,28 @@ mod driver {
             }
         }
 
+        fn is_closed(&self) -> bool {
+            self.lost
+        }
+
         fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64, Error> {
-            self.ensure_idle()?;
-            let mysql_params = to_params(params)?;
-            let kill = Arc::clone(&self.kill);
-            let _busy = BusyFlag::arm(&kill.busy);
-            match self.prep_cached(sql) {
-                Ok(()) => {
-                    self.cached_drain(sql, mysql_params)?;
-                    Ok(self.conn().affected_rows())
-                }
-                Err(err) if params.is_empty() && unsupported_prepared(&err) => {
-                    self.conn().query_drop(sql).map_err(mysql_err)?;
-                    Ok(self.conn().affected_rows())
-                }
-                Err(err) => Err(mysql_err(err)),
-            }
+            let result = self.execute_rows(sql, params);
+            self.note(result)
         }
 
         fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
-            self.rows(sql, params, true)
+            let result = self.rows(sql, params, true);
+            self.note(result)
         }
 
         fn query_once(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
-            self.rows(sql, params, false)
+            let result = self.rows(sql, params, false);
+            self.note(result)
         }
 
         fn open_stream(&mut self, sql: &str, params: &[Value]) -> Result<(), Error> {
-            self.ensure_idle()?;
-            let mysql_params = to_params(params)?;
-            let kill = Arc::clone(&self.kill);
-            let mut busy = BusyFlag::arm(&kill.busy);
-            self.prep_cached(sql).map_err(mysql_err)?;
-            let result = self.stream_result(sql, mysql_params)?;
-            self.stream = Some(result);
-            self.stream_names = None;
-            busy.keep();
-            Ok(())
+            let result = self.open_stream_rows(sql, params);
+            self.note(result)
         }
 
         fn next_row(&mut self) -> Result<Option<DbRow>, Error> {
@@ -407,7 +507,10 @@ mod driver {
             };
             match stream.next() {
                 Some(Ok(row)) => Ok(Some(map_row(row, &mut self.stream_names)?)),
-                Some(Err(err)) => Err(mysql_err(err)),
+                Some(Err(err)) => {
+                    let result = Err(mysql_err(err));
+                    self.note(result)
+                }
                 None => Ok(None),
             }
         }
@@ -467,6 +570,13 @@ mod driver {
 
     impl DbCancel for MysqlCancel {
         fn cancel(&self) -> Result<(), Error> {
+            self.kill_within(CANCEL_TIMEOUT)
+        }
+    }
+
+    impl MysqlCancel {
+        /// `KILL QUERY` of the busy statement, each step (connect, sign in, the query) within `timeout`.
+        fn kill_within(&self, timeout: Duration) -> Result<(), Error> {
             if !self.state.busy.load(Ordering::Acquire) {
                 return Ok(());
             }
@@ -474,7 +584,10 @@ mod driver {
             if id == 0 {
                 return Ok(());
             }
-            let mut conn = mysql::Conn::new(self.state.endpoint.opts()).map_err(mysql_err)?;
+            // KILL QUERY needs a signed-in session of its own: each of its steps is bounded, so a server that does not
+            // answer does not hold the deadline worker
+            let opts = self.state.endpoint.opts_within(timeout, Some(timeout), timeout);
+            let mut conn = mysql::Conn::new(opts).map_err(mysql_err)?;
             conn.query_drop(format!("KILL QUERY {id}")).map_err(mysql_err)
         }
     }
@@ -787,6 +900,8 @@ mod driver {
     }
 
     // Inline `mod driver` loads children from mysql/driver/, not from beside mysql.rs.
+    #[cfg(test)]
+    mod network_tests;
     #[cfg(test)]
     mod tests;
 }

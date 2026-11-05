@@ -69,6 +69,36 @@ fn data(user_key: &PrivateKey) -> String {
     )
 }
 
+/// As many connections to the SSH server at `address` as it has pre-auth slots, from 127.0.0.2, sending nothing, so
+/// they wait to log in; returned once the server has taken or closed each of them.
+fn hold_preauth_slots(address: std::net::SocketAddr) -> Vec<std::net::TcpStream> {
+    let held = connect_from(address, "127.0.0.2", 16);
+    // the server answers each connection it keeps with its version line, and closes one past the share
+    let mut kept = 0;
+    for stream in &held {
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut first = [0_u8; 4];
+        if matches!(std::io::Read::read(&mut &*stream, &mut first), Ok(n) if n > 0) {
+            kept += 1;
+        }
+    }
+    assert!(kept > 0 && kept < 16, "{kept} of 16 kept from one address");
+    held
+}
+
+/// `count` connections to `address` from the loopback address `source`.
+fn connect_from(address: std::net::SocketAddr, source: &str, count: usize) -> Vec<std::net::TcpStream> {
+    let source: std::net::SocketAddr = format!("{source}:0").parse().unwrap();
+    (0..count)
+        .map(|_| {
+            let socket = socket2::Socket::new(socket2::Domain::IPV4, socket2::Type::STREAM, None).unwrap();
+            socket.bind(&source.into()).unwrap();
+            socket.connect(&address.into()).unwrap();
+            socket.into()
+        })
+        .collect()
+}
+
 fn key(seed: [u8; 32]) -> PrivateKey {
     PrivateKey::from(Ed25519Keypair::from_seed(&seed))
 }
@@ -193,20 +223,25 @@ fn sftp_and_the_admin_shell_run_on_the_built_in_server() {
     client.mkdirs("/outbox/SshOut").unwrap();
     client.close();
 
-    // Connections that never log in do not take the ssh-server max-sessions (8) slots from one that does.
-    let idle: Vec<std::net::TcpStream> = (0..8).map(|_| std::net::TcpStream::connect(address).unwrap()).collect();
+    // Connections that never log in do not take the ssh-server max-sessions (8) slots from one that does (from two
+    // other addresses, each within its share of the pre-auth slots).
+    let mut idle = connect_from(address, "127.0.0.3", 4);
+    idle.extend(connect_from(address, "127.0.0.4", 4));
     let mut past_idle = SftpClient::new(&host, "john.doe", None).unwrap();
     past_idle.password("moqui").connect().unwrap();
     assert_eq!(past_idle.ls_files("/drop").unwrap(), ["s.txt"]);
     past_idle.close();
     drop(idle);
 
-    // Key login with the user's UserSshKey, and a key that is not one is refused.
+    // Key login with the user's UserSshKey, and a key that is not one is refused. Another address holding every
+    // pre-auth slot it can does not keep the login out (HL-032).
+    let held = hold_preauth_slots(address);
     let pem = user_key.to_openssh(LineEnding::LF).unwrap().to_string();
     let mut keyed = SftpClient::new(&host, "john.doe", None).unwrap();
     keyed.public_key_pkcs8(&pem, None).connect().unwrap();
     assert_eq!(keyed.ls_files("/drop").unwrap(), ["s.txt"]);
     keyed.close();
+    drop(held);
     let stranger = key(OTHER_SEED).to_openssh(LineEnding::LF).unwrap().to_string();
     let mut refused = SftpClient::new(&host, "john.doe", None).unwrap();
     assert!(refused.public_key_pkcs8(&stranger, None).connect().is_err());

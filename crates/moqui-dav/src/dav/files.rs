@@ -62,6 +62,8 @@ struct Entry {
     version_name: String,
     content_type: String,
     can_write: bool,
+    /// Its resource location, which get#ResourceInfo gives with the entry, so a read needs no second call.
+    location: String,
 }
 
 impl Entry {
@@ -77,6 +79,7 @@ impl Entry {
             version_name: text_of(map, "versionName"),
             content_type: text_of(map, "contentType"),
             can_write: map.get("canWrite").map_or(can_write, |_| flag_of(map, "canWrite")),
+            location: text_of(map, "location"),
         }
     }
 
@@ -199,6 +202,7 @@ fn info(drive: &Drive, path: &str) -> Result<Option<Entry>, String> {
                     version_name: String::new(),
                     content_type: String::new(),
                     can_write: flag_of(&folder, "canWrite"),
+                    location: drive.root_location.clone(),
                 }))
             }
             Err(err) if status_of_error(&err) == 404 => Ok(None),
@@ -245,6 +249,43 @@ fn split_parent(path: &str) -> (String, String) {
 fn server_error(err: &str) -> DavResponse {
     tracing::warn!("dav files: {err}");
     DavResponse::text(500, err)
+}
+
+// ---- the drive adapter: what WebDAV and the SFTP tree do to a file, behind the file services ----
+
+/// The content of the file `entry` (from [`info`], whose get#ResourceInfo checked the user's access and gave its
+/// location), opened as a windowed source: nothing is read yet. `None` when it is no longer there. The storage is rows
+/// the user's own authorization may not read, so it is opened with authorization off.
+fn open_file(entry: &Entry) -> Result<Option<moqui_core::context::Opened>, String> {
+    if entry.is_directory || entry.location.is_empty() {
+        return Ok(None);
+    }
+    ExecutionContext::with_current(|ec| {
+        let _authz = ec.disable_authz();
+        ec.factory().resource().open(&entry.location)
+    })
+    .ok_or_else(|| "no execution context".to_string())?
+    .map_err(|err| err.message().to_string())
+}
+
+/// Upload `file` into the folder `parent` of a drive, replacing the file of its name: a new version of it. The error
+/// is the upload service's, or the failed outcome of the file.
+fn upload(drive: &Drive, parent: &str, file: UploadedFile) -> Result<(), String> {
+    let out = call(
+        &format!("{FILES}.upload#Resource"),
+        &[
+            ("driveId", Value::string(&drive.drive_id)),
+            ("path", Value::string(parent)),
+            ("file", Value::Object(HostObject::new(file))),
+            ("conflictPolicy", Value::string("replace")),
+        ],
+    )?;
+    if let Some(row) = maps(out.get("uploadedList")).first() {
+        if text_of(row, "outcome") == "failed" {
+            return Err(text_of(row, "error"));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn handle(context: &Context<'_>, method: &str) -> DavResponse {
@@ -367,6 +408,7 @@ fn listing_page(href: &str, title: &str, names: &[(String, bool)], head: bool) -
             ("Content-Length".into(), length.to_string()),
         ],
         body: if head { Vec::new() } else { page.into_bytes() },
+        stream: None,
     }
 }
 
@@ -395,30 +437,20 @@ fn get(context: &Context<'_>, drive: &Drive, path: &str, head: bool) -> DavRespo
     {
         return DavResponse::status(304).with_header("ETag", etag);
     }
-    let location = match call(
-        &format!("{FILES}.get#ResourceInfo"),
-        &[
-            ("driveId", Value::string(&drive.drive_id)),
-            ("path", Value::string(path)),
-        ],
-    ) {
-        Ok(out) => match out.get("resource") {
-            Some(Value::Map(map)) => text_of(map, "location"),
-            _ => return DavResponse::status(404),
-        },
-        Err(err) => return DavResponse::text(status_of_error(&err), &err),
+    // HEAD answers from the entry's size and reads nothing; GET sends the content as a stream of its source
+    let known_size = entry.size.and_then(|size| u64::try_from(size).ok());
+    let opened = if head && known_size.is_some() {
+        None
+    } else {
+        match open_file(&entry) {
+            Ok(Some(opened)) => Some(opened),
+            Ok(None) => return DavResponse::status(404),
+            Err(err) => return server_error(&err),
+        }
     };
-    // get#ResourceInfo checked the user's access; the storage is entity rows the user's own authorization may not read
-    let bytes = ExecutionContext::with_current(|ec| {
-        let _authz = ec.disable_authz();
-        ec.factory().resource().location_bytes(&location)
-    });
-    let bytes = match bytes {
-        Some(Ok(Some(bytes))) => bytes,
-        Some(Ok(None)) => return DavResponse::status(404),
-        Some(Err(err)) => return server_error(err.message()),
-        None => return server_error("no execution context"),
-    };
+    let total = opened
+        .as_ref()
+        .map_or(known_size.unwrap_or(0), |opened| opened.stat.size);
     let content_type = if entry.content_type.is_empty() {
         "application/octet-stream".to_string()
     } else {
@@ -432,28 +464,32 @@ fn get(context: &Context<'_>, drive: &Drive, path: &str, head: bool) -> DavRespo
             ("Accept-Ranges".into(), "bytes".into()),
         ],
         body: Vec::new(),
+        stream: None,
     };
     if let Some(modified) = entry.modified {
         response.headers.push(("Last-Modified".into(), http_date(modified)));
     }
-    let total = bytes.len();
     let range = context
         .request
         .header("range")
-        .and_then(|range| byte_range(range, total));
-    let body = match range {
+        .and_then(|range| byte_range(range, usize::try_from(total).unwrap_or(usize::MAX)));
+    let (start, length) = match range {
         Some((start, end)) => {
             response.status = 206;
             response
                 .headers
                 .push(("Content-Range".into(), format!("bytes {start}-{end}/{total}")));
-            bytes[start..=end].to_vec()
+            (start as u64, (end - start + 1) as u64)
         }
-        None => bytes,
+        None => (0, total),
     };
-    response.headers.push(("Content-Length".into(), body.len().to_string()));
-    if !head {
-        response.body = body;
+    response.headers.push(("Content-Length".into(), length.to_string()));
+    if let (false, Some(opened)) = (head, opened) {
+        response.stream = Some(moqui_core::web::ResponseStream {
+            source: opened.source,
+            offset: start,
+            length,
+        });
     }
     response
 }
@@ -523,24 +559,8 @@ fn put(context: &Context<'_>, drive: &Drive, path: &str) -> DavResponse {
         .unwrap_or("application/octet-stream")
         .to_string();
     let file = UploadedFile::in_memory("file", &name, &content_type, context.request.body.clone());
-    let out = call(
-        &format!("{FILES}.upload#Resource"),
-        &[
-            ("driveId", Value::string(&drive.drive_id)),
-            ("path", Value::string(&parent)),
-            ("file", Value::Object(HostObject::new(file))),
-            ("conflictPolicy", Value::string("replace")),
-        ],
-    );
-    let out = match out {
-        Ok(out) => out,
-        Err(err) => return DavResponse::text(status_of_error(&err), &err),
-    };
-    if let Some(row) = maps(out.get("uploadedList")).first() {
-        if text_of(row, "outcome") == "failed" {
-            let error = text_of(row, "error");
-            return DavResponse::text(status_of_error(&error), &error);
-        }
+    if let Err(err) = upload(drive, &parent, file) {
+        return DavResponse::text(status_of_error(&err), &err);
     }
     let mut answer = DavResponse::status(if existing.is_some() { 204 } else { 201 });
     if let Ok(Some(entry)) = info(drive, path) {
@@ -780,10 +800,10 @@ pub fn drive_folder(drive_id: &str) -> Option<String> {
 /// WebDAV, and each path below goes through the same services (a write is an upload, a removal goes to the trash, a
 /// rename across folders is a move). The desktops' litter is not dropped here, as SFTP clients write none.
 pub mod tree {
-    use super::{children, drives, info, split_parent, trash, Drive, Entry, FILES};
-    use moqui_core::context::{Error, ExecutionContext, ResourceStat};
+    use super::{children, drives, info, open_file, split_parent, trash, upload, Drive, Entry, FILES};
+    use moqui_core::context::{Error, ResourceStat};
     use moqui_core::web::multipart::UploadedFile;
-    use moqui_lib::object::{HostObject, Value};
+    use moqui_lib::object::Value;
 
     fn refused(text: String) -> Error {
         Error::new(text)
@@ -858,30 +878,31 @@ pub mod tree {
             .collect())
     }
 
-    /// The bytes of a file.
-    pub fn read(path: &str) -> Result<Vec<u8>, Error> {
+    /// A file opened for reading a window at a time (the adapter's open: the access checked, nothing read yet).
+    pub fn open(path: &str) -> Result<moqui_core::context::Opened, Error> {
         let (Some(drive), inner) = locate(path)? else {
             return Err(refused("not a file: the top folder holds the drives".into()));
         };
-        let out = crate::dav::call(
-            &format!("{FILES}.get#ResourceInfo"),
-            &[
-                ("driveId", Value::string(&drive.drive_id)),
-                ("path", Value::string(&inner)),
-            ],
-        )
-        .map_err(refused)?;
-        let location = match out.get("resource") {
-            Some(Value::Map(map)) if !crate::dav::flag_of(map, "isDirectory") => crate::dav::text_of(map, "location"),
-            _ => return Err(refused(format!("not a file: {path}"))),
+        let entry = match info(&drive, &inner).map_err(refused)? {
+            Some(entry) if !entry.is_directory => entry,
+            Some(_) => return Err(refused(format!("not a file: {path}"))),
+            None => return Err(refused(format!("not found: {path}"))),
         };
-        // get#ResourceInfo checked the access; the storage is rows the user's own authorization may not read
-        ExecutionContext::with_current(|ec| {
-            let _authz = ec.disable_authz();
-            ec.factory().resource().location_bytes(&location)
-        })
-        .ok_or_else(|| refused("no execution context".into()))??
-        .ok_or_else(|| refused(format!("not found: {path}")))
+        open_file(&entry)
+            .map_err(refused)?
+            .ok_or_else(|| refused(format!("not found: {path}")))
+    }
+
+    /// The bytes of a file, whole.
+    pub fn read(path: &str) -> Result<Vec<u8>, Error> {
+        let opened = open(path)?;
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(
+            &mut moqui_core::resource::source::SourceReader::new(opened.source),
+            &mut bytes,
+        )
+        .map_err(|err| refused(err.to_string()))?;
+        Ok(bytes)
     }
 
     /// Write a file: a new one, or a new version of the one there.
@@ -896,22 +917,7 @@ pub mod tree {
         let content_type = moqui_lib::resource::content_type_for_name(&name)
             .map_or_else(|| "application/octet-stream".to_string(), str::to_string);
         let file = UploadedFile::in_memory("file", &name, &content_type, bytes);
-        let out = crate::dav::call(
-            &format!("{FILES}.upload#Resource"),
-            &[
-                ("driveId", Value::string(&drive.drive_id)),
-                ("path", Value::string(&parent)),
-                ("file", Value::Object(HostObject::new(file))),
-                ("conflictPolicy", Value::string("replace")),
-            ],
-        )
-        .map_err(refused)?;
-        if let Some(row) = crate::dav::maps(out.get("uploadedList")).first() {
-            if crate::dav::text_of(row, "outcome") == "failed" {
-                return Err(refused(crate::dav::text_of(row, "error")));
-            }
-        }
-        Ok(())
+        upload(&drive, &parent, file).map_err(refused)
     }
 
     pub fn make_directory(path: &str) -> Result<(), Error> {

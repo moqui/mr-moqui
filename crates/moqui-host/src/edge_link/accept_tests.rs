@@ -89,3 +89,28 @@ async fn a_client_hello_that_never_ends_is_refused() {
     assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
     drop(writer.await);
 }
+
+/// Pair attempts count by /64 and start again after the window; sources whose window ended are swept once a window,
+/// so the table does not keep them (HL-032).
+#[test]
+fn pair_attempts_count_by_source_in_a_window() {
+    let mut attempts = PairAttempts::default();
+    let window = Duration::from_secs(600);
+    let t0 = Instant::now();
+    let a: IpAddr = "2001:db8:7:7::1".parse().unwrap();
+    let a2: IpAddr = "2001:db8:7:7::2".parse().unwrap();
+    assert!(attempts.allowed(a, t0, window, 2));
+    assert!(attempts.allowed(a2, t0, window, 2));
+    assert!(!attempts.allowed(a, t0, window, 2), "the third from the /64");
+    let v4: IpAddr = "198.51.100.9".parse().unwrap();
+    let mapped: IpAddr = "::ffff:198.51.100.9".parse().unwrap();
+    assert!(attempts.allowed(v4, t0, window, 1));
+    assert!(
+        !attempts.allowed(mapped, t0, window, 1),
+        "an IPv4-mapped address is its IPv4 one"
+    );
+    assert_eq!(attempts.sources(), 2);
+    let later = t0 + window + Duration::from_secs(1);
+    assert!(attempts.allowed(a, later, window, 2), "a new window");
+    assert_eq!(attempts.sources(), 1, "the expired source was swept");
+}

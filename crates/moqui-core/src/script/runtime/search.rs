@@ -35,7 +35,8 @@
 //! ec.search.embedPending({indexName | documentType, batch, maxChars}) -> embeddings stored
 //! ec.search.capabilities() -> names: proximity, fuzzy, autocomplete, weightedRank, accent, semantic, hybrid
 //! ec.search.flatten(map) -> map with dotted keys
-//! ec.search.processFeedPending(ids?) -> {documentsIndexed, documentsDeleted, rowsDone, rowsLeft}
+//! ec.search.processFeedPending(ids?, stuckMinutes?) -> {documentsIndexed, documentsDeleted, rowsDone, rowsLeft, rowsHeld,
+//!     rowsStuck, rowsPending, oldestPendingSeconds, stuckError}
 //! ec.search.rebuildFeed({dataFeedId, dataDocumentId, fromUpdateStamp, thruUpdateStamp, batchSize}) -> count
 //! ec.entity.getDataDocuments(dataDocumentId, condition?, fromUpdateStamp?, thruUpdateStamp?) -> list
 //! ```
@@ -447,9 +448,12 @@ pub(super) fn search_flatten<'js>(ctx: Ctx<'js>, value: JsValue<'js>) -> rquickj
     })
 }
 
+/// `ec.search.processFeedPending(ids, stuckMinutes)`: deliver the rows of `ids`, or drain every pending row when `ids`
+/// is null. A drain reports as `stuckError` the rows that still fail after `stuckMinutes` (default 60) pending.
 pub(super) fn search_process_feed_pending<'js>(
     ctx: Ctx<'js>,
     ids: Opt<JsValue<'js>>,
+    stuck_minutes: Opt<JsValue<'js>>,
 ) -> rquickjs::Result<JsValue<'js>> {
     host_guard(&ctx, || {
         flush_current(&ctx, true)?;
@@ -460,13 +464,41 @@ pub(super) fn search_process_feed_pending<'js>(
             },
             None => None,
         };
-        let report = lib(&ctx, search::feed::process_pending(ids.as_deref()))?;
+        let stuck_after = match stuck_minutes.0 {
+            Some(value) => match js_to_host(&ctx, &value)? {
+                Value::Null => search::feed::DEFAULT_STUCK_AFTER,
+                other => {
+                    let minutes = moqui_lib::object::to_plain_string(&other)
+                        .trim()
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|minutes| minutes.is_finite() && *minutes >= 0.0)
+                        .ok_or_else(|| Exception::throw_message(&ctx, "stuckMinutes is not a number of minutes"))?;
+                    std::time::Duration::from_secs_f64(minutes * 60.0)
+                }
+            },
+            None => search::feed::DEFAULT_STUCK_AFTER,
+        };
+        let report = lib(&ctx, search::feed::process_pending(ids.as_deref(), stuck_after))?;
         let mut out = indexmap::IndexMap::new();
         let count = |value: usize| Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
         out.insert("documentsIndexed".to_string(), count(report.documents_indexed));
         out.insert("documentsDeleted".to_string(), count(report.documents_deleted));
         out.insert("rowsDone".to_string(), count(report.rows_done));
         out.insert("rowsLeft".to_string(), count(report.rows_left));
+        out.insert("rowsHeld".to_string(), count(report.rows_held));
+        out.insert("rowsStuck".to_string(), count(report.rows_stuck));
+        out.insert("rowsPending".to_string(), count(report.rows_pending));
+        out.insert(
+            "oldestPendingSeconds".to_string(),
+            report.oldest_pending_seconds.map_or(Value::Null, |seconds| {
+                Value::I64(i64::try_from(seconds).unwrap_or(i64::MAX))
+            }),
+        );
+        out.insert(
+            "stuckError".to_string(),
+            report.stuck(stuck_after).map_or(Value::Null, Value::String),
+        );
         host_to_js(&ctx, Value::Map(out))
     })
 }

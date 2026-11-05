@@ -46,9 +46,11 @@ pub(super) async fn serve_channel(
         let _ = handle.close(id).await;
         return;
     };
+    // a client that stops reading frees the git worker after the idle timeout, as over HTTP
+    let stall = crate::git_bridge::idle_timeout(&strong);
     let submitted = server::pool(&strong).try_submit(Arc::clone(&strong), move || {
         let mut input = ChannelReader::new(in_rx);
-        let mut output = ChannelWriter::new(out_tx);
+        let mut output = ChannelWriter::new(out_tx, stall);
         let mut stderr = Vec::new();
         let status = server::serve_ssh(
             &username,

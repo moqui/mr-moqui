@@ -660,7 +660,8 @@ struct GuestScope {
 /// `{rtc: 'guestAuth', credential}`, within 10 seconds; the credential (from `join#AsGuest`) is checked with
 /// `get#GuestState` and names one call and leg. After that the socket takes only `rtc` frames of that call and leg:
 /// no topics, no co-editing, nothing else. The credential is checked again every 30 seconds; when it no longer works
-/// (revoked, expired, the guest denied or removed) the page is told the call ended and the socket closes.
+/// (revoked, expired, the guest denied or removed) the page is told the call ended and the socket closes. At most
+/// [`MAX_GUEST_WAITING`] sockets on a node wait for their credential; another is answered 503.
 /// Adds `/callws` to the routes.
 pub(crate) fn guest_route(app: axum::Router<Arc<crate::http::HttpState>>) -> axum::Router<Arc<crate::http::HttpState>> {
     app.route("/callws", axum::routing::get(guest_upgrade).connect(guest_upgrade))
@@ -675,11 +676,40 @@ pub(crate) async fn guest_upgrade(
     if !super::origin_allowed(&state.factory, &headers, &site, "call") {
         return crate::http::plain(403, "origin not allowed");
     }
+    // a socket with no credential yet holds one of a few places until its first frame is checked (HL-027)
+    let Some(waiting) = GuestWaiting::take() else {
+        return state.guard.unavailable("too many call sockets are waiting to sign in");
+    };
     let factory = Arc::clone(&state.factory);
     let shutdown = state.shutdown.clone();
     ws.max_message_size(MAX_FRAME)
         .max_frame_size(MAX_FRAME)
-        .on_upgrade(move |socket| run_guest(socket, factory, shutdown))
+        .on_upgrade(move |socket| run_guest(socket, factory, shutdown, waiting))
+}
+
+/// Guest sockets open on this node whose credential is not checked yet, at most [`MAX_GUEST_WAITING`].
+static GUEST_WAITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+const MAX_GUEST_WAITING: usize = 64;
+
+/// One place in [`GUEST_WAITING`], given back when it drops.
+struct GuestWaiting;
+
+impl GuestWaiting {
+    fn take() -> Option<Self> {
+        use std::sync::atomic::Ordering;
+        GUEST_WAITING
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |count| {
+                (count < MAX_GUEST_WAITING).then_some(count + 1)
+            })
+            .ok()
+            .map(|_| Self)
+    }
+}
+
+impl Drop for GuestWaiting {
+    fn drop(&mut self) {
+        GUEST_WAITING.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 /// The guest's state by credential: (admission, callSessionId, callLegId), or None when the check could not run.
@@ -701,6 +731,7 @@ async fn run_guest(
     mut socket: axum::extract::ws::WebSocket,
     factory: Arc<ExecutionContextFactory>,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
+    waiting: GuestWaiting,
 ) {
     use axum::extract::ws::Message;
     let first = tokio::time::timeout(GUEST_AUTH_WAIT, socket.recv()).await;
@@ -721,6 +752,7 @@ async fn run_guest(
     if !matches!(admission.as_str(), "admitted" | "waiting") || call.is_empty() || leg.is_empty() {
         return refuse_guest(socket, "notFound").await;
     }
+    drop(waiting);
     let (tx, mut rx) = tokio::sync::mpsc::channel(super::SOCKET_QUEUE);
     let id = super::NEXT_SOCKET.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     // a guest is no user: its id matches no notification's recipients, and it has no topics
@@ -740,7 +772,7 @@ async fn run_guest(
     };
     let authed = json!({"topic": format!("rtc:{call}"), "rtc": "guestAuthed", "callSessionId": call, "callLegId": leg,
         "admission": admission});
-    let mut open = socket.send(Message::Text(authed.to_string().into())).await.is_ok();
+    let mut open = super::send_within(&mut socket, Message::Text(authed.to_string().into())).await;
     let mut check = tokio::time::interval(GUEST_CHECK);
     check.tick().await;
     let mut ping = tokio::time::interval(super::PING_EVERY);
@@ -759,21 +791,21 @@ async fn run_guest(
                 if !matches!(still, Some((ref a, _, _)) if a == "admitted" || a == "waiting") {
                     let ended = json!({"topic": format!("rtc:{}", scope.call), "rtc": "ended", "callSessionId": scope.call,
                         "callLegId": scope.leg, "reason": "removed"});
-                    let _ = socket.send(Message::Text(ended.to_string().into())).await;
+                    let _ = super::send_within(&mut socket, Message::Text(ended.to_string().into())).await;
                     break;
                 }
             }
             incoming = socket.recv() => match incoming {
                 Some(Ok(Message::Text(text))) => guest_frame(&factory, &slot, &scope, &text),
-                Some(Ok(Message::Ping(payload))) => open = socket.send(Message::Pong(payload)).await.is_ok(),
+                Some(Ok(Message::Ping(payload))) => open = super::send_within(&mut socket, Message::Pong(payload)).await,
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 Some(Ok(_)) => {}
             },
             push = rx.recv() => {
                 let Some(push) = push else { break };
-                open = socket.send(Message::Text(push.text.into())).await.is_ok();
+                open = super::send_within(&mut socket, Message::Text(push.text.into())).await;
             }
-            _ = ping.tick() => open = socket.send(Message::Ping(Vec::new().into())).await.is_ok(),
+            _ = ping.tick() => open = super::send_within(&mut socket, Message::Ping(Vec::new().into())).await,
         }
     }
     super::unregister(id);
@@ -784,13 +816,15 @@ async fn run_guest(
 async fn refuse_guest(mut socket: axum::extract::ws::WebSocket, code: &str) {
     use axum::extract::ws::{CloseFrame, Message};
     let frame = json!({"rtc": "error", "code": code, "message": "this link no longer works"});
-    let _ = socket.send(Message::Text(frame.to_string().into())).await;
-    let _ = socket
-        .send(Message::Close(Some(CloseFrame {
+    let _ = super::send_within(&mut socket, Message::Text(frame.to_string().into())).await;
+    let _ = super::send_within(
+        &mut socket,
+        Message::Close(Some(CloseFrame {
             code: 1008,
             reason: "refused".into(),
-        })))
-        .await;
+        })),
+    )
+    .await;
 }
 
 /// A guest's frame: only `rtc` frames of its own call and leg.

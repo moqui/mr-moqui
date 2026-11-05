@@ -44,7 +44,7 @@ use super::types::{self, A2aError, Cursor, InMessage, PartLimits, SendConfig};
 use super::{Caller, Failure};
 use crate::approval::{self, ApprovalView};
 use crate::prompt::Surface;
-use crate::run::{self, events, RunRow, RunState};
+use crate::run::{self, RunRow, RunState};
 use crate::tools::PauseKind;
 use crate::{int_of, millis_of, text_of};
 use moqui_core::context::ExecutionContextFactory;
@@ -58,12 +58,6 @@ const PART: &str = "moqui.agent.AgentMessagePart";
 const QUESTION: &str = "moqui.agent.AgentQuestion";
 const APPROVAL: &str = "moqui.agent.AgentApproval";
 const SURFACE: &str = "AgsfA2a";
-/// A stream's keep-alive comment comes this often.
-const PING_EVERY: Duration = Duration::from_secs(15);
-/// How often a stream reads the run's state, so it ends even when it missed the last event.
-const CHECK_EVERY: Duration = Duration::from_secs(5);
-/// Stored events read per page of a replay.
-const PAGE: i64 = 500;
 /// How long CancelTask waits for a working run to stop.
 const CANCEL_WAIT: Duration = Duration::from_secs(5);
 
@@ -1096,10 +1090,62 @@ impl Projector {
     }
 }
 
+/// An A2A reader of a run's events ([`run::stream::Reader`]): stored events projected to `StreamResponse`s for
+/// `emit` (`None` is a keep-alive), live-only ones left out; it stops when `stop` says so (the server stops, the
+/// client closed) or `deadline` passes, and a pause ends it as [`Follow::close_on_pause`] says.
+struct A2aReader<'a> {
+    projector: Projector,
+    close_on_pause: bool,
+    deadline: Option<Instant>,
+    stop: &'a dyn Fn() -> bool,
+    emit: &'a mut dyn FnMut(Option<Json>) -> bool,
+}
+
+impl run::stream::Reader for A2aReader<'_> {
+    fn event(
+        &mut self,
+        facade: &EntityFacade,
+        seq: Option<i64>,
+        event_type: &str,
+        payload: &Json,
+    ) -> Result<run::stream::Flow, Error> {
+        use run::stream::Flow;
+        if seq.is_none() {
+            return Ok(Flow::Next);
+        }
+        let (out, ends) = self.projector.project(facade, event_type, payload)?;
+        let wrote = !out.is_empty();
+        for response in out {
+            if !(self.emit)(Some(response)) {
+                return Ok(Flow::Gone);
+            }
+        }
+        Ok(match (ends, wrote) {
+            (true, _) => Flow::End,
+            (false, true) => Flow::Wrote,
+            (false, false) => Flow::Next,
+        })
+    }
+
+    fn keep_alive(&mut self) -> bool {
+        (self.emit)(None)
+    }
+
+    fn stopped(&mut self) -> bool {
+        (self.stop)() || self.deadline.is_some_and(|deadline| Instant::now() >= deadline)
+    }
+
+    fn settled(&mut self, facade: &EntityFacade, run_id: &str) -> Result<bool, Error> {
+        Ok(load_task(facade, run_id)?
+            .is_none_or(|task| task.run.state.is_terminal() || (task.run.state.is_paused() && self.close_on_pause)))
+    }
+}
+
 /// Follow a task: project each stored event after `follow.after` to `emit` (`None` is a keep-alive), until the stream
 /// ends (a terminal or interrupted state, as [`Follow::close_on_pause`] says), `emit` says the client is gone,
-/// `stop` says the server stops, or `deadline` passes. Runs in an execution context of the caller's thread with
-/// authorization off. Out: the last stored sequence projected.
+/// `stop` says the server stops or the client closed (checked at least every second), or `deadline` passes. The
+/// replay and the follow are the run layer's ([`run::stream::replay_then_follow`]). Runs in an execution context of
+/// the caller's thread with authorization off. Out: the last stored sequence projected.
 ///
 /// # Errors
 ///
@@ -1111,83 +1157,14 @@ pub fn follow(
     stop: &dyn Fn() -> bool,
     emit: &mut dyn FnMut(Option<Json>) -> bool,
 ) -> Result<i64, Error> {
-    let facade = factory
-        .entity()
-        .ok_or_else(|| Error::new("the entity facade is not installed"))?;
-    let run_id = follow.run_id.as_str();
-    let mut projector = Projector::new(follow.clone());
-    let mut last = follow.after;
-    // the stored events after `last`, page by page: Some(true) when the stream is over, None when the client left
-    let replay = |last: &mut i64,
-                  projector: &mut Projector,
-                  emit: &mut dyn FnMut(Option<Json>) -> bool|
-     -> Result<Option<bool>, Error> {
-        loop {
-            let page = events::stored_after(&facade, run_id, *last, PAGE)?;
-            for event in &page {
-                *last = event.seq;
-                let (out, ends) = projector.project(&facade, &event.event_type, &event.payload)?;
-                for response in out {
-                    if !emit(Some(response)) {
-                        return Ok(None);
-                    }
-                }
-                if ends {
-                    return Ok(Some(true));
-                }
-            }
-            if i64::try_from(page.len()).unwrap_or(0) < PAGE {
-                return Ok(Some(false));
-            }
-        }
+    let mut reader = A2aReader {
+        projector: Projector::new(follow.clone()),
+        close_on_pause: follow.close_on_pause,
+        deadline,
+        stop,
+        emit,
     };
-    if replay(&mut last, &mut projector, emit)? != Some(false) {
-        return Ok(last);
-    }
-    let engine = run::engine(factory);
-    let hub = engine.hub();
-    let _watch = hub.watch(factory, run_id, last);
-    let mut follower = run::hub::Follower::new(&hub, run_id, last);
-    let mut wrote = Instant::now();
-    let mut checked = Instant::now();
-    loop {
-        if stop() || deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-            return Ok(last);
-        }
-        for event in follower.next(&hub, &facade, Duration::from_secs(1))? {
-            let Some(seq) = event.seq else {
-                continue;
-            };
-            last = seq;
-            let (out, ends) = projector.project(&facade, &event.event_type, &event.payload)?;
-            for response in out {
-                if !emit(Some(response)) {
-                    return Ok(last);
-                }
-                wrote = Instant::now();
-            }
-            if ends {
-                return Ok(last);
-            }
-        }
-        if wrote.elapsed() >= PING_EVERY {
-            if !emit(None) {
-                return Ok(last);
-            }
-            wrote = Instant::now();
-        }
-        if checked.elapsed() >= CHECK_EVERY {
-            checked = Instant::now();
-            let done = load_task(&facade, run_id)?.is_none_or(|task| {
-                task.run.state.is_terminal() || (task.run.state.is_paused() && follow.close_on_pause)
-            });
-            if done && !engine.is_local(run_id) {
-                // the last events may have come after the hub was read: project what is stored, then end
-                replay(&mut last, &mut projector, emit)?;
-                return Ok(last);
-            }
-        }
-    }
+    Ok(run::stream::replay_then_follow(factory, &follow.run_id, follow.after, &mut reader)?.last)
 }
 
 /// Wait up to `wait` for a task to end or pause (a blocking send), without a request worker. Out: the task then.
@@ -1219,7 +1196,8 @@ pub fn wait_settled(
         // the step that paused or ended the run may still be finishing its last writes here
         let until = Instant::now() + Duration::from_secs(2);
         while let Some(now) = load_task(&facade, task.id())? {
-            if settled(factory, &now) || Instant::now() >= until {
+            // a client that left, or a server that stops, does not wait for them
+            if settled(factory, &now) || Instant::now() >= until || stop() {
                 break;
             }
             std::thread::sleep(Duration::from_millis(20));

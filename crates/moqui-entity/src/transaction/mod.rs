@@ -28,7 +28,9 @@ mod pool;
 #[doc(hidden)]
 pub use manager::single_threaded;
 pub use manager::{thread_in_transaction, TransactionAttribute, TransactionManager, TxScope};
-pub use pool::{Pool, PoolConfig, PoolStats};
+pub use pool::{Pool, PoolConfig, PoolCounters, PoolStats};
 
+#[cfg(test)]
+mod load_tests;
 #[cfg(test)]
 mod tests;

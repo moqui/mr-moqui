@@ -16,6 +16,8 @@
 
 #[macro_use]
 pub(crate) mod rust_services;
+#[cfg(test)]
+mod anonymous_tests;
 pub(crate) mod backup;
 pub mod call;
 mod call_media;
@@ -81,7 +83,10 @@ pub use call::{
     ServiceFuture,
 };
 pub use define::load_definitions;
-pub use define::{check, configured_service_files, lint, reload as reload_definitions, ServiceReload};
+pub use define::{
+    check, configured_service_files, lint, reload as reload_definitions, reload_parsed as reload_parsed_definitions,
+    ReloadPhases, ServiceReload,
+};
 pub use define::{input_hints, input_rules, merge_param, ClientRule};
 pub use eca::{run_data_file_service, run_matched_eca, schedule_feed_receive, search_not_up};
 #[cfg(any(test, feature = "test-support"))]
@@ -95,7 +100,7 @@ pub use jobs::{run_job_now, PassReport};
 pub use pool::{start_pools, PoolStatus, RunnerStats, ServicePools};
 #[cfg(feature = "http")]
 pub use remote::shared_http_client;
-pub use request_pool::{caps, check_serve_caps, spare_connections, RequestPool};
+pub use request_pool::{caps, check_serve_caps, spare_connections, transfer_readers, transfer_workers, RequestPool};
 #[cfg(test)]
 pub(crate) use rest::install;
 #[cfg(any(test, feature = "test-support"))]

@@ -603,6 +603,7 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     ec.resource.markdownHtml = (text) => host.markdownHtml(text == null ? "" : String(text));
     // digests and archives read as streams (archive_host.rs): checksums of exports, operator-supplied import archives
     ec.resource.digest = (location, algorithm) => host.resourceDigest(String(location), String(algorithm || "sha256"));
+    ec.resource.digestText = (text, algorithm) => host.textDigest(String(text ?? ""), String(algorithm || "sha256"));
     ec.resource.gunzip = (source, target, maxBytes) => host.resourceGunzip(String(source), String(target),
         maxBytes == null ? 4 * 1024 * 1024 * 1024 : Number(maxBytes));
     ec.resource.extractArchive = (source, target, limits) => host.resourceExtractArchive(String(source), String(target), limits || {});

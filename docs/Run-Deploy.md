@@ -399,8 +399,11 @@ embeds it.
 ### External Postgres or MySQL
 
 Set `entity_ds_db_conf` and the other `entity_ds_*` properties, in the environment, `.env` or the runtime conf. There
-are examples in `runtime/conf/MoquiDevConf.xml`. MySQL has open issues: two tables are not created and emoji cannot be
-stored ([MySQL-Issues](../plans/MySQL-Issues.md)).
+are examples in `runtime/conf/MoquiDevConf.xml`. Use `mysql8` for MySQL 8 and `mysql` for MariaDB (which has no
+`LATERAL`) and MySQL 5.7. Both create `utf8mb4` tables, so any character (an emoji) can be stored; create the database
+with `CHARACTER SET utf8mb4`. A database made before, with 3-byte `utf8` tables, needs a fresh load or each table
+converted by hand (`ALTER TABLE ... CONVERT TO CHARACTER SET utf8mb4`). Loading every data type into each was checked
+([MySQL-Issues](../plans/archive/MySQL-Issues.md)).
 
 | Property | Example | What it does |
 |---|---|---|
@@ -448,8 +451,7 @@ else uses `ec.resource`. No foreign key or view-entity crosses between the conte
 For a server of its own, set `content_ds_host`, `content_ds_port`, `content_ds_user`, `content_ds_password`,
 `content_ds_sslmode` and `content_ds_sslrootcert`. Each one left empty takes its `entity_ds_` value. So setting only
 `content_ds_db_conf=postgres` puts the content in a `moqui_content` database on the transactional server, which must
-exist. `content_ds_schema` names a schema, as `entity_ds_schema` does. A MySQL content database has the open MySQL
-issues above.
+exist. `content_ds_schema` names a schema, as `entity_ds_schema` does.
 
 One transaction spans both databases, as Moqui Java's transaction spans every datasource, but without two-phase commit:
 
@@ -459,8 +461,12 @@ One transaction spans both databases, as Moqui Java's transaction spans every da
 - **Rollback**: a rollback, or an error in either database, rolls back both.
 - **The edge case**: a file deleted in a transaction whose transactional commit then fails stays deleted.
 
-Each transaction can hold a connection to each database, so the content pool is the size of the transactional one (90).
-The embedded cluster makes room for both. A cluster of servers shares the content database as it shares the
+Each transaction can hold a connection to each database, so the content pool is the size of the transactional one (80).
+Its 72 ordinary connections (8 are reserve) hold the request and service workers' (8 + 25) × 2, one agent worker and a
+connection for each streamed download reading a window at once (the `webroot` webapp's `transfer-workers`, 4): 71. When
+the content shares an external transactional database, that pool holds the same 71. The embedded cluster makes room for
+both pools. Startup refuses a pool too small for the workers, and warns about one too small for the downloads' reads,
+which then read fewer at once. A cluster of servers shares the content database as it shares the
 transactional one, so it needs both external.
 
 ### Search
@@ -537,6 +543,9 @@ plain HTTP listener is HTTP/1.1 only. `webapp_http2=false` keeps HTTPS to HTTP/1
 - **Limits.** One HTTP/2 connection carries at most `webapp_http2_max_streams` (100) requests at once. One with no
   request for `webapp_header_timeout` (30 seconds) is closed with a GOAWAY, as an idle HTTP/1.1 connection is closed,
   and so is a client's connection when web protection refuses that client.
+- **Slow readers.** A connection whose client takes nothing of a response for `webapp_write_timeout` (60 seconds) is
+  closed, a WebSocket's included; a download that keeps moving is not. A WebSocket keeps its connection's place in
+  `webapp_max_connections` and web protection's `max-per-client` until it closes.
 - **Behind a proxy**, HTTP/2 is between the client and the proxy; the proxy may reach the server over HTTP/1.1 or, on
   the HTTPS port, over HTTP/2 (gRPC through a proxy needs HTTP/2 to the server).
 

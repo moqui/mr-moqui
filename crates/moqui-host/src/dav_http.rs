@@ -80,29 +80,36 @@ pub(crate) async fn handle(
         secure,
         client_ip: client.to_string(),
     };
-    let factory = Arc::clone(&state.factory);
-    let job_factory = Arc::clone(&factory);
+    // the shared admission (queue age, abandonment, overload; HL-006)
+    let job_factory = Arc::clone(&state.factory);
     let guard = Arc::clone(&state.guard);
-    let (done, answer) = tokio::sync::oneshot::channel::<DavResponse>();
-    let submitted = factory.request_pool().try_submit(Arc::clone(&factory), move || {
-        let response = moqui_dav::dav::serve(&job_factory, &dav_request);
-        if moqui_core::web::take_auth_failure() {
-            guard.record(client, Event::AuthFailure);
-        }
-        let _ = done.send(response);
-        Ok(())
-    });
-    if submitted.is_err() {
-        return state.guard.unavailable("the server is busy; try again");
-    }
-    let Ok(answer) = answer.await else {
-        return plain(500, "the DAV request ended without a response");
+    let served = crate::http::admission::run(
+        Arc::clone(&state.factory),
+        Arc::clone(&state.guard),
+        state.guard.conf().queue_timeout,
+        move || {
+            let response: DavResponse = moqui_dav::dav::serve(&job_factory, &dav_request);
+            if moqui_core::web::take_auth_failure() {
+                guard.record(client, Event::AuthFailure);
+            }
+            response
+        },
+    )
+    .await;
+    let answer = match served {
+        Ok(answer) => answer,
+        Err(refusal) => return refusal.response(&state.guard),
     };
     let mut response = Response::builder().status(answer.status);
     for (name, value) in answer.headers {
         response = response.header(name, value);
     }
+    // a file's content streams a window at a time, as a web download's does
+    let body = match answer.stream {
+        Some(stream) => crate::source_body::body(Arc::clone(&state.factory), stream),
+        None => axum::body::Body::from(answer.body),
+    };
     response
-        .body(axum::body::Body::from(answer.body))
+        .body(body)
         .unwrap_or_else(|_| plain(500, "a DAV response header was not valid"))
 }

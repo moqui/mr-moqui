@@ -27,12 +27,15 @@
 
     const MODE = "csv";
 
-    // $csv quotes a value with a comma, a quote or a line break and doubles its quotes.
+    // $csv quotes a value with a comma, a quote or a line break (LF or CR) and doubles its quotes. A value a spreadsheet
+    // would read as a formula (it starts with =, +, -, @, a tab or a CR, and is not a plain number such as -12.50) is
+    // written with a leading apostrophe first, so an exported field cannot run as a formula (CSV injection).
     // $sep writes the comma between the values of a row.
     const prelude = `let $hasPrev = false;
 const $csv = (value) => {
     value = String(value);
-    return /[,"\\n]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value;
+    if (/^[=+\\-@\\t\\r]/.test(value) && !/^[+-]?[\\d,]*\\.?\\d+$/.test(value)) value = "'" + value;
+    return /[,"\\n\\r]/.test(value) ? '"' + value.replace(/"/g, '""') + '"' : value;
 };
 const $sep = () => { if ($hasPrev) sri.write(","); else $hasPrev = true; };
 `;

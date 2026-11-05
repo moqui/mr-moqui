@@ -23,7 +23,8 @@
 //! Sent (unless the server keeps a copy of what it sends, found by Message-ID), a draft saved here is appended to Drafts
 //! (replacing its copy there; [`apply_draft`]). A message whose UID is not known (a move
 //! without UIDPLUS) is found by Message-ID. A change that cannot be made yet waits; one that fails
-//! [`MAX_ATTEMPTS`] times is dropped and logged.
+//! [`MAX_ATTEMPTS`] times is dropped and logged. An attempt is counted, in a transaction of its own, before its command
+//! goes, so one that loses the connection or stops the session counts too (plans/High-Level-Review.md HL-029).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
@@ -40,7 +41,8 @@ use super::inbound::stamp_millis;
 use super::store::{update_fields, MESSAGE};
 use super::sync::{
     connection_lost, encode_mutf7, label_keyword, load_account, load_folders, quoted, run_sync, search_message_id,
-    select, update_folder, value_millis, value_number, FolderInfo, ImapConn, SyncFailure, SyncOptions, CHANGE, FOLDER,
+    select, update_folder, value_millis, value_number, FolderInfo, ImapConn, Lease, SyncFailure, SyncOptions, CHANGE,
+    FOLDER,
 };
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::{Condition, EntityFacade, EntityValue};
@@ -88,6 +90,12 @@ fn queue(facade: &EntityFacade, account_id: &str, change_type: &str, fields: &[(
     row.create(facade)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// A test's failure of `push#RemoteChanges` on this thread, so the service that calls it fails after it.
+    pub(crate) static FAIL_PUSH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// `push#RemoteChanges`: queue the server side of a local change of an IMAP account (internal: the filing services
 /// call it with authorization disabled). Nothing for an account without an IMAP server, or for a message kept only here.
 pub(super) fn push_changes(
@@ -98,6 +106,10 @@ pub(super) fn push_changes(
     if !ExecutionContext::with_current(ExecutionContext::authz_disabled).unwrap_or(false) {
         note_error("push#RemoteChanges is internal");
         return Ok(out);
+    }
+    #[cfg(test)]
+    if FAIL_PUSH.with(std::cell::Cell::get) {
+        return Err(LibError::new("push#RemoteChanges failed for the test"));
     }
     let account_id = param_text(parameters, "emailAccountId");
     let change_type = param_text(parameters, "changeType");
@@ -313,20 +325,46 @@ enum Outcome {
     Drop(String),
 }
 
-/// Make an account's queued changes, oldest first; returns how many were made. A connection lost ends it, with the
-/// rest still queued.
+/// What [`apply_queue`] did: how many changes it made, and the connection it lost making one, if it did.
+#[derive(Default)]
+pub(super) struct QueueRun {
+    pub(super) applied: usize,
+    pub(super) lost: Option<String>,
+}
+
+/// What a change is the change of, for its order: a message's changes are made in order, so one cut off holds back
+/// the later ones of its message (or folder) for the session.
+fn change_subject(change: &EntityValue) -> String {
+    let message = field_text(change, "emailMessageId");
+    if !message.is_empty() {
+        return format!("message:{message}");
+    }
+    let folder = field_text(change, "emailFolderId");
+    if !folder.is_empty() {
+        return format!("folder:{folder}");
+    }
+    format!("change:{}", field_text(change, "emailRemoteChangeId"))
+}
+
+/// Make an account's queued changes, oldest first, but those of a subject in `held` (cut off earlier in this session).
+/// Each attempt is counted before its command goes. A connection lost ends the run, with the rest still queued: its
+/// subject goes into `held`, and the caller goes on with a new connection. The session's lease is kept before each
+/// change, so a long queue (a bulk move is a change per message) does not outlive it, and the run stops once another
+/// session has the account.
 pub(super) fn apply_queue(
     conn: &mut ImapConn,
     facade: &EntityFacade,
     account: &super::sync::AccountInfo,
-) -> Result<usize, SyncFailure> {
+    lease: &Lease,
+    held: &mut HashSet<String>,
+) -> Result<QueueRun, SyncFailure> {
     let lost = |err: LibError| SyncFailure::Connect(err.to_string());
     let rows = facade
         .find(CHANGE)
         .and_then(|find| find.eq("emailAccountId", Value::string(&account.id)).list())
         .map_err(lost)?;
     if rows.values().is_empty() {
-        return Ok(0);
+        return Ok(QueueRun::default());
     }
     let mut changes: Vec<EntityValue> = rows.values().to_vec();
     changes.sort_by_key(|row| {
@@ -342,6 +380,44 @@ pub(super) fn apply_queue(
     for change in changes {
         let change_id = field_text(&change, "emailRemoteChangeId");
         let change_type = field_text(&change, "changeType");
+        let subject = change_subject(&change);
+        if held.contains(&subject) {
+            continue;
+        }
+        lease.keep(facade)?;
+        let tried = value_number(change.get("attemptCount")).unwrap_or(0);
+        // its last try was cut off (a lost connection, a stopped session) after it had all its tries
+        if tried >= MAX_ATTEMPTS {
+            drop_change(
+                facade,
+                account,
+                &change,
+                &format!(
+                    "still failing after {tried} tries: {}",
+                    field_text(&change, "lastError")
+                ),
+            );
+            continue;
+        }
+        let attempts = tried + 1;
+        // counted before the command goes, so an attempt that loses the connection or stops the session counts
+        let counted = force_new(facade, || {
+            let mut row = facade.make_value(CHANGE)?;
+            row.set("emailRemoteChangeId", Value::string(&change_id));
+            row.set("attemptCount", Value::I64(attempts));
+            row.set("lastAttemptDate", stamp_millis(now_millis()));
+            row.update(facade)
+        });
+        if let Err(err) = counted {
+            // not tried uncounted: it and the later changes of its subject wait for the next session
+            tracing::error!(
+                account = %account.id,
+                "Could not count the attempt of email remote change {change_id} of account {}: {err}",
+                account.id
+            );
+            held.insert(subject);
+            continue;
+        }
         let outcome = match change_type.as_str() {
             "flags" => apply_flags(conn, facade, &folders, &change),
             "move" => apply_move(conn, facade, &folders, &change),
@@ -357,14 +433,26 @@ pub(super) fn apply_queue(
         let outcome = match outcome {
             Ok(outcome) => outcome,
             Err(ApplyError::Imap(err)) if connection_lost(&err) => {
-                return Err(SyncFailure::Connect(format!(
-                    "IMAP connection lost making change {change_id}: {err}"
-                )))
+                let reason = format!("IMAP connection lost making change {change_id}: {err}");
+                if attempts >= MAX_ATTEMPTS {
+                    drop_change(
+                        facade,
+                        account,
+                        &change,
+                        &format!("still failing after {attempts} tries: {reason}"),
+                    );
+                } else if let Err(err) = note_change_error(facade, &change_id, &reason) {
+                    tracing::error!("Could not record email remote change {change_id}: {err}");
+                }
+                held.insert(subject);
+                return Ok(QueueRun {
+                    applied,
+                    lost: Some(reason),
+                });
             }
             Err(ApplyError::Imap(err)) => Outcome::Later(err.to_string()),
             Err(ApplyError::Local(err)) => Outcome::Later(err.to_string()),
         };
-        let attempts = value_number(change.get("attemptCount")).unwrap_or(0) + 1;
         let outcome = match outcome {
             Outcome::Later(reason) if attempts >= MAX_ATTEMPTS => {
                 Outcome::Drop(format!("still failing after {attempts} tries: {reason}"))
@@ -380,13 +468,8 @@ pub(super) fn apply_queue(
                 delete_change(facade, &change_id)
             }
             Outcome::Drop(reason) => {
-                tracing::error!(
-                    account = %account.id,
-                    "Dropping the {change_type} change {change_id} of email account {} (message {}): {reason}",
-                    account.id,
-                    field_text(&change, "emailMessageId")
-                );
-                delete_change(facade, &change_id)
+                drop_change(facade, account, &change, &reason);
+                Ok(())
             }
             Outcome::Later(reason) => {
                 tracing::warn!(
@@ -394,21 +477,39 @@ pub(super) fn apply_queue(
                     "The {change_type} change {change_id} of email account {} waits: {reason}",
                     account.id
                 );
-                force_new(facade, || {
-                    let mut row = facade.make_value(CHANGE)?;
-                    row.set("emailRemoteChangeId", Value::string(&change_id));
-                    row.set("attemptCount", Value::I64(attempts));
-                    row.set("lastAttemptDate", stamp_millis(now_millis()));
-                    row.set("lastError", Value::string(super::sync::clip(&reason, 4000)));
-                    row.update(facade)
-                })
+                note_change_error(facade, &change_id, &reason)
             }
         };
         if let Err(err) = written {
             tracing::error!("Could not record email remote change {change_id}: {err}");
         }
     }
-    Ok(applied)
+    Ok(QueueRun { applied, lost: None })
+}
+
+/// Log a change that is given up on, and delete it.
+fn drop_change(facade: &EntityFacade, account: &super::sync::AccountInfo, change: &EntityValue, reason: &str) {
+    let change_id = field_text(change, "emailRemoteChangeId");
+    tracing::error!(
+        account = %account.id,
+        "Dropping the {} change {change_id} of email account {} (message {}): {reason}",
+        field_text(change, "changeType"),
+        account.id,
+        field_text(change, "emailMessageId")
+    );
+    if let Err(err) = delete_change(facade, &change_id) {
+        tracing::error!("Could not delete email remote change {change_id}: {err}");
+    }
+}
+
+/// Why a change's last attempt failed (its attempt was counted before it).
+fn note_change_error(facade: &EntityFacade, change_id: &str, reason: &str) -> Result<(), LibError> {
+    force_new(facade, || {
+        let mut row = facade.make_value(CHANGE)?;
+        row.set("emailRemoteChangeId", Value::string(change_id));
+        row.set("lastError", Value::string(super::sync::clip(reason, 4000)));
+        row.update(facade)
+    })
 }
 
 fn delete_change(facade: &EntityFacade, change_id: &str) -> Result<(), LibError> {

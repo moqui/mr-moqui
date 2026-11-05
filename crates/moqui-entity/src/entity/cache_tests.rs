@@ -607,6 +607,151 @@ fn a_commit_clears_rows_another_thread_cached_before_it() {
     assert!(super::TX_WRITTEN.with(|slot| slot.borrow().is_empty()));
 }
 
+/// The lookup `found` makes of `TYPE` by `id`.
+fn type_lookup(id: &str) -> FindLookup {
+    FindLookup {
+        entity_name: TYPE.to_string(),
+        use_cache: None,
+        condition: Some(Condition::equals("enumTypeId", Value::string(id))),
+        order: Vec::new(),
+        limit: None,
+        offset: None,
+        filtered: false,
+    }
+}
+
+/// The rows of `TYPE` by `id`, read from the database.
+fn type_rows(facade: &EntityFacade, id: &str) -> crate::entity::EntityList {
+    facade
+        .find(TYPE)
+        .unwrap()
+        .eq("enumTypeId", Value::string(id))
+        .use_cache(false)
+        .list()
+        .unwrap()
+}
+
+/// HL-023: a find whose query ran before another thread's autocommit write, and whose store comes after that write's
+/// eviction, is not stored; the next cached read is fresh. With no write between, the store is kept.
+#[test]
+fn a_find_read_before_an_autocommit_write_is_not_stored_after_its_eviction() {
+    let facade = testing::open();
+    let lookup = type_lookup("FENCED");
+    let fence = super::store_fence(&facade, &lookup).expect("the entity's finds are cached");
+    let rows = type_rows(&facade, "FENCED");
+    assert!(rows.is_empty());
+    let writer = facade.clone();
+    std::thread::spawn(move || put(&writer, TYPE, "enumTypeId", "FENCED"))
+        .join()
+        .unwrap();
+    assert!(
+        !super::after_find(&facade, &lookup, &fence, &rows).unwrap(),
+        "the rows read before the write are refused"
+    );
+    assert!(
+        super::before_find(&facade, &lookup).is_none(),
+        "nothing stale is cached"
+    );
+    assert!(found(&facade, TYPE, "enumTypeId", "FENCED"), "the next read is fresh");
+    assert!(
+        super::before_find(&facade, &lookup).is_some_and(|rows| rows.len() == 1),
+        "and is cached"
+    );
+    // The same for a count.
+    let count_fence = super::store_fence(&facade, &type_lookup("COUNTED")).unwrap();
+    put(&facade, TYPE, "enumTypeId", "COUNTED");
+    assert!(!super::after_count(&facade, &type_lookup("COUNTED"), &count_fence, 0).unwrap());
+    // With no write since its fence, a find is stored.
+    let quiet = type_lookup("QUIET");
+    let fence = super::store_fence(&facade, &quiet).unwrap();
+    assert!(super::after_find(&facade, &quiet, &fence, &type_rows(&facade, "QUIET")).unwrap());
+}
+
+/// HL-023: the query straddles another thread's commit. The writer's frame wrote (and evicted) before the reader took
+/// its fence, and the reader's query saw the rows as they were before the commit (as a database at READ COMMITTED
+/// shows them); the store lands after the commit's eviction and is refused.
+#[test]
+fn a_find_whose_query_straddles_a_commit_is_not_stored() {
+    use std::sync::mpsc;
+    let facade = testing::open();
+    let lookup = type_lookup("STRADDLE");
+    let before = type_rows(&facade, "STRADDLE");
+    assert!(before.is_empty());
+    let (wrote_tx, wrote_rx) = mpsc::channel::<()>();
+    let (commit_tx, commit_rx) = mpsc::channel::<()>();
+    let writer = facade.clone();
+    let handle = std::thread::spawn(move || {
+        let tx = writer.transactions_for(TYPE).unwrap();
+        assert!(tx.begin(None).unwrap());
+        put(&writer, TYPE, "enumTypeId", "STRADDLE");
+        wrote_tx.send(()).unwrap();
+        commit_rx.recv().unwrap();
+        tx.commit().unwrap();
+    });
+    wrote_rx.recv().unwrap();
+    let fence = super::store_fence(&facade, &lookup).expect("this thread did not write");
+    commit_tx.send(()).unwrap();
+    handle.join().unwrap();
+    assert!(
+        !super::after_find(&facade, &lookup, &fence, &before).unwrap(),
+        "the rows from before the commit are refused"
+    );
+    assert!(found(&facade, TYPE, "enumTypeId", "STRADDLE"), "the next read is fresh");
+}
+
+/// HL-023: a remote invalidation and a whole-cache clear move the fence as a local write does.
+#[test]
+fn a_remote_invalidation_and_a_whole_clear_refuse_an_earlier_find() {
+    let facade = testing::open();
+    let lookup = type_lookup("REMOTE");
+    let rows = type_rows(&facade, "REMOTE");
+    let fence = super::store_fence(&facade, &lookup).unwrap();
+    super::clear_one_cache(&facade, TYPE, None).unwrap();
+    assert!(!super::after_find(&facade, &lookup, &fence, &rows).unwrap());
+    let fence = super::store_fence(&facade, &lookup).unwrap();
+    let key = row(&[("enumTypeId", Value::string("OTHER"))]);
+    super::clear_one_cache(&facade, TYPE, Some(&key)).unwrap();
+    assert!(
+        !super::after_find(&facade, &lookup, &fence, &rows).unwrap(),
+        "a remote eviction by primary key moves the fence too"
+    );
+    let fence = super::store_fence(&facade, &lookup).unwrap();
+    super::clear_all_list_caches(&facade).unwrap();
+    assert!(!super::after_find(&facade, &lookup, &fence, &rows).unwrap());
+}
+
+/// HL-023: a find of a replica (`use_clone` with a clone group open) is not stored where a find of the primary would
+/// read it.
+#[test]
+fn a_find_of_a_replica_is_not_stored_in_the_shared_cache() {
+    let facade = testing::open_groups("transactional#clone1");
+    let entity = "moqui.basic.Enumeration";
+    let mut row = facade.make_value(entity).unwrap();
+    row.set("enumId", Value::string("MAIN"));
+    row.create(&facade).unwrap();
+    let find = || {
+        facade
+            .find(entity)
+            .unwrap()
+            .eq("enumId", Value::string("MAIN"))
+            .use_cache(true)
+    };
+    assert!(find().use_clone(true).one().unwrap().is_none(), "the clone has no row");
+    assert!(find().one().unwrap().is_some(), "the primary's read is not the clone's");
+}
+
+/// HL-023: a frame that reads one snapshot does not store its finds; outside a transaction it does.
+#[test]
+fn a_snapshot_frame_does_not_store_its_finds() {
+    let facade = testing::open_snapshot_reads();
+    let lookup = type_lookup("SNAP");
+    assert!(super::store_fence(&facade, &lookup).is_some());
+    let tx = facade.transactions_for(TYPE).unwrap();
+    assert!(tx.begin(None).unwrap());
+    assert!(super::store_fence(&facade, &lookup).is_none());
+    tx.commit().unwrap();
+}
+
 /// The writes of each open frame kept for `full_name`: `None` when the frame keeps none (clears it whole), else
 /// how many.
 fn kept_writes(full_name: &str) -> Vec<Option<usize>> {
@@ -927,4 +1072,380 @@ fn a_new_llm_or_agent_entity_is_in_the_sim_list_or_named_absent() {
         "in SIM_PRODUCTION_ENTITIES but not defined: {unknown:?}"
     );
     assert!(!super::SIM_PRODUCTION_ENTITIES.contains(&"moqui.test.TestEntity"));
+}
+
+const ENUM: &str = "moqui.basic.Enumeration";
+
+fn put_enum(facade: &EntityFacade, id: &str, kind: &str, description: &str) {
+    let mut value = facade.make_value(ENUM).unwrap();
+    value.set("enumId", Value::string(id));
+    value.set("enumTypeId", Value::string(kind));
+    value.set("description", Value::string(description));
+    value.create(facade).unwrap();
+}
+
+fn set_enum(facade: &EntityFacade, id: &str, field: &str, value: &str) -> Result<(), Error> {
+    let mut row = facade.make_value(ENUM)?;
+    row.set("enumId", Value::string(id));
+    row.set(field, Value::string(value));
+    row.update(facade)
+}
+
+fn delete_enum(facade: &EntityFacade, id: &str) -> Result<(), Error> {
+    let mut row = facade.make_value(ENUM)?;
+    row.set("enumId", Value::string(id));
+    row.delete(facade)
+}
+
+fn enum_statements(tape: &Arc<Mutex<Vec<String>>>, reads: bool) -> Vec<String> {
+    tape.lock()
+        .unwrap()
+        .iter()
+        .filter(|sql| sql.starts_with("SELECT") == reads && sql.contains("\"enumeration\""))
+        .cloned()
+        .collect()
+}
+
+fn enum_reads(tape: &Arc<Mutex<Vec<String>>>) -> usize {
+    enum_statements(tape, true).len()
+}
+
+fn enum_ids(rows: &crate::entity::EntityList) -> Vec<String> {
+    rows.values()
+        .iter()
+        .map(|row| {
+            row.get("enumId")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect()
+}
+
+/// plans/High-Level-Review.md HL-034: a find in a transaction-cache frame reads its list once, and the stored rows
+/// under the frame's held updates once per frame, in one query, however many rows are held or loaded.
+#[test]
+fn held_updates_read_their_stored_rows_once_per_frame() {
+    for (loaded, held) in [(3, 2), (40, 2), (3, 40), (40, 40)] {
+        let tape = Arc::new(Mutex::new(Vec::new()));
+        let facade = testing::open_with_tape(Arc::clone(&tape));
+        for index in 0..loaded {
+            put_enum(&facade, &format!("A{index:03}"), "A", "stored");
+        }
+        for index in 0..held {
+            put_enum(&facade, &format!("C{index:03}"), "C", "stored");
+        }
+        let tx = facade.transactions_for(ENUM).unwrap();
+        run(&tx, TransactionAttribute::Cache, || {
+            // Held updates of rows a find of type A does not load, and one of a row it does.
+            for index in 0..held {
+                set_enum(&facade, &format!("C{index:03}"), "description", "held")?;
+            }
+            set_enum(&facade, "A000", "description", "held")?;
+            let before = enum_reads(&tape);
+            let of_a = facade.find(ENUM)?.eq("enumTypeId", Value::string("A")).list()?;
+            assert_eq!(of_a.len(), loaded);
+            assert_eq!(
+                enum_reads(&tape) - before,
+                2,
+                "the list, then the stored rows of {held} unloaded updates in one query"
+            );
+            for _ in 0..3 {
+                let before = enum_reads(&tape);
+                let of_a = facade.find(ENUM)?.eq("enumTypeId", Value::string("A")).list()?;
+                assert_eq!(of_a.len(), loaded);
+                assert_eq!(enum_reads(&tape) - before, 1, "a repeated find reads only its list");
+            }
+            // A find that loads none of the held rows starts each from the row the frame read before: A000 from the
+            // first find's list, the C rows from the stored-row query.
+            let before = enum_reads(&tape);
+            let of_held = facade
+                .find(ENUM)?
+                .eq("description", Value::string("stored-elsewhere"))
+                .list()?;
+            assert!(of_held.is_empty());
+            let of_held = facade.find(ENUM)?.eq("description", Value::string("held")).list()?;
+            assert_eq!(of_held.len(), held + 1);
+            assert!(of_held
+                .values()
+                .iter()
+                .all(|row| row.get("enumTypeId").is_some_and(|kind| !kind.is_null())));
+            assert_eq!(enum_reads(&tape) - before, 2, "two lists, and no held row read again");
+            Ok(())
+        })
+        .unwrap();
+    }
+}
+
+/// A paged find in a transaction-cache frame reads only as far as the page can reach, and its pages are the ones the
+/// database gives after the commit: a held create, a delete and an update that moves a row out each shift them.
+#[test]
+fn a_paged_find_over_held_rows_reads_a_bounded_window() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    for index in 1..=30 {
+        put_enum(&facade, &format!("E{index:02}"), "A", "stored");
+    }
+    let page = |facade: &EntityFacade, offset: i64| -> Result<Vec<String>, Error> {
+        let rows = facade
+            .find(ENUM)?
+            .eq("enumTypeId", Value::string("A"))
+            .order_by("enumId", false)
+            .offset(offset)
+            .limit(3)
+            .list()?;
+        Ok(enum_ids(&rows))
+    };
+    let offsets = [0, 3, 6, 24, 27];
+    let tx = facade.transactions_for(ENUM).unwrap();
+    let held_pages = run(&tx, TransactionAttribute::Cache, || {
+        put_enum(&facade, "E00", "A", "held");
+        delete_enum(&facade, "E02")?;
+        set_enum(&facade, "E05", "enumTypeId", "B")?;
+        set_enum(&facade, "E29", "description", "held")?;
+        let mut pages = Vec::new();
+        for offset in offsets {
+            let before = enum_reads(&tape);
+            pages.push(page(&facade, offset)?);
+            let reads = enum_statements(&tape, true);
+            assert!(
+                reads[before].contains("LIMIT"),
+                "the list is read with a limit: {:?}",
+                &reads[before..]
+            );
+        }
+        Ok(pages)
+    })
+    .unwrap();
+    let committed: Vec<Vec<String>> = offsets.iter().map(|&offset| page(&facade, offset).unwrap()).collect();
+    assert_eq!(held_pages, committed);
+    assert_eq!(committed[0], ["E00", "E01", "E03"]);
+    assert_eq!(committed[1], ["E04", "E06", "E07"]);
+}
+
+/// The held rows keep their order and their collapsing: a create and a delete of one row write nothing, and an update
+/// after a held delete does not bring the row back.
+#[test]
+fn held_rows_collapse_a_create_and_delete_and_stay_deleted() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    put_enum(&facade, "KEPT", "A", "stored");
+    let tx = facade.transactions_for(ENUM).unwrap();
+    let before = enum_statements(&tape, false).len();
+    run(&tx, TransactionAttribute::Cache, || {
+        put_enum(&facade, "BRIEF", "A", "held");
+        set_enum(&facade, "BRIEF", "description", "changed")?;
+        delete_enum(&facade, "BRIEF")?;
+        set_enum(&facade, "KEPT", "description", "held")?;
+        delete_enum(&facade, "KEPT")?;
+        // An update after the delete writes nothing on the database, so the row stays gone here too.
+        set_enum(&facade, "KEPT", "description", "again")?;
+        let of_a = facade.find(ENUM)?.eq("enumTypeId", Value::string("A")).list()?;
+        assert!(of_a.is_empty(), "{:?}", enum_ids(&of_a));
+        assert!(facade
+            .find(ENUM)?
+            .eq("description", Value::string("again"))
+            .list()?
+            .is_empty());
+        put_enum(&facade, "LATER", "A", "held");
+        Ok(())
+    })
+    .unwrap();
+    let flushed = enum_statements(&tape, false)[before..].to_vec();
+    let kinds: Vec<&str> = flushed
+        .iter()
+        .map(|sql| sql.split_whitespace().next().unwrap_or_default())
+        .collect();
+    assert_eq!(kinds, ["UPDATE", "DELETE", "UPDATE", "INSERT"], "{flushed:?}");
+    assert!(!found(&facade, ENUM, "enumId", "BRIEF"));
+    assert!(!found(&facade, ENUM, "enumId", "KEPT"));
+    assert!(found(&facade, ENUM, "enumId", "LATER"));
+}
+
+/// plans/High-Level-Review.md HL-002: a key of one type compares as a value, and only text against another type
+/// compares as text.
+#[test]
+fn a_cached_rows_key_matches_the_written_one_across_types_only_as_text() {
+    assert!(super::same_key(&Value::string("E1"), &Value::string("E1")));
+    assert!(!super::same_key(&Value::string("E1"), &Value::string("E2")));
+    assert!(super::same_key(&Value::I64(7), &Value::string("7")));
+    assert!(super::same_key(&Value::string("7"), &Value::I32(7)));
+    assert!(!super::same_key(&Value::I64(7), &Value::I64(8)));
+}
+
+/// plans/High-Level-Review.md HL-002, opt-in: the cost of the current eviction (one sweep of every cached list per
+/// write, immediately and again at frame end) beside one sweep per entity that checks each cached row against a set of
+/// the changed keys. The writes match no cached list, the case where selective eviction scans everything and removes
+/// nothing. Run: `cargo test -p moqui-entity --lib eviction_sweep_cost -- --ignored --nocapture`.
+#[test]
+#[ignore = "measurement; run with --ignored --nocapture"]
+fn eviction_sweep_cost_per_write_and_per_entity() {
+    use std::collections::HashSet;
+    use std::time::Instant;
+
+    println!("lists rows/list writes | commit-no-cache(ms) commit-cached(ms) | per-write: inspected  lock(ms) | per-entity: inspected  lock(ms)");
+    for (lists, rows, writes) in [(20, 20, 10), (100, 20, 50), (200, 20, 200), (200, 50, 200)] {
+        let facade = testing::open();
+        for list in 0..lists {
+            for row in 0..rows {
+                put_enum(
+                    &facade,
+                    &format!("L{list:03}R{row:03}"),
+                    &format!("T{list:03}"),
+                    "stored",
+                );
+            }
+        }
+        for write in 0..writes {
+            put_enum(&facade, &format!("W{write:04}"), "W", "stored");
+        }
+        let fill = |facade: &EntityFacade| {
+            for list in 0..lists {
+                let found = facade
+                    .find(ENUM)
+                    .unwrap()
+                    .eq("enumTypeId", Value::string(format!("T{list:03}")))
+                    .use_cache(true)
+                    .list()
+                    .unwrap();
+                assert_eq!(found.len(), rows);
+            }
+        };
+        let tx = facade.transactions_for(ENUM).unwrap();
+        let update_all = |facade: &EntityFacade, text: &str| {
+            let started = Instant::now();
+            tx.run(TransactionAttribute::UseOrBegin, None, || {
+                for write in 0..writes {
+                    let mut row = facade.make_value(ENUM)?;
+                    row.set("enumId", Value::string(format!("W{write:04}")));
+                    row.set("enumTypeId", Value::string("W"));
+                    row.set("description", Value::string(text));
+                    row.update(facade)?;
+                }
+                Ok(())
+            })
+            .unwrap();
+            started.elapsed()
+        };
+        let no_cache = update_all(&facade, "first");
+        fill(&facade);
+        let cached = update_all(&facade, "second");
+        let lists_cache = facade
+            .with_slot_read(super::OneCaches::default, |caches| caches.lists.get(ENUM).cloned())
+            .unwrap();
+        assert_eq!(lists_cache.len(), lists, "the writes matched no cached list");
+
+        let values: Vec<crate::entity::FieldMap> = (0..writes)
+            .map(|write| {
+                row(&[
+                    ("enumId", Value::string(format!("W{write:04}"))),
+                    ("enumTypeId", Value::string("W")),
+                    ("description", Value::string("third")),
+                ])
+            })
+            .collect();
+        let meta = super::read_meta(&facade, ENUM).unwrap();
+        // Now: each write sweeps every cached list.
+        let mut inspected = 0_usize;
+        let mut per_write = std::time::Duration::ZERO;
+        for values in &values {
+            let pk = [("enumId", values.get("enumId").unwrap())];
+            let started = Instant::now();
+            lists_cache
+                .remove_where(|_, cached| {
+                    inspected += cached.rows.len();
+                    super::list_affected(cached, "update", values, Some(&pk))
+                })
+                .unwrap();
+            per_write += started.elapsed();
+        }
+        // One sweep: each cached row's key against the set, each list's condition against each write.
+        let keys: HashSet<String> = values
+            .iter()
+            .filter_map(|values| super::pk_of(values, &meta.pk_fields))
+            .collect();
+        let mut keyed_inspected = 0_usize;
+        let started = Instant::now();
+        let mut buffer = String::new();
+        lists_cache
+            .remove_where(|_, cached| {
+                keyed_inspected += cached.rows.len();
+                let held = cached.rows.iter().any(|row| {
+                    buffer.clear();
+                    super::write_pk(row.fields(), &meta.pk_fields, &mut buffer) && keys.contains(buffer.as_str())
+                });
+                held || values
+                    .iter()
+                    .any(|values| super::may_match(cached.condition.as_ref(), values))
+            })
+            .unwrap();
+        let per_entity = started.elapsed();
+        let ms = |duration: std::time::Duration| duration.as_secs_f64() * 1000.0;
+        println!(
+            "{lists:>5} {rows:>9} {writes:>6} | {:>19.2} {:>17.2} | {:>20} {:>9.2} | {:>21} {:>9.2}",
+            ms(no_cache),
+            ms(cached),
+            inspected,
+            ms(per_write),
+            keyed_inspected,
+            ms(per_entity),
+        );
+    }
+}
+
+/// plans/High-Level-Review.md HL-002: a frame's writes of one entity are evicted again at its end in one sweep, and the
+/// lists another thread cached while the frame was open are fresh after it: one held an updated row, one matches a
+/// created row, one holds a deleted row. A list none of the writes touches stays.
+#[test]
+fn a_frames_writes_of_one_entity_make_one_frame_end_sweep() {
+    let facade = testing::open();
+    for (id, kind) in [("U1", "A"), ("U2", "A"), ("U3", "A"), ("D1", "D"), ("K1", "K")] {
+        put_enum(&facade, id, kind, "stored");
+    }
+    let cached = |facade: &EntityFacade, kind: &str| -> Vec<String> {
+        let rows = facade
+            .find(ENUM)
+            .unwrap()
+            .eq("enumTypeId", Value::string(kind))
+            .use_cache(true)
+            .list()
+            .unwrap();
+        let mut found: Vec<String> = rows
+            .values()
+            .iter()
+            .map(|row| {
+                let text = |name: &str| row.get(name).and_then(Value::as_str).unwrap_or_default().to_string();
+                format!("{}:{}", text("enumId"), text("description"))
+            })
+            .collect();
+        found.sort();
+        found
+    };
+    // Cached before the frame, so its writes keep their values for the frame end.
+    for kind in ["A", "C", "D", "K"] {
+        let _ = cached(&facade, kind);
+    }
+    let tx = facade.transactions_for(ENUM).unwrap();
+    assert!(tx.begin(None).unwrap());
+    for id in ["U1", "U2", "U3"] {
+        set_enum(&facade, id, "description", "changed").unwrap();
+    }
+    put_enum(&facade, "C1", "C", "created");
+    delete_enum(&facade, "D1").unwrap();
+    // Another thread reads the committed rows and caches them, after the writes' own evictions.
+    let reader = facade.clone();
+    std::thread::spawn(move || {
+        for kind in ["A", "C", "D", "K"] {
+            assert!(!cached(&reader, kind).is_empty() || kind == "C");
+        }
+    })
+    .join()
+    .unwrap();
+    let sweeps = super::frame_sweeps();
+    tx.commit().unwrap();
+    assert_eq!(super::frame_sweeps() - sweeps, 1, "one sweep for the five writes");
+    assert_eq!(cached(&facade, "A"), ["U1:changed", "U2:changed", "U3:changed"]);
+    assert_eq!(cached(&facade, "C"), ["C1:created"]);
+    assert!(cached(&facade, "D").is_empty());
+    assert_eq!(cached(&facade, "K"), ["K1:stored"]);
 }

@@ -720,7 +720,9 @@ and so `send#EmailTemplate` and the mail client's `send#Draft`, does all of a re
 `EmailServer` must still have an SMTP host, as for a real send (an empty one sends nothing); it is never connected. A
 spec turns it on for itself, and the conf property `mail_capture_sends=true` turns it on for a whole run
 (`mail_capture_sends=true ./moq test ...`) or a server that must not send mail; it is off otherwise, so a spec that
-checks a send that cannot connect sees one. The tool reads and clears what was captured:
+checks a send that cannot connect sees one. `send#Draft` called in a transaction (as `send#Compose` calls it) only
+claims the message there and sends once that commits, on a service worker: such a spec waits for the message's status
+before it reads the capture. The tool reads and clears what was captured:
 
 ```js
 const capture = ec.factory.getTool("MailCapture")

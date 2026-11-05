@@ -330,12 +330,20 @@ const AUTHZ_SERVICES: &str = r#"<services>
     <service verb="create" noun="moqui.test.TestEntity" type="entity-auto" authenticate="false">
         <in-parameters><auto-parameters include="all"/></in-parameters>
     </service>
+    <service verb="authz" noun="Register">
+        <in-parameters><parameter name="id" required="true"/></in-parameters>
+        <actions><script>ec.service.special().name("authz#Whoami").parameters({id: id}).registerOnCommit()</script></actions>
+    </service>
+    <service verb="open" noun="Register" authenticate="false">
+        <in-parameters><parameter name="id" required="true"/></in-parameters>
+    </service>
 </services>"#;
 
 /// An inline executor with service and entity authorization on, `authz#Whoami` allowed to the group `ASYNC_CALLERS`, and
 /// two users: `asyncok` in that group and `asyncplain` in none. Nobody is allowed any entity, not even through
 /// `create#moqui.test.TestEntity`, which needs no authentication; `call#Whoami`, which needs none either, calls
-/// `authz#Whoami`.
+/// `authz#Whoami`. A third user, `asyncinherit`, may run `authz#Register`, whose authorization what it calls inherits,
+/// and nothing else.
 fn authz_context() -> (EntityFacade, ExecutionContext) {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let next = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -362,7 +370,7 @@ fn authz_context() -> (EntityFacade, ExecutionContext) {
             }
             row.create(&facade).unwrap();
         };
-        for user in ["asyncok", "asyncplain"] {
+        for user in ["asyncok", "asyncplain", "asyncinherit"] {
             create("moqui.security.UserAccount", &[("userId", user), ("username", user)]);
         }
         let mut member = facade.make_value("moqui.security.UserGroupMember").unwrap();
@@ -373,6 +381,38 @@ fn authz_context() -> (EntityFacade, ExecutionContext) {
             moqui_lib::object::basic_convert(&Value::I64(1_000), "java.sql.Timestamp").value,
         );
         member.create(&facade).unwrap();
+        let mut member = facade.make_value("moqui.security.UserGroupMember").unwrap();
+        member.set("userId", Value::string("asyncinherit"));
+        member.set("userGroupId", Value::string("REGISTER_CALLERS"));
+        member.set(
+            "fromDate",
+            moqui_lib::object::basic_convert(&Value::I64(1_000), "java.sql.Timestamp").value,
+        );
+        member.create(&facade).unwrap();
+        create(
+            "moqui.security.ArtifactGroup",
+            &[("artifactGroupId", "REGISTER_SERVICES")],
+        );
+        create(
+            "moqui.security.ArtifactGroupMember",
+            &[
+                ("artifactGroupId", "REGISTER_SERVICES"),
+                ("artifactName", "authz#Register"),
+                ("artifactTypeEnumId", "AT_SERVICE"),
+                ("nameIsPattern", "N"),
+                ("inheritAuthz", "Y"),
+            ],
+        );
+        create(
+            "moqui.security.ArtifactAuthz",
+            &[
+                ("artifactAuthzId", "REGISTER_ALLOW"),
+                ("userGroupId", "REGISTER_CALLERS"),
+                ("artifactGroupId", "REGISTER_SERVICES"),
+                ("authzTypeEnumId", "AUTHZT_ALLOW"),
+                ("authzActionEnumId", "AUTHZA_ALL"),
+            ],
+        );
         create("moqui.security.ArtifactGroup", &[("artifactGroupId", "ASYNC_SERVICES")]);
         create(
             "moqui.security.ArtifactGroupMember",
@@ -543,4 +583,83 @@ fn an_async_call_in_a_sim_session_is_skipped() {
     facade.set_sim_active(false);
     assert_eq!(ctx.factory().run_pending(), 0);
     assert_eq!(medium(&facade, "SIM1"), None);
+}
+
+/// A call registered for the commit is checked where it is registered, as an async call made there: `asyncinherit` may
+/// not run `authz#Whoami` itself, but `authz#Register` passes its authorization down. The transaction is the caller's and
+/// commits after `authz#Register` is off the stack, as a screen transition commits after its screens are popped, and the
+/// call still runs then, as that user.
+#[test]
+fn a_call_registered_for_the_commit_keeps_the_authorization_it_was_registered_with() {
+    let (facade, ctx) = authz_context();
+    let _entered = ctx.enter();
+    crate::user::internal_login_user("asyncinherit").unwrap();
+    let tx = facade.transactions_for("moqui.test.TestEntity").unwrap();
+    assert!(tx.begin(None).unwrap());
+    super::sync("authz#Register", &whoami("REG1")).unwrap();
+    assert!(ctx.message().errors().is_empty(), "{:?}", ctx.message().errors());
+    assert_eq!(ctx.factory().service_pools().pending(), 0, "queued before the commit");
+    tx.commit().unwrap();
+    crate::user::logout().unwrap();
+    assert_eq!(ctx.factory().run_pending(), 1);
+    let _authz = ctx.disable_authz();
+    assert_eq!(medium(&facade, "REG1").as_deref(), Some("asyncinherit/asyncinherit"));
+}
+
+/// Registered where nothing authorizes it, the call is refused at once and nothing runs after the commit.
+#[test]
+fn a_call_registered_for_the_commit_where_it_is_not_authorized_is_refused() {
+    let (facade, ctx) = authz_context();
+    let _entered = ctx.enter();
+    crate::user::internal_login_user("asyncinherit").unwrap();
+    let tx = facade.transactions_for("moqui.test.TestEntity").unwrap();
+    assert!(tx.begin(None).unwrap());
+    let err = super::register_on_end("authz#Whoami", &whoami("REG2"), true).unwrap_err();
+    assert_eq!(
+        crate::context::ErrorKind::of(&err),
+        crate::context::ErrorKind::Unauthorized,
+        "{err}"
+    );
+    tx.commit().unwrap();
+    crate::user::logout().unwrap();
+    assert_eq!(ctx.factory().run_pending(), 0);
+    let _authz = ctx.disable_authz();
+    assert_eq!(medium(&facade, "REG2"), None);
+}
+
+/// The tx-commit rules of a call run after the commit under the authorization the call had, as its inline rules do:
+/// the rule of `authz#Register` may call `authz#Whoami` for `asyncinherit`. The rule of `open#Register`, which needs no
+/// authorization and passes none down, may not, as it could not inline.
+#[test]
+fn tx_commit_rules_run_under_the_authorization_of_their_call() {
+    let (facade, ctx) = authz_context();
+    super::eca_rules::install(
+        ctx.factory(),
+        super::eca_rules::from_xml(
+            r#"<secas>
+                <seca service="authz#Register" when="tx-commit">
+                    <actions><service-call name="authz#Whoami" in-map="{id: 'RULE-' + id}"/></actions>
+                </seca>
+                <seca service="open#Register" when="tx-commit">
+                    <actions><service-call name="authz#Whoami" in-map="{id: 'RULE-' + id}"/></actions>
+                </seca>
+            </secas>"#,
+            "",
+        ),
+    );
+    let _entered = ctx.enter();
+    crate::user::internal_login_user("asyncinherit").unwrap();
+    for (service, id) in [("authz#Register", "IN"), ("open#Register", "OPEN")] {
+        let tx = facade.transactions_for("moqui.test.TestEntity").unwrap();
+        assert!(tx.begin(None).unwrap());
+        super::sync(service, &whoami(id)).unwrap();
+        tx.commit().unwrap();
+        ctx.message().clear();
+    }
+    crate::user::logout().unwrap();
+    ctx.factory().run_pending();
+    let _authz = ctx.disable_authz();
+    let ran = medium(&facade, "RULE-IN").unwrap_or_default();
+    assert!(ran.starts_with("asyncinherit/"), "{ran}");
+    assert_eq!(medium(&facade, "RULE-OPEN"), None);
 }

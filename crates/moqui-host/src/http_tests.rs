@@ -693,3 +693,216 @@ async fn a_websocket_over_extended_connect_is_checked_as_a_get() {
     let taken = super::serve_request(&web, websocket, &peer).await.unwrap();
     assert_eq!(taken.status(), 200);
 }
+
+// ---- connection limits after the response head (HL-027) -----------------------------------
+
+/// A listener serving `app` with `guard` and `limits`, until the sender drops.
+async fn listening(
+    app: Router,
+    guard: Arc<Guard>,
+    limits: ListenLimits,
+) -> (
+    std::net::SocketAddr,
+    tokio::sync::oneshot::Sender<()>,
+    tokio::task::JoinHandle<()>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let permits = Arc::new(Semaphore::new(limits.connections));
+    let server = tokio::spawn(serve(
+        listener,
+        None,
+        WebApp::new(app, limits, guard),
+        permits,
+        async move {
+            let _ = stopped.await;
+        },
+    ));
+    (address, stop, server)
+}
+
+/// A client with a small receive buffer that sends `request` and then reads nothing, so the server's writes stall.
+async fn not_reading(address: std::net::SocketAddr, request: &str) -> TcpStream {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.set_recv_buffer_size(4096).unwrap();
+    let mut stream = socket.connect(address).await.unwrap();
+    stream.write_all(request.as_bytes()).await.unwrap();
+    stream
+}
+
+/// The answer to an upgrade to a WebSocket at `path`, read up to the end of its head.
+async fn upgraded(address: std::net::SocketAddr, path: &str) -> (TcpStream, String) {
+    let mut stream = TcpStream::connect(address).await.unwrap();
+    let request = format!(
+        "GET {path} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+         Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut head = Vec::new();
+    let mut byte = [0u8; 1];
+    while !head.ends_with(b"\r\n\r\n") {
+        match tokio::time::timeout(Duration::from_secs(5), stream.read(&mut byte)).await {
+            Ok(Ok(1)) => head.push(byte[0]),
+            _ => break,
+        }
+    }
+    (stream, String::from_utf8_lossy(&head).into_owned())
+}
+
+const EIGHT_MIB: usize = 8 * 1024 * 1024;
+
+/// With two connection slots, two clients that ask for 8 MiB and never read are closed by the write timeout, and a
+/// third connection, which waited for a slot, is served.
+#[tokio::test]
+async fn clients_that_never_read_a_large_answer_are_closed_by_the_write_timeout() {
+    let app = Router::new()
+        .route("/big", get(|| async { vec![b'x'; EIGHT_MIB] }))
+        .route("/", get(|| async { "ok" }));
+    let limits = ListenLimits {
+        connections: 2,
+        write: Some(Duration::from_millis(300)),
+        ..ListenLimits::defaults()
+    };
+    let (address, stop, server) = listening(app, unguarded(), limits).await;
+    let started = Instant::now();
+    let _first = not_reading(address, "GET /big HTTP/1.1\r\nHost: x\r\n\r\n").await;
+    let _second = not_reading(address, "GET /big HTTP/1.1\r\nHost: x\r\n\r\n").await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let answered = ask(address, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").await;
+    assert!(answered.starts_with("HTTP/1.1 200"), "{answered}");
+    assert!(
+        started.elapsed() >= Duration::from_millis(250) && started.elapsed() < Duration::from_secs(4),
+        "{:?}",
+        started.elapsed()
+    );
+    drop(stop);
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("the listener did not stop")
+        .unwrap();
+}
+
+/// The same for a WebSocket that pushes (as `/notws` does) to a client that reads nothing: the upgraded socket keeps
+/// its connection slot while open, and the write timeout closes it and frees the slot.
+#[tokio::test]
+async fn a_websocket_whose_client_never_reads_is_closed_by_the_write_timeout() {
+    use axum::extract::ws::{Message, WebSocketUpgrade};
+    let app = Router::new()
+        .route(
+            "/notws",
+            get(|ws: WebSocketUpgrade| async {
+                ws.on_upgrade(|mut socket| async move {
+                    let chunk = vec![7u8; 64 * 1024];
+                    while socket.send(Message::Binary(chunk.clone().into())).await.is_ok() {}
+                })
+            }),
+        )
+        .route("/", get(|| async { "ok" }));
+    let limits = ListenLimits {
+        connections: 1,
+        write: Some(Duration::from_millis(300)),
+        ..ListenLimits::defaults()
+    };
+    let (address, stop, server) = listening(app, unguarded(), limits).await;
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.set_recv_buffer_size(4096).unwrap();
+    let mut pushed = socket.connect(address).await.unwrap();
+    pushed
+        .write_all(
+            b"GET /notws HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+              Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+        )
+        .await
+        .unwrap();
+    let started = Instant::now();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // the one slot is the socket's until the write timeout closes it
+    let answered = ask(address, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").await;
+    assert!(answered.starts_with("HTTP/1.1 200"), "{answered}");
+    assert!(
+        started.elapsed() >= Duration::from_millis(200) && started.elapsed() < Duration::from_secs(4),
+        "{:?}",
+        started.elapsed()
+    );
+    drop(stop);
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("the listener did not stop")
+        .unwrap();
+}
+
+/// An upgraded socket stays inside `max-per-client`: with two `/callws` sockets open from one address, a third
+/// connection is closed before its request, and one more is served once a socket closes.
+#[tokio::test]
+async fn upgraded_sockets_count_against_max_per_client() {
+    use axum::extract::ws::WebSocketUpgrade;
+    let guard = crate::guard::tests::guard(
+        r#"<web-protection enabled="true"><connections max-per-client="2"/></web-protection>"#,
+        "",
+    );
+    let app = Router::new()
+        .route(
+            "/callws",
+            get(|ws: WebSocketUpgrade| async {
+                ws.on_upgrade(|mut socket| async move { while let Some(Ok(_)) = socket.recv().await {} })
+            }),
+        )
+        .fallback(|| async { "ok" });
+    let limits = ListenLimits {
+        header: Some(Duration::from_secs(5)),
+        ..ListenLimits::defaults()
+    };
+    let (address, stop, server) = listening(app, guard, limits).await;
+    let (first, head) = upgraded(address, "/callws").await;
+    assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+    let (second, head) = upgraded(address, "/callws").await;
+    assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+    let (third, head) = upgraded(address, "/callws").await;
+    assert!(
+        !head.contains(" 101 "),
+        "a third socket from one address is refused: {head}"
+    );
+    drop(first);
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let answered = ask(address, "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").await;
+    assert!(answered.starts_with("HTTP/1.1 200"), "{answered}");
+    // the stop's drain waits for open sockets
+    drop((second, third));
+    drop(stop);
+    tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("the listener did not stop")
+        .unwrap();
+}
+
+/// The stop's drain waits for an open WebSocket as for a connection, and ends once it closes (HL-027).
+#[tokio::test]
+async fn the_shutdown_drain_waits_for_an_open_websocket() {
+    use axum::extract::ws::WebSocketUpgrade;
+    let app = Router::new().route(
+        "/notws",
+        get(|ws: WebSocketUpgrade| async {
+            ws.on_upgrade(|mut socket| async move { while let Some(Ok(_)) = socket.recv().await {} })
+        }),
+    );
+    let limits = ListenLimits {
+        shutdown: Some(Duration::from_secs(5)),
+        ..ListenLimits::defaults()
+    };
+    let (address, stop, mut server) = listening(app, unguarded(), limits).await;
+    let (socket, head) = upgraded(address, "/notws").await;
+    assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+    drop(stop);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), &mut server)
+            .await
+            .is_err(),
+        "the drain waits for the open socket"
+    );
+    drop(socket);
+    tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .expect("the drain ended once the socket closed")
+        .unwrap();
+}

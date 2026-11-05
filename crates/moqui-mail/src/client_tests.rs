@@ -20,12 +20,16 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
+use std::time::Duration;
 
 use indexmap::IndexMap;
 use moqui_lib::object::{basic_convert, to_plain_string, Value};
+use moqui_lib::sync::lock;
 
+use super::fake_servers::FakeSmtp;
 use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
 use moqui_core::entity::{EntityFacade, EntityValue};
+use moqui_core::transaction::TransactionAttribute;
 
 const SERVICES: &str = "org.moqui.impl.EmailClientServices";
 const MESSAGE: &str = "moqui.basic.email.EmailMessage";
@@ -1385,6 +1389,127 @@ fn drafts_send_now_scheduled_held_and_failed() {
     assert!(find_one(&facade, MESSAGE, "emailMessageId", &stranded).is_none());
     assert_eq!(sink.sent().len(), 5);
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A due send commits its claim before the SMTP session and records its result after it, each in its own transaction
+/// (plans/High-Level-Review.md HL-028): a session that outlasts the caller's transaction is sent once and recorded; one
+/// past the session limit is uncertain, waits in the Outbox and holds back the rest of its account's run; one whose
+/// result cannot be recorded stays claimed, is never sent again and is shown as stopped once the claim is old.
+#[test]
+fn a_due_send_is_claimed_before_its_session_and_goes_once() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let (ctx, facade) = setup_with(r#"<moqui-conf><email-client allowed-hosts="127.0.0.1"/></moqui-conf>"#);
+    let _entered = ctx.enter();
+    install();
+    let account = shared_account(&facade, "127.0.0.1");
+    let smtp = FakeSmtp::start("team@example.com");
+    lock(&smtp.state)
+        .passwords
+        .push(("team@example.com".to_string(), "secret".to_string()));
+    {
+        let _authz = ExecutionContext::with_current(ExecutionContext::disable_authz);
+        let server = find_one(&facade, "moqui.basic.email.EmailAccount", "emailAccountId", &account)
+            .and_then(|row| row.get("emailServerId").map(to_plain_string))
+            .unwrap();
+        let mut row = find_one(&facade, "moqui.basic.email.EmailServer", "emailServerId", &server).unwrap();
+        row.set("smtpPort", text(&smtp.port.to_string()));
+        row.set("mailUsername", text("team@example.com"));
+        row.set("mailPassword", text("secret"));
+        row.update(&facade).unwrap();
+    }
+    let due = |subject: &str| {
+        let id = out_text(
+            &ok(
+                "save#Draft",
+                &[
+                    ("emailAccountId", text(&account)),
+                    ("toAddresses", text("someone@example.com")),
+                    ("subject", text(subject)),
+                    ("body", text("<p>Hello</p>")),
+                ],
+            ),
+            "emailMessageId",
+        );
+        ok(
+            "send#Draft",
+            &[("emailMessageId", text(&id)), ("scheduledSendDate", stamp(now() + DAY))],
+        );
+        set_message(&facade, &id, &[("scheduledSendDate", stamp(now() - 1000))]);
+        id
+    };
+    let job = || {
+        let _authz = ctx.disable_authz();
+        call("send#DueDrafts", &[])
+    };
+    let arrived = |count: usize| {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while lock(&smtp.state).messages.len() < count && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        lock(&smtp.state).messages.len()
+    };
+
+    // the server answers the end of the data after the caller's transaction ran out: sent once, and recorded
+    let slow = due("Slow");
+    lock(&smtp.state).data_reply_delay = Duration::from_millis(1500);
+    let tx = facade.default_transactions().unwrap();
+    let _ = tx.run(
+        TransactionAttribute::UseOrBegin,
+        Some(Duration::from_millis(500)),
+        || Ok(job()),
+    );
+    let _ = errors();
+    assert_eq!(arrived(1), 1);
+    assert_eq!(message_field(&facade, &slow, "statusId"), "ES_SENT");
+    assert_eq!(message_field(&facade, &slow, "sendClaimDate"), "");
+    assert_eq!(out_number(&job(), "sentCount"), 0);
+    assert_eq!(errors(), "");
+    assert_eq!(lock(&smtp.state).messages.len(), 1, "not sent again");
+
+    // a session past its limit: its outcome is not known, so it waits in the Outbox with its error and is not sent
+    // again; the account's next due message waits for the next run
+    let uncertain = due("Uncertain");
+    let held = due("Held back");
+    {
+        let _limit = super::implementation::SessionLimitGuard::set(Duration::from_millis(300));
+        let ran = job();
+        assert_eq!(errors(), "");
+        assert_eq!(out_number(&ran, "sentCount"), 0, "{ran:?}");
+        assert_eq!(out_number(&ran, "failedCount"), 1, "{ran:?}");
+    }
+    assert_eq!(message_field(&facade, &uncertain, "statusId"), "ES_READY");
+    assert!(message_field(&facade, &uncertain, "sendError").contains("may have been sent"));
+    assert_eq!(message_field(&facade, &held, "statusId"), "ES_SCHEDULED");
+    assert_eq!(arrived(2), 2, "the server got it");
+    lock(&smtp.state).data_reply_delay = Duration::ZERO;
+    let ran = job();
+    assert_eq!(out_number(&ran, "sentCount"), 1, "{ran:?}");
+    assert_eq!(message_field(&facade, &held, "statusId"), "ES_SENT");
+    assert_eq!(message_field(&facade, &uncertain, "statusId"), "ES_READY");
+    assert_eq!(
+        lock(&smtp.state).messages.len(),
+        3,
+        "the uncertain send is not sent again"
+    );
+
+    // the result cannot be recorded after the send: the claim stays, it is not sent again, and once the claim is old
+    // the job shows it in the Outbox as a send that stopped
+    let unrecorded = due("Unrecorded");
+    super::remote::FAIL_PUSH.with(|fail| fail.set(true));
+    let ran = job();
+    super::remote::FAIL_PUSH.with(|fail| fail.set(false));
+    let _ = errors();
+    assert_eq!(out_number(&ran, "failedCount"), 1, "{ran:?}");
+    assert_eq!(lock(&smtp.state).messages.len(), 4);
+    assert_eq!(message_field(&facade, &unrecorded, "statusId"), "ES_READY");
+    assert_eq!(message_field(&facade, &unrecorded, "sendError"), "");
+    assert_ne!(message_field(&facade, &unrecorded, "sendClaimDate"), "");
+    assert_eq!(out_number(&job(), "stoppedCount"), 0);
+    set_message(&facade, &unrecorded, &[("sendClaimDate", stamp(now() - 20 * 60_000))]);
+    let ran = job();
+    assert_eq!(out_number(&ran, "stoppedCount"), 1, "{ran:?}");
+    assert!(message_field(&facade, &unrecorded, "sendError").contains("stopped"));
+    assert_eq!(lock(&smtp.state).messages.len(), 4, "never sent again");
 }
 
 /// Identities, the automatic reply, text blocks and saved searches.

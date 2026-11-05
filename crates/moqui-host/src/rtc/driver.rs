@@ -81,6 +81,52 @@ struct Driver<'a> {
     origins: HashMap<String, String>,
 }
 
+/// The SFU's work counters ([`moqui_rtc::SfuStats`]) as the driver last copied them, for the telemetry gauges
+/// `moqui.rtc.sfu.*` (plans/High-Level-Review.md HL-008): datagrams received and accepted, accept checks, drives, drive
+/// passes and peer polls, each a running total. The driver owns the SFU, so it copies them at most once a second.
+#[derive(Default)]
+struct SfuGauges([std::sync::atomic::AtomicU64; 6]);
+
+/// The gauge names, in the order of [`SfuGauges`].
+const SFU_GAUGES: [&str; 6] = [
+    "moqui.rtc.sfu.received",
+    "moqui.rtc.sfu.accepted",
+    "moqui.rtc.sfu.accept_checks",
+    "moqui.rtc.sfu.drives",
+    "moqui.rtc.sfu.drive_passes",
+    "moqui.rtc.sfu.peer_polls",
+];
+
+impl SfuGauges {
+    /// Gauges reading these counters, on the factory's telemetry.
+    fn register(factory: &ExecutionContextFactory) -> Arc<Self> {
+        let gauges = Arc::new(Self::default());
+        let telemetry = moqui_core::telemetry::for_factory(factory);
+        for (index, name) in SFU_GAUGES.iter().enumerate() {
+            let weak = Arc::downgrade(&gauges);
+            telemetry.observe_gauge(name, move || {
+                let gauges = weak.upgrade()?;
+                Some(gauges.0[index].load(Ordering::Relaxed) as f64)
+            });
+        }
+        gauges
+    }
+
+    fn copy(&self, stats: &moqui_rtc::SfuStats) {
+        let values = [
+            stats.received,
+            stats.accepted,
+            stats.accept_checks,
+            stats.drives,
+            stats.drive_passes,
+            stats.peer_polls,
+        ];
+        for (gauge, value) in self.0.iter().zip(values) {
+            gauge.store(value, Ordering::Relaxed);
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run(
     factory: &Arc<ExecutionContextFactory>,
@@ -109,9 +155,15 @@ pub(super) fn run(
         origins: HashMap::new(),
     };
     let mut buf = vec![0u8; DATAGRAM];
+    let gauges = SfuGauges::register(factory);
+    let mut copied = Instant::now();
     loop {
         if stop.load(Ordering::Acquire) {
             break;
+        }
+        if copied.elapsed() >= Duration::from_secs(1) {
+            gauges.copy(&driver.sfu.stats());
+            copied = Instant::now();
         }
         let turn = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             while let Ok(command) = commands.try_recv() {

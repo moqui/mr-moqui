@@ -177,7 +177,7 @@ fn groups_loaded_while_the_generation_moves_are_not_kept() {
         |cache| cache.groups.clone(),
         || {
             // An authorization write lands while the groups are read.
-            super::note_entity_write("moqui.security.ArtifactAuthz");
+            super::note_entity_write(Some("moqui.security.ArtifactAuthz"));
             Ok(std::sync::Arc::new(std::collections::HashSet::new()))
         },
         |cache, groups| cache.groups = Some(groups),

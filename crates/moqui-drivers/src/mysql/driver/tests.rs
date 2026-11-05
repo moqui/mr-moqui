@@ -334,3 +334,81 @@ fn round_trip_stream_and_statement_cache() {
     let mut boxed = must(DbDriver::connect(&driver));
     must(boxed.query_once("SELECT 1", &[]));
 }
+
+fn endpoint_at(port: u16) -> Endpoint {
+    Endpoint {
+        host: "127.0.0.1".to_string(),
+        port,
+        username: "moqui".to_string(),
+        password: "secret".to_string(),
+        database: "moqui".to_string(),
+        tls: false,
+        read_timeout: Some(READ_TIMEOUT),
+        isolation: None,
+    }
+}
+
+/// A session connects, reads and writes within bounds and keeps TCP keepalive on (plans/High-Level-Review.md HL-019).
+#[test]
+fn a_session_bounds_its_network_waits_and_keeps_alive() {
+    let opts = mysql::Opts::from(endpoint_at(3306).opts());
+    assert_eq!(opts.get_tcp_connect_timeout(), Some(CONNECT_TIMEOUT));
+    assert_eq!(opts.get_read_timeout(), Some(&READ_TIMEOUT));
+    assert_eq!(opts.get_write_timeout(), Some(&WRITE_TIMEOUT));
+    assert_eq!(opts.get_tcp_keepalive_time_ms(), Some(KEEPALIVE_IDLE_MS));
+    // the datasource's read-timeout, and 0 for none
+    let driver = MysqlDriver::new("127.0.0.1", 3306, "u", "p", "moqui", false).read_timeout(Duration::from_secs(90));
+    let opts = mysql::Opts::from(driver.endpoint.opts());
+    assert_eq!(opts.get_read_timeout(), Some(&Duration::from_secs(90)));
+    assert_eq!(opts.get_write_timeout(), Some(&WRITE_TIMEOUT));
+    let unbounded = MysqlDriver::new("127.0.0.1", 3306, "u", "p", "moqui", false).read_timeout(Duration::ZERO);
+    assert_eq!(mysql::Opts::from(unbounded.endpoint.opts()).get_read_timeout(), None);
+}
+
+/// A server that accepts TCP and then sends no greeting: a connection and a cancel (which signs in first) each end
+/// within their time.
+#[test]
+fn a_server_that_stalls_after_accepting_bounds_connect_and_cancel() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let held = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let keep = Arc::clone(&held);
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { return };
+            keep.lock().unwrap().push(stream);
+        }
+    });
+    let limit = Duration::from_millis(300);
+    let started = std::time::Instant::now();
+    assert!(mysql::Conn::new(endpoint_at(port).opts_within(limit, Some(limit), limit)).is_err());
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+    let cancel = MysqlCancel {
+        state: Arc::new(KillState {
+            endpoint: endpoint_at(port),
+            connection_id: AtomicU32::new(7),
+            busy: AtomicBool::new(true),
+        }),
+    };
+    let started = std::time::Instant::now();
+    assert!(cancel.kill_within(limit).is_err());
+    assert!(started.elapsed() < Duration::from_secs(3), "{:?}", started.elapsed());
+}
+
+/// A read past the read timeout, or a socket that failed, leaves the connection of no use: it reports itself closed,
+/// so the pool drops it instead of sending a ROLLBACK that waits out the timeout again. A statement's own error does
+/// not.
+#[test]
+fn a_lost_socket_marks_the_connection_lost_and_a_statement_error_does_not() {
+    let timed_out = mysql_err(mysql::Error::IoError(std::io::Error::from(
+        std::io::ErrorKind::WouldBlock,
+    )));
+    assert!(connection_lost(&timed_out));
+    assert!(connection_lost(&mysql_err(mysql::Error::DriverError(
+        mysql::DriverError::PacketOutOfSync
+    ))));
+    assert!(!connection_lost(&Error::new("mysql stream is open")));
+    assert!(!connection_lost(&mysql_err(mysql::Error::DriverError(
+        mysql::DriverError::MixedParams
+    ))));
+}

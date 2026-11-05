@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A form-list whose values a spreadsheet would read as a formula, for the csv render mode's guard. -->
+<screen require-authentication="false" default-menu-title="CSV Guard">
+    <actions>
+        <set field="rowList" from="[{text: '=HYPERLINK(&quot;http://x&quot;)', amount: -12.5}, {text: '+A1', amount: 3}, {text: '+1', amount: 2},
+                {text: '@SUM(A1)', amount: 0}, {text: '-cmd', amount: -1234.5}, {text: 'line\rbreak', amount: 1}]"/>
+    </actions>
+    <widgets>
+        <form-list name="RowList" list="rowList">
+            <field name="text"><default-field><display/></default-field></field>
+            <field name="amount"><default-field><display format="#,##0.00"/></default-field></field>
+        </form-list>
+    </widgets>
+</screen>

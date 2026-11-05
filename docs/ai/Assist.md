@@ -1249,6 +1249,11 @@ tasks, `ec.llm.summarize`/`classify`/`extract`/`startRun`, `propose#AiFieldValue
   schema) on the task's feature (`summarize`, `classify`, …) when bound, else `assist`, with the caller's text wrapped as
   untrusted; `list#AiTaskTypes` is the registry. A component adds a task with `<ai-task name service feature
   description>` in its `llm-facade` conf, the service an implementation of `prepare#AiTask` (system, prompt, schema).
+- **Transactions**: a model call is never made inside a transaction. The task services take none of their own
+  (`transaction="ignore"`), and a synchronous task (and `propose#AiFieldValue`, `ec.llm.complete`, `ec.llm.summarize`
+  and the rest) called while the caller has one open is refused, unless `allowInTransaction=true`: the transaction is
+  then suspended for the call, which is cut to the time it has left. Call them with none open (a screen transition
+  with `begin-transaction="false"`, a service with `transaction="ignore"`) or with `async=true`.
 - **Async**: `async=true` answers a `taskId` (a tool-less `AgentRun` of the job surface, `triggerRef` `ai-task:<type>`)
   and runs the task on a service worker (`execute#AiTask`); `get#AiTask` gives its state and output; its user gets an
   inbox message and, with `webhookUrl` (https, public addresses only), a POST of `{taskId, taskType, state, output |

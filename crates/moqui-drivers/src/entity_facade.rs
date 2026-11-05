@@ -104,7 +104,14 @@ fn open_facade(
     let conf = moqui_lib::node::MNode::parse_shared("moqui-conf", &factory.conf_text())?;
     let tx = moqui_core::transaction::TransactionManager::new(Arc::clone(&driver), pool)?;
     tx.configure_from_conf(&conf)?;
-    let mut groups = vec![moqui_core::entity::EntityGroup::new("transactional", dialect, tx)];
+    let snapshot_reads = match db {
+        Some(db) => db.conf.snapshot_reads(),
+        None => {
+            moqui_core::entity::datasource::datasource_conf(&conf, "transactional").is_ok_and(|ds| ds.snapshot_reads())
+        }
+    };
+    let mut groups =
+        vec![moqui_core::entity::EntityGroup::new("transactional", dialect, tx).with_snapshot_reads(snapshot_reads)];
     groups.extend(other_groups(&conf, &driver, db));
     moqui_core::entity::open_for_factory(factory, "transactional", groups)
 }
@@ -203,7 +210,9 @@ fn other_groups(
             };
             let tx = moqui_core::transaction::TransactionManager::new(driver, ds.pool.clone())?;
             tx.configure_from_conf(conf)?;
-            Ok(Some((moqui_core::entity::EntityGroup::new(group.clone(), ds.dialect, tx), target)))
+            let snapshot_reads = ds.snapshot_reads();
+            let opened = moqui_core::entity::EntityGroup::new(group.clone(), ds.dialect, tx);
+            Ok(Some((opened.with_snapshot_reads(snapshot_reads), target)))
         });
         match opened {
             Ok(Some((opened, target))) => {

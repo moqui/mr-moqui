@@ -377,6 +377,22 @@ fn load_data_stores_eca_and_inserts_pending() {
         "moqui.entity.feed.DataFeedDocument",
         &[("dataFeedId", "FEED1"), ("dataDocumentId", "DOC1")],
     );
+    // A document on an entity not in the model (one of a component taken out) is left out of the feed. The commit
+    // hook once looked it up as a database-defined view, which borrows the connection the hook holds, and every
+    // commit with a fed write failed with "commit hook panicked: RefCell already mutably borrowed".
+    create_row(
+        &facade,
+        "moqui.entity.document.DataDocument",
+        &[
+            ("dataDocumentId", "DOC_GONE"),
+            ("primaryEntityName", "mantle.gone.GoneEntity"),
+        ],
+    );
+    create_row(
+        &facade,
+        "moqui.entity.feed.DataFeedDocument",
+        &[("dataFeedId", "FEED1"), ("dataDocumentId", "DOC_GONE")],
+    );
 
     facade.begin("moqui.test.Foo", None).unwrap();
     create_row(&facade, "moqui.test.Foo", &[("fooId", "F1"), ("fooText", "alpha")]);

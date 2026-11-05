@@ -30,6 +30,7 @@ use moqui_lib::node::MNode;
 pub const SUPERUSER_SLOTS: u32 = 3;
 /// The cluster `LISTEN` connection, which is outside the pool.
 pub const LISTEN_SLOTS: u32 = 1;
+#[cfg(feature = "postgres")]
 const POSTGRES_PORT: u16 = 5432;
 #[cfg(feature = "mysql")]
 const MYSQL_PORT: u16 = 3306;
@@ -278,6 +279,7 @@ fn session_options(conf: &DatasourceConf) -> Result<Option<String>, Error> {
 }
 
 /// The `search_path` for a `schema-name`: none when it is empty. Only a plain identifier is taken.
+#[cfg(feature = "postgres")]
 fn search_path(schema: &str) -> Result<Option<String>, Error> {
     let schema = schema.trim();
     if schema.is_empty() {
@@ -339,20 +341,22 @@ pub fn postgres_server_driver(
 
 #[cfg(feature = "mysql")]
 fn mysql_driver(conf: &DatasourceConf) -> Result<Arc<dyn DbDriver>, Error> {
-    Ok(Arc::new(
-        super::mysql::MysqlDriver::new(
-            &conf.host,
-            conf.port.unwrap_or(MYSQL_PORT),
-            &conf.user,
-            &conf.password,
-            &conf.database,
-            conf.tls,
-        )
-        .isolation(
-            conf.isolation_level
-                .map(moqui_core::entity::datasource::IsolationLevel::sql),
-        ),
-    ))
+    let driver = super::mysql::MysqlDriver::new(
+        &conf.host,
+        conf.port.unwrap_or(MYSQL_PORT),
+        &conf.user,
+        &conf.password,
+        &conf.database,
+        conf.tls,
+    )
+    .isolation(
+        conf.isolation_level
+            .map(moqui_core::entity::datasource::IsolationLevel::sql),
+    );
+    Ok(Arc::new(match conf.read_timeout {
+        Some(timeout) => driver.read_timeout(timeout),
+        None => driver,
+    }))
 }
 
 #[cfg(not(feature = "mysql"))]
@@ -360,6 +364,6 @@ fn mysql_driver(_conf: &DatasourceConf) -> Result<Arc<dyn DbDriver>, Error> {
     Err(Error::new("the mysql driver is not in this build"))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "postgres"))]
 #[path = "entity_db_tests.rs"]
 mod tests;

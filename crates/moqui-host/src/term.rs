@@ -48,6 +48,10 @@ const START_PATH: &str = "/apps";
 /// A session ends after this long without input, with a note. The client's minute clock writes to the stream, which
 /// would keep a transport's own inactivity timer from ever firing.
 pub(crate) const IDLE: Duration = Duration::from_secs(600);
+/// Frames the session may have waiting for the stream; past it the session's thread waits for the client.
+const FRAMES_WAITING: usize = 64;
+/// A write to the client that takes nothing for this long ends the session (`plans/High-Level-Review.md` HL-027).
+const WRITE_STALL: Duration = Duration::from_secs(60);
 /// How long a session with no user has to log in through the dialog.
 pub(crate) const LOGIN_WAIT: Duration = Duration::from_secs(120);
 /// Refused logins in the dialog before the session closes. The account's own lockout counts them too.
@@ -241,10 +245,11 @@ pub(crate) struct Ended {
     pub note: Option<String>,
 }
 
-/// Frames to the stream task: each `flush` sends what was written since as one chunk, so a frame goes out whole.
+/// Frames to the stream task: each `flush` sends what was written since as one chunk, so a frame goes out whole. The
+/// channel is bounded, so a client that reads slowly holds up the session's thread rather than filling memory.
 struct FrameWriter {
     pending: Vec<u8>,
-    out: tokio_mpsc::UnboundedSender<Vec<u8>>,
+    out: tokio_mpsc::Sender<Vec<u8>>,
 }
 
 impl Write for FrameWriter {
@@ -258,7 +263,7 @@ impl Write for FrameWriter {
             return Ok(());
         }
         self.out
-            .send(std::mem::take(&mut self.pending))
+            .blocking_send(std::mem::take(&mut self.pending))
             .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "the stream closed"))
     }
 }
@@ -476,7 +481,7 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
         link,
         gate: Arc::clone(&gate),
     };
-    let (out, mut frames) = tokio_mpsc::unbounded_channel::<Vec<u8>>();
+    let (out, mut frames) = tokio_mpsc::channel::<Vec<u8>>(FRAMES_WAITING);
     let (finished, ended) = oneshot::channel();
     let options = SessionOptions {
         path: START_PATH.to_string(),
@@ -518,6 +523,8 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
     let mut idle_until = tokio::time::Instant::now() + IDLE;
     let login_until = tokio::time::Instant::now() + LOGIN_WAIT;
     let mut note = None;
+    // off once a write failed or stalled: later frames are dropped while the session ends
+    let mut writing = true;
     loop {
         tokio::select! {
             read = stream.read(&mut buffer), if reading => match read {
@@ -544,7 +551,12 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
             }
             frame = frames.recv() => match frame {
                 Some(frame) => {
-                    if stream.write_all(&frame).await.is_err() {
+                    let written = writing && matches!(
+                        tokio::time::timeout(WRITE_STALL, stream.write_all(&frame)).await,
+                        Ok(Ok(()))
+                    );
+                    if writing && !written {
+                        writing = false;
                         reading = false;
                         let _ = events.send(SessionEvent::Close);
                     }
@@ -562,7 +574,9 @@ pub(crate) async fn serve<S: AsyncRead + AsyncWrite + Unpin>(stream: &mut S, sta
             }
         }
     }
-    let _ = stream.flush().await;
+    if writing {
+        let _ = tokio::time::timeout(WRITE_STALL, stream.flush()).await;
+    }
     let note = note.or_else(|| lock(&gate.note).take());
     // The slot goes back with the gate, once the session's link has dropped it too.
     drop(gate);

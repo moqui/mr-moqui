@@ -44,6 +44,14 @@ const IDLE: Duration = Duration::from_secs(600);
 /// trickles keepalives cannot hold a connection slot (it is closed at the first tick past this).
 pub const SIGN_IN_WITHIN: Duration = Duration::from_secs(60);
 const TICK: Duration = Duration::from_secs(30);
+/// A write the client takes nothing of for this long ends the connection, so a blocked write does not hold up the
+/// session's idle and sign-in timeouts (`plans/High-Level-Review.md` HL-027).
+const WRITE_STALL: Duration = Duration::from_secs(60);
+
+/// `write` within [`WRITE_STALL`]: false when it failed or stalled.
+async fn written<F: Future<Output = bool>>(write: F) -> bool {
+    tokio::time::timeout(WRITE_STALL, write).await.unwrap_or(false)
+}
 
 /// Whether `ip` is blocked for failed sign-ins.
 pub fn blocked(server: &Server, ip: IpAddr) -> bool {
@@ -187,22 +195,22 @@ async fn flush(session: &mut Session, link: &mut Link) -> bool {
     for out in session.take_out() {
         match (out, &mut *link) {
             (Out::Raw(text), Link::Stream(stream)) => {
-                if stream.io.write(&text).await.is_err() {
+                if !written(async { stream.io.write(&text).await.is_ok() }).await {
                     return false;
                 }
             }
             (Out::Element(element), Link::Stream(stream)) => {
-                if stream.io.write(&framing::write(&element)).await.is_err() {
+                if !written(async { stream.io.write(&framing::write(&element)).await.is_ok() }).await {
                     return false;
                 }
             }
             (Out::Raw(text), Link::Frames(frames)) => {
-                if !frames.send(text).await {
+                if !written(frames.send(text)).await {
                     return false;
                 }
             }
             (Out::Element(element), Link::Frames(frames)) => {
-                if !frames.send(framing::write(&element)).await {
+                if !written(frames.send(framing::write(&element))).await {
                     return false;
                 }
             }

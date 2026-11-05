@@ -78,14 +78,21 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
-    <service verb="clean" noun="PrintJobData" authenticate="false" transaction-timeout="600">
-        <in-parameters><parameter name="daysToKeep" type="Integer" default="7"/></in-parameters>
+    <service verb="clean" noun="PrintJobData" authenticate="false" transaction="ignore">
+        <description>
+            Delete print jobs older than daysToKeep, a chunk of rows at a time, each chunk committed on its own; no chunk
+            begins after maxSeconds (plans/High-Level-Review.md HL-033).
+        </description>
+        <in-parameters>
+            <parameter name="daysToKeep" type="Integer" default="7"/>
+            <parameter name="maxSeconds" type="Integer" default="600"/>
+        </in-parameters>
         <out-parameters><parameter name="printJobsRemoved" type="Long"/></out-parameters>
         <actions><script>
             const basisTimestamp = new Date(ec.user.timestampMillis(ec.user.nowTimestamp) - daysToKeep * 86400000).toISOString()
             printJobsRemoved = ec.entity.find("moqui.basic.print.PrintJob")
                     .condition(ec.entity.conditionFactory.makeCondition("createdDate", "&lt;", basisTimestamp))
-                    .disableAuthz().deleteAll()
+                    .disableAuthz().purge(maxSeconds)
             ec.logger.log("info", `Removed ${printJobsRemoved} PrintJob records more than ${daysToKeep} days old`)
         </script></actions>
     </service>

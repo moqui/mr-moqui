@@ -25,7 +25,7 @@ use moqui_lib::sync::{lock, read, write};
 use super::define::{Authenticate, ServiceDef, ServiceKind};
 use super::util::has_error;
 use super::validate;
-use crate::context::{Authz, Error, ExecutionContext, Tarpit};
+use crate::context::{AnonymousAccess, AnonymousLogin, Authz, Error, ExecutionContext, Tarpit};
 use crate::entity::{EntityFacade, EntityValue};
 use crate::transaction::TransactionAttribute;
 
@@ -568,7 +568,9 @@ pub fn sync_with(
     // The body and its post-service rules ran; a failure after that is the commit's.
     let mut finished = false;
     let outcome = tx.run(attribute, options.timeout.or(def.timeout), || {
-        let _deadline = crate::script::DeadlineGuard::new(tx.time_remaining());
+        // A service that begins no transaction is still bounded by a `transaction-timeout` it declares, on any thread
+        // and for an async call too (plans/High-Level-Review.md HL-035); a job adds its own limit around the call.
+        let _deadline = crate::script::DeadlineGuard::new(tx.time_remaining().or(def.timeout));
         if let Some(run) = &mut operation {
             run.watch(&tx)?;
         }
@@ -775,7 +777,7 @@ impl Drop for ErrorsAside {
 /// call started.
 struct ServiceFrame {
     pushed: bool,
-    anonymous: bool,
+    anonymous: AnonymousLogin,
 }
 
 impl ServiceFrame {
@@ -783,7 +785,7 @@ impl ServiceFrame {
         if !crate::user::context_entered() {
             return Ok(Self {
                 pushed: false,
-                anonymous: false,
+                anonymous: AnonymousLogin::default(),
             });
         }
         let authz = Authz::required_if(def.authenticate == Authenticate::Required);
@@ -805,18 +807,22 @@ impl ServiceFrame {
         }
         let mut frame = Self {
             pushed: outcome.is_some(),
-            anonymous: false,
+            anonymous: AnonymousLogin::default(),
         };
-        // After the push, so the frame is the one marked.
-        let all = match def.authenticate {
-            Authenticate::AnonymousAll => Some(true),
-            Authenticate::AnonymousView => Some(false),
+        // After the push, so the frame is the one marked. The grant is for the caller, when one is logged in: a call
+        // below that logs in as someone else (authUsername) does not inherit it.
+        let access = match def.authenticate {
+            Authenticate::AnonymousAll => Some(AnonymousAccess::All),
+            Authenticate::AnonymousView => Some(AnonymousAccess::View),
             _ => None,
         };
-        if let Some(all) = all {
-            let user_id = crate::user::current_user_id().ok().flatten().unwrap_or_default();
-            crate::context::ExecutionContext::with_current(|ctx| ctx.set_anonymous_authorized(all, &user_id));
-            frame.anonymous = crate::user::login_anonymous().unwrap_or(false);
+        if let Some(access) = access {
+            let user_id = crate::user::current_user_id().ok().flatten();
+            crate::context::ExecutionContext::with_current(|ctx| ctx.grant_anonymous(access, user_id.as_deref()));
+            // Unlike a screen or REST path, the call goes on without the login: the grant already covers its artifacts.
+            if let Err(err) = frame.anonymous.begin() {
+                tracing::warn!(service = %def.name, error = %err, "the anonymous login of a service frame failed");
+            }
         }
         Ok(frame)
     }
@@ -824,9 +830,8 @@ impl ServiceFrame {
 
 impl Drop for ServiceFrame {
     fn drop(&mut self) {
-        if self.anonymous {
-            crate::user::logout_anonymous_only();
-        }
+        // The login ends before the frame pops.
+        self.anonymous.end();
         if self.pushed {
             crate::context::ExecutionContext::with_current(|ctx| {
                 let _ = ctx.pop();
@@ -882,6 +887,10 @@ fn register_tx_commit(
 /// rules run on a service worker, in a context and transaction of their own. A sim session never really commits, so
 /// its rules do not run.
 ///
+/// They run under the authorization the call has here, with its frame on the stack, as its other rules run inline:
+/// by the commit the frames that authorized the call (a screen transition's, say) are gone, and the rules' service
+/// calls would be decided against an empty stack. They can do no more than the call's own rules could.
+///
 /// A pattern rule runs here as at any other `when`. Java's `registerTx` compares the rule's service name, the pattern
 /// text, to the called name, so its pattern tx rules never run (an accepted difference, P7a-15).
 fn register_tx_rules(
@@ -905,25 +914,26 @@ fn register_tx_rules(
             &format!("the {when} rules of {service}"),
         )?;
     }
+    let authz = ExecutionContext::with_current(ExecutionContext::registered_authz).unwrap_or_default();
     let service = service.to_string();
-    let mut parameters = parameters.clone();
-    let mut results = results.cloned();
+    let parameters = parameters.clone();
+    let results = results.cloned();
     let hook = move || {
         if sim {
             tracing::info!("Skipping {when} rules of {service} in a sim session");
             return;
         }
-        let pools_factory = Arc::clone(&factory);
-        pools_factory.service_pools().spawn("service tx ECA rules", move || {
-            let facade = factory
-                .entity()
-                .ok_or_else(|| Error::new("no entity facade is installed"))?;
-            let tx = facade.default_transactions()?;
-            tx.run(TransactionAttribute::UseOrBegin, None, || {
-                super::seca::run_seca_rules(&service, when, &mut parameters, results.as_mut()).map_err(Into::into)
-            })
-            .map_err(Into::into)
-        });
+        // A full or stopping queue stores the run as a queued job instead of dropping it (HL-025).
+        factory.service_pools().spawn_rules(
+            &factory,
+            super::pool::TxRules {
+                service,
+                when: when.to_string(),
+                parameters,
+                results,
+                authz,
+            },
+        );
     };
     if when == "tx-commit" {
         tx.on_commit(hook)
@@ -932,12 +942,46 @@ fn register_tx_rules(
     }
 }
 
+/// Run the `when` rules of `service` in a transaction of their own, on the current context: the worker side of
+/// [`register_tx_rules`], from the service queue or from a queued job.
+pub(crate) fn run_tx_rules(
+    factory: &crate::context::ExecutionContextFactory,
+    rules: &mut super::pool::TxRules,
+) -> Result<(), Error> {
+    let facade = factory
+        .entity()
+        .ok_or_else(|| Error::new("no entity facade is installed"))?;
+    let tx = facade.default_transactions()?;
+    let super::pool::TxRules {
+        service,
+        when,
+        parameters,
+        results,
+        authz,
+    } = rules;
+    // Under the service's frame with the authorization it had when it registered them, as its other rules run.
+    let action = resolve(service, Some(&facade)).map_or("all", |def| verb_action(&def.verb));
+    let _restored = ExecutionContext::with_current(|ctx| ctx.restore_authz(authz, "AT_SERVICE", service, action));
+    tx.run(TransactionAttribute::UseOrBegin, None, || {
+        super::seca::run_seca_rules(service, when, parameters, results.as_mut()).map_err(Into::into)
+    })
+    .map_err(Into::into)
+}
+
 /// Java's `ServiceCallSpecial.registerOnCommit` and `registerOnRollback`: run `name` asynchronously once the
 /// transaction in place commits (`on_commit`) or rolls back.
 ///
+/// The call is checked now, as an async call made here is ([`prepare_async`]): its input is validated and the caller
+/// must be authorized for it, against the artifact stack in place, whose screen or service may authorize it by
+/// inheritance. When the transaction ends those frames are gone (a screen transition commits after its screens are
+/// popped), so the call is queued then as the user who registered it without a second check, and runs with
+/// authorization disabled, as every checked async call does. A call refused here is an error and nothing is
+/// registered; in a sim session nothing is registered either, since its transaction never really commits.
+///
 /// # Errors
 ///
-/// Returns an error for an unknown service or when no transaction is in place.
+/// Returns an error for an unknown service, when no transaction is in place, or when the caller may not run the
+/// service.
 pub fn register_on_end(name: &str, parameters: &BTreeMap<String, Value>, on_commit: bool) -> Result<(), Error> {
     let name = canonical(name);
     let facade = current_facade().ok_or_else(|| Error::new("no entity facade is installed"))?;
@@ -948,9 +992,16 @@ pub fn register_on_end(name: &str, parameters: &BTreeMap<String, Value>, on_comm
             "Cannot register service {name} to run at the end of a transaction: no transaction is in place"
         )));
     }
-    let parameters = parameters.clone();
+    let factory = super::pool::capture_factory()?;
+    let parameters = match prepare_async(&name, parameters)? {
+        AsyncCall::Run(parameters) => parameters,
+        // A sim session, or input that failed validation, whose errors are in the message facade.
+        AsyncCall::Skip(_) => return Ok(()),
+    };
+    let call = super::pool::CheckedCall::new(name, parameters);
     let hook = move || {
-        if let Err(err) = async_call(&name, &parameters) {
+        let name = call.name.clone();
+        if let Err(err) = factory.service_pools().submit_checked(&factory, call) {
             tracing::error!(error = %err, "Could not run service {name} registered for the end of the transaction");
         }
     };

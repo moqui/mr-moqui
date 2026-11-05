@@ -16,7 +16,6 @@ use super::*;
 
 /// A Postgres server the conf names gets the `schema-name` as its search path and the isolation level as the session's
 /// default, a space in it escaped for the startup options.
-#[cfg(feature = "postgres")]
 #[test]
 fn a_postgres_session_takes_the_schema_and_the_isolation_level() {
     use moqui_core::entity::datasource::IsolationLevel;

@@ -430,3 +430,33 @@ fn write_fixture(name: &str, body: &str) -> PathBuf {
     std::fs::write(&path, body).unwrap();
     path
 }
+
+/// plans/High-Level-Review.md HL-015: a reload takes the changed file's root the caller parsed to check it, and does not
+/// read that file again; the files loaded before are read once each, with no duplicate from the changed path.
+#[test]
+fn a_reload_takes_the_checked_root_of_a_changed_file_instead_of_reading_it_again() {
+    let service = |value: &str| {
+        format!(
+            r#"<services><service verb="run" noun="One"><actions><set field="x" value="{value}"/></actions></service></services>"#
+        )
+    };
+    let root = lazy_framework(
+        "parsed-once",
+        &[("A.xml", &service("first")), ("B.xml", &service("other"))],
+    );
+    let a = root.join("service/test/lazy/A.xml");
+    let ctx = lazy_context(root);
+    let _entered = ctx.enter();
+    assert!(super::find("test.lazy.A.run#One").is_some());
+    assert!(super::find("test.lazy.B.run#One").is_some());
+    super::PARSED.with(|parsed| parsed.borrow_mut().clear());
+    let checked = moqui_lib::node::MNode::parse_text("services", &service("checked")).unwrap();
+    // The text on disk now differs from the root checked, which is the one the reload must use.
+    std::fs::write(&a, service("on-disk")).unwrap();
+    let reload = super::reload_parsed(std::slice::from_ref(&a), vec![(a.clone(), checked)]).unwrap();
+    assert_eq!(reload.defined, 1);
+    assert_eq!(parsed_count("A.xml"), 0, "the changed file is not read again");
+    assert_eq!(parsed_count("B.xml"), 1, "a file loaded before is read once");
+    let one = super::find("test.lazy.A.run#One").unwrap();
+    assert!(one.actions.contains("checked"), "{}", one.actions);
+}

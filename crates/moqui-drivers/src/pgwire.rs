@@ -19,10 +19,15 @@
 //! with `Sync`, so each has its own `ReadyForQuery` and a failed one does not take the next down with it, and a
 //! request can be left unanswered ([`Wire::queue`]): its reply is read, and its failure kept, by the next call that
 //! waits. The encoding and the parsing of messages, and SCRAM, are `postgres-protocol`'s.
+//!
+//! Network waits are bounded (plans/High-Level-Review.md HL-019): a connection, its TLS handshake and its startup
+//! finish within [`CONNECT_TIMEOUT`], a cancel within [`CANCEL_TIMEOUT`], a read in a transaction within the time the
+//! manager sets ([`Wire::set_read_timeout`]), and a TCP connection has keepalive on, so a host that stops answering
+//! without a reset is noticed.
 
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 #[cfg(unix)]
@@ -49,6 +54,13 @@ const QUIET_BEFORE_PEEK: Duration = Duration::from_millis(20);
 const READ_CHUNK: usize = 16 * 1024;
 /// How long a write waits for room before it reads what the server sent meanwhile (see [`Wire::send_all`]).
 const SEND_WAIT: Duration = Duration::from_millis(2);
+/// The most a connection, with its TLS handshake and its startup and sign-in, takes.
+pub(super) const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// The most a cancel request, on a connection of its own, takes.
+pub(super) const CANCEL_TIMEOUT: Duration = Duration::from_secs(5);
+/// TCP keepalive: probes start after this much quiet, and go this often.
+const KEEPALIVE_IDLE: Duration = Duration::from_secs(60);
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(10);
 /// Every result column comes in binary.
 const BINARY: i16 = 1;
 const TEXT: i16 = 0;
@@ -117,6 +129,10 @@ pub(super) struct Wire {
     last_read: Instant,
     process_id: i32,
     secret_key: i32,
+    /// While connecting: when the startup must be done by. Each read waits at most what is left.
+    handshake_deadline: Option<Instant>,
+    /// The longest a read waits after the startup ([`Wire::set_read_timeout`]); `None` waits as long as it takes.
+    read_timeout: Option<Duration>,
 }
 
 /// What failed a request: the server, or this side while reading the reply (a cell that does not decode).
@@ -193,19 +209,30 @@ enum Stream {
 }
 
 impl Stream {
-    fn open(endpoint: &Endpoint) -> Result<Self, Error> {
+    /// Connect, and for TLS negotiate, by `deadline`.
+    fn open(endpoint: &Endpoint, deadline: Instant) -> Result<Self, Error> {
         match endpoint {
             #[cfg(unix)]
             Endpoint::Unix(path) => UnixStream::connect(path)
                 .map(Stream::Unix)
                 .map_err(|err| io_error(&format!("connect {}", path.display()), err)),
             Endpoint::Tcp { host, port, tls } => {
-                let tcp = TcpStream::connect((host.as_str(), *port))
-                    .map_err(|err| io_error(&format!("connect {host}:{port}"), err))?;
-                tcp.set_nodelay(true).map_err(|err| io_error("connect", err))?;
+                let tcp = connect_tcp(host, *port, deadline)?;
                 match tls {
                     None => Ok(Stream::Tcp(tcp)),
-                    Some(config) => negotiate_tls(tcp, host, config),
+                    Some(config) => {
+                        // the handshake's reads and writes wait at most what is left, then wait as before
+                        let left = remaining(deadline, "connect")?;
+                        tcp.set_read_timeout(Some(left))
+                            .and_then(|()| tcp.set_write_timeout(Some(left)))
+                            .map_err(|err| io_error("connect", err))?;
+                        let stream = negotiate_tls(tcp, host, config)?;
+                        stream
+                            .set_read_timeout(None)
+                            .and_then(|()| stream.set_write_timeout(None))
+                            .map_err(|err| io_error("connect", err))?;
+                        Ok(stream)
+                    }
                 }
             }
         }
@@ -317,6 +344,52 @@ impl Write for Stream {
     }
 }
 
+/// What is left of `deadline`, or the error of a `what` that ran out of time.
+fn remaining(deadline: Instant, what: &str) -> Result<Duration, Error> {
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return Err(Error::new(format!(
+            "postgres {what}: the server did not answer in time"
+        )));
+    }
+    Ok(left)
+}
+
+/// A TCP connection to `host:port` by `deadline`, trying each address the name resolves to, with no delay and with
+/// keepalive on.
+fn connect_tcp(host: &str, port: u16, deadline: Instant) -> Result<TcpStream, Error> {
+    let addresses = (host, port)
+        .to_socket_addrs()
+        .map_err(|err| io_error(&format!("connect {host}:{port}"), err))?;
+    let mut last = None;
+    for address in addresses {
+        let left = remaining(deadline, &format!("connect {host}:{port}"))?;
+        match TcpStream::connect_timeout(&address, left) {
+            Ok(tcp) => {
+                tcp.set_nodelay(true).map_err(|err| io_error("connect", err))?;
+                keepalive(&tcp);
+                return Ok(tcp);
+            }
+            Err(err) => last = Some(err),
+        }
+    }
+    Err(match last {
+        Some(err) => io_error(&format!("connect {host}:{port}"), err),
+        None => Error::new(format!("postgres connect {host}:{port}: the name has no address")),
+    })
+}
+
+/// TCP keepalive, so a host that stopped answering without a reset ends a wait on it. A socket that does not take it
+/// is logged and used as it is.
+pub(super) fn keepalive(tcp: &TcpStream) {
+    let settings = socket2::TcpKeepalive::new()
+        .with_time(KEEPALIVE_IDLE)
+        .with_interval(KEEPALIVE_INTERVAL);
+    if let Err(err) = socket2::SockRef::from(tcp).set_tcp_keepalive(&settings) {
+        tracing::warn!(error = %err, "postgres: could not turn on TCP keepalive");
+    }
+}
+
 /// `SSLRequest`, then the TLS handshake, run here so that a refused certificate is reported as the handshake's.
 fn negotiate_tls(mut tcp: TcpStream, host: &str, config: &Arc<rustls::ClientConfig>) -> Result<Stream, Error> {
     let mut request = BytesMut::new();
@@ -376,7 +449,8 @@ fn type_of(oid: u32) -> Type {
 }
 
 impl Wire {
-    /// Connect, authenticate (cleartext, MD5 or SCRAM-SHA-256) and wait for the server to be ready.
+    /// Connect, authenticate (cleartext, MD5 or SCRAM-SHA-256) and wait for the server to be ready, within
+    /// [`CONNECT_TIMEOUT`].
     pub(super) fn connect(
         endpoint: &Endpoint,
         user: &str,
@@ -384,8 +458,21 @@ impl Wire {
         password: Option<&str>,
         options: Option<&str>,
     ) -> Result<Self, Error> {
+        Self::connect_within(endpoint, user, database, password, options, CONNECT_TIMEOUT)
+    }
+
+    /// [`Wire::connect`] within `timeout`: the TCP connection, the TLS handshake and the startup all by then.
+    pub(super) fn connect_within(
+        endpoint: &Endpoint,
+        user: &str,
+        database: &str,
+        password: Option<&str>,
+        options: Option<&str>,
+        timeout: Duration,
+    ) -> Result<Self, Error> {
+        let deadline = Instant::now() + timeout;
         let mut wire = Wire {
-            stream: Stream::open(endpoint)?,
+            stream: Stream::open(endpoint, deadline)?,
             read: BytesMut::with_capacity(READ_CHUNK),
             write: BytesMut::with_capacity(1024),
             pending: VecDeque::new(),
@@ -395,6 +482,8 @@ impl Wire {
             last_read: Instant::now(),
             process_id: 0,
             secret_key: 0,
+            handshake_deadline: Some(deadline),
+            read_timeout: None,
         };
         if !matches!(wire.stream, Stream::Tls(_)) {
             wire.stream
@@ -419,7 +508,22 @@ impl Wire {
                 _ => {}
             }
         }
+        wire.handshake_deadline = None;
+        wire.stream
+            .set_read_timeout(None)
+            .map_err(|err| io_error("connect", err))?;
         Ok(wire)
+    }
+
+    /// The longest one read waits from now on; `None` waits as long as it takes. A read past it closes the connection,
+    /// as its reply can no longer be told from the next.
+    pub(super) fn set_read_timeout(&mut self, timeout: Option<Duration>) -> Result<(), Error> {
+        let timeout = timeout.map(|timeout| timeout.max(Duration::from_millis(1)));
+        self.stream
+            .set_read_timeout(timeout)
+            .map_err(|err| io_error("read timeout", err))?;
+        self.read_timeout = timeout;
+        Ok(())
     }
 
     fn authenticate(&mut self, user: &str, password: Option<&str>) -> Result<(), Error> {
@@ -602,8 +706,19 @@ impl Wire {
         }
     }
 
-    /// More bytes from the socket. An end of stream is a closed connection.
+    /// More bytes from the socket. An end of stream is a closed connection. While connecting, a read waits at most
+    /// what is left of the startup's time.
     fn fill(&mut self) -> Result<(), Error> {
+        if let Some(deadline) = self.handshake_deadline {
+            let left = remaining(deadline, "connect").inspect_err(|_| self.dead = true)?;
+            self.stream
+                .set_read_timeout(Some(left))
+                .map_err(|err| io_error("connect", err))?;
+        }
+        self.fill_once()
+    }
+
+    fn fill_once(&mut self) -> Result<(), Error> {
         let mut chunk = [0u8; READ_CHUNK];
         loop {
             match self.stream.read(&mut chunk) {
@@ -618,7 +733,21 @@ impl Wire {
                 }
                 Err(err) if err.kind() == ErrorKind::Interrupted => {}
                 Err(err) => {
-                    if !matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) {
+                    let timed_out = matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut);
+                    if timed_out && self.handshake_deadline.is_some() {
+                        self.dead = true;
+                        return Err(Error::new("postgres connect: the server did not answer in time").with_source(err));
+                    }
+                    if timed_out && self.read_timeout.is_some() {
+                        // a reply cut off part way: the connection cannot be used again
+                        self.dead = true;
+                        return Err(Error::new(format!(
+                            "postgres read: no answer from the server within {:?}",
+                            self.read_timeout.unwrap_or_default()
+                        ))
+                        .with_source(err));
+                    }
+                    if !timed_out {
                         self.dead = true;
                     }
                     return Err(io_error("read", err));
@@ -1058,8 +1187,11 @@ impl Wire {
             self.stream
                 .set_read_timeout(Some(timeout.max(Duration::from_millis(1))))
                 .map_err(|err| io_error("notification", err))?;
-            let waited = self.fill();
-            let _ = self.stream.set_read_timeout(None);
+            // the wait is the caller's, not a statement's: its end is no failure
+            let statement_timeout = self.read_timeout.take();
+            let waited = self.fill_once();
+            self.read_timeout = statement_timeout;
+            let _ = self.stream.set_read_timeout(statement_timeout);
             match waited {
                 Ok(()) => {}
                 Err(_) if !self.dead => {}
@@ -1134,9 +1266,24 @@ fn row_of(body: &DataRowBody, columns: &[Column], decode: Decode<'_>) -> Result<
     Ok(DbRow { columns: cells })
 }
 
-/// A cancel of a running statement, on a connection of its own, as the protocol has it.
+/// A cancel of a running statement, on a connection of its own, as the protocol has it, within [`CANCEL_TIMEOUT`].
 pub(super) fn cancel(endpoint: &Endpoint, process_id: i32, secret_key: i32) -> Result<(), Error> {
-    let mut stream = Stream::open(endpoint)?;
+    cancel_within(endpoint, process_id, secret_key, CANCEL_TIMEOUT)
+}
+
+/// [`cancel`] within `timeout`: the connection, its TLS handshake and the request all by then.
+pub(super) fn cancel_within(
+    endpoint: &Endpoint,
+    process_id: i32,
+    secret_key: i32,
+    timeout: Duration,
+) -> Result<(), Error> {
+    let deadline = Instant::now() + timeout;
+    let mut stream = Stream::open(endpoint, deadline)?;
+    let left = remaining(deadline, "cancel")?;
+    stream
+        .set_write_timeout(Some(left))
+        .map_err(|err| io_error("cancel", err))?;
     let mut request = BytesMut::new();
     frontend::cancel_request(process_id, secret_key, &mut request);
     stream

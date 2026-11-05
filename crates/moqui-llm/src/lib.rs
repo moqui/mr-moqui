@@ -260,6 +260,8 @@ impl LlmFacade {
         options.deadline = Some(std::time::Instant::now() + ask.timeout.unwrap_or(COMPLETE_TIMEOUT));
         options.user_id.clone_from(&user_id);
         options.nudge = Some(provider::EMPTY_NUDGE.to_string());
+        options.quota = Some("api");
+        options.allow_in_transaction = ask.allow_in_transaction;
         options.recorder = Some(Recorder { llm: self, facade });
         let mut reply = provider::call(&target, &request, &mut options);
         let mut usage = reply.usage;
@@ -335,6 +337,9 @@ pub struct CompleteRequest {
     pub source: CallSource,
     /// The whole completion's limit, retries and the schema repair included; `None` is [`COMPLETE_TIMEOUT`].
     pub timeout: Option<std::time::Duration>,
+    /// Make the call though a transaction is open (`allowInTransaction`): it is suspended for the call, which is cut to
+    /// the time it has left. Without it a completion with a transaction open is refused ([`provider::call`]).
+    pub allow_in_transaction: bool,
 }
 
 /// The limit of a completion that gives none.
@@ -355,6 +360,7 @@ impl Default for CompleteRequest {
             max_output: None,
             source: CallSource::Api,
             timeout: None,
+            allow_in_transaction: false,
         }
     }
 }

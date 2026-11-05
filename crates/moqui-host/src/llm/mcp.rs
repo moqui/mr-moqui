@@ -85,23 +85,25 @@ pub(crate) async fn handle(
         client_ip: client.to_string(),
         origin,
     };
-    let factory = Arc::clone(&state.factory);
-    let job_factory = Arc::clone(&factory);
+    // the shared admission (queue age, abandonment, overload; HL-006)
+    let job_factory = Arc::clone(&state.factory);
     let guard = Arc::clone(&state.guard);
-    let (done, answer) = tokio::sync::oneshot::channel::<Answer>();
-    let submitted = factory.request_pool().try_submit(Arc::clone(&factory), move || {
-        let answer = mcp::serve(&job_factory, &mcp_request);
-        if moqui_core::web::take_auth_failure() {
-            guard.record(client, Event::AuthFailure);
-        }
-        let _ = done.send(answer);
-        Ok(())
-    });
-    if submitted.is_err() {
-        return state.guard.unavailable("the server is busy; try again");
-    }
-    let Ok(answer) = answer.await else {
-        return plain(500, "the MCP request ended without a response");
+    let served = crate::http::admission::run(
+        Arc::clone(&state.factory),
+        Arc::clone(&state.guard),
+        state.guard.conf().queue_timeout,
+        move || {
+            let answer: Answer = mcp::serve(&job_factory, &mcp_request);
+            if moqui_core::web::take_auth_failure() {
+                guard.record(client, Event::AuthFailure);
+            }
+            answer
+        },
+    )
+    .await;
+    let answer = match served {
+        Ok(answer) => answer,
+        Err(refusal) => return refusal.response(&state.guard),
     };
     match answer {
         Answer::Reply(reply) => response_of(reply),
@@ -111,11 +113,13 @@ pub(crate) async fn handle(
                 Err(full) => return busy(&full),
             };
             let (done, reply) = tokio::sync::oneshot::channel::<Reply>();
+            let shutdown = state.shutdown.clone();
             let spawned = std::thread::Builder::new()
                 .name("moqui-mcp-wait".to_string())
                 .spawn(move || {
                     let _open = open;
-                    let _ = done.send(finish());
+                    let answered = finish(&|| *shutdown.borrow() || done.is_closed());
+                    let _ = done.send(answered);
                 });
             if let Err(error) = spawned {
                 return crate::http::internal_error(&format!("the MCP wait did not start: {error}"));

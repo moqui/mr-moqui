@@ -620,7 +620,7 @@ impl McpTool {
                     ));
                 };
                 if let Some(facade) = &facade {
-                    let node = ctx.events.node().to_string();
+                    let holder = ctx.events.holder().clone();
                     let state = kept_state(
                         &self.server.address.origin,
                         request_state.as_deref(),
@@ -629,7 +629,7 @@ impl McpTool {
                     );
                     let kept = remote::keep(
                         facade,
-                        &node,
+                        &holder,
                         waiting.map(|waiting| waiting.remote_task_id.as_str()),
                         &Keep {
                             run_id: &run.run_id,

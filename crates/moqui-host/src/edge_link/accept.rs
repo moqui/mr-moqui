@@ -284,8 +284,8 @@ pub(crate) struct EdgeServer {
     /// The fingerprint of this node's link key, which pairing tells.
     link_fingerprint: String,
     registry: Mutex<Registry>,
-    /// Pair calls by address: when the window began, and how many since.
-    pair_attempts: Mutex<HashMap<IpAddr, (Instant, u32)>>,
+    /// Pair calls by source.
+    pair_attempts: Mutex<PairAttempts>,
     shutdown: watch::Receiver<bool>,
     /// The paired nodes' public host names (§5.3).
     pub(crate) hosts: Hosts,
@@ -296,6 +296,45 @@ pub(crate) struct EdgeServer {
     active: Arc<AtomicI64>,
     /// The places for tunnels and forwarded WebSockets, by node.
     tunnel_slots: Mutex<HashMap<String, Arc<tokio::sync::Semaphore>>>,
+}
+
+/// The sources whose Pair calls are counted at once; a new source past it is refused until a sweep frees room.
+const MAX_PAIR_SOURCES: usize = 10_000;
+
+/// Pair calls by source (an IPv6 /64 is one, an IPv4-mapped address its IPv4 one): when its window began, and how
+/// many since. Bounded at [`MAX_PAIR_SOURCES`]; the sources whose window ended are swept at most once a window, not
+/// on every call (plans/High-Level-Review.md HL-032).
+#[derive(Default)]
+pub(super) struct PairAttempts {
+    by_source: HashMap<IpAddr, (Instant, u32)>,
+    next_sweep: Option<Instant>,
+}
+
+impl PairAttempts {
+    /// Count a call from `ip` at `now`: false when its source made more than `limit` in `window`, or when the table
+    /// is full of sources still in their window.
+    pub(super) fn allowed(&mut self, ip: IpAddr, now: Instant, window: Duration, limit: u32) -> bool {
+        let key = moqui_lib::source_guard::source_key(ip);
+        if self.next_sweep.is_none_or(|at| now >= at) {
+            self.by_source
+                .retain(|_, (started, _)| now.duration_since(*started) < window);
+            self.next_sweep = Some(now + window);
+        }
+        if self.by_source.len() >= MAX_PAIR_SOURCES && !self.by_source.contains_key(&key) {
+            return false;
+        }
+        let (started, count) = self.by_source.entry(key).or_insert((now, 0));
+        if now.duration_since(*started) >= window {
+            (*started, *count) = (now, 0);
+        }
+        *count += 1;
+        *count <= limit
+    }
+
+    #[cfg(test)]
+    pub(super) fn sources(&self) -> usize {
+        self.by_source.len()
+    }
 }
 
 /// Tunnels and forwarded WebSockets open at once down one node's link: well under the down connection's stream limit
@@ -328,7 +367,7 @@ impl EdgeServer {
             config,
             link_fingerprint: link_fingerprint.to_string(),
             registry: Mutex::new(Registry::default()),
-            pair_attempts: Mutex::new(HashMap::new()),
+            pair_attempts: Mutex::new(PairAttempts::default()),
             shutdown,
             hosts: Hosts::default(),
             telemetry: Arc::clone(&telemetry),
@@ -595,12 +634,7 @@ impl EdgeServer {
 
     /// Count a Pair call from `ip`; false when it is over the limit for the window.
     fn pair_allowed(&self, ip: IpAddr) -> bool {
-        let now = Instant::now();
-        let mut attempts = lock(&self.pair_attempts);
-        attempts.retain(|_, (started, _)| now.duration_since(*started) < self.config.pair_window);
-        let (_, count) = attempts.entry(ip).or_insert((now, 0));
-        *count += 1;
-        *count <= self.config.pair_attempts
+        lock(&self.pair_attempts).allowed(ip, Instant::now(), self.config.pair_window, self.config.pair_attempts)
     }
 
     async fn serve(self: Arc<Self>, mut stream: TlsStream<TcpStream>, remote: SocketAddr) {
