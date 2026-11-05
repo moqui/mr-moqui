@@ -415,13 +415,19 @@ impl EntityValue {
             targets: Arc::clone(targets),
             memo: self.l10n_memo.get_or_init(),
         };
-        // As Java, the expression reads the stored fields, not the localized ones.
+        // As Java, the expression reads the stored fields, not the localized ones; but not the encrypted ones or
+        // password material, so an expression cannot show them in clear.
         if let Some(expression) = targets.pq_expression(field) {
             return Err(LocalizedRead {
                 l10n,
                 field: field.to_string(),
                 locale: String::new(),
-                fields: (*self.fields).clone(),
+                fields: self
+                    .fields
+                    .iter()
+                    .filter(|(name, _)| !targets.pq_hides(name))
+                    .map(|(name, value)| (Arc::clone(name), value.clone()))
+                    .collect(),
                 pq: Some(Box::new((self.entity_name.to_string(), expression.to_string()))),
             });
         }

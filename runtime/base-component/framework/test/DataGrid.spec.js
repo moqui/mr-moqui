@@ -212,3 +212,96 @@ feature('an export goes to the user\'s own place unless they are a database admi
         authorized.data.length >= 2
     },
 })
+feature('a data document gives every field it defines, its expression field read only and computed in the rows', {
+    when() {
+        asAdmin(() => {
+            call('create#moqui.entity.document.DataDocument', { dataDocumentId: 'GridSpecDoc', documentName: 'Grid spec doc',
+                primaryEntityName: E })
+            call('create#moqui.entity.document.DataDocumentField', { dataDocumentId: 'GridSpecDoc', fieldSeqId: '01', fieldPath: 'enumId' })
+            call('create#moqui.entity.document.DataDocumentField', { dataDocumentId: 'GridSpecDoc', fieldSeqId: '02', fieldPath: 'description' })
+            call('create#moqui.entity.document.DataDocumentField', { dataDocumentId: 'GridSpecDoc', fieldSeqId: '03',
+                fieldPath: "(enumId + ' / ' + description)", fieldNameAlias: 'enumLabel' })
+        })
+        const doc = { type: 'entity', entityName: 'DataDocument.GridSpecDoc', conditions: { enumId: 'GS_A' } }
+        const columns = invoke(D + 'get#DataGridColumns', { source: doc })
+        const rows = invoke(D + 'get#DataGridRows', { source: doc, page: 1, size: 5 })
+        const sorted = invoke(D + 'get#DataGridRows', { source: doc, page: 1, size: 5, sort: [{ field: 'enumLabel', dir: 'asc' }] })
+        const conditioned = invoke(D + 'get#DataGridRows', { source: Object.assign({}, doc, { conditions: { enumLabel: 'x' } }),
+            page: 1, size: 5 })
+        const exported = invoke(D + 'export#DataGrid', { source: doc, columns: ['enumId', 'enumLabel'], format: 'csv' })
+        const text = exported.location ? ec.resource.getLocationText(exported.location) : ''
+        // the definitions are not saved through the grid, where a Tools viewer could plant an expression
+        const planted = invoke(D + 'save#DataGridChanges', { entityName: 'moqui.entity.document.DataDocumentField',
+            updates: [{ pk: { dataDocumentId: 'GridSpecDoc', fieldSeqId: '03' }, fields: { fieldPath: '(1)' } }] })
+        // an expression over an encrypted field or password material reads without it
+        asAdmin(() => {
+            call('create#moqui.monitor.ScrapeTarget', { targetId: 'GRID_SPEC_T', url: 'http://localhost:1/metrics',
+                bearerToken: 'grid-spec-secret' })
+            call('create#moqui.entity.document.DataDocument', { dataDocumentId: 'GridSpecTokenDoc', documentName: 'Grid spec token',
+                primaryEntityName: 'moqui.monitor.ScrapeTarget' })
+            call('create#moqui.entity.document.DataDocumentField', { dataDocumentId: 'GridSpecTokenDoc', fieldSeqId: '01', fieldPath: 'targetId' })
+            call('create#moqui.entity.document.DataDocumentField', { dataDocumentId: 'GridSpecTokenDoc', fieldSeqId: '02',
+                fieldPath: 'bearerToken', fieldNameAlias: 'renamedToken' })
+            call('create#moqui.entity.document.DataDocumentField', { dataDocumentId: 'GridSpecTokenDoc', fieldSeqId: '03',
+                fieldPath: "('t:' + renamedToken)", fieldNameAlias: 'tokenShown' })
+            call('create#moqui.entity.document.DataDocument', { dataDocumentId: 'GridSpecUserDoc', documentName: 'Grid spec user',
+                primaryEntityName: 'moqui.security.UserAccount' })
+            call('create#moqui.entity.document.DataDocumentField', { dataDocumentId: 'GridSpecUserDoc', fieldSeqId: '01', fieldPath: 'userId' })
+            call('create#moqui.entity.document.DataDocumentField', { dataDocumentId: 'GridSpecUserDoc', fieldSeqId: '02',
+                fieldPath: 'currentPassword', fieldNameAlias: 'pw' })
+            call('create#moqui.entity.document.DataDocumentField', { dataDocumentId: 'GridSpecUserDoc', fieldSeqId: '03',
+                fieldPath: "('p:' + pw)", fieldNameAlias: 'pwShown' })
+        })
+        const token = invoke(D + 'get#DataGridRows', { source: { type: 'entity', entityName: 'DataDocument.GridSpecTokenDoc',
+            conditions: { targetId: 'GRID_SPEC_T' } }, page: 1, size: 5 })
+        const user = invoke(D + 'get#DataGridRows', { source: { type: 'entity', entityName: 'DataDocument.GridSpecUserDoc',
+            conditions: { userId: 'GRID_PLAIN_USER' } }, page: 1, size: 5 })
+        return { columns, rows, sorted, conditioned, exported, text, planted, token, user }
+    },
+    then({ columns, rows, sorted, conditioned, exported, text, planted, token, user }) {
+        columns.columns.map(c => c.name).includes('description')
+        columns.columns.find(c => c.name == 'enumLabel').editable == false
+        columns.readOnlyReason != null
+        rows.data.length == 1
+        rows.data[0].enumLabel == 'GS_A / ' + rows.data[0].description
+        sorted.error.includes('not a field the grid sorts or filters on')
+        conditioned.error.includes('computed on read')
+        exported.rowCount == 1
+        text.includes('GS_A / ')
+        planted.error.includes('not saved in the data grid')
+        token.data.length == 1
+        token.data[0].tokenShown == 't:null'
+        !JSON.stringify(token.data).includes('grid-spec-secret')
+        user.data.length == 1
+        !JSON.stringify(user.data).includes('16ac58bbfa332c1c55bd98b53e60720bfa90d394')
+    },
+})
+feature('a grid view of SQL is stored only by a user who may run SQL, and is marked so the screen shows it first', {
+    when() {
+        const sql = { type: 'sql', sql: "SELECT enum_id FROM enumeration WHERE enum_type_id = 'GridSpec'" }
+        login('grid.plain.user')
+        let planted, plantedNested, plainEntity
+        try {
+            planted = invoke(D + 'store#GridView', { description: 'Planted', isShared: true, sourceJson: JSON.stringify(sql) })
+            plantedNested = invoke(D + 'store#GridView', { description: 'Planted', isShared: true,
+                sourceJson: JSON.stringify({ source: sql }) })
+            plainEntity = invoke(D + 'store#GridView', { description: 'Plain entity', isShared: true,
+                sourceJson: JSON.stringify({ source }) })
+        } finally { login('john.doe') }
+        const own = invoke(D + 'store#GridView', { description: 'Spec SQL view', sourceJson: JSON.stringify({ source: sql }) })
+        const views = invoke(D + 'find#GridViews', {}).gridViews
+        for (const viewId of [own.viewId, plainEntity.viewId]) asAdmin(() =>
+            ec.entity.find('moqui.database.GridView').condition({ viewId }).deleteAll())
+        return { planted, plantedNested, plainEntity, own, views }
+    },
+    then({ planted, plantedNested, plainEntity, own, views }) {
+        planted.error.includes('SQL_RUNNER_WEB')
+        planted.viewId == null
+        plantedNested.error.includes('SQL_RUNNER_WEB')
+        plainEntity.error == ''
+        own.error == ''
+        views.find(v => v.viewId == own.viewId).sqlSource == true
+        views.find(v => v.viewId == plainEntity.viewId).sqlSource == false
+        views.find(v => v.viewId == plainEntity.viewId).ownerUserId == 'GRID_PLAIN_USER'
+    },
+})

@@ -329,7 +329,27 @@ fn view_value(row: &moqui_core::entity::EntityValue) -> Value {
     ] {
         entry.insert(field.to_string(), row.get(field).cloned().unwrap_or(Value::Null));
     }
+    // a view of another user's SQL is shown before it is run
+    let source = row.get("sourceJson").map(to_plain_string).unwrap_or_default();
+    entry.insert("sqlSource".to_string(), Value::Bool(is_sql_view(&source)));
     Value::Map(entry)
+}
+
+/// Whether a grid view's `sourceJson` holds SQL: an object anywhere in it of `type` `sql` or with a `sql` key, so a
+/// source nested in the layout's shape is caught too. Text that is not JSON counts as SQL (it fails closed).
+fn is_sql_view(source_json: &str) -> bool {
+    fn holds_sql(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Object(map) => {
+                map.get("type").and_then(serde_json::Value::as_str) == Some("sql")
+                    || map.contains_key("sql")
+                    || map.values().any(holds_sql)
+            }
+            serde_json::Value::Array(items) => items.iter().any(holds_sql),
+            _ => false,
+        }
+    }
+    serde_json::from_str::<serde_json::Value>(source_json).map_or(true, |value| holds_sql(&value))
 }
 
 /// `find#GridViews`: the user's own grid views and the shared ones, by description.
@@ -403,6 +423,10 @@ fn store_grid_view(parameters: &BTreeMap<String, Value>, facade: &EntityFacade) 
     };
     if matches!(source, Value::Null) {
         add_error("sourceJson is required");
+        return none();
+    }
+    // a view is run as whoever opens it, so only a user who may run SQL stores one of SQL
+    if is_sql_view(&to_plain_string(&source)) && !may_run_sql() {
         return none();
     }
     let view_id = text(parameters, "viewId");

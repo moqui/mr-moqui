@@ -17,6 +17,8 @@
 //! says; a stored password is cleared when its host changes; only the owner or a database admin changes a row; a
 //! user without `DATABASE_EXTERNAL`, and a production-purpose instance, get the one vague error.
 
+#![cfg(all(unix, feature = "embedded-postgres"))]
+
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
