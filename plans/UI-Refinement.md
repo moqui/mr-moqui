@@ -223,6 +223,18 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-075 | B04 wizard post-submit navigation superseded by browser Back | P2 source-confirmed and regression-tested | Wizard-owned navigation tokens release a superseded wait; obsolete callbacks cannot release a newer submission | Existing deferred A/B menu fixture checks retained wizard recovery and teardown. Shared navigation/wizard43/43 pass; this race is not claimed as a live browser reproduction. |
 | UI-076 | D07 scheduled report state and actions | P3 observed misleading labels / prepared follow-up | State is raw false/true, action always says Pause / resume, and file-only confirmation refers to recipients | Schedule100000 on8096, ui-d07-report, CSV/file-only, future2099 and paused. Cancel immediate-run confirmation returns focus; no report executed. Refine Active/Paused, Pause/Resume and Run now copy. |
 
+
+| UI-077 | D06 Alerts empty overview | P3 observed grouping and empty states / prepared follow-up | No page/rules/instances title and five empty tables show only headers; shared sections have weak separation | John Doe/dark1920 on8096. Evidence dashboard-alerts-dark-before-1920.png. Group rule activity, instances and shared delivery/quieting definitions without changing actions. |
+| UI-078 | D06 AlertRule editor | P3 observed hierarchy and contextual copy / investigation | Long ungrouped form, generic Panel options/Save a version copy, raw paused N/Y, equally weighted threshold/range fields | John Doe/dark1920. Invalid threshold refuses and retains state; ui-d06-alert saved paused with value_count(trace_id) query and no contacts. Evidence dashboard-alert-rule-dark-before-1920.png. |
+
+| UI-079 | D06 shared contact editor | P3 observed grouping/contextual fields / prepared follow-up | Full-width form shows notification, email and webhook settings together; empty Used in shows bare headers | Dark1920, ui-d06-contact. Configured private local ReportAlert self-notification; no email/webhook. Evidence dashboard-alert-contact-dark-before-1920.png. |
+| UI-080 | D06 notification → Alerts → New alert rule | P2 observed inherited record context / prepared follow-up | Creation links inherit definitionId from the notification route; New alert rule reopens the existing record | Dark1920, ui-d06-alert notification. All four creation links carry the inherited ID; rule route also needs dashboard/panel context cleared. Existing detail links remain intact. |
+| UI-081 | D06 Evaluate now feedback | P2 observed misleading acknowledgment / prepared follow-up | Submit successful appears even when pause or the interval prevents a fresh evaluation | Dark1920, interval60. Evaluated timestamp remains unchanged on immediate repeat. Existing service counters include skipped claims; UI must describe the request without claiming fresh results. |
+| UI-082 | D06 firing → recovery notifications | P2 observed ambiguous state / investigation | Firing and Normal notifications have the same title and warning icon | Dark1920, local ReportAlert self-notifications at20:56/20:58. Evidence dashboard-alert-notification-states-dark-before-1920.png. Both remain navigable, but their state is indistinguishable. |
+| UI-083 | D06 AlertRule reload → change pause → save | P2 observed numeric round-trip failure / investigation | Saved1000000000 reloads as1,000,000,000 and fails finite-number validation on a later unrelated save | Dark1920, ui-d06-alert. Removing commas through the field permits Save and retains Paused Y. Inspect shared formatting and other JSON-backed numeric fields before selecting a correction. |
+| UI-084 | M08 Replays search | P3 observed layout/empty state / prepared review | User/Visit inputs span1920px and both initial empty and no-match result show only table headers | Dark1920, no recording fixture yet; filter ui-review-no-recording and clear both complete. Evidence monitor-replays-dark-before-1920.png. Playback and masking remain unverified. |
+| UI-085 | M09 Releases → Release Detail | P3 observed hierarchy/readability / prepared review | Empty regression list has no explanation or heading; revision/times are compressed into prose and error fingerprints dominate row labels | Dark1920, moqui0.1.0. Error link reaches the corresponding known schedule-validation error; Back retains release context. Evidence monitor-release-detail-dark-before-1920.png. Synthetic comparative regression/disposition remains pending. |
+
 ## Running implementation notes
 
 ### Batch 0 — plan and baseline
@@ -971,6 +983,65 @@ generators, followed by the focused checks, live restored8094 review, lint and c
 - Bounded batch7 is ready for its local commit. Shared, administration and communication waves remain open;
   UI-061 account-list copy, UI-071–074 and UI-076 are prepared follow-ups, with terminal saving and external-provider
   success explicitly unverified. Evidence files remain ignored and absent from the branch's commit history.
+
+
+### Batch 8 — report module preparation
+
+Batch7 committed locally as `2b9e7e5e`; no files under the evidence directory were included and nothing was pushed.
+Before UI-073 changes, the Rust practices require extracting large inline test modules in their own commit.
+`crates/moqui-tui/src/components/report.rs` contains two such modules. A private mechanical proposal will preserve
+`report::tests`/`report::gap_tests` names through path attributes and isolate the small ReportPlaylist component.
+No behavior change is intended in this preparation commit; focused crate tests, Clippy and the framework gate follow
+integration. UI-082 also touches a report module with a large inline test block: its nine tests move unchanged to
+`crates/moqui-report/src/alert_tests.rs`, retaining their `alert::tests` paths. The separately reviewed UI-073 and
+UI-082 fixes will then target the extracted files. UI-074 forms/HTML-preservation
+and contextual guidance, UI-071/072/076 Reports and UI-061 hosted list copy remain separate unapplied proposals.
+
+Parallel read-only/live observations continue against8096: D06 Alerts starts empty, and New alert rule exposes
+UI-077/078. Used visible controls to select otel_spans, add a value_count aggregation on trace_id, name
+`ui-d06-alert` / UI review local span count, and select Paused Y. Threshold `not-a-number` is rejected with a finite
+numbers error and preserves the form. Corrected0 saves successfully. No contact point or outgoing provider is
+configured for this rule, and evaluation/delivery/quieting branches remain pending.
+
+- Applied the four-file mechanical extraction. The playlist implementation and remaining production behavior are
+  unchanged; the two test modules retain all24 test names under their original module paths. `cargo test -p moqui-tui`
+  passes202 with1 ignored across14 test binaries/doc-tests; workspace `cargo lint` passes in29.18s. Logs
+  /tmp/ui-batch8-tui-extraction-tests.log and /tmp/ui-batch8-extraction-clippy.log. Gate15 is running with the current
+  release binary for server specs and newly compiled Rust tests; no behavior patch is included yet.
+- D06 local silence: reversed ISO range is rejected and retains comment/dates; corrected Nov6→Nov7 UTC saves a row.
+  Remove acts immediately and removes that disposable rule-local silence. Rule remains paused and has no contacts.
+
+
+- D06 recurring mute:25:00/26:00 is rejected and retains inputs. Friday23:00→01:00 saves, but weekday displays raw[4]
+  (UI-078). Removed that disposable mute before notification evaluation. Shared contact `ui-d06-contact`, title
+  UI review local notification, Notification/ReportAlert toEX_JOHN_DOE, groupWait0/repeat14400, private sharing,
+  no email/webhook, saves successfully. Used shared item from the rule, then followed its link: Used in names the
+  rule. Delete Cancel retains it; confirmed Delete is refused with the referencing ID/title and recovery instruction.
+  Both contact and rule remain present. Local notification delivery and alert evaluation have not yet been executed.
+
+- D06 evaluation/delivery: activated the rule with threshold0 and evaluated it, producing Firing at20:56 and a local
+  self-notification. Threshold1000000000 followed by an eligible evaluation produced Normal at20:58 and a recovery
+  notification. An immediate repeat request returned generic success without a new evaluated timestamp (UI-081).
+  Both history entries have identical title/warning icon (UI-082). Following the first notification and choosing
+  New alert rule reopened the existing definition because creation links inherited its ID (UI-080).
+- Re-pausing the fixture exposed UI-083: the reloaded numeric threshold contains grouping commas and Number(value)
+  rejects it. Re-entering1000000000 and saving succeeds; the fixture is now paused with its shared local contact
+  retained. No silence or recurring mute remains; no email/webhook was configured. No Data/Error, suppression and
+  failed-sink activity branches remain unverified. All observed evidence remains local and ignored.
+- The report alert test extraction preserves the production prefix byte-for-byte and extracted bodies modulo
+  whitespace. Fresh `cargo test -p moqui-report` passes74/74; final workspace Clippy passes in19.15s, logs
+  /tmp/ui-batch8-alert-extraction-tests.log and /tmp/ui-batch8-final-clippy.log. Gate15's earlier report tests ran the
+  equivalent inline source; this focused run covers the extracted source. No UI082 behavior is included here.
+- M08/M09 read-only coverage while the gate runs: Replays begins empty; no-match user filter and clearing it work but
+  leave bare table headers (UI-084). Releases shows the current moqui0.1.0 marker; its detail has no regressions and
+  seven error groups from the local review. The schedule-validation error link opens its message/trace context, and
+  Back returns to the release. This covers navigation/empty state only, not playback, comparison or disposition.
+- Gate15 completed: `./moq test-framework --nobuild` returned1 solely for the same three SIP unit-test
+  `AddrNotAvailable` failures at ua_tests.rs:46. Host SIP integration passed. All remaining sections passed:
+  shell342, framework server352/352 (31.35s, all component budgets), demo10, webroot394, Dev AIDE client48 and served
+  client148. Webroot44.9/34s warns but stays below the51s failure limit. Log /tmp/moqui-ui-framework-gate15.log.
+  No budgets were raised or failures suppressed. This mechanical commit has passing focused crates/Clippy;
+  the full gate remains nonzero and the recurring SIP fixture assumption is being inspected separately.
 
 ### Verification environment corrections
 
