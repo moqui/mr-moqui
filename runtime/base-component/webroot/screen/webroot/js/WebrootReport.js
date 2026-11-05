@@ -685,6 +685,71 @@
     report.parsePills = (value) => {
         try { const items=typeof value==='string'?JSON.parse(value || '[]'):value;return Array.isArray(items)?items.slice(0,32).filter(item=>item && typeof item==='object' && !Array.isArray(item)):[]; } catch (_) {return [];}
     };
+    // A display summary only: never rewrite the predicate, typed values or an authored pill label.
+    // Unrecognized queries retain their JSON so a future operator cannot acquire a misleading meaning here.
+    function filterQueryLabel(query, depth = 0) {
+        const object = value => value && typeof value === "object" && !Array.isArray(value);
+        const only = (value, keys) => object(value) && Object.keys(value).every(key => keys.includes(key));
+        const scalar = value => value === null || typeof value === "string" || typeof value === "boolean" ||
+            typeof value === "number" && Number.isFinite(value) ? JSON.stringify(value) : null;
+        if (depth > 8 || !object(query) || Object.keys(query).length !== 1) return null;
+        if (query.field) {
+            const field = query.field;
+            if (!only(field, ["name", "op", "value", "values", "gt", "gte", "lt", "lte", "negate"]) ||
+                    typeof field.name !== "string" || !field.name) return null;
+            const value = scalar(field.value === undefined ? null : field.value);
+            let text;
+            switch (field.op == null ? "eq" : field.op) {
+            case "eq": case "equals":
+                if (value === null) return null;
+                text = T("{0} = {1}", field.name, value); break;
+            case "in": {
+                if (!Array.isArray(field.values) || !field.values.length) return null;
+                const values = field.values.map(scalar);
+                if (values.includes(null)) return null;
+                text = T("{0} is one of [{1}]", field.name, values.join(", ")); break;
+            }
+            case "exists": text = T("{0} exists", field.name); break;
+            case "prefix": case "wildcard":
+                if (typeof field.value !== "string") return null;
+                text = T(field.op === "prefix" ? "{0} starts with {1}" : "{0} matches wildcard {1}", field.name, value); break;
+            case "range": {
+                // The server accepts null as an absent bound. Keep exclusive/inclusive bounds distinct, including zero.
+                if (field.gt != null && field.gte != null || field.lt != null && field.lte != null) return null;
+                const bounds = [["gt", ">"], ["gte", "≥"], ["lt", "<"], ["lte", "≤"]].filter(([key]) => field[key] != null);
+                if (!bounds.length || bounds.some(([key]) => scalar(field[key]) === null)) return null;
+                text = field.name + " " + bounds.map(([key, operator]) => operator + " " + scalar(field[key])).join(T(" and ")); break;
+            }
+            default: return null;
+            }
+            return field.negate === true ? T("NOT ({0})", text) : text;
+        }
+        if (query.bool) {
+            const bool = query.bool;
+            if (!only(bool, ["all", "any", "none", "min_any"])) return null;
+            const all = bool.all == null ? [] : bool.all, any = bool.any == null ? [] : bool.any, none = bool.none == null ? [] : bool.none;
+            if (![all, any, none].every(Array.isArray)) return null;
+            // An `any` beside `all` is optional by default. Leave that and minimum-count queries in their exact JSON form.
+            if (any.length && all.length || bool.min_any != null && bool.min_any !== (any.length ? 1 : 0)) return null;
+            const describe = items => items.map(item => filterQueryLabel(item, depth + 1));
+            const required = describe(all), alternatives = describe(any), excluded = describe(none);
+            if ([...required, ...alternatives, ...excluded].includes(null)) return null;
+            const clauses = [...required];
+            if (alternatives.length) clauses.push(alternatives.length === 1 ? alternatives[0] : "(" + alternatives.join(T(" OR ")) + ")");
+            clauses.push(...excluded.map(text => T("NOT ({0})", text)));
+            return clauses.length > 1 ? "(" + clauses.join(T(" AND ")) + ")" : clauses[0] || null;
+        }
+        return null;
+    }
+    report.filterLabel = pill => {
+        let text = pill.label || filterQueryLabel(pill.query);
+        if (!text) {
+            try { text = JSON.stringify(pill.query) || T("Structured filter"); }
+            catch (_) { text = T("Structured filter"); }
+        }
+        if (pill.negated) text = T(pill.label ? "NOT {0}" : "NOT ({0})", text);
+        return String(text) + (pill.disabled ? T(" (disabled)") : "");
+    };
     report.storage = {
         read(key,fallback) {try {return JSON.parse(root.localStorage.getItem(key)) ?? fallback;} catch (_) {return fallback;}},
         write(key,value) {try {root.localStorage.setItem(key,JSON.stringify(value));} catch (_) {/* Private browsing may disable storage. */}}
@@ -736,16 +801,16 @@
                 h('button',{type:'button',onClick:()=>{this.history=[];report.storage.write(this.storageKey+'.history',[]);}},'Clear query history')]),
             this.suggesting && this.suggestions.length?h('ul',{role:'listbox',class:'q-pa-xs'},this.suggestions.map((item,at)=>h('li',{role:'option','aria-selected':at===this.choice},[h('button',{type:'button',onClick:()=>this.choose(item)},item.text)]))):null,
             h('div',{class:'m-report-query-pills','aria-label':'Query filters'},this.pills.map((pill,at)=>h('div',{class:'q-pa-xs',style:{border:'1px solid var(--q-secondary)',opacity:pill.disabled?0.6:1}},[
-                h('span',(pill.negated?'NOT ':'')+(pill.label || JSON.stringify(pill.query))+(pill.disabled?' (disabled)':'')),
+                h('span',report.filterLabel(pill)),
                 h('button',{type:'button','aria-pressed':!!pill.pinned,onClick:()=>this.change(at,'pinned')},pill.pinned?'Unpin':'Pin'),
                 h('button',{type:'button','aria-pressed':!!pill.negated,onClick:()=>this.change(at,'negated')},'Negate'),
                 h('button',{type:'button','aria-pressed':!!pill.disabled,onClick:()=>this.change(at,'disabled')},pill.disabled?'Enable':'Disable'),
                 h('button',{type:'button',onClick:()=>this.edit(at)},'Edit query / label'),h('button',{type:'button',onClick:()=>this.remove(at)},'Remove')]))),
             this.editAt>=0?h('div',[h('label',['Filter label ',h('input',{value:this.label,onInput:event=>{this.label=event.target.value;}})]),h('label',['Structured query ',h('textarea',{value:this.editJson,rows:5,cols:70,onInput:event=>{this.editJson=event.target.value;}})]),h('button',{type:'button',onClick:this.saveEdit},'Apply filter edit'),h('button',{type:'button',onClick:()=>{this.editAt=-1;this.label='';}},'Cancel edit')]):null,
-            h('details',[h('summary','Add filter'),h('label',['Field ',h('select',{value:this.field,onChange:event=>{this.field=event.target.value;}},[h('option',{value:''},'Choose field'),...this.fields.filter(field=>field.searchable!==false).map(field=>h('option',{value:field.name},field.name))])]),
+            h('details',[h('summary','Add filter'),h('div',{class:'m-report-query-tools q-mt-sm'},[h('label',['Field ',h('select',{value:this.field,onChange:event=>{this.field=event.target.value;}},[h('option',{value:''},'Choose field'),...this.fields.filter(field=>field.searchable!==false).map(field=>h('option',{value:field.name},field.name))])]),
                 h('label',['Operation ',h('select',{value:this.operation,onChange:event=>{this.operation=event.target.value;}},['eq','in','exists','prefix','wildcard','range'].map(value=>h('option',{value},value)))]),
                 h('label',['Value ',h('input',{value:this.value,disabled:this.operation==='exists',placeholder:this.operation==='range'?'lower,upper':this.operation==='in'?'value,value':'value',onInput:event=>{this.value=event.target.value;}})]),
-                h('label',['Label ',h('input',{value:this.label,onInput:event=>{this.label=event.target.value;}})]),h('button',{type:'button',onClick:this.add},'Add filter')]),
+                h('label',['Label ',h('input',{value:this.label,onInput:event=>{this.label=event.target.value;}})]),h('button',{type:'button',onClick:this.add},'Add filter')])]),
             h('p','Pinned filters and query history are stored in this browser for this user and dataset. Search applies the filters.'),
             this.error?h('p',{role:'alert',class:'text-negative'},this.error):null]);}
     };

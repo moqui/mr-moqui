@@ -45,13 +45,34 @@ feature("gallery screen #name renders in #mode without errors", {
     expect({ name, mode }) {
         const test = ec.screen.makeTest().rootScreen("component://example/screen/Gallery.xml").renderMode(mode)
         // the screen as the shell fetches it: a fragment of the last standalone screen, not the root placeholder
-        const str = test.render(name, { lastStandalone: "-2" }, null)
+        const parameters = {lastStandalone: "-2"}
+        // Reuse Editor's sweep render for explicit Home and an unavailable comparison, with its recovery controls.
+        if (name === "Editor") Object.assign(parameters, {pagePath: null, versionNameLhs: "missing-version"})
+        const str = test.render(name, parameters, null)
         log.info(`Rendered gallery ${name} (${mode}) in ${str.renderTime}ms, ${str.output?.length} characters`)
         str.status == 200
         str.errorMessages.length == 0
         str.output.length > 200
         !str.output.includes("is not written yet")
         !/Error rendering|Exception in render/.test(str.output)
+        if (name === "Editor") {
+            assert(str.output.includes('Example Wiki'), "an explicit empty path opens the root page")
+            assert(str.output.includes('Comparison unavailable'), "an unavailable version is a local warning")
+            assert(str.output.includes('Choose versions from History'), "the warning explains recovery")
+            assert(str.output.includes('id="EditPage"'), "the page remains editable after a comparison failure")
+            const close = Array.from(str.output.matchAll(/<m-link\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/m-link>/g))
+                .find(match => match[2].replace(/<[^>]*>/g, "").trim() === "Close")
+            assert(close, "the unavailable comparison has a Close link")
+            const query = queryParameters(close[1])
+            assert.equal(query.pagePath, "\u00a0", "Close retains the explicit root page")
+            assert.equal(Object.hasOwn(query, "versionNameLhs"), false)
+            const root = ec.resource.getLocationReference('dbresource://ExampleWiki/EXAMPLE.md')
+            const answer = test.header("Accept", "application/json").render("Editor/savePage",
+                {wikiSpaceId: "EXAMPLE", pagePath: "", pageText: root.getText()}, "post")
+            assert.equal(answer.errorMessages.length, 0)
+            assert.equal(queryParameters(JSON.parse(answer.output).screenUrl).pagePath, "\u00a0",
+                "saving the unchanged Home page returns to Home")
+        }
         if (name === "Dialog") {
             const form = /<m-form\b[^>]*\bid="NewEnum"[^>]*>/.exec(str.output)
             assert(form && form[0].includes("'enumTypeId':'ComparisonOperator'"), "New starts with the comparison operator type")
@@ -89,7 +110,9 @@ feature("gallery screen #name renders in tui as one document without errors", {
     where: galleryScreens.map(([name]) => ({ name })),
     expect({ name }) {
         const test = ec.screen.makeTest().rootScreen("component://example/screen/Gallery.xml").renderMode("tui")
-        const str = test.render(name, {}, null)
+        // The local TUI may carry the literal sentinel rather than HTTP's parsed null value.
+        const parameters = name === "Editor" ? {pagePath: "\u00a0", versionNameLhs: "missing-version"} : {}
+        const str = test.render(name, parameters, null)
         const doc = JSON.parse(str.output)
         const errors = tuiErrors(doc.c, [])
         if (errors.length) log.warn(`Gallery ${name} tui errors: ${errors.join(" | ")}`)
@@ -97,6 +120,11 @@ feature("gallery screen #name renders in tui as one document without errors", {
         doc.v == 1
         errors.length == 0
         str.errorMessages.length == 0
+        if (name === "Editor") {
+            assert(str.output.includes("Example Wiki"), "Home is reachable in the terminal")
+            assert(str.output.includes("Comparison unavailable"), "the terminal also retains comparison recovery")
+            assert(str.output.includes("Choose versions from History"))
+        }
     },
 })
 
@@ -286,31 +314,39 @@ feature("the editor's #space space keeps versions, compares, views and restores 
         if (space === "EXGIT" && !ec.entity.find("moqui.resource.wiki.WikiSpace").condition("wikiSpaceId", "EXGIT").one())
             editor("createGitSpace", {}, "post")
         const page = pageText(space, "Welcome")
+        // Reproduce an older browser multipart save without rewriting resource history in production.
+        const originalText = page.getText().replace(/\r\n?/g, "\n")
+        page.putText(originalText.replace(/\n/g, "\r\n"), "Legacy browser line endings fixture")
         const beforeHistory = page.getVersionHistory(), before = beforeHistory.length
         const stale = {versionName:beforeHistory[0].versionName, versionNameLhs:beforeHistory[0].versionName,
             versionNameRhs:beforeHistory[0].versionName}
+        const savedText = originalText + "\nSaved by the gallery spec.\n"
         const saved = editor("savePage", Object.assign({ wikiSpaceId: space, pagePath: "Welcome",
-            pageText: "# Welcome\n\nSaved by the gallery spec.\n" }, stale), "post")
+            pageText: savedText.replace(/\n/g, "\r\n").replace(/\r\n$/, "\r") }, stale), "post")
+        const writtenText = page.getText()
         const history = page.getVersionHistory()
         const newest = history[0].versionName, previous = history[1].versionName
         const compared = editor("", { wikiSpaceId: space, pagePath: "Welcome", versionName: newest,
             versionNameLhs: previous, versionNameRhs: newest })
         const viewed = editor("", { wikiSpaceId: space, pagePath: "Welcome", versionName: previous })
-        // a plain line only the old version has; the Edit dialog holds the current text, so look for the old one
-        const oldLine = page.getText(previous).split("\n").map((line) => line.replace(/^[-#\s]+/, ""))
+        // The old page still renders its text; the added paragraph is only in the Edit dialog's current text.
+        const oldLine = page.getText(previous).split("\n").map((line) => line.replace(/^[-#\s]+/, "").trim())
             .find((line) => line.length > 10 && !line.includes("*"))
         const restoredAnswer = editor("restoreVersion", { wikiSpaceId: space, pagePath: "Welcome", versionName: previous,
             versionNameLhs: previous, versionNameRhs: newest }, "post")
         const restored = page.getVersionHistory()
         saved.errorMessages.length == 0
+        writtenText == savedText
         history.length == before + 1
         compared.status == 200
         compared.errorMessages.length == 0
         compared.output.includes("moqui-diff")
         compared.output.includes("Saved by the gallery spec.")
+        compared.output.includes("2 added, 0 removed")
         viewed.status == 200
         viewed.output.includes("not the current text")
         viewed.output.includes(oldLine)
+        !viewed.output.includes("<p>Saved by the gallery spec.</p>")
         restored.length == before + 2
         page.getText() == page.getText(previous)
         // Reuse the existing comparison and old-version renders: their links must leave stale history behind.
@@ -346,6 +382,10 @@ feature("the editor's #space space keeps versions, compares, views and restores 
         for (const name of ["pagePath", "versionName", "versionNameLhs", "versionNameRhs"])
             assert.equal(Object.hasOwn(otherSpace.query, name), false, "space selection clears " + name)
         if (space === "EXAMPLE") {
+            const home = comparedLinks.find(link => link.text === "Home")
+            assert(home, "the page list links to Home")
+            assert.equal(home.query.pagePath, "\u00a0", "Home has an explicit null page path")
+            assert.equal(Object.hasOwn(home.query, "versionNameLhs"), false)
             const notes = comparedLinks.find(link => link.text === "Notes")
             assert(notes, "the Notes page is available while comparing")
             assert.equal(notes.query.pagePath, "Notes")

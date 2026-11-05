@@ -2,6 +2,59 @@
 // WebrootVue.qvt.js starts the Vue app only when the page has #moqui-config plus Vue and Quasar. This page has none of those.
 spec({ server: false, timeout: 60 })
 
+feature("Material confirmations cancel cleanly and approve the original validated action once", {
+    expect() {
+        const page = browser.newPage()
+        page.setContent(`<!doctype html><html><head><link rel="stylesheet" href="/libs/quasar/quasar.prod.css"></head><body><div id="app">
+            <m-form action="/confirmed-save" :fields-initial="{customerName:''}" v-slot="form">
+                <m-text-line id="confirm-name" name="customerName" label="Customer name" required v-model="form.fields.customerName"></m-text-line>
+                <q-btn id="confirmed-submit" type="submit" name="CreateRecord" value="Y" label="Create" data-confirm="Create &lt;b&gt;record&lt;/b&gt;?"></q-btn>
+            </m-form>
+            </div><script src="/libs/vue/vue.global.prod.js"></script><script src="/libs/quasar/quasar.umd.prod.js"></script>
+            <script src="/js/MoquiLib.js"></script><script src="/js/WebrootVue.qvt.js"></script><script>
+            // Animation timing belongs to acceptance; the real dialog, focus stack and event handlers stay in this rule check.
+            Quasar.QDialog.props.transitionDuration.default=0;
+            window.requests=[];window.nativeConfirmCalls=0;
+            window.confirm=()=>{nativeConfirmCalls++;throw new Error('native confirmation must not run');};
+            const realFetch=window.fetch;window.fetch=async(url,init)=>{
+                if(String(url)==='/confirmed-save'){requests.push(Object.fromEntries(init.body.entries()));return new Response(JSON.stringify({messageInfos:['Saved']}),{status:200});}
+                return realFetch(url,init);
+            };
+            const app=Vue.createApp({data(){return {appRootPath:'',moquiSessionToken:'fixture-token',loading:0};},
+                methods:{getCsrfToken(){},addNotify(){}}});
+            app.use(Quasar,{plugins:moqui.qvt.quasarPlugins(Quasar)});app.config.globalProperties.moqui=moqui;
+            ['m-form','m-text-line'].forEach(name=>app.component(name,moqui.qvt.components[name]));
+            window.vm=moqui.webrootVue=app.mount('#app');document.addEventListener('click',moqui.qvt.onConfirmClick,true);
+            </script></body></html>`)
+        page.waitFor(() => window.vm && document.querySelector('#confirmed-submit'))
+        const approve = () => {
+            page.locator('.q-dialog-plugin button:last-child').click()
+            page.waitFor(() => !document.querySelector('.q-dialog-plugin'))
+        }
+        page.locator('#confirmed-submit').press('Enter')
+        page.waitFor(() => document.activeElement.closest('.q-dialog-plugin') && document.activeElement.textContent.includes('Cancel'))
+        assert.equal(page.locator('.q-dialog-plugin .q-dialog__message').evaluate(el => el.textContent), 'Create <b>record</b>?')
+        assert.equal(page.locator('.q-dialog-plugin .q-dialog__message b').count(), 0)
+        page.evaluate(() => {document.getElementById('confirmed-submit').click();return true})
+        assert.equal(page.locator('.q-dialog-plugin').count(), 1, 'repeated clicks do not stack confirmations')
+        page.keyboard.press('Escape')
+        page.waitFor(() => !document.querySelector('.q-dialog-plugin'))
+        assert.equal(page.evaluate(() => document.activeElement.id), 'confirmed-submit')
+        assert.equal(page.evaluate(() => requests.length), 0)
+        page.locator('#confirmed-submit').press('Enter')
+        approve()
+        page.waitFor(() => document.querySelector('#confirm-name').getAttribute('aria-invalid') === 'true')
+        assert.equal(page.evaluate(() => requests.length), 0, 'approval does not bypass field validation')
+        page.locator('#confirm-name').fill('Customer')
+        page.locator('#confirmed-submit').press('Enter')
+        approve()
+        page.waitFor(() => requests.length === 1)
+        assert.deepEqual(page.evaluate(() => requests), [{customerName:'Customer',moquiSessionToken:'fixture-token',CreateRecord:'Y'}])
+
+        assert.equal(page.evaluate(() => nativeConfirmCalls), 0)
+    },
+})
+
 feature("field validation and notification feedback retain readable text in both themes", {
     expect() {
         const page = browser.newPage({ viewport: { width: 1920, height: 1080 } })

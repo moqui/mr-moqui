@@ -117,13 +117,13 @@ before/after evidence use the agreed 1920×1080 target.
 
 | Area | Activity groups | State | Evidence / remaining work |
 |---|---|---|---|
-| Shared shell and widgets | Navigation, lists, saved finds, columns, forms, preferences | In progress | Find/filter and save/update/default/reset observed; delete cancellation passed. Columns move/undo/hide/save/reset and keyboard move/hide/Display, 1280/390 Find, Escape focus return and appearance reload passed. Final deletion and real 200% browser zoom remain unverified. |
-| Gallery | Archetypes and shared widget reference | Automated journey passed | GallerySmoke 23/23 at 1280×900; 1920 visual activities remain in the inventory. |
+| Shared shell and widgets | Navigation, lists, saved finds, columns, forms, preferences | In progress | Find/filter and save/update/default/reset observed; delete cancellation passed. Columns move/undo/hide/save/reset and keyboard move/hide/Display, 1280/390 Find, Escape focus return and appearance reload passed. Material confirmation Cancel/Escape/focus and approved saved-find deletion now pass in Gallery; real200% browser zoom remains unverified. |
+| Gallery | Archetypes and shared widget reference | Refined; partial activities | Server59/59 and browser23/23 acceptance pass. Live list/find confirmation, forms/dialogs, wizard, split, scan/task, board/calendar, message and Editor version/recovery activities recorded at1920 plus targeted390/keyboard checks. G03/G10/G11 and full recovery/mode coverage remain open. |
 | Embedded TUI | Navigation, dialogs, themes and focus | Refined; partial retest | System and F1 help readable across live light/dark switches; fresh light and dark launches and F1 help after saved appearance reload also passed. |
 | System and Tools | Administration and data/service tools | Refined; partial activities | Overview both themes, Components, SQL success/error/recovery, service XML and echo output/validation/retry observed. Deep administration groups remain pending. |
 | Monitor and Dashboards | Diagnosis, reporting and authoring | Refined; partial activities | Monitoring 19/19 at 1440×1000; dashboard copy/edit/save/open, CSV export and filter/remove visually observed at 1920; saved log search restores query/range. See assertion limits and screen map below. |
 | Dev AIDE | Artifact discovery, editing, simulation, previews and Git | Refined; verification in progress | Home, creation-dialog cancellation, search empty states, source navigation and Search → References → Docs/copy/package/diagram navigation observed. All eight disposable-repository journeys passed; detailed limits are recorded below. |
-| BasicComms | Mail, chat, calls and settings | Recovery fixes tested; partial visual | Local fake-media/encrypted-call/chat 10/10; failed-save retention/retry regression passed. No-account Inbox and Compose inspected at 1920/390; failed Close and identity refresh retain text. Remaining mail/settings activities are pending. |
+| BasicComms | Mail, chat, calls and settings | Recovery fixes tested; partial visual | Local fake-media/encrypted-call/chat 10/10; failed-save retention/retry regression passed. No-account Inbox/Compose inspected at1920/390; failed Close/identity refresh retain text. Hosted setup, two-message import/thread and empty-search recovery observed; triage/sending/settings remain partial. |
 | Integration | Cross-app patterns and remaining routes | In progress | Shared styles observed in System, Tools, Dashboards and Dev AIDE; full remaining inventory is explicit below. |
 
 ## Findings
@@ -147,7 +147,7 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 
 | ID | Activity / route and reproduction | Severity and basis | Owning layer / correction | Retest and evidence |
 |---|---|---|---|---|
-| UI-009 | Shared saved-find lifecycle, `/system/Security/UserAccount/UserAccountList`: active find opens a large scheduling form above its actions | P2 design judgment, light screenshot | ScreenQvt/Static and sharedCSS: action list first, new find separate, schedule collapsed, named deletion confirmation | Save/update/default/clear-default and cancellation passed; final deletion blocked by browser prompt automation. `saved-finds-*-1920.jpg` |
+| UI-009 | Shared saved-find lifecycle, `/system/Security/UserAccount/UserAccountList`: active find opens a large scheduling form above its actions | P2 design judgment, light screenshot | ScreenQvt/Static and sharedCSS: action list first, new find separate, schedule collapsed, named deletion confirmation | Save/update/default/clear-default passed; batch5 Material dialog replaces the blocked native prompt, with live Gallery Cancel/Escape/Confirm deletion retest. `saved-finds-*-1920.jpg` |
 | UI-010 | T06, `/tools/Service/ServiceRun`: successful BasicServices.echo#Data returns blank output fields | P2 observed functional defect | Screen-local session result envelope replaces unavailable `ec.webImpl` method; bind output form separately, clear stale failed-run result | Echo text, default ping and numeric 0 visible; invalid number rejected, corrected 2 succeeds. `service-output-after-1920.jpg`; AdminOverview |
 | UI-011 | Appearance → Dark → reload: mode returns to Light | P2 observed functional defect | Core appearance serialization preserves forced mode; QvtConfig distinguishes permission boolean from mode string | Rust roundtrip, QvtConfig and dark selection → reload browser retest passed |
 | UI-012 | Find Options at 390×844: full-screen dialog body retains 80vh limit and clips actions | P2 observed layout defect | Shared m-dialog body class and maximized height correction | 390×844 final screenshot confirms visible actions; keyboard filter submitted and returned the expected row |
@@ -178,7 +178,7 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-034 | Shared nested breadcrumb menu, System → LLM and Agents → Models | P2 fixed and retested | Menu opener was a span with tabIndex -1 and no role; Tab from System skips to Search | Real button opener: Tab/Enter/Space/Escape and child navigation passed. Text contrast raised from 2.72:1 to 16.9:1 in default dark; existing QVT fixture 30/30. |
 | UI-035 | T02 Tools entity browser and edit | P3 observed hierarchy/layout | Database maintenance actions precede discovery; two short edit fields span 1920px; Find return loses the prior filter | Create/find/edit and duplicate recovery work; layout and return-context refinement deferred. `tools-entity-edit-before.jpg` |
 | UI-036 | T02/T03 EntityDataFind CSV export | P2 fixed and browser retested | Headers and values share the same exportable field set; conditional empty cells retain their column | Existing CSV fixture/core tests pass; rebuilt debug browser export has two matching headers, quoted text and empty cell. `/tmp/ui-review-entity-export-after.csv` |
-| UI-037 | M02 Explore → Add filter without Label | P3 observed terminology / deferred | Filter pill exposes the full query JSON instead of a readable field/operator/value summary; expanded Add filter action aligns with labels instead of input baselines | Default light/dark, 1920/1280/390; functional create/search passed. Follow-up in shared reporting query controls; preserve stored query structure. |
+| UI-037 | M02 Explore → Add filter without Label | P3 fixed and retested | Known predicates have readable summaries; authored labels and typed queries remain unchanged; Add filter aligns with inputs | Default light/dark 1920 and dark390; severity_text = "ERROR" applies and returns7 errors. Existing reporting fixture covers operators, negation and conservative JSON fallback. |
 | UI-038 | G08 Wizard required-field recovery, default dark | P2 fixed and retested | Semantic validation text and subtle changed-field fill replace low-contrast defaults; default notifications use readable tonal pairs | Error helper 2.63→7.38:1; label on changed field 3.78→6.19:1. Default light/dark and Forest checked; notification message/caption/action regression passes. |
 | UI-039 | G08 Wizard at 390px | P2 fixed and retested | Alternative labels keep step names visible and accessible instead of contracting them away | Customer/Options/Review visible; previous-step Enter preserves the draft, completion resets it. No future-step header navigation. |
 | UI-040 | G04 New container dialog → Escape | P2 earlier observation; not reproduced in final check | Earlier closing returned focus to BODY | Fresh built-in browser at 390 dark and mounted Chromium both restore exact New opener after Escape and Close, including reopening. No speculative source fix. |
@@ -186,16 +186,28 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-042 | G06 QVue Board and Calendar controls | P2 fixed and retested | Keyboard Move menu/title links, named date controls and readable tonal event/count presentation | Board Enter move updates counts/sums and restores focus; Calendar Enter/Escape restores date focus, mobile events have full names, event text passes 4.5:1 in both themes. |
 | UI-043 | G06 Calendar → another app screen | P2 fixed and retested | Bind endpoints to the Calendar instance and guard watcher/completion/unmount | Next → Today → 390→1920 → Gallery Task produces no stale events request or error toast; browser acceptance confirms. |
 | UI-044 | G05 Task Confirm → Short | P2 fixed and retested | Full-page Short/Skip responses clear fragment-only stepOnly | Confirm retains demo line 1; Short opens line 2 with intro and Remaining lines (5), URL only lineIndex=1. |
-| UI-045 | G09 CodeField edit | P2 observed accessibility / follow-up | The code editor has role textbox but no accessible name despite its visible Description (JSON) label | John Doe, default light 1920; content saves/reloads, but the contenteditable DIV has neither aria-label nor aria-labelledby. Shared code editor ownership; fallback state still unverified. |
-| UI-046 | G09 Editor compare → Close → another page | P2 fixed normal navigation; invalid-bookmark recovery pending | Clear comparison/version state explicitly when changing context | Welcome compare 02/03 → Close → Notes now succeeds. A manually stale comparison bookmark still loses local controls to its error; local warning/recovery is a follow-up. |
+| UI-045 | G09 CodeField edit | P2 fixed and retested | Visible field label reaches CodeMirror content and fallback textarea; optional names reconfigure without losing text/undo | Live dark1920 Description (JSON) textbox named correctly; mounted fixture covers dynamic names, restored editor state, unnamed standalone and failed-bundle fallback. |
+| UI-046 | G09 Editor compare → Close → another page | P2 fixed and retested | Clear comparison/version state when changing context; invalid comparison retains current content, Edit, History and Close recovery | Live stale-version bookmark → local warning → Close → current Home passes; existing Gallery acceptance covers invalid bookmark and normal navigation. |
 | UI-047 | G13 Message → Show images | P2 fixed and retested | Use actual request scheme/host for the local image fixture | HTTP review alias now loads the image (naturalWidth 114); Trust/Hide and keyboard trimmed-content expansion pass. |
-| UI-048 | G09 Editor → Home | P2 observed navigation / follow-up | Home omits empty pagePath, and the default selects Welcome instead of the root page | Notes → Home shows Welcome v03. Investigate existing null-parameter wire convention without adding a route. |
-| UI-049 | G09 Editor → save appended Markdown → compare | P3 observed noisy history / follow-up | Multipart submission changes LF to CRLF, so every old line appears changed | Read-only SQL through Tools confirms current03 has 11 LF/11 CRLF; history02 has 9 LF/0 CRLF. Normalize only the editor save boundary; retain resource byte-exact history. |
-| UI-050 | G05 Task guide text | P3 observed stale explanation / follow-up | Guide says handheld density is unimplemented although Gallery Handheld demonstrates it | Live Task intro at 1920; update the explanation and point to the current handheld example. |
+| UI-048 | G09 Editor → Home | P2 fixed and retested | Existing explicit-null wire sentinel distinguishes Home from omitted default Welcome | Welcome → Home → reload → unchanged Save retains root page/version01; server and browser acceptance pass, including TUI literal sentinel. |
+| UI-049 | G09 Editor → save appended Markdown → compare | P3 fixed and retested | Normalize Markdown at Editor input and comparison presentation; retained resource history/restores stay byte-exact | Existing mixed-line-ending versions02/03 now show2 added/0 removed, live light/dark1920; resource/Git server and browser acceptance pass. |
+| UI-050 | Gallery guide text | P3 corrected | Task links current Handheld example; Editor describes real writes; List distinguishes demonstration row actions from stored finds/preferences | Task/Editor acceptance render passes; final List copy linted and covered by framework gate. |
 | UI-051 | S06 Audit Log / Visit Detail, shared list controls | P2 observed missing accessible names / follow-up | Sort arrows, filter operator buttons and active-filter removal buttons have no accessible name | Material default light 1920, DOM/AX inspection; investigate shared generator/widget ownership before correction. |
 | UI-052 | S06 Visit Detail request history | P2 observed misleading metadata / follow-up | Static requests show literal undefined Type; hostname and instance UUID are labeled Server IP Address / Server Host Name; timestamps mix local and raw UTC | Visit 100001, default light 1920; local screenshot and trace payload confirm the values. Screen/data mapping investigation pending. |
 | UI-053 | S06 → M02 Trace Detail selected error span | P2 measured contrast; P3 information hierarchy / follow-up | Duration text overlaps red timing bar at 3.28:1; selected span exposes full duplicated JSON without a concise diagnostic summary | POST validation failure, default light 1920. Separate duration from bars; summarize status/error/request context with raw data still available. |
 | UI-054 | S12 Models → Model default | P3 observed configuration hierarchy / follow-up | More than 30 override controls form one uninterrupted column; Save is far below the viewport while the capabilities column becomes empty | Default light 1920 screenshot. Group identity, context/pricing, execution and advanced limits; distinguish effective configuration from overrides and keep the save action easy to reach. |
+
+| UI-055 | G09 Editor History → Publish | P2 observed action safeguard / follow-up | Publish immediately changes the published marker without confirmation, unlike Restore | John Doe/default light1920, EXAMPLE Welcome03 published successfully; original marker01 restored. Add a version/page-specific confirmation and cancellation check. |
+| UI-056 | G09 Editor Edit dialog | P2 observed accessibility / follow-up | Markdown content textbox has an empty accessible name because pageText has an empty title | Live default light1920 on EXGIT; version note is named. Supply a meaningful content title through the existing text-area label. |
+| UI-057 | G09 Git-backed Editor comparison | P3 design judgment / follow-up | Full commit hashes size the two line-number columns to about150px each, wasting reading width | Light1920 Git diff; title already shows short hashes. Use short comparison display names while preserving full version parameters and history. |
+
+| UI-058 | S05 Job Run Detail after safe manual run | P3 observed information hierarchy / follow-up | A full-width stack of read-only fields buries outcome/results/timing and repeats User; minute-only times cannot explain short runs | John Doe/light1920, run101012, removedCount0. Evidence `system-job-run-light-before-1920.png`; group outcome/results and runtime metadata, preserve diagnostic links. |
+| UI-059 | Shared navigation: Find → immediate result link | P2 suspected race; source gap confirmed, deterministic retest pending | Older menu-data completion can overwrite the newer route; Find→job link once settled back at the list | Repeating the link after Find settled opens detail. Source shows unguarded menu-data completion; Run Job→Job Runs succeeded and is not a second reproduction. Prepare deferred-response fixture before claiming correction. |
+
+| UI-060 | B04 hosted mail setup Options → Back → Next | P2 observed draft loss / follow-up | Unsaved account name and filing policy reset to database defaults after revisiting Test | John Doe/light1920, account100001: UI review local mail + Only what I link became address-name + Every message with a known contact. Preserve scoped draft without implicitly saving sharing changes. |
+| UI-061 | B04 hosted mail setup and Account | P3 observed misleading controls/copy / follow-up | Import window, Start syncing, Last sync and provider-removal wording imply an incoming provider for a gateway-delivered account | Light1920, hosted account100001. Evidence `comms-hosted-options-light-before-1920.png`; condition remote-import controls and clarify activation/local storage. |
+| UI-062 | B04 Account → Open Inbox | P2 observed broken navigation / follow-up | Both Open Inbox links are disabled; source uses obsolete //Comms/Inbox instead of framework-relative route | John Doe/light1920, hosted account100001. Preserve account filter while resolving the current app mount. |
+| UI-063 | B02 thread reading | P2 observed keyboard exclusion / follow-up | Older collapsed message and recipient-details disclosure are click-only; row accessible name concatenates nested actions | John Doe/light1920, two imported synthetic messages. Evidence `comms-thread-light-before-1920.png`; provide named disclosure buttons and focus continuity. |
 
 ## Running implementation notes
 
@@ -302,7 +314,7 @@ served framework 148/148. The five environmental host failures were rerun succes
 5435 expression sites, zero parse failures and 87 unchanged idiom flags. Generated clients/goldens and whitespace
 checks passed. UI-025 through UI-028 are next-batch findings, not claims that this batch fixed them.
 
-Local commits so far (unpushed): `67d3270f` establishes this plan and baseline; `883fffe8` contains the foundations, administration entry points, GroovyShell removal and guide; `da924d4b` contains retained-work, diagnostic and development flows; `1e88b494` contains diagnostic controls, breadcrumb access, cache/thread status and aligned CSV exports. Each includes its verification notes. The evidence directory is retained locally and ignored by Git at the user’s request; the original foundations commit was rewritten to exclude it.
+Local commits so far (unpushed): `67d3270f` establishes this plan and baseline; `883fffe8` contains the foundations, administration entry points, GroovyShell removal and guide; `da924d4b` contains retained-work, diagnostic and development flows; `1e88b494` contains diagnostic controls, breadcrumb access, cache/thread status and aligned CSV exports; `8c8ce50b` contains shared feedback, wizard and Gallery keyboard/recovery refinements. Each includes its verification notes. The evidence directory is retained locally and ignored by Git at the user’s request; the original foundations commit was rewritten to exclude it.
 
 ### Batch 2 — retained work, diagnostic recovery and workspace navigation
 
@@ -634,6 +646,85 @@ Additional administration baseline while the batch-4 gate runs (John Doe, 8094, 
   override form is UI-054; evidence `system-model-detail-light-before-1920.png`. Successful local-provider activity,
   validation/retry, limited actor and other LLM administration groups remain pending.
 
+### Batch 5 — confirmation, query labels and Editor recovery
+
+Implementation began after batch 4 committed. Agents prepared private patches while the prior source was frozen;
+the coordinator reviews and applies each patch, regenerates client templates, runs tests and owns the live retest.
+
+- Material confirmation: replace native confirmation for data-confirm and m-link with explicit Confirm/Cancel in
+  the existing dialog stack. Preserve normal form validation, submitter, modifiers and one authorized replay;
+  Cancel/Escape/dismissal must not submit. Tree-move and reload native prompts remain a separate follow-up.
+- Code fields: forward the visible field label to CodeMirror's editable surface and failed-bundle textarea;
+  reconfigure optional accessible names without replacing text or undo state.
+- Query pills: summarize known typed predicates, ranges and negation; preserve authored labels and original query
+  data. Unknown/ambiguous structures retain their exact JSON display. Align Add filter controls using existing styles.
+- Editor: distinguish explicit Home from the omitted default Welcome path using the existing null sentinel;
+  keep Home through reload/save/history navigation. An unavailable comparison leaves the page and recovery controls
+  usable. Normalize Editor Markdown input/diff presentation to LF; retained resource history and restores stay exact.
+- Task guide: remove the obsolete handheld-density claim and link the existing Handheld example.
+- Extend existing Gallery List/Editor activities, without another sweep or more browser rows. Actual acceptance
+  outcomes, contrast evidence and the required complete component/gate results are recorded after integration.
+
+Verification to date:
+
+- Existing Gallery server acceptance:59/59 in5.35s; complete isolated `./moq accept --nobuild example`:server59/59
+  in5.91s and browser23/23 in37.28s, exit0. Existing List and Editor activities extended, no extra sweep/rows.
+  Log `/tmp/ui-batch5-gallery-acceptance.log`.
+- Focused offline client regressions:WebrootReport47/47 in1.24s; WebrootVue.qvt33/33 in11.50s (feature10.5s);
+  WebrootVue.qvt.markdown39/39 in4.84s (feature3.4s). The initial editor-name fixture returned a DOM object from a
+  wait predicate, hitting the CDP serialization-depth limit; boolean predicates fixed the fixture, with no product
+  behavior change. Logs `/tmp/ui-batch5-report.log`, `/tmp/ui-batch5-confirmation.log` and
+  `/tmp/ui-batch5-editor-names-retest.log`.
+- Precompiled client checks3/3; regenerated only the changed m-text-area render. Screen lint362files/5473sites,
+  zero parse failures and87 existing flagged sites; final log `/tmp/ui-batch5-screen-lint-final.txt`.
+- Live John Doe/default dark1920:created saved find100000, Cancel and Escape each leave it present and return focus
+  to Delete in the underlying Saved Finds dialog. Confirm deletes it; reopening shows no item. Console warnings/errors
+  empty. The browser acceptance additionally counts zero requests on cancellation and one on approval; focused
+  regression covers required-field validation, submitter, duplicate click, modified links and stale controls.
+  Evidence `saved-find-confirmation-dark-after-1920.png`. Tree move and re-login native prompts remain outside this fix.
+- Live Editor/default light1920:Home bookmark/reload and unchanged Save keep root page/version01. Invalid comparison
+  bookmark shows local warning and leaves content/Edit/History available; Close clears the bad comparison. Existing
+  mixed LF/CRLF Welcome versions02/03 compare as2 added/0 removed. Default dark1920 visually inspected as well.
+  Evidence `gallery-editor-recovery-light-after-1920.png`, `gallery-editor-diff-dark-after-1920.png`.
+- Live CodeField/default dark1920:the actual editable surface has name Description (JSON), preserving the stored
+  JSON. Failed-bundle fallback and live name updates pass the mounted regression, not a manual network-failure walk.
+- Live Explore/default dark1920:Add filter without Label shows `severity_text = "ERROR"`; Search preserves the typed
+  filter in its URL and returns7 error records. The same summary is readable at390 with no page overflow; light1920
+  expanded Add filter aligns the action with its fields. Evidence `explore-query-label-{light,dark}-after-1920.png`.
+- Additional G09 activity during the gate:at390/light, invalid comparison Close by Enter recovers Home; History
+  opens and Escape returns focus to History with no page overflow. At1920/light, view EXAMPLE Welcome02 → Restore
+  creates04 while keeping older versions; publish03 updates the marker, restore03 creates05 and preserves the review
+  content; publish01 restores the original marker. Publish lacked a confirmation (UI-055), so this successful local
+  write is not a passing safeguard check. All writes remain in the disposable database.
+- Create the EXGIT database repository through its confirmation → edit Welcome → save a note → History → prev:
+  new commit52f2ebee15 follows599d084608 and comparison shows2 added/0 removed. Console warnings/errors empty.
+  Evidence `gallery-git-diff-light-after-1920.png`; remaining Editor refinements UI-056/057. No source checkout or
+  external remote was changed. Light confirmation text21:1, Cancel5.98:1, Confirm4.60:1 on its rendered fill.
+- Task → Open the Handheld example reaches the scan/Code/Bin page through the visible link.
+- S05/default light1920:Service jobs → filter clean_ClientUploads_hourly → detail → Run Job → Material Confirm →
+  Job Runs →101012. Finished as John Doe with Has Error N and `removedCount:0`; View trace opens matching
+  50ef2ec81ac71ee11dc1ebdc388fb11e with6.35ms span. Job settings were unchanged. This completes the previously
+  blocked safe manual-run branch; failed-run/limited-actor/settings-edit branches remain pending. UI-058 records
+  the result hierarchy; UI-059 is a suspected quick-navigation race, kept separate from successful run coverage.
+- B04/default light1920: created hosted account100001 (`ui.review@example.invalid`) through the wizard; invalid
+  address recovery and activation succeeded. Options Back/revisit loses unsaved name/policy (UI-060); saving via Next
+  retains Only what I link. Hosted setup/account copy also exposes inapplicable remote-sync controls (UI-061).
+  Account's two Open Inbox links are disabled by an obsolete mount path (UI-062). No external account was connected.
+- B02/default light1920: imported two synthetic messages into that account's Inbox from `/tmp/ui-review-mail.mbox`:
+  UI reports2 imported,0 duplicates,0 unreadable. The matching thread contains Pat/Alex, both bodies and38B agenda.txt.
+  Expanded the older message and recipient details; their click-only surfaces lack keyboard controls (UI-063).
+  Search `subject:does-not-exist-ui-review` shows No conversations match and Clear filters returns to Unified inbox.
+  Evidence `comms-thread-light-before-1920.png`; sending, attachment download and complete triage remain unverified.
+- Required `env -u MOQUI_RUNTIME MOQ_TEST_WORKERS=2 CARGO_BUILD_JOBS=4 RUST_TEST_THREADS=1 ./moq test-framework --nobuild`
+  gate10 finished, exit1: three known SIP tests fail binding loopback aliases (`AddrNotAvailable`,57pass/3fail).
+  Every other invoked stage passed: shell342/342; framework server350/350 in46.60s; demo10/10; offline webroot390/390
+  in55.56s; Dev AIDE48/48; served framework148/148 in48.07s. Webroot feature time40.1s/34s is a warning below the
+  existing1.5×failure threshold; no budget was raised. Core1458unit+4browser-library+12native and host344unit+
+  166integration (23ignored,690.83s) passed. Cargo stops at SIP; later workspace crates are not claimed as passed.
+  Log `/tmp/moqui-ui-framework-gate10.log`. `git diff --check` passes and the evidence directory has no tracked files.
+  Actual200%browser zoom remains unverified; a narrow viewport is not recorded as zoom.
+
+
 ### Verification environment corrections
 
 The first full gate inherited the review runtime and created an ignored Shop template in the real dev-component
@@ -927,14 +1018,14 @@ All XML definitions in the two tools apps and basic-comms are listed, including 
 | `BasicComms/Settings/DevicesTui.xml` | hidden menu; explicit TUI screen | B07 | P |
 | `BasicComms/Settings/Identities.xml` | XML widgets | B05 | P |
 | `BasicComms/Settings/Index.xml` | hidden menu | B01/B05/B11 | S/P |
-| `BasicComms/Settings/MailAccounts/Account.xml` | hidden menu | B04 | P |
-| `BasicComms/Settings/MailAccounts/Add/Address.xml` | XML widgets | B04 | P |
-| `BasicComms/Settings/MailAccounts/Add/Connect.xml` | XML widgets | B04 | P |
-| `BasicComms/Settings/MailAccounts/Add/Finish.xml` | XML widgets | B04 | P |
-| `BasicComms/Settings/MailAccounts/Add/Options.xml` | XML widgets | B04 | P |
-| `BasicComms/Settings/MailAccounts/Add/Test.xml` | XML widgets | B04 | P |
+| `BasicComms/Settings/MailAccounts/Account.xml` | hidden menu | B04 | V/P: hosted status/settings/import inspected; Open Inbox links disabled (UI-062) |
+| `BasicComms/Settings/MailAccounts/Add/Address.xml` | XML widgets | B04 | V/P: invalid address and hosted-address recovery passed |
+| `BasicComms/Settings/MailAccounts/Add/Connect.xml` | XML widgets | B04 | P: hosted branch bypasses external connection |
+| `BasicComms/Settings/MailAccounts/Add/Finish.xml` | XML widgets | B04 | V/P: local activation passed; misleading sync copy UI-061 |
+| `BasicComms/Settings/MailAccounts/Add/Options.xml` | XML widgets | B04 | V/P: saved name/policy retained; Back loses draft UI-060 |
+| `BasicComms/Settings/MailAccounts/Add/Test.xml` | XML widgets | B04 | V/P: hosted ready state and Back navigation inspected |
 | `BasicComms/Settings/MailAccounts/Add.xml` | Container → Address; hidden menu | B04 | P |
-| `BasicComms/Settings/MailAccounts/List.xml` | hidden menu | B04 | P |
+| `BasicComms/Settings/MailAccounts/List.xml` | hidden menu | B04 | V/P: create and open hosted account observed |
 | `BasicComms/Settings/MailAccounts/Removed.xml` | hidden menu; modes vue,qvue,tui; `BasicComms/Settings/MailAccounts/Removed.qvue`; `BasicComms/Settings/MailAccounts/Removed.tui.json` | B04 | P |
 | `BasicComms/Settings/MailAccounts/SignIn.xml` | hidden menu; modes vue,qvue,tui; `BasicComms/Settings/MailAccounts/SignIn.qvue`; `BasicComms/Settings/MailAccounts/SignIn.tui.json` | B04 | P |
 | `BasicComms/Settings/MailAccounts/SyncProgress.xml` | hidden menu; modes vue,qvue,tui; `BasicComms/Settings/MailAccounts/SyncProgress.qvue`; `BasicComms/Settings/MailAccounts/SyncProgress.tui.json` | B04 | P |
@@ -1753,7 +1844,7 @@ Paths are relative to `runtime/dev-component/example/screen/`. The Gallery root 
 
 ## Remaining coverage and next bounded review choices
 
-1. UI-038/039/041–044 are corrected and retested in batch 4; UI-040 did not reproduce in fresh manual or mounted checks. Next address readable query labels (UI-037), code-editor names (UI-045), Editor Home/invalid-comparison/line-ending recovery (UI-046/048/049), and Material confirmation cancellation and focus. Then refine shared list-control names/sorting (UI-051), Visit Detail metadata (UI-052) and trace readability (UI-053).
+1. UI-038/039/041–044 are corrected and retested in batch4; UI-040 did not reproduce. Batch5 addresses query labels (UI-037), code-editor names (UI-045), Editor Home/comparison/line-ending recovery (UI-046/048/049), guide text (UI-050), and Material confirmation. Next refine shared list-control names/sorting (UI-051), Visit Detail metadata (UI-052), trace readability (UI-053) and model configuration grouping (UI-054).
 2. Complete **G02/G04/G09/G10** keyboard/responsive coverage, including hidden Contact/EditExample/CodeField. G05 scanning, G08 wizard and portions of G04/G06/G07/G10 have now been exercised; retest the identified fixes and complete the remaining recovery/input modes. Carry shared fixes back to actual System/Tools/Monitor pages.
 3. Give **D06 alerts**, **D07 reports/playlists/schedules**, **M08 replay**, **M09 release detail**, **M10 incident/recovery** and **M11 diagnostic settings** separate bounded fixtures and activity reviews. Their administrative lists currently have little or no functional acceptance coverage.
 4. Verify one **Monitor-only** actor can follow Monitor-local trace/context/compare/export paths, and one denied dataset yields useful refusal. The admin19-feature run is not permission-isolation proof.

@@ -14,7 +14,7 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- Gallery screen for the 3.2 List archetype of the IronStone BOSS style guide: a find and list screen over
     moqui.basic.Enumeration joined to its type, with inline finds, Find Options, saved finds, column picker, paging,
-    exports, row selection with a bulk action, row actions, a status-like chip and a New dialog. Nothing is written. -->
+    exports, row selection with a bulk action, row actions, a status-like chip and a New dialog. Row actions are demonstrations. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="List" default-menu-index="2" menu-image="sym_o_view_list" menu-image-type="icon">
 
@@ -35,7 +35,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <widgets>
         <container-box type="info"><box-header title="Archetype 3.2 List"/><box-body>
-            <label type="p" text="The find and list screen over one record type, here Enumeration with its type through display-entity: the identifier first as a text link to the Detail, a chip for the state, Find Options for the rest of the filters, saved finds, the column picker, paging with a page size, exports, row selection with one bulk action in the header menu, two row actions, and New as a dialog. Nothing posted here is written."/>
+            <label type="p" text="Find and inspect enumerations, choose columns, save searches and export results. New, clone and bulk-tag actions are demonstrations; saved finds and column preferences are stored for your account."/>
             <label type="p" text="Fallbacks for §8: the state chip is a tonal anchor-button link (Enumeration has no status, so the state is derived per row) until the m-tonal status chip exists; the two inline finds are a form-single above the table because header-dialog moves every header-field into Find Options; the view switch is a button-menu to the Views screen, where one form-list of example records has the board and calendar views of §8.2 (Enumeration has no status flow or times to show them on)."/>
         </box-body></container-box>
 

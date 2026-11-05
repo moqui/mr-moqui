@@ -175,3 +175,14 @@ Further patterns established during the review:
   remove registered dialogs when it unmounts so navigation cannot send requests against the destination screen.
 - Drag interactions have a keyboard path using the same update operation, with focus restored after movement.
   Demonstrations clearly distinguish temporary visual changes from stored data.
+
+- Confirmations stay in the application's dialog/focus stack. Only explicit approval resumes the original action;
+  Cancel, Escape and backdrop dismissal do not submit. Preserve validation, the submitter and modified-link behavior,
+  and discard approval if the original control is removed, disabled or changes its meaning while the dialog is open.
+- Rich editors expose the visible field name on their actual editable surface and on the unavailable-library fallback.
+  Reconfigure names without replacing content or undo history; an optional standalone editor label remains optional.
+- Structured query summaries are display-only. Preserve typed values and authored labels; use exact JSON when an
+  unfamiliar or ambiguous predicate cannot be summarized faithfully.
+- Explicitly distinguish a root-page bookmark from an omitted default route using the existing parameter convention.
+  Comparison failures retain current content and a clear recovery action. Normalize text only at the editor boundary
+  and diff presentation, without rewriting retained resource history or restore payloads.

@@ -44,6 +44,74 @@ feature("gallery #name", {
 
 // Keep each activity on the page its existing sweep row opens. Native key events exercise the controls' behavior.
 const activities = {
+    List() {
+        const description = "Gallery saved find " + Date.now()
+        page.locator("#EnumFind_description").fill("Equal")
+        page.locator("#EnumFind").getByRole("button", { name: "Find", exact: true }).click()
+        page.waitFor(() => new URL(location.href).searchParams.get("description") === "Equal")
+        page.getByRole("button", { name: "Saved Finds", exact: true }).click()
+        page.locator("#EnumList_NewFind_description").fill(description)
+        page.getByRole("button", { name: "Save New Find", exact: true }).click()
+        page.waitFor(() => {
+            const id = new URL(location.href).searchParams.get("formListFindId")
+            return id && id !== "_clear"
+        })
+        const findId = page.evaluate(() => new URL(location.href).searchParams.get("formListFindId"))
+        if (page.locator(".m-saved-finds").isVisible()) {
+            page.keyboard.press("Escape")
+            page.locator(".m-saved-finds").waitFor({ state: "hidden" })
+        }
+        page.getByRole("button", { name: "Saved Finds", exact: true }).click()
+        page.locator(".m-saved-find-list").getByRole("link", { name: description, exact: true }).waitFor()
+        const deleteSelector = '.m-saved-find-list .q-item:has(a[href*="formListFindId=' + encodeURIComponent(findId) + '"]) button[name="DeleteFind"]'
+        page.locator(deleteSelector).evaluate(element => { window.gallerySavedFindDeleteButton = element; return true })
+        // Observe real writes; do not replace confirmation, submission, responses or the server fixture.
+        page.evaluate(() => {
+            window.gallerySavedFindWrites = []
+            window.gallerySavedFindFetch = window.fetch
+            window.fetch = function(input, init) {
+                const url = typeof input === "string" ? input : input && input.url || String(input)
+                const body = init && init.body
+                if (/\/formSaveFind(?:\?|$)/.test(url) && body && typeof body.get === "function" && body.get("DeleteFind") === "Y") {
+                    window.gallerySavedFindWrites.push(body.get("formListFindId"))
+                }
+                return window.gallerySavedFindFetch.apply(this, arguments)
+            }
+            return true
+        })
+        try {
+            page.locator(deleteSelector).press("Enter")
+            page.locator(".q-dialog-plugin").waitFor()
+            assert(page.locator(".q-dialog-plugin").text().includes(description), "The Material confirmation names the saved find")
+            page.locator(".q-dialog-plugin").getByRole("button", { name: "Cancel", exact: true }).click()
+            page.waitFor(() => !document.querySelector(".q-dialog-plugin") && document.activeElement === window.gallerySavedFindDeleteButton)
+            assert(page.evaluate(() => window.gallerySavedFindWrites.length) === 0, "Cancel sends no delete request")
+            assert(page.locator(".m-saved-find-list").getByRole("link", { name: description, exact: true }).count() === 1, "Cancel keeps the saved find")
+            page.locator(deleteSelector).press("Enter")
+            page.locator(".q-dialog-plugin").waitFor()
+            page.keyboard.press("Escape")
+            page.waitFor(() => !document.querySelector(".q-dialog-plugin") && document.activeElement === window.gallerySavedFindDeleteButton)
+            assert(page.evaluate(() => window.gallerySavedFindWrites.length) === 0, "Escape sends no delete request")
+            assert(page.locator(".m-saved-find-list").getByRole("link", { name: description, exact: true }).count() === 1, "Escape keeps the saved find and its parent dialog")
+            page.locator(deleteSelector).press("Enter")
+            page.locator(".q-dialog-plugin").getByRole("button", { name: "Confirm", exact: true }).press("Enter")
+            page.waitFor(() => window.gallerySavedFindWrites.length === 1 && !document.querySelector(".q-dialog-plugin"))
+            page.settle()
+            assert(JSON.stringify(page.evaluate(() => window.gallerySavedFindWrites)) === JSON.stringify([findId]), "Confirm deletes this find exactly once")
+            if (!page.locator(".m-saved-finds").isVisible()) page.getByRole("button", { name: "Saved Finds", exact: true }).click()
+            page.locator(".m-saved-finds").waitFor()
+            assert(page.locator(".m-saved-find-list").getByRole("link", { name: description, exact: true }).count() === 0, "The deleted saved find is absent after reopening")
+            page.keyboard.press("Escape")
+        } finally {
+            page.evaluate(() => {
+                if (typeof window.gallerySavedFindFetch === "function") window.fetch = window.gallerySavedFindFetch
+                delete window.gallerySavedFindFetch
+                delete window.gallerySavedFindWrites
+                delete window.gallerySavedFindDeleteButton
+                return true
+            })
+        }
+    },
     Task() {
         page.waitFor(() => !!document.querySelector("#PickStep_scanInput"))
         assert(page.text().includes("line 1 of 7") && page.text().includes("Remaining lines (6)"), "The first step includes its context")
@@ -179,11 +247,42 @@ const activities = {
             const query = new URL(location.href).searchParams
             return !["versionName", "versionNameLhs", "versionNameRhs"].some(name => query.has(name))
         })
+        assert(page.getByRole("heading", { name: "Welcome", exact: true }).count() > 0, "Editor starts on Welcome")
+        page.getByRole("link", { name: "Home", exact: true }).click()
+        page.waitFor(() => new URL(location.href).searchParams.get("pagePath") === "\u00a0")
+        assert(page.url().includes("pagePath=%C2%A0"), "Home has an explicit bookmark distinct from the default page")
+        page.getByRole("heading", { name: "Example Wiki", exact: true }).waitFor()
+        // This reload is part of the Home bookmark activity, not another sweep row.
+        assert(page.goto(page.url()).status === 200, "The Home bookmark reloads")
+        page.getByRole("heading", { name: "Example Wiki", exact: true }).waitFor()
+        assert(page.evaluate(() => new URL(location.href).searchParams.get("pagePath")) === "\u00a0", "Reload retains Home")
+        page.getByRole("button", { name: "Edit", exact: true }).click()
+        page.locator(".q-dialog #EditPage_pageText").waitFor()
+        assert(page.locator("#EditPage_pageText").value().startsWith("# Example Wiki"), "Edit opens the root page's Markdown")
+        page.getByRole("button", { name: "Save as a new version", exact: true }).click()
+        page.waitFor(() => !document.querySelector(".q-dialog #EditPage_pageText"))
+        page.getByRole("heading", { name: "Example Wiki", exact: true }).waitFor()
+        assert(page.evaluate(() => new URL(location.href).searchParams.get("pagePath")) === "\u00a0", "Saving unchanged Home returns to Home")
+        const unavailableComparison = page.evaluate(() => {
+            const url = new URL(location.href)
+            url.searchParams.set("versionNameLhs", "missing-version")
+            return url.pathname + url.search
+        })
+        assert(page.goto(unavailableComparison).status === 200, "An unavailable comparison remains a usable page")
+        page.waitFor(() => document.querySelector(".q-page").innerText.includes("Comparison unavailable"))
+        assert(page.text().includes("Choose versions from History"), "The comparison warning explains recovery")
+        assert(page.getByRole("heading", { name: "Example Wiki", exact: true }).count() === 1, "The current Home content remains visible")
+        assert(page.getByRole("button", { name: "Edit", exact: true }).isVisible(), "Edit remains available after the bad comparison")
+        assert(page.getByRole("button", { name: "History", exact: true }).isVisible(), "History remains available after the bad comparison")
+        page.getByRole("link", { name: "Close", exact: true }).click()
+        assert(cleanVersionUrl(), "Close clears the unavailable comparison")
+        assert(page.evaluate(() => new URL(location.href).searchParams.get("pagePath")) === "\u00a0", "Close preserves Home")
+        page.getByRole("heading", { name: "Example Wiki", exact: true }).waitFor()
         page.getByRole("link", { name: "Welcome", exact: true }).click()
         page.getByRole("button", { name: "Edit", exact: true }).click()
         page.locator(".q-dialog #EditPage_pageText").waitFor()
         const marker = "Gallery acceptance review " + Date.now()
-        page.locator("#EditPage_pageText").fill(page.locator("#EditPage_pageText").value() + "\n\n" + marker + "\n")
+        page.locator("#EditPage_pageText").fill(page.locator("#EditPage_pageText").value() + "\n" + marker + "\n")
         page.locator("#EditPage_versionNote").fill(marker)
         page.getByRole("button", { name: "Save as a new version", exact: true }).click()
         page.waitFor(() => !document.querySelector(".q-dialog #EditPage_pageText"))
@@ -191,6 +290,7 @@ const activities = {
         page.getByRole("button", { name: "History", exact: true }).click()
         page.locator(".q-dialog").getByRole("link", { name: "prev", exact: true }).first().click()
         page.waitFor(() => !!new URL(location.href).searchParams.get("versionNameLhs"))
+        assert(page.text().includes("2 added, 0 removed"), "Appending a paragraph does not replace lines because of browser CRLF endings")
         page.getByRole("link", { name: "Close", exact: true }).click()
         assert(cleanVersionUrl(), "Closing comparison clears its version parameters")
         assert(page.getByRole("link", { name: "Close", exact: true }).count() === 0, "Closing removes the comparison")

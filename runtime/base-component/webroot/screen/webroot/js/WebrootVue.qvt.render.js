@@ -9163,7 +9163,7 @@
               ], 8, ["id", "data-step", "data-step-form", "data-forms"]))
             }
         } },
-        "m-text-area": { hash: "ab61655c", make: function (Vue) {
+        "m-text-area": { hash: "879c7991", make: function (Vue) {
             const { resolveComponent: _resolveComponent, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, toDisplayString: _toDisplayString, createElementBlock: _createElementBlock, createVNode: _createVNode, createElementVNode: _createElementVNode, createTextVNode: _createTextVNode, withCtx: _withCtx, mergeProps: _mergeProps } = Vue
 
             return function render(_ctx, _cache) {
@@ -9211,9 +9211,10 @@
                         "read-only": _ctx.readonly || _ctx.disable,
                         name: _ctx.name,
                         form: _ctx.form,
+                        "aria-label": _ctx.label || undefined,
                         "min-height": "8rem",
                         "max-height": "32rem"
-                      }, null, 8, ["model-value", "onUpdate:modelValue", "language", "read-only", "name", "form"])
+                      }, null, 8, ["model-value", "onUpdate:modelValue", "language", "read-only", "name", "form", "aria-label"])
                     ]))
                   : (_ctx.editorType === 'html')
                     ? (_openBlock(), _createElementBlock("div", {

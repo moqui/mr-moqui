@@ -26,13 +26,20 @@ along with this software (see the LICENSE.md file). If not, see
     <parameter name="versionNameLhs"/>
     <parameter name="versionNameRhs"/>
 
+    <always-actions>
+        <!-- HTTP maps the explicit-null NBSP sentinel to null; the local TUI may supply the literal sentinel. -->
+        <if condition="pagePath === '\u00a0'"><set field="pagePath" from="''"/></if>
+    </always-actions>
+
     <transition name="savePage">
         <actions>
+            <!-- Multipart posts normalize textarea line endings to CRLF. Markdown edited here has LF line endings. -->
+            <set field="pageText" from="String(pageText ?? '').replace(/\r\n?/g, '\n')"/>
             <set field="pageName" from="pagePath ? pagePath.substring(pagePath.lastIndexOf('/') + 1) : wikiSpaceId"/>
             <service-call name="org.moqui.impl.WikiServices.update#WikiPage"
                     in-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath, pageName:pageName, pageText:pageText, versionNote:versionNote}"/>
         </actions>
-        <default-response url="."><parameter name="wikiSpaceId"/><parameter name="pagePath"/>
+        <default-response url="."><parameter name="wikiSpaceId"/><parameter name="pagePath" from="pagePath || '\u00a0'"/>
             <parameter name="versionName" from="null"/><parameter name="versionNameLhs" from="null"/><parameter name="versionNameRhs" from="null"/></default-response>
     </transition>
     <!-- a restore writes the old text as a new version, so nothing in the history is lost -->
@@ -45,12 +52,12 @@ along with this software (see the LICENSE.md file). If not, see
                     in-map="{wikiPageId:restoreInfo.wikiPageId, versionName:versionName}"/>
             <message>Restored version ${versionName.substring(0, 10)} as the newest version</message>
         </actions>
-        <default-response url="."><parameter name="wikiSpaceId"/><parameter name="pagePath"/>
+        <default-response url="."><parameter name="wikiSpaceId"/><parameter name="pagePath" from="pagePath || '\u00a0'"/>
             <parameter name="versionName" from="null"/><parameter name="versionNameLhs" from="null"/><parameter name="versionNameRhs" from="null"/></default-response>
     </transition>
     <transition name="publishVersion">
         <service-call name="org.moqui.impl.WikiServices.set#PublishedVersion"/>
-        <default-response url="."><parameter name="wikiSpaceId"/><parameter name="pagePath"/><parameter name="versionName"/>
+        <default-response url="."><parameter name="wikiSpaceId"/><parameter name="pagePath" from="pagePath || '\u00a0'"/><parameter name="versionName"/>
             <parameter name="versionNameLhs" from="null"/><parameter name="versionNameRhs" from="null"/></default-response>
     </transition>
     <transition name="createGitSpace">
@@ -70,12 +77,15 @@ along with this software (see the LICENSE.md file). If not, see
             <field-map field-name="wikiSpaceId" value="EXGIT"/></entity-find-one>
         <entity-find entity-name="moqui.resource.wiki.WikiPage" list="pageList">
             <econdition field-name="wikiSpaceId"/><order-by field-name="sequenceNum,pagePath"/></entity-find>
-        <if condition="pagePath == null &amp;&amp; pageList.length">
+        <if condition="pagePath == null &amp;&amp; !Object.hasOwn(ec.web.requestParameters, 'pagePath') &amp;&amp; pageList.length">
             <set field="pagePath" from="(pageList.find((page) => page.pagePath) || pageList[0]).pagePath || ''"/></if>
-        <!-- Empty strings explicitly replace inherited URL parameters; null would leave them unchanged. -->
-        <set field="currentPageParameters" from="{wikiSpaceId:wikiSpaceId, pagePath:pagePath || '', versionName:'', versionNameLhs:'', versionNameRhs:''}"/>
+        <!-- An omitted path keeps the default Welcome route; the existing null sentinel names Home explicitly.
+             Empty strings clear inherited version parameters; null map values would leave them unchanged. -->
+        <set field="currentPageParameters" from="{wikiSpaceId:wikiSpaceId, pagePath:pagePath || '\u00a0', versionName:'', versionNameLhs:'', versionNameRhs:''}"/>
         <service-call name="org.moqui.impl.WikiServices.get#WikiPageInfo" out-map="pageInfo"
                 in-map="{wikiSpaceId:wikiSpaceId, pagePath:pagePath || '', versionName:versionName}"/>
+        <!-- A comparison failure is recoverable; a page-access failure still stops before any version is read. -->
+        <if condition="ec.message.hasError()"><return/></if>
         <set field="pageReference" from="pageInfo.pageReference"/>
         <set field="currentVersionName" from="pageInfo.currentVersionName"/>
         <set field="publishedVersionName" from="pageInfo.publishedVersionName"/>
@@ -84,7 +94,8 @@ along with this software (see the LICENSE.md file). If not, see
             // a git version name is a 40 digit commit id; show its first 10 digits
             const short = (name) => name == null ? '' : String(name).length > 12 ? String(name).substring(0, 10) : String(name)
             pageTitle = pagePath ? pagePath.substring(pagePath.lastIndexOf('/') + 1) : (pageInfo.wikiSpace?.description || wikiSpaceId)
-            pageText = pageReference?.exists ? (pageReference.getText() ?? '') : ''
+            const markdownText = (text) => String(text ?? '').replace(/\r\n?/g, '\n')
+            pageText = pageReference?.exists ? markdownText(pageReference.getText()) : ''
             const userNames = {}
             const userName = (userId) => {
                 if (!userId) return ''
@@ -107,25 +118,32 @@ along with this software (see the LICENSE.md file). If not, see
             publishedShort = short(publishedVersionName)
             storage = String(pageInfo.pageLocation || '').startsWith('git:') ? 'git commits' : 'dbresource history'
 
-            // the compare: a server-side diff, an HTML table with every text escaped
+            // Compare Markdown line content, including versions saved before line-ending normalization.
+            // Resource history and its reverse deltas remain byte-exact; only this presentation normalizes text.
             diffHtml = null
             diffText = null
+            diffError = null
             if (versionNameLhs && pageReference?.exists) {
                 try {
-                    const diff = pageReference.getVersionDiff(versionNameLhs, versionNameRhs || '')
+                    const lhsText = pageReference.getText(versionNameLhs)
+                    const rhsText = versionNameRhs ? pageReference.getText(versionNameRhs) : pageReference.getText()
+                    if (lhsText == null || rhsText == null) throw new Error('A requested version is unavailable')
+                    const diff = ec.resource.textDiff(markdownText(lhsText), markdownText(rhsText), versionNameLhs,
+                            versionNameRhs || 'current')
                     diffHtml = diff.html
                     diffText = diff.unifiedDiff
                     diffTitle = 'Compare ' + short(diff.fromName) + ' with ' + short(diff.toName) + ': ' + diff.stats.insertions +
                             ' added, ' + diff.stats.deletions + ' removed'
                 } catch (err) {
-                    ec.message.addError('Cannot compare: ' + err.message)
+                    diffError = 'One or both versions could not be read. Choose versions from History, or close this comparison to continue with the current page.'
+                    ec.logger.log(200, 'Cannot compare wiki page ' + wikiSpaceId + '/' + (pagePath || '') + ': ' + err.message)
                 }
             }
         ]]></script>
     </actions>
     <widgets>
         <container-box type="info"><box-header title="Archetype 3.13 Editor"/><box-body>
-            <label type="p" text="A document the user writes: the page list at the side, the rendered page with its title and version in a title row, and History, Compare, Restore and Publish as actions in a dialog, not tabs. The body is a text-area with editor-type md (the co-editing component of §8 is not built). Unlike the other gallery screens these actions write, into the demo spaces only."/>
+            <label type="p" text="Browse pages, edit Markdown, and inspect versions from History. Compare changes before restoring or publishing a version. Editing, restoring and publishing change the selected demo space."/>
             <label type="p" text="Two storages under one resource API: the EXAMPLE space keeps its pages as dbresource files (each past version a reverse delta), the EXGIT space as files in a git repository in the database (each version a commit). The compare is rendered on the server."/>
         </box-body></container-box>
 
@@ -134,7 +152,7 @@ along with this software (see the LICENSE.md file). If not, see
                 <container-box><box-header title="${pageInfo.wikiSpace?.description || wikiSpaceId}"/><box-body>
                     <section-iterate name="PageLinks" list="pageList" entry="page"><widgets><container>
                         <link url="." text="${page.pagePath || 'Home'}" link-type="anchor" style="${(page.pagePath || '') == (pagePath || '') ? 'text-weight-bold' : ''}"
-                                parameter-map="Object.assign({}, currentPageParameters, {pagePath:page.pagePath || ''})"/>
+                                parameter-map="Object.assign({}, currentPageParameters, {pagePath:page.pagePath || '\u00a0'})"/>
                     </container></widgets></section-iterate>
                 </box-body></container-box>
                 <container-box><box-header title="Spaces"/><box-body>
@@ -206,6 +224,13 @@ along with this software (see the LICENSE.md file). If not, see
                     </box-body></container-box>
                 </widgets></section>
 
+                <section name="ComparisonUnavailable" condition="diffError"><widgets>
+                    <container-box type="warning"><box-header title="Comparison unavailable"/><box-toolbar>
+                        <link url="." text="Close" link-type="anchor" parameter-map="currentPageParameters"/>
+                    </box-toolbar><box-body>
+                        <label type="p" text="${diffError}"/>
+                    </box-body></container-box>
+                </widgets></section>
                 <section name="Compare" condition="diffHtml"><widgets>
                     <container-box><box-header title="${diffTitle}"/><box-toolbar>
                         <link url="." text="Close" link-type="anchor" parameter-map="currentPageParameters"/>

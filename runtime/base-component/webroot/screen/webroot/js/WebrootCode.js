@@ -279,7 +279,7 @@
             modelValue: { type: String, default: "" }, language: String, fileName: String, readOnly: Boolean,
             lineNumbers: { type: Boolean, default: true }, wrap: Boolean, highlightLines: Array, schema: Object, lint: Function,
             name: String, form: String, minHeight: { type: String, default: "6rem" }, maxHeight: String, height: String,
-            autofocus: Boolean, placeholder: String,
+            autofocus: Boolean, placeholder: String, ariaLabel: String, ariaLabelledby: String,
             // who last changed each run of lines (git blame), shown in a gutter while it is set
             blame: Array,
             // more extensions from the page (CM) => extension: a keymap, event handlers, completion sources
@@ -291,7 +291,13 @@
         emits: ["update:modelValue", "save", "cursor", "ready"],
         data() { return { failed: false, ready: false, text: this.modelValue || "" }; },
         computed: {
-            resolvedLanguage() { return this.language || editor.languageOf(this.fileName); }
+            resolvedLanguage() { return this.language || editor.languageOf(this.fileName); },
+            accessibilityAttributes() {
+                const attrs = {};
+                if (this.ariaLabel) attrs["aria-label"] = this.ariaLabel;
+                if (this.ariaLabelledby) attrs["aria-labelledby"] = this.ariaLabelledby;
+                return attrs;
+            }
         },
         watch: {
             modelValue(value) {
@@ -308,6 +314,8 @@
             schema() { this.reconfigure("language"); },
             readOnly() { this.reconfigure("readOnly"); },
             wrap() { this.reconfigure("wrap"); },
+            ariaLabel() { this.reconfigure("accessibility"); },
+            ariaLabelledby() { this.reconfigure("accessibility"); },
             highlightLines() { this.reconfigure("highlight"); this.reveal(); },
             blame() { this.reconfigure("blame"); }
         },
@@ -334,6 +342,7 @@
                     theme: () => theme(CM, isDark(this)),
                     readOnly: () => [CM.EditorState.readOnly.of(!!this.readOnly), CM.EditorView.editable.of(!this.readOnly)],
                     wrap: () => (this.wrap ? CM.EditorView.lineWrapping : []),
+                    accessibility: () => CM.EditorView.contentAttributes.of(this.accessibilityAttributes),
                     highlight: () => highlighted(CM, this.highlightLines, this.view ? this.view.state.doc : CM.Text.of(this.text.split("\n"))),
                     blame: () => blameGutter(CM, this.blame)
                 };
@@ -347,7 +356,7 @@
                     this.owner = kept.owner;
                     this.owner.vm = this;
                     this.view = new CM.EditorView({ state: kept.state, parent: this.$refs.host });
-                    ["language", "theme", "readOnly", "wrap", "highlight", "blame"].forEach((key) => this.reconfigure(key));
+                    ["language", "theme", "readOnly", "wrap", "accessibility", "highlight", "blame"].forEach((key) => this.reconfigure(key));
                     if (this.autofocus) this.view.focus();
                     this.ready = true;
                     this.reveal();
@@ -413,11 +422,11 @@
         },
         render() {
             if (this.failed) {
-                return h("textarea", {
+                return h("textarea", Object.assign({
                     class: "m-code-editor-fallback q-pa-sm", value: this.text, readonly: this.readOnly, name: this.name,
                     form: this.form, rows: 12, spellcheck: false, "data-state": "fallback",
                     onInput: (event) => { this.text = event.target.value; this.$emit("update:modelValue", this.text); }
-                });
+                }, this.accessibilityAttributes));
             }
             return h("div", { class: "m-code-editor", "data-state": this.ready ? "ready" : "loading" }, [
                 h("div", { ref: "host", class: "m-code-editor-host", style: {

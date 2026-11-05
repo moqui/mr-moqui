@@ -218,13 +218,57 @@ test("structural pills retain typed values, negation, disable, labels and user-s
     const form={fields:Vue.reactive({queryString:'',filtersJson:'[]'})},props={datasetId:'pill-test',viewerId:'reader-test',fields:[{name:'duration',type:'number',searchable:true},{name:'status',type:'string',searchable:true}]};
     localStorage.removeItem(report.storageKey('reader-test','pill-test')+'.pins');
     const app=Vue.createApp(moqui.qvtComponents['m-report-querybar'],props);app.provide('mForm',form);const editor=app.mount(target);
-    editor.field='duration';editor.operation='range';editor.value='1,5';editor.label='Expected duration';editor.add();await Vue.nextTick();
+    editor.field='duration';editor.operation='range';editor.value='1,5';editor.add();await Vue.nextTick();
     let pill=JSON.parse(form.fields.filtersJson)[0];assert.deepEqual(pill.query,{field:{name:'duration',op:'range',gte:1,lte:5}});
+    assert.equal(pill.label,'');assert.equal(target.querySelector('.m-report-query-pills > div > span').textContent,'duration ≥ 1 and ≤ 5');
+    editor.edit(0);editor.label='Expected duration';editor.saveEdit();await Vue.nextTick();
     editor.change(0,'pinned');editor.change(0,'negated');editor.change(0,'disabled');await Vue.nextTick();
     pill=JSON.parse(form.fields.filtersJson)[0];assert.equal(pill.pinned,true);assert.equal(pill.negated,true);assert.equal(pill.disabled,true);
     assert.equal(target.textContent.includes('NOT Expected duration (disabled)'),true);
     editor.edit(0);editor.editJson=JSON.stringify({field:{name:'status',op:'eq',value:'ERROR'}});editor.label='Failures';editor.saveEdit();
     assert.equal(JSON.parse(form.fields.filtersJson)[0].label,'Failures');
+    const cases = [
+        [{field:{name:'status',op:'eq',value:'ERROR'}}, 'status = "ERROR"'],
+        [{field:{name:'status',value:''}}, 'status = ""'],
+        [{field:{name:'duration',op:'equals',value:0}}, 'duration = 0'],
+        [{field:{name:'enabled',op:'eq',value:false}}, 'enabled = false'],
+        [{field:{name:'enabled',op:'eq',value:'false'}}, 'enabled = "false"'],
+        [{field:{name:'status',op:'eq',value:null}}, 'status = null'],
+        [{field:{name:'status',op:'in',values:['ERROR','WARN']}}, 'status is one of ["ERROR", "WARN"]'],
+        [{field:{name:'status',op:'exists'}}, 'status exists'],
+        [{field:{name:'status',op:'exists',negate:true}}, 'NOT (status exists)'],
+        [{field:{name:'status',op:'prefix',value:'ERR'}}, 'status starts with "ERR"'],
+        [{field:{name:'status',op:'wildcard',value:'ERR*'}}, 'status matches wildcard "ERR*"'],
+        [{field:{name:'duration',op:'range',gte:0,lt:5}}, 'duration ≥ 0 and < 5'],
+        [{field:{name:'duration',op:'range',gt:0,lte:null}}, 'duration > 0'],
+        [{field:{name:'duration',op:'range',lte:5,negate:true}}, 'NOT (duration ≤ 5)'],
+        [{bool:{none:[{field:{name:'status',op:'exists'}}]}}, 'NOT (status exists)'],
+        [{bool:{all:[{field:{name:'status',op:'exists'}}],none:[{field:{name:'status',op:'in',values:['OK']}}]}}, '(status exists AND NOT (status is one of ["OK"]))'],
+        [{bool:{any:[{field:{name:'duration',op:'eq',value:1}},{field:{name:'duration',op:'eq',value:2}}]}}, '(duration = 1 OR duration = 2)'],
+        [{field:{name:'status',op:'eq',value:'<img src=x onerror=alert(1)>'}}, 'status = "<img src=x onerror=alert(1)>"']
+    ];
+    for (const query of [
+        {custom:{predicate:'future'}},
+        {field:{name:'status',op:'future',value:'ERROR'}},
+        {field:{name:'status',op:'',value:'ERROR'}},
+        {bool:{all:false,none:[{field:{name:'status',op:'exists'}}]}},
+        {field:{name:'duration',op:'range',gt:0,gte:1}},
+        {bool:{all:[{field:{name:'status',op:'exists'}}],any:[{field:{name:'status',value:'ERROR'}}]}},
+        {bool:{any:[{field:{name:'status',value:'ERROR'}}],min_any:2}}
+    ]) cases.push([query,JSON.stringify(query)]);
+    const labels = cases.map(([query,expected]) => {
+        const before = JSON.stringify(query);
+        assert.equal(report.filterLabel({query}),expected);
+        assert.equal(JSON.stringify(query),before,'label generation does not rewrite predicates');
+        return {query,label:'',negated:false,disabled:false,pinned:false};
+    });
+    labels.push({query:{field:{name:'duration',op:'range',gte:0,lt:5}},negated:true,disabled:true});
+    assert.equal(report.filterLabel(labels[labels.length-1]),'NOT (duration ≥ 0 and < 5) (disabled)');
+    const serialized = JSON.stringify(labels);
+    form.fields.filtersJson=serialized;await Vue.nextTick();
+    assert.equal(form.fields.filtersJson,serialized,'rendering keeps original filter JSON and blank labels');
+    assert.deepEqual(Array.from(target.querySelectorAll('.m-report-query-pills > div > span')).slice(0,cases.length).map(span=>span.textContent),cases.map(([,expected])=>expected));
+    assert.equal(target.querySelector('img'),null,'filter values render as text');
     app.unmount();target.remove();
     const next=document.createElement('div');document.body.appendChild(next);const nextForm={fields:Vue.reactive({queryString:'',filtersJson:'[]'})};
     const nextApp=Vue.createApp(moqui.qvtComponents['m-report-querybar'],props);nextApp.provide('mForm',nextForm);const restored=nextApp.mount(next);

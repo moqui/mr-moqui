@@ -90,7 +90,8 @@ along with this software (see the LICENSE.md file). If not, see
         <section name="Full" condition="stepOnly != 'Y'"><widgets>
             <container-box type="info"><box-header title="Archetype 3.5 Task"/><box-body>
                 <label text="One operational job at a time: the current pick line with large read-only location and product, a focused scan field (Enter confirms), Confirm as the one primary and Short / Skip as tonal actions, then a compact list of what remains. The step is a dynamic-container that reloads after Confirm; Short and Skip move to the next line through the URL." type="p"/>
-                <label text="Fallbacks: the handheld density of §8 (48 px controls) does not exist yet, so the controls are the dense defaults; pick lines have no framework entity, so they are an inline list built in the screen actions." type="p"/>
+                <label text="This example uses compact controls and an inline list of demonstration pick lines. The Handheld example shows 48 px touch controls and a scan-first workflow." type="p"/>
+                <link url="../Handheld" text="Open the Handheld example" link-type="anchor"/>
             </box-body></container-box>
 
             <dynamic-container id="TaskStep" transition="stepLoad">

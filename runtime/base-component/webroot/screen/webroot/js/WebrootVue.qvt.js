@@ -41,6 +41,56 @@
 
     const rootVm = () => moqui.webrootVue;
 
+    // Material confirmations stay in the application's focus stack. Only the explicit Confirm choice approves an action;
+    // Cancel, Escape and backdrop dismissal settle false after focus returns. Approval resolves from the Confirm gesture,
+    // retaining its browser activation for links that open another window.
+    moqui.confirmAction = (message, opener) => {
+        const vm = rootVm();
+        if (!vm || !vm.$q || typeof vm.$q.dialog !== "function") {
+            console.error("Confirmation dialog unavailable; action cancelled");
+            return Promise.resolve(false);
+        }
+        if (opener && opener.isConnected && typeof opener.focus === "function") opener.focus({ preventScroll: true });
+        return new Promise((resolve) => {
+            const title = localized("Confirm action");
+            vm.$q.dialog({ title, message: String(message || ""), html: false, "aria-label": title, focus: "cancel",
+                ok: { label: localized("Confirm"), color: "primary", unelevated: true, noCaps: true },
+                cancel: { label: localized("Cancel"), flat: true, noCaps: true } })
+                .onOk(() => resolve(true)).onDismiss(() => resolve(false));
+        });
+    };
+    const confirmedClicks = new WeakSet(), pendingConfirmations = new WeakSet();
+    // Pause the original click before a form, link or screen handler sees it. Approval resumes that same action once,
+    // including its modifiers and submitter; it never skips validation or calls a submit/network method directly.
+    qvt.confirmClick = (event, control, message, stillCurrent) => {
+        if (confirmedClicks.has(event)) return false;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (pendingConfirmations.has(control)) return true;
+        pendingConfirmations.add(control);
+        const target = event.target && control.contains(event.target) ? event.target : control;
+        const clickOptions = { bubbles: true, cancelable: true, composed: true, view: root, detail: event.detail,
+            button: event.button, buttons: event.buttons, ctrlKey: event.ctrlKey, metaKey: event.metaKey,
+            shiftKey: event.shiftKey, altKey: event.altKey, clientX: event.clientX, clientY: event.clientY };
+        moqui.confirmAction(message, control).then((confirmed) => {
+            if (!confirmed || !control.isConnected || control.matches(":disabled, [aria-disabled='true']") ||
+                    (stillCurrent && !stillCurrent())) return;
+            const replay = new root.MouseEvent("click", clickOptions);
+            if (event.qKeyEvent) replay.qKeyEvent = true;
+            confirmedClicks.add(replay);
+            try { (target.isConnected && control.contains(target) ? target : control).dispatchEvent(replay); }
+            finally { confirmedClicks.delete(replay); }
+        }).catch((error) => console.error("Confirmation failed; action cancelled", error))
+            .finally(() => pendingConfirmations.delete(control));
+        return true;
+    };
+    qvt.onConfirmClick = (event) => {
+        const control = event.target.closest && event.target.closest("[data-confirm]");
+        if (!control) return;
+        const message = control.getAttribute("data-confirm");
+        qvt.confirmClick(event, control, message, () => control.getAttribute("data-confirm") === message);
+    };
+
     /* ========== user preferences ========== */
 
     // The user's preferences in the page are config.preferences (the snapshot the server wrote). moqui.applyPreference(key, value)
@@ -1291,13 +1341,13 @@
         methods: {
             go(event) {
                 if (this.disable) { event.preventDefault(); return; }
-                if (this.external) {
-                    if (this.confirmation && this.confirmation.length && !root.confirm(this.confirmation)) event.preventDefault();
-                    return;
-                }
+                const message = this.confirmation;
+                const linkHref = this.linkHref, loadId = this.loadId;
+                if (message && qvt.confirmClick(event, this.$el, message,
+                        () => !this.disable && this.confirmation === message && this.linkHref === linkHref && this.loadId === loadId)) return;
+                if (this.external) return;
                 event.preventDefault();
                 if (event.button !== 0) return;
-                if (this.confirmation && this.confirmation.length && !root.confirm(this.confirmation)) return;
                 if (this.loadId && this.loadId.length > 0) this.$root.loadContainer(this.loadId, this.href);
                 else if (event.ctrlKey || event.metaKey) root.open(this.linkHref, "_blank");
                 else this.$root.setUrl(this.linkHref);
@@ -3195,7 +3245,7 @@
             '<div v-else-if="editorType === \'code\' && codeReady" class="m-text-area-editor">' +
                 '<div v-if="label" class="text-caption text-grey-7">{{label}}</div>' +
                 '<m-code-editor :model-value="local" @update:model-value="onInput" :language="language" :read-only="readonly || disable" :name="name"' +
-                    ' :form="form" min-height="8rem" max-height="32rem"></m-code-editor>' +
+                    ' :form="form" :aria-label="label || undefined" min-height="8rem" max-height="32rem"></m-code-editor>' +
             '</div>' +
             '<div v-else-if="editorType === \'html\'" class="m-text-area-editor">' +
                 '<div v-if="label" class="text-caption text-grey-7">{{label}}</div>' +
@@ -10003,14 +10053,8 @@
             const loading = moqui.l10n.loadCatalog(config.locale, () => moqui.request(catalogUrl).then((result) => result.json)).catch((err) => console.warn("no locale catalog", err));
             catalogReady = Promise.race([loading, new Promise((resolve) => root.setTimeout(resolve, 3000))]);
         }
-        // A confirmation is a data-confirm attribute on the button or link. It is asked before any other handler runs.
-        doc.addEventListener("click", (event) => {
-            const el = event.target.closest && event.target.closest("[data-confirm]");
-            if (el && !root.confirm(el.getAttribute("data-confirm"))) {
-                event.preventDefault();
-                event.stopImmediatePropagation();
-            }
-        }, true);
+        // Both qvt renderers put confirmations on the control; approval resumes its existing click/submit behavior.
+        doc.addEventListener("click", qvt.onConfirmClick, true);
         const options = rootOptions(config);
         Object.assign(options.methods, qvt.rootMethods);
         // the shell's render function when it is precompiled, else its template for the compiler build

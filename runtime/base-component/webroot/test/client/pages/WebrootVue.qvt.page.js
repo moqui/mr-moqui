@@ -4,6 +4,55 @@
 const compiler = globalThis.VueCompilerDOM;
 const qvt = moqui.qvt;
 
+test("confirmed clicks preserve modifiers and cannot act on moved, disabled or stale targets", async () => {
+    const fixture = document.createElement("div");
+    fixture.innerHTML = '<button type="button" data-confirm="Run this action?"><span id="confirm-icon">Run</span></button><div id="moved-target"></div><a id="confirm-link" href="/next">Next</a>';
+    document.body.appendChild(fixture);
+    const control = fixture.querySelector("button"), icon = fixture.querySelector("span"), elsewhere = fixture.querySelector("div"), link = fixture.querySelector("a");
+    const savedConfirm = moqui.confirmAction, savedOpen = window.open, answers = [], actions = [], opened = [], visits = [], external = [];
+    let movedActions = 0;
+    moqui.confirmAction = () => new Promise(resolve => answers.push(resolve));
+    window.open = (...args) => opened.push(args);
+    const answer = async value => { answers.shift()(value); await new Promise(resolve => setTimeout(resolve, 0)); };
+    const click = (element, extra) => element.dispatchEvent(new MouseEvent("click", Object.assign({ bubbles: true, cancelable: true, button: 0 }, extra)));
+    const vm = { $el: link, disable: false, confirmation: "Leave this record?", external: false, href: "/next", linkHref: "/next", loadId: "",
+        $root: { setUrl: path => visits.push(path) } };
+    control.addEventListener("click", event => actions.push({ target: event.target.tagName, ctrl: event.ctrlKey, meta: event.metaKey, shift: event.shiftKey, alt: event.altKey }));
+    elsewhere.addEventListener("click", () => movedActions++);
+    link.addEventListener("click", event => qvt.components["m-link"].methods.go.call(vm, event));
+    link.addEventListener("click", event => {
+        if (vm.external) { external.push({ prevented: event.defaultPrevented, meta: event.metaKey, target: link.target, href: link.href }); event.preventDefault(); }
+    });
+    document.addEventListener("click", qvt.onConfirmClick, true);
+    try {
+        click(icon, { ctrlKey: true, metaKey: true, shiftKey: true, altKey: true });
+        assert.equal(actions.length, 0);
+        elsewhere.appendChild(icon);
+        await answer(true);
+        assert.deepEqual(actions, [{ target: "BUTTON", ctrl: true, meta: true, shift: true, alt: true }]);
+        assert.equal(movedActions, 0, "a connected descendant moved elsewhere never receives the approved replay");
+
+        click(control); control.setAttribute("data-confirm", "A different action?"); await answer(true);
+        assert.equal(actions.length, 1, "changed confirmation text invalidates the pending approval");
+        click(control); control.disabled = true; await answer(true); control.disabled = false;
+        assert.equal(actions.length, 1, "a disabled control cannot replay");
+        click(control); control.remove(); await answer(true);
+        assert.equal(actions.length, 1, "a removed control cannot replay");
+
+        click(link, { ctrlKey: true }); await answer(true);
+        assert.deepEqual(opened, [["/next", "_blank"]]);
+        assert.deepEqual(visits, []);
+        click(link); vm.linkHref = "/changed"; await answer(true);
+        assert.deepEqual(visits, [], "a changed link target invalidates the pending approval");
+        vm.external = true; vm.href = vm.linkHref = link.href = "https://example.invalid/record"; link.target = "_blank";
+        click(link, { metaKey: true }); await answer(true);
+        assert.deepEqual(external, [{ prevented: false, meta: true, target: "_blank", href: "https://example.invalid/record" }], "external links retain their native target and modifiers");
+    } finally {
+        document.removeEventListener("click", qvt.onConfirmClick, true);
+        moqui.confirmAction = savedConfirm; window.open = savedOpen; fixture.remove();
+    }
+});
+
 test("every component has a template that compiles", () => {
     const names = Object.keys(qvt.components);
     assert.ok(names.length >= 38, "components: " + names.length);
