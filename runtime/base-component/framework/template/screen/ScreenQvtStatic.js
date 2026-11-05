@@ -1137,6 +1137,7 @@
                 const out = {};
                 plainAttr(out, "id", at(n, "id"), n);
                 textAttr(out, "finish-text", at(n, "finish-text"), n, true);
+                ["draft-form", "draft-fields", "draft-parameter"].forEach((name) => { if (at(n, name)) out[name] = at(n, name); });
                 w("<m-subscreens-wizard" + A(out) + "></m-subscreens-wizard>");
                 return;
             }

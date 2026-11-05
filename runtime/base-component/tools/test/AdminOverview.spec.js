@@ -185,3 +185,62 @@ feature("service selection accepts implicit entity services and rejects missing 
         }
     }
 })
+
+
+feature("job run outcome and timing distinguish incomplete history and retain diagnostic windows", {
+    expect() {
+        // The existing tools acceptance sweep owns this screen's HTML render. Check its actual display rules here.
+        const source = ec.resource.getLocationText("component://tools/screen/System/ServiceJob/JobRuns/JobRunDetail.xml")
+        const actions = /<script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/.exec(source)[1]
+        const start = new Date("2026-11-04T18:28:00.123Z")
+        const end = new Date("2026-11-04T18:28:00.130Z")
+        const run = (overrides) => ({jobRunId: "UI_JOB", jobName: "ui.fixture", userId: "EX_JOHN_DOE",
+            startTime: start, endTime: end, hasError: "N", errors: "", runThread: 'worker "one"', ...overrides})
+        const inspect = serviceJobRun => {
+            const state = {ec, serviceJobRun, runUser: {username: "john.doe", userFullName: "John Doe"},
+                runOutcomeText: null, runOutcomeStyle: null, runOutcomeDetail: null, runElapsedText: null,
+                runStartText: null, runEndText: null, runUserText: null,
+                logFrom: null, logThru: null, traceFrom: null, traceThru: null, logQueryString: null}
+            runInContext(actions, state)
+            return state
+        }
+        const complete = inspect(run({results: '{"removedCount":0}'}))
+        assert.equal(complete.runOutcomeText, "Completed successfully")
+        assert.equal(complete.runElapsedText, "7 ms")
+        assert.equal(complete.runStartText, ec.l10n.format(start, "yyyy-MM-dd HH:mm:ss.SSS") + " " + ec.user.timeZone)
+        assert.equal(complete.runEndText, ec.l10n.format(end, "yyyy-MM-dd HH:mm:ss.SSS") + " " + ec.user.timeZone)
+        assert(complete.runStartText.includes(".123"), "display retains millisecond precision")
+        assert.equal(complete.runUserText, "john.doe — John Doe (EX_JOHN_DOE)")
+        assert.equal(complete.serviceJobRun.results, '{"removedCount":0}')
+        assert.equal(complete.logFrom, "2026-11-04T18:28:00.123Z")
+        assert.equal(complete.logThru, "2026-11-04T18:28:01.130Z")
+        assert.equal(complete.traceFrom, "2026-11-04T18:27:00.123Z")
+        assert.equal(complete.traceThru, "2026-11-04T18:29:00.130Z")
+        assert.equal(complete.logQueryString, 'thread.name:' + JSON.stringify('worker "one"'))
+        for (const [row, outcome, duration] of [
+            [run({hasError: "Y", errors: "Fixture failure"}), "Completed with errors", "7 ms"],
+            [run({errors: "An error was recorded without a flag"}), "Completed with errors", "7 ms"],
+            [run({hasError: null}), "Finished — outcome not recorded", "7 ms"],
+            [run({endTime: null}), "Not finished", "Unavailable"],
+            [run({endTime: null, hasError: "Y"}), "Not finished", "Unavailable"],
+            [run({startTime: null, endTime: null}), "Not finished", "Unavailable"],
+            [run({endTime: "not a timestamp"}), "Completion time unavailable", "Unavailable"],
+            [run({startTime: end, endTime: start}), "Completed successfully", "Unavailable"],
+            [run({startTime: 0, endTime: 0}), "Completed successfully", "0 ms"],
+            [null, "Run unavailable", "Unavailable"]
+        ]) {
+            const state = inspect(row)
+            assert.equal(state.runOutcomeText, outcome)
+            assert.equal(state.runElapsedText, duration)
+        }
+        const unfinished = inspect(run({endTime: null}))
+        assert(unfinished.runOutcomeDetail.includes("may still be active or may have stopped"))
+        assert.equal(unfinished.runEndText, "Not recorded")
+        assert.equal(unfinished.logThru, "now")
+        assert.equal(unfinished.traceThru, "now")
+        const missing = inspect(null)
+        assert.equal(missing.logFrom, "now-1d")
+        assert.equal(missing.traceFrom, "now-7d")
+        assert.equal(missing.logQueryString, "")
+    }
+})

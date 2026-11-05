@@ -123,7 +123,7 @@ before/after evidence use the agreed 1920×1080 target.
 | System and Tools | Administration and data/service tools | Refined; partial activities | Overview both themes, Components, SQL success/error/recovery, service XML and echo output/validation/retry observed. Deep administration groups remain pending. |
 | Monitor and Dashboards | Diagnosis, reporting and authoring | Refined; partial activities | Monitoring 19/19 at 1440×1000; dashboard copy/edit/save/open, CSV export and filter/remove visually observed at 1920; saved log search restores query/range. See assertion limits and screen map below. |
 | Dev AIDE | Artifact discovery, editing, simulation, previews and Git | Refined; verification in progress | Home, creation-dialog cancellation, search empty states, source navigation and Search → References → Docs/copy/package/diagram navigation observed. All eight disposable-repository journeys passed; detailed limits are recorded below. |
-| BasicComms | Mail, chat, calls and settings | Recovery fixes tested; partial visual | Local fake-media/encrypted-call/chat 10/10; failed-save retention/retry regression passed. No-account Inbox/Compose inspected at1920/390; failed Close/identity refresh retain text. Hosted setup, two-message import/thread and empty-search recovery observed; triage/sending/settings remain partial. |
+| BasicComms | Mail, chat, calls and settings | Recovery fixes tested; partial visual | Local fake-media/encrypted-call/chat10/10; failed-save retention/retry passed. Hosted wizard Back/header/Finish/new-account recovery, mounted Inbox links, message keyboard controls, identity/text-block confirmation/focus and reply date clearing/validation/Standard roundtrip observed. Triage/sending/settings remain partial; TUI display passes but saving awaits UI-074. |
 | Integration | Cross-app patterns and remaining routes | In progress | Shared styles observed in System, Tools, Dashboards and Dev AIDE; full remaining inventory is explicit below. |
 
 ## Findings
@@ -201,22 +201,27 @@ otherwise, browser observations are Material at 1920×1080; routes are under `/q
 | UI-056 | G09 Editor Edit dialog | P2 fixed and retested | Markdown content has an explicit accessible name | Existing Gallery browser acceptance locates and edits the named textbox. |
 | UI-057 | G09 Git-backed Editor comparison | P3 corrected and tested | Short comparison headings preserve reading width; full version IDs remain in data and navigation | Existing Gallery acceptance checks short headings and full version parameters; resource/Git lifecycle coverage passes. |
 
-| UI-058 | S05 Job Run Detail after safe manual run | P3 observed information hierarchy / follow-up | A full-width stack of read-only fields buries outcome/results/timing and repeats User; minute-only times cannot explain short runs | John Doe/light1920, run101012, removedCount0. Evidence `system-job-run-light-before-1920.png`; group outcome/results and runtime metadata, preserve diagnostic links. |
-| UI-059 | Shared navigation: Find → immediate result link | P2 suspected race; source gap confirmed, deterministic retest pending | Older menu-data completion can overwrite the newer route; Find→job link once settled back at the list | Repeating the link after Find settled opens detail. Source shows unguarded menu-data completion; Run Job→Job Runs succeeded and is not a second reproduction. Prepare deferred-response fixture before claiming correction. |
+| UI-058 | S05 Job Run Detail after safe manual run | P3 fixed and retested | Outcome, results, timing and runtime have distinct sections; millisecond times and timezone explain short runs | Run101012, light/dark1920 and light390. Mobile sections use explicit full width. View trace reaches retained6.35ms span; View logs preserves thread/time window. |
+| UI-059 | Shared navigation: Find → immediate result link | P2 corrected; deterministic regression passes | Latest menu request wins; stale completion cannot replace newer route metadata | Deferred-response browser fixture passes; live Jobs→Job Runs→run→Trace/Logs navigation succeeds. Original intermittent Find race is not claimed to be repeatedly reproduced. |
 
-| UI-060 | B04 hosted mail setup Options → Back → Next | P2 observed draft loss / follow-up | Unsaved account name and filing policy reset to database defaults after revisiting Test | John Doe/light1920, account100001: UI review local mail + Only what I link became address-name + Every message with a known contact. Preserve scoped draft without implicitly saving sharing changes. |
-| UI-061 | B04 hosted mail setup and Account | P3 observed misleading controls/copy / follow-up | Import window, Start syncing, Last sync and provider-removal wording imply an incoming provider for a gateway-delivered account | Light1920, hosted account100001. Evidence `comms-hosted-options-light-before-1920.png`; condition remote-import controls and clarify activation/local storage. |
-| UI-062 | B04 Account → Open Inbox | P2 observed broken navigation / follow-up | Both Open Inbox links are disabled; source uses obsolete //Comms/Inbox instead of framework-relative route | John Doe/light1920, hosted account100001. Preserve account filter while resolving the current app mount. |
-| UI-063 | B02 thread reading | P2 observed keyboard exclusion / follow-up | Older collapsed message and recipient-details disclosure are click-only; row accessible name concatenates nested actions | John Doe/light1920, two imported synthetic messages. Evidence `comms-thread-light-before-1920.png`; provide named disclosure buttons and focus continuity. |
-| UI-064 | B05 Text Blocks and Identities row actions | P2 observed unnamed actions / follow-up | Delete icons have no accessible name; tooltip alone is insufficient | John Doe/light1920, own block and alias. Add visible Delete text and retain record-specific confirmation. |
-| UI-065 | B05 Text Blocks / Identities Edit → Escape | Suspected focus loss / not reproduced with controlled focus | Earlier direct locator activation ended with BODY focused; explicit focus before Enter returns to Edit correctly | John Doe/light1920: plain Name and rich Signature Escape paths both pass after establishing active Edit. Rules Edit and Gallery History also pass. No speculative product correction; retain a real-Tab follow-up. |
+| UI-060 | B04 hosted mail setup Options → Back → Next | P2 fixed and retested | Unsaved name and filing policy survive Back and step-header navigation within the scoped wizard | Disposable100051: both paths preserve edits; Next/Finish saves; Add another account starts empty. Deferred-response/scope/teardown fixtures pass. |
+| UI-061 | B04 hosted mail setup and Account | P3 partially fixed; account-list follow-up | Hosted setup describes gateway delivery and activation; remote import controls are absent; Account explains local storage | Live100001/100051, both hosted. Mail-account list still says Last sync/Not yet; two-label follow-up prepared for batch8. |
+| UI-062 | B04 Account → Open Inbox | P2 fixed and retested | Both links resolve the current app mount and preserve the account filter | Account100001 opens imported thread; setup-completion100051 opens its empty Inbox. |
+| UI-063 | B02 thread reading | P2 fixed and retested | Named message and recipient disclosure buttons work with Enter/Space and retain focus | Dark1920, imported thread100000: older body/attachment and recipients expand/collapse; row name identifies subject, senders and count without nested action text. |
+| UI-064 | B05 Text Blocks and Identities row actions | P2 fixed and retested | Delete has visible text and a record-specific tooltip; confirmation names the record | Keyboard activation opens confirmation; Cancel retains alias and text block. |
+| UI-065 | B05 Text Blocks / Identities Edit → Escape | Not reproduced with real keyboard focus | Earlier direct locator activation ended with BODY focused; real Shift+Tab navigation to Edit then Enter/Escape returns to Edit | Dark1920: Identities Name/Signature and Text Blocks rich Text paths return to the invoking BUTTON. No speculative product correction. |
 | UI-066 | M02 trace flame graph | P2 fixed and retested | Label foreground follows actual composited fill; clipped percentage frames preserve12px text without horizontal scaling | Live light/dark1920/390 and switches both ways; mounted fixture checks contrast, palette, zoom and responsive geometry. Yellow labels are black in both themes. |
 | UI-067 | M02 Trace Detail title at390 | P3 fixed and retested | Shared wrapping utility keeps the full trace ID within the viewport | Live light/dark390: document scrollWidth390; title readable and selected-span controls retained. |
 | UI-068 | Shared box headers, observed S12 ModelDetail at390 | P2 fixed and retested | Title remains above wrapping phone actions; Collapse/Expand controls name their section and expose expanded state | Live Model title width100.83px at390, keyboard toggle works; dark1280 and desktop grouping retained; mounted layout regression passes. |
-| UI-069 | B02 thread message flag | P2 observed misleading accessible name / follow-up | A flagged message still exposes Flag with no pressed state; the list row correctly says Remove flag | Dark1920, imported thread100000: row flag marks Alex message, opened Flagged and removed it. Light icon foreground is already readable (#6d5619); fix message action name to match actual state. |
-| UI-070 | B05 Out of office save → reload | P2 observed timestamp drift / investigation | Entered09:00 From/Until return as03:00 after save/reload | John Doe/light1920, disabled hosted account100001:2026-11-08 to2026-11-09. Invalid reversed range is rejected correctly. Evidence comms-away-light-1920.png; inspect service formatting, timestamp alias and shared conversion. Reply remains off. |
+| UI-069 | B02 thread message flag | P2 fixed and retested | Message action changes from Flag to Remove flag after acknowledgment | Dark1920: Enter flags Alex message; accessible name updates; Enter removes flag and restores original state. It is a next-action button, without aria-pressed. |
+| UI-070 | B05 Out of office save → reload | P2 fixed and retested | Carry instants separately from public display strings and format once | Material Save/reload and Standard Save retain Nov8/9 09:00; TUI displays the same values. Normal/DST/null service/static fixtures pass. Reply remains off; TUI save is not claimed (UI-074). |
 | UI-071 | D07 Reports overview | P3 observed grouping / prepared follow-up | Empty playlist and schedule tables show only headers; eight full-width schedule fields separate unrelated lists without section headings | John Doe/dark1920. Evidence dashboard-reports-dark-before-1920.png. Group downloads, playlists and scheduling; bound forms and explain empty lists. |
 | UI-072 | D07 playlist playback | P1 observed functional failure / investigation | Counter and dashboard link advance but same-origin dashboard iframe refuses to connect | John Doe/dark1920, disposable ui-d07-playlist, monitor-overview/monitor-services. Pause and keyboard Previous work; embedded dashboard is unavailable. Investigate response framing policy before choosing a correction. |
+
+| UI-073 | D07 TUI playlist after inaccessible items are filtered | P2 source-confirmed index mismatch / prepared follow-up | TUI uses filtered position instead of the retained original item index | Private Rust patch extends the existing bounded-rotation test; no live claim or passing result yet. |
+| UI-074 | B05 terminal Out of office | P2 observed shared form issues / follow-up | Extra selected N checkbox and blank row submit; rich fields show HTML source and are read-only | Dark1920. Direct Save field avoids the row defect in batch7. Source review also identifies potential loss of omitted rich fields on TUI save; no terminal save performed. Shared renderer and app-scoped preservation correction pending. |
+| UI-075 | B04 wizard post-submit navigation superseded by browser Back | P2 source-confirmed and regression-tested | Wizard-owned navigation tokens release a superseded wait; obsolete callbacks cannot release a newer submission | Existing deferred A/B menu fixture checks retained wizard recovery and teardown. Shared navigation/wizard43/43 pass; this race is not claimed as a live browser reproduction. |
+| UI-076 | D07 scheduled report state and actions | P3 observed misleading labels / prepared follow-up | State is raw false/true, action always says Pause / resume, and file-only confirmation refers to recipients | Schedule100000 on8096, ui-d07-report, CSV/file-only, future2099 and paused. Cancel immediate-run confirmation returns focus; no report executed. Refine Active/Paused, Pause/Resume and Run now copy. |
 
 ## Running implementation notes
 
@@ -852,6 +857,120 @@ application renders or another sweep. Broader Comms findings UI-060–063 remain
   without committing the change event. CSV preview generates a Download report link named report.zip. The browser
   download action was rejected because data: URLs are disallowed, after waiting on the permission harness. Do not
   bypass that policy or claim the ZIP contents/download have been verified. Keep the saved report for later review.
+
+### Batch 7 — mail workflow recovery and settings
+
+Batch6 committed locally as `92ca156a`. Applied bounded corrections for UI-058–064 and UI-069/070, leaving
+UI-071/072 Dashboards work as private patches for a subsequent batch. This batch preserves local mail Options
+drafts across Back/header navigation, resolves mounted Inbox links, distinguishes hosted delivery from remote sync,
+names keyboard message/recipient disclosures and delete/flag actions, groups Job Run Detail, and corrects the
+OutOfOffice date roundtrip with a grouped form and accessible shared date/time pickers.
+
+The wizard opt-in names an exact form, scalar field allowlist and account URL scope. It stores only in the mounted
+wizard, excludes secrets and remote member selections, and discards on scope change/teardown/Finish. Submitted
+snapshots are acknowledged individually so delayed responses cannot erase newer edits. Navigation menu responses
+now accept only the latest request. Existing fixtures cover these races; verification results are recorded below.
+
+Date cross-review caught a Standard/TUI compatibility problem in the first private proposal: numeric instants would
+format as numbers in those modes. The integrated screen converts the additive service instants to Date values;
+existing public display strings remain unchanged. Static QVT serializes host timestamps as epoch text, so the
+shared explicit timestamp formatter now recognizes that representation too. The existing static fixture and one
+new focused BasicComms feature cover normal/DST/null values without another application render.
+
+Initial integration included embedded-template/precompiled-client regeneration and a debug rebuild for changed
+generators, followed by the focused checks, live restored8094 review, lint and complete gate below.
+
+- Generator325passed/1ignored in40.21s, precompiled clients3/3, debug build25.12s (existing linker unwind-table warning).
+  Restored8094 started successfully with isolated persistent storage and retained hosted account100001, subject/body
+  and dates. Original test-server shutdown completed; logical backup remains intact.
+- Focused server BasicComms/AdminOverview16/16 in8.25s, including date normal/DST/null boundary. The initial added
+  Account render started at its parent with lastStandalone=-2; correct it to-3 and use the existing wizard render
+  to assert opt-in attributes at the same nested boundary. No extra render was added.
+- Shared browser fixtures: first run69/72 exposed fixture synchronization/return-value mistakes, not established
+  product failures. Wait for actual handleResponse after Response.text, return booleans from popup waits/side-effect
+  evaluate calls, and use supported locator APIs. QvtKeys passes3/3; wizard/layout9/9 in2.98s after avoiding the
+  action helper's10-second settle wait on the deliberately active loading mask. Submitted/newer/scope/teardown and
+  actual completion-path assertions all pass. Static timestamp and navigation-race fixtures passed in the first run.
+- Mail ShellSync9/9 in4.38s,3.3s feature time. Its existing Inbox case now mounts real sandboxed message previews;
+  Chromium reports the blocked injected script. The in-page harness supports only a per-case allowance, so that
+  known page-problem allowance is confined to this case; all message/body/focus/flag/network assertions remain.
+- Requested BasicComms acceptance passes10/10 across CallFlow, CallGuestFlow, EncryptedCallFlow and EncryptedChatFlow
+  in49.80s, using local participants and fake media. This does not establish external SIP/SMTP/provider delivery.
+  Command MOQUI_RUNTIME=/tmp/mui-b7-specs-tj9gmjvq ./moq accept --nobuild basic-comms; log
+  /tmp/ui-batch7-comms-acceptance.log. Screen lint362files/5517sites, zero parse failures,87 existing idiom/hazard
+  sites and202 fancy templates. Gate13 was started with source frozen; subsequent corrections and gate results follow.
+- Live8094: corrected OutOfOffice displays both stored dates at09:00. Save/reload retains09:00; Standard native
+  datetime controls also show09:00, and unchanged Standard Save preserves it when returning to Material. Both
+  picker buttons open by Enter/Space and Escape returns focus without changing values. Default light/dark1920
+  grouping is readable; dark390 stacks with no horizontal document overflow (clientWidth/scrollWidth375 with the
+  scrollbar). Collapsing Reply content keeps scheduling controls reachable. Automatic reply remains disabled.
+  Evidence comms-away-{light,dark}-after-1920.png and comms-away-dark-after-390.png (viewport capture).
+
+
+- B04 live hosted wizard: account100051, `ui.wizard.b7@example.invalid`. On Options, Back→Test→Next retains
+  unsaved name and Only what I link. A revised name also survives keyboard header→Test→Next. Next and Activate
+  account complete setup with gateway copy. Both Account100001 and completion100051 Inbox links work with their
+  own account filter. Add another account starts with a blank address. Remove/keep mail: Cancel retains; Confirm
+  soft-removes100051 with zero messages. Original100001 and its imported mail remain intact.
+- B02 live dark1920: Enter expands the older Pat message and agenda.txt38B, with focus moving to the named Collapse
+  control. Enter/Space operates recipient details and collapse. Alex Flag→Remove flag→Flag follows acknowledgment;
+  the fixture is left unflagged. The row name is concise and includes two senders and the message count.
+- B05 live dark1920: both Delete actions are named and confirmation Cancel retains the fixture. Actual Shift+Tab
+  navigation to Edit, Enter, then Escape returns to Edit for Identities and Text Blocks, including rich text.
+  UI-065 is not reproduced under a normal focus path; no focus-specific source change was made.
+- TUI display compatibility: Comms→Settings→numbered Out of office link shows Nov8/9 at09:00. Screenshot
+  comms-away-tui-dark-after-1920.png. This exposed UI-074 shared controls and an app-specific rich-field preservation
+  risk; terminal saving is explicitly unverified. Moving Save/applyToAll out of a field-row avoids introducing a
+  blank submit control with this layout. Fresh light TUI launch confirms visible Save and no hidden-field label;
+  evidence comms-away-tui-light-after-1920.png. Full shared correction remains a subsequent bounded batch.
+- Material date recovery: clear both dates → Save → reload keeps both empty; reversed dates produce the explicit
+  ends-before-starts alert and retain the entered values. Correcting and saving restores Nov8/9 at09:00 on reload,
+  with subject and rich body unchanged and reply still Off.
+- S05 live run101012: successful outcome, removedCount0, elapsed5ms from recorded start/end, timezone and runtime
+  metadata are grouped. Light/dark1920 and light390 inspected. First390 render exposed intrinsic-width columns;
+  adding xs=12 makes sections343px wide in a375px document with no horizontal overflow. Trace drill-through finds
+  the retained6.35ms telemetry span (a different measurement from the persisted5ms run timestamps); Logs opens the
+  exact thread and bounded time window. Evidence system-job-run-{light,dark}-after-1920.png and light-after-390.png.
+- Final two XML layout corrections were applied while gate14 was still in Rust host tests, before component specs.
+  Focused BasicComms/AdminOverview rerun16/16 in8.66s; final screen lint362files/5517sites/zero parse failures,
+ 87 existing flags and202 fancy templates. Logs /tmp/ui-batch7-final-layout-specs.log and
+  /tmp/ui-batch7-screen-lint-final.txt.
+- Gate13 used the old release binary accidentally. It failed the new wizard-attribute assertion because its embedded
+  generator predates this batch, plus an unrelated HTTP-resource fixture received an empty request. The exact HTTP
+  resource test passed on rerun. Gate14 uses `./moq test-framework --debug --nobuild` with the regenerated debug
+  binary, two framework workers and one Rust test thread; its final result follows. Do not count gate13 as a pass.
+- D07 next-batch observation on8096: invalid cron is refused with the6/7-field explanation; file delivery without
+  a location is refused. Created schedule100000 for ui-d07-report, CSV/file-only, cron `0 0 0 1 1 ? 2099`, location
+  `dbresource://ui-review/report-output`, then paused it. Immediate-run confirmation Cancel retains the paused
+  schedule and returns focus. No file was rendered or acquired and no mail was sent; this does not bypass or resolve
+  the browser's blocked data-URL download. UI-076 copy refinements join the private Reports proposal.
+
+
+- Final source cross-review found UI-075: suppressing an obsolete menu completion could leave the still-mounted
+  wizard submitting after browser Back. A wizard-owned navigation token now releases only its superseded wait;
+  completion, a new POST, refusal and teardown invalidate the old token. Root callbacks for obsolete routes remain
+  suppressed. Existing deferred A/B fixture covers cancellation, newer submission and teardown. Focused shared
+  navigation/wizard43/43 passes in16.39s, component feature time15.2/34s; log
+  /tmp/ui-batch7-navigation-cancel-tests.log. Integrated before gate14 began the component JavaScript suites.
+- Gate14 completed exit1: shell342/342, server352/352 functionally, demo10/10, webroot394/394, Dev AIDE client48/48
+  and served framework148/148. Cargo failed only the same three SIP fixtures at ua_tests.rs:46 with macOS
+  AddrNotAvailable. The debug server run failed timing budgets: ArtifactIndex27.73s, ArtifactDocs24.44s, Tools5.2s
+  against3s, Dev AIDE53.5s against30s. Webroot44.4/34s is a warning below its51s failure threshold. No budgets changed.
+  Rebuilding release with the current embedded generators to rerun the complete server component selection under
+  its intended performance profile. Keep the full gate recorded as nonzero, even if targeted recovery passes.
+- Stopped obsolete8090 review server cleanly and closed obsolete browser tabs4–23/25. Current8094 persistent
+  runtime and8096 report fixtures remain live; keep tabs24/26/28. No Purchasing process/runtime/checkouts touched.
+
+
+- Release rebuild passed in4m18s, four build jobs, /tmp/ui-batch7-release-build.log. Repeated the full framework
+  server selection with `env -u MOQUI_RUNTIME -u MOQUI_CONF ./moq test --nobuild -- framework basic-comms tools webroot
+  dev-aide example --workers 2`:352/352,51specs,37.25s, exit0. Every server component is within its normal budget:
+  framework10.2/12s, BasicComms5.9/8s, Tools2.2/3s, Dev AIDE17.2/30s, example1.0/3s. No spec exceeds15s.
+  Log /tmp/ui-batch7-release-server-gate.log. This resolves the debug-profile timing failures and verifies the
+  current release generators; it does not relabel gate14's known SIP/environment failure as a clean full gate.
+- Bounded batch7 is ready for its local commit. Shared, administration and communication waves remain open;
+  UI-061 account-list copy, UI-071–074 and UI-076 are prepared follow-ups, with terminal saving and external-provider
+  success explicitly unverified. Evidence files remain ignored and absent from the branch's commit history.
 
 ### Verification environment corrections
 

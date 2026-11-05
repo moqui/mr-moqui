@@ -561,6 +561,21 @@ test("the helpers a template calls", () => {
     assert.equal(mq.fmt("1234.5", "#,##0.00"), "1,234.50");
     assert.equal(mq.fmt("2024-03-05", "MM/dd/yyyy"), "03/05/2024");
     assert.equal(mq.fmt("2024-03-05 14:07:09.0", "yyyy-MM-dd HH:mm", "date-time"), "2024-03-05 14:07");
+    // Static date widgets receive numeric instants, not a wall-clock string that would be formatted a second time.
+    const previousZone = moqui.l10n.timeZone;
+    try {
+        moqui.l10n.setTimeZone("America/Chicago");
+        assert.equal(mq.fmt(Date.UTC(2026,10,8,15), "yyyy-MM-dd HH:mm", "timestamp"), "2026-11-08 09:00");
+        assert.equal(mq.fmt(Date.UTC(2026,9,31,14), "yyyy-MM-dd HH:mm", "timestamp"), "2026-10-31 09:00");
+        assert.equal(mq.fmt(Date.UTC(2026,10,2,15), "yyyy-MM-dd HH:mm", "timestamp"), "2026-11-02 09:00");
+        assert.equal(mq.fmt(null, "yyyy-MM-dd HH:mm", "timestamp"), "");
+        // A screen Date is a host Timestamp, whose static JSON representation is epoch-millisecond text.
+        assert.equal(mq.fmt(String(Date.UTC(2026,10,8,15)), "yyyy-MM-dd HH:mm", "timestamp"), "2026-11-08 09:00");
+        assert.equal(mq.fmt(String(Date.UTC(2026,9,31,14)), "yyyy-MM-dd HH:mm", "date-time"), "2026-10-31 09:00");
+        assert.equal(mq.fmt(String(Date.UTC(2026,10,2,15)), "yyyy-MM-dd HH:mm", "timestamp"), "2026-11-02 09:00");
+        assert.equal(mq.fmt("0", "yyyy-MM-dd HH:mm", "timestamp"), "1969-12-31 18:00");
+        assert.equal(mq.fmt("-1", "yyyy-MM-dd HH:mm:ss.SSS", "timestamp"), "1969-12-31 17:59:59.999");
+    } finally { moqui.l10n.setTimeZone(previousZone); }
     assert.equal(mq.fmt("12:30:00", "HH:mm"), "12:30");
     assert.equal(mq.fmt("", "#"), "");
     // epoch millis text, as a time stamp is in the data: with any date pattern, and with none (as ec.l10n.format on the server)

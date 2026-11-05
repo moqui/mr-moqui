@@ -61,7 +61,7 @@ feature("an m-drop-down takes the typed match on a quick ENTER or TAB, and TAB m
 feature("date keys step an m-date-time input; its q-date and q-time keep their own keys", {
     expect() {
         const page = mount(`<div><m-date-time id="day" name="day" type="date" v-model="day"></m-date-time>
-            <m-date-time id="stamp" name="stamp" v-model="stamp" :minute-step="15"></m-date-time>
+            <m-date-time id="stamp" name="stamp" type="timestamp" label="From" v-model="stamp" :minute-step="15"></m-date-time>
             <m-date-time id="at" name="at" type="time" v-model="at"></m-date-time></div>`, { day: "2026-01-31", stamp: "2026-10-25 23:50", at: "" })
         const press = (index, key) => { focusAt(page, index); page.keyboard.press(key); sleep(50) }
         press(0, "m")
@@ -96,6 +96,22 @@ feature("date keys step an m-date-time input; its q-date and q-time keep their o
         assert.equal(shiftH, "2026-10-25 23:05")
         assert.ok(dOnEmptyTime === "" || dOnEmptyTime === "__:__", dOnEmptyTime)
         assert.equal(tTime, true)
+        // timestamp is the XML schema's valid default; both picker buttons retain native keyboard and popup focus.
+        assert.equal(page.getByRole("button", {name:"Choose date for From",exact:true}).count(), 1)
+        assert.equal(page.getByRole("button", {name:"Choose time for From",exact:true}).count(), 1)
+        assert.equal(page.getByRole("button", {name:"Choose time for day",exact:true}).count(), 0)
+        assert.equal(page.getByRole("button", {name:"Choose date for at",exact:true}).count(), 0)
+        const dateButton = page.getByRole("button", {name:"Choose date for From",exact:true})
+        dateButton.press("Enter")
+        page.waitFor(() => !!document.querySelector(".q-date"))
+        page.keyboard.press("Escape")
+        page.waitFor(() => !document.querySelector(".q-date") && document.activeElement.getAttribute("aria-label") === "Choose date for From")
+        const timeButton = page.getByRole("button", {name:"Choose time for From",exact:true})
+        timeButton.press("Space")
+        page.waitFor(() => !!document.querySelector(".q-time"))
+        page.keyboard.press("Escape")
+        page.waitFor(() => !document.querySelector(".q-time") && document.activeElement.getAttribute("aria-label") === "Choose time for From")
+        assert.equal(page.evaluate(() => window.vm.stamp), shiftH, "opening and cancelling either picker leaves the timestamp unchanged")
     },
 })
 

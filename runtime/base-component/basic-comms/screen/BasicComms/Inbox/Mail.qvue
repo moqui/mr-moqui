@@ -273,7 +273,7 @@ along with this software (see the LICENSE.md file). If not, see
                             <template v-for="group in groups" :key="group.key">
                                 <q-item-label header class="q-py-xs q-px-md text-caption text-weight-medium">{{group.label}}</q-item-label>
                                 <q-item v-for="row in group.rows" :key="row.rowKey" :id="domId('inbox-row-', row.rowKey)" clickable
-                                        :active="row.rowKey === openKey" :active-class="activeClass" class="q-pl-xs q-pr-sm"
+                                        :active="row.rowKey === openKey" :active-class="activeClass" :aria-label="rowLabel(row)" class="q-pl-xs q-pr-sm"
                                         :class="selected[row.rowKey] ? selectedClass : ''" :style="swipeStyle(row)" @click="clickRow(row, $event)"
                                         @mouseenter="hoverKey = row.rowKey" @mouseleave="hoverKey = hoverKey === row.rowKey ? null : hoverKey"
                                         @touchstart.passive="swipeStart(row, $event)" @touchmove.passive="swipeMove(row, $event)" @touchend="swipeEnd(row)">
@@ -404,14 +404,16 @@ along with this software (see the LICENSE.md file). If not, see
                             <div v-if="item.kind === 'older'" class="row justify-center q-my-xs">
                                 <q-btn flat dense no-caps color="primary" icon="sym_o_unfold_more" :label="item.count + ' ' + t('older messages')" @click="showOlder = true"></q-btn>
                             </div>
-                            <q-card v-else-if="!isExpanded(item.message)" flat bordered class="q-mb-xs cursor-pointer" @click="expand(item.message)">
-                                <q-card-section class="row items-center no-wrap q-py-xs q-px-md">
+                            <q-card v-else-if="!isExpanded(item.message)" flat bordered class="q-mb-xs">
+                                <q-btn flat no-caps align="left" class="full-width q-py-xs q-px-md m-inbox-message-toggle"
+                                        :id="domId('inbox-toggle-', item.message.key)" :aria-label="messageToggleLabel(item.message)" aria-expanded="false"
+                                        @keydown.enter.stop @click="toggleExpanded(item.message)">
                                     <m-avatar :name="avatarName(item.message.from)" size="24px" class="q-mr-sm"></m-avatar>
                                     <span class="text-weight-medium q-mr-sm ellipsis" style="max-width:30%" :class="item.message.isUnread ? 'text-weight-bold' : ''">{{personName(item.message.from)}}</span>
                                     <span class="col ellipsis m-muted text-caption">{{plainSnippet(item.message)}}</span>
                                     <q-icon v-if="item.message.attachmentList.length" name="sym_o_attach_file" size="14px" class="m-muted q-mx-xs"></q-icon>
                                     <span class="text-caption m-muted text-no-wrap">{{shortDate(item.message.date)}}</span>
-                                </q-card-section>
+                                </q-btn>
                             </q-card>
                             <q-card v-else flat bordered class="q-mb-sm" :id="domId('inbox-msg-', item.message.key)"
                                     :class="item.message.key === focusMessageKey ? 'shadow-2' : ''">
@@ -427,8 +429,12 @@ along with this software (see the LICENSE.md file). If not, see
                                                         @click.stop="unsubscribe(item.message)"></q-btn>
                                                 <q-space></q-space>
                                                 <span class="text-caption m-muted text-no-wrap q-ml-sm">{{isPhone ? shortDate(item.message.date) : fullDate(item.message.date)}}</span>
+                                                <q-btn flat round dense size="sm" icon="sym_o_expand_less"
+                                                        :id="domId('inbox-toggle-', item.message.key)" :aria-label="messageToggleLabel(item.message)" aria-expanded="true"
+                                                        :aria-controls="domId('inbox-body-', item.message.key)" @keydown.enter.stop @click.stop="toggleExpanded(item.message)">
+                                                    <q-tooltip>{{messageToggleLabel(item.message)}}</q-tooltip></q-btn>
                                                 <q-btn flat round dense size="sm" :icon="item.message.isFlagged ? 'star' : 'sym_o_star'" :color="item.message.isFlagged ? 'warning' : undefined"
-                                                        :aria-label="t('Flag')" @click.stop="flagMessage(item.message)"></q-btn>
+                                                        :aria-label="item.message.isFlagged ? t('Remove flag') : t('Flag')" @click.stop="flagMessage(item.message)"></q-btn>
                                                 <q-btn v-if="canReplyTo(item.message)" flat round dense size="sm" icon="sym_o_reply" :aria-label="t('Reply')" @click.stop="reply(item.message, false)">
                                                     <q-tooltip>{{thread.contactListId ? t('Reply to mailbox') : t('Reply')}} (r)</q-tooltip></q-btn>
                                                 <q-btn flat round dense size="sm" icon="sym_o_more_vert" :aria-label="t('More')" @click.stop>
@@ -458,9 +464,14 @@ along with this software (see the LICENSE.md file). If not, see
                                                     </q-list></q-menu>
                                                 </q-btn>
                                             </div>
-                                            <div class="text-caption m-muted cursor-pointer ellipsis" @click="toggleDetails(item.message)">{{recipientsText(item.message)}}
-                                                <q-icon :name="details[item.message.key] ? 'sym_o_expand_less' : 'sym_o_expand_more'" size="14px"></q-icon></div>
-                                            <div v-if="details[item.message.key]" class="text-caption q-mt-xs">
+                                            <q-btn flat dense no-caps align="left" class="text-caption m-muted m-inbox-recipient-toggle"
+                                                    :id="domId('inbox-recipients-', item.message.key)" :aria-label="messageDetailsLabel(item.message)"
+                                                    :aria-expanded="!!details[item.message.key]" :aria-controls="domId('inbox-details-', item.message.key)"
+                                                    @keydown.enter.stop @click="toggleDetails(item.message)">
+                                                <span class="ellipsis">{{recipientsText(item.message)}}</span>
+                                                <q-icon :name="details[item.message.key] ? 'sym_o_expand_less' : 'sym_o_expand_more'" size="14px" aria-hidden="true"></q-icon>
+                                            </q-btn>
+                                            <div v-if="details[item.message.key]" :id="domId('inbox-details-', item.message.key)" class="text-caption q-mt-xs">
                                                 <div><span class="m-muted">{{t('From')}}:</span> {{personFull(item.message.from)}}</div>
                                                 <div v-if="item.message.toList.length"><span class="m-muted">{{t('To')}}:</span> {{item.message.toList.map(personFull).join(', ')}}</div>
                                                 <div v-if="item.message.ccList.length"><span class="m-muted">{{t('Cc')}}:</span> {{item.message.ccList.map(personFull).join(', ')}}</div>
@@ -470,7 +481,7 @@ along with this software (see the LICENSE.md file). If not, see
                                         </div>
                                     </div>
                                 </q-card-section>
-                                <q-card-section class="q-pt-xs">
+                                <q-card-section class="q-pt-xs" :id="domId('inbox-body-', item.message.key)">
                                     <q-banner v-if="item.message.isDraft" dense rounded class="m-tonal text-negative q-mb-sm">{{t('Draft')}}
                                         <template v-slot:action><q-btn flat dense no-caps color="primary" :label="t('Edit')" @click="compose({emailMessageId: item.message.emailMessageId})"></q-btn></template></q-banner>
                                     <q-banner v-if="item.message.sendError" dense rounded class="m-tonal text-negative q-mb-sm">{{t('Not sent')}}: {{item.message.sendError}}
@@ -1487,6 +1498,11 @@ module.exports = {
         },
 
         // ---- rows ----
+        rowLabel(row) {
+            const count = Number(row.messageCount) || 1;
+            const countText = count === 1 ? t('1 message') : t('{count} messages').replace('{count}', () => String(count));
+            return [row.subject || t('(no subject)'), this.participantsText(row), countText, row.isUnread ? t('Unread') : ''].filter(Boolean).join('. ');
+        },
         participantsText(row) {
             const list = row.participantList || [];
             const mine = (entry) => (row.store === 'email' ? this.myAddresses.has(String(entry.address || '').toLowerCase()) : entry.partyId === this.me.partyId);
@@ -1799,6 +1815,24 @@ module.exports = {
         clearThread() { this.openKey = null; this.thread = null; this.loadingThread = false; this.threadSeq++; },
         closeThread() { this.setThreadParam(null); },
         isExpanded(message) { return !!this.expanded[message.key]; },
+        messageControlLabel(message, label) {
+            const named = t(label).replace('{sender}', () => this.personName(message.from));
+            const date = this.fullDate(message.date);
+            return named + (date ? ', ' + date : '');
+        },
+        messageToggleLabel(message) {
+            return this.messageControlLabel(message, this.isExpanded(message) ? 'Collapse message from {sender}' : 'Read message from {sender}');
+        },
+        messageDetailsLabel(message) { return this.messageControlLabel(message, 'Message details from {sender}'); },
+        toggleExpanded(message) {
+            this.expanded = Object.assign({}, this.expanded, { [message.key]: !this.isExpanded(message) });
+            this.focusMessageKey = message.key;
+            // The two card presentations replace their buttons; keep keyboard focus on the same message's disclosure.
+            this.$nextTick(() => {
+                const control = document.getElementById(this.domId('inbox-toggle-', message.key));
+                if (control) control.focus({ preventScroll: true });
+            });
+        },
         expand(message) { this.expanded = Object.assign({}, this.expanded, { [message.key]: true }); this.focusMessageKey = message.key; },
         expandAll() {
             const all = {};
@@ -2555,6 +2589,9 @@ module.exports = {
 };
 </script>
 <style>
+.m-inbox-root .m-inbox-message-toggle .q-btn__content { flex-wrap:nowrap; text-align:left; }
+.m-inbox-root .m-inbox-recipient-toggle { min-height:0; padding:0 2px; max-width:100%; vertical-align:top; }
+.m-inbox-root .m-inbox-recipient-toggle .q-btn__content { flex-wrap:nowrap; min-width:0; }
 /* the end column of a thread row: the date and the hover actions share one fixed width, so the row never shifts on hover —
    the actions fade in over the date (opacity only, no layout change) */
 .m-inbox-root .m-inbox-row-end { position:relative; width:112px; height:24px; flex:none; }

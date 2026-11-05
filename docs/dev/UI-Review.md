@@ -200,3 +200,18 @@ Further patterns established during the review:
   Save reachable. Collapsing advanced fields must preserve their values for the eventual submission.
 - Use exact accessible names for short action words such as Confirm in focused browser tests. A newly named section
   toggle can legitimately contain the same word; substring matching must not activate a different control.
+- An unsaved wizard draft is an explicit form/field allowlist scoped to one mounted workflow and record. Keep
+  credentials and remote relationship selections out. A successful response acknowledges the submitted snapshot;
+  it must not erase newer edits. Finish, scope changes and leaving the workflow discard the local draft.
+  A superseded navigation must also release the mounted wizard's pending state, while old completion callbacks
+  cannot unlock a newer submission. Exercise this ordering with a deferred-response fixture.
+- Format temporal values once, in the user's zone. Keep instants across server/client boundaries and preserve any
+  existing display-string contract for other callers. Verify normal, DST-crossing and cleared dates, plus Standard
+  and TUI representations when changing shared date handling.
+- Use named native buttons for message and recipient disclosures; preserve focus when collapsed and expanded
+  presentations replace each other. Toggle actions describe the next action and expose their current state.
+- Distinguish hosted delivery from remote synchronization. Account links resolve through the current app mount and
+  carry the selected account. Copy, status metadata and available controls should match the actual account kind.
+- Responsive field columns specify their phone width explicitly, for example `xs="12" md="8"`; a desktop-only
+  width can leave narrow cards at their intrinsic width. Inspect the real phone layout instead of inferring stacking
+  from the absence of horizontal overflow.

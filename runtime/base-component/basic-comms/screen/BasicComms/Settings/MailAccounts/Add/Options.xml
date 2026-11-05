@@ -41,12 +41,14 @@ along with this software (see the LICENSE.md file). If not, see
 
     <actions><script><![CDATA[
         hasAccount = false
+        deliveredHere = false
         memberRows = []
         if (!emailAccountId) return
         const detail = ec.service.sync().name('org.moqui.comms.MailSettingsServices.get#MailAccountDetail').parameter('emailAccountId', emailAccountId).call()
         if (ec.message.hasError() || !detail?.found) { optionsError = ec.message.getErrorsString(); ec.message.clearErrors(); return }
         if (!detail.account?.canManage) { optionsError = ec.l10n.localize('Only a manager of this account changes its options'); return }
         hasAccount = true
+        deliveredHere = detail.account.deliveredHere === true
         isShared = detail.account.isShared === true
         memberRows = Array.from(detail.memberList || [])
         const saved = detail.options || {}
@@ -69,9 +71,10 @@ along with this software (see the LICENSE.md file). If not, see
                 <form-single name="AccountOptions" transition="saveOptions" map="options">
                     <field name="emailAccountId"><default-field><hidden/></default-field></field>
                     <field name="accountName"><default-field title="Name in the Inbox" tooltip="Such as Personal, Work or Support"><text-line size="30"/></default-field></field>
-                    <field name="syncWindowDays"><default-field title="Bring in mail from"><radio no-current-selected-key="365">
+                    <field name="syncWindowDays"><conditional-field condition="!deliveredHere" title="Bring in mail from"><radio no-current-selected-key="365">
                         <option key="30" text="The last 30 days"/><option key="90" text="The last 3 months"/><option key="365" text="The last year"/>
-                        <option key="all" text="All of it (a large mailbox takes a while)"/></radio></default-field></field>
+                        <option key="all" text="All of it (a large mailbox takes a while)"/></radio></conditional-field>
+                        <default-field><hidden/></default-field></field>
                     <field name="accountKindEnumId"><default-field title="Whose mail is it?"><radio><list-options list="kindOptions" key="${key}" text="${text}"/></radio></default-field></field>
                     <field name="recordFilingEnumId"><default-field title="Put mail on customer and supplier records">
                         <radio no-current-selected-key="ErfLinkedOnly">

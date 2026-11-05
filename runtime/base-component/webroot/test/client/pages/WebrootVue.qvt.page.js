@@ -124,7 +124,7 @@ test("both shells install Quasar's Notify, LoadingBar and Dialog plugins", async
     }
 });
 
-test("the shell mounts: links, dark mode, and the page address", () => {
+test("the shell mounts: links, dark mode, and the latest page address", async () => {
     const options = qvt.rootOptions({ basePath: "/apps", linkBasePath: "/qapps", appRootPath: "" });
     const link = options.methods.getLinkPath;
     const vmLike = { appRootPath: "", linkBasePath: "/qapps" };
@@ -144,6 +144,107 @@ test("the shell mounts: links, dark mode, and the page address", () => {
     assert.deepEqual(target.currentPathList, ["System", "Foo"]);
     cp.set.call(target, "/apps/Bar");
     assert.deepEqual(target.currentPathList, ["Bar"]);
+    // Use the real root setters and menu watcher, with deferred responses instead of timing-sensitive HTTP delays.
+    const vm = options.data(), pending = [], completions = [], reloads = [], errors = [];
+    Object.keys(options.methods).forEach((name) => { vm[name] = options.methods[name].bind(vm); });
+    Object.keys(options.computed).forEach((name) => {
+        const computed = options.computed[name];
+        Object.defineProperty(vm, name, { configurable: true,
+            get: () => (typeof computed === "function" ? computed : computed.get).call(vm),
+            set: typeof computed.set === "function" ? (value) => computed.set.call(vm, value) : undefined });
+    });
+    vm.reloadSubscreens = () => reloads.push(vm.currentPath);
+    let menu = vm.navMenuList;
+    Object.defineProperty(vm, "navMenuList", { get: () => menu, set(value) {
+        menu = value;
+        options.watch.navMenuList.call(vm, value);
+    } });
+    const originalRequest = moqui.request, originalError = moqui.handleAjaxError, originalTitle = document.title;
+    const originalScroll = [document.documentElement.scrollTop, document.body.scrollTop];
+    moqui.request = (url) => new Promise((resolve, reject) => pending.push({ url, resolve, reject }));
+    moqui.handleAjaxError = (err) => errors.push(err);
+    const result = (path, title) => ({ json: [{ path, pathWithParams: path + "?jobName=Demo", title }] });
+    const go = (path, label) => vm.setUrl("/qapps/system/" + path + "?jobName=Demo", null,
+        (route) => completions.push({ label, path: route.path }), false);
+    try {
+        go("JobList", "find");
+        go("JobDetail", "detail");
+        assert.deepEqual(pending.map((request) => request.url), [
+            "/menuData/apps/system/JobList?jobName=Demo", "/menuData/apps/system/JobDetail?jobName=Demo"
+        ]);
+        pending[1].resolve(result("/apps/system/JobDetail", "Job Detail"));
+        await Promise.resolve();
+        assert.equal(vm.currentPath, "/apps/system/JobDetail");
+        pending[0].resolve(result("/apps/system/JobList", "Job List"));
+        await Promise.resolve();
+        assert.equal(vm.currentPath, "/apps/system/JobDetail", "an older Find response cannot replace the newer detail route");
+        assert.equal(vm.currentLinkUrl, "/qapps/system/JobDetail?jobName=Demo");
+        assert.equal(document.title, "Job Detail (Demo)");
+        assert.deepEqual(reloads, ["/apps/system/JobDetail"]);
+        assert.deepEqual(vm.navHistoryList.map((entry) => entry.pathWithParams), ["/apps/system/JobDetail?jobName=Demo"]);
+        assert.deepEqual(completions, [{ label: "detail", path: "/apps/system/JobDetail" }]);
+
+        go("JobList", "older-error");
+        go("JobRuns", "runs");
+        pending[3].resolve(result("/apps/system/JobRuns", "Job Runs"));
+        await Promise.resolve();
+        pending[2].reject({ status: 503, text: "Old request unavailable" });
+        await Promise.resolve();
+        assert.deepEqual(errors, [], "an obsolete request must not report an error on the new page");
+        assert.equal(vm.currentPath, "/apps/system/JobRuns");
+
+        go("JobDetail", "pending-detail");
+        // The same-URL branch reloads components without another menu request. Its pending menu is still useful.
+        go("JobDetail", "reload-detail");
+        assert.equal(pending.length, 5);
+        pending[4].resolve(result("/apps/system/JobDetail", "Job Detail"));
+        await Promise.resolve();
+        assert.equal(vm.navMenuList[0].path, "/apps/system/JobDetail");
+        assert.equal(document.title, "Job Detail (Demo)");
+
+        go("JobList", "current-error");
+        const currentError = { status: 503, text: "Current request unavailable" };
+        pending[5].reject(currentError);
+        await Promise.resolve();
+        assert.deepEqual(errors, [currentError], "the current request retains ordinary failure feedback");
+
+        // A wizard ancestor stays mounted when browser Back supersedes its successful POST's step navigation.
+        const wizard = qvt.components["m-subscreens-wizard"];
+        const wizardVm = Object.assign(wizard.data(), wizard.methods, { $root: vm, activeIndex: 0,
+            steps: [{name:"Options",pathWithParams:"/qapps/system/W/Options"}, {name:"Finish",pathWithParams:"/qapps/system/W/Finish"}] });
+        let generation = vm.menuLoadGeneration;
+        Object.defineProperty(vm, "menuLoadGeneration", { get: () => generation, set(value) {
+            generation = value;
+            // Like Vue's watcher, observe after setUrl returns and the wizard records its own request's generation.
+            Promise.resolve().then(() => wizard.watch["$root.menuLoadGeneration"].call(wizardVm, generation));
+        } });
+        const navigate = vm.setUrl, callbacks = [];
+        vm.setUrl = (url, body, done) => { if (done) callbacks.push(done); navigate(url, body, done, false); };
+        vm.currentPath="/apps/system/W/Options";vm.currentSearch="";
+        wizardVm.stepSubmitting();wizardVm.stepAnswered(null, {});
+        const forward=pending[pending.length-1];
+        await Promise.resolve();
+        assert.equal(wizardVm.submitting,true,"the wizard waits for its own step navigation");
+        vm.setUrl("/qapps/system/W/Options");
+        const back=pending[pending.length-1];
+        await Promise.resolve();
+        assert.equal(wizardVm.submitting,false,"superseding navigation releases the still-mounted wizard");
+        back.resolve(result("/apps/system/W/Options","Options"));await Promise.resolve();
+        wizardVm.stepSubmitting();
+        forward.resolve(result("/apps/system/W/Finish","Finish"));await Promise.resolve();
+        assert.equal(vm.currentPath,"/apps/system/W/Options","the obsolete response cannot restore the discarded step");
+        callbacks[0]();
+        assert.equal(wizardVm.submitting,true,"an obsolete completion cannot release a newer submission");
+        wizard.beforeUnmount.call(wizardVm);callbacks[0]();
+        assert.equal(wizardVm.submitting,false,"teardown invalidates its outstanding navigation cleanup");
+    } finally {
+        moqui.request = originalRequest;
+        moqui.handleAjaxError = originalError;
+        document.title = originalTitle;
+        document.documentElement.scrollTop = originalScroll[0];
+        document.body.scrollTop = originalScroll[1];
+    }
+
 });
 
 test("theme footer columns have a full-width row as their immediate parent", () => {

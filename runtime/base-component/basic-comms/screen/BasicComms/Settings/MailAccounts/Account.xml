@@ -283,7 +283,7 @@ along with this software (see the LICENSE.md file). If not, see
                         <label type="p" text="The first sync is under way: your mail shows in the Inbox as it arrives, the newest first. A large mailbox takes a while; you can use the Inbox meanwhile."/>
                     </widgets></section>
                     <container style="row q-gutter-sm">
-                        <link url="//Comms/Inbox" text="Open the Inbox" icon="sym_o_inbox" btn-type="primary" parameter-map="{account:emailAccountId}"/>
+                        <link url="../../../Inbox" text="Open the Inbox" icon="sym_o_inbox" btn-type="primary" parameter-map="{account:emailAccountId}"/>
                         <link url="." text="Refresh" icon="sym_o_refresh" parameter-map="{emailAccountId:emailAccountId}"/>
                         <link url="../Add" text="Add another account" icon="sym_o_add" parameter-map="{fresh:'Y'}"/>
                     </container>
@@ -389,8 +389,8 @@ along with this software (see the LICENSE.md file). If not, see
                         <container style="row q-col-gutter-sm q-mt-xs">
                             <container style="col-6 col-sm-3"><label type="div" text="Unread" style="text-caption m-muted"/>
                                 <label type="div" text="${account.unreadCount != null ? ec.l10n.format(account.unreadCount, '#,##0') : '–'}" style="text-subtitle1"/></container>
-                            <container style="col-6 col-sm-3"><label type="div" text="Last sync" style="text-caption m-muted"/>
-                                <label type="div" text="${account.lastSyncText || 'Not yet'}" style="text-body2"/></container>
+                            <container style="col-6 col-sm-3"><label type="div" text="${deliveredHere ? 'Delivery' : 'Last sync'}" style="text-caption m-muted"/>
+                                <label type="div" text="${deliveredHere ? 'Mail gateway' : (account.lastSyncText || 'Not yet')}" style="text-body2"/></container>
                             <container style="col-6 col-sm-3"><label type="div" text="Folders" style="text-caption m-muted"/>
                                 <label type="div" text="${account.folderCount}" style="text-subtitle1"/></container>
                             <container style="col-6 col-sm-3"><label type="div" text="Not sent" style="text-caption m-muted"/>
@@ -401,7 +401,7 @@ along with this software (see the LICENSE.md file). If not, see
                             <link url="." text="Test the connection" icon="sym_o_network_check" condition="canManage &amp;&amp; account.hasServer" parameter-map="{emailAccountId:emailAccountId, runTest:'Y'}"/>
                             <link url="sendTestMessage" link-type="hidden-form" text="Send a test message" icon="sym_o_send" condition="account.canSend &amp;&amp; account.hasServer"
                                     parameter-map="{emailAccountId:emailAccountId}"/>
-                            <link url="//Comms/Inbox" text="Open in the Inbox" icon="sym_o_inbox" parameter-map="{account:emailAccountId}"/>
+                            <link url="../../../Inbox" text="Open in the Inbox" icon="sym_o_inbox" parameter-map="{account:emailAccountId}"/>
                         </container>
                     </box-body></container-box>
 
@@ -494,8 +494,8 @@ along with this software (see the LICENSE.md file). If not, see
                             <form-list name="AccountFolders" list="folderRows" skip-form="true" paginate="false">
                                 <field name="folderName"><default-field title="Folder"><display/></default-field></field>
                                 <field name="kindLabel"><default-field title="Kind"><display style="text-caption"/></default-field></field>
-                                <field name="pathText"><default-field title="On the server"><display style="text-caption m-muted"/></default-field></field>
-                                <field name="syncText"><default-field title="Sync"><display style="text-caption"/></default-field></field>
+                                <field name="pathText" hide="deliveredHere"><default-field title="On the server"><display style="text-caption m-muted"/></default-field></field>
+                                <field name="syncText" hide="deliveredHere"><default-field title="Sync"><display style="text-caption"/></default-field></field>
                                 <field name="unreadCount" align="right"><default-field title="Unread"><display/></default-field></field>
                                 <field name="totalCount" align="right"><default-field title="Messages"><display/></default-field></field>
                                 <columns type="mobile">
@@ -503,7 +503,8 @@ along with this software (see the LICENSE.md file). If not, see
                                     <column><field-ref name="unreadCount"/></column>
                                 </columns>
                             </form-list>
-                            <label type="p" text="The sync maps the server's folders here: Inbox, Sent, Drafts, Spam, Trash and Archive by their kind, and the others by name." style="text-caption m-muted q-pa-sm q-mb-none"/>
+                            <label type="p" text="The sync maps the server's folders here: Inbox, Sent, Drafts, Spam, Trash and Archive by their kind, and the others by name." style="text-caption m-muted q-pa-sm q-mb-none" condition="!deliveredHere"/>
+                            <label type="p" text="These folders keep this account's mail here. The mail gateway delivers incoming messages; no external mailbox is synced." style="text-caption m-muted q-pa-sm q-mb-none" condition="deliveredHere"/>
                         </widgets></section>
                     </box-body-nopad></container-box>
                 </row-col>
@@ -514,9 +515,10 @@ along with this software (see the LICENSE.md file). If not, see
                             <form-single name="AccountOptionsEdit" transition="saveOptions" map="options">
                                 <field name="emailAccountId"><default-field><hidden/></default-field></field>
                                 <field name="accountName"><default-field title="Name in the Inbox"><text-line size="30"/></default-field></field>
-                                <field name="syncWindowDays"><default-field title="Bring in mail from"><drop-down>
+                                <field name="syncWindowDays"><conditional-field condition="!deliveredHere" title="Bring in mail from"><drop-down>
                                     <option key="30" text="The last 30 days"/><option key="90" text="The last 3 months"/><option key="365" text="The last year"/>
-                                    <option key="all" text="All of it"/></drop-down></default-field></field>
+                                    <option key="all" text="All of it"/></drop-down></conditional-field>
+                                    <default-field><hidden/></default-field></field>
                                 <field name="recordFilingEnumId"><default-field title="Put mail on records"><radio no-current-selected-key="ErfLinkedOnly">
                                     <option key="ErfLinkedOnly" text="Only what I link (private until I link a message)"/>
                                     <option key="ErfAllMatches" text="Every message with a known contact (for the team to see)"/></radio></default-field></field>
@@ -578,12 +580,13 @@ along with this software (see the LICENSE.md file). If not, see
 
                     <section name="Remove" condition="canManage"><widgets>
                         <container-box type="danger"><box-header title="Remove the account"/><box-body>
-                            <label type="p" text="Removing stops the sync and takes the account out of your Inbox and the lists. Nothing is deleted on the server: your mail stays with your provider. Keep the mail here to keep it on the records it is filed on, or delete it here to free the space."/>
+                            <label type="p" text="Removing stops the sync and takes the account out of your Inbox and the lists. Nothing is deleted on the server: your mail stays with your provider. Keep the mail here to keep it on the records it is filed on, or delete it here to free the space." condition="!deliveredHere"/>
+                            <label type="p" text="Removing takes this account out of your Inbox and the lists. This account's mail is kept here, with no external provider copy. Keep the mail here, or delete it here to free the space; messages filed on records are kept." condition="deliveredHere"/>
                             <container style="row q-gutter-sm">
                                 <link url="removeAccount" link-type="hidden-form" text="Remove, keep the mail here" icon="sym_o_link_off" btn-type="danger"
-                                        confirmation="Remove ${account.accountName}? Its mail stays here and on the server." parameter-map="{emailAccountId:emailAccountId, deleteLocalCopies:'N'}"/>
+                                        confirmation="${deliveredHere ? 'Remove ' + account.accountName + '? Its mail stays here.' : 'Remove ' + account.accountName + '? Its mail stays here and on the server.'}" parameter-map="{emailAccountId:emailAccountId, deleteLocalCopies:'N'}"/>
                                 <link url="removeAccount" link-type="hidden-form" text="Remove and delete its mail here" icon="sym_o_delete" btn-type="danger"
-                                        confirmation="Remove ${account.accountName} and delete its mail here? The mail on the server is not touched; a message filed on a record is kept." parameter-map="{emailAccountId:emailAccountId, deleteLocalCopies:'Y'}"/>
+                                        confirmation="${deliveredHere ? 'Remove ' + account.accountName + ' and delete its mail here? There is no external provider copy; a message filed on a record is kept.' : 'Remove ' + account.accountName + ' and delete its mail here? The mail on the server is not touched; a message filed on a record is kept.'}" parameter-map="{emailAccountId:emailAccountId, deleteLocalCopies:'Y'}"/>
                             </container>
                         </box-body></container-box>
                     </widgets></section>

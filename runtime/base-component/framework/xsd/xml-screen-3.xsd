@@ -934,6 +934,17 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:attribute name="header-menus-id" type="xs:string" default="header-menus"/>
         <xs:attribute name="finish-text" type="xs:string"><xs:annotation><xs:documentation>For type wizard: the label of
             the last step's button, Finish by default (localized). Next and Back are localized too.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="draft-form" type="xs:string"><xs:annotation><xs:documentation>For a qvt wizard only: the exact
+            form name whose unsaved fields survive Back/header navigation while this wizard is mounted. Requires
+            draft-fields and draft-parameter. Does not submit, use browser storage or change the server's draft.
+            A successful save discards its submitted snapshot; newer edits remain. Finish, a different or missing scope,
+            and leaving the wizard discard the draft. Other render modes retain their existing save/Back behavior.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="draft-fields" type="xs:string"><xs:annotation><xs:documentation>Comma-separated allowlist of
+            non-secret field names to keep for draft-form. Never include passwords, tokens or other credentials. Only
+            scalar values and arrays of scalar values are kept; all other fields remain server-provided.</xs:documentation></xs:annotation></xs:attribute>
+        <xs:attribute name="draft-parameter" type="xs:string"><xs:annotation><xs:documentation>The current URL parameter
+            that scopes the draft, such as emailAccountId. An empty or changed value clears the draft; a new mounted
+            wizard starts empty even for the same id.</xs:documentation></xs:annotation></xs:attribute>
     </xs:complexType></xs:element>
 
     <!-- ================ Sections ================ -->

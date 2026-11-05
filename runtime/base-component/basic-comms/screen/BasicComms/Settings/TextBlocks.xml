@@ -96,7 +96,7 @@ along with this software (see the LICENSE.md file). If not, see
                             </field-layout>
                         </form-single>
                     </container-dialog>
-                    <link url="deleteTextBlock" link-type="hidden-form-link" icon="sym_o_delete" text="" tooltip="Delete" style="m-btn-flat"
+                    <link url="deleteTextBlock" link-type="hidden-form-link" icon="sym_o_delete" text="Delete" tooltip="Delete ${title}" style="m-btn-flat"
                             confirmation="Delete the text block ${title}?" parameter-map="{emailTextBlockId:emailTextBlockId}"/>
                 </conditional-field><default-field title=""><display text=""/></default-field></field>
                 <columns type="mobile">

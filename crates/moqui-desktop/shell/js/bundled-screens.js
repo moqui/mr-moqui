@@ -9915,6 +9915,11 @@ module.exports = {
         },
 
         // ---- rows ----
+        rowLabel(row) {
+            const count = Number(row.messageCount) || 1;
+            const countText = count === 1 ? t('1 message') : t('{count} messages').replace('{count}', () => String(count));
+            return [row.subject || t('(no subject)'), this.participantsText(row), countText, row.isUnread ? t('Unread') : ''].filter(Boolean).join('. ');
+        },
         participantsText(row) {
             const list = row.participantList || [];
             const mine = (entry) => (row.store === 'email' ? this.myAddresses.has(String(entry.address || '').toLowerCase()) : entry.partyId === this.me.partyId);
@@ -10227,6 +10232,24 @@ module.exports = {
         clearThread() { this.openKey = null; this.thread = null; this.loadingThread = false; this.threadSeq++; },
         closeThread() { this.setThreadParam(null); },
         isExpanded(message) { return !!this.expanded[message.key]; },
+        messageControlLabel(message, label) {
+            const named = t(label).replace('{sender}', () => this.personName(message.from));
+            const date = this.fullDate(message.date);
+            return named + (date ? ', ' + date : '');
+        },
+        messageToggleLabel(message) {
+            return this.messageControlLabel(message, this.isExpanded(message) ? 'Collapse message from {sender}' : 'Read message from {sender}');
+        },
+        messageDetailsLabel(message) { return this.messageControlLabel(message, 'Message details from {sender}'); },
+        toggleExpanded(message) {
+            this.expanded = Object.assign({}, this.expanded, { [message.key]: !this.isExpanded(message) });
+            this.focusMessageKey = message.key;
+            // The two card presentations replace their buttons; keep keyboard focus on the same message's disclosure.
+            this.$nextTick(() => {
+                const control = document.getElementById(this.domId('inbox-toggle-', message.key));
+                if (control) control.focus({ preventScroll: true });
+            });
+        },
         expand(message) { this.expanded = Object.assign({}, this.expanded, { [message.key]: true }); this.focusMessageKey = message.key; },
         expandAll() {
             const all = {};
@@ -12565,6 +12588,7 @@ module.exports = {
                                                 clickable: "",
                                                 active: row.rowKey === _ctx.openKey,
                                                 "active-class": _ctx.activeClass,
+                                                "aria-label": _ctx.rowLabel(row),
                                                 class: _normalizeClass(["q-pl-xs q-pr-sm", _ctx.selected[row.rowKey] ? _ctx.selectedClass : '']),
                                                 style: _normalizeStyle(_ctx.swipeStyle(row)),
                                                 onClick: $event => (_ctx.clickRow(row, $event)),
@@ -12796,7 +12820,7 @@ module.exports = {
                                                   }, 1024)
                                                 ]),
                                                 _: 2
-                                              }, 1032, ["id", "active", "active-class", "class", "style", "onClick", "onMouseenter", "onMouseleave", "onTouchstartPassive", "onTouchmovePassive", "onTouchend"]))
+                                              }, 1032, ["id", "active", "active-class", "aria-label", "class", "style", "onClick", "onMouseenter", "onMouseleave", "onTouchstartPassive", "onTouchmovePassive", "onTouchend"]))
                                             }), 128))
                                           ], 64))
                                         }), 128))
@@ -13531,11 +13555,20 @@ module.exports = {
                                                   key: 1,
                                                   flat: "",
                                                   bordered: "",
-                                                  class: "q-mb-xs cursor-pointer",
-                                                  onClick: $event => (_ctx.expand(item.message))
+                                                  class: "q-mb-xs"
                                                 }, {
                                                   default: _withCtx(() => [
-                                                    _createVNode(_component_q_card_section, { class: "row items-center no-wrap q-py-xs q-px-md" }, {
+                                                    _createVNode(_component_q_btn, {
+                                                      flat: "",
+                                                      "no-caps": "",
+                                                      align: "left",
+                                                      class: "full-width q-py-xs q-px-md m-inbox-message-toggle",
+                                                      id: _ctx.domId('inbox-toggle-', item.message.key),
+                                                      "aria-label": _ctx.messageToggleLabel(item.message),
+                                                      "aria-expanded": "false",
+                                                      onKeydown: _withKeys(_withModifiers(() => {}, ["stop"]), ["enter"]),
+                                                      onClick: $event => (_ctx.toggleExpanded(item.message))
+                                                    }, {
                                                       default: _withCtx(() => [
                                                         _createVNode(_component_m_avatar, {
                                                           name: _ctx.avatarName(item.message.from),
@@ -13558,10 +13591,10 @@ module.exports = {
                                                         _createElementVNode("span", { class: "text-caption m-muted text-no-wrap" }, _toDisplayString(_ctx.shortDate(item.message.date)), 1)
                                                       ]),
                                                       _: 2
-                                                    }, 1024)
+                                                    }, 1032, ["id", "aria-label", "onKeydown", "onClick"])
                                                   ]),
                                                   _: 2
-                                                }, 1032, ["onClick"]))
+                                                }, 1024))
                                               : (_openBlock(), _createBlock(_component_q_card, {
                                                   key: 2,
                                                   flat: "",
@@ -13616,9 +13649,32 @@ module.exports = {
                                                                 round: "",
                                                                 dense: "",
                                                                 size: "sm",
+                                                                icon: "sym_o_expand_less",
+                                                                id: _ctx.domId('inbox-toggle-', item.message.key),
+                                                                "aria-label": _ctx.messageToggleLabel(item.message),
+                                                                "aria-expanded": "true",
+                                                                "aria-controls": _ctx.domId('inbox-body-', item.message.key),
+                                                                onKeydown: _withKeys(_withModifiers(() => {}, ["stop"]), ["enter"]),
+                                                                onClick: _withModifiers($event => (_ctx.toggleExpanded(item.message)), ["stop"])
+                                                              }, {
+                                                                default: _withCtx(() => [
+                                                                  _createVNode(_component_q_tooltip, null, {
+                                                                    default: _withCtx(() => [
+                                                                      _createTextVNode(_toDisplayString(_ctx.messageToggleLabel(item.message)), 1)
+                                                                    ]),
+                                                                    _: 2
+                                                                  }, 1024)
+                                                                ]),
+                                                                _: 2
+                                                              }, 1032, ["id", "aria-label", "aria-controls", "onKeydown", "onClick"]),
+                                                              _createVNode(_component_q_btn, {
+                                                                flat: "",
+                                                                round: "",
+                                                                dense: "",
+                                                                size: "sm",
                                                                 icon: item.message.isFlagged ? 'star' : 'sym_o_star',
                                                                 color: item.message.isFlagged ? 'warning' : undefined,
-                                                                "aria-label": _ctx.t('Flag'),
+                                                                "aria-label": item.message.isFlagged ? _ctx.t('Remove flag') : _ctx.t('Flag'),
                                                                 onClick: _withModifiers($event => (_ctx.flagMessage(item.message)), ["stop"])
                                                               }, null, 8, ["icon", "color", "aria-label", "onClick"]),
                                                               (_ctx.canReplyTo(item.message))
@@ -13980,19 +14036,33 @@ module.exports = {
                                                                 _: 2
                                                               }, 1032, ["aria-label", "onClick"])
                                                             ]),
-                                                            _createElementVNode("div", {
-                                                              class: "text-caption m-muted cursor-pointer ellipsis",
+                                                            _createVNode(_component_q_btn, {
+                                                              flat: "",
+                                                              dense: "",
+                                                              "no-caps": "",
+                                                              align: "left",
+                                                              class: "text-caption m-muted m-inbox-recipient-toggle",
+                                                              id: _ctx.domId('inbox-recipients-', item.message.key),
+                                                              "aria-label": _ctx.messageDetailsLabel(item.message),
+                                                              "aria-expanded": !!_ctx.details[item.message.key],
+                                                              "aria-controls": _ctx.domId('inbox-details-', item.message.key),
+                                                              onKeydown: _withKeys(_withModifiers(() => {}, ["stop"]), ["enter"]),
                                                               onClick: $event => (_ctx.toggleDetails(item.message))
-                                                            }, [
-                                                              _createTextVNode(_toDisplayString(_ctx.recipientsText(item.message)) + " ", 1),
-                                                              _createVNode(_component_q_icon, {
-                                                                name: _ctx.details[item.message.key] ? 'sym_o_expand_less' : 'sym_o_expand_more',
-                                                                size: "14px"
-                                                              }, null, 8, ["name"])
-                                                            ], 8, ["onClick"]),
+                                                            }, {
+                                                              default: _withCtx(() => [
+                                                                _createElementVNode("span", { class: "ellipsis" }, _toDisplayString(_ctx.recipientsText(item.message)), 1),
+                                                                _createVNode(_component_q_icon, {
+                                                                  name: _ctx.details[item.message.key] ? 'sym_o_expand_less' : 'sym_o_expand_more',
+                                                                  size: "14px",
+                                                                  "aria-hidden": "true"
+                                                                }, null, 8, ["name"])
+                                                              ]),
+                                                              _: 2
+                                                            }, 1032, ["id", "aria-label", "aria-expanded", "aria-controls", "onKeydown", "onClick"]),
                                                             (_ctx.details[item.message.key])
                                                               ? (_openBlock(), _createElementBlock("div", {
                                                                   key: 0,
+                                                                  id: _ctx.domId('inbox-details-', item.message.key),
                                                                   class: "text-caption q-mt-xs"
                                                                 }, [
                                                                   _createElementVNode("div", null, [
@@ -14021,14 +14091,17 @@ module.exports = {
                                                                     _createElementVNode("span", { class: "m-muted" }, _toDisplayString(_ctx.t('Date')) + ":", 1),
                                                                     _createTextVNode(" " + _toDisplayString(_ctx.longDate(item.message.date)), 1)
                                                                   ])
-                                                                ]))
+                                                                ], 8, ["id"]))
                                                               : _createCommentVNode("", true)
                                                           ])
                                                         ])
                                                       ]),
                                                       _: 2
                                                     }, 1024),
-                                                    _createVNode(_component_q_card_section, { class: "q-pt-xs" }, {
+                                                    _createVNode(_component_q_card_section, {
+                                                      class: "q-pt-xs",
+                                                      id: _ctx.domId('inbox-body-', item.message.key)
+                                                    }, {
                                                       default: _withCtx(() => [
                                                         (item.message.isDraft)
                                                           ? (_openBlock(), _createBlock(_component_q_banner, {
@@ -14303,7 +14376,7 @@ module.exports = {
                                                           : _createCommentVNode("", true)
                                                       ]),
                                                       _: 2
-                                                    }, 1024)
+                                                    }, 1032, ["id"])
                                                   ]),
                                                   _: 2
                                                 }, 1032, ["id", "class"]))
@@ -16288,7 +16361,7 @@ module.exports = {
             })();
             delete target.template;
         }
-        return { component: component, style: "\n/* the end column of a thread row: the date and the hover actions share one fixed width, so the row never shifts on hover —\n   the actions fade in over the date (opacity only, no layout change) */\n.m-inbox-root .m-inbox-row-end { position:relative; width:112px; height:24px; flex:none; }\n.m-inbox-root .m-inbox-row-end-date, .m-inbox-root .m-inbox-row-end-actions { position:absolute; right:0; top:0; bottom:0; }\n.m-inbox-root .m-inbox-row-end-date { transition:opacity 120ms ease-out; }\n.m-inbox-root .m-inbox-row-end-date.m-inbox-hidden { opacity:0; }\n.m-inbox-root .m-inbox-row-end-actions { opacity:0; pointer-events:none; transition:opacity 120ms ease-out; }\n.m-inbox-root .m-inbox-row-end-actions.m-inbox-shown { opacity:1; pointer-events:auto; }\n", scoped: false };
+        return { component: component, style: "\n.m-inbox-root .m-inbox-message-toggle .q-btn__content { flex-wrap:nowrap; text-align:left; }\n.m-inbox-root .m-inbox-recipient-toggle { min-height:0; padding:0 2px; max-width:100%; vertical-align:top; }\n.m-inbox-root .m-inbox-recipient-toggle .q-btn__content { flex-wrap:nowrap; min-width:0; }\n/* the end column of a thread row: the date and the hover actions share one fixed width, so the row never shifts on hover —\n   the actions fade in over the date (opacity only, no layout change) */\n.m-inbox-root .m-inbox-row-end { position:relative; width:112px; height:24px; flex:none; }\n.m-inbox-root .m-inbox-row-end-date, .m-inbox-root .m-inbox-row-end-actions { position:absolute; right:0; top:0; bottom:0; }\n.m-inbox-root .m-inbox-row-end-date { transition:opacity 120ms ease-out; }\n.m-inbox-root .m-inbox-row-end-date.m-inbox-hidden { opacity:0; }\n.m-inbox-root .m-inbox-row-end-actions { opacity:0; pointer-events:none; transition:opacity 120ms ease-out; }\n.m-inbox-root .m-inbox-row-end-actions.m-inbox-shown { opacity:1; pointer-events:auto; }\n", scoped: false };
     } };
     moqui.qvtBundled["BasicComms/Inbox/Compose"] = { make: function (Vue) {
         const module = { exports: {} };

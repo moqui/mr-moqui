@@ -1224,13 +1224,15 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="accountList" type="List"/>
             <parameter name="selectedAccountId"/>
             <parameter name="reply" type="Map"/>
+            <parameter name="replyTimestamps" type="Map"><description>From/thru as numeric UTC epoch milliseconds, or null when empty, for date widgets.
+                The reply map keeps its existing user-zone yyyy-MM-dd HH:mm strings for other callers.</description></parameter>
             <parameter name="statusText"/>
             <parameter name="isActive" type="Boolean"/>
             <parameter name="hasServer" type="Boolean"/>
         </out-parameters>
         <actions><script><![CDATA[
             const L = (text) => text.length > 255 ? text : ec.l10n.localize(text)
-            accountList = []; selectedAccountId = null; reply = null; statusText = null; isActive = false; hasServer = false
+            accountList = []; selectedAccountId = null; reply = null; replyTimestamps = {fromDate:null,thruDate:null}; statusText = null; isActive = false; hasServer = false
             const access = ec.service.sync().name('org.moqui.impl.EmailClientServices.get#EmailAccountAccess').call()
             if (ec.message.hasError()) return
             const fmt = (millis) => millis == null ? '' : ec.l10n.format(new Date(Number(millis)), 'yyyy-MM-dd HH:mm')
@@ -1257,6 +1259,9 @@ along with this software (see the LICENSE.md file). If not, see
             hasServer = selected.hasServer
             const current = states[selectedAccountId]?.outOfOffice || null
             isActive = states[selectedAccountId]?.isActive === true
+            // Keep the existing display-string contract; widgets format each instant once in the viewer's zone.
+            replyTimestamps = {fromDate:current?.fromDate == null ? null : Number(current.fromDate),
+                thruDate:current?.thruDate == null ? null : Number(current.thruDate)}
             reply = {emailAccountId: selectedAccountId, enabled: current?.enabled ? 'Y' : 'N', fromDate: fmt(current?.fromDate), thruDate: fmt(current?.thruDate),
                 subject: current?.subject || '', bodyHtml: current?.bodyHtml || '', internalBodyHtml: current?.internalBodyHtml || '',
                 replyOncePerDays: String(current?.replyOncePerDays ?? 4), replyAudienceEnumId: current?.replyAudienceEnumId || 'EraEveryone',

@@ -1119,7 +1119,9 @@
             const type = at(n, "type");
             if (type === "popup") { w("<m-subscreens-active></m-subscreens-active>"); return; }
             if (type === "wizard") {
-                w("<m-subscreens-wizard" + A({ id: at(n, "id") || null, "finish-text": at(n, "finish-text") ? x(at(n, "finish-text")) : null }) + "></m-subscreens-wizard>");
+                w("<m-subscreens-wizard" + A({ id: at(n, "id") || null, "finish-text": at(n, "finish-text") ? x(at(n, "finish-text")) : null,
+                    "draft-form": at(n, "draft-form") || null, "draft-fields": at(n, "draft-fields") || null,
+                    "draft-parameter": at(n, "draft-parameter") || null }) + "></m-subscreens-wizard>");
                 return;
             }
             if (type === "stack") { w("<m-subscreens-stack" + A({ id: at(n, "id") || null }) + "></m-subscreens-stack>"); return; }

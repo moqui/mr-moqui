@@ -58,26 +58,60 @@ feature("a user with no party sees the mail settings, the wizard and no Internal
         ec.user.internalLoginUser("basic.comms.spec")
         const index = render(root, "Settings/Index", "qvt", {})
         const list = render(root, "Settings/MailAccounts/List", "qvt", {})
-        const wizard = render(root, "Settings/MailAccounts/Add/Address", "qvt", {fresh: "Y"})
+        const wizard = render(root, "Settings/MailAccounts/Add/Address", "qvt", {lastStandalone:"-3", fresh: "Y"})
         // as the screens call them: authorized by the app's screen, here by the spec
         const accounts = sys(() => call("org.moqui.comms.MailSettingsServices.get#MailAccountList", {})) || {}
         accounts.errors = ec.message.hasError() ? ec.message.errorsString : ""
         ec.message.clearErrors()
         const providers = sys(() => call("org.moqui.impl.ShellServices.get#Providers", {hook: "inbox-source"})) || {}
+        // This account has no external server: the first Account render checks its route back to this mount's Inbox.
+        const hosted = sys(() => call("org.moqui.impl.EmailClientServices.create#EmailAccount", {
+            accountKindEnumId: "EakHosted", emailAddress: "basic.comms.spec@example.invalid", accountName: "Spec hosted mail",
+            statusId: "EasActive"
+        })) || {}
+        const accountErrors = ec.message.hasError() ? ec.message.errorsString : ""
+        ec.message.clearErrors()
+        const hostedAccountId = hosted.emailAccountId
+        const accountDetail = render(root, "Settings/MailAccounts/Account", "qvt", {lastStandalone:"-3", emailAccountId: hostedAccountId, setup: "done"})
+        const inboxLinkProblems = []
+        const links = accountDetail.output.match(/<m-link\b[^>]*>[\s\S]*?<\/m-link>/g) || []
+        for (const label of ["Open the Inbox", "Open in the Inbox"]) {
+            const link = links.find(item => item.includes(label))
+            const href = link?.match(/\bhref="([^"]+)"/)?.[1] || ""
+            // With BasicComms as this test's root, the same relative destination starts at /Inbox.
+            if (!/^\/Inbox(?:\/Mail)?\?/.test(href)) inboxLinkProblems.push(label + ": missing enabled Inbox link")
+            const parameters = href.split("?")[1]?.replace(/&amp;/g, "&").split("&") || []
+            if (!parameters.includes("account=" + encodeURIComponent(hostedAccountId))) inboxLinkProblems.push(label + ": account not retained")
+        }
         login("john.doe")
         const internalShown = Array.from(accounts.accountList || []).some(account => account.isInternal)
         const internalSource = Array.from(providers.providerList || []).length > 0
-        return {index, list, wizard, accounts, internalShown, internalSource}
+        return {index, list, wizard, accounts, internalShown, internalSource, accountDetail, hostedAccountId, accountErrors, inboxLinkProblems}
     },
-    then({index, list, wizard, accounts, internalShown, internalSource}) {
+    then({index, list, wizard, accounts, internalShown, internalSource, accountDetail, hostedAccountId, accountErrors, inboxLinkProblems}) {
         index.status == 200
         index.output.includes("Identities and signatures")
         list.status == 200
         !list.broken
         wizard.status == 200
         !wizard.broken
+        wizard.output.includes('draft-form="AccountOptions"')
+        wizard.output.includes('draft-parameter="emailAccountId"')
         accounts.errors == ""
         accounts.mailAccountCount == 0
+        accountErrors == ""
+        !!hostedAccountId
+        accountDetail.status == 200
+        accountDetail.output.includes("Mail gateway")
+        !accountDetail.output.includes("Bring in mail from")
+        !accountDetail.output.includes("The sync maps the server's folders here")
+        accountDetail.output.includes("no external mailbox is synced")
+        accountDetail.output.includes("no external provider copy")
+        !accountDetail.output.includes("your mail stays with your provider")
+        accountDetail.errors == ""
+        !accountDetail.broken
+        accountDetail.output.includes("Spec hosted mail")
+        inboxLinkProblems.length == 0
         // the Internal account is listed only when an app the user may open answers for it
         internalShown == internalSource
     }
@@ -278,5 +312,81 @@ feature("Chat apps says which app passwords work with XMPP apps and offers a new
         off.status == 200
         off.output.includes("not set up on this server")
         !off.output.includes("New app password for XMPP")
+    }
+})
+
+
+feature("out of office retains user-zone date strings and supplies instants to the static form", {
+    expect() {
+        const username = "basic.comms.ooo.spec"
+        makeUser("BASIC_COMMS_OOO_SPEC", username, false)
+        const previousUser = ec.user.username || "john.doe"
+        ec.user.internalLoginUser(username)
+        ec.user.setTimeZone("America/Chicago")
+        const settings = (name, params) => sys(() => call("org.moqui.comms.MailSettingsServices." + name, params || {})) || {}
+        try {
+            const account = sys(() => call("org.moqui.impl.EmailClientServices.create#EmailAccount", {
+                accountKindEnumId:"EakHosted", emailAddress:"ooo.spec@example.invalid", accountName:"Out of office date fixture", statusId:"EasActive"
+            })) || {}
+            assert.ok(account.emailAccountId)
+            const emailAccountId = account.emailAccountId
+            const save = (fromDate, thruDate) => settings("store#OutOfOffice", {emailAccountId, enabled:"N", fromDate, thruDate,
+                subject:"Date fixture", bodyHtml:"<p>Disabled review reply</p>", replyOncePerDays:"4"})
+            assert.equal(save("2026-11-08 09:00", "2026-11-09 09:00").storedCount, 1)
+            assert.equal(ec.message.hasError(), false)
+            const result = settings("get#OutOfOfficeSettings", {emailAccountId})
+            assert.equal(result.reply.fromDate, "2026-11-08 09:00", "existing caller representation is unchanged")
+            assert.equal(result.reply.thruDate, "2026-11-09 09:00")
+            assert.equal(result.replyTimestamps.fromDate, Date.UTC(2026,10,8,15))
+            assert.equal(result.replyTimestamps.thruDate, Date.UTC(2026,10,9,15))
+            // Execute the screen's actual mapping without another application render. The host formatter must
+            // receive temporal values, not numeric epochs (which it formats as numbers in Standard and TUI).
+            const source = ec.resource.getLocationText("component://basic-comms/screen/BasicComms/Settings/OutOfOffice.xml")
+            const actions = /<actions>\s*<service-call name="org\.moqui\.comms\.MailSettingsServices\.get#OutOfOfficeSettings"[^>]*\/>\s*<script><!\[CDATA\[([\s\S]*?)\]\]><\/script>/.exec(source)[1]
+            const checkFormDates = output => {
+                const state = {oooOut:output, oooAccounts:[], hasAccounts:false, selectedAccountId:null,
+                    replyForm:{}, statusText:"", isActive:false, hasServer:false, selectedAccount:null, manyAccounts:false}
+                runInContext(actions, state)
+                assert.equal(ec.l10n.format(state.replyForm.fromDate, "yyyy-MM-dd HH:mm"), output.reply.fromDate)
+                assert.equal(ec.l10n.format(state.replyForm.thruDate, "yyyy-MM-dd HH:mm"), output.reply.thruDate)
+                for (const name of ["fromDate", "thruDate"]) {
+                    if (output.replyTimestamps[name] == null) assert.equal(state.replyForm[name], null)
+                    else {
+                        assert.ok(state.replyForm[name] instanceof Date, "the screen passes a Date through the host Timestamp bridge")
+                        assert.equal(Number(state.replyForm[name]), output.replyTimestamps[name])
+                    }
+                }
+            }
+            checkFormDates(result)
+            // One screen template and its one actions package, the same boundary used by the static browser client.
+            const screen = ec.screen.makeTest().rootScreen(root).renderMode("qvt")
+            const page = screen.render("Settings/OutOfOffice", {lastStandalone:"-2",emailAccountId}, null)
+            assert.equal(page.status, 200)
+            assert.equal(page.errorMessages.length, 0)
+            assert.equal(page.header("X-Moqui-Qvt"), "static-template")
+            assert.ok(String(page.output).includes("m-date-time"))
+            const data = screen.render("Settings/OutOfOffice/actions", {lastStandalone:"-2",emailAccountId}, null)
+            assert.equal(data.status, 200)
+            assert.equal(data.errorMessages.length, 0)
+            const form = data.jsonObject.replyForm
+            assert.equal(form.fromDate, String(result.replyTimestamps.fromDate), "static JSON serializes a Timestamp as epoch text")
+            assert.equal(form.thruDate, String(result.replyTimestamps.thruDate))
+            assert.equal(form.enabled, "N", "the fixture never enables an automatic reply")
+            // Local09:00 straddles the fall DST change: it is14:00Z before and15:00Z afterward.
+            assert.equal(save("2026-10-31 09:00", "2026-11-02 09:00").storedCount, 1)
+            const dst = settings("get#OutOfOfficeSettings", {emailAccountId})
+            assert.equal(dst.reply.fromDate, "2026-10-31 09:00")
+            assert.equal(dst.reply.thruDate, "2026-11-02 09:00")
+            assert.equal(dst.replyTimestamps.fromDate, Date.UTC(2026,9,31,14))
+            assert.equal(dst.replyTimestamps.thruDate, Date.UTC(2026,10,2,15))
+            checkFormDates(dst)
+            assert.equal(save(null, null).storedCount, 1)
+            const cleared = settings("get#OutOfOfficeSettings", {emailAccountId})
+            assert.equal(cleared.reply.fromDate, "")
+            assert.equal(cleared.reply.thruDate, "")
+            assert.equal(cleared.replyTimestamps.fromDate, null)
+            assert.equal(cleared.replyTimestamps.thruDate, null)
+            checkFormDates(cleared)
+        } finally { ec.message.clearErrors(); ec.user.internalLoginUser(previousUser) }
     }
 })

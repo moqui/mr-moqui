@@ -77,7 +77,8 @@ along with this software (see the LICENSE.md file). If not, see
                     <field name="kindText"><default-field title="Whose"><display/></default-field></field>
                     <field name="incomingText"><default-field title="Incoming"><display/></default-field></field>
                     <field name="outgoingText"><default-field title="Outgoing"><display/></default-field></field>
-                    <field name="windowText"><default-field title="Mail from"><display/></default-field></field>
+                    <field name="windowText"><conditional-field condition="!deliveredHere" title="Mail from"><display/></conditional-field>
+                        <default-field><ignored/></default-field></field>
                     <field name="filingText"><default-field title="Records"><display/></default-field></field>
                     <field name="membersText"><conditional-field condition="reviewShared" title="Shared with"><display/></conditional-field>
                         <default-field><ignored/></default-field></field>
@@ -89,10 +90,10 @@ along with this software (see the LICENSE.md file). If not, see
                     </field-layout>
                 </form-single>
                 <section name="FinishSyncNote" condition="!deliveredHere"><widgets>
-                    <label type="p" text="Start syncing brings your mail in, the newest first: it shows in the Inbox as it arrives, and keeps in step with the server from then on. What you do here (read, move, delete, send) happens on the server too, as in any mail app." style="m-muted q-mt-md"/>
+                    <label type="p" text="Activate account starts syncing your mail, the newest first: it shows in the Inbox as it arrives, and keeps in step with the server from then on. What you do here (read, move, delete, send) happens on the server too, as in any mail app." style="m-muted q-mt-md"/>
                 </widgets></section>
                 <section name="FinishGatewayNote" condition="deliveredHere"><widgets>
-                    <label type="p" text="Start syncing turns the account on. The mail gateway delivers the mail, and there is no mail server to sync. A tag after a plus sign still arrives here: sales+news@example.com goes to sales@example.com." style="m-muted q-mt-md"/>
+                    <label type="p" text="Activate account turns the account on. The mail gateway delivers the mail, and there is no mail server to sync. A tag after a plus sign still arrives here: sales+news@example.com goes to sales@example.com." style="m-muted q-mt-md"/>
                 </widgets></section>
                 <dynamic-container id="FinishSyncProgress" transition="../../SyncProgress">
                     <parameter name="emailAccountId" from="emailAccountId"/>

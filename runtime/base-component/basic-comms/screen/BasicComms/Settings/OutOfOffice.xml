@@ -55,7 +55,12 @@ along with this software (see the LICENSE.md file). If not, see
             oooAccounts = Array.from(oooOut?.accountList || [])
             hasAccounts = oooAccounts.length > 0
             selectedAccountId = oooOut?.selectedAccountId || null
-            replyForm = oooOut?.reply || {}
+            // Date objects cross the script boundary as Timestamps for Standard/TUI formatting; static QVT receives epoch text.
+            const dates = oooOut?.replyTimestamps || {}
+            replyForm = Object.assign({}, oooOut?.reply || {}, {
+                fromDate: dates.fromDate == null ? null : new Date(Number(dates.fromDate)),
+                thruDate: dates.thruDate == null ? null : new Date(Number(dates.thruDate))
+            })
             statusText = oooOut?.statusText || ''
             isActive = oooOut?.isActive === true
             hasServer = oooOut?.hasServer === true
@@ -84,6 +89,8 @@ along with this software (see the LICENSE.md file). If not, see
                     </widgets></section-iterate>
                 </container>
             </widgets></section>
+            <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[<div style="width:100%;max-width:1400px">]]></text>
+                <text type="tui" template="false">[]</text></render-mode>
             <container-box type="${isActive ? 'warning' : 'default'}"><box-header title="${selectedAccount.accountName}"/>
                 <box-toolbar>
                     <link url="turnOff" link-type="hidden-form" text="Turn off" icon="sym_o_toggle_off" condition="replyForm.enabled == 'Y'"
@@ -112,17 +119,32 @@ along with this software (see the LICENSE.md file). If not, see
                             <default-field><hidden/></default-field></field>
                         <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
                         <field-layout>
-                            <field-ref name="emailAccountId"/><field-ref name="enabled"/>
-                            <field-row><field-ref name="fromDate"/><field-ref name="thruDate"/></field-row>
-                            <field-ref name="subject"/><field-ref name="bodyHtml"/><field-ref name="internalBodyHtml"/>
-                            <field-row><field-ref name="replyOncePerDays"/><field-ref name="applyToAll"/></field-row>
-                            <field-ref name="replyAudienceEnumId"/><field-ref name="internalDomains"/>
-                            <field-ref name="submitButton"/>
+                            <field-ref name="emailAccountId"/>
+                    <field-ref name="submitButton"/><field-ref name="applyToAll"/>
+                            <field-col-row>
+                                <field-col xs="12" md="7">
+                                    <field-group title="Reply content" box="true">
+                                        <field-ref name="subject"/><field-ref name="bodyHtml"/><field-ref name="internalBodyHtml"/>
+                                    </field-group>
+                                </field-col>
+                                <field-col xs="12" md="5">
+                                    <field-group title="When" box="true">
+                                        <field-ref name="enabled"/>
+                                        <field-row><field-ref name="fromDate"/><field-ref name="thruDate"/></field-row>
+                                    </field-group>
+                                    <field-group title="Audience and frequency" box="true">
+                                        <field-ref name="replyAudienceEnumId"/><field-ref name="replyOncePerDays"/>
+                                        <field-ref name="internalDomains"/>
+                                    </field-group>
+                                </field-col>
+                            </field-col-row>
                         </field-layout>
                     </form-single>
                     <label type="p" text="Your contacts are the people your address book knows, when this system has one. People inside the organization are the system's users and addresses at the domains of your shared accounts and the other domains you list. Turning the reply on again sends it to everyone again." style="text-caption m-muted q-mb-none"/>
                 </box-body>
             </container-box>
+            <render-mode><text type="qvt,html,html-print" template="false"><![CDATA[</div>]]></text>
+                <text type="tui" template="false">[]</text></render-mode>
         </widgets></section>
     </widgets>
 </screen>

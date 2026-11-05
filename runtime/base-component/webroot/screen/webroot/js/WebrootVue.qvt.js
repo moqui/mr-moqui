@@ -886,6 +886,8 @@
     qvt.formatValue = (value, pattern, type) => {
         if (value === null || value === undefined || value === "") return "";
         let kind = type === "date-time" ? "timestamp" : type;
+        // Server Timestamps serialize as epoch text, including when a date widget supplies its explicit type.
+        if (kind === "timestamp" && typeof value === "string" && /^-?\d+$/.test(value.trim())) value = Number(value.trim());
         // No pattern: epoch millis text (a time stamp in the screen's data) is the time stamp, as l10n.rs epoch_millis_text
         if (!kind && !pattern && typeof value === "string" && /^\d{12,13}$/.test(value.trim())) {
             const millis = Number(value.trim());
@@ -2081,6 +2083,8 @@
                     const search = new root.URLSearchParams(formData).toString();
                     target += (target.indexOf("?") > 0 ? "&" : "?") + search;
                 } else init.body = formData;
+                // A wizard draft acknowledges exactly the submitted values even if its step unmounts before the answer.
+                const acknowledgeDraft = this.mWizard && this.mWizard.captureDraftSubmit ? this.mWizard.captureDraftSubmit(this) : null;
                 root.fetch(target, init).then((response) => {
                     arrived = true;
                     root_.loading--;
@@ -2100,7 +2104,9 @@
                         let json;
                         try { json = JSON.parse(text); } catch (err) { json = undefined; }
                         if (!response.ok) throw { status: response.status, statusText: response.statusText, text, json };
-                        this.handleResponse(json !== undefined ? json : text);
+                        const answer = json !== undefined ? json : text;
+                        if (acknowledgeDraft) acknowledgeDraft(answer);
+                        this.handleResponse(answer);
                     });
                 }).catch((err) => {
                     if (!arrived) root_.loading--;
@@ -2565,25 +2571,25 @@
                     ' :mask="inputMask" fill-mask :for="id" :name="name" :form="form" :disable="disable" :size="sizeVal"' +
                     ' style="max-width:max-content;" :bg-color="bg" v-bind="errorAttrs">' +
                 '<template v-slot:prepend v-if="hasDate">' +
-                    '<q-icon name="event" size="xs" class="cursor-pointer">' +
+                    '<q-btn flat round dense size="sm" icon="event" :disable="disable" :aria-label="pickerLabel(\'Choose date for {field}\')" @keydown.enter.stop @click.stop>' +
                         '<q-popup-proxy ref="qDateProxy" cover transition-show="scale" transition-hide="scale">' +
                             '<q-date :model-value="local" @update:model-value="onDate" :mask="formatVal" today-btn></q-date>' +
                         '</q-popup-proxy>' +
-                    '</q-icon>' +
+                    '</q-btn>' +
                 '</template>' +
                 '<template v-slot:append v-if="hasTime">' +
-                    '<q-icon name="access_time" size="xs" class="cursor-pointer">' +
+                    '<q-btn flat round dense size="sm" icon="access_time" :disable="disable" :aria-label="pickerLabel(\'Choose time for {field}\')" @keydown.enter.stop @click.stop>' +
                         '<q-popup-proxy ref="qTimeProxy" cover transition-show="scale" transition-hide="scale">' +
                             '<q-time :model-value="local" @update:model-value="onTime" :mask="formatVal" format24h now-btn></q-time>' +
                         '</q-popup-proxy>' +
-                    '</q-icon>' +
+                    '</q-btn>' +
                 '</template>' +
                 '<template v-slot:after><slot name="after"></slot></template>' +
                 '<q-tooltip v-if="tooltip">{{tooltip}}</q-tooltip>' +
             '</q-input>',
         computed: {
-            hasDate() { return this.type === "date" || this.type === "date-time" || !this.type; },
-            hasTime() { return this.type === "time" || this.type === "date-time" || !this.type; },
+            hasDate() { return this.type === "date" || this.type === "date-time" || this.type === "timestamp" || !this.type; },
+            hasTime() { return this.type === "time" || this.type === "date-time" || this.type === "timestamp" || !this.type; },
             formatVal() {
                 if (this.format && this.format.length) return this.format;
                 return this.type === "time" ? "HH:mm" : (this.type === "date" ? "YYYY-MM-DD" : "YYYY-MM-DD HH:mm");
@@ -2601,6 +2607,10 @@
             if (input) input.addEventListener("keydown", (event) => this.onKey(event));
         },
         methods: {
+            pickerLabel(text) {
+                const translated = moqui.l10n ? moqui.l10n.localize(text) : text;
+                return translated.replace("{field}", () => this.label || this.name);
+            },
             // The date keys of the input (Quasar's q-input has none; its q-date and q-time popups keep their own): t today or
             // now, y, m, d and w a year, month, day and week later, h, i and s an hour, minute-step minutes and a second later,
             // Shift with any of them earlier, ArrowUp and ArrowDown a day later and earlier. A key needs the field it changes
@@ -5007,15 +5017,16 @@
     // the answer says to stay or the screen it goes to is there: the last step's submit (an import, a run) may take a while.
     component("m-subscreens-wizard", {
         name: "mSubscreensWizard",
-        props: { id: String, finishText: String, nextText: String, backText: String },
-        data() { return { pathIndex: -1, forms: [], submitting: false, hasForm: false }; },
+        props: { id: String, finishText: String, nextText: String, backText: String,
+            draftForm: String, draftFields: String, draftParameter: String },
+        data() { return { pathIndex: -1, forms: [], submitting: false, hasForm: false, draftScope: "", draftValues: null }; },
         provide() { return { mWizard: this }; },
         template:
             '<div class="m-wizard" :id="id" :data-step="activeName" :data-step-form="hasForm ? \'true\' : \'false\'" :data-forms="forms.length">' +
                 '<q-stepper v-if="steps.length" :model-value="activeName" flat bordered header-nav class="m-wizard-stepper" active-color="primary" done-color="primary"' +
                         ' :alternative-labels="$q.screen.lt.sm" @update:model-value="headerTo">' +
                     '<q-step v-for="(step, index) in steps" :key="step.name" :name="step.name" :title="step.title" :done="index < activeIndex"' +
-                        ' :header-nav="index < activeIndex" :prefix="step.imageType === \'icon\' && step.image ? undefined : String(index + 1)"' +
+                        ' :header-nav="index < activeIndex" :disable="submitting && index < activeIndex" :prefix="step.imageType === \'icon\' && step.image ? undefined : String(index + 1)"' +
                         ' :icon="step.imageType === \'icon\' && step.image ? step.image : undefined" :data-step="step.name"></q-step>' +
                 '</q-stepper>' +
                 '<div ref="body" class="m-wizard-body"><m-subscreens-active></m-subscreens-active>' +
@@ -5040,11 +5051,105 @@
             nextLabel() { return this.nextText || localized("Next"); },
             backLabel() { return this.backText || localized("Back"); },
             finishLabel() { return this.finishText || localized("Finish"); },
-            workingLabel() { return localized("Working..."); }
+            workingLabel() { return localized("Working..."); },
+            draftContext() {
+                if (!this.draftForm || !this.draftFields || !this.draftParameter) return "";
+                const value = (this.$root.currentParameters || {})[this.draftParameter];
+                return value === null || value === undefined || value === "" ? "" : String(value);
+            }
+        },
+        watch: {
+            draftContext() { this.syncDraftScope(); },
+            "$root.menuLoadGeneration"(generation) {
+                if (this._stepNavigation && this._stepNavigation.generation !== generation) {
+                    this._stepNavigation = null;
+                    this.submitting = false;
+                }
+            }
         },
         methods: {
-            addForm(form) { if (this.forms.indexOf(form) < 0) this.forms.push(form); this.formsChanged(); },
-            removeForm(form) { const at = this.forms.indexOf(form); if (at >= 0) this.forms.splice(at, 1); this.formsChanged(); },
+            // Explicit, non-secret fields of one form, in this mounted wizard only. Back never submits them.
+            syncDraftScope() {
+                const scope = this.draftContext || "";
+                if (this.draftScope !== scope) { this.draftScope = scope; this.clearDraft(); }
+                return scope;
+            },
+            clearDraft() {
+                this.draftValues = null;
+                this._draftRecord = null;
+                this._draftEpoch = (this._draftEpoch || 0) + 1;
+                this._draftForms = new WeakMap();
+            },
+            draftFieldNames() {
+                return String(this.draftFields || "").split(/[\s,]+/).filter((name) =>
+                    /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !["__proto__", "constructor", "prototype"].includes(name));
+            },
+            restoreDraft(form) {
+                const scope = this.syncDraftScope();
+                if (!scope || !form.fields || form.fields.moquiFormName !== this.draftForm) return;
+                if (!this._draftForms) this._draftForms = new WeakMap();
+                this._draftForms.set(form, { scope, record: this.draftValues ? this._draftRecord : null });
+                if (!this.draftValues) return;
+                this.draftFieldNames().forEach((name) => {
+                    if (!Object.prototype.hasOwnProperty.call(form.fields, name) || !Object.prototype.hasOwnProperty.call(this.draftValues, name)) return;
+                    const value = this.draftValues[name];
+                    form.fields[name] = Array.isArray(value) ? value.slice() : value;
+                });
+            },
+            draftFieldValues(form) {
+                const values = {};
+                const scalar = (value) => value === null || ["string", "number", "boolean"].includes(typeof value);
+                this.draftFieldNames().forEach((name) => {
+                    const value = form.fields[name];
+                    if (scalar(value)) values[name] = value;
+                    else if (Array.isArray(value) && value.every(scalar)) values[name] = value.slice();
+                });
+                return values;
+            },
+            sameDraftValues(left, right) {
+                const keys = Object.keys(left || {});
+                return !!right && keys.length === Object.keys(right).length && keys.every((name) => {
+                    const a = left[name], b = right[name];
+                    return Array.isArray(a) ? Array.isArray(b) && a.length === b.length && a.every((value, index) => Object.is(value, b[index])) : Object.is(a, b);
+                });
+            },
+            rememberDraft(form) {
+                const scope = this.syncDraftScope();
+                const saved = this._draftForms && this._draftForms.get(form);
+                // A previous account's form may unmount after the route has changed; never recapture it in the new scope.
+                if (!scope || !saved || saved.scope !== scope) return;
+                const values = this.draftFieldValues(form);
+                const record = saved.record && this.sameDraftValues(values, saved.record.values) ? saved.record : { values, accepted: false };
+                // A remounted step may still show the snapshot that a delayed answer has since accepted.
+                if (record.accepted) return;
+                this._draftRecord = record;
+                this.draftValues = values;
+            },
+            captureDraftSubmit(form) {
+                const scope = this.syncDraftScope();
+                const saved = this._draftForms && this._draftForms.get(form);
+                if (!scope || !saved || saved.scope !== scope) return null;
+                const epoch = this._draftEpoch;
+                const record = { values: this.draftFieldValues(form), accepted: false };
+                saved.record = record;
+                this._draftRecord = record;
+                this.draftValues = record.values;
+                return (answer) => {
+                    if (moqui.responseHasErrors(answer) || this._draftEpoch !== epoch || this.draftContext !== scope) return;
+                    record.accepted = true;
+                    if (this._draftRecord === record) { this.draftValues = null; this._draftRecord = null; }
+                };
+            },
+            addForm(form) {
+                if (this.forms.indexOf(form) < 0) { this.forms.push(form); this.restoreDraft(form); }
+                this.formsChanged();
+            },
+            removeForm(form) {
+                this.rememberDraft(form);
+                if (this._draftForms) this._draftForms.delete(form);
+                const at = this.forms.indexOf(form); if (at >= 0) this.forms.splice(at, 1);
+                this.formsChanged();
+            },
             // whether the step has a form, once the DOM of a step that came or went is in place (the step form is found in the DOM)
             formsChanged() { this.$nextTick(() => { this.hasForm = !!this.stepForm(); }); },
             // the first form of the step in document order that is not a list row form and not in a dialog (a dialog is teleported)
@@ -5069,24 +5174,39 @@
                 form.submitForm();
             },
             back() { if (!this.submitting) this.goTo(this.activeIndex - 1, null); },
-            stepSubmitting() { this.submitting = true; },
+            stepSubmitting() { this._stepNavigation = null; this.submitting = true; },
             headerTo(name) {
+                if (this.submitting) return;
                 const index = this.steps.findIndex((step) => step.name === name);
                 if (index >= 0 && index < this.activeIndex) this.goTo(index, null);
             },
-            stepRefused() { this.submitting = false; },
+            stepRefused() { this._stepNavigation = null; this.submitting = false; },
             // the spinner stays until the screen the answer names is there (a redirect leaves the page)
             stepAnswered(form, resp) {
                 const way = moqui.wizardAfterAnswer(resp, this.$root.currentPathList, this.steps.length, this.activeIndex);
-                const done = () => { this.submitting = false; };
+                const navigation = { generation: this.$root.menuLoadGeneration };
+                this._stepNavigation = navigation;
+                const done = () => {
+                    if (this._stepNavigation !== navigation) return;
+                    this._stepNavigation = null;
+                    this.submitting = false;
+                };
+                if (!moqui.responseHasErrors(resp)) {
+                    // The captured acknowledgment owns saved draft values; unmount still keeps edits made during the POST.
+                    // Finishing the wizard explicitly discards any earlier unsent step draft.
+                    if (this.activeIndex >= this.steps.length - 1) this.clearDraft();
+                }
                 if (way.kind === "redirect") root.location.href = way.url;
                 else if (way.kind === "url") this.$root.setUrl(way.url, null, done);
                 else if (way.kind === "step") this.goTo(way.index, way.parameters, done);
                 else done();
+                // setUrl increments synchronously; the watcher runs afterward. A later navigation cancels this wait only.
+                if (this._stepNavigation === navigation) navigation.generation = this.$root.menuLoadGeneration;
             }
         },
         // before the m-subscreens-active inside registers, as m-subscreens-tabs is mounted before its sibling
-        beforeMount() { this.pathIndex = this.$root.activeSubscreens.length; }
+        beforeMount() { this.pathIndex = this.$root.activeSubscreens.length; },
+        beforeUnmount() { this._stepNavigation = null; this.submitting = false; this.clearDraft(); }
     });
 
     // subscreens-panel type="stack": the first subscreen in menu order is the bottom of the stack and the others open over it, with a
@@ -9238,7 +9358,7 @@
             return {
                 basePath: config.basePath || "", linkBasePath: config.linkBasePath || "", currentPathList: [], extraPathList: [], currentParameters: {}, bodyParameters: null,
                 activeSubscreens: [], navMenuList: [], navHistoryList: [], navPlugins: [], accountPlugins: [], notifyHistoryList: [],
-                lastNavTime: Date.now(), loading: 0, currentLoadRequest: null, activeContainers: {}, urlListeners: [],
+                lastNavTime: Date.now(), loading: 0, currentLoadRequest: null, menuLoadGeneration: 0, activeContainers: {}, urlListeners: [],
                 moquiSessionToken: config.sessionToken || "", appHost: config.appHost || "", appRootPath: config.appRootPath || "", userId: config.userId || "",
                 username: config.username || "", locale: config.locale || "en", userFullName: config.userFullName || "",
                 terminalUrl: config.terminalUrl || "", pushOn: !!(config.userId && moqui.push && !root.moquiDesktop),
@@ -9306,12 +9426,17 @@
                 // the menu data changes, and that changes the screens and subscreens shown
                 const menuDataUrl = this.appRootPath && this.appRootPath.length && screenUrl.indexOf(this.appRootPath) === 0 ?
                     this.appRootPath + "/menuData" + screenUrl.slice(this.appRootPath.length) : "/menuData" + screenUrl;
+                // Menu requests outlive a screen-template abort. Only the latest request may choose the visible route.
+                const menuGeneration = ++this.menuLoadGeneration;
                 moqui.request(menuDataUrl).then((result) => {
+                    if (menuGeneration !== this.menuLoadGeneration) return;
                     if (Array.isArray(result.json)) {
                         this.navMenuList = result.json;
                         if (onComplete) this.callOnComplete(onComplete, redirectedFrom);
                     }
-                }, moqui.handleAjaxError);
+                }, (err) => {
+                    if (menuGeneration === this.menuLoadGeneration) moqui.handleAjaxError(err);
+                });
 
                 if (pushState) root.history.pushState(null, this.ScreenTitle, url);
                 this.urlListeners.forEach((callback) => callback(url, this));

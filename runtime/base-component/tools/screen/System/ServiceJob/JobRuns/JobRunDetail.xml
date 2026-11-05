@@ -23,12 +23,45 @@ along with this software (see the LICENSE.md file). If not, see
     <transition name="trace"><default-response url="//apps/monitor/TraceDetail"/></transition>
     <actions>
         <entity-find-one entity-name="moqui.service.job.ServiceJobRun" value-field="serviceJobRun"/>
+        <set field="runUser" from="null"/>
+        <if condition="serviceJobRun?.userId">
+            <entity-find-one entity-name="moqui.security.UserAccount" value-field="runUser">
+                <field-map field-name="userId" from="serviceJobRun.userId"/>
+            </entity-find-one>
+        </if>
         <script><![CDATA[
-            // The telemetry screens take relative times, epoch millis or ISO-8601 with an offset; a running job ends now.
-            const isoTime = (value, shift) => {
+            const L = (text) => ec.l10n.localize(text)
+            const timeMillis = (value) => {
                 if (value == null || value === '') return null
                 const millis = value instanceof Date ? value.getTime() : /^\d+$/.test(String(value)) ? Number(value) : Number.isFinite(Number(value)) ? Number(value) : Date.parse(String(value))
-                return Number.isFinite(millis) ? new Date(millis + (shift || 0)).toISOString() : null
+                return Number.isFinite(millis) ? millis : null
+            }
+            const startMillis = timeMillis(serviceJobRun?.startTime)
+            const endMillis = timeMillis(serviceJobRun?.endTime)
+            const hasErrors = serviceJobRun?.hasError === 'Y' || String(serviceJobRun?.errors || '').trim() !== ''
+            const hasEndValue = serviceJobRun?.endTime != null && serviceJobRun.endTime !== ''
+            runOutcomeText = !serviceJobRun ? L('Run unavailable')
+                : endMillis == null ? (hasEndValue ? L('Completion time unavailable') : L('Not finished'))
+                : hasErrors ? L('Completed with errors')
+                : serviceJobRun.hasError === 'N' ? L('Completed successfully') : L('Finished — outcome not recorded')
+            runOutcomeStyle = hasErrors ? 'text-negative' : endMillis != null && serviceJobRun?.hasError === 'N' ? 'text-positive' : 'm-muted'
+            runOutcomeDetail = !serviceJobRun ? '' : endMillis == null
+                ? (hasEndValue ? L('The recorded end time cannot be read. Inspect the results and diagnostic links.')
+                    : L('No end time is recorded. The run may still be active or may have stopped before recording completion.'))
+                : serviceJobRun.hasError == null || serviceJobRun.hasError === ''
+                    ? L('No error flag was recorded. Inspect the results and any errors below.') : ''
+            runElapsedText = startMillis != null && endMillis != null && endMillis >= startMillis
+                ? String(endMillis - startMillis) + ' ms' : L('Unavailable')
+            const displayTime = (value, millis) => value == null || value === '' ? L('Not recorded')
+                : millis == null ? L('Unavailable') : ec.l10n.format(new Date(millis), 'yyyy-MM-dd HH:mm:ss.SSS') + ' ' + ec.user.timeZone
+            runStartText = displayTime(serviceJobRun?.startTime, startMillis)
+            runEndText = displayTime(serviceJobRun?.endTime, endMillis)
+            runUserText = runUser ? [runUser.username, runUser.userFullName].filter(Boolean).join(' — ') : serviceJobRun?.userId || L('Not recorded')
+            if (runUser && serviceJobRun?.userId) runUserText += ' (' + serviceJobRun.userId + ')'
+            // The telemetry screens take relative times, epoch millis or ISO-8601 with an offset; a running job ends now.
+            const isoTime = (value, shift) => {
+                const millis = timeMillis(value)
+                return millis == null ? null : new Date(millis + (shift || 0)).toISOString()
             }
             logFrom = isoTime(serviceJobRun?.startTime) || 'now-1d'
             logThru = isoTime(serviceJobRun?.endTime, 1000) || 'now'
@@ -39,21 +72,67 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script>
     </actions>
     <widgets>
-        <link condition="serviceJobRun.traceId" url="trace" text="View trace" parameter-map="{traceId:serviceJobRun.traceId,from:traceFrom,thru:traceThru}"/>
-        <link url="logViewer" text="View Log" parameter-map="{queryString:logQueryString,from:logFrom,thru:logThru}"/>
-
-        <form-single name="ServiceJobRunDetail" map="serviceJobRun">
-            <auto-fields-entity entity-name="moqui.service.job.ServiceJobRun" field-type="display"/>
-            <field name="jobName"><default-field><link url="serviceJobDetail" text="${jobName}" link-type="anchor"/></default-field></field>
-            <field name="userId"><default-field title="User">
-                <display-entity entity-name="moqui.security.UserAccount" text="${username} - ${userFullName}"/>
-                <link url="userAccountDetail" text="${userId}" link-type="anchor" condition="userId"/>
-            </default-field></field>
-
-            <field-layout>
-                <field-ref name="jobRunId"/><field-ref name="jobName"/><field-ref name="userId"/>
-                <fields-not-referenced/>
-            </field-layout>
-        </form-single>
+        <section name="JobRunAvailable" condition="serviceJobRun"><widgets>
+            <container style="m-record-header">
+                <label type="h2" text="Job run ${serviceJobRun.jobRunId}" style="q-my-none m-wrap-anywhere"/>
+                <label type="p" text="${runOutcomeText}" style="${runOutcomeStyle} text-weight-medium q-my-sm"/>
+                <section name="JobRunOutcomeDetail" condition="runOutcomeDetail"><widgets>
+                    <label type="p" text="${runOutcomeDetail}" style="m-muted q-my-sm"/>
+                </widgets></section>
+                <container style="q-gutter-xs">
+                    <link condition="serviceJobRun.traceId" url="trace" text="View trace" parameter-map="{traceId:serviceJobRun.traceId,from:traceFrom,thru:traceThru}"/>
+                    <link url="logViewer" text="View logs" parameter-map="{queryString:logQueryString,from:logFrom,thru:logThru}"/>
+                    <link url="." text="Refresh run" parameter-map="{jobRunId:serviceJobRun.jobRunId}"/>
+                    <link url=".." text="Back to job runs"/>
+                </container>
+            </container>
+            <form-single name="ServiceJobRunDetail" map="serviceJobRun">
+                <auto-fields-entity entity-name="moqui.service.job.ServiceJobRun" field-type="display"/>
+                <field name="jobName"><default-field title="Job"><link url="serviceJobDetail" text="${jobName}" link-type="anchor"
+                        parameter-map="{jobName:serviceJobRun.jobName}" style="m-wrap-anywhere"/></default-field></field>
+                <field name="userId"><conditional-field condition="userId" title="Started by">
+                    <link url="userAccountDetail" text="${runUserText}" link-type="anchor" parameter-map="{userId:serviceJobRun.userId}" style="m-wrap-anywhere"/>
+                </conditional-field><default-field title="Started by"><display text="Not recorded"/></default-field></field>
+                <field name="hasError"><default-field title="Error recorded"><display text="${hasError === 'Y' ? 'Yes' : hasError === 'N' ? 'No' : 'Not recorded'}"/></default-field></field>
+                <field name="results"><default-field><display text="${results || 'No results recorded'}" style="m-wrap-anywhere"/></default-field></field>
+                <field name="messages"><default-field><display text="${messages || 'No messages recorded'}" style="m-wrap-anywhere"/></default-field></field>
+                <field name="errors"><default-field><display text="${errors || 'No error details recorded'}" style="m-wrap-anywhere"/></default-field></field>
+                <field name="parameters"><default-field><display text="${parameters || 'No parameters recorded'}" style="m-wrap-anywhere"/></default-field></field>
+                <field name="startTime"><default-field title="Started"><display text="${runStartText}"/></default-field></field>
+                <field name="endTime"><default-field title="Finished"><display text="${runEndText}"/></default-field></field>
+                <field name="elapsed"><default-field title="Elapsed"><display text="${runElapsedText}" also-hidden="false"/></default-field></field>
+                <field name="traceId"><default-field><display text="${traceId || 'Not recorded'}" style="m-wrap-anywhere"/></default-field></field>
+                <field name="hostName"><default-field><display text="${hostName || 'Not recorded'}" style="m-wrap-anywhere"/></default-field></field>
+                <field name="hostAddress"><default-field><display text="${hostAddress || 'Not recorded'}" style="m-wrap-anywhere"/></default-field></field>
+                <field name="runThread"><default-field><display text="${runThread || 'Not recorded'}" style="m-wrap-anywhere"/></default-field></field>
+                <field-layout>
+                    <field-group title="Run details" box="true">
+                        <field-row><field-ref name="jobRunId"/><field-ref name="jobName"/><field-ref name="userId"/></field-row>
+                    </field-group>
+                    <field-col-row>
+                        <field-col xs="12" md="8">
+                            <field-group title="Results and errors" box="true">
+                                <field-ref name="hasError"/><field-ref name="errors"/><field-ref name="results"/><field-ref name="messages"/>
+                            </field-group>
+                            <field-group title="Input parameters" box="true"><field-ref name="parameters"/></field-group>
+                        </field-col>
+                        <field-col xs="12" md="4">
+                            <field-group title="Timing" box="true">
+                                <field-ref name="elapsed"/><field-ref name="startTime"/><field-ref name="endTime"/>
+                            </field-group>
+                            <field-group title="Runtime and diagnostics" box="true">
+                                <field-ref name="hostName"/><field-ref name="hostAddress"/><field-ref name="runThread"/><field-ref name="traceId"/>
+                                <fields-not-referenced/>
+                            </field-group>
+                        </field-col>
+                    </field-col-row>
+                </field-layout>
+            </form-single>
+        </widgets><fail-widgets>
+            <container-box><box-header title="Job run unavailable"/><box-body>
+                <label type="p" text="Run ${jobRunId} was not found. It may have been removed by history cleanup, or the link may be incorrect." style="m-wrap-anywhere"/>
+                <link url=".." text="Back to job runs"/>
+            </box-body></container-box>
+        </fail-widgets></section>
     </widgets>
 </screen>

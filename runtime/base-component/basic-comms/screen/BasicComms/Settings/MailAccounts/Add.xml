@@ -36,6 +36,9 @@ along with this software (see the LICENSE.md file). If not, see
             <container style="col"/>
             <link url="../List" text="Mail accounts" icon="sym_o_mail"/>
         </container>
-        <subscreens-panel id="AddMailAccountWizard" type="wizard" finish-text="Start syncing"/>
+        <!-- Pending remote member selections require Next to save; their labels are not retained by the local draft. -->
+        <subscreens-panel id="AddMailAccountWizard" type="wizard" finish-text="Activate account"
+                draft-form="AccountOptions" draft-parameter="emailAccountId"
+                draft-fields="accountName,syncWindowDays,recordFilingEnumId,accountKindEnumId,memberPermissionEnumId"/>
     </widgets>
 </screen>

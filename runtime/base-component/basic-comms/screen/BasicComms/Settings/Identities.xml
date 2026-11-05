@@ -113,7 +113,7 @@ along with this software (see the LICENSE.md file). If not, see
                                 </form-single>
                             </container-dialog>
                             <link url="makeDefault" link-type="hidden-form-link" text="Make default" condition="isDefault != 'Y'" parameter-map="{emailIdentityId:emailIdentityId}"/>
-                            <link url="deleteIdentity" link-type="hidden-form-link" icon="sym_o_delete" text="" tooltip="Delete" style="m-btn-flat" condition="canDelete"
+                            <link url="deleteIdentity" link-type="hidden-form-link" icon="sym_o_delete" text="Delete" tooltip="Delete ${nameText}" style="m-btn-flat" condition="canDelete"
                                     confirmation="Delete the identity ${nameText}? Drafts written as it send as the account's default." parameter-map="{emailIdentityId:emailIdentityId}"/>
                         </conditional-field><default-field title=""><display text=""/></default-field></field>
                         <columns type="mobile">

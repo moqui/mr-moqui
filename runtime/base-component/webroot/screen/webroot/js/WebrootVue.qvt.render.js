@@ -3264,13 +3264,13 @@
                   ]))
             }
         } },
-        "m-date-time": { hash: "94ef7446", make: function (Vue) {
-            const { resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, renderSlot: _renderSlot, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, mergeProps: _mergeProps, createSlots: _createSlots } = Vue
+        "m-date-time": { hash: "c0bbbea5", make: function (Vue) {
+            const { resolveComponent: _resolveComponent, createVNode: _createVNode, withCtx: _withCtx, withModifiers: _withModifiers, withKeys: _withKeys, renderSlot: _renderSlot, toDisplayString: _toDisplayString, createTextVNode: _createTextVNode, openBlock: _openBlock, createBlock: _createBlock, createCommentVNode: _createCommentVNode, mergeProps: _mergeProps, createSlots: _createSlots } = Vue
 
             return function render(_ctx, _cache) {
               const _component_q_date = _resolveComponent("q-date")
               const _component_q_popup_proxy = _resolveComponent("q-popup-proxy")
-              const _component_q_icon = _resolveComponent("q-icon")
+              const _component_q_btn = _resolveComponent("q-btn")
               const _component_q_time = _resolveComponent("q-time")
               const _component_q_tooltip = _resolveComponent("q-tooltip")
               const _component_q_input = _resolveComponent("q-input")
@@ -3314,10 +3314,16 @@
                   ? {
                       name: "prepend",
                       fn: _withCtx(() => [
-                        _createVNode(_component_q_icon, {
-                          name: "event",
-                          size: "xs",
-                          class: "cursor-pointer"
+                        _createVNode(_component_q_btn, {
+                          flat: "",
+                          round: "",
+                          dense: "",
+                          size: "sm",
+                          icon: "event",
+                          disable: _ctx.disable,
+                          "aria-label": _ctx.pickerLabel('Choose date for {field}'),
+                          onKeydown: _withKeys(_withModifiers(() => {}, ["stop"]), ["enter"]),
+                          onClick: _withModifiers(() => {}, ["stop"])
                         }, {
                           default: _withCtx(() => [
                             _createVNode(_component_q_popup_proxy, {
@@ -3338,7 +3344,7 @@
                             }, 512)
                           ]),
                           _: 1
-                        })
+                        }, 8, ["disable", "aria-label", "onKeydown", "onClick"])
                       ]),
                       key: "0"
                     }
@@ -3347,10 +3353,16 @@
                   ? {
                       name: "append",
                       fn: _withCtx(() => [
-                        _createVNode(_component_q_icon, {
-                          name: "access_time",
-                          size: "xs",
-                          class: "cursor-pointer"
+                        _createVNode(_component_q_btn, {
+                          flat: "",
+                          round: "",
+                          dense: "",
+                          size: "sm",
+                          icon: "access_time",
+                          disable: _ctx.disable,
+                          "aria-label": _ctx.pickerLabel('Choose time for {field}'),
+                          onKeydown: _withKeys(_withModifiers(() => {}, ["stop"]), ["enter"]),
+                          onClick: _withModifiers(() => {}, ["stop"])
                         }, {
                           default: _withCtx(() => [
                             _createVNode(_component_q_popup_proxy, {
@@ -3372,7 +3384,7 @@
                             }, 512)
                           ]),
                           _: 1
-                        })
+                        }, 8, ["disable", "aria-label", "onKeydown", "onClick"])
                       ]),
                       key: "1"
                     }
@@ -9070,7 +9082,7 @@
               ], 8, ["id"]))
             }
         } },
-        "m-subscreens-wizard": { hash: "e8f63d08", make: function (Vue) {
+        "m-subscreens-wizard": { hash: "696f3b67", make: function (Vue) {
             const { renderList: _renderList, Fragment: _Fragment, openBlock: _openBlock, createElementBlock: _createElementBlock, resolveComponent: _resolveComponent, createBlock: _createBlock, withCtx: _withCtx, createCommentVNode: _createCommentVNode, createVNode: _createVNode, toDisplayString: _toDisplayString, createElementVNode: _createElementVNode } = Vue
 
             return function render(_ctx, _cache) {
@@ -9110,10 +9122,11 @@
                             title: step.title,
                             done: index < _ctx.activeIndex,
                             "header-nav": index < _ctx.activeIndex,
+                            disable: _ctx.submitting && index < _ctx.activeIndex,
                             prefix: step.imageType === 'icon' && step.image ? undefined : String(index + 1),
                             icon: step.imageType === 'icon' && step.image ? step.image : undefined,
                             "data-step": step.name
-                          }, null, 8, ["name", "title", "done", "header-nav", "prefix", "icon", "data-step"]))
+                          }, null, 8, ["name", "title", "done", "header-nav", "disable", "prefix", "icon", "data-step"]))
                         }), 128))
                       ]),
                       _: 1

@@ -297,6 +297,9 @@ test("a lost answer then a retry shows one message; a push that comes twice show
 });
 
 test("the Inbox: a thread change that conflicted says it changed on the server and reads the list again; a send that conflicted keeps a copy, opened in Compose", async () => {
+    // The real message preview is deliberately sandboxed; Chromium reports the blocked injected script as a page problem.
+    // Keep the mounted message-body assertions below. This allowance is confined to this case, not the suite.
+    harness.allowProblems();
     // a thread's archive waiting, then the server met the thread changed
     await outbox.add("mail-state", { targets: [{ store: "email", threadId: "T1", rowKey: "email:T1" }], action: "archive" });
     const state = host.added[host.added.length - 1];
@@ -333,6 +336,95 @@ test("the Inbox: a thread change that conflicted says it changed on the server a
     button(refused, "Discard").click();
     (await dialogButton("Discard")).click();
     await until(() => host.discarded.includes(state.id) && !document.querySelector(".m-inbox-outbox-change"), "the change discarded");
+
+    // The existing mounted Inbox also checks its message disclosures, using two local bodies and no send action.
+    const threadPath = "/apps/BasicComms/Inbox/Mail/thread", listPath = "/apps/BasicComms/Inbox/Mail/threads";
+    const oldThreadAnswer = answers[threadPath], oldListAnswer = answers[listPath];
+    const pat = { name: "Pat Sender", address: "pat@example.invalid" }, alex = { name: "Alex Reviewer", address: "alex@example.invalid" };
+    const to = [{ name: "Ann", address: "ann@example.com", isMe: true }];
+    const mail = (id, from, body, date) => ({ key: "email:" + id, emailMessageId: id, store: "email", from, toList: to,
+        ccList: [], bccList: [], attachmentList: [], linkList: [], subject: "Keyboard review", text: body, date });
+    const earlier = mail("KEY1", pat, "Older body available by keyboard", Date.now() - 60000);
+    const laterMessage = mail("KEY2", alex, "Latest body", Date.now());
+    const row = { store: "email", threadId: "TKEY", rowKey: "email:TKEY", subject: "Keyboard review", messageCount: 2,
+        participantList: [pat, alex], fromName: alex.name, fromAddress: alex.address, sortDate: laterMessage.date,
+        isUnread: true, unreadCount: 0, labelList: [], linkList: [], folderKindEnumId: "EfkInbox" };
+    answers[threadPath] = () => ({ thread: Object.assign(clone(row), { messageList: [clone(earlier), clone(laterMessage)], canSend: false }) });
+    answers[listPath] = () => ({ threadList: [clone(row)], hasMore: false, storeList: ["email"] });
+    // Quasar's real button handlers turn keyup into the activation; the shell's Enter shortcut must not take it.
+    const keys = event => moqui.keymap.handle(event);
+    const press = (control, key, code) => {
+        control.focus();
+        control.dispatchEvent(new KeyboardEvent("keydown", { key, keyCode: code, bubbles: true, cancelable: true }));
+        control.dispatchEvent(new KeyboardEvent("keyup", { key, keyCode: code, bubbles: true, cancelable: true }));
+    };
+    document.addEventListener("keydown", keys);
+    try {
+        await inbox.loadList(true);
+        const threadRow = await until(() => document.getElementById("inbox-row-email_TKEY"), "the keyboard thread row");
+        assert.equal(threadRow.getAttribute("aria-label"), "Keyboard review. Pat Sender, Alex Reviewer. 2 messages. Unread");
+        assert.ok(threadRow.querySelector("button"), "the concise row name preserves its individual actions");
+        threadRow.click();
+        let disclosure = await until(() => document.getElementById("inbox-toggle-email_KEY1"), "the collapsed older message");
+        assert.equal(disclosure.tagName, "BUTTON");
+        assert.equal(disclosure.tabIndex, 0);
+        assert.equal(disclosure.getAttribute("aria-expanded"), "false");
+        assert.ok(disclosure.getAttribute("aria-label").startsWith("Read message from Pat Sender"));
+        const reads = asked(threadPath).length;
+        press(disclosure, "Enter", 13);
+        disclosure = await until(() => {
+            const control = document.getElementById("inbox-toggle-email_KEY1");
+            return control && control.getAttribute("aria-expanded") === "true" && document.activeElement === control && control;
+        }, "the expanded message and retained disclosure focus");
+        assert.ok(disclosure.getAttribute("aria-label").startsWith("Collapse message from Pat Sender"));
+        await until(() => {
+            const frame = document.querySelector("#inbox-body-email_KEY1 iframe");
+            return frame && frame.contentDocument && frame.contentDocument.body.textContent.includes("Older body available by keyboard");
+        }, "the older message body");
+        const recipients = document.getElementById("inbox-recipients-email_KEY1");
+        assert.equal(recipients.tagName, "BUTTON");
+        assert.equal(recipients.tabIndex, 0);
+        assert.ok(recipients.getAttribute("aria-label").startsWith("Message details from Pat Sender"));
+        press(recipients, "Enter", 13);
+        await until(() => recipients.getAttribute("aria-expanded") === "true", "recipient details expanded");
+        assert.ok(document.getElementById(recipients.getAttribute("aria-controls")).textContent.includes("pat@example.invalid"));
+        assert.equal(document.activeElement, recipients);
+        press(recipients, " ", 32);
+        await until(() => recipients.getAttribute("aria-expanded") === "false", "recipient details collapsed");
+        assert.equal(document.activeElement, recipients);
+        press(disclosure, "Enter", 13);
+        disclosure = await until(() => {
+            const control = document.getElementById("inbox-toggle-email_KEY1");
+            return control && control.getAttribute("aria-expanded") === "false" && document.activeElement === control && control;
+        }, "collapsed message focus");
+        press(disclosure, " ", 32);
+        await until(() => document.getElementById("inbox-toggle-email_KEY1").getAttribute("aria-expanded") === "true", "Space expands the message");
+        assert.equal(asked(threadPath).length, reads, "disclosure Enter did not reopen the whole thread");
+
+        // A message's flag names the next action after each successful change, just like its conversation row.
+        const statePath = "/apps/BasicComms/Inbox/Mail/state", changesBefore = asked(statePath, "POST").length;
+        const flag = document.querySelector('#inbox-msg-email_KEY1 button[aria-label="Flag"]');
+        assert.ok(flag, "the unflagged message offers Flag");
+        flag.click();
+        await until(() => flag.getAttribute("aria-label") === "Remove flag", "the flagged message offers Remove flag");
+        assert.equal(inbox.thread.messageList.find(message => message.key === "email:KEY1").isFlagged, true);
+        assert.ok(threadRow.querySelector('button[aria-label="Remove flag"]'), "the conversation reflects its flagged message");
+        flag.click();
+        await until(() => flag.getAttribute("aria-label") === "Flag", "the unflagged message offers Flag again");
+        assert.equal(inbox.thread.messageList.find(message => message.key === "email:KEY1").isFlagged, false);
+        assert.ok(threadRow.querySelector('button[aria-label="Flag"]'), "the conversation flag is restored");
+        const changes = asked(statePath, "POST").slice(changesBefore);
+        assert.deepEqual(changes.map(request => request.params.action), ["flag", "unflag"], "one request per toggle");
+        assert.ok(changes.every(request => JSON.stringify(JSON.parse(request.params.targetsJson)) ===
+            JSON.stringify([{ store: "email", emailMessageId: "KEY1" }])), "only the selected message is changed");
+    } finally {
+        document.removeEventListener("keydown", keys);
+        answers[listPath] = oldListAnswer;
+        if (oldThreadAnswer) answers[threadPath] = oldThreadAnswer; else delete answers[threadPath];
+        inbox.closeThread();
+        await until(() => !inbox.thread, "the keyboard thread closed");
+        await inbox.loadList(true);
+    }
 
     // a mail whose draft was changed elsewhere: the server's draft stays, the user's version is kept as a copy
     const copy = { at: 1, email: true, clientRef: "mCOPY", queued: [{ file: "f1", name: "plan.pdf", size: 3, contentType: "application/pdf" }], conflictOf: { clientRef: "mc1", emailMessageId: "E5" },
