@@ -207,6 +207,8 @@ fn handle(
     let just_content =
         ScreenUrlInfo::parse(factory, root, &request.path, 0).is_ok_and(|info| info.file_resource.is_some());
     let _no_visit = user::session::NoVisitGuard::set(just_content);
+    // what the request decides about its session (a screen may decline one), from before the bind
+    let _request_session = user::session::RequestSessionScope::begin();
     let guard = user::bind(
         factory,
         session_cookie.as_deref(),
@@ -261,18 +263,25 @@ fn handle(
     }
     scripts.run_actions_logged("after-request", parameters);
     // A page a shared cache may keep, for a visitor with no session and nobody signed in, gets no session: no cookie or
-    // token is sent and the session made for the request is not kept (impl-shop F42).
-    let cacheable = presented.is_none()
-        && matches!(&outcome, Ok(response) if is_public(response))
-        && user::session::current_user_id()?.is_none();
-    if cacheable {
+    // token is sent and the session made for the request is not kept (impl-shop F42). A screen that declined a session
+    // (`ec.web.declineSession()`, impl-commerce F86) gets the same whatever its caching, and a session the request
+    // brought is kept but sent nothing new; either way the Visit the request started is taken back.
+    let declined = user::session::session_declined();
+    let anonymous = user::session::current_user_id()?.is_none();
+    let discard = anonymous
+        && ((presented.is_none() && matches!(&outcome, Ok(response) if is_public(response)))
+            || (declined && new_session));
+    if declined {
+        user::session::take_back_request_visit();
+    }
+    if discard {
         user::session::discard_bound_session();
     }
     let response = match end.finish() {
         Err(err) if !web::output_sent() && outcome.is_ok() => web::json_error_of(&err),
         _ => outcome?,
     };
-    let mut response = if cacheable {
+    let mut response = if discard || declined {
         response
     } else {
         attach_session(

@@ -1082,6 +1082,15 @@ impl HostWeb {
         })
     }
 
+    /// Send this request's response with no session cookie or token (impl-commerce F86): see
+    /// [`crate::user::session::decline_session`].
+    fn decline_session(&self, ctx: Ctx<'_>) -> rquickjs::Result<()> {
+        host_guard(&ctx, || {
+            crate::user::session::decline_session();
+            Ok(())
+        })
+    }
+
     #[qjs(get)]
     fn session_token(&self, ctx: Ctx<'_>) -> rquickjs::Result<String> {
         host_guard(&ctx, || {

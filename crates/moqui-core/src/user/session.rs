@@ -1625,6 +1625,8 @@ fn ensure_visit(factory: &ExecutionContextFactory, visitor_cookie: Option<&str>)
         Ok((visitor_id, visit_id))
     })?;
     set_visit(&visit_id, &visitor_id);
+    let new_visitor = (visitor_cookie.map(str::trim) != Some(visitor_id.as_str())).then(|| visitor_id.clone());
+    note_started_visit(&visit_id, new_visitor);
     // Java defines first-hit-in-visit and never runs it; here it runs when a request starts a visit (Parity-Diffs P9-02)
     factory
         .webapp_scripts()
@@ -1695,6 +1697,113 @@ pub struct VisitRequest {
 thread_local! {
     static VISIT_REQUEST: std::cell::RefCell<Option<VisitRequest>> = const { std::cell::RefCell::new(None) };
     static NO_VISIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static REQUEST_SESSION: std::cell::RefCell<Option<RequestSession>> = const { std::cell::RefCell::new(None) };
+}
+
+/// What one web request decided about its session: whether a screen declined one ([`decline_session`]) and the visit
+/// the request started, which a decline takes back.
+#[derive(Default)]
+struct RequestSession {
+    declined: bool,
+    started: Option<StartedVisit>,
+}
+
+/// A `moqui.server.Visit` this request created, with the `moqui.server.Visitor` it created for it, if any.
+struct StartedVisit {
+    visit_id: String,
+    new_visitor: Option<String>,
+}
+
+/// One web request's session decisions, from [`RequestSessionScope::begin`] (before the bind, so the visit the bind
+/// starts is known) until the scope drops. Outside a scope [`decline_session`] does nothing.
+#[must_use = "dropping the scope forgets the request's session decisions"]
+pub struct RequestSessionScope {
+    previous: Option<RequestSession>,
+}
+
+impl RequestSessionScope {
+    pub fn begin() -> Self {
+        Self {
+            previous: REQUEST_SESSION.with(|slot| slot.borrow_mut().replace(RequestSession::default())),
+        }
+    }
+}
+
+impl Drop for RequestSessionScope {
+    fn drop(&mut self) {
+        let previous = self.previous.take();
+        REQUEST_SESSION.with(|slot| *slot.borrow_mut() = previous);
+    }
+}
+
+/// Decline a session for this web request (`ec.web.declineSession()`, impl-commerce F86; docs/security/Attack-Surface.md
+/// "Pages without a session"): the response carries no session or visitor cookie and no session token. A request that
+/// came with no session of its own and has nobody signed in has its session discarded unwritten and starts no Visit; a
+/// request that has a session keeps it, and is only sent nothing new. Either way a Visit the request started is taken
+/// back, so no Visit records it as its `initialRequest`. Nothing outside a web request.
+pub fn decline_session() {
+    REQUEST_SESSION.with(|slot| {
+        if let Some(request) = slot.borrow_mut().as_mut() {
+            request.declined = true;
+        }
+    });
+}
+
+/// Whether a screen declined a session for this web request ([`decline_session`]).
+pub fn session_declined() -> bool {
+    REQUEST_SESSION.with(|slot| slot.borrow().as_ref().is_some_and(|request| request.declined))
+}
+
+fn note_started_visit(visit_id: &str, new_visitor: Option<String>) {
+    REQUEST_SESSION.with(|slot| {
+        if let Some(request) = slot.borrow_mut().as_mut() {
+            request.started = Some(StartedVisit {
+                visit_id: visit_id.to_string(),
+                new_visitor,
+            });
+        }
+    });
+}
+
+/// Take back the Visit this request started, for a request that declined its session (F86): the session forgets it, so
+/// a later request that keeps a session starts its own, and the Visit row, with the Visitor made for it, is deleted. A
+/// Visit a login in this request started stays, as the login history names it. Call it while the session is bound. A
+/// row that will not delete is logged and left.
+pub fn take_back_request_visit() {
+    let started = REQUEST_SESSION.with(|slot| slot.borrow_mut().as_mut().and_then(|request| request.started.take()));
+    let Some(started) = started else {
+        return;
+    };
+    if with_session(|session| session.user_id.is_some()) {
+        return;
+    }
+    with_session(|session| {
+        if session.visit_id.as_deref() == Some(started.visit_id.as_str()) {
+            session.visit_id = None;
+            session.visitor_id = None;
+            mark_column(session, Column::VisitId);
+            mark_column(session, Column::VisitorId);
+        }
+    });
+    let Some(facade) = bound_factory().and_then(|factory| factory.entity()) else {
+        return;
+    };
+    let _authz = without_authz();
+    // the Visit first, as it refers to its Visitor
+    let rows = [
+        (VISIT, "visitId", Some(started.visit_id)),
+        (VISITOR, "visitorId", started.new_visitor),
+    ];
+    for (entity, field, id) in rows {
+        let Some(id) = id else { continue };
+        let deleted = facade.make_value(entity).and_then(|mut row| {
+            row.set(field, Value::string(&id));
+            row.delete(&facade)
+        });
+        if let Err(err) = deleted {
+            tracing::error!("declined session: {entity} {id} was not deleted: {err}");
+        }
+    }
 }
 
 /// A request for a static file under a screen is content, not a visit: it starts no Visitor or Visit, at the bind or at a
