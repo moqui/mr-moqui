@@ -24,15 +24,16 @@ use moqui_db::sql::{select, Condition, FieldRef, LimitOffset, OrderBy};
 use moqui_lib::error::Error;
 
 use super::batch::{flush_writes, Flushed};
-use super::hold::{FrameHold, Held, Overlay};
+use super::hold::{FrameHold, Held, KeptList, Overlay};
 use super::stats::{self, FlushCause};
 use super::{
-    entity_columns, load_plain, may_match, pk_condition, pk_of, query_tx, row_key, row_matches, rows_plain,
-    sim_session_open, sim_view, sort_rows, EntityFacade, EntityValue, FieldMap, MemRow, Op, ReadMeta, SelectPlan,
-    SimView,
+    entity_columns, load_by_pk, load_plain, may_match, owned_lookup_key, pk_condition, pk_of, query_tx, row_key,
+    row_matches, rows_plain, sim_session_open, sim_view, sort_rows, write_pk, EntityFacade, EntityValue, FieldMap,
+    FindLookup, MemRow, Op, ReadMeta, SelectPlan, SimView,
 };
 use crate::driver::DbConnection;
 use crate::transaction::{CacheMode, TransactionManager};
+use moqui_lib::object::Value;
 
 thread_local! {
     /// Held rows by transaction frame token.
@@ -193,14 +194,34 @@ pub(super) fn clear_holds() {
 pub fn flush_before_sql(facade: &EntityFacade, tx: &TransactionManager) -> Result<(), Error> {
     match tx.cache_frame() {
         Some((token, CacheMode::Hold)) => flush_early(facade, tx, token, FlushCause::RawSql, ""),
+        // The statement may change any row the frame read.
+        Some((token, CacheMode::ReadThrough)) => {
+            forget_reads(token, None);
+            Ok(())
+        }
         _ => Ok(()),
     }
 }
 
-/// The rows of a find of `meta` with this frame's held writes and the sim overlay on them; `None` when the database
-/// answers alone. With a page (`limit`) and no sim, the database reads only as far as the page can reach: each held
-/// write moves at most one row into or out of the rows before it, and a held update of a row past that point starts
-/// from its stored row. The caller takes the page.
+/// Drop what the frame `token` read of `entity`, or of every entity (plans/TX-Cache.md D2).
+pub(super) fn forget_reads(token: u64, entity: Option<&str>) {
+    TX_HOLD.with(|slot| {
+        if let Some(frame) = slot.borrow_mut().get_mut(&token) {
+            frame.forget_reads(entity);
+        }
+    });
+}
+
+/// The rows of a find of `meta` in a frame with the transaction cache on, with the frame's held writes on them (and the
+/// sim overlay, in a sim); `None` when the database answers alone, as it does with no such frame.
+///
+/// In a cache frame (hold or read-through, plans/TX-Cache.md D2, D3) the rows come from what the frame read before when
+/// they can: a find by the whole key from the row the frame keeps (or, for a row it created, its held writes alone); a
+/// list find with no page from the list it kept under the key of `list`; a list find whose condition pins a type-one
+/// relationship to a row the frame created from its held creates alone. Otherwise the database answers and the frame
+/// keeps the rows. With a page (`limit`), the database reads only as far as the page can reach: each held write moves
+/// at most one row into or out of the rows before it, and a held update of a row past that point starts from its
+/// stored row. The caller takes the page. A `lock` (for update) always reads the database.
 pub(super) fn overlay_rows(
     facade: &EntityFacade,
     meta: &ReadMeta,
@@ -208,12 +229,259 @@ pub(super) fn overlay_rows(
     order: &[OrderBy],
     page: LimitOffset,
     lock: Option<bool>,
+    list: Option<&FindLookup>,
 ) -> Result<Option<Vec<EntityValue>>, Error> {
-    let sim = if sim_session_open() {
-        sim_view(&meta.full_name)
-    } else {
-        SimView::empty()
+    if sim_session_open() {
+        let sim = sim_view(&meta.full_name);
+        if sim.affects() {
+            return sim_overlay_rows(facade, meta, condition, order, page, lock, sim);
+        }
+    }
+    let Some((token, _)) = facade
+        .transactions_for(&meta.full_name)
+        .ok()
+        .and_then(|tx| tx.cache_frame())
+    else {
+        return Ok(None);
     };
+    let entity = meta.full_name.as_str();
+    // A find the shared entity cache answers (an entity marked `cache`, the frame not having written it) is left to it:
+    // it is memory too, and shared.
+    if let Some(lookup) = list {
+        if lock.is_none() && meta.caches(lookup) && !super::frame_wrote(facade, entity, meta) {
+            return Ok(None);
+        }
+    }
+    let pinned = if lock.is_none() {
+        pinned_keys(condition, &meta.pk_fields)
+    } else {
+        None
+    };
+    if let Some((pk, keys)) = pinned {
+        return pinned_row(facade, meta, token, &pk, &keys).map(Some);
+    }
+    let holds = TX_HOLD.with(|slot| {
+        slot.borrow()
+            .get(&token)
+            .map(|frame| frame.holds(entity))
+            .unwrap_or_default()
+    });
+    let cacheable = lock.is_none() && page.limit.is_none() && page.offset.is_none();
+    let relevant = holds
+        .iter()
+        .any(|held| held.operation != Op::Create || may_match(condition, &held.plain));
+    let list_key = list.filter(|_| cacheable).map(owned_lookup_key);
+    let list_key = list_key.as_deref();
+    let new_rows_only = lock.is_none() && pins_created_parent(facade, meta, token, condition);
+    if !relevant && list_key.is_none() && !new_rows_only {
+        // Nothing the frame holds or kept can change the answer: the database gives it, with its limit and offset.
+        return Ok(None);
+    }
+    let kept = list_key
+        .and_then(|key| TX_HOLD.with(|slot| slot.borrow().get(&token).and_then(|frame| frame.kept_list(entity, key))));
+    let mut memory = true;
+    let loaded: Vec<FieldMap> = if new_rows_only {
+        Vec::new()
+    } else if let Some(kept) = kept {
+        kept.iter().map(|row| FieldMap::clone(row)).collect()
+    } else {
+        memory = false;
+        let window = page.limit.map(|limit| {
+            let held = i64::try_from(holds.len()).unwrap_or(i64::MAX);
+            page.offset
+                .unwrap_or(0)
+                .max(0)
+                .saturating_add(limit.max(0))
+                .saturating_add(held)
+        });
+        let loaded = load_plain(facade, meta, condition, order, window, None, lock)?;
+        TX_HOLD.with(|slot| {
+            let mut map = slot.borrow_mut();
+            let frame = map.entry(token).or_default();
+            match list_key {
+                Some(key) => {
+                    let rows: KeptList = Rc::new(loaded.iter().map(|row| Rc::new(row.clone())).collect());
+                    frame.keep_list(entity, key, rows, &meta.pk_fields);
+                }
+                None => {
+                    let mut buffer = String::new();
+                    for row in &loaded {
+                        buffer.clear();
+                        if write_pk(row, &meta.pk_fields, &mut buffer) {
+                            frame.keep_stored(entity, &buffer, Some(Rc::new(row.clone())));
+                        }
+                    }
+                }
+            }
+        });
+        loaded
+    };
+    let rows: Vec<MemRow> = loaded
+        .into_iter()
+        .map(|fields| MemRow { fields, trusted: true })
+        .collect();
+    let overlay = Overlay::new(rows, &holds, &meta.pk_fields);
+    // An update of a row the condition did not load starts from the whole stored row, not the fields it set.
+    let (stored, read) = stored_rows(facade, meta, Some(token), &overlay)?;
+    stats::note_read_of(token, memory && !read);
+    let mut rows = overlay.apply(&stored)?;
+    rows.retain(|row| row.trusted || row_matches(condition, &row.fields));
+    if !order.is_empty() {
+        sort_rows(&mut rows, order);
+    }
+    Ok(Some(values_of(meta, rows)))
+}
+
+fn values_of(meta: &ReadMeta, rows: Vec<MemRow>) -> Vec<EntityValue> {
+    let name: Arc<str> = Arc::from(meta.full_name.as_str());
+    rows.into_iter()
+        .map(|row| EntityValue::from_fields(Arc::clone(&name), row.fields))
+        .collect()
+}
+
+/// A find by the whole key in a cache frame: the row the frame keeps, or for a row it created its held writes alone,
+/// or else the row read by its key and kept (plans/TX-Cache.md D2, G7). The rest of the condition is checked in
+/// memory.
+fn pinned_row(
+    facade: &EntityFacade,
+    meta: &ReadMeta,
+    token: u64,
+    pk: &str,
+    keys: &FieldMap,
+) -> Result<Vec<EntityValue>, Error> {
+    let entity = meta.full_name.as_str();
+    let (holds, known, first) = TX_HOLD.with(|slot| {
+        let map = slot.borrow();
+        match map.get(&token) {
+            Some(frame) => (
+                frame.holds_of(entity, pk),
+                frame.stored(entity, pk),
+                frame.first_op(entity, pk),
+            ),
+            None => (Vec::new(), None, None),
+        }
+    });
+    let (base, memory) = match (known, first) {
+        (Some(row), _) => (row, true),
+        // A row the frame created is not on the database, unless the frame read it there (then the overlay fails it).
+        (None, Some(Op::Create)) => (None, true),
+        (None, _) => {
+            let row = load_by_pk(facade, entity, keys)?.map(Rc::new);
+            TX_HOLD.with(|slot| {
+                slot.borrow_mut()
+                    .entry(token)
+                    .or_default()
+                    .keep_stored(entity, pk, row.clone())
+            });
+            (row, false)
+        }
+    };
+    stats::note_read_of(token, memory);
+    // The condition is the key: every row the overlay gives, of that key alone, matches it.
+    let rows: Vec<MemRow> = base
+        .map(|row| MemRow {
+            fields: FieldMap::clone(&row),
+            trusted: true,
+        })
+        .into_iter()
+        .collect();
+    let overlay = Overlay::new(rows, &holds, &meta.pk_fields);
+    let rows = overlay.apply(&HashMap::new())?;
+    Ok(values_of(meta, rows))
+}
+
+/// Whether `condition` pins every key field of a type-one relationship of `meta` to a row the frame created, so no row
+/// on the database refers to it and the frame's held creates are all the rows there are (Java's `listGet` shortcut,
+/// plans/TX-Cache.md D3).
+fn pins_created_parent(facade: &EntityFacade, meta: &ReadMeta, token: u64, condition: Option<&Condition>) -> bool {
+    if meta.one_keys.is_empty() {
+        return false;
+    }
+    let Some(condition) = condition else {
+        return false;
+    };
+    let pinned = equalities(condition);
+    if pinned.is_empty() {
+        return false;
+    }
+    TX_HOLD.with(|slot| {
+        let map = slot.borrow();
+        let Some(frame) = map.get(&token).filter(|frame| !frame.is_empty()) else {
+            return false;
+        };
+        meta.one_keys.iter().any(|(related, pairs)| {
+            let mut keys = FieldMap::new();
+            for (field, related_field) in pairs {
+                match pinned.get(field.as_str()) {
+                    Some(value) => {
+                        keys.insert(Arc::from(related_field.as_str()), (*value).clone());
+                    }
+                    None => return false,
+                }
+            }
+            let Ok(related) = super::read_meta(facade, related) else {
+                return false;
+            };
+            let Some(pk) = pk_of(&keys, &related.pk_fields) else {
+                return false;
+            };
+            frame.first_op(&related.full_name, &pk) == Some(Op::Create)
+                && frame.stored(&related.full_name, &pk).is_none()
+        })
+    })
+}
+
+/// The fields a condition compares by equality at the top level, with their values.
+fn equalities(condition: &Condition) -> HashMap<&str, &Value> {
+    let parts: Vec<&Condition> = match condition {
+        Condition::And(list) => list.iter().collect(),
+        other => vec![other],
+    };
+    let mut out = HashMap::new();
+    for part in parts {
+        if let Condition::Equals(field, value) = part {
+            if field.entity_alias.is_none() && !value.is_null() {
+                out.insert(field.name.as_str(), value);
+            }
+        }
+    }
+    out
+}
+
+/// The key text and key fields of a condition that is the whole key and nothing else: an equality of each key field at
+/// the top level. A condition with more is not answered by key, since what more it asks is judged by the database (a
+/// value of another type compares there as it would not here).
+fn pinned_keys(condition: Option<&Condition>, pk_fields: &[String]) -> Option<(String, FieldMap)> {
+    let condition = condition?;
+    let parts = match condition {
+        Condition::And(list) => list.len(),
+        _ => 1,
+    };
+    let pinned = equalities(condition);
+    if parts != pk_fields.len() || pinned.len() != pk_fields.len() {
+        return None;
+    }
+    let mut keys = FieldMap::new();
+    for name in pk_fields {
+        keys.insert(Arc::from(name.as_str()), (*pinned.get(name.as_str())?).clone());
+    }
+    let pk = pk_of(&keys, pk_fields)?;
+    Some((pk, keys))
+}
+
+/// [`overlay_rows`] with a sim open that changed the entity: the frame's held writes and the sim overlay on the rows of
+/// the database; `None` when the database answers alone. With a page (`limit`) and no sim, the database reads only as far as the page can reach: each held
+/// write moves at most one row into or out of the rows before it, and a held update of a row past that point starts
+/// from its stored row. The caller takes the page.
+fn sim_overlay_rows(
+    facade: &EntityFacade,
+    meta: &ReadMeta,
+    condition: Option<&Condition>,
+    order: &[OrderBy],
+    page: LimitOffset,
+    lock: Option<bool>,
+    sim: SimView,
+) -> Result<Option<Vec<EntityValue>>, Error> {
     let token = hold_token(facade, &meta.full_name);
     // A find by the whole primary key sees only the held rows of that key.
     let pinned = (!sim.affects())
@@ -263,7 +531,7 @@ pub(super) fn overlay_rows(
         .collect();
     let overlay = Overlay::new(rows, &holds, &meta.pk_fields);
     // An update of a row the condition did not load starts from the whole stored row, not the fields it set.
-    let stored = stored_rows(facade, meta, token, &overlay)?;
+    let (stored, _) = stored_rows(facade, meta, token, &overlay)?;
     let mut rows = overlay.apply(&stored)?;
     rows.retain(|row| row.trusted || row_matches(condition, &row.fields));
     if sim.affects() {
@@ -292,6 +560,9 @@ pub(super) fn overlay_rows(
     Ok(Some(values))
 }
 
+/// The stored row of each held key an overlay needs; `None` where the database has none.
+type StoredRows<'h> = HashMap<&'h str, Option<Rc<FieldMap>>>;
+
 /// Held keys read in one query of [`stored_rows`].
 const STORED_BATCH: usize = 100;
 
@@ -303,7 +574,7 @@ pub(super) fn stored_rows<'h>(
     meta: &ReadMeta,
     token: Option<u64>,
     overlay: &Overlay<'h>,
-) -> Result<HashMap<&'h str, Option<Rc<FieldMap>>>, Error> {
+) -> Result<(StoredRows<'h>, bool), Error> {
     let needed = overlay.unloaded_updates();
     let mut stored = HashMap::with_capacity(needed.len());
     let mut missing = Vec::new();
@@ -327,6 +598,7 @@ pub(super) fn stored_rows<'h>(
             }
         }
     });
+    let read = !missing.is_empty();
     for batch in missing.chunks(STORED_BATCH) {
         let keys: Vec<&FieldMap> = batch.iter().map(|held| &held.plain).collect();
         let mut found: HashMap<String, Rc<FieldMap>> = HashMap::with_capacity(batch.len());
@@ -347,7 +619,7 @@ pub(super) fn stored_rows<'h>(
             }
         });
     }
-    Ok(stored)
+    Ok((stored, read))
 }
 
 /// The primary key text a condition pins: every key field compared by equality at the top level.
@@ -368,9 +640,12 @@ pub(super) fn pinned_pk(condition: Option<&Condition>, pk_fields: &[String]) -> 
     pk_of(&keys, pk_fields)
 }
 
-/// Before a view read: when the frame holds rows of one of the view's members, write every held row now (in order,
-/// so a child row follows its parent), as Java's bypass of the transaction cache for a view.
-pub(super) fn flush_for_view(facade: &EntityFacade, view: &str) -> Result<(), Error> {
+/// Before a view read: when the frame holds a row of one of the view's members that may be in the result, write every
+/// held row now (in order, so a child row follows its parent), as Java's bypass of the transaction cache for a view.
+/// A held row may be in the result unless the view's `condition`, mapped to the member's fields through the view's
+/// aliases, surely does not match it, before or after the write (plans/TX-Cache.md D5); a row whose stored values the
+/// frame does not know may be.
+pub(super) fn flush_for_view(facade: &EntityFacade, view: &str, condition: Option<&Condition>) -> Result<(), Error> {
     if TX_HOLD.with(|slot| slot.borrow().is_empty()) {
         return Ok(());
     }
@@ -378,23 +653,76 @@ pub(super) fn flush_for_view(facade: &EntityFacade, view: &str) -> Result<(), Er
     let Some(token) = tx.frame_token() else {
         return Ok(());
     };
-    let members: Vec<String> = facade.with_entity(view, |entity, _, model| {
+    // Each member: its full name, and the view's aliases of its fields (alias, field).
+    let members: Vec<(String, Vec<(String, String)>)> = facade.with_entity(view, |entity, _, model| {
         Ok(entity
             .member_entities
             .iter()
             .map(|member| {
-                model
+                let full_name = model
                     .entity(&member.entity_name)
                     .map(|entity| entity.full_name.clone())
-                    .unwrap_or_else(|_| member.entity_name.clone())
+                    .unwrap_or_else(|_| member.entity_name.clone());
+                let aliases = entity
+                    .aliases
+                    .iter()
+                    .filter(|alias| alias.entity_alias.as_deref() == Some(member.entity_alias.as_str()))
+                    .filter(|alias| alias.function.is_none())
+                    .map(|alias| {
+                        (
+                            alias.name.clone(),
+                            alias.field.clone().unwrap_or_else(|| alias.name.clone()),
+                        )
+                    })
+                    .collect();
+                (full_name, aliases)
             })
             .collect())
     })?;
-    let held = TX_HOLD.with(|slot| slot.borrow().get(&token).is_some_and(|frame| frame.holds_any(&members)));
-    if held {
+    let shows = TX_HOLD.with(|slot| {
+        let map = slot.borrow();
+        let Some(frame) = map.get(&token) else {
+            return false;
+        };
+        members.iter().any(|(entity, aliases)| {
+            frame
+                .holds(entity)
+                .iter()
+                .any(|held| held_may_show(frame, held, aliases, condition))
+        })
+    });
+    if shows {
         flush_early(facade, &tx, token, FlushCause::View, view)?;
     }
     Ok(())
+}
+
+/// Whether a held write of a view member may change a view read with `condition`: the row before or after it may
+/// match, judged on the view's aliases of the member's fields.
+fn held_may_show(frame: &FrameHold, held: &Held, aliases: &[(String, String)], condition: Option<&Condition>) -> bool {
+    let Some(condition) = condition else {
+        return true;
+    };
+    let stored = frame.stored(&held.entity_name, &held.pk);
+    let states: Vec<FieldMap> = match (held.operation, stored) {
+        (Op::Create, _) => vec![held.plain.clone()],
+        (Op::Update | Op::Upsert, Some(Some(row))) => {
+            let mut after = FieldMap::clone(&row);
+            after.extend(held.plain.iter().map(|(name, value)| (name.clone(), value.clone())));
+            vec![FieldMap::clone(&row), after]
+        }
+        (Op::Update | Op::Upsert, Some(None)) => vec![held.plain.clone()],
+        (Op::Delete, Some(Some(row))) => vec![FieldMap::clone(&row)],
+        (Op::Delete, Some(None)) => return false,
+        (_, None) => return true,
+    };
+    states.iter().any(|fields| {
+        let mapped: FieldMap = aliases
+            .iter()
+            .filter_map(|(alias, field)| Some((Arc::from(alias.as_str()), fields.get(field.as_str())?.clone())))
+            .collect();
+        may_match(Some(condition), &mapped)
+    })
 }
 
 /// The stored rows of `keys` (each a held write's values, which hold the whole primary key), in one query.

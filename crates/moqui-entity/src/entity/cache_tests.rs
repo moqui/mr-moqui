@@ -141,6 +141,7 @@ fn only_a_plain_conditioned_find_is_cached() {
         cache: true,
         cache_never: false,
         pk_fields: Vec::new(),
+        one_keys: Vec::new(),
     };
     let lookup = |condition: Option<Condition>, limit: Option<i64>, offset: Option<i64>, filtered: bool| FindLookup {
         entity_name: "E".to_string(),

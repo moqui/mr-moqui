@@ -16,7 +16,7 @@
 //! sent without waiting (creates and upserts as rows the driver may join into multi-row statements), and one wait for
 //! them all. A driver that cannot pipeline (MySQL, SQLite) runs each statement as it is sent, as before.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
@@ -32,9 +32,8 @@ pub(super) struct Flushed {
     pub(super) rows: u64,
 }
 
-/// One row's held writes as one: a create and its later updates are one insert of the final values, updates are one
-/// update of the union of their columns, and updates followed by a delete are the delete. ECA rules and audit rows ran
-/// for each write when it was held.
+/// One row's held writes as one ([`merge`]): a create and its later updates are one insert of the final values, and
+/// updates are one update of the union of their columns. ECA rules and audit rows ran for each write when it was held.
 struct Merged {
     /// The first write of the row, for its entity and key and what an error says.
     first: Rc<Held>,
@@ -43,83 +42,76 @@ struct Merged {
     writes: u64,
 }
 
-/// Merge each row's writes, keeping the held order: a create (or upsert) stays where the row's first write was, so a
-/// child row created after it follows it, and an update or delete goes where the row's last write was, so it follows
-/// the writes it may depend on (a row it now refers to, a child deleted before it).
-fn merge(writes: impl Iterator<Item = Rc<Held>>) -> Vec<Merged> {
-    let mut out: Vec<Option<Merged>> = Vec::new();
+/// Merge each row's writes into one where moving a write cannot change what the database checks, keeping the held
+/// order. A write joins its row's previous merged write when the two are adjacent, and an update joins the row's earlier
+/// create, upsert or update across other writes when it changes no field of a relationship key (so no foreign key it
+/// sets or clears moves past a row that depends on it). A delete is never merged: the update before it may clear a
+/// reference that another row's delete after it needs gone (a thread's replies before their parent).
+fn merge(facade: &EntityFacade, writes: impl Iterator<Item = Rc<Held>>) -> Vec<Merged> {
+    let mut out: Vec<Merged> = Vec::new();
     // The open merged write of each row, by entity and key; a delete closes it.
     let mut open: HashMap<(String, String), usize> = HashMap::new();
+    // The relationship key fields of each entity met.
+    let mut key_fields: HashMap<String, HashSet<String>> = HashMap::new();
     for held in writes {
         let key = (held.entity_name.clone(), held.pk.clone());
-        let Some(at) = open.get(&key).copied() else {
-            let at = out.len();
-            if held.operation != Op::Delete {
-                open.insert(key, at);
+        let target = open.get(&key).copied().filter(|&at| {
+            let merged = &out[at];
+            let joins = matches!(
+                (merged.operation, held.operation),
+                (Op::Create | Op::Upsert | Op::Update, Op::Update) | (Op::Create | Op::Upsert | Op::Update, Op::Upsert)
+            );
+            if !joins {
+                return false;
             }
-            out.push(Some(Merged {
-                operation: held.operation,
-                sealed: held.sealed.clone(),
-                first: held,
-                writes: 1,
-            }));
-            continue;
-        };
-        let Some(mut merged) = out[at].take() else {
-            continue;
-        };
-        merged.writes += 1;
-        let moves = match (merged.operation, held.operation) {
-            (Op::Create | Op::Upsert, Op::Update | Op::Upsert) => {
+            if at + 1 == out.len() {
+                return true;
+            }
+            held.operation == Op::Update && !sets_key_field(facade, &mut key_fields, &held)
+        });
+        match target {
+            Some(at) => {
+                let merged = &mut out[at];
                 merged
                     .sealed
                     .extend(held.sealed.iter().map(|(name, value)| (name.clone(), value.clone())));
-                false
+                merged.writes += 1;
+                if merged.operation == Op::Update && held.operation == Op::Upsert {
+                    merged.operation = Op::Upsert;
+                }
             }
-            (Op::Update, Op::Update) => {
-                merged
-                    .sealed
-                    .extend(held.sealed.iter().map(|(name, value)| (name.clone(), value.clone())));
-                true
-            }
-            (Op::Update, Op::Upsert) => {
-                merged
-                    .sealed
-                    .extend(held.sealed.iter().map(|(name, value)| (name.clone(), value.clone())));
-                merged.operation = Op::Upsert;
-                true
-            }
-            (_, Op::Delete) => {
-                merged.operation = Op::Delete;
-                merged.sealed = held.sealed.clone();
-                open.remove(&key);
-                true
-            }
-            // A create after a write of the same row other than a delete is refused when it is held, and a delete
-            // closes its row: keep both as they are.
-            _ => {
-                out[at] = Some(merged);
-                let at = out.len();
-                open.insert(key, at);
-                out.push(Some(Merged {
+            None => {
+                if held.operation == Op::Delete {
+                    open.remove(&key);
+                } else {
+                    open.insert(key, out.len());
+                }
+                out.push(Merged {
                     operation: held.operation,
                     sealed: held.sealed.clone(),
                     first: held,
                     writes: 1,
-                }));
-                continue;
+                });
             }
-        };
-        if moves {
-            if merged.operation != Op::Delete {
-                open.insert(key, out.len());
-            }
-            out.push(Some(merged));
-        } else {
-            out[at] = Some(merged);
         }
     }
-    out.into_iter().flatten().collect()
+    out
+}
+
+/// Whether an update sets a field of one of its entity's type-one relationship keys (a foreign key).
+fn sets_key_field(facade: &EntityFacade, key_fields: &mut HashMap<String, HashSet<String>>, held: &Held) -> bool {
+    let fields = key_fields.entry(held.entity_name.clone()).or_insert_with(|| {
+        super::read_meta(facade, &held.entity_name)
+            .map(|meta| {
+                meta.one_keys
+                    .iter()
+                    .flat_map(|(_, pairs)| pairs.iter().map(|(field, _)| field.clone()))
+                    .filter(|field| !meta.pk_fields.contains(field))
+                    .collect()
+            })
+            .unwrap_or_default()
+    });
+    held.sealed.keys().any(|name| fields.contains(&**name))
 }
 
 /// Send `writes` as the commit batch on `conn` and wait for them once. A failure found when sending names its write;
@@ -131,7 +123,7 @@ pub(super) fn flush_writes(
     writes: impl Iterator<Item = Rc<Held>>,
     conn: &mut dyn DbConnection,
 ) -> Result<Flushed, Error> {
-    let merged = merge(writes);
+    let merged = merge(facade, writes);
     let mut flushed = Flushed { statements: 0, rows: 0 };
     for write in &merged {
         let held = &write.first;

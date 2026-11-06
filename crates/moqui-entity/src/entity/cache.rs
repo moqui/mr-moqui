@@ -44,7 +44,7 @@ use super::params::{entity_columns, map_row};
 use super::value::FieldMap;
 use super::value::{EntityList, EntityValue};
 use crate::driver::{DbConnection, DbRow};
-use crate::transaction::TransactionManager;
+use crate::transaction::{CacheMode, TransactionManager};
 
 mod batch;
 mod hold;
@@ -119,6 +119,9 @@ struct ReadMeta {
     cache: bool,
     cache_never: bool,
     pk_fields: Vec<String>,
+    /// Each type-one relationship: the related entity and the key pairs (this field, related field), for a list find
+    /// whose condition pins one to a row the frame created (plans/TX-Cache.md D3).
+    one_keys: Vec<(String, Vec<(String, String)>)>,
 }
 
 impl ReadMeta {
@@ -492,13 +495,21 @@ pub fn before_find(facade: &EntityFacade, lookup: &FindLookup) -> Result<Option<
     let meta = read_meta(facade, &lookup.entity_name)?;
     if meta.is_view {
         // A view is read from the database, so the frame's held rows of its members go there first.
-        flush_for_view(facade, &lookup.entity_name)?;
+        flush_for_view(facade, &lookup.entity_name, lookup.condition.as_ref())?;
     } else {
         let page = LimitOffset {
             limit: lookup.limit,
             offset: lookup.offset,
         };
-        if let Some(rows) = overlay_rows(facade, &meta, lookup.condition.as_ref(), &lookup.order, page, None)? {
+        if let Some(rows) = overlay_rows(
+            facade,
+            &meta,
+            lookup.condition.as_ref(),
+            &lookup.order,
+            page,
+            None,
+            Some(lookup),
+        )? {
             return Ok(Some(EntityList::new(page_rows(rows, lookup.limit, lookup.offset))));
         }
     }
@@ -514,13 +525,14 @@ pub fn before_find(facade: &EntityFacade, lookup: &FindLookup) -> Result<Option<
 pub fn before_count(facade: &EntityFacade, lookup: &FindLookup) -> Result<Option<i64>, Error> {
     let meta = read_meta(facade, &lookup.entity_name)?;
     if meta.is_view {
-        flush_for_view(facade, &lookup.entity_name)?;
+        flush_for_view(facade, &lookup.entity_name, lookup.condition.as_ref())?;
     } else if let Some(rows) = overlay_rows(
         facade,
         &meta,
         lookup.condition.as_ref(),
         &[],
         LimitOffset::default(),
+        None,
         None,
     )? {
         return Ok(Some(i64::try_from(rows.len()).unwrap_or(i64::MAX)));
@@ -561,7 +573,7 @@ pub fn before_selective_find(
 ) -> Result<Option<EntityList>, Error> {
     let meta = read_meta(facade, &lookup.entity_name)?;
     if meta.is_view {
-        flush_for_view(facade, &lookup.entity_name)?;
+        flush_for_view(facade, &lookup.entity_name, lookup.condition.as_ref())?;
         return Ok(None);
     }
     if !tx::holds_entity(facade, &meta.full_name) {
@@ -582,6 +594,7 @@ pub fn before_selective_find(
         &lookup.order,
         page,
         selective.lock,
+        None,
     )?
     else {
         return Ok(None);
@@ -609,7 +622,7 @@ pub fn before_selective_find(
 pub fn before_selective_count(facade: &EntityFacade, entity_name: &str) -> Result<(), Error> {
     let meta = read_meta(facade, entity_name)?;
     if meta.is_view {
-        return flush_for_view(facade, entity_name);
+        return flush_for_view(facade, entity_name, None);
     }
     if tx::holds_entity(facade, &meta.full_name) {
         tx::flush_through(facade, &meta.full_name)?;
@@ -1121,6 +1134,10 @@ pub fn gate_write(
             .unwrap_or(false);
     let tx = facade.transactions_for(entity_name)?;
     if !sim && !tx.transaction_cache_active() {
+        // A read-through frame writes to the database at once: what it read of the entity is stale.
+        if let Some((token, CacheMode::ReadThrough)) = tx.cache_frame() {
+            tx::forget_reads(token, Some(&read_meta(facade, entity_name)?.full_name));
+        }
         return Ok(WriteGate::Proceed);
     }
     let prepared = prepare_handled(facade, entity_name, operation, values, stored)?;
@@ -2138,6 +2155,14 @@ fn read_meta(facade: &EntityFacade, entity_name: &str) -> Result<Arc<ReadMeta>, 
             cache: entity.cache == "true",
             cache_never: entity.cache == "never",
             pk_fields: entity.pk_field_names().into_iter().map(str::to_string).collect(),
+            one_keys: entity
+                .relationships
+                .iter()
+                .filter(|relationship| {
+                    relationship.relationship_type.starts_with("one") && !relationship.key_pairs.is_empty()
+                })
+                .map(|relationship| (relationship.related.clone(), relationship.key_pairs.clone()))
+                .collect(),
         })
     })?);
     facade.with_slot(ReadMetas::default, |metas| {

@@ -60,7 +60,15 @@ pub(super) struct FrameHold {
     /// of its row collapsed.
     order: Vec<Option<Rc<Held>>>,
     entities: HashMap<String, EntityHold>,
+    /// Rows kept in `stored` over every entity, up to [`READ_CAP`] (plans/TX-Cache.md D2).
+    kept: usize,
 }
+
+/// Rows a frame keeps of what it read; past it, nothing more is kept (plans/TX-Cache.md D2). Reaching it is not a flush.
+pub(super) const READ_CAP: usize = 10_000;
+
+/// The rows of a list find as the database gave them, kept by the find's key (plans/TX-Cache.md D3).
+pub(super) type KeptList = Rc<Vec<Rc<FieldMap>>>;
 
 #[derive(Default)]
 struct EntityHold {
@@ -68,9 +76,14 @@ struct EntityHold {
     slots: Vec<usize>,
     /// Positions in `order` of each row's writes, by primary key text.
     by_pk: HashMap<String, Vec<usize>>,
-    /// The stored row under a held update, read once in this frame; `None` when the database has no such row. The
-    /// held writes are not on the database yet, so the row does not change while the frame holds them.
+    /// Each row of the entity this frame read (by key, under a held update, or in a list), as the database has it;
+    /// `None` when it has no such row (plans/TX-Cache.md D2). The frame's own writes are applied on top when it reads:
+    /// while it holds them they are not on the database, so these rows stay as read. A write of the frame to the
+    /// database (an early flush, or any write in read-through mode) drops them.
     stored: HashMap<String, Option<Rc<FieldMap>>>,
+    /// List finds of the entity with no limit or offset, by the find's key, as the database answered them
+    /// (plans/TX-Cache.md D3); dropped as `stored` is.
+    lists: HashMap<String, KeptList>,
 }
 
 impl FrameHold {
@@ -81,7 +94,7 @@ impl FrameHold {
     }
 
     fn push_rc(&mut self, held: Rc<Held>) -> Result<(), Error> {
-        let Self { order, entities } = self;
+        let Self { order, entities, .. } = self;
         if !entities.contains_key(&held.entity_name) {
             entities.insert(held.entity_name.clone(), EntityHold::default());
         }
@@ -152,6 +165,7 @@ impl FrameHold {
         let mut order = std::mem::take(&mut self.order);
         let rest: Vec<Rc<Held>> = order.split_off(last + 1).into_iter().flatten().collect();
         self.entities.clear();
+        self.kept = 0;
         for held in rest {
             // Each was accepted in this order before, so none is refused now.
             if let Err(err) = self.push_rc(held) {
@@ -182,14 +196,6 @@ impl FrameHold {
         slots.iter().filter_map(|&at| self.order[at].clone()).collect()
     }
 
-    /// Whether the frame holds a write of one of `entities`.
-    pub(super) fn holds_any(&self, entities: &[String]) -> bool {
-        entities
-            .iter()
-            .filter_map(|name| self.entities.get(name))
-            .any(|hold| !hold.by_pk.is_empty())
-    }
-
     /// The writes held, a collapsed one among them until the hold is written.
     pub(super) fn len(&self) -> usize {
         self.order.len()
@@ -210,11 +216,59 @@ impl FrameHold {
         self.entities.get(entity)?.stored.get(pk).cloned()
     }
 
-    /// Keep the stored row under a held update of `entity`, as read now.
+    /// Keep a row of `entity` as read now from the database; nothing past [`READ_CAP`] rows.
     pub(super) fn keep_stored(&mut self, entity: &str, pk: &str, row: Option<Rc<FieldMap>>) {
-        if let Some(hold) = self.entities.get_mut(entity) {
-            hold.stored.insert(pk.to_string(), row);
+        if self.kept >= READ_CAP {
+            return;
         }
+        let hold = match self.entities.get_mut(entity) {
+            Some(hold) => hold,
+            None => self.entities.entry(entity.to_string()).or_default(),
+        };
+        if hold.stored.insert(pk.to_string(), row).is_none() {
+            self.kept += 1;
+        }
+    }
+
+    /// A list find of `entity` kept by its key.
+    pub(super) fn kept_list(&self, entity: &str, key: &str) -> Option<KeptList> {
+        self.entities.get(entity)?.lists.get(key).cloned()
+    }
+
+    /// Keep the rows of a list find of `entity`, and each row as a stored row, while the cap allows.
+    pub(super) fn keep_list(&mut self, entity: &str, key: &str, rows: KeptList, pk_fields: &[String]) {
+        if self.kept.saturating_add(rows.len()) > READ_CAP {
+            return;
+        }
+        let mut buffer = String::new();
+        for row in rows.iter() {
+            buffer.clear();
+            if super::write_pk(row, pk_fields, &mut buffer) {
+                self.keep_stored(entity, &buffer, Some(Rc::clone(row)));
+            }
+        }
+        let hold = self.entities.entry(entity.to_string()).or_default();
+        hold.lists.insert(key.to_string(), rows);
+    }
+
+    /// Drop what the frame read of `entity`, or of every entity: the database changed under it.
+    pub(super) fn forget_reads(&mut self, entity: Option<&str>) {
+        for (name, hold) in &mut self.entities {
+            if entity.is_none_or(|entity| entity == name) {
+                self.kept = self.kept.saturating_sub(hold.stored.len());
+                hold.stored.clear();
+                hold.lists.clear();
+            }
+        }
+    }
+
+    /// The first held write of one row of `entity`.
+    pub(super) fn first_op(&self, entity: &str, pk: &str) -> Option<Op> {
+        let slots = self.entities.get(entity)?.by_pk.get(pk)?;
+        slots
+            .iter()
+            .find_map(|&at| self.order[at].as_ref())
+            .map(|held| held.operation)
     }
 }
 

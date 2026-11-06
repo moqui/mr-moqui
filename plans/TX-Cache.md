@@ -1,6 +1,6 @@
 # Transaction cache
 
-Status 2026-11-05: Phases 0 to 2 built: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G7 (G7's test waits for Phase 3; G8 and G9 are by design and go in the guide), and D6's commit batch. [Results](#results) has the censuses and the numbers.
+Status 2026-11-05: Phases 0 to 3 built: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G7 (G8 and G9 are by design and go in the guide), D6's commit batch, and D2 to D5's reads. [Results](#results) has the censuses and the numbers.
 
 The transaction cache holds a transaction's writes in memory and writes them all at commit; while it holds them, the transaction's reads see them. Done well, it gives a large speedup for high-volume transactional work and a large cut in database load, without refactoring reusable services and without callers keeping records in hand to avoid re-reading them: a service that reads `OrderItem` again, as each of several services in one operation does, gets it from memory. Moqui Java got real gains from this in a few places. Here the framework is ours to change and services can be reviewed in bulk, so the aim is more: make the cache fast and correct enough that a common transactional service runs from its first write to its commit without touching the database for anything it has already read or written, and its writes go out in one batch.
 
@@ -278,6 +278,76 @@ database: external Postgres 172.17.0.2:5432, database speed_1431787_179393366629
 ```
 
 The batch waits once (`batch rt` 1.00 where a frame holds several writes): S3 goes from 14 to 12 waited round trips a call and from 4.92 to 4.24 ms with the delay; F4 from 4 to 3 and 1.25 to 0.97 ms. The rest of each call is its reads (`db rd`), which Phase 3 takes on. The size cap is 10,000 held writes (a byte cap is not built). Creates of one entity are not regrouped across other writes yet.
+
+### Reads (Phase 3)
+
+D2 to D5 built. A frame with the cache on (hold or read-through) keeps each row it reads as the database has it, and each list find with no page by the find's key, and applies its held writes on top when it reads; while it holds its writes the database does not change under it, so nothing it kept needs updating write by write. An early flush, a write in read-through mode, or raw SQL drops what it read (of the entity, or all). A find by the whole key (only the key: a condition with more goes to the database, since a value of another type compares there as it would not in memory) is answered from the kept row, or for a row the frame created from its held writes alone (G7); a list find pinned to a row the frame created by a type-one relationship from the held creates alone; a find the shared entity cache answers is left to it. A view read flushes only when a held member row may be in its result (D5), judged on the row before and after the write through the view's aliases; a row whose stored values the frame does not know may be.
+
+D6 changed with it: merging a row's writes moved an update past another row's write that depended on it, and the census found one (`delete#LocalMessages` clears a thread's references, then deletes the messages: the update of a reply folded into its delete, so its parent went first and the foreign key refused it). A write now joins its row's previous write when they are adjacent, an update joins the row's earlier write across others only when it sets no relationship key field, and a delete is never merged.
+
+Census 3 (the same specs as census 1): 390 of 393 pass; the three left are census 2's `DataGrid`, `Units` and `Chat` search. Twenty early flushes for size, all in the demo data load.
+
+Embedded Postgres:
+
+```
+  operation                                        calls  median ms   us/call    calls/s    allocs      bytes      kept    sql     rt        min-max ms
+  S1 heartbeat#UserStatus, cache off                 200     57.628    288.14       3471    1411.6     248778     20423   6.29   7.30   55.351-71.746  
+  S3 send#Message, cache off                         200    212.722   1063.61        940    4364.2     564230     23306  13.00  14.00  191.424-254.172 
+  S2 mark#Read, cache off                            200     38.546    192.73       5189    1045.0     207575      6801   3.00   4.00   37.832-49.249  
+  S4 update#WikiPage, cache off                      200   1018.391   5091.96        196   29026.5    6395778    103003 116.00 117.00  626.798-1421.702
+  S5 set#MessageFlags, cache off                     200    231.816   1159.08        863    5361.3    1979184     20855  15.98  20.98  204.020-348.617 
+  F1 notification persist, 3 users, cache off        200     34.304    171.52       5830     648.9      64094       -53   6.04   8.06   29.049-38.176  
+  F4 audited update UserAccount.username, cache off     200     25.092    125.46       7971     641.0     273060      1820   3.02   4.04   23.980-31.400  
+  F5 fed update EmailMessage.isFlagged, cache off     200    176.891    884.46       1131    1856.1     662178      2879   8.97  13.96   79.099-319.217 
+  F3 session start and password login, cache off     200   2222.715  11113.57         90     604.0   19989411      3780   6.04   8.06 2210.353-2231.319
+  S1 heartbeat#UserStatus, cache on                  200     61.362    306.81       3259    1498.1     233097      6496   3.00   4.31   50.971-82.714  
+  S3 send#Message, cache on                          200    223.097   1115.49        896    5299.8     632684     19779   9.00  11.01  204.325-250.006 
+  S2 mark#Read, cache on                             200     44.566    222.83       4488    1488.6     237105      6783   3.00   4.00   40.669-61.360  
+  S4 update#WikiPage, cache on                       200   1205.470   6027.35        166   48142.3   10077729     18998  15.00  17.00  577.386-1783.209
+  S5 set#MessageFlags, cache on                      200    252.977   1264.89        791    6101.0    1990416     15887  12.99  19.00  218.257-372.299 
+  F4 audited update UserAccount.username, cache on     200     30.320    151.60       6596     998.2     300288       925   1.02   3.05   26.884-36.517  
+  F5 fed update EmailMessage.isFlagged, cache on     200    224.505   1122.53        891    2299.9     686012      2879   6.96  12.96   87.037-325.706 
+  transaction cache per call                      frames    held   mem rd    db rd    early batch st batch rt
+  F4 audited update UserAccount.username, cache on    1.00    2.00     0.00     1.00     0.00     2.00     1.00
+  F5 fed update EmailMessage.isFlagged, cache on    1.00    1.00     1.00     2.00     0.00     1.00     1.00
+  S1 heartbeat#UserStatus, cache on                 1.00    0.32     3.00     3.00     0.00     0.32     0.32
+  S2 mark#Read, cache on                            1.00    0.00     0.00     3.00     0.00     0.00     0.00
+  S3 send#Message, cache on                         1.00    3.00     1.00     8.00     0.00     3.00     1.01
+  S4 update#WikiPage, cache on                      1.00    4.00    97.00    15.00     0.00     4.00     1.00
+  S5 set#MessageFlags, cache on                     1.00    1.00     2.00     8.00     0.00     1.00     1.00
+```
+
+External Postgres with 200 us of added delay:
+
+```
+  operation                                        calls  median ms   us/call    calls/s    allocs      bytes      kept    sql     rt        min-max ms
+  S1 heartbeat#UserStatus, cache off                 200    468.297   2341.49        427    1474.8     254425     20796   7.03   8.03  448.649-506.913 
+  S3 send#Message, cache off                         200    947.996   4739.98        211    4367.4     564307     23328  13.00  14.00  903.768-981.539 
+  S2 mark#Read, cache off                            200    265.810   1329.05        752    1045.3     207524      6783   3.00   4.00  263.856-331.293 
+  S4 update#WikiPage, cache off                      200   6658.733  33293.67         30   29026.0    6395781    103034 116.00 117.00 6102.077-7174.792
+  S5 set#MessageFlags, cache off                     200    972.655   4863.27        206    5360.7    1979015     20842  15.98  20.98  946.624-1014.958
+  F1 notification persist, 3 users, cache off        200    422.970   2114.85        473     648.9      64006       -53   6.04   8.07  401.929-436.390 
+  F4 audited update UserAccount.username, cache off     200    247.856   1239.28        807     640.6     272991      1820   3.02   4.04  228.035-260.781 
+  F5 fed update EmailMessage.isFlagged, cache off     200    476.105   2380.53        420    1857.8     662139      2879   8.97  13.97  465.464-502.774 
+  F3 session start and password login, cache off     200   2664.083  13320.41         75     603.7   19989235      3549   6.03   8.04 2641.862-2707.195
+  S1 heartbeat#UserStatus, cache on                  200    310.062   1550.31        645    1596.5     243116      6496   3.00   5.00  305.146-322.771 
+  S3 send#Message, cache on                          200    758.444   3792.22        264    5300.7     633157     20113   9.00  11.02  742.371-787.174 
+  S2 mark#Read, cache on                             200    271.328   1356.64        737    1490.0     237176      6783   3.00   4.00  264.857-279.015 
+  S4 update#WikiPage, cache on                       200   1994.024   9970.12        100   48141.1   10077554     18998  15.00  17.00 1504.741-2535.807
+  S5 set#MessageFlags, cache on                      200    837.987   4189.93        239    6100.1    1990172     15900  12.97  18.98  821.657-846.744 
+  F4 audited update UserAccount.username, cache on     200    189.825    949.13       1054     998.7     300294       919   1.04   3.08  185.673-208.212 
+  F5 fed update EmailMessage.isFlagged, cache on     200    444.358   2221.79        450    2301.7     685981      2879   6.97  12.97  425.131-479.072 
+  transaction cache per call                      frames    held   mem rd    db rd    early batch st batch rt
+  F4 audited update UserAccount.username, cache on    1.00    2.00     0.00     1.00     0.00     2.00     1.00
+  F5 fed update EmailMessage.isFlagged, cache on    1.00    1.00     1.00     2.00     0.00     1.00     1.00
+  S1 heartbeat#UserStatus, cache on                 1.00    1.00     3.00     3.00     0.00     1.00     1.00
+  S2 mark#Read, cache on                            1.00    0.00     0.00     3.00     0.00     0.00     0.00
+  S3 send#Message, cache on                         1.00    3.00     1.00     8.00     0.00     3.00     1.00
+  S4 update#WikiPage, cache on                      1.00    4.00    97.00    15.00     0.00     4.00     1.01
+  S5 set#MessageFlags, cache on                     1.00    1.00     2.00     8.00     0.00     1.00     1.00
+```
+
+With the delay, cache on against off: S1 2.34 to 1.55 ms (-34%), S3 4.74 to 3.79 ms (-20%), S4 33.3 to 10.0 ms (-70%: 117 waited round trips to 17), S5 4.86 to 4.19 ms (-14%), F4 1.24 to 0.95 ms (-23%), S2 the same. Allocations are up with the cache on (S4 29k to 48k a call): the kept rows and lists are copied out for each read, a first target for Phase 6.
 
 ## Tests
 

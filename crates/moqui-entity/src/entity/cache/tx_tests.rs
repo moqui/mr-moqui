@@ -237,7 +237,11 @@ fn held_updates_read_their_stored_rows_once_per_frame() {
                 let before = enum_reads(&tape);
                 let of_a = facade.find(ENUM)?.eq("enumTypeId", Value::string("A")).list()?;
                 assert_eq!(of_a.len(), loaded);
-                assert_eq!(enum_reads(&tape) - before, 1, "a repeated find reads only its list");
+                assert_eq!(
+                    enum_reads(&tape) - before,
+                    0,
+                    "a repeated find is answered from the frame (D3)"
+                );
             }
             // A find that loads none of the held rows starts each from the row the frame read before: A000 from the
             // first find's list, the C rows from the stored-row query.
@@ -340,8 +344,8 @@ fn held_rows_collapse_a_create_and_delete_and_stay_deleted() {
         .iter()
         .map(|sql| sql.split_whitespace().next().unwrap_or_default())
         .collect();
-    // KEPT's update and delete are one delete (plans/TX-Cache.md D6).
-    assert_eq!(kinds, ["DELETE", "INSERT"], "{flushed:?}");
+    // A delete is not merged with the update before it (plans/TX-Cache.md D6).
+    assert_eq!(kinds, ["UPDATE", "DELETE", "INSERT"], "{flushed:?}");
     assert!(!found(&facade, ENUM, "enumId", "BRIEF"));
     assert!(!found(&facade, ENUM, "enumId", "KEPT"));
     assert!(found(&facade, ENUM, "enumId", "LATER"));
@@ -620,12 +624,8 @@ fn a_held_create_of_a_stored_row_fails_at_the_next_find() {
     let tx = facade.transactions_for(TEST).unwrap();
     run(&tx, TransactionAttribute::Cache, || {
         put(&facade, TEST, "testId", "DUP");
-        let err = facade
-            .find(TEST)?
-            .eq("testId", Value::string("DUP"))
-            .one()
-            .unwrap_err()
-            .to_string();
+        // A list find loads the database's row (a find by key of a row the frame created reads nothing, D2).
+        let err = facade.find(TEST)?.list().unwrap_err().to_string();
         assert!(
             err.contains("already in the database") && err.contains("testId=DUP"),
             "{err}"
@@ -642,9 +642,8 @@ fn a_held_create_of_a_stored_row_fails_at_the_next_find() {
     .unwrap();
 }
 
-/// G7 (plans/TX-Cache.md D2, Phase 3): a find by key of a row the frame created runs no query.
+/// G7 (plans/TX-Cache.md D2): a find by key of a row the frame created runs no query.
 #[test]
-#[ignore = "plans/TX-Cache.md G7: the read cache of Phase 3"]
 fn a_find_by_key_of_a_created_row_runs_no_query() {
     let tape = Arc::new(Mutex::new(Vec::new()));
     let facade = testing::open_with_tape(Arc::clone(&tape));
@@ -708,4 +707,250 @@ fn the_commit_batch_merges_each_rows_writes_and_waits_once() {
         .unwrap()
         .unwrap();
     assert_eq!(row.get("enumCode"), Some(&Value::string("C")));
+}
+
+/// D2: in a cache frame a row read by key is read once (a find the shared entity cache answers is left to it, so these
+/// ask for none), and a row read in a list is not read again by key; in read-through
+/// mode a write of the entity drops what the frame read of it, so the next find reads the database.
+#[test]
+fn a_cache_frame_reads_a_row_once_until_it_writes_through() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    put_enum(&facade, "K1", "A", "one");
+    put_enum(&facade, "K2", "A", "two");
+    let tx = facade.transactions_for(ENUM).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        let by_key = |id: &str| -> Result<String, Error> {
+            let row = facade
+                .find(ENUM)?
+                .eq("enumId", Value::string(id))
+                .use_cache(false)
+                .one()?
+                .expect("row");
+            Ok(plain(&row, "description"))
+        };
+        let before = enum_reads(&tape);
+        assert_eq!(by_key("K1")?, "one");
+        assert_eq!(by_key("K1")?, "one");
+        assert_eq!(enum_reads(&tape) - before, 1, "read once by key");
+        assert!(facade
+            .find(ENUM)?
+            .eq("enumId", Value::string("NONE"))
+            .use_cache(false)
+            .one()?
+            .is_none());
+        assert!(facade
+            .find(ENUM)?
+            .eq("enumId", Value::string("NONE"))
+            .use_cache(false)
+            .one()?
+            .is_none());
+        assert_eq!(enum_reads(&tape) - before, 2, "a missing row is kept as missing");
+        assert_eq!(
+            facade
+                .find(ENUM)?
+                .eq("enumTypeId", Value::string("A"))
+                .use_cache(false)
+                .list()?
+                .len(),
+            2
+        );
+        assert_eq!(by_key("K2")?, "two");
+        assert_eq!(
+            enum_reads(&tape) - before,
+            3,
+            "a row from a list is not read again by key"
+        );
+        // A held update is seen from memory.
+        set_enum(&facade, "K2", "description", "held")?;
+        assert_eq!(by_key("K2")?, "held");
+        assert_eq!(enum_reads(&tape) - before, 3);
+        super::flush_and_disable(&facade, &tx)?;
+        let before = enum_reads(&tape);
+        assert_eq!(by_key("K2")?, "held", "the held write is on the database now");
+        assert_eq!(
+            enum_reads(&tape) - before,
+            1,
+            "an early flush drops what the frame read"
+        );
+        assert_eq!(by_key("K2")?, "held");
+        assert_eq!(enum_reads(&tape) - before, 1, "read-through keeps the rows it reads");
+        set_enum(&facade, "K2", "description", "direct")?;
+        assert_eq!(by_key("K2")?, "direct", "a write through drops the entity's rows");
+        assert_eq!(enum_reads(&tape) - before, 2);
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// D3: a list find whose condition pins a type-one relationship to a row the frame created is answered from the held
+/// creates, with no query.
+#[test]
+fn the_rows_of_a_created_parent_come_from_the_held_creates() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    let tx = facade.transactions_for(ENUM).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        put(&facade, TYPE, "enumTypeId", "NEWT");
+        put_enum(&facade, "N1", "NEWT", "one");
+        put_enum(&facade, "N2", "NEWT", "two");
+        let before = enum_reads(&tape);
+        let rows = facade.find(ENUM)?.eq("enumTypeId", Value::string("NEWT")).list()?;
+        assert_eq!(enum_ids(&rows).len(), 2);
+        assert_eq!(enum_reads(&tape) - before, 0, "no query");
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// D4: a for-update find always reads the database for its lock, and the rows it read are kept.
+#[test]
+fn a_for_update_find_locks_every_time_and_keeps_its_rows() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    put_enum(&facade, "L1", "A", "one");
+    put_enum(&facade, "L2", "A", "two");
+    let tx = facade.transactions_for(ENUM).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        set_enum(&facade, "L2", "description", "held")?;
+        let locks = statements(&tape, "FOR UPDATE");
+        for _ in 0..2 {
+            let rows = facade
+                .find(ENUM)?
+                .eq("enumTypeId", Value::string("A"))
+                .for_update(true)
+                .list()?;
+            assert_eq!(rows.len(), 2);
+        }
+        assert_eq!(
+            statements(&tape, "FOR UPDATE") - locks,
+            2,
+            "each lock goes to the database"
+        );
+        let before = enum_reads(&tape);
+        assert!(facade.find(ENUM)?.eq("enumId", Value::string("L1")).one()?.is_some());
+        assert_eq!(enum_reads(&tape) - before, 0, "the locked rows are kept");
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// D5: a view read writes the held rows first only when a held row of a member may be in its result.
+#[test]
+fn a_view_read_flushes_only_for_a_held_row_it_may_show() {
+    let facade = testing::open();
+    put(&facade, TYPE, "enumTypeId", "A");
+    put(&facade, TYPE, "enumTypeId", "Z");
+    put_enum(&facade, "V1", "A", "one");
+    let tx = facade.transactions_for(ENUM).unwrap();
+    let view = "moqui.basic.EnumerationAndType";
+    let before = super::super::tx_cache_stats();
+    run(&tx, TransactionAttribute::Cache, || {
+        // The frame reads V1, so it knows its type before and after the update.
+        assert!(facade
+            .find(ENUM)?
+            .eq("enumId", Value::string("V1"))
+            .use_cache(false)
+            .one()?
+            .is_some());
+        set_enum(&facade, "V1", "description", "held")?;
+        facade.find(view)?.eq("enumTypeId", Value::string("Z")).list()?;
+        Ok(())
+    })
+    .unwrap();
+    let stats = super::super::tx_cache_stats().since(&before);
+    assert_eq!(
+        stats.early_flushes_of(super::FlushCause::View),
+        0,
+        "type Z cannot show V1"
+    );
+    let before = super::super::tx_cache_stats();
+    run(&tx, TransactionAttribute::Cache, || {
+        assert!(facade
+            .find(ENUM)?
+            .eq("enumId", Value::string("V1"))
+            .use_cache(false)
+            .one()?
+            .is_some());
+        set_enum(&facade, "V1", "description", "again")?;
+        let rows = facade.find(view)?.eq("enumTypeId", Value::string("A")).list()?;
+        assert_eq!(rows.values()[0].get("description"), Some(&Value::string("again")));
+        Ok(())
+    })
+    .unwrap();
+    let stats = super::super::tx_cache_stats().since(&before);
+    assert_eq!(stats.early_flushes_of(super::FlushCause::View), 1, "type A shows V1");
+}
+
+/// A find by key with a key value of another type than the stored one (a number as text) finds the row, from the
+/// database and from what the frame keeps, with a held update on it.
+#[test]
+fn a_find_by_key_of_another_value_type_finds_the_row() {
+    let facade = testing::open();
+    let event = "moqui.chat.ChatEvent";
+    let mut row = facade.make_value(event).unwrap();
+    row.set("chatRoomId", Value::string("R1"));
+    row.set("eventSeq", Value::I64(3));
+    row.set("eventTypeEnumId", Value::string("CetMessage"));
+    row.create(&facade).unwrap();
+    let tx = facade.transactions_for(event).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        let find = || {
+            facade
+                .find(event)?
+                .eq("chatRoomId", Value::string("R1"))
+                .eq("eventSeq", Value::string("3"))
+                .one()
+        };
+        assert!(find()?.is_some(), "read by key");
+        assert!(find()?.is_some(), "kept");
+        let mut row = facade.make_value(event)?;
+        row.set("chatRoomId", Value::string("R1"));
+        row.set("eventSeq", Value::I64(3));
+        row.set("eventTypeEnumId", Value::string("CetEdit"));
+        row.update(&facade)?;
+        let found = find()?.expect("held update");
+        assert_eq!(found.get("eventTypeEnumId"), Some(&Value::string("CetEdit")));
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// D6: the commit batch does not move a write past another row's write that depends on it. A thread's references are
+/// cleared and then its rows deleted, the parent first: each update stays before the deletes, as held.
+#[test]
+fn the_commit_batch_keeps_a_cleared_reference_before_the_delete_it_allows() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    put_enum(&facade, "PARENT", "A", "p");
+    put_enum(&facade, "CHILD", "A", "c");
+    set_enum(&facade, "CHILD", "parentEnumId", "PARENT").unwrap();
+    let tx = facade.transactions_for(ENUM).unwrap();
+    let before = enum_statements(&tape, false).len();
+    run(&tx, TransactionAttribute::Cache, || {
+        set_enum(&facade, "PARENT", "description", "going")?;
+        let mut child = facade.make_value(ENUM)?;
+        child.set("enumId", Value::string("CHILD"));
+        child.set("parentEnumId", Value::Null);
+        child.update(&facade)?;
+        delete_enum(&facade, "PARENT")?;
+        delete_enum(&facade, "CHILD")?;
+        Ok(())
+    })
+    .unwrap();
+    let written: Vec<String> = enum_statements(&tape, false)[before..]
+        .iter()
+        .map(|sql| sql.split_whitespace().take(2).collect::<Vec<_>>().join(" "))
+        .collect();
+    assert_eq!(
+        written,
+        [
+            "UPDATE \"enumeration\"",
+            "UPDATE \"enumeration\"",
+            "DELETE FROM",
+            "DELETE FROM"
+        ]
+    );
+    let child_update = enum_statements(&tape, false)[before + 1].clone();
+    assert!(child_update.contains("parent_enum_id"), "{child_update}");
 }
