@@ -1627,7 +1627,10 @@ impl EntityFacade {
             }
             Ok((seq_field, entity.sequence_secondary_padded_length, keys))
         })?;
-        let mut find = self.find(entity_name)?;
+        // Only the sequence field: a sibling's other fields are not needed, and an entity numbered this way (a page's
+        // versions) has more rows with every write (plans/Profiling.md, Round 15). In a transaction-cache frame the
+        // find still sees the held rows.
+        let mut find = self.find(entity_name)?.select_field(&seq_field);
         for (field, value) in keys {
             find = find.eq(&field, value);
         }

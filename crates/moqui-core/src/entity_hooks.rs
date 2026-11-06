@@ -159,6 +159,10 @@ fn trace_transaction() -> Option<Box<dyn TransactionTrace>> {
 }
 
 impl TransactionTrace for TxTrace {
+    fn wants_attributes(&self) -> bool {
+        self.span.as_ref().is_some_and(Span::is_recording)
+    }
+
     fn finish(mut self: Box<Self>, committed: bool, attributes: Vec<(&'static str, Value)>) {
         let outcome = if committed { "commit" } else { "rollback" };
         if self.metrics {

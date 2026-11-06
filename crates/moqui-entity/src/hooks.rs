@@ -51,6 +51,11 @@ pub trait TransactionTrace {
     /// The transaction ended: `committed`, or rolled back; `attributes` are what it did (its cache mode, its waited round
     /// trips, the transaction cache's counts).
     fn finish(self: Box<Self>, committed: bool, attributes: Vec<(&'static str, Value)>);
+
+    /// Whether [`Self::finish`] keeps more than the cache mode, so the rest are worth making.
+    fn wants_attributes(&self) -> bool {
+        true
+    }
 }
 
 /// What a statement runs for, from the artifact stack: the entity of the `AT_ENTITY` frame on top, when the statement

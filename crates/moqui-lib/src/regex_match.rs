@@ -73,8 +73,34 @@ impl CompiledRegex {
     }
 }
 
+/// Whether the whole of `text` matches `pattern`. Each thread keeps the patterns it compiled, up to
+/// [`COMPILED_CAP`]: an authorization check matches the same artifact name patterns on every request, and parsing a
+/// pattern costs far more than matching it (plans/Profiling.md, Round 15). A bad pattern is not kept.
 pub fn is_full_match(text: &str, pattern: &str) -> Result<bool, Error> {
-    Ok(CompiledRegex::new(pattern)?.is_full_match(text))
+    let known = COMPILED.with(|compiled| compiled.borrow().get(pattern).cloned());
+    let regex = match known {
+        Some(regex) => regex,
+        None => {
+            let regex = std::rc::Rc::new(CompiledRegex::new(pattern)?);
+            COMPILED.with(|compiled| {
+                let mut compiled = compiled.borrow_mut();
+                if compiled.len() >= COMPILED_CAP {
+                    compiled.clear();
+                }
+                compiled.insert(pattern.to_string(), std::rc::Rc::clone(&regex));
+            });
+            regex
+        }
+    };
+    Ok(regex.is_full_match(text))
+}
+
+/// Compiled patterns a thread keeps; past this many they are all dropped and compiled again as they come.
+const COMPILED_CAP: usize = 512;
+
+thread_local! {
+    static COMPILED: std::cell::RefCell<std::collections::HashMap<String, std::rc::Rc<CompiledRegex>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 struct Parser {

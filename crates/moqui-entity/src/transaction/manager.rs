@@ -1596,13 +1596,15 @@ fn end_trace(phase: &mut Phase, committed: bool) {
         CacheMode::ReadThrough => "read-through",
     };
     let count = |value: u64| moqui_lib::object::Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
-    let mut attributes = vec![
-        ("moqui.transaction.cache", moqui_lib::object::Value::string(mode)),
-        (
-            "moqui.transaction.round_trips",
-            count(crate::driver::thread_round_trips().saturating_sub(phase.round_trips_at)),
-        ),
-    ];
+    let mut attributes = vec![("moqui.transaction.cache", moqui_lib::object::Value::string(mode))];
+    if !trace.wants_attributes() {
+        trace.finish(committed, attributes);
+        return;
+    }
+    attributes.extend([(
+        "moqui.transaction.round_trips",
+        count(crate::driver::thread_round_trips().saturating_sub(phase.round_trips_at)),
+    )]);
     if let Some(stats) = stats {
         attributes.extend([
             ("moqui.tx_cache.held", count(stats.held())),
