@@ -732,6 +732,23 @@ fn a_cached_count_of_non_null_goes_up_by_one_and_back_when_cleared() {
     assert_eq!(reset, before);
 }
 
+/// A cached count with no condition (of all rows) is kept, read once, and a create or a delete drops it.
+#[test]
+fn a_cached_count_of_all_rows_is_kept_until_a_write() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    let count = || facade.find(ENUM).unwrap().use_cache(true).count().unwrap();
+    let reads = || enum_reads(&tape);
+    let before = count();
+    let after_first = reads();
+    assert_eq!(count(), before);
+    assert_eq!(reads(), after_first, "the second count is the cached one");
+    put_enum(&facade, "CNT1", "CA", "one");
+    assert_eq!(count(), before + 1, "a create dropped it");
+    delete_enum(&facade, "CNT1").unwrap();
+    assert_eq!(count(), before, "a delete dropped it");
+}
+
 /// Java's `no cache with for update` checks `isMutable()`, because a cached value throws on `set`. This port
 /// copies on write (`a_cached_enumeration_is_shared_until_set`), so the assertion is the cache bypass: `for_update`
 /// returns the stored row, not the one the cache still holds.

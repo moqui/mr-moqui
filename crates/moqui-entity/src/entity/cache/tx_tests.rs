@@ -836,6 +836,115 @@ fn a_for_update_find_locks_every_time_and_keeps_its_rows() {
     .unwrap();
 }
 
+/// A find of an encrypted field in a cache frame compares the field's stored ciphertext, as a find outside the frame
+/// does: the row is found by its plain value.
+#[test]
+fn a_frame_finds_a_row_by_an_encrypted_field() {
+    let facade = testing::open();
+    let entity = "moqui.agent.AgentPushConfig";
+    let mut row = facade.make_value(entity).unwrap();
+    row.set("pushConfigId", Value::string("ENC1"));
+    row.set("token", Value::string("the-secret-token"));
+    row.create(&facade).unwrap();
+    let outside = facade
+        .find(entity)
+        .unwrap()
+        .eq("token", Value::string("the-secret-token"))
+        .list()
+        .unwrap();
+    assert_eq!(outside.len(), 1, "found outside a frame");
+    let tx = facade.transactions_for(entity).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        let found = facade
+            .find(entity)?
+            .eq("token", Value::string("the-secret-token"))
+            .list()?;
+        assert_eq!(found.len(), 1, "found in the frame");
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// A frame of its own that commits a write under a cache frame on the same thread (a `force-new` call, a probe) makes
+/// the suspended frame drop what it read of that entity, so its next find reads the database again (plans/TX-Cache.md
+/// D2: only another thread's commit stays unseen).
+#[test]
+fn a_nested_commit_drops_what_the_suspended_frame_read_of_its_entity() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    put_enum(&facade, "N1", "NA", "one");
+    let tx = facade.transactions_for(ENUM).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        let list = || {
+            facade
+                .find(ENUM)
+                .unwrap()
+                .eq("enumTypeId", Value::string("NA"))
+                .list()
+                .unwrap()
+        };
+        assert_eq!(list().len(), 1);
+        let before = enum_reads(&tape);
+        assert_eq!(list().len(), 1);
+        assert_eq!(enum_reads(&tape) - before, 0, "kept");
+        tx.run(TransactionAttribute::ForceNew, None, || {
+            set_enum(&facade, "N1", "description", "nested")
+        })?;
+        let before = enum_reads(&tape);
+        list();
+        assert_eq!(enum_reads(&tape) - before, 1, "read again after the nested commit");
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// A held row is matched against a condition's text value at its field's type, as the database matches it: a time
+/// given as epoch millis text finds the row created in the frame with that time.
+#[test]
+fn a_held_row_matches_a_condition_value_given_as_text() {
+    let facade = testing::open();
+    let tx = facade.transactions_for(TEST).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        let mut row = facade.make_value(TEST)?;
+        row.set("testId", Value::string("TYPED"));
+        row.set(
+            "testDateTime",
+            Value::Timestamp(jiff::Timestamp::from_millisecond(2_000_000_000_000).unwrap()),
+        );
+        row.create(&facade)?;
+        let later = facade
+            .find(TEST)?
+            .condition(moqui_db::sql::Condition::greater(
+                "testDateTime",
+                Value::string("1999999999999"),
+            ))
+            .list()?;
+        assert_eq!(later.len(), 1, "the held row is after the time given as text");
+        let earlier = facade
+            .find(TEST)?
+            .condition(moqui_db::sql::Condition::greater(
+                "testDateTime",
+                Value::string("2000000000001"),
+            ))
+            .list()?;
+        assert!(earlier.is_empty());
+        // a number of another kind than the field's: compared by amount, as SQL compares it
+        let mut amount = facade.make_value(TEST)?;
+        amount.set("testId", Value::string("AMOUNT"));
+        amount.set("testNumberDecimal", Value::Decimal("6".parse().unwrap()));
+        amount.create(&facade)?;
+        let positive = facade
+            .find(TEST)?
+            .condition(moqui_db::sql::Condition::greater("testNumberDecimal", Value::I32(0)))
+            .list()?;
+        assert_eq!(positive.len(), 1, "6 is greater than the integer 0");
+        let six = facade.find(TEST)?.eq("testNumberDecimal", Value::I64(6)).list()?;
+        assert_eq!(six.len(), 1, "6 equals the integer 6");
+        Ok(())
+    })
+    .unwrap();
+}
+
 /// A select-field find in a cache frame that holds no write of the entity is kept as it was answered and answered again
 /// from memory; the frame's first held write of the entity drops it, and the find reads the database again.
 #[test]

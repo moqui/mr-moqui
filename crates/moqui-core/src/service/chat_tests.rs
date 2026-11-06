@@ -1225,6 +1225,66 @@ fn pushes_go_only_to_the_room_members_and_only_after_the_commit() {
 /// Presence: none without a heartbeat, online with one, away after the idle minutes (the user's preference), offline
 /// three minutes after the last beat; a set status with its text and clear-at time; invisible is offline to others;
 /// do not disturb still records the notifications.
+/// The frequent job publishes its users in one batch; a user whose write fails fails that batch, which is split until
+/// that user is alone, so the others are still published and only that user is logged.
+#[test]
+fn a_user_that_fails_the_presence_batch_leaves_the_others_published() {
+    let ctx = ExecutionContextFactory::test_context_in(
+        "",
+        crate::service::ServicePools::idle(),
+        crate::context::framework_dir(),
+    );
+    let facade = crate::testing::open_with(
+        &crate::context::framework_dir(),
+        crate::testing::Options {
+            entity_eca: true,
+            ..Default::default()
+        },
+    );
+    ctx.factory().set_entity(facade.clone());
+    crate::entity::load_feed::add_eca_rules(
+        &facade,
+        r#"<eecas>
+            <eeca id="PresenceFails" entity="moqui.security.UserStatus" on-update="true">
+                <condition><expression>entityValue.userId == 'pxbad' &amp;&amp; entityValue.lastPresence == 'offline'</expression></condition>
+                <actions><script>throw new Error('this user cannot go offline')</script></actions>
+            </eeca>
+        </eecas>"#,
+    )
+    .unwrap();
+    let dir = std::env::temp_dir().join(format!("moqui-chat-presence-batch-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("service/test")).unwrap();
+    std::fs::write(dir.join("service/test/ChatStub.xml"), STUBS).unwrap();
+    let _entered = ctx.enter();
+    install(&dir);
+    let names = ["pxa", "pxbad", "pxc"];
+    users(&facade, &names);
+    let start = now();
+    set_time(&ctx, start);
+    for user in names {
+        login(user);
+        ok("heartbeat#UserStatus", &[("idleSeconds", int(0))]);
+    }
+    set_time(&ctx, start + 15 * MINUTE);
+    let _authz = ctx.disable_authz();
+    let job = ok("expire#UserStatuses", &[]);
+    assert_eq!(out_number(&job, "publishedCount"), 2, "{job:?}");
+    let last = |user: &str| {
+        facade
+            .find("moqui.security.UserStatus")
+            .unwrap()
+            .eq("userId", text(user))
+            .one()
+            .unwrap()
+            .and_then(|row| row.get("lastPresence").map(moqui_lib::object::to_plain_string))
+            .unwrap_or_default()
+    };
+    assert_eq!(last("pxa"), "offline");
+    assert_eq!(last("pxc"), "offline");
+    assert_eq!(last("pxbad"), "online", "the failing user's write was not kept");
+}
+
 #[test]
 fn presence_follows_the_heartbeat_the_status_and_its_clear_at_time() {
     let (ctx, facade, dir) = setup("presence", crate::service::ServicePools::idle());

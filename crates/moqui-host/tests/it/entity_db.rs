@@ -421,6 +421,77 @@ fn a_cache_frames_batch_goes_with_its_commit_on_postgres() {
     drop(cluster);
 }
 
+/// A row a transaction-cache frame created reads back in the frame as the database gives it after the commit, every
+/// field there (null where the create set none), so a fingerprint of the row made in the frame matches one made later
+/// from the database. (A time stamp finer than the database keeps, microseconds on Postgres, still reads back finer in
+/// the frame.)
+#[test]
+fn a_held_row_reads_in_its_frame_as_the_database_gives_it() {
+    use moqui_core::transaction::TransactionAttribute;
+    let _lock = crate::common::shared();
+    let dir = temp_dir("moqui-txc-values");
+    let _guard = DirGuard(dir.clone());
+    std::fs::create_dir_all(&dir).unwrap();
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let driver: Arc<dyn DbDriver> = Arc::new(driver);
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let facade = open_entity_facade(&framework, Arc::clone(&driver), pool()).unwrap();
+    let entity = "moqui.test.TestEntity";
+    facade.check_tables(&[entity]).unwrap();
+    let fields = [
+        "testNumberDecimal",
+        "testCurrencyAmount",
+        "testCurrencyPrecise",
+        "testNumberFloat",
+        "testNumberInteger",
+        "testDateTime",
+        "testDate",
+        "testTime",
+        "lastUpdatedStamp",
+        "testMedium",
+    ];
+    let read = |label: &str| -> Vec<String> {
+        let row = facade
+            .find(entity)
+            .unwrap()
+            .eq("testId", Value::string("VALS"))
+            .one()
+            .unwrap()
+            .unwrap();
+        let mut seen: Vec<String> = fields
+            .iter()
+            .map(|name| format!("{label} {name}={:?}", row.get(*name)))
+            .collect();
+        // a field the create left out is there, null, as the database gives it
+        seen.push(format!("{label} names={:?}", row.fields().keys().collect::<Vec<_>>()));
+        seen
+    };
+    let tx = facade.transactions_for(entity).unwrap();
+    let held = tx
+        .run(TransactionAttribute::Cache, None, || {
+            let mut row = facade.make_value(entity)?;
+            row.set("testId", Value::string("VALS"));
+            row.set("testNumberDecimal", Value::I64(10));
+            row.set("testCurrencyAmount", Value::Decimal("2.5".parse().unwrap()));
+            row.set("testCurrencyPrecise", Value::string("1.25"));
+            row.set("testNumberFloat", Value::F64(0.5));
+            row.set("testNumberInteger", Value::I32(7));
+            row.set(
+                "testDateTime",
+                Value::Timestamp(jiff::Timestamp::from_microsecond(1_793_980_786_123_456).unwrap()),
+            );
+            row.set("testDate", Value::string("2026-11-06"));
+            row.set("testTime", Value::string("10:11:12"));
+            row.create(&facade)?;
+            Ok(read("row"))
+        })
+        .unwrap();
+    let stored = read("row");
+    assert_eq!(held, stored);
+    drop(facade);
+    drop(cluster);
+}
+
 fn pool() -> PoolConfig {
     PoolConfig {
         min: 0,

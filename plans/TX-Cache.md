@@ -1,6 +1,6 @@
 # Transaction cache
 
-Status 2026-11-05: Phases 0 to 6 built, Phase 6 as a first profiling pass: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G8, D6's commit batch, D2 to D5's reads, S1 to S5 on the cache, a first pass of F1 to F5, and the guide ([Services](../docs/logic/Services.md#transaction-cache)). [Results](#results) has the censuses and the numbers; [Profiling, Rounds 14 to 21](Profiling.md#round-21-span-ids-as-bytes-the-lock-check-the-rest-of-the-second-set) the profiles and the tuning. Each transaction is an `AT_TRANSACTION` telemetry span with the cache's counts ([Monitoring](../docs/tools/Monitoring.md)).
+Status 2026-11-05: Phases 0 to 6 built, Phase 6 as a first profiling pass: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G8, D6's commit batch, D2 to D5's reads, S1 to S5 on the cache, a first pass of F1 to F5, and the guide ([Services](../docs/logic/Services.md#transaction-cache)). [Results](#results) has the censuses and the numbers; [Profiling, Rounds 14 to 22](Profiling.md#round-22-the-census-over-mr-boss-and-mr-mantle-the-frames-reads-made-right-presence-and-mail-in-batches) the profiles and the tuning. Each transaction is an `AT_TRANSACTION` telemetry span with the cache's counts ([Monitoring](../docs/tools/Monitoring.md)).
 
 The transaction cache holds a transaction's writes in memory and writes them all at commit; while it holds them, the transaction's reads see them. Done well, it gives a large speedup for high-volume transactional work and a large cut in database load, without refactoring reusable services and without callers keeping records in hand to avoid re-reading them: a service that reads `OrderItem` again, as each of several services in one operation does, gets it from memory. Moqui Java got real gains from this in a few places. Here the framework is ours to change and services can be reviewed in bulk, so the aim is more: make the cache fast and correct enough that a common transactional service runs from its first write to its commit without touching the database for anything it has already read or written, and its writes go out in one batch.
 
@@ -151,8 +151,8 @@ saved, not yet changed. Counts are from reading the code unless timed.
 | 6 | `save#Draft` (EmailClientServices.xml) | each compose save and autosave | the draft created then updated again, attachments deleted and made again then listed | `transaction="cache"` (Round 21): an autosave 15 to 9 statements (`tx_cache_speed` N4) |
 | 7 | `process#InboundItem` (ChatBridgeServices.xml) | each bridged event | 8-10 reads, the room read twice, then `send#Message` joins | `transaction="cache"` (Round 21) |
 | 8 | `send#WebPush` (NotificationServices.xml, `service/web_push.rs`) | each persisted notification for users with a subscription | one update per subscription, and a transaction open across the push HTTP calls | `transaction="ignore"`, the outcomes written after the pushes in one cache frame (Round 20) |
-| 9 | `expire#UserStatuses` (ChatServices.xml) | each minute, per online user | `publish#UserStatus` reads `UserStatus` again after the list | not changed: one user's failure would fail the batch |
-| 10 | `run#EmailRules` | each delivered Inbox message | the stored message read again, account configuration | not changed |
+| 9 | `expire#UserStatuses` (ChatServices.xml) | each minute, per online user | `publish#UserStatus` reads `UserStatus` again after the list | one batch, split on a failure down to the failing user (Round 22) |
+| 10 | `run#EmailRules` | each delivered Inbox message | the stored message read again, account configuration | in the store's frame for delivered mail, the message stored alone when that fails (Round 22) |
 | 11 | Alert rule finish, `moqui-report/src/alert.rs` | each rule each minute | K state rows deleted and written | not changed |
 
 Not candidates, checked: artifact hits (telemetry, not rows), `UserLoginHistory` (async, once a minute a user), LLM
@@ -191,6 +191,19 @@ Census mode (`MOQUI_TX_CACHE_EVERYWHERE=true`, every frame a `run` begins or joi
 - **Chat and everything over it** (the Chat, Calls, Voice, XMPP and basic-comms specs): `No chat change counter for user ...` (`record#UserChange`'s lock-then-read of `ChatUserState`) and `Chat room ... not found` (a `for-update` or select-field find of a room the frame created). Both are G1.
 - **Commit flush failures**: `DatabaseServices.save#DataGridChanges` (a held create of an `Enumeration` the database has fails only at commit, so the rows saved before it are not rolled back one by one as the spec expects: G5), and one with no service on the stack, an insert of `WorkEffortParty` whose `WorkEffort` was not there (a data load).
 - **Early flushes, all of views** (in Mantle services run by the demo data load): `ProductServices.create#VariantProduct` 12 (`ProductAssocAndToFeatureAppl`), `TimeServices.create#TimePeriod` 3 (`PartyDetail`), and one each in `CalendarServices.store#CalendarFeedEvents`, `LedgerServices.get#OrganizationFiscalTimePeriods` and `CommunicationServices.create#EmailCommunicationEvent`.
+
+### Census 5 (mr-boss and mr-mantle)
+
+Census mode over the specs of mr-boss and mr-mantle (Profiling Round 22): 3,058 features, 2,822 passed and 179 failed
+at first. Five faults of the frame's reads, not of the services, explained nearly all of it: a created row without its
+unset fields, condition text values not at their fields' types, numbers of different kinds not compared, encrypted
+fields' conditions not encrypted in the frame's reads, and reads kept past a nested frame's commit on the same thread
+(with a view of views missing its base entities' held rows). Fixed, 3,062 of 3,067 pass; the five left pass run alone
+but four, and WorkCenters' load count fails. The early flushes (4,396 in the run) are view reads of rows the service
+wrote (`TrackingServices.refresh#Mode` 1,320, `TaskServices.update#ProjectTimeFromTask` 923, `update#TaskFromTime`,
+`DuplicateServices.find#PartyDuplicates`, `OrderServices.handle#OrderMajorChange`, `ShipmentServices.add#OrderPartToShipment`),
+the `AssetServices` reservations marked `no-tx-cache` (742), and `pack#Shipment`'s selective find; those services read
+the member entity instead, or stay off the cache, before it is turned on for them.
 
 ### Census 2 (Phase 1)
 

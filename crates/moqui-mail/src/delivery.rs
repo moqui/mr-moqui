@@ -56,7 +56,7 @@ use moqui_lib::object::Value;
 use super::implementation::{find_one, force_cache};
 use super::inbound::{run_stored_ecas, StoredMessage};
 use super::store::{self, header_value, parse_message, Placement, MESSAGE};
-use super::sync::{account_info, after_new_mail, load_folders, publish_counts, run_rules, ACCOUNT};
+use super::sync::{account_info, after_new_mail, load_folders, publish_counts, run_rules, run_rules_in_frame, ACCOUNT};
 use moqui_core::entity::{Condition, EntityFacade, EntityValue};
 use moqui_core::service::util::{field_text, now_millis};
 
@@ -768,7 +768,33 @@ fn deliver_one(
         server_size: None,
         archived: false,
     };
-    let id = force_cache(facade, || store::store_message(facade, &parsed, &place)).map_err(failed)?;
+    // Inbox mail with no email ECA rule to run first: the message and what the account's rules do to it in one
+    // transaction-cache frame. When that fails, the message is stored alone and the rules run after it, as apart, so a
+    // rule that fails never loses the message.
+    let together = junk.is_none() && moqui_core::service::email_rule_count() == 0;
+    let mut rules_ran = false;
+    let id = if together {
+        let stored = force_cache(facade, || {
+            let id = store::store_message(facade, &parsed, &place)?;
+            run_rules_in_frame(account_id, std::slice::from_ref(&id))?;
+            Ok(id)
+        });
+        match stored {
+            Ok(id) => {
+                rules_ran = true;
+                id
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "Email account {account_id}: the message and its rules did not commit together ({err}); storing \
+                     the message alone"
+                );
+                force_cache(facade, || store::store_message(facade, &parsed, &place)).map_err(failed)?
+            }
+        }
+    } else {
+        force_cache(facade, || store::store_message(facade, &parsed, &place)).map_err(failed)?
+    };
     if junk.is_none() {
         let server_id = field_text(&row, "emailServerId");
         let ids = vec![id.clone()];
@@ -787,7 +813,9 @@ fn deliver_one(
                 },
             );
         });
-        step(account_id, "rules", || run_rules(account_id, &ids));
+        if !rules_ran {
+            step(account_id, "rules", || run_rules(account_id, &ids));
+        }
         step(account_id, "new mail", || after_new_mail(account_id, &ids));
     }
     step(account_id, "counts", || publish_counts(account_id));

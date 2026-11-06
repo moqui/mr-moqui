@@ -255,6 +255,18 @@ pub(super) fn keep_projected(facade: &EntityFacade, meta: &ReadMeta, key: String
     });
 }
 
+/// Drop what every frame on this thread but `token` read of `entity`: `token` committed writes of it, and the others
+/// (suspended under it, or beside it) read the entity as it was before.
+pub(super) fn forget_reads_of_others(token: u64, entity: &str) {
+    TX_HOLD.with(|slot| {
+        for (other, frame) in slot.borrow_mut().iter_mut() {
+            if *other != token {
+                frame.forget_reads(Some(entity));
+            }
+        }
+    });
+}
+
 /// Drop what the frame `token` read of `entity`, or of every entity (plans/TX-Cache.md D2).
 pub(super) fn forget_reads(token: u64, entity: Option<&str>) {
     TX_HOLD.with(|slot| {
@@ -392,6 +404,9 @@ pub(super) fn overlay_rows(
     let (stored, read) = stored_rows(facade, meta, Some(token), &overlay)?;
     stats::note_read_of(token, memory && !read);
     let mut rows = overlay.apply(&stored)?;
+    // matched as the database would match them: text values of the condition at their fields' types
+    let typed = super::typed_condition(facade, &meta.full_name, condition);
+    let condition = typed.as_ref().or(condition);
     rows.retain(|row| row.trusted || row_matches(condition, &row.fields));
     if !order.is_empty() {
         sort_rows(&mut rows, order);
@@ -691,6 +706,9 @@ fn sim_overlay_rows(
     // An update of a row the condition did not load starts from the whole stored row, not the fields it set.
     let (stored, _) = stored_rows(facade, meta, token, &overlay)?;
     let mut rows = overlay.apply(&stored)?;
+    // matched as the database would match them: text values of the condition at their fields' types
+    let typed = super::typed_condition(facade, &meta.full_name, condition);
+    let condition = typed.as_ref().or(condition);
     rows.retain(|row| row.trusted || row_matches(condition, &row.fields));
     if sim.affects() {
         rows.retain(|row| match pk_of(&row.fields, &meta.pk_fields) {
@@ -814,12 +832,20 @@ pub(super) fn flush_for_view(facade: &EntityFacade, view: &str, condition: Optio
     let Some(token) = tx.frame_token() else {
         return Ok(());
     };
-    // Each member: its full name, and the view's aliases of its fields (alias, field).
-    let members: Vec<(String, Vec<(String, String)>)> = facade.with_entity(view, |entity, _, model| {
+    // Each member: its full name, and the view's aliases of its fields (alias, field); a member that is a view itself
+    // stands for the entities under it, whose rows are judged with no condition (`None`): any held row of them shows.
+    let members: Vec<ViewMember> = facade.with_entity(view, |entity, _, model| {
         Ok(entity
             .member_entities
             .iter()
-            .map(|member| {
+            .flat_map(|member| {
+                let nested = model.entity(&member.entity_name).ok().filter(|member| member.is_view);
+                if let Some(nested) = nested {
+                    return base_entities(model, nested, 0)
+                        .into_iter()
+                        .map(|name| (name, None))
+                        .collect::<Vec<_>>();
+                }
                 let full_name = model
                     .entity(&member.entity_name)
                     .map(|entity| entity.full_name.clone())
@@ -836,7 +862,7 @@ pub(super) fn flush_for_view(facade: &EntityFacade, view: &str, condition: Optio
                         )
                     })
                     .collect();
-                (full_name, aliases)
+                vec![(full_name, Some(aliases))]
             })
             .collect())
     })?;
@@ -846,10 +872,10 @@ pub(super) fn flush_for_view(facade: &EntityFacade, view: &str, condition: Optio
             return false;
         };
         members.iter().any(|(entity, aliases)| {
-            frame
-                .holds(entity)
-                .iter()
-                .any(|held| held_may_show(frame, held, aliases, condition))
+            frame.holds(entity).iter().any(|held| match aliases {
+                Some(aliases) => held_may_show(frame, held, aliases, condition),
+                None => true,
+            })
         })
     });
     if shows {
@@ -871,10 +897,19 @@ pub(crate) fn flush_for_members(facade: &EntityFacade, members: &[String], view:
     let Some(token) = tx.frame_token() else {
         return Ok(());
     };
-    let full_names: Vec<String> = members
-        .iter()
-        .map(|name| super::read_meta(facade, name).map_or_else(|_| name.clone(), |meta| meta.full_name.clone()))
-        .collect();
+    // a member that is a view stands for the entities under it
+    let full_names: Vec<String> = facade
+        .with_entity(first, |_, _, model| {
+            Ok(members
+                .iter()
+                .flat_map(|name| match model.entity(name) {
+                    Ok(entity) if entity.is_view => base_entities(model, entity, 0),
+                    Ok(entity) => vec![entity.full_name.clone()],
+                    Err(_) => vec![name.clone()],
+                })
+                .collect())
+        })
+        .unwrap_or_else(|_| members.to_vec());
     let holds = TX_HOLD.with(|slot| {
         slot.borrow()
             .get(&token)
@@ -884,6 +919,29 @@ pub(crate) fn flush_for_members(facade: &EntityFacade, members: &[String], view:
         flush_early(facade, &tx, token, FlushCause::View, view)?;
     }
     Ok(())
+}
+
+/// A member entity of a view read, by full name, with the view's aliases of its fields (alias, field); `None` for an
+/// entity under a member view, whose held rows are judged with no condition.
+type ViewMember = (String, Option<Vec<(String, String)>>);
+
+/// The entities under a view, through the views among its members, by full name; past a few levels (a view of
+/// views of views) what is left is not looked into.
+fn base_entities(
+    model: &moqui_db::model::EntityModel,
+    view: &moqui_db::model::EntityDefinition,
+    depth: usize,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    for member in &view.member_entities {
+        match model.entity(&member.entity_name) {
+            Ok(entity) if entity.is_view && depth < 8 => out.extend(base_entities(model, entity, depth + 1)),
+            Ok(entity) if !entity.is_view => out.push(entity.full_name.clone()),
+            Ok(_) => {}
+            Err(_) => out.push(member.entity_name.clone()),
+        }
+    }
+    out
 }
 
 /// Whether a held write of a view member may change a view read with `condition`: the row before or after it may

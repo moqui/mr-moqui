@@ -542,7 +542,11 @@ impl EntityFind {
         if !self.facade.table_ready(&self.entity_name) {
             return Ok(0);
         }
-        let fence = self.store_fence(bypass, &lookup);
+        let fence = if bypass || (self.use_clone && self.facade.reads_clone(&self.entity_name)) {
+            None
+        } else {
+            cache::store_count_fence(&self.facade, &lookup)
+        };
         let plan = self.plan(true, condition)?;
         let rows = query_tx(&plan.tx, &plan.sql, &plan.params)?;
         self.record_query(&plan.sql);

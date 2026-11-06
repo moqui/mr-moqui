@@ -2997,6 +2997,27 @@ pub(super) fn run_rules(account_id: &str, ids: &[String]) {
     }
 }
 
+/// [`run_rules`] in the transaction in place, for a caller that stores and runs the rules in one frame: any failure of
+/// the rules (an error, or one they leave in the message facade, taken out of it) is returned, for the caller to roll
+/// back and do the two apart.
+pub(super) fn run_rules_in_frame(account_id: &str, ids: &[String]) -> Result<(), LibError> {
+    let mut parameters = BTreeMap::new();
+    parameters.insert("emailAccountId".to_string(), Value::string(account_id));
+    parameters.insert(
+        "emailMessageIdList".to_string(),
+        Value::List(ids.iter().map(Value::string).collect()),
+    );
+    let ran = moqui_core::service::sync(&format!("{SERVICES}.run#EmailRules"), &parameters);
+    let left = take_errors_string();
+    if let Err(err) = ran {
+        return Err(LibError::new(err.message()));
+    }
+    match left {
+        Some(text) => Err(LibError::new(text)),
+        None => Ok(()),
+    }
+}
+
 /// What new Inbox mail brings once the rules ran, each part on its own (a part that fails is logged and the other
 /// runs): a snoozed thread with new mail is back in the Inbox (`wake#SnoozedThreads`, as Gmail does), and the account's
 /// automatic reply goes to the senders it is for (`send#OutOfOfficeReplies`).

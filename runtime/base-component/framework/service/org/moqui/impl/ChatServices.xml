@@ -4284,11 +4284,13 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="expire" noun="UserStatuses" authenticate="anonymous-all">
+    <service verb="expire" noun="UserStatuses" authenticate="anonymous-all" transaction="ignore">
         <description>The frequent job of presence: a clear-at time that has come clears the status text and emoji and puts
             the status back to online; a user who was online, away or busy is published again when that changed (no
-            heartbeat for 3 minutes is offline, idle past their auto-away minutes is away). Each user is on their own: one
-            that fails is logged and the rest go on.</description>
+            heartbeat for 3 minutes is offline, idle past their auto-away minutes is away). The users go in one batch
+            (publish#UserStatusBatch, a transaction-cache frame of its own); when a batch fails, it is split in two and
+            each half tried as a batch of its own, down to one user, so a user that fails is logged and the rest are
+            still written, in batches.</description>
         <out-parameters>
             <parameter name="clearedCount" type="Integer"/>
             <parameter name="publishedCount" type="Integer"/>
@@ -4296,34 +4298,66 @@ along with this software (see the LICENSE.md file). If not, see
         <actions><script><![CDATA[
             clearedCount = 0; publishedCount = 0
             const now = Number(ec.user.nowTimestamp)
-            const expired = Array.from(ec.entity.find('moqui.security.UserStatus').condition('clearAtDate', 'less-equals', String(now)).disableAuthz().list())
-            const users = new Set()
-            for (const row of expired) {
-                try {
-                    row.setFields({statusText: null, emoji: null, clearAtDate: null, statusEnumId: 'UpsOnline'}, true, null, null)
-                    row.update()
-                    clearedCount++
-                    users.add(row.userId)
-                } catch (err) {
-                    ec.logger.error(`Could not clear the status of user ${row.userId}: ${err && err.message ? err.message : err}`)
-                }
-            }
+            const cleared = new Set(Array.from(ec.entity.find('moqui.security.UserStatus').condition('clearAtDate', 'less-equals', String(now))
+                    .selectField('userId').disableAuthz().list()).map((row) => row.userId))
+            const users = new Set(cleared)
             for (const row of ec.entity.find('moqui.security.UserStatus').condition('lastPresence', 'in', ['online', 'away', 'dnd'])
                     .selectField('userId').disableAuthz().list()) users.add(row.userId)
-            const forced = new Set(expired.map((row) => row.userId))
-            for (const userId of users) {
+            // one batch of the users; split in two when it fails, until the user that fails is alone
+            const run = (userIds) => {
                 ec.message.pushErrors()
+                let out = null, failure = null
                 try {
-                    const out = ec.service.sync().name('org.moqui.impl.ChatServices.publish#UserStatus').disableAuthz()
-                            .parameters({userId: userId, force: forced.has(userId)}).call()
-                    if (ec.message.hasError()) ec.logger.error(`Could not publish the status of user ${userId}: ${ec.message.errorsString}`)
-                    else if (out && out.published) publishedCount++
+                    out = ec.service.sync().name('org.moqui.impl.ChatServices.publish#UserStatusBatch').disableAuthz()
+                            .parameters({userIdList: userIds, clearUserIdList: userIds.filter((userId) => cleared.has(userId))}).call()
+                    if (ec.message.hasError()) failure = ec.message.errorsString
                 } catch (err) {
-                    ec.logger.error(`Could not publish the status of user ${userId}: ${err && err.message ? err.message : err}`)
+                    failure = err && err.message ? err.message : String(err)
                 } finally {
                     ec.message.clearErrors()
                     ec.message.popErrors()
                 }
+                if (failure == null) {
+                    clearedCount += Number(out?.clearedCount || 0)
+                    publishedCount += Number(out?.publishedCount || 0)
+                } else if (userIds.length === 1) {
+                    ec.logger.error(`Could not expire or publish the status of user ${userIds[0]}: ${failure}`)
+                } else {
+                    const half = Math.ceil(userIds.length / 2)
+                    run(userIds.slice(0, half))
+                    run(userIds.slice(half))
+                }
+            }
+            if (users.size) run(Array.from(users))
+        ]]></script></actions>
+    </service>
+    <service verb="publish" noun="UserStatusBatch" authenticate="anonymous-all" allow-remote="false" transaction="force-cache">
+        <description>Internal, of expire#UserStatuses: in one transaction-cache frame, clear the status of each user of
+            clearUserIdList (text, emoji and clear-at time, back to online) and publish the status of each user of
+            userIdList again (forced for one cleared). Any failure fails the batch, for the caller to split.</description>
+        <in-parameters>
+            <parameter name="userIdList" type="List" required="true"/>
+            <parameter name="clearUserIdList" type="List"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="clearedCount" type="Integer"/>
+            <parameter name="publishedCount" type="Integer"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            clearedCount = 0; publishedCount = 0
+            const clear = new Set(Array.from(clearUserIdList || []))
+            if (clear.size) {
+                for (const row of ec.entity.find('moqui.security.UserStatus').condition('userId', 'in', Array.from(clear)).disableAuthz().list()) {
+                    row.setFields({statusText: null, emoji: null, clearAtDate: null, statusEnumId: 'UpsOnline'}, true, null, null)
+                    row.update()
+                    clearedCount++
+                }
+            }
+            for (const userId of Array.from(userIdList)) {
+                const out = ec.service.sync().name('org.moqui.impl.ChatServices.publish#UserStatus').disableAuthz()
+                        .parameters({userId: userId, force: clear.has(userId)}).call()
+                if (ec.message.hasError()) return
+                if (out && out.published) publishedCount++
             }
         ]]></script></actions>
     </service>

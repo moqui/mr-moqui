@@ -130,7 +130,13 @@ impl ReadMeta {
     /// Java `shouldCache` and the list find: no cache for a find with no condition, a limit or offset, or the user's
     /// authorization filters.
     fn caches(&self, lookup: &FindLookup) -> bool {
-        if lookup.condition.is_none() || lookup.limit.is_some() || lookup.offset.is_some() || lookup.filtered {
+        lookup.condition.is_some() && self.caches_count(lookup)
+    }
+
+    /// [`Self::caches`] for a count, which is kept with no condition too: a count of all rows is one number, and every
+    /// write of the entity drops it (an unconditioned count matches any row).
+    fn caches_count(&self, lookup: &FindLookup) -> bool {
+        if lookup.limit.is_some() || lookup.offset.is_some() || lookup.filtered {
             return false;
         }
         match lookup.use_cache {
@@ -443,11 +449,22 @@ impl StoreFence {
 /// are not cached ([`ReadMeta::caches`]), this frame wrote the entity (its rows may be uncommitted), or the frame reads
 /// one snapshot ([`EntityFacade::snapshot_frame`]), whose rows may predate a commit already evicted for.
 pub fn store_fence(facade: &EntityFacade, lookup: &FindLookup) -> Option<StoreFence> {
+    store_fence_of(facade, lookup, false)
+}
+
+/// [`store_fence`] for a count, which is kept with no condition too ([`ReadMeta::caches_count`]).
+pub fn store_count_fence(facade: &EntityFacade, lookup: &FindLookup) -> Option<StoreFence> {
+    store_fence_of(facade, lookup, true)
+}
+
+fn store_fence_of(facade: &EntityFacade, lookup: &FindLookup, count: bool) -> Option<StoreFence> {
     let meta = read_meta(facade, &lookup.entity_name).ok()?;
-    if !meta.caches(lookup)
-        || frame_wrote(facade, &lookup.entity_name, &meta)
-        || facade.snapshot_frame(&lookup.entity_name)
-    {
+    let caches = if count {
+        meta.caches_count(lookup)
+    } else {
+        meta.caches(lookup)
+    };
+    if !caches || frame_wrote(facade, &lookup.entity_name, &meta) || facade.snapshot_frame(&lookup.entity_name) {
         return None;
     }
     let name = &meta.full_name;
@@ -541,7 +558,7 @@ pub fn before_count(facade: &EntityFacade, lookup: &FindLookup) -> Result<Option
     )? {
         return Ok(Some(i64::try_from(rows.len()).unwrap_or(i64::MAX)));
     }
-    if meta.caches(lookup) && !frame_wrote(facade, &lookup.entity_name, &meta) {
+    if meta.caches_count(lookup) && !frame_wrote(facade, &lookup.entity_name, &meta) {
         let Some(cache) =
             facade.with_slot_read(OneCaches::default, |caches| caches.counts.get(&meta.full_name).cloned())
         else {
@@ -640,6 +657,19 @@ pub fn forget_frame_reads(facade: &EntityFacade, entity_name: &str) {
     if let Ok(meta) = read_meta(facade, entity_name) {
         tx::forget_reads(token, Some(&meta.full_name));
     }
+}
+
+/// `values` with every field of `entity_name`, null where it has none.
+fn with_every_field(facade: &EntityFacade, entity_name: &str, values: &FieldMap) -> Result<FieldMap, Error> {
+    facade.with_entity(entity_name, |entity, _, _| {
+        let mut all = values.clone();
+        for field in &entity.fields {
+            if !all.contains_key(field.name.as_str()) {
+                all.insert(Arc::from(field.name.as_str()), Value::Null);
+            }
+        }
+        Ok(all)
+    })
 }
 
 /// The key a select-field find is kept by in a cache frame (`tx::projected_rows`): the find's own key and its fields.
@@ -796,7 +826,12 @@ fn note_frame_write(
         return Ok(());
     }
     let (commit_facade, commit_name) = (facade.clone(), full_name.to_string());
-    tx.on_commit(move || end_frame_write(&commit_facade, token, &commit_name))?;
+    tx.on_commit(move || {
+        // A frame of its own committed under a frame suspended on this thread (a `force-new` call, a probe in a
+        // transaction of its own): what that frame read of the entity is no longer what the database has.
+        tx::forget_reads_of_others(token, &commit_name);
+        end_frame_write(&commit_facade, token, &commit_name)
+    })?;
     let (rollback_facade, rollback_name) = (facade.clone(), full_name.to_string());
     tx.on_rollback(move || end_frame_write(&rollback_facade, token, &rollback_name))?;
     TX_WRITTEN.with(|slot| {
@@ -1229,13 +1264,20 @@ pub fn gate_write(
         }
     }
     let service = (crate::hooks::get().artifact_name)().artifact.map(Arc::from);
+    // A created row reads back as the database will give it: every field, null where the create set none (its insert
+    // writes them so too, [`batch::cached_statement`]).
+    let plain = if op == Op::Create {
+        with_every_field(facade, entity_name, values)?
+    } else {
+        values.clone()
+    };
     tx::hold(
         &tx,
         facade,
         Held {
             entity_name: prepared.full_name,
             operation: op,
-            plain: values.clone(),
+            plain,
             sealed: prepared.sealed,
             pk: prepared.pk,
             service,
@@ -2045,7 +2087,9 @@ fn plan_select(
             skip_locked: lock.unwrap_or(false),
             ..Default::default()
         };
-        let statement = select_with_head(&shape.head, entity, dialect, condition, order, page, &options)?;
+        // An encrypted field is compared with its stored ciphertext, as a find outside the frame compares it.
+        let encrypted = field_rw::encrypt_condition(facade, entity, condition.cloned())?;
+        let statement = select_with_head(&shape.head, entity, dialect, encrypted.as_ref(), order, page, &options)?;
         Ok(SelectPlan {
             sql: statement.sql,
             params: statement.params,
@@ -2691,6 +2735,84 @@ fn cmp_order(left: &Value, right: &Value, descending: bool, nulls_first: bool) -
     }
 }
 
+/// `condition` with each text value converted to its field's date, time or number type, as a condition binds it in
+/// SQL (`moqui_db::sql::typed_value`): a script passes a time as epoch millis text, and a held row compared with it in
+/// memory has the time. `None` when the condition needs no change.
+pub(crate) fn typed_condition(
+    facade: &EntityFacade,
+    entity_name: &str,
+    condition: Option<&Condition>,
+) -> Option<Condition> {
+    let condition = condition?;
+    facade
+        .with_entity(entity_name, |entity, _, _| Ok(retype(entity, condition)))
+        .ok()
+        .flatten()
+}
+
+/// [`typed_condition`] on one condition; `None` when nothing in it changes.
+fn retype(entity: &moqui_db::model::EntityDefinition, condition: &Condition) -> Option<Condition> {
+    let typed = |field: &FieldRef, value: &Value| -> Option<Value> {
+        if field.entity_alias.is_some() || !matches!(value, Value::String(_)) {
+            return None;
+        }
+        let converted = moqui_db::sql::typed_value(entity.java_type_of(&field.name), value.clone());
+        (converted != *value).then_some(converted)
+    };
+    let one = |field: &FieldRef, value: &Value, make: fn(FieldRef, Value) -> Condition| {
+        typed(field, value).map(|value| make(field.clone(), value))
+    };
+    let list = |values: &[Value], field: &FieldRef| -> Option<Vec<Value>> {
+        let converted: Vec<Option<Value>> = values.iter().map(|value| typed(field, value)).collect();
+        converted.iter().any(Option::is_some).then(|| {
+            converted
+                .into_iter()
+                .zip(values)
+                .map(|(converted, value)| converted.unwrap_or_else(|| value.clone()))
+                .collect()
+        })
+    };
+    let all = |parts: &[Condition]| -> Option<Vec<Condition>> {
+        let converted: Vec<Option<Condition>> = parts.iter().map(|part| retype(entity, part)).collect();
+        converted.iter().any(Option::is_some).then(|| {
+            converted
+                .into_iter()
+                .zip(parts)
+                .map(|(converted, part)| converted.unwrap_or_else(|| part.clone()))
+                .collect()
+        })
+    };
+    match condition {
+        Condition::Equals(field, value) => one(field, value, Condition::Equals),
+        Condition::NotEquals(field, value) => one(field, value, Condition::NotEquals),
+        Condition::Less(field, value) => one(field, value, Condition::Less),
+        Condition::Greater(field, value) => one(field, value, Condition::Greater),
+        Condition::LessEqual(field, value) => one(field, value, Condition::LessEqual),
+        Condition::GreaterEqual(field, value) => one(field, value, Condition::GreaterEqual),
+        Condition::In(field, values) => list(values, field).map(|values| Condition::In(field.clone(), values)),
+        Condition::NotIn(field, values) => list(values, field).map(|values| Condition::NotIn(field.clone(), values)),
+        Condition::Between(field, low, high) | Condition::NotBetween(field, low, high) => {
+            let (new_low, new_high) = (typed(field, low), typed(field, high));
+            if new_low.is_none() && new_high.is_none() {
+                return None;
+            }
+            let (low, high) = (
+                new_low.unwrap_or_else(|| low.clone()),
+                new_high.unwrap_or_else(|| high.clone()),
+            );
+            Some(if matches!(condition, Condition::Between(..)) {
+                Condition::Between(field.clone(), low, high)
+            } else {
+                Condition::NotBetween(field.clone(), low, high)
+            })
+        }
+        Condition::And(parts) => all(parts).map(Condition::And),
+        Condition::Or(parts) => all(parts).map(Condition::Or),
+        Condition::Not(inner) => retype(entity, inner).map(|inner| Condition::Not(Box::new(inner))),
+        _ => None,
+    }
+}
+
 fn row_matches(condition: Option<&Condition>, fields: &FieldMap) -> bool {
     match condition {
         None => true,
@@ -2822,14 +2944,45 @@ fn same_value(got: &Value, expected: &Value) -> bool {
     if got.is_null() || expected.is_null() {
         return false;
     }
-    compare_obj(got, expected).ok() == Some(Ordering::Equal) || same_key(got, expected)
+    cmp_present(got, expected) == Some(Ordering::Equal) || same_key(got, expected)
 }
 
+/// Two values ordered as the database orders them: numbers of different kinds (an integer against a decimal) by their
+/// amounts, as SQL compares a number column with a number of any type.
 fn cmp_present(left: &Value, right: &Value) -> Option<Ordering> {
     if left.is_null() || right.is_null() {
         return None;
     }
-    compare_obj(left, right).ok()
+    if let Ok(order) = compare_obj(left, right) {
+        return Some(order);
+    }
+    let number = |value: &Value| -> Option<Value> {
+        match value {
+            Value::I32(_) | Value::I64(_) | Value::Decimal(_) => {
+                Some(moqui_lib::object::basic_convert(value, "BigDecimal").value)
+                    .filter(|v| matches!(v, Value::Decimal(_)))
+            }
+            _ => None,
+        }
+    };
+    match (left, right) {
+        (Value::F64(a), other) | (other, Value::F64(a)) => {
+            let b = match other {
+                Value::I32(b) => f64::from(*b),
+                #[allow(clippy::cast_precision_loss)]
+                Value::I64(b) => *b as f64,
+                Value::Decimal(_) => moqui_lib::object::to_plain_string(other).parse::<f64>().ok()?,
+                _ => return None,
+            };
+            let order = a.partial_cmp(&b)?;
+            Some(if matches!(left, Value::F64(_)) {
+                order
+            } else {
+                order.reverse()
+            })
+        }
+        _ => compare_obj(&number(left)?, &number(right)?).ok(),
+    }
 }
 
 fn parse_op(operation: &str) -> Result<Op, Error> {

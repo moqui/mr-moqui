@@ -427,6 +427,85 @@ fn a_message_is_stored_once_per_account_with_files_rules_and_ecas() {
 
 /// The gateway's spam verdict files the message in Junk, where no rule, ECA or automatic reply runs on it; a verdict
 /// of no leaves it in the Inbox.
+/// With no email ECA rule, Inbox mail and what the account's rules do to it commit in one frame; when the rules fail
+/// there (here a rule's write that fails at the commit: a create of a row that is there), the message is stored alone and the rules run after it on their own,
+/// so a failing rule never loses mail.
+#[test]
+fn a_rule_that_fails_with_the_store_leaves_the_message_stored() {
+    let _lock = moqui_core::user::session::cookie_property_lock();
+    let ctx = moqui_core::context::ExecutionContextFactory::test_context_in(
+        "",
+        moqui_core::service::ServicePools::idle(),
+        moqui_core::context::framework_dir(),
+    );
+    let facade = moqui_core::testing::open_with(
+        &moqui_core::context::framework_dir(),
+        moqui_core::testing::Options {
+            entity_eca: true,
+            ..Default::default()
+        },
+    );
+    facade.assume_db_tables();
+    ctx.factory().set_entity(facade.clone());
+    moqui_core::entity::load_feed::add_eca_rules(
+        &facade,
+        r#"<eecas>
+            <eeca id="FlagRefused" entity="moqui.basic.email.EmailMessage" on-update="true">
+                <condition><expression>entityValue.isFlagged == 'Y'</expression></condition>
+                <actions><script>
+                    const again = ec.entity.makeValue('moqui.basic.email.EmailAccount')
+                    again.emailAccountId = entityValue.emailAccountId
+                    again.create()
+                </script></actions>
+            </eeca>
+        </eecas>"#,
+    )
+    .unwrap();
+    let _entered = ctx.enter();
+    install();
+    alice(&facade);
+    let sales = account("EakHosted", "sales@example.com", &[]);
+    let quiet = account("EakHosted", "quiet@example.com", &[]);
+    ok(
+        "create#EmailRule",
+        &[
+            ("ruleName", text("Flag all")),
+            ("emailAccountId", text(&sales)),
+            (
+                "conditionList",
+                Value::List(vec![map(&[
+                    ("field", "subject"),
+                    ("operator", "contains"),
+                    ("value", "Files"),
+                ])]),
+            ),
+            ("actionList", Value::List(vec![map(&[("action", "flag")])])),
+        ],
+    );
+    moqui_core::user::logout().unwrap();
+    let frames = |address: &str, account: &str| {
+        let before = moqui_core::entity::cache::tx_cache_stats();
+        let report = receive(&facade, FILES, "carol@example.org", &[to(account, &[address])]).unwrap();
+        assert!(!report.store_failed(), "{report:?}");
+        let (id, _) = stored(&report, account);
+        let after = moqui_core::entity::cache::tx_cache_stats();
+        (id, after.frames - before.frames)
+    };
+    // an account with no rule: the message and its (no) rules in one frame
+    let (_, together) = frames("quiet@example.com", &quiet);
+    // the rule's write fails the commit: the message is stored again alone, in a frame of its own
+    let (id, apart) = frames("sales@example.com", &sales);
+    assert!(
+        apart > together,
+        "the store was done again alone, and the rules apart: {apart} frames, {together}"
+    );
+    let row = one(&facade, MESSAGE, "emailMessageId", &id);
+    assert_eq!(field(&row, "subject"), "Files");
+    assert_eq!(field(&row, "emailAccountId"), sales);
+    let messages = rows(&facade, MESSAGE, &[("emailAccountId", sales.as_str())]);
+    assert_eq!(messages.len(), 1, "stored once");
+}
+
 #[test]
 fn the_gateways_spam_verdict_files_in_junk() {
     let _lock = moqui_core::user::session::cookie_property_lock();
