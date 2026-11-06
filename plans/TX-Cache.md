@@ -1,6 +1,6 @@
 # Transaction cache
 
-Status 2026-11-05: Phases 0 to 6 built, Phase 6 as a first profiling pass: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G8, D6's commit batch, D2 to D5's reads, S1 to S5 on the cache, a first pass of F1 to F5, and the guide ([Services](../docs/logic/Services.md#transaction-cache)). [Results](#results) has the censuses and the numbers; [Profiling, Rounds 14 to 22](Profiling.md#round-22-the-census-over-mr-boss-and-mr-mantle-the-frames-reads-made-right-presence-and-mail-in-batches) the profiles and the tuning. Each transaction is an `AT_TRANSACTION` telemetry span with the cache's counts ([Monitoring](../docs/tools/Monitoring.md)).
+Status 2026-11-06: Phases 0 to 6 built, and 45 application services on the cache (Round 23), Phase 6 as a first profiling pass: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G8, D6's commit batch, D2 to D5's reads, S1 to S5 on the cache, a first pass of F1 to F5, and the guide ([Services](../docs/logic/Services.md#transaction-cache)). [Results](#results) has the censuses and the numbers; [Profiling, Rounds 14 to 23](Profiling.md#round-23-the-cache-on-for-45-application-services-chosen-by-the-census) the profiles and the tuning. Each transaction is an `AT_TRANSACTION` telemetry span with the cache's counts ([Monitoring](../docs/tools/Monitoring.md)).
 
 The transaction cache holds a transaction's writes in memory and writes them all at commit; while it holds them, the transaction's reads see them. Done well, it gives a large speedup for high-volume transactional work and a large cut in database load, without refactoring reusable services and without callers keeping records in hand to avoid re-reading them: a service that reads `OrderItem` again, as each of several services in one operation does, gets it from memory. Moqui Java got real gains from this in a few places. Here the framework is ours to change and services can be reviewed in bulk, so the aim is more: make the cache fast and correct enough that a common transactional service runs from its first write to its commit without touching the database for anything it has already read or written, and its writes go out in one batch.
 
@@ -204,6 +204,12 @@ wrote (`TrackingServices.refresh#Mode` 1,320, `TaskServices.update#ProjectTimeFr
 `DuplicateServices.find#PartyDuplicates`, `OrderServices.handle#OrderMajorChange`, `ShipmentServices.add#OrderPartToShipment`),
 the `AssetServices` reservations marked `no-tx-cache` (742), and `pack#Shipment`'s selective find; those services read
 the member entity instead, or stay off the cache, before it is turned on for them.
+
+### Census 6 (every component, measured)
+
+Every component's specs under the census (Profiling Round 23), with a `frame` line per transaction: 108,019
+transactions, 3,659 of 3,665 features passing, and none of the six failures the cache's (see Round 23). The ranking
+of services by round trips saved picked the 45 now marked `cache`; across them the specs' waited round trips fell 34%.
 
 ### Census 2 (Phase 1)
 

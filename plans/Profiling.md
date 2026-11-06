@@ -1075,6 +1075,97 @@ Next:
    asset reservations marked `no-tx-cache`.
 3. A held time stamp finer than the database keeps (Postgres: microseconds) still reads back finer in its frame.
 
+## Round 23: the cache on for 45 application services, chosen by the census
+
+Round 22's next steps. The census now measures as well as finds: with `MOQUI_TX_CACHE_CENSUS_FILE` set, each
+transaction writes a `frame` line when it ends (the service that ended it, its cache mode, its held writes, reads from
+memory and from the database, early flushes, and its waited round trips), with the cache everywhere or not. A census
+run over every component's specs (108,019 transactions) ranked the services that begin a transaction by what holding
+saves them; 45 of them are now `transaction="cache"`: 43 in mr-mantle and mr-boss, and `CallServices.start#Call` and
+`VoiceServices.receive#PhoneCall` in the framework. 38 are called only from screens, REST, jobs and specs, never from
+another service; the other seven are the order, invoice and production operations (`place#Order`, `approve#Order`,
+`add#OrderProductQuantity`, `change#InvoiceState`, `repost#Invoice`, `create#ProductionOrder`,
+`transition#ProductionOrder`), whose service callers are bulk, return, billing and demo operations, held under the
+census already. Left off for now: services many others call (`create#Payment`, `apply#Settlement`), and those whose
+early flushes come from their own view reads (`pack#Shipment`, `ship#OrderPart`, `store#TimeEntry`).
+
+Measured by the specs of mr-mantle, mr-boss and mr-pass (embedded Postgres), the same run before and after marking:
+waited round trips per call, and on the cache the reads it answered from memory and its early flushes per call. "Then
+reads through" is a service whose frame a `no-tx-cache` service (Mantle's asset reservations) turned to read-through.
+
+| Service | Calls | Round trips off | On | Fewer | Reads from memory | Early flushes |
+|---|---:|---:|---:|---:|---:|---:|
+| `ledger.SetupServices.check#Readiness` | 8 | 449 | 216 | 52% | 233 | 0.0 |
+| `products.CatalogServices.find#ProductPrices` | 13 | 218 | 28 | 87% | 190 | 0.0 |
+| `customerservice.CustomerServices.get#Customer360` | 8 | 646 | 473 | 27% | 173 | 0.0 |
+| `products.MethodServices.get#BomWhereUsed` | 5 | 214 | 42 | 81% | 173 | 0.0 |
+| `account.PaymentRunServices.apply#RunPayment` | 7 | 312 | 151 | 52% | 119 | 0.0 |
+| `party.AgreementServices.release#PurchaseAgreement` | 9 | 172 | 65 | 62% | 99 | 0.0 |
+| `projects.ProjectServices.get#ProjectsHome` | 9 | 389 | 299 | 23% | 87 | 0.0 |
+| `order.PurchaseServices.store#PurchaseOrderItem` | 22 | 152 | 63 | 59% | 82 | 0.0 |
+| `work.RoutingServices.release#RoutingDraft` | 28 | 256 | 168 | 34% | 51 | 0.0 |
+| `order.ShopCheckoutServices.submit#Checkout` | 29 | 162 | 89 | 45% | 32 | 0.0 |
+| `order.ShopCheckoutServices.begin#Checkout` | 22 | 115 | 43 | 62% | 71 | 0.0 |
+| `product.BomServices.release#BomDraft` | 52 | 156 | 89 | 43% | 48 | 0.0 |
+| `account.PaymentRunServices.pay#RunSupplier` | 12 | 145 | 79 | 46% | 48 | 0.2 |
+| `work.ProductionServices.create#ProductionOrder` | 106 | 300 | 238 | 21% | 13 | 0.0 |
+| `account.InvoiceServices.change#InvoiceState` | 72 | 152 | 91 | 40% | 43 | 0.0 |
+| `product.CostServices.preview#ProductCostRollup` | 16 | 118 | 59 | 50% | 52 | 0.0 |
+| `ledger.InvoiceAutoPostServices.repost#Invoice` | 217 | 132 | 78 | 41% | 33 | 0.0 |
+| `order.ShopCheckoutServices.set#CheckoutContact` | 20 | 144 | 93 | 35% | 45 | 0.1 |
+| `order.ShopCheckoutServices.select#Payment` | 19 | 86 | 39 | 55% | 47 | 0.0 |
+| `products.MethodServices.get#MethodContext` | 44 | 80 | 32 | 59% | 47 | 0.0 |
+| `product.SupplyPlanningServices.convert#PlanningSuggestion` | 30 | 113 | 69 | 39% | 34 | 0.0 (then reads through) |
+| `ledger.SetupServices.store#SetupRun` | 17 | 70 | 33 | 53% | 5 | 0.1 |
+| `order.ShopCheckoutServices.get#Checkout` | 29 | 71 | 34 | 52% | 37 | 0.0 |
+| `order.OrderServices.add#OrderProductQuantity` | 234 | 97 | 60 | 38% | 30 | 0.2 |
+| `work.ProductionServices.record#ProductionQuantity` | 23 | 205 | 168 | 18% | 37 | 0.1 (then reads through) |
+| `product.SupplyPlanningServices.run#SupplyPlan` | 31 | 124 | 87 | 30% | 23 | 0.0 |
+| `work.ProductionServices.transition#ProductionOrder` | 312 | 101 | 70 | 30% | 19 | 0.4 |
+| `request.SupportCaseServices.create#Case` | 66 | 67 | 38 | 43% | 24 | 0.2 |
+| `work.RoutingServices.store#RoutingOperation` | 32 | 102 | 74 | 28% | 15 | 0.0 |
+| `order.OrderServices.place#Order` | 202 | 105 | 78 | 25% | 22 | 1.0 (then reads through) |
+| `products.CatalogServices.get#ProductDetail` | 58 | 48 | 22 | 53% | 26 | 0.0 |
+| `forum.DeliveryWorkerServices.prepare#Outbox` | 46 | 72 | 48 | 34% | 21 | 0.0 |
+| `order.OrderServices.approve#Order` | 183 | 81 | 58 | 29% | 19 | 0.9 (then reads through) |
+| `product.ShopFulfillmentServices.run#FulfillmentStep` | 83 | 50 | 27 | 46% | 17 | 0.0 |
+| `org.moqui.impl.CallServices.start#Call` | 3 | 49 | 28 | 44% | 11 | 0.0 |
+| `product.BomServices.store#Bom` | 46 | 70 | 50 | 28% | 10 | 0.0 |
+| `order.ReturnPolicyServices.authorize#Return` | 42 | 53 | 34 | 37% | 14 | 0.0 (then reads through) |
+| `product.BomServices.store#BomItem` | 73 | 77 | 57 | 25% | 8 | 0.0 |
+| `order.ShopCheckoutServices.run#Step` | 136 | 53 | 34 | 36% | 16 | 0.2 (then reads through) |
+| `products.CatalogServices.store#ProductPrice` | 136 | 78 | 60 | 23% | 9 | 0.0 |
+| `org.moqui.impl.VoiceServices.receive#PhoneCall` | 1 | 33 | 16 | 52% | 7 | 0.0 |
+| `account.CustomerFinanceServices.get#CustomerFinance` | 48 | 54 | 38 | 30% | 16 | 0.0 |
+| `account.InvoiceServices.store#InvoiceDraftItem` | 91 | 39 | 24 | 39% | 14 | 0.0 |
+| `account.InvoiceServices.create#Receivable` | 80 | 46 | 31 | 32% | 9 | 0.0 |
+| `products.PriceNoticeServices.send#ProductPriceNotice` | 1266 | 23 | 17 | 26% | 6 | 0.0 |
+
+All 45: 319883 waited round trips with the cache off, 210973 on (34% fewer).
+
+With 200 µs to the database, each waited round trip saved is 0.2 ms: `check#Readiness` 47 ms less a call,
+`find#ProductPrices` 38 ms, `place#Order` 5 ms, `send#ProductPriceNotice` 1.2 ms.
+
+Also:
+1. **A held time stamp reads back at the precision its database keeps**: Postgres the nearest microsecond (half to
+   even, as its `rint`), MySQL `DATETIME(n)` six digits cut then half up to n (`Dialect::timestamp_digits`).
+2. **The census leftovers are not the cache's**: Consent, Contacts and CustomerServiceAccess (four features) fail with
+   the cache off too in a full run of mr-boss (they depend on state earlier specs leave); WorkCenters passes now.
+   ShopCart (two) and SupportAccess (one) fail when Mantle's cart and link specs and mr-pass's fall in one ten-minute
+   bucket of `record#Attempt`'s rate limit (one requester for every spec): they pass with mr-pass run alone, cache or
+   not. `DataGrid` under the census is `save#DataGridChanges`, which runs without the cache by design.
+3. A census line is one write, so lines from several threads do not split each other.
+
+Next:
+1. The view reads that flush `place#Order` and `approve#Order` (`check#OrderPreApprove`'s `OrderItemAndPart`,
+   `handle#OrderMajorChange`'s `OrderItemBillingDetail`) and the biggest flushers (`refresh#Mode`'s
+   `ForumInternalAccount`, `update#ProjectTimeFromTask`'s `TaskTimeSummary`): a framework way to answer a view read in
+   the frame when the held member rows cannot change its joins (updates of fields the view neither joins nor
+   conditions on, read as the overlay of the view's rows), else the service reads the member entity.
+2. Mantle's `no-tx-cache` asset reservations (742 early flushes, every order placement): Java took the cache off for
+   their locks; with `for-update` finds going to the database under hold, check whether they can hold.
+3. The shared services next (`create#Payment`, `apply#Settlement`, `pack#Shipment`, `ship#OrderPart`), by their callers.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
@@ -1094,6 +1185,8 @@ Next:
 - `TraceContext.trace_id` and `span_id` are `HexId` values (their bytes), not `String`s; `to_string()` gives the hex.
 - A row created in a transaction-cache frame reads back with every field (null where unset), as the database gives it.
 - `expire#UserStatuses` writes its users in batches (`publish#UserStatusBatch`), split down to a failing user.
+- 45 application and framework services are `transaction="cache"` (Round 23's list), among them `place#Order`, `approve#Order`, `change#InvoiceState`, the Shop checkout steps and `CallServices.start#Call`: their writes go out at the commit and a row they read is not read again in the transaction.
+- A time stamp held in a transaction-cache frame reads back in the frame at the precision the database keeps (Postgres microseconds).
 - SMTP-delivered Inbox mail and its account rules commit together when no email ECA is installed; a failure there stores the message alone and runs the rules after.
 - Mail stored by IMAP and POP3 sync, SMTP delivery and import, and the IMAP flag sync, run in transaction-cache frames; `react#Message`, `edit#Message`, `redact#Message`, `vote#Poll`, `mark#AllRead` and `mark#NotificationsViewed` are `transaction="cache"`, and a redacted message leaves the search index after its commit.
 - `no-tx-cache` turns a frame to read-through (writes go to the database, reads still kept), and a later `cache` call that joins it no longer turns holding back on.

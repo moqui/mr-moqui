@@ -236,6 +236,39 @@ pub(super) fn note_flush_failed(tx: &TransactionManager, error: &Error) {
     }
 }
 
+/// Whether frames are measured for the census: `MOQUI_TX_CACHE_CENSUS_FILE` is set (read once).
+pub(crate) fn census_measures() -> bool {
+    !census_path().is_empty()
+}
+
+fn census_path() -> &'static str {
+    static PATH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| moqui_lib::env::get_prop_or_env("MOQUI_TX_CACHE_CENSUS_FILE"))
+}
+
+/// A frame ended with the census file set, in census mode or not: a census line with the service that ended it, its
+/// cache mode, its waited round trips and what its cache did, so a run with the cache everywhere and one without give
+/// per service what the cache saves and whether it held cleanly.
+pub(crate) fn census_frame(mode: &str, stats: Option<&TxCacheStats>, committed: bool, round_trips: u64) {
+    let service = (crate::hooks::get().artifact_name)().artifact.unwrap_or_default();
+    let none = TxCacheStats::default();
+    let stats = stats.unwrap_or(&none);
+    census(&format!(
+        "{{\"kind\":\"frame\",\"service\":\"{service}\",\"mode\":\"{mode}\",\"committed\":{committed},\
+         \"creates\":{},\"updates\":{},\"deletes\":{},\"upserts\":{},\"memory_reads\":{},\"db_reads\":{},\
+         \"early_flushes\":{},\"batch_statements\":{},\"batch_rows\":{},\"round_trips\":{round_trips}}}",
+        stats.held_creates,
+        stats.held_updates,
+        stats.held_deletes,
+        stats.held_upserts,
+        stats.memory_reads,
+        stats.db_reads,
+        stats.early_flush_count(),
+        stats.batch_statements,
+        stats.batch_rows,
+    ));
+}
+
 /// The frame `token` ended (committed or rolled back): its counts go to a debug event and this thread's totals, and
 /// back to the transaction manager for the transaction's span.
 pub(crate) fn end_frame(token: u64) -> Option<TxCacheStats> {
@@ -262,13 +295,14 @@ pub(super) fn clear_frames() {
 
 fn census(line: &str) {
     tracing::warn!(target: "moqui::tx_cache::census", "{line}");
-    let path = moqui_lib::env::get_prop_or_env("MOQUI_TX_CACHE_CENSUS_FILE");
+    let path = census_path();
     if path.is_empty() {
         return;
     }
-    match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    match std::fs::OpenOptions::new().create(true).append(true).open(path) {
         Ok(mut file) => {
-            if let Err(err) = writeln!(file, "{line}") {
+            // one write of the whole line: appends from other threads and processes do not split it
+            if let Err(err) = file.write_all(format!("{line}\n").as_bytes()) {
                 tracing::warn!(error = %err, path, "could not write the transaction cache census");
             }
         }

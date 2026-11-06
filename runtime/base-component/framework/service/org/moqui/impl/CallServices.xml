@@ -55,7 +55,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- ========== Calls ========== -->
 
-    <service verb="start" noun="Call">
+    <service verb="start" noun="Call" transaction="cache">
         <description>Start a call: to the users of calleeUserIdList (a direct call to one, through their direct room;
             a group call of several, through the direct room of the set), or the call of chatRoomId (a member of it; a direct
             room of two is a direct call, any other a group call, ringing its current members). A room with a call going

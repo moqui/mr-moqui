@@ -1149,3 +1149,35 @@ fn a_frames_writes_of_one_entity_make_one_frame_end_sweep() {
     assert!(cached(&facade, "D").is_empty());
     assert_eq!(cached(&facade, "K"), ["K1:stored"]);
 }
+
+#[test]
+fn a_held_time_stamp_is_kept_at_the_precision_its_database_stores() {
+    use super::stored_timestamp;
+    let stamp = |nanos: i128| jiff::Timestamp::from_nanosecond(nanos).unwrap();
+    // Postgres: the nearest microsecond, a half to even
+    assert_eq!(
+        stored_timestamp(stamp(1_000_123_456_789), 6, true),
+        stamp(1_000_123_457_000)
+    );
+    assert_eq!(
+        stored_timestamp(stamp(1_000_123_456_500), 6, true),
+        stamp(1_000_123_456_000)
+    );
+    assert_eq!(
+        stored_timestamp(stamp(1_000_123_457_500), 6, true),
+        stamp(1_000_123_458_000)
+    );
+    // MySQL DATETIME(3): six digits cut, then half up to the millisecond
+    assert_eq!(
+        stored_timestamp(stamp(1_000_123_499_999), 3, false),
+        stamp(1_000_123_000_000)
+    );
+    assert_eq!(
+        stored_timestamp(stamp(1_000_123_500_999), 3, false),
+        stamp(1_000_124_000_000)
+    );
+    assert_eq!(
+        stored_timestamp(stamp(1_000_623_000_000), 0, false),
+        stamp(1_001_000_000_000)
+    );
+}

@@ -478,7 +478,8 @@ fn a_held_row_reads_in_its_frame_as_the_database_gives_it() {
             row.set("testNumberInteger", Value::I32(7));
             row.set(
                 "testDateTime",
-                Value::Timestamp(jiff::Timestamp::from_microsecond(1_793_980_786_123_456).unwrap()),
+                // finer than Postgres keeps: it reads back at the microsecond, rounded
+                Value::Timestamp(jiff::Timestamp::from_nanosecond(1_793_980_786_123_456_789).unwrap()),
             );
             row.set("testDate", Value::string("2026-11-06"));
             row.set("testTime", Value::string("10:11:12"));

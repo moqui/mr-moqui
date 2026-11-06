@@ -127,6 +127,10 @@ work that reads a document of those rows (a search index) after the commit (`reg
 flush mark the transaction rollback-only, so a test of a `cache` service fails when it does not commit in one batch.
 `moqui.tx_cache.everywhere=true` (`MOQUI_TX_CACHE_EVERYWHERE`, dev and test only) makes every transaction hold; with
 `MOQUI_TX_CACHE_CENSUS_FILE` set, each early flush and each failed commit batch is a line in that file, naming the
-service: run it over a component's specs to find the next services to mark, and what stops them. Each transaction's
+service: run it over a component's specs to find the next services to mark, and what stops them. With the file set,
+in census mode or not, each transaction also writes a `frame` line when it ends: the service that ended it, its cache
+mode, its held writes, its reads from memory and from the database, its early flushes and its waited round trips. Two
+runs of the same specs, one with the cache everywhere and one without, give per service what the cache would save; a
+run before and after marking services gives what it did. Each transaction's
 counts (held writes, reads from memory and from the database, early flushes by cause, the batch's statements and waited
 round trips) are a debug event at its end, and `entity::cache::tx_cache_stats()` sums them for the thread.

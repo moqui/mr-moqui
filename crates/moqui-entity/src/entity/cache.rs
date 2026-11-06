@@ -52,7 +52,7 @@ mod stats;
 mod tx;
 
 use hold::Held;
-pub(crate) use stats::end_frame as end_frame_stats;
+pub(crate) use stats::{census_frame, census_measures, end_frame as end_frame_stats};
 pub use stats::{tx_cache_stats, FlushCause, TxCacheStats};
 pub(crate) use tx::flush_for_members;
 pub use tx::{flush_and_disable, flush_before_sql, register_cache_flush};
@@ -659,17 +659,56 @@ pub fn forget_frame_reads(facade: &EntityFacade, entity_name: &str) {
     }
 }
 
-/// `values` with every field of `entity_name`, null where it has none.
-fn with_every_field(facade: &EntityFacade, entity_name: &str, values: &FieldMap) -> Result<FieldMap, Error> {
-    facade.with_entity(entity_name, |entity, _, _| {
+/// `values` as the database of `entity_name` will give them back: time stamps at the precision it keeps
+/// ([`stored_timestamp`]), and with `every_field`, every field of the entity, null where it has none.
+fn as_stored(
+    facade: &EntityFacade,
+    entity_name: &str,
+    values: &FieldMap,
+    every_field: bool,
+) -> Result<FieldMap, Error> {
+    facade.with_entity(entity_name, |entity, dialect, _| {
         let mut all = values.clone();
-        for field in &entity.fields {
-            if !all.contains_key(field.name.as_str()) {
-                all.insert(Arc::from(field.name.as_str()), Value::Null);
+        if let Some(digits) = dialect.timestamp_digits() {
+            for value in all.values_mut() {
+                if let Value::Timestamp(stamp) = value {
+                    *stamp = stored_timestamp(*stamp, digits, dialect.name.starts_with("postgres"));
+                }
+            }
+        }
+        if every_field {
+            for field in &entity.fields {
+                if !all.contains_key(field.name.as_str()) {
+                    all.insert(Arc::from(field.name.as_str()), Value::Null);
+                }
             }
         }
         Ok(all)
     })
+}
+
+/// `stamp` as a column keeping `digits` fractional digits of seconds stores it. Postgres rounds to the nearest
+/// microsecond, a half to even (`rint`); MySQL is sent six digits (cut) and rounds those half up to its own.
+fn stored_timestamp(stamp: jiff::Timestamp, digits: u8, postgres: bool) -> jiff::Timestamp {
+    use jiff::{RoundMode, TimestampRound, Unit};
+    let round = |stamp: jiff::Timestamp, unit: Unit, increment: i64, mode: RoundMode| {
+        stamp
+            .round(TimestampRound::new().smallest(unit).increment(increment).mode(mode))
+            .unwrap_or(stamp)
+    };
+    if postgres {
+        return round(stamp, Unit::Microsecond, 1, RoundMode::HalfEven);
+    }
+    let cut = round(stamp, Unit::Microsecond, 1, RoundMode::Trunc);
+    match digits {
+        0 => round(cut, Unit::Second, 1, RoundMode::HalfExpand),
+        1 => round(cut, Unit::Millisecond, 100, RoundMode::HalfExpand),
+        2 => round(cut, Unit::Millisecond, 10, RoundMode::HalfExpand),
+        3 => round(cut, Unit::Millisecond, 1, RoundMode::HalfExpand),
+        4 => round(cut, Unit::Microsecond, 100, RoundMode::HalfExpand),
+        5 => round(cut, Unit::Microsecond, 10, RoundMode::HalfExpand),
+        _ => cut,
+    }
 }
 
 /// The key a select-field find is kept by in a cache frame (`tx::projected_rows`): the find's own key and its fields.
@@ -1264,13 +1303,9 @@ pub fn gate_write(
         }
     }
     let service = (crate::hooks::get().artifact_name)().artifact.map(Arc::from);
-    // A created row reads back as the database will give it: every field, null where the create set none (its insert
-    // writes them so too, [`batch::cached_statement`]).
-    let plain = if op == Op::Create {
-        with_every_field(facade, entity_name, values)?
-    } else {
-        values.clone()
-    };
+    // A held row reads back as the database will give it: time stamps at its precision, and a created row with every
+    // field, null where the create set none (its insert writes them so too, [`batch::cached_statement`]).
+    let plain = as_stored(facade, entity_name, values, op == Op::Create)?;
     tx::hold(
         &tx,
         facade,

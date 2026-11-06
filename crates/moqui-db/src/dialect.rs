@@ -97,6 +97,25 @@ impl Dialect {
                 .is_none_or(|text| text.trim().eq_ignore_ascii_case("FOR UPDATE"))
     }
 
+    /// The fractional digits of seconds a `date-time` column keeps, where the database rounds a finer time stamp
+    /// written to it: Postgres's `TIMESTAMP` six, MySQL's `DATETIME(n)` n. `None` where it keeps what it is given (as
+    /// text) or is not known.
+    #[must_use]
+    pub fn timestamp_digits(&self) -> Option<u8> {
+        if self.name.starts_with("postgres") {
+            return Some(6);
+        }
+        if self.name.starts_with("mysql") {
+            let sql_type = self.sql_type("date-time")?.trim().to_ascii_uppercase();
+            let digits = sql_type.strip_prefix("DATETIME")?.trim();
+            if digits.is_empty() {
+                return Some(0);
+            }
+            return digits.strip_prefix('(')?.strip_suffix(')')?.trim().parse().ok();
+        }
+        None
+    }
+
     /// SQL type override for a dictionary type, if this database sets one.
     pub fn sql_type(&self, field_type: &str) -> Option<&str> {
         self.sql_types.get(field_type).map(String::as_str)
@@ -321,6 +340,25 @@ mod tests {
         assert!(!flags.never_nulls);
         assert!(!flags.use_binary_type_for_blob);
         assert_eq!(flags.offset_style.as_deref(), Some("fetch"));
+    }
+
+    #[test]
+    fn a_date_time_column_keeps_its_database_digits() {
+        let root = MNode::parse_text(
+            "sample",
+            r#"<database-list>
+                <database name="postgres"/>
+                <database name="mysql8"><database-type type="date-time" sql-type="DATETIME(3)"/></database>
+                <database name="mysql"><database-type type="date-time" sql-type="DATETIME"/></database>
+                <database name="sqlite"><database-type type="date-time" sql-type="TEXT"/></database>
+            </database-list>"#,
+        )
+        .expect("parse");
+        let dialects = Dialects::load(&root).expect("load");
+        assert_eq!(profile(&dialects, "postgres").timestamp_digits(), Some(6));
+        assert_eq!(profile(&dialects, "mysql8").timestamp_digits(), Some(3));
+        assert_eq!(profile(&dialects, "mysql").timestamp_digits(), Some(0));
+        assert_eq!(profile(&dialects, "sqlite").timestamp_digits(), None);
     }
 
     #[test]

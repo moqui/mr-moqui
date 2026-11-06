@@ -948,13 +948,24 @@ impl TransactionManager {
             }
         }
         // The after hooks run with every frame ended, then each manager resumes the frame its `force_new` suspended.
-        for (_, mut phase, committed) in ended {
-            end_trace(&mut phase, committed);
+        // The census has one line for the transaction: its holding member's frame, else this manager's.
+        let census = self.tx_cache_everywhere() || crate::entity::cache::census_measures();
+        let mut census_line: Option<CensusLine> = None;
+        for (member, mut phase, committed) in ended {
+            if let Some(line) = end_trace(&mut phase, committed, census) {
+                let kept_held = census_line.as_ref().is_some_and(|kept| kept.stats.is_some());
+                if census_line.is_none() || (!kept_held && (line.stats.is_some() || member.shares_stack(self))) {
+                    census_line = Some(line);
+                }
+            }
             if committed {
                 run_after_hooks("commit", phase.on_commit.drain(..));
             } else {
                 run_after_hooks("rollback", phase.on_rollback.drain(..));
             }
+        }
+        if let Some(line) = census_line {
+            crate::entity::cache::census_frame(line.mode, line.stats.as_ref(), line.committed, line.round_trips);
         }
         for member in resumes {
             member.resume_parked_parent();
@@ -1587,21 +1598,27 @@ fn try_commit(phase: &mut Phase) -> Result<(), Error> {
 }
 
 /// The end of a frame for its transaction cache counts (plans/TX-Cache.md D1) and its span: what it did, as attributes.
-fn end_trace(phase: &mut Phase, committed: bool) {
+fn end_trace(phase: &mut Phase, committed: bool, census: bool) -> Option<CensusLine> {
     let stats = crate::entity::cache::end_frame_stats(phase.token);
-    let Some(trace) = phase.trace.take() else {
-        return;
-    };
     let mode = match phase.cache_mode {
         CacheMode::Off => "off",
         CacheMode::Hold => "hold",
         CacheMode::ReadThrough => "read-through",
     };
+    let line = census.then(|| CensusLine {
+        mode,
+        stats: stats.clone(),
+        committed,
+        round_trips: crate::driver::thread_round_trips().saturating_sub(phase.round_trips_at),
+    });
+    let Some(trace) = phase.trace.take() else {
+        return line;
+    };
     let count = |value: u64| moqui_lib::object::Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
     let mut attributes = vec![("moqui.transaction.cache", moqui_lib::object::Value::string(mode))];
     if !trace.wants_attributes() {
         trace.finish(committed, attributes);
-        return;
+        return line;
     }
     attributes.extend([(
         "moqui.transaction.round_trips",
@@ -1618,6 +1635,15 @@ fn end_trace(phase: &mut Phase, committed: bool) {
         ]);
     }
     trace.finish(committed, attributes);
+    line
+}
+
+/// A frame's census line (plans/TX-Cache.md D1), written once for the transaction after its frames end.
+struct CensusLine {
+    mode: &'static str,
+    stats: Option<crate::entity::cache::TxCacheStats>,
+    committed: bool,
+    round_trips: u64,
 }
 
 /// Runs the after-commit or after-rollback hooks in order. The transaction has already ended, so a panicking hook is
