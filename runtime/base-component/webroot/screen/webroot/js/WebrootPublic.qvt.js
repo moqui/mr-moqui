@@ -31,6 +31,12 @@
     // An island: the screen alone, in the page around it.
     const ISLAND_TEMPLATE = '<div class="m-public-island">' + SCREEN_TEMPLATE + '</div>';
     const isIsland = (config) => config && config.shell === "island";
+    // The page's config: only a <script type="application/json">, so markup of the page (a theme's
+    // <div id="moqui-public-config">) cannot stand in for it.
+    const pageConfigElement = (doc) => {
+        const found = doc && doc.getElementById ? doc.getElementById("moqui-public-config") : null;
+        return found && found.tagName === "SCRIPT" && found.type === "application/json" ? found : null;
+    };
 
     const queryOf = (search) => {
         const out = {};
@@ -157,7 +163,7 @@
     };
 
     const start = () => {
-        const config = JSON.parse(root.document.getElementById("moqui-public-config").textContent);
+        const config = JSON.parse(pageConfigElement(root.document).textContent);
         if (isIsland(config) && config.mount) return startIslands();
         moqui.webrootVue = mountApp(config, ROOT_TEMPLATE, "#public-root");
         return moqui.webrootVue;
@@ -174,7 +180,7 @@
                 if (config.mount && doc.getElementById(config.mount)) found.push(config);
             } catch (err) { console.error("A public island's config is not JSON", err); }
         }
-        const page = doc.getElementById && doc.getElementById("moqui-public-config");
+        const page = pageConfigElement(doc);
         if (page) {
             try {
                 const config = JSON.parse(page.textContent);
@@ -205,6 +211,6 @@
     if (moqui) moqui.startPublic = start;
 
     const ready = root.document && root.document.getElementById && root.Vue && root.Quasar && moqui;
-    if (ready && root.document.getElementById("moqui-public-config")) start();
+    if (ready && pageConfigElement(root.document)) start();
     else if (ready && root.document.querySelector && root.document.querySelector("script[data-moqui-island]")) startIslands();
 })(globalThis);
