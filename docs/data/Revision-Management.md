@@ -306,8 +306,8 @@ the record entity and id field of the folders below it; the application that wri
 `list#Folder` shows the mapped folders at the top with their labels, and gives each record folder `recordEntityName`,
 `idField` and `recordId`.
 
-Its access is the records' own. A member below the manage level (its users may well all be members, through an
-`ALL_USERS` row) reaches only the paths in the map whose records they may see, as the record visibility hook answers:
+Its access is the records' own. A member below the manage level (its users may well all be members, through one group's
+row, as IronStone's `BOSS_USERS`) reaches only the paths in the map whose records they may see, as the record visibility hook answers:
 `check#RecordPaths` maps a path to the records it is in (`party/P1/...` is in Party `P1`; `asset/A1/maintenance/M7/...`
 in Asset `A1` and AssetMaintenance `M7`, both checked) and asks `ChatServices.check#RecordVisible`, the service the
 user's theme names in `STRT_RECORD_VISIBLE_SERVICE`, called as the user with `checkOnly` (IronStone names Mantle's

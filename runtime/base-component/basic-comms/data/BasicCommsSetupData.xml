@@ -13,11 +13,15 @@ along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
 <entity-facade-xml type="seed-initial">
-    <!-- BasicComms: every user may open it; each service checks the user's own access to what it reads and writes. -->
+    <!-- BasicComms: the members of BASIC_COMMS_USERS may open it, with ADMIN and the Comms administrators; ALL_USERS, which every
+        account holds (a public registration too), grants no app. Each service checks the user's own access to what it reads and
+        writes. An app that mounts these screens under its own root (IronStone BOSS's Comms) authorizes them by its root instead. -->
+    <moqui.security.UserGroup userGroupId="BASIC_COMMS_USERS" description="Comms users"/>
     <moqui.security.UserGroup userGroupId="BASIC_COMMS_ADMIN" description="Comms administrator"/>
     <artifactGroups artifactGroupId="BASIC_COMMS" description="BasicComms App (via root screen)">
         <artifacts artifactName="component://basic-comms/screen/BasicComms.xml" artifactTypeEnumId="AT_XML_SCREEN" inheritAuthz="Y"/>
-        <authz artifactAuthzId="BASIC_COMMS_ALL_USERS" userGroupId="ALL_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+        <authz artifactAuthzId="BASIC_COMMS_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+        <authz artifactAuthzId="BASIC_COMMS_USERS" userGroupId="BASIC_COMMS_USERS" authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
         <authz artifactAuthzId="BASIC_COMMS_APPADMIN" userGroupId="BASIC_COMMS_ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
     </artifactGroups>
     <!-- the do not disturb hours of Settings, Chat (org.moqui.comms.ChatScreenServices.apply#DndHours). A success is not kept:

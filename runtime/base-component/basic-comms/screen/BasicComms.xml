@@ -14,8 +14,8 @@ along with this software (see the LICENSE.md file). If not, see
 -->
 <!-- BasicComms, the framework's Comms app (plans/Comms-Framework.md §3): the Inbox, chat and the mail settings now, then calls
     and voice, usable with only the framework. Another app mounts these screens under its own root and adds to them through
-    screen-extend, its shell-providers' provider hooks, and ext-action and ext-panel (§3.3, §3.4). Authorized for ALL_USERS by
-    BASIC_COMMS (data/BasicCommsSetupData.xml). -->
+    screen-extend, its shell-providers' provider hooks, and ext-action and ext-panel (§3.3, §3.4). Authorized for BASIC_COMMS_USERS
+    and ADMIN by BASIC_COMMS (data/BasicCommsSetupData.xml), not ALL_USERS. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Comms" menu-image="sym_o_forum" menu-image-type="icon">
 

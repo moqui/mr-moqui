@@ -213,7 +213,10 @@ The services report supported, configured and active capabilities separately, fo
 - The services that move check only `isInGroup('ADMIN')`.
 - The BOSS screens are covered by the `BOSS_COMMS` artifact group. `BOSS_CONTACT_ADMIN` is checked only in Consent and
   Commons, which stay.
-- BasicComms gets its own artifact group and authorization.
+- BasicComms gets its own artifact group and authorization: `BASIC_COMMS`, granted to the `BASIC_COMMS_USERS` group (ALLOW)
+  and to `ADMIN` and `BASIC_COMMS_ADMIN` (ALWAYS), not to `ALL_USERS`, which every account holds, a public registration
+  too (Nov 5, 2026; mr-boss impl-drawers-commons R29). An app that mounts the screens under its own root authorizes them
+  there, as IronStone's Comms does with `BOSS_USERS`.
 
 **Internal accounts.**
 - The framework account lists, settings and compose choices show Internal accounts only when the BOSS provider

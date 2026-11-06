@@ -65,15 +65,21 @@ const setFields = (emailMessageId, fields) =>
     })
 function makeUser(username) {
     sys(() => {
-        if (ec.entity.find("moqui.security.UserAccount").condition("username", username).count() > 0) return
-        const user = ec.entity.makeValue("moqui.security.UserAccount")
-        user.setFields(
-            {userId: username.replace(/\./g, "_").toUpperCase(), username, userFullName: "Sync " + username, disabled: "N"},
-            true,
-            null,
-            null
-        )
-        user.create()
+        const userId = username.replace(/\./g, "_").toUpperCase()
+        if (ec.entity.find("moqui.security.UserAccount").condition("username", username).count() == 0) {
+            const user = ec.entity.makeValue("moqui.security.UserAccount")
+            user.setFields({userId, username, userFullName: "Sync " + username, disabled: "N"}, true, null, null)
+            user.create()
+        }
+        // BasicComms is opened by BASIC_COMMS_USERS, not ALL_USERS; IronStone's Comms, when installed, by BOSS_USERS
+        for (const group of ["BASIC_COMMS_USERS", "BOSS_USERS"]) {
+            if (ec.entity.find("moqui.security.UserGroup").condition("userGroupId", group).count() == 0) continue
+            const found = ec.entity.find("moqui.security.UserGroupMember").condition("userGroupId", group)
+            if (found.condition("userId", userId).count() > 0) continue
+            const member = ec.entity.makeValue("moqui.security.UserGroupMember")
+            member.setFields({userGroupId: group, userId, fromDate: ec.user.nowTimestamp}, true, null, null)
+            member.create()
+        }
     })
 }
 function makeMessage(subject, rootId) {

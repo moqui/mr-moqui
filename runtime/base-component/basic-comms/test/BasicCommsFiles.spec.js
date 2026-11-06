@@ -71,6 +71,8 @@ function makeUser(userId, username) {
         emailAddress: username + "@example.com",
         disabled: "N"
     })
+    // BasicComms is opened by BASIC_COMMS_USERS, not ALL_USERS
+    store("moqui.security.UserGroupMember", {userGroupId: "BASIC_COMMS_USERS", userId, fromDate: "2026-01-01 00:00:00"})
     sys(() => {
         if (ec.entity.find("moqui.security.UserGroup").condition("userGroupId", FRAMEWORK_GROUP).count() == 0) return
         if (
