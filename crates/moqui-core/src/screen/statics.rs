@@ -521,8 +521,9 @@ fn send_json(body: &serde_json::Value, extra: Vec<(String, String)>) {
         ("Cache-Control".to_string(), "private, no-store".to_string()),
     ];
     headers.extend(extra);
+    // 200, or the status the path's always-actions set.
     web::send_bytes_with_headers(
-        200,
+        web::output_status(),
         headers,
         serde_json::to_vec(body).unwrap_or_else(|_| b"{}".to_vec()),
     );

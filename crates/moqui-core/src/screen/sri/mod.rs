@@ -217,7 +217,7 @@ pub fn write(state: &RenderState, text: &str) {
         return;
     }
     if !web::output_sent() {
-        web::start_output(200, &content_type_header(state));
+        web::start_output(&content_type_header(state));
     }
     web::write_output(&super::stamp::inject(text));
 }
