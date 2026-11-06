@@ -67,7 +67,10 @@ mod speech;
 pub(crate) mod semaphore;
 pub mod shell;
 #[cfg(feature = "xlsx")]
-pub(crate) mod spreadsheet;
+pub mod spreadsheet;
+#[cfg(not(feature = "xlsx"))]
+#[path = "spreadsheet_off.rs"]
+pub mod spreadsheet;
 mod sso;
 mod sso_app;
 mod system_sync;
@@ -96,7 +99,7 @@ pub use email_eca::{email_rule_count, run_email_rule, run_email_rules};
 pub use jobs::job_time_zone;
 #[cfg(test)]
 pub(crate) use jobs::send_job_error_notification;
-pub use jobs::{run_job_now, PassReport};
+pub use jobs::{current_job_name, current_job_run_id, in_job_run, run_job_now, PassReport};
 pub use pool::{start_pools, PoolStatus, RunnerStats, ServicePools};
 #[cfg(feature = "http")]
 pub use remote::shared_http_client;
@@ -111,7 +114,9 @@ pub use rest::reload_roots as reload_rest_roots;
 pub use rest::{resolve_service as resolve_rest_service, root_resource_infos, run};
 pub use seca::run_seca_rules;
 pub use security_checks::security_checks_run;
-pub(crate) use security_checks::{assert_privileged_group_membership, assert_sealed_permission_grant};
+pub(crate) use security_checks::{
+    assert_document_expression, assert_privileged_group_membership, assert_sealed_permission_grant,
+};
 pub(crate) use system_sync::receive_rest_message;
 // The test client signs with these, the same functions the server uses.
 pub use system_sync::{hmac_base64, timestamp_header};

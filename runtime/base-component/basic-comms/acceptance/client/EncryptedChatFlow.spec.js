@@ -334,7 +334,7 @@ feature("a store from before the derived store key moves once to a new device: i
             await crypto.close()
             // the device as it was before the derived key: its random key stored (the one its store opens with) and the
             // revision it derives from moved on (Tools, as an administrator)
-            await window.moqui.request("/apps/tools/Entity/DataEdit/EntityDataEdit/update", { method: "POST", params: {
+            await window.moqui.request("/apps/tools/Data/Record/update", { method: "POST", params: {
                 selectedEntity: "moqui.chat.ChatDevice", userId: first.userId, deviceId: first.deviceId, storeKey: derived, storeRevision: 7 } })
             const legacy = (await keys({ deviceId: first.deviceId })).legacyStoreKey
             const next = await crypto.ensureDevice()

@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Database selection for the Data, SQL, Schema, ETL and Database screens. A section screen resolves `db` in its
+    always-actions; a screen that acts on the chosen database includes the selectDatabase transition and the
+    DatabasePicker section. `db` is `group:<groupName>`, the first of the groups on that database
+    (org.moqui.impl.DatabaseServices.get#DatabaseList, with label); the last choice is the user preference database.selected. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd">
+    <transition name="selectDatabase">
+        <actions><script><![CDATA[
+            // the posted value: the section's always-actions have already put a known database in place of an unknown one
+            const posted = String(ec.web.requestParameters.db || '')
+            const databases = (ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DatabaseList').parameters({includeExternal: true}).call() || {}).databases || []
+            const chosen = databases.find((database) => database.db == posted)
+            if (chosen) ec.user.setPreference('database.selected', chosen.db)
+            else ec.message.addError(ec.l10n.localize('Unknown database'))
+        ]]></script></actions>
+        <default-response url="."><parameter name="db"/></default-response>
+        <error-response url="."/>
+    </transition>
+    <widgets>
+        <!-- the foreign keys a load wrap dropped and has not made again: its restore job pending (the load still running,
+            or never started) or failed -->
+        <section name="DroppedKeys"><actions><script><![CDATA[
+            droppedKeyJobs = []
+            try {
+                for (const statusId of ['DbjsPending', 'DbjsFailed']) {
+                    const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DatabaseJobs').parameters({statusId, limit: 50}).call() || {}
+                    for (const job of out.jobs || []) if (job.kindEnumId == 'DbjLoadWrap' && /restore/i.test(job.description || ''))
+                        droppedKeyJobs.push({jobId: job.jobId, db: job.db, failed: statusId == 'DbjsFailed'})
+                }
+            } catch (e) { droppedKeyJobs = [] }
+            ec.message.clearErrors()
+        ]]></script></actions><widgets>
+            <section-iterate name="DroppedKeyJobs" list="droppedKeyJobs" entry="droppedKeyJob"><widgets>
+                <container style="text-warning">
+                    <label text="Foreign keys are dropped on ${droppedKeyJob.db}: ${droppedKeyJob.failed ? 'making them again failed' : 'they are not made again yet'}. Run database job ${droppedKeyJob.jobId}." type="span"/>
+                    <link url="//apps/tools/Database/JobDetail" text="Open job ${droppedKeyJob.jobId}" link-type="anchor" parameter-map="{jobId: droppedKeyJob.jobId}"/>
+                </container>
+            </widgets></section-iterate>
+        </widgets></section>
+        <section name="DatabasePicker" condition="databaseList?.length &gt; 1"><widgets>
+            <form-single name="DatabasePickerForm" transition="selectDatabase" map="context">
+                <field name="db"><default-field title="Database">
+                    <drop-down>
+                        <list-options list="databaseList" key="${db}" text="${label}"/>
+                    </drop-down>
+                </default-field></field>
+                <field name="submitButton"><default-field title=""><submit text="Choose database"/></default-field></field>
+                <field-layout><field-row><field-ref name="db"/><field-ref name="submitButton"/></field-row></field-layout>
+            </form-single>
+        </widgets></section>
+    </widgets>
+</screen>

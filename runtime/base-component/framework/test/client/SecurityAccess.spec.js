@@ -92,7 +92,7 @@ feature("A01 a VIEW-only user cannot open the SQL Runner", {
         const s = formSession("sec.view.only", "SecView1!!")
         return {
             tools: s.get("/apps/tools/dashboard"),
-            res: s.get("/apps/tools/Entity/SqlRunner", { params: { groupName: "transactional", sql: "SELECT 1" } }),
+            res: s.get("/apps/tools/SqlTui", { params: { db: "group:transactional", sql: "SELECT 1" } }),
         }
     },
     then({ tools, res }) {

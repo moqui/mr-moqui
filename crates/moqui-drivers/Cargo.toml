@@ -47,6 +47,8 @@ flate2 = { workspace = true }
 
 [dev-dependencies]
 moqui-core = { workspace = true, features = ["test-support"] }
+# The schema comparison's catalog queries, parsed against a MySQL server.
+moqui-db = { workspace = true }
 # The pgwire tests' TLS server certificate.
 rcgen = { workspace = true }
 

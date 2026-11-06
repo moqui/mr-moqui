@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Entities" default-menu-index="1">
+
+    <transition name="find"><default-response url="../../Data/Grid"/></transition>
+    <transition name="detail"><default-response url="../Entity"/></transition>
+    <transition name="autoScreen"><default-response url="../../Data/Browse/AutoFind"/></transition>
+    <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
+    <transition name="checkTables" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            // the entities of the chosen database's groups (Schema.xml's always-actions)
+            const groupNames = selectedDatabase?.groupNames || []
+            const check = ec.entity.checkTables(ec.entity.getAllEntityNames(), groupNames)
+            ec.message.addMessage(`Checked the tables of ${groupNames.join(', ')}: ${check.ddl.length} statements ran, ${check.errors} failed`,
+                check.errors || check.failed.length ? 'warning' : 'info')
+            for (const failure of check.failed) ec.message.addMessage(`${failure.entityName} not checked: ${failure.error}`, 'warning')
+            for (const ddl of check.ddl.slice(0, 100)) ec.message.addMessage(ddl, 'info')
+            if (check.ddl.length > 100) ec.message.addMessage(`and ${check.ddl.length - 100} more; the server log has them all`, 'info')
+        ]]></script></actions>
+        <default-response url="."/>
+    </transition>
+
+    <actions>
+        <set field="pageSize" from="pageSize || 60"/>
+        <set field="masterEntitiesOnly" from="viewOption == 'master'"/>
+        <set field="excludeViewEntities" from="viewOption == 'exclude-views'"/>
+        <set field="entityList" from="ec.entity.getAllEntitiesInfo(orderByField || 'fullEntityName', filterRegexp, masterEntitiesOnly, excludeViewEntities)"/>
+        <script>CollectionUtilities.paginateList("entityList", null, context)</script>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Find entities"/><box-body>
+            <form-single name="FilterForm" transition=".">
+                <field name="filterRegexp"><default-field><text-line size="30"/></default-field></field>
+                <field name="viewOption"><default-field title="View Option">
+                    <drop-down>
+                        <option key="all" text="All Entities"/>
+                        <option key="master" text="Master Entities"/>
+                        <option key="exclude-views" text="Exclude View Entities"/>
+                    </drop-down>
+                </default-field></field>
+                <field name="submitButton"><default-field title="Filter"><submit/></default-field></field>
+                <field-layout><field-row-big><field-ref name="filterRegexp"/><field-ref name="viewOption"/>
+                    <field-ref name="submitButton"/></field-row-big></field-layout>
+            </form-single>
+            <form-list name="EntityList" list="entityList">
+                <field name="package">
+                    <header-field show-order-by="true"/>
+                    <default-field><display also-hidden="false"/></default-field>
+                </field>
+                <field name="entityName">
+                    <header-field show-order-by="true"/>
+                    <default-field><display also-hidden="false"/></default-field>
+                </field>
+                <field name="isView">
+                    <header-field title="View##DataBase" show-order-by="true"/>
+                    <default-field><display also-hidden="false"/></default-field>
+                </field>
+                <field name="find"><default-field>
+                    <link url="find" text="Find" link-type="anchor" parameter-map="{selectedEntity:fullEntityName}"/>
+                </default-field></field>
+                <field name="autoScreen"><default-field>
+                    <link url="autoScreen" text="Auto Screen" link-type="anchor" parameter-map="{aen:fullEntityName}"/>
+                </default-field></field>
+                <field name="detail"><default-field>
+                    <link url="detail" text="Detail" link-type="anchor" parameter-map="{selectedEntity:fullEntityName}"/>
+                </default-field></field>
+            </form-list>
+        </box-body></container-box>
+        <container-box><box-header title="Database maintenance"/><box-body>
+            <section-include name="DatabasePicker" location="component://tools/template/DatabaseParts.xml"/>
+            <label text="Check Tables creates the missing tables, columns, indexes and foreign keys of the entities on this database, and lists the statements it ran. It does not change or drop anything." type="p" style="m-muted"/>
+            <link url="checkTables" link-type="hidden-form" text="Check tables" confirmation="Check the tables on this database and create what is missing?"/>
+        </box-body></container-box>
+    </widgets>
+</screen>

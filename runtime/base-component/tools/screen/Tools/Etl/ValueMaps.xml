@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- ETL value maps (moqui.etl.EtlValueMap): a mapping field's valueMapId turns a source value into the target's, such as
+    "Yes" into Y. Entries are edited as lines of from = to; the value map's owner or a DATABASE_ADMIN holder may change
+    or delete it. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Value Maps" default-menu-index="3">
+
+    <transition name="storeValueMap" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            // one entry a line: from = to (the first = splits them; a line with none is skipped)
+            const entries = []
+            for (const line of String(ec.web.secureRequestParameters.entriesText || context.entriesText || '').split(/\r?\n/)) {
+                const at = line.indexOf('=')
+                if (at < 0) continue
+                const fromValue = line.substring(0, at).trim()
+                if (fromValue) entries.push({fromValue, toValue: line.substring(at + 1).trim()})
+            }
+            const out = ec.service.sync().name('org.moqui.impl.EtlServices.store#EtlValueMap').parameters({valueMapId: context.valueMapId || null,
+                description: context.description || null, entries}).call() || {}
+            if (!ec.message.hasError()) ec.message.addMessage(ec.resource.expand('Value map ${id} saved, ${count} entries', '', {id: out.valueMapId, count: entries.length}), 'success')
+        ]]></script></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+    <transition name="deleteValueMap" method="post" begin-transaction="false" authz-action="all">
+        <actions><service-call name="org.moqui.impl.EtlServices.delete#EtlValueMap" in-map="{valueMapId: valueMapId}"/>
+            <message>Value map deleted</message></actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <script><![CDATA[
+            const isAdmin = ec.user.hasPermission('DATABASE_ADMIN')
+            const entryRows = ec.entity.find('moqui.etl.EtlValueMapEntry').orderBy('valueMapId').orderBy('fromValue').limit(20000).list()
+            const byMap = {}
+            for (const entry of entryRows) (byMap[entry.valueMapId] = byMap[entry.valueMapId] || []).push(entry)
+            valueMapList = ec.entity.find('moqui.etl.EtlValueMap').orderBy('description').orderBy('valueMapId').list().map((row) => {
+                const entries = byMap[row.valueMapId] || []
+                return {valueMapId: row.valueMapId, description: row.description || '', ownerUserId: row.ownerUserId,
+                    mayChange: isAdmin || row.ownerUserId == ec.user.userId, entryCount: entries.length,
+                    sampleText: entries.slice(0, 3).map((entry) => entry.fromValue + ' → ' + (entry.toValue || '')).join(', ') + (entries.length > 3 ? ', …' : ''),
+                    entriesText: entries.map((entry) => entry.fromValue + ' = ' + (entry.toValue || '')).join('\n')}
+            })
+        ]]></script>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Value maps"/>
+            <box-toolbar>
+                <container-dialog id="NewValueMapDialog" button-text="New value map" type="primary">
+                    <form-single name="NewValueMap" transition="storeValueMap" body-parameters="entriesText">
+                        <field name="valueMapId"><default-field title="ID" tooltip="Empty for a new one"><text-line size="30"/></default-field></field>
+                        <field name="description"><default-field><text-line size="40"/></default-field></field>
+                        <field name="entriesText"><default-field title="Entries" tooltip="One a line: from = to"><text-area rows="10" cols="50"/></default-field></field>
+                        <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                    </form-single>
+                </container-dialog>
+                <link url="../Mappings" text="Mappings" icon="list"/>
+            </box-toolbar>
+            <box-body>
+                <label text="A value map turns a source value into the target's, such as Yes into Y; a mapping field names one." type="p" style="m-muted"/>
+                <form-list name="ValueMapList" list="valueMapList" skip-form="true" paginate="false">
+                    <field name="valueMapId"><default-field title="ID"><display/></default-field></field>
+                    <field name="description"><default-field><display/></default-field></field>
+                    <field name="entryCount"><default-field title="Entries"><display/></default-field></field>
+                    <field name="sampleText"><default-field title="For example"><display/></default-field></field>
+                    <field name="actions"><default-field title="">
+                        <section name="ValueMapActions" condition="mayChange"><widgets>
+                            <container-dialog id="EditValueMap_${valueMapId}" button-text="Edit">
+                                <form-single name="EditValueMap_${valueMapId}" transition="storeValueMap" body-parameters="entriesText"
+                                        map="{valueMapId: valueMapId, description: description, entriesText: entriesText}">
+                                    <field name="valueMapId"><default-field title="ID"><display also-hidden="true"/></default-field></field>
+                                    <field name="description"><default-field><text-line size="40"/></default-field></field>
+                                    <field name="entriesText"><default-field title="Entries" tooltip="One a line: from = to"><text-area rows="12" cols="50"/></default-field></field>
+                                    <field name="submitButton"><default-field title="Save"><submit/></default-field></field>
+                                </form-single>
+                            </container-dialog>
+                            <link url="deleteValueMap" text="Delete" link-type="hidden-form" btn-type="danger" parameter-map="{valueMapId: valueMapId}"
+                                    confirmation="Delete value map ${description || valueMapId}?"/>
+                        </widgets></section>
+                    </default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="valueMapId"/><field-ref name="description"/></column>
+                        <column><field-ref name="entryCount"/><field-ref name="actions"/></column>
+                    </columns>
+                </form-list>
+            </box-body>
+        </container-box>
+    </widgets>
+</screen>

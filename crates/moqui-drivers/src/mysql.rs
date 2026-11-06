@@ -28,7 +28,7 @@ mod driver {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use moqui_core::driver::{DbCancel, DbConnection, DbDriver, DbRow};
+    use moqui_core::driver::{ColumnOrigin, DbCancel, DbConnection, DbDriver, DbRow};
     use moqui_lib::error::Error;
     use moqui_lib::object::{basic_convert, Value};
     use mysql::consts::{ColumnFlags, ColumnType};
@@ -65,6 +65,10 @@ mod driver {
         password: String,
         database: String,
         tls: bool,
+        /// What a TLS connection checks of the server's certificate, and the authorities to trust in place of the
+        /// public ones.
+        tls_verify: moqui_core::entity::datasource::TlsVerify,
+        tls_root_cert: Option<std::path::PathBuf>,
         /// The most one read waits; `None` without a limit.
         read_timeout: Option<Duration>,
         /// The session's isolation level as SQL writes it (`READ COMMITTED`); `None` leaves the server's default
@@ -98,15 +102,33 @@ mod driver {
                 .db_name(database)
                 .prefer_socket(false)
                 .stmt_cache_size(0usize)
-                .ssl_opts(self.tls.then(mysql::SslOpts::default))
+                .ssl_opts(self.tls.then(|| self.ssl_opts()))
                 .init(self.init())
                 .tcp_connect_timeout(Some(connect))
                 .read_timeout(read)
                 .write_timeout(Some(write))
-                .tcp_keepalive_time_ms(Some(KEEPALIVE_IDLE_MS));
+                .tcp_keepalive_time_ms(Some(KEEPALIVE_IDLE_MS))
+                .connect_attrs(Some(connect_attrs()));
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             let builder = builder.tcp_keepalive_probe_interval_secs(Some(KEEPALIVE_INTERVAL_SECS));
             builder
+        }
+
+        /// The TLS options of `sslMode` and `sslRootCert`: `require` encrypts without checking the certificate (with a
+        /// root certificate, as `verify-ca`), `verify-ca` checks the authority and not the host name, `verify-full` both.
+        fn ssl_opts(&self) -> mysql::SslOpts {
+            use moqui_core::entity::datasource::TlsVerify;
+            let mut opts = mysql::SslOpts::default();
+            if let Some(root) = &self.tls_root_cert {
+                opts = opts.with_root_cert_path(Some(std::borrow::Cow::Owned(root.clone())));
+            }
+            match (self.tls_verify, self.tls_root_cert.is_some()) {
+                (TlsVerify::Encrypt, false) => opts
+                    .with_danger_accept_invalid_certs(true)
+                    .with_danger_skip_domain_validation(true),
+                (TlsVerify::Encrypt | TlsVerify::Ca, _) => opts.with_danger_skip_domain_validation(true),
+                (TlsVerify::Full, _) => opts,
+            }
         }
 
         /// What each new connection runs first.
@@ -117,6 +139,18 @@ mod driver {
             }
             init
         }
+    }
+
+    /// The connection attributes a session sends with the crate's own (`performance_schema.session_connect_attrs`):
+    /// `program_name`, and `application_name` with the process's name for its sessions, the instance id, so the
+    /// server's activity shows whose they are (plans/archive/Tools-Database.md 7.3). Attributes go only with the
+    /// handshake, so a session opened before the instance id was known keeps the attributes of then.
+    fn connect_attrs() -> std::collections::HashMap<&'static str, String> {
+        let mut attrs = std::collections::HashMap::from([("program_name", "moqui".to_string())]);
+        if let Some(name) = moqui_core::driver::application_name() {
+            attrs.insert("application_name", name.to_string());
+        }
+        attrs
     }
 
     struct KillState {
@@ -185,10 +219,22 @@ mod driver {
                     password: password.into(),
                     database: database.into(),
                     tls,
+                    tls_verify: moqui_core::entity::datasource::TlsVerify::Full,
+                    tls_root_cert: None,
                     read_timeout: Some(READ_TIMEOUT),
                     isolation: None,
                 },
             }
+        }
+
+        /// What TLS checks of the server's certificate (`sslMode`), and the PEM file of the authorities to trust in place
+        /// of the public ones (`sslRootCert`, empty for the public ones).
+        #[must_use]
+        pub fn tls_options(mut self, verify: moqui_core::entity::datasource::TlsVerify, root_cert: &str) -> Self {
+            self.endpoint.tls_verify = verify;
+            let root_cert = root_cert.trim();
+            self.endpoint.tls_root_cert = (!root_cert.is_empty()).then(|| std::path::PathBuf::from(root_cert));
+            self
         }
 
         /// The most one read waits, the sign-in's included; [`Duration::ZERO`] waits without a limit. The default is
@@ -218,7 +264,7 @@ mod driver {
             });
             Ok(MysqlConn {
                 stream: None,
-                stream_names: None,
+                stream_shape: None,
                 statements: StatementLru::new(STATEMENT_CACHE_CAP),
                 kill,
                 mariadb: version.as_deref().is_some_and(is_mariadb),
@@ -245,8 +291,8 @@ mod driver {
     /// the `'static` borrow an open `stream` holds is never invalidated by a move or retag of the owner.
     pub struct MysqlConn {
         stream: Option<mysql::QueryResult<'static, 'static, 'static, mysql::Binary>>,
-        /// The open stream's column names, from its first row.
-        stream_names: Option<Arc<[Arc<str>]>>,
+        /// The open stream's column names and origins, from its first row.
+        stream_shape: Option<ResultShape>,
         statements: StatementLru<mysql::Statement>,
         kill: Arc<KillState>,
         /// The server is MariaDB, which bounds statements with `max_statement_time`.
@@ -422,7 +468,7 @@ mod driver {
             self.prep_cached(sql).map_err(mysql_err)?;
             let result = self.stream_result(sql, mysql_params)?;
             self.stream = Some(result);
-            self.stream_names = None;
+            self.stream_shape = None;
             busy.keep();
             Ok(())
         }
@@ -452,7 +498,7 @@ mod driver {
         fn drop(&mut self) {
             self.kill.busy.store(false, Ordering::Release);
             drop(self.stream.take());
-            self.stream_names = None;
+            self.stream_shape = None;
             let statements = std::mem::replace(&mut self.statements, StatementLru::new(1));
             for statement in statements.into_values() {
                 let _ = self.conn().close(statement);
@@ -506,7 +552,7 @@ mod driver {
                 return Ok(None);
             };
             match stream.next() {
-                Some(Ok(row)) => Ok(Some(map_row(row, &mut self.stream_names)?)),
+                Some(Ok(row)) => Ok(Some(map_row(row, &mut self.stream_shape)?)),
                 Some(Err(err)) => {
                     let result = Err(mysql_err(err));
                     self.note(result)
@@ -561,6 +607,18 @@ mod driver {
             Box::new(MysqlCancel {
                 state: Arc::clone(&self.kill),
             })
+        }
+
+        /// `CONNECTION_ID()`, from the handshake.
+        fn backend_id(&self) -> Option<i64> {
+            let id = self.kill.connection_id.load(Ordering::Acquire);
+            (id != 0).then_some(i64::from(id))
+        }
+
+        /// MySQL and MariaDB refuse `SET TRANSACTION` inside a transaction, so the one [`Self::begin`] started (with
+        /// no statement in it yet) is replaced: `START TRANSACTION READ ONLY` commits it and begins a read-only one.
+        fn set_transaction_read_only(&mut self) -> Result<(), Error> {
+            self.command("START TRANSACTION READ ONLY".to_owned())
         }
     }
 
@@ -618,9 +676,9 @@ mod driver {
 
     fn collect_rows(iter: impl Iterator<Item = mysql::Result<mysql::Row>>) -> Result<Vec<DbRow>, Error> {
         let mut rows = Vec::new();
-        let mut names = None;
+        let mut shape = None;
         for row in iter {
-            rows.push(map_row(row.map_err(mysql_err)?, &mut names)?);
+            rows.push(map_row(row.map_err(mysql_err)?, &mut shape)?);
         }
         Ok(rows)
     }
@@ -632,15 +690,68 @@ mod driver {
         Ok(())
     }
 
-    /// `names` are the column names of the result the row is from, made from its first row and shared by the rest.
-    fn map_row(row: mysql::Row, names: &mut Option<Arc<[Arc<str>]>>) -> Result<DbRow, Error> {
-        let columns = row.columns();
-        let names = Arc::clone(names.get_or_insert_with(|| {
-            columns
+    /// The column names of a result and the table column each comes from, made from its first row and shared by the
+    /// rest.
+    struct ResultShape {
+        names: Arc<[Arc<str>]>,
+        origins: Arc<[Option<ColumnOrigin>]>,
+    }
+
+    impl ResultShape {
+        /// The names, and the origins with each database and table name made once and the column name shared with
+        /// the result name when they are the same (as they are in an entity find), so a result of many columns costs
+        /// few allocations more than its names.
+        fn of(columns: &[mysql::Column]) -> Self {
+            let names: Arc<[Arc<str>]> = columns
                 .iter()
                 .map(|column| Arc::from(column.name_str().as_ref()))
-                .collect()
-        }));
+                .collect();
+            let mut tables: Vec<(Arc<str>, Arc<str>)> = Vec::new();
+            let origins = columns
+                .iter()
+                .zip(names.iter())
+                .map(|(column, name)| {
+                    let table = column.org_table_str();
+                    let column_name = column.org_name_str();
+                    if table.is_empty() || column_name.is_empty() {
+                        return None;
+                    }
+                    let schema = column.schema_str();
+                    let at = tables
+                        .iter()
+                        .position(|(s, t)| **s == *schema && **t == *table)
+                        .unwrap_or_else(|| {
+                            tables.push((Arc::from(schema.as_ref()), Arc::from(table.as_ref())));
+                            tables.len() - 1
+                        });
+                    let (schema, table) = &tables[at];
+                    Some(ColumnOrigin::Mysql {
+                        schema: Arc::clone(schema),
+                        table: Arc::clone(table),
+                        column: if **name == *column_name {
+                            Arc::clone(name)
+                        } else {
+                            Arc::from(column_name.as_ref())
+                        },
+                    })
+                })
+                .collect();
+            Self { names, origins }
+        }
+    }
+
+    /// The column definition's database, `org_table` and `org_name`; `None` for a column of no table (an expression).
+    #[cfg(test)]
+    fn column_origin(column: &mysql::Column) -> Option<ColumnOrigin> {
+        ResultShape::of(std::slice::from_ref(column)).origins[0].clone()
+    }
+
+    /// `shape` is the result's, made from its first row and shared by the rest.
+    fn map_row(row: mysql::Row, shape: &mut Option<ResultShape>) -> Result<DbRow, Error> {
+        let columns = row.columns();
+        let shape = shape.get_or_insert_with(|| ResultShape::of(&columns));
+        let names = Arc::clone(&shape.names);
+        let origins = Arc::clone(&shape.origins);
         let values = row.unwrap();
         let mut out = Vec::with_capacity(columns.len());
         for (index, (column, value)) in columns.iter().zip(values).enumerate() {
@@ -655,7 +766,10 @@ mod driver {
             };
             out.push((name, cell));
         }
-        Ok(DbRow { columns: out })
+        Ok(DbRow {
+            columns: out,
+            origins: Some(origins),
+        })
     }
 
     fn map_cell(column: &mysql::Column, value: MysqlValue) -> Result<Value, Error> {

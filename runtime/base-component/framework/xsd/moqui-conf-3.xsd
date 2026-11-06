@@ -1766,6 +1766,30 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:attribute name="startup-add-missing" default="false" type="boolean-expandable"/>
             <xs:attribute name="runtime-add-missing" default="true" type="boolean-expandable"/>
             <xs:attribute name="runtime-add-fks" default="true" type="boolean-expandable"/>
+            <xs:attribute name="shared-buffers" type="xs:string">
+                <xs:annotation><xs:documentation>The embedded cluster's shared_buffers, a size such as 64MB. Empty keeps
+                    the default from code (16MB for the entity cluster). Applies when this process starts the cluster;
+                    the cluster takes the transactional datasource's value.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="work-mem" type="xs:string">
+                <xs:annotation><xs:documentation>The embedded cluster's work_mem, a size; empty keeps Postgres's
+                    default. As shared-buffers.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="maintenance-work-mem" type="xs:string">
+                <xs:annotation><xs:documentation>The embedded cluster's maintenance_work_mem, a size; empty keeps
+                    Postgres's default. As shared-buffers.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="effective-cache-size" type="xs:string">
+                <xs:annotation><xs:documentation>The embedded cluster's effective_cache_size, a size; empty keeps
+                    Postgres's default. As shared-buffers.</xs:documentation></xs:annotation>
+            </xs:attribute>
+            <xs:attribute name="pg-stat-statements" default="false" type="boolean-expandable">
+                <xs:annotation><xs:documentation>On Postgres, load pg_stat_statements for this datasource's database:
+                    the embedded cluster preloads it (shared_preload_libraries, applied when this process starts the
+                    cluster) and turns on track_io_timing; an external server must preload it, else a warning says so.
+                    CREATE EXTENSION IF NOT EXISTS runs after start; a role that may not create it gets a warning.
+                    Ignored on MySQL, whose statement digests are in performance_schema.</xs:documentation></xs:annotation>
+            </xs:attribute>
             <xs:attribute name="object-factory" type="xs:string" default="org.moqui.impl.entity.EntityDatasourceFactoryImpl">
                 <xs:annotation><xs:documentation>The references class must implement the
                     org.moqui.entity.EntityDatasourceFactory interface.</xs:documentation></xs:annotation>

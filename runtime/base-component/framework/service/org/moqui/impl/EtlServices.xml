@@ -1,0 +1,288 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
+    <!-- ETL mappings and the data grid's file source (plans/archive/Tools-Database.md §9.1, §10), in
+        crates/moqui-tools/src/etl and files.rs; the entities are the moqui.etl section of
+        framework/entity/DatabaseEntities.xml. A mapping is mappingId (a saved moqui.etl.EtlMapping) or mapping, an
+        inline map of EtlMapping's field names with fields, a list of maps of EtlMappingField's (a field may have
+        valueMap, a map from value to value, in place of a valueMapId). A refusal is a message-facade error and no out
+        parameters. Each service refuses a user the Tools app's authorization (TOOLS_APP) does not let view
+        component://tools/screen/Tools.xml; writes, checks and runs need authorization for all actions on it, a SQL
+        source the SQL_RUNNER_WEB permission, and an expression field the GROOVY_SHELL_WEB permission (to save, check or
+        run it). A run is the user's own with authorization on, also on the worker pool or as a ServiceJob's user, so
+        its writes and service calls run the security rules. Only a mapping's owner or a DATABASE_ADMIN holder may
+        change, copy over or delete it. A file is read only from the user's own uploads
+        (dbresource://moqui/database/upload/(userId)/), dbresource://moqui/etl/ and runtime://import/, or any
+        dbresource:// location with DATABASE_ADMIN; anything else is "Not available". An identity-admin, secret-config
+        or audit entity (the moqui.etl entities among them), or a view over one, is no source, target or lookup, nor the
+        noun of an entity-auto service target; no delete# service is a target. A UserAccount password field, by name or
+        as a view's alias of one, is no target or lookup field and is left out of an entity source's rows.
+        load#SpreadsheetEntity reads a location from the same places. No Java counterpart. -->
+
+    <service verb="run" noun="EtlMapping" type="rust" location="moqui_tools::etl::service::run_etl_mapping"
+            transaction="ignore">
+        <description>Run a mapping: a job on the worker pool (out runId, statusId EtlrPending), or here with wait. The
+            source's rows go through the mapping's fields into the target, an entity (loadModeEnumId) or a service (one
+            call per row). With no batch size the run is one transaction: any error rolls it back, the extract and
+            transform errors are all reported, and the first database error ends the loading. With a batch size a failed
+            batch is rolled back and recorded (failedRanges), and the mapping's stopOnError decides whether the run goes
+            on; with stopOnError any error ends the run Failed, the batch it was in rolled back. loadCount is the rows
+            committed. lastCommittedRow is the last row of the last batch committed before any batch failed; startRow is
+            the first row read, so a rerun from nextStartRow (lastCommittedRow + 1) loads no committed row again. check
+            extracts and transforms only, never stopping at an error, and reports each row's errors, the foreign keys
+            with no related record (a parent an earlier row of the file would create is reported missing: a check
+            writes nothing), and for an entity target the diff against the database (the first 1,000 rows). location
+            overrides the mapping's (${date}, ${yesterday}, ${now} and ${nowMillis} replaced; nothing else);
+            contentBytes is the file itself. With wait the caller's transaction is suspended so the batches commit. The
+            EtlRun row has the counts (written every 1,000 rows), the status, the first 1,000 errors as EtlRunError rows
+            and an error file of every failed row (errorLocation). A DbaEtlRun DatabaseAudit row is written, and a DbaSql
+            row for a SQL source, whose sourceDb is an entity group or an external connection (ext:connectionId, refused as
+            "Not available" on a production instance or without DATABASE_EXTERNAL), read only. A ServiceJob that calls
+            this with a mappingId runs a mapping on a schedule: with no user signed in (a cron run) as the mapping's
+            owner, who must be a ServiceJobUser of the job, from the mapping's own source (location and contentBytes
+            ignored); refused for an owner who may not sign in or an inline mapping. From a job the run is done here,
+            as with wait, and EtlRun.jobRunId names the job's run.</description>
+        <in-parameters>
+            <parameter name="mappingId"/>
+            <parameter name="mapping" type="Map"/>
+            <parameter name="check" type="Boolean" default-value="false"/>
+            <parameter name="startRow" type="Integer"/>
+            <parameter name="location"/>
+            <parameter name="contentBytes" type="Object"/>
+            <parameter name="sheetIndex" type="Integer"/>
+            <parameter name="maxRows" type="Integer"/>
+            <parameter name="wait" type="Boolean" default-value="false"/>
+            <parameter name="runId"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="runId"/>
+            <parameter name="statusId"/>
+            <parameter name="extractCount" type="Long"/>
+            <parameter name="skipCount" type="Long"/>
+            <parameter name="loadCount" type="Long"/>
+            <parameter name="errorCount" type="Long"/>
+            <parameter name="fieldErrorCount" type="Long"/>
+            <parameter name="lastCommittedRow" type="Long"/>
+            <parameter name="nextStartRow" type="Long"/>
+            <parameter name="committedBatches" type="Long"/>
+            <parameter name="failedBatches" type="Long"/>
+            <parameter name="failedRanges" type="List"><parameter name="range" type="Map"/></parameter>
+            <parameter name="errors" type="List"><parameter name="error" type="Map"/></parameter>
+            <parameter name="errorLocation"/>
+            <parameter name="failure"/>
+            <parameter name="diff" type="List"><parameter name="row" type="Map"/></parameter>
+        </out-parameters>
+    </service>
+    <service verb="check" noun="EtlSample" type="rust" location="moqui_tools::etl::service::check_etl_sample"
+            transaction="ignore">
+        <description>The first rows of a mapping's source (maxRows, 200 by default) through its fields, for "Load
+            into…" in the grid: each row's rowNumber, its source cells, the converted values by target field, and the
+            errors by target field (_row for the row as a whole, such as a value not of its field's type). columns is the
+            source's header. Needs what a run needs: authorization for all actions on the Tools app.</description>
+        <in-parameters>
+            <parameter name="mappingId"/>
+            <parameter name="mapping" type="Map"/>
+            <parameter name="location"/>
+            <parameter name="contentBytes" type="Object"/>
+            <parameter name="sheetIndex" type="Integer"/>
+            <parameter name="maxRows" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="columns" type="List"><parameter name="column"/></parameter>
+            <parameter name="rows" type="List"><parameter name="row" type="Map"/></parameter>
+        </out-parameters>
+    </service>
+    <service verb="match" noun="EtlFields" type="rust" location="moqui_tools::etl::service::match_etl_fields"
+            transaction="ignore">
+        <description>The target field of each of columns: the same name ignoring case, then the same words (Product Name
+            and productName), then the nearest name within a third of its length; how is name, prettyName, nearest or
+            none. targetFields are the entity's fields or the service's in-parameters.</description>
+        <in-parameters>
+            <parameter name="columns" type="List" required="true"><parameter name="column"/></parameter>
+            <parameter name="targetTypeEnumId" default-value="EtltEntity"/>
+            <parameter name="targetName" required="true"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="matches" type="List"><parameter name="match" type="Map"/></parameter>
+            <parameter name="targetFields" type="List"><parameter name="field"/></parameter>
+        </out-parameters>
+    </service>
+
+    <service verb="get" noun="EtlMapping" type="rust" location="moqui_tools::etl::service::get_etl_mapping"
+            transaction="ignore">
+        <description>The saved mapping mappingId as an inline map, with its fields.</description>
+        <in-parameters><parameter name="mappingId" required="true"/></in-parameters>
+        <out-parameters><parameter name="mapping" type="Map"/></out-parameters>
+    </service>
+    <service verb="store" noun="EtlMapping" type="rust" location="moqui_tools::etl::service::store_etl_mapping"
+            transaction="ignore">
+        <description>Create or update a mapping (its mappingId; a new id when empty) and its fields, replaced, from an
+            inline mapping.</description>
+        <in-parameters><parameter name="mapping" type="Map" required="true" allow-html="any"/></in-parameters>
+        <out-parameters><parameter name="mappingId"/></out-parameters>
+    </service>
+    <service verb="copy" noun="EtlMapping" type="rust" location="moqui_tools::etl::service::copy_etl_mapping"
+            transaction="ignore">
+        <description>A copy of mapping mappingId with its fields, as newMappingId (a new id when empty), its description
+            description or "Copy of …".</description>
+        <in-parameters>
+            <parameter name="mappingId" required="true"/>
+            <parameter name="newMappingId"/>
+            <parameter name="description"/>
+        </in-parameters>
+        <out-parameters><parameter name="mappingId"/></out-parameters>
+    </service>
+    <service verb="delete" noun="EtlMapping" type="rust" location="moqui_tools::etl::service::delete_etl_mapping"
+            transaction="ignore">
+        <description>Delete mapping mappingId and its fields; its runs stay.</description>
+        <in-parameters><parameter name="mappingId" required="true"/></in-parameters>
+    </service>
+    <service verb="store" noun="EtlValueMap" type="rust" location="moqui_tools::etl::service::store_etl_value_map"
+            transaction="ignore">
+        <description>Create or update value map valueMapId (a new id when empty) with its description and entries (a map
+            from value to value, or a list of fromValue and toValue maps), the entries replaced. Updating needs the value
+            map's owner (ownerUserId, the user who made it) or DATABASE_ADMIN.</description>
+        <in-parameters>
+            <parameter name="valueMapId"/>
+            <parameter name="description"/>
+            <parameter name="entries" type="Object"/>
+        </in-parameters>
+        <out-parameters><parameter name="valueMapId"/></out-parameters>
+    </service>
+    <service verb="delete" noun="EtlValueMap" type="rust" location="moqui_tools::etl::service::delete_etl_value_map"
+            transaction="ignore">
+        <description>Delete value map valueMapId and its entries: its owner or a DATABASE_ADMIN holder.</description>
+        <in-parameters><parameter name="valueMapId" required="true"/></in-parameters>
+    </service>
+    <service verb="get" noun="EtlRuns" type="rust" location="moqui_tools::etl::service::get_etl_runs"
+            transaction="ignore">
+        <description>The latest runs, newest first, of mappingId when given: the user's own, or every user's with
+            DATABASE_ADMIN.</description>
+        <in-parameters>
+            <parameter name="mappingId"/>
+            <parameter name="limit" type="Integer" default-value="50"/>
+        </in-parameters>
+        <out-parameters><parameter name="runs" type="List"><parameter name="run" type="Map"/></parameter></out-parameters>
+    </service>
+    <service verb="get" noun="EtlRun" type="rust" location="moqui_tools::etl::service::get_etl_run"
+            transaction="ignore">
+        <description>Run runId (its EtlRun fields) and its EtlRunError rows, for the run's user or a DATABASE_ADMIN
+            holder (to anyone else there is no such run). With includeErrorFile, errorFile is the text of the error file
+            (dbresource://moqui/etl-run/(userId)/(runId)/errors.csv, every failed row): the way to download it.
+            canRerun is true when rerun#EtlRun would take the run.</description>
+        <in-parameters>
+            <parameter name="runId" required="true"/>
+            <parameter name="includeErrorFile" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="run" type="Map"/>
+            <parameter name="errors" type="List"><parameter name="error" type="Map"/></parameter>
+            <parameter name="errorFile"/>
+            <parameter name="canRerun" type="Boolean"/>
+        </out-parameters>
+    </service>
+    <service verb="rerun" noun="EtlRun" type="rust" location="moqui_tools::etl::service::rerun_etl_run"
+            transaction="ignore">
+        <description>Run runId's saved mapping again from where it stopped: startRow is the run's nextStartRow, and a
+            file source reads the run's sourceLocation, the location as that run expanded it (so ${yesterday} is still
+            that run's day). For the run's user or a DATABASE_ADMIN holder (to anyone else there is no such run); the
+            new run is the caller's, with run#EtlMapping's checks. Refused for a run still pending or running, a check, a
+            run done with no errors (nothing left), an inline mapping or a deleted one, and a run of uploaded content
+            (contentBytes is not kept). With wait it runs here; otherwise it is queued. Out: as run#EtlMapping, for the
+            new run.</description>
+        <in-parameters>
+            <parameter name="runId" required="true"/>
+            <parameter name="wait" type="Boolean" default-value="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="runId"/>
+            <parameter name="statusId"/>
+            <parameter name="extractCount" type="Long"/>
+            <parameter name="skipCount" type="Long"/>
+            <parameter name="loadCount" type="Long"/>
+            <parameter name="errorCount" type="Long"/>
+            <parameter name="fieldErrorCount" type="Long"/>
+            <parameter name="lastCommittedRow" type="Long"/>
+            <parameter name="nextStartRow" type="Long"/>
+            <parameter name="committedBatches" type="Long"/>
+            <parameter name="failedBatches" type="Long"/>
+            <parameter name="failedRanges" type="List"><parameter name="range" type="Map"/></parameter>
+            <parameter name="errors" type="List"><parameter name="error" type="Map"/></parameter>
+            <parameter name="errorLocation"/>
+            <parameter name="failure"/>
+        </out-parameters>
+    </service>
+
+    <!-- ========== The data grid's file source (§9.1) ========== -->
+    <service verb="upload" noun="GridFile">
+        <description>Keep an uploaded CSV or spreadsheet for the data grid as
+            dbresource://moqui/database/upload/(userId)/(uploadId)/(file name), in the content database so every cluster
+            member reads it; clean#GridUploads removes it after seven days. location is the grid's file source.</description>
+        <in-parameters><parameter name="file" type="org.apache.commons.fileupload2.core.FileItem" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="location"/>
+            <parameter name="fileName"/>
+            <parameter name="uploadId"/>
+        </out-parameters>
+        <actions><script><![CDATA[
+            const me = ec.user.userId
+            if (!me) { ec.message.addError('Uploading a file for the grid needs a signed-in user'); return }
+            // the Tools app, and at most 100 MB
+            const checked = ec.service.sync().name('org.moqui.impl.EtlServices.check#GridUpload')
+                .parameters({ size: Number(file.getSize()) }).call()
+            if (!checked || !checked.allowed || ec.message.hasError()) return
+            let name = String(file.getName() || '').split(/[\\/]/).pop().replace(/[\u0000-\u001f]/g, '').trim()
+            if (!name || name === '.' || name === '..') name = 'file'
+            if (name.length > 200) name = name.slice(-200)
+            uploadId = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e9).toString(36)}`
+            fileName = name
+            location = `dbresource://moqui/database/upload/${me}/${uploadId}/${name}`
+            file.write(location)
+        ]]></script></actions>
+    </service>
+    <service verb="check" noun="GridUpload" type="rust" location="moqui_tools::files::check_grid_upload"
+            transaction="ignore">
+        <description>Whether the user may upload a file of size bytes for the grid: the Tools app's authorization, and
+            at most 100 MB. upload#GridFile's check before it writes.</description>
+        <in-parameters><parameter name="size" type="Long" required="true"/></in-parameters>
+        <out-parameters><parameter name="allowed" type="Boolean"/></out-parameters>
+    </service>
+    <service verb="get" noun="GridFileInfo" type="rust" location="moqui_tools::files::get_grid_file_info"
+            transaction="ignore">
+        <description>A file source's columns with their inferred types (number, date, date-time, boolean, text), its
+            sheet names, its row count and its first limit rows (100 by default), from a place the user may read (as an
+            ETL run's file). A sheet is read whole and cached per node (64 MB, by location, last-modified time, sheet and
+            header row); a CSV is read once per call.</description>
+        <in-parameters>
+            <parameter name="location" required="true"/>
+            <parameter name="sheet"/>
+            <parameter name="headerRow" type="Integer" default-value="1"/>
+            <parameter name="format" default-value="auto"/>
+            <parameter name="limit" type="Integer" default-value="100"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="columns" type="List"><parameter name="column" type="Map"/></parameter>
+            <parameter name="sheetNames" type="List"><parameter name="sheetName"/></parameter>
+            <parameter name="rowCount" type="Long"/>
+            <parameter name="rows" type="List"><parameter name="row" type="Map"/></parameter>
+        </out-parameters>
+    </service>
+    <service verb="clean" noun="GridUploads" type="rust" location="moqui_tools::files::clean_grid_uploads"
+            authenticate="false" transaction="ignore">
+        <description>Delete the grid's uploads older than seven days and its export files (runtime://tmp/grid-export/)
+            older than a day: the daily ServiceJob clean_GridUploads_daily.</description>
+        <out-parameters><parameter name="deleted" type="Long"/></out-parameters>
+    </service>
+</services>

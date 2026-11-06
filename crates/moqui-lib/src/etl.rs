@@ -245,6 +245,8 @@ pub struct SimpleEtl {
     transform_errors: Vec<EtlError>,
     load_errors: Vec<EtlError>,
     stop_on_error: bool,
+    /// A transform or load error stopped the run (with stop-on-error).
+    stopped: bool,
     timeout: Option<u32>,
     extract_count: u64,
     skip_count: u64,
@@ -267,6 +269,7 @@ impl SimpleEtl {
             transform_errors: Vec::new(),
             load_errors: Vec::new(),
             stop_on_error: false,
+            stopped: false,
             timeout: Some(DEFAULT_TIMEOUT),
             extract_count: 0,
             skip_count: 0,
@@ -382,6 +385,12 @@ impl SimpleEtl {
         &self.load_errors
     }
 
+    /// Whether a transform or load error stopped the run ([`Self::stop_on_error`]): the rest of the source was not
+    /// read.
+    pub fn stopped(&self) -> bool {
+        self.stopped
+    }
+
     pub fn has_error(&self) -> bool {
         self.extract_error.is_some() || !self.transform_errors.is_empty() || !self.load_errors.is_empty()
     }
@@ -409,12 +418,15 @@ impl SimpleEtl {
         match self.config.as_ref().filter(|config| config.has_transformers) {
             Some(config) => {
                 let mut transform = EntryTransform::new(entry);
-                config.run_transformers(
+                if let Err(stop) = config.run_transformers(
                     &mut self.transform_errors,
                     self.stop_on_error,
                     &mut transform,
                     &mut load_entries,
-                )?;
+                ) {
+                    self.stopped = true;
+                    return Err(stop);
+                }
                 if transform.loads_current() {
                     load_entries.insert(0, transform.entry);
                 } else if transform.new_entries.is_empty() {
@@ -437,6 +449,7 @@ impl SimpleEtl {
                         error: Arc::clone(&error),
                     });
                     if self.stop_on_error {
+                        self.stopped = true;
                         return Err(StopError { cause: error });
                     }
                     return Ok(false);
@@ -533,6 +546,178 @@ fn flat_xml(etl: &mut SimpleEtl, location: &str, text: &str) -> Result<(), Error
         }
     }
     Ok(())
+}
+
+/// The value key under which an extractor of rows puts each entry's row number (1-based, in the file), for the errors
+/// and the last committed row of a run (plans/archive/Tools-Database.md §10.2). A loader leaves it out.
+pub const ROW_NUMBER_KEY: &str = "_etlRowNumber";
+
+/// The header of a table of rows, shared by an extractor that reads it and a transformer that names columns by letter
+/// or number: filled when the header row is read.
+pub type SharedHeaders = Arc<std::sync::Mutex<Vec<String>>>;
+
+/// How a [`CsvExtractor`] reads its file.
+#[derive(Clone, Debug)]
+pub struct CsvOptions {
+    pub delimiter: u8,
+    /// The row of the column names, from 1; 0 is none, and the columns are named by number from 1.
+    pub header_row: usize,
+    /// The first row of data, from 1; 0 is the row after the header (or the first row).
+    pub first_data_row: usize,
+    /// No row before this one is extracted, from 1: a rerun from the last committed row.
+    pub start_row: usize,
+    /// At most this many data rows.
+    pub max_rows: Option<usize>,
+    /// The type of each entry.
+    pub etl_type: String,
+}
+
+impl Default for CsvOptions {
+    fn default() -> Self {
+        Self {
+            delimiter: b',',
+            header_row: 1,
+            first_data_row: 0,
+            start_row: 0,
+            max_rows: None,
+            etl_type: String::new(),
+        }
+    }
+}
+
+impl CsvOptions {
+    /// The first data row, as [`Self::first_data_row`] defaults it.
+    #[must_use]
+    pub fn data_start(&self) -> usize {
+        if self.first_data_row > 0 {
+            self.first_data_row
+        } else {
+            self.header_row + 1
+        }
+    }
+}
+
+/// Reads a plain table in CSV, streamed record by record (plans/archive/Tools-Database.md §10.3): each data row is an
+/// entry of [`CsvOptions::etl_type`] with its cells by column name (text; an empty cell is left out) and its row number
+/// under [`ROW_NUMBER_KEY`]. A row of only empty cells is skipped. A stop of the run ends the read and is not an error.
+pub struct CsvExtractor<R: std::io::Read> {
+    reader: Option<R>,
+    options: CsvOptions,
+    headers: SharedHeaders,
+}
+
+impl<R: std::io::Read> CsvExtractor<R> {
+    pub fn new(reader: R, options: CsvOptions) -> Self {
+        Self {
+            reader: Some(reader),
+            options,
+            headers: SharedHeaders::default(),
+        }
+    }
+
+    /// The header, once the extract read it.
+    #[must_use]
+    pub fn headers(&self) -> SharedHeaders {
+        Arc::clone(&self.headers)
+    }
+}
+
+/// The name of column `index` (from 0) when the table has no header: its number from 1.
+#[must_use]
+pub fn column_number_name(index: usize) -> String {
+    (index + 1).to_string()
+}
+
+/// The column names of a table from its header's cells, at least `width` of them, as the data grid and an ETL run
+/// both name them: each trimmed, a blank or missing one named by its number from 1 ([`column_number_name`]), and a
+/// repeated one given `_2`, `_3` (`id`, `id_2`).
+#[must_use]
+pub fn unique_column_names(header: &[String], width: usize) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for index in 0..width.max(header.len()) {
+        let base = header
+            .get(index)
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| column_number_name(index));
+        let mut name = base.clone();
+        let mut suffix = 2;
+        while names.contains(&name) {
+            name = format!("{base}_{suffix}");
+            suffix += 1;
+        }
+        names.push(name);
+    }
+    names
+}
+
+impl<R: std::io::Read> Extractor for CsvExtractor<R> {
+    fn extract(&mut self, etl: &mut SimpleEtl) -> Result<(), Error> {
+        let Some(reader) = self.reader.take() else {
+            return Ok(());
+        };
+        let mut csv = csv::ReaderBuilder::new()
+            .has_headers(false)
+            .flexible(true)
+            .delimiter(self.options.delimiter)
+            .from_reader(reader);
+        let data_start = self.options.data_start();
+        let mut header: Vec<String> = Vec::new();
+        let mut names: Vec<String> = Vec::new();
+        let mut taken = 0usize;
+        let mut record = csv::StringRecord::new();
+        let mut row = 0usize;
+        loop {
+            let more = csv
+                .read_record(&mut record)
+                .map_err(|err| Error::new(format!("Could not read CSV row {}: {err}", row + 1)))?;
+            if !more {
+                break;
+            }
+            // the line the record starts on, as the csv reader counts it: from the first of any empty lines before it,
+            // which it skips; a quoted cell may span several
+            row = record
+                .position()
+                .and_then(|position| usize::try_from(position.line()).ok())
+                .unwrap_or(row + 1);
+            if row == self.options.header_row {
+                header = record.iter().map(str::to_string).collect();
+                names = unique_column_names(&header, header.len());
+                *crate::sync::lock(&self.headers) = names.clone();
+                continue;
+            }
+            if row < data_start || row < self.options.start_row {
+                continue;
+            }
+            if self.options.max_rows.is_some_and(|max| taken >= max) {
+                break;
+            }
+            if record.len() > names.len() {
+                names = unique_column_names(&header, record.len());
+            }
+            let mut values = BTreeMap::new();
+            for (name, cell) in names.iter().zip(record.iter()) {
+                if !cell.is_empty() {
+                    values.insert(name.clone(), Value::string(cell));
+                }
+            }
+            if values.is_empty() {
+                continue;
+            }
+            taken += 1;
+            values.insert(
+                ROW_NUMBER_KEY.to_string(),
+                Value::I64(i64::try_from(row).unwrap_or(i64::MAX)),
+            );
+            if etl
+                .process_entry(SimpleEntry::new(self.options.etl_type.clone(), values))
+                .is_err()
+            {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

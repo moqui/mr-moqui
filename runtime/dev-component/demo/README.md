@@ -29,17 +29,17 @@ default properties, so set it with `-D` or in the environment.
 
 | Where | What |
 | --- | --- |
-| `MoquiConf.xml` | Puts `screen/Disabled.xml` in place of Data Import, Data Export, Data Snapshot, Speed Test, SQL Runner, SQL Script Runner, Service Run and Service Load Runner, and leaves them out of the menus. Speed Test and the Data Import check run as the screen renders, so VIEW-only would not stop them. |
+| `MoquiConf.xml` | Puts `screen/Disabled.xml` in place of Tools' SQL, Data Load, Export and Snapshots, Database Speed Test, Activity, Queries and Connections, Service Run and Service Load Runner, and leaves them out of the menus. Speed Test and the Data Load check run as the screen renders, so VIEW-only would not stop them. |
 | `MoquiConf.xml` | Turns off SSH (`ssh-server enabled="false"`), WebDAV, the MCP server and client, A2A both ways and the LLM gateway, whatever their properties say. Mail connects only to `localhost`, so no one syncs a real mailbox into Comms, where every visitor would read it. |
 | `data/DemoSecurityData.xml` (seed) | ADMIN is VIEW-only on Tools, System, Monitor, the `/moqui` REST API, EntitySync and SystemMessage services, the `/resources` command service (so refused), git repositories (no push or mirrors), report git sync and report webhooks. ADMIN loses the search and dashboard proxies, `ADMIN_PASSWORD` (another user's password without the old one), SFTP and git over SSH, telemetry ingest, and report files written on the server. |
-| `data/DemoUserData.xml` (demo) | John Doe leaves ADMIN_ADV: no login as another user, SQL Runner, SSH admin shell or service load runner. ADMIN_ADV is a privileged group, so a member of ADMIN cannot add him back. |
+| `data/DemoUserData.xml` (demo) | John Doe leaves ADMIN_ADV: no login as another user, SQL, SSH admin shell or service load runner. ADMIN_ADV is a privileged group, so a member of ADMIN cannot add him back. |
 | `service/Demo.secas.xml` | Before a password change or reset, a sign-in factor, or a change of username, disabled or require-password-change, `demo.DemoServices.refuse#SharedAccountChange` stops it for a user in `demo_shared_user_ids` (default `EX_JOHN_DOE`). |
 
 The security data is `seed`, not `demo` as in Moqui Java's `moqui-demo`: each seed load runs the tools and framework
 seed and then this, so the lock-down holds. The John Doe row is `demo` because a seed load without the demo users would
 fail its foreign key.
 
-Still open: every app, Tools views (AutoFind and Data Edit show every entity), the System views, Dashboards and reports,
+Still open: every app, Tools views (Data's Grid and Browse show every entity), the System views, Dashboards and reports,
 Assist, and the browser terminal (`/termws`, the same screens checked as the user). `/notws` and PDF stay on.
 
 ## Running a demo server
@@ -47,7 +47,7 @@ Assist, and the browser terminal (`/termws`, the same screens checked as the use
 - Restore a saved database on a schedule (`./moq save-db demo` once after the load, then `./moq reload-save demo` with
   the server stopped): visitors change the demo data.
 - Every visitor is John Doe, so the `ALL_SCREENS` tarpit (120 screens a minute per user) is shared.
-- Keep real keys and passwords out of the database: Data Edit shows every entity to a VIEW-only user.
+- Keep real keys and passwords out of the database: Tools' Data Grid shows every entity to a VIEW-only user.
 - Leave `llm_openai_api_key` empty, or accept the `llm-facade` `user-daily-cost` as the cap for every visitor together.
 - To undo the lock-down on a database, load seed, seed-initial and demo data again with the component off.
 

@@ -135,7 +135,91 @@ impl DbDriver for Closed {
 /// Returns an error when the conf does not parse or the datasource cannot be read.
 pub fn transactional_conf(factory: &ExecutionContextFactory) -> Result<DatasourceConf, Error> {
     let conf = MNode::parse_shared("moqui-conf", &factory.conf_text())?;
-    datasource_conf(&conf, "transactional")
+    let mut transactional = datasource_conf(&conf, "transactional")?;
+    if transactional.kind == DatasourceKind::Embedded {
+        // the cluster is one postmaster: its settings are the transactional datasource's; another embedded
+        // datasource's that differ are logged and left out
+        for node in moqui_core::entity::datasource::datasource_nodes(&conf) {
+            let group = moqui_core::entity::datasource::datasource_attribute(&node, "group-name");
+            if group.is_empty() || group == "transactional" {
+                continue;
+            }
+            if let Ok(other) = datasource_conf(&conf, &group) {
+                if other.kind == DatasourceKind::Embedded
+                    && other.embedded_settings.any()
+                    && other.embedded_settings != transactional.embedded_settings
+                {
+                    static WARNED: std::sync::Once = std::sync::Once::new();
+                    WARNED.call_once(|| {
+                        tracing::warn!(
+                            "Datasource {group} sets embedded cluster settings that differ from the transactional \
+                             datasource's; the cluster uses the transactional ones"
+                        );
+                    });
+                }
+            }
+        }
+    }
+    if transactional.kind == DatasourceKind::Embedded && !transactional.preload_pg_stat_statements {
+        // the other embedded datasources are databases of the same cluster, whose postmaster loads the library
+        transactional.preload_pg_stat_statements = moqui_core::entity::datasource::datasource_nodes(&conf)
+            .iter()
+            .map(|node| moqui_core::entity::datasource::datasource_attribute(node, "group-name"))
+            .filter(|group| !group.is_empty() && group != "transactional")
+            .filter_map(|group| datasource_conf(&conf, &group).ok())
+            .any(|other| other.kind == DatasourceKind::Embedded && other.pg_stat_statements);
+    }
+    Ok(transactional)
+}
+
+/// After a datasource with `pg-stat-statements` on opens on Postgres: `CREATE EXTENSION IF NOT EXISTS
+/// pg_stat_statements` in its database (plans/archive/Tools-Database.md §7.2). `shared_preload_libraries` is checked
+/// first, and a warning says when the server does not load it. Neither stops the
+/// start: a role that may not create the extension, or a server without it, gets a warning. On MySQL the setting is
+/// ignored, with a debug line (statement digests are in `performance_schema`).
+pub fn create_pg_stat_statements(conf: &DatasourceConf, driver: &dyn DbDriver) {
+    if !conf.pg_stat_statements {
+        return;
+    }
+    let group = &conf.group;
+    if conf.kind == DatasourceKind::Mysql {
+        tracing::debug!("Datasource {group} is MySQL: pg-stat-statements does not apply, statement digests are in performance_schema");
+        return;
+    }
+    let mut conn = match driver.connect() {
+        Ok(conn) => conn,
+        Err(err) => {
+            tracing::warn!(error = %err, "Could not connect to set up pg_stat_statements for datasource {group}");
+            return;
+        }
+    };
+    {
+        let loaded = conn
+            .query("SELECT current_setting('shared_preload_libraries') AS libraries", &[])
+            .map(|rows| {
+                rows.first()
+                    .and_then(|row| row.get("libraries"))
+                    .map(moqui_lib::object::to_plain_string)
+                    .unwrap_or_default()
+            });
+        match loaded {
+            Ok(libraries) if libraries.split(',').any(|library| library.trim() == "pg_stat_statements") => {}
+            Ok(_) if conf.kind == DatasourceKind::Embedded => tracing::warn!(
+                "Datasource {group} has pg-stat-statements on, but the embedded cluster runs without pg_stat_statements (a postmaster started before the setting): it is loaded at the cluster's next start"
+            ),
+            Ok(_) => tracing::warn!(
+                "Datasource {group} has pg-stat-statements on, but the server does not preload pg_stat_statements: add it to shared_preload_libraries and restart the server"
+            ),
+            Err(err) => tracing::warn!(error = %err, "Could not read shared_preload_libraries for datasource {group}"),
+        }
+    }
+    match conn.execute("CREATE EXTENSION IF NOT EXISTS pg_stat_statements", &[]) {
+        Ok(_) => tracing::info!("pg_stat_statements is installed for datasource {group}"),
+        Err(err) => tracing::warn!(
+            error = %err,
+            "Could not create the pg_stat_statements extension for datasource {group}; statement stats in the database are not available"
+        ),
+    }
 }
 
 /// The driver for a datasource of a server this process does not start (Postgres or MySQL), for an entity group
@@ -177,6 +261,7 @@ pub fn open(conf: DatasourceConf, cluster_dir: &Path, install_dir: &Path, pool_m
         DatasourceKind::Postgres => open_postgres(conf),
         DatasourceKind::Mysql => {
             let driver = mysql_driver(&conf)?;
+            create_pg_stat_statements(&conf, &*driver);
             Ok(EntityDb {
                 conf,
                 driver,
@@ -202,8 +287,11 @@ fn open_embedded(
         max_connections: pool_max + LISTEN_SLOTS + SUPERUSER_SLOTS,
         role: ClusterRole::Entity,
         install_dir: Some(install_dir.to_path_buf()),
+        pg_stat_statements: conf.preload_pg_stat_statements,
+        settings: conf.embedded_settings.clone(),
     };
     let (cluster, driver) = EmbeddedCluster::start_with(cluster_dir, &options)?;
+    create_pg_stat_statements(&conf, &driver);
     Ok(EntityDb {
         conf,
         driver: Arc::new(driver.clone()),
@@ -227,6 +315,7 @@ fn open_embedded(
 #[cfg(feature = "postgres")]
 fn open_postgres(conf: DatasourceConf) -> Result<EntityDb, Error> {
     let driver = postgres_driver(&conf)?;
+    create_pg_stat_statements(&conf, &driver);
     Ok(EntityDb {
         conf,
         driver: Arc::new(driver.clone()),

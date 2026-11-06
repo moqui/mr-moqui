@@ -919,8 +919,8 @@ fn collection_flatten_nested_map<'js>(ctx: Ctx<'js>, map: JsValue<'js>) -> rquic
     })
 }
 
-/// Fill `UserSecurityChecks`, the checks `Security.eecas.xml` runs before a write of a group membership or a
-/// permission grant. A denied check throws, so the write fails.
+/// Fill `UserSecurityChecks`, the checks `Security.eecas.xml` runs before a write of a group membership, a
+/// permission grant or a DataDocument field expression. A denied check throws, so the write fails.
 pub(super) fn fill_security_checks<'js>(ctx: &Ctx<'js>, checks: &Object<'js>) -> Result<(), Error> {
     let function = caught(
         ctx,
@@ -942,7 +942,25 @@ pub(super) fn fill_security_checks<'js>(ctx: &Ctx<'js>, checks: &Object<'js>) ->
         "assertSealedPermissionGrant",
         checks.set("assertSealedPermissionGrant", function),
     )?;
+    let function = caught(
+        ctx,
+        "assertDocumentExpression",
+        Function::new(ctx.clone(), security_assert_document_expression),
+    )?;
+    caught(
+        ctx,
+        "assertDocumentExpression",
+        checks.set("assertDocumentExpression", function),
+    )?;
     Ok(())
+}
+
+fn security_assert_document_expression<'js>(ctx: Ctx<'js>, field_path: Opt<JsValue<'js>>) -> rquickjs::Result<()> {
+    host_guard(&ctx, || {
+        let facade = facade_of(&ctx)?;
+        crate::service::assert_document_expression(&facade, &opt_id_text(&ctx, &field_path)?)
+            .map_err(|err| throw_lib(&ctx, &err))
+    })
 }
 
 fn security_assert_privileged_group_membership<'js>(

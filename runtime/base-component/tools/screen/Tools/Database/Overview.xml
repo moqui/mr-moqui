@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The chosen database: its server, version, uptime and size, what the Tools screens can do on it and why not the rest
+    (org.moqui.impl.DatabaseServices.get#Capabilities, kept five minutes; Refresh asks again), the backup of the embedded
+    database, and the entity groups on each database. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Overview" default-menu-index="1">
+
+    <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
+    <transition name="refresh" read-only="true">
+        <actions>
+            <service-call name="org.moqui.impl.DatabaseServices.get#Capabilities" in-map="{db: db, refresh: true}"/>
+        </actions>
+        <default-response url="."><parameter name="db"/></default-response>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <script><![CDATA[
+            // a refusal (the Tools authorization, an external database here) is shown on the page, not dropped
+            capabilities = null
+            capabilitiesError = null
+            try {
+                capabilities = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#Capabilities').parameters({db}).call()
+            } catch (e) {
+                capabilitiesError = String(e.message || e)
+            }
+            const errors = ec.message.getErrorsString()
+            if (errors) {
+                capabilitiesError = errors
+                capabilities = null
+                ec.message.clearErrors()
+            }
+            const labels = {statementStats: 'Statement statistics', activity: 'Sessions and activity', cancel: 'Cancel a statement',
+                terminate: 'End a session', lockWaits: 'Lock waits', tableSizes: 'Table sizes and row estimates',
+                bloatExact: 'Exact table bloat', indexUsage: 'Index usage', indexOnline: 'Indexes built online',
+                fkLightLock: 'Foreign keys with a light lock', maintenance: 'Vacuum, analyze and reindex',
+                integrity: 'Integrity checks', settings: 'Server settings', settingsEdit: 'Editable settings', backups: 'Backups'}
+            const features = capabilities?.features || {}
+            featureList = Object.keys(labels).filter((name) => features[name] != null).map((name) => ({name,
+                label: labels[name], available: !!features[name].available, reason: features[name].reason || ''}))
+            for (const name of Object.keys(features)) if (!labels[name]) featureList.push({name, label: name,
+                available: !!features[name].available, reason: features[name].reason || ''})
+
+            const backendLabels = {'embedded-postgres': 'Embedded PostgreSQL', postgres: 'PostgreSQL', mysql: 'MySQL', mariadb: 'MariaDB'}
+            backendText = backendLabels[capabilities?.backend] || capabilities?.backend || selectedDatabase?.databaseConf || ''
+            startText = capabilities?.startTime == null ? '' : ec.l10n.format(basicConvert(capabilities.startTime, 'java.sql.Timestamp'), null)
+            const seconds = capabilities?.uptimeSeconds
+            uptimeText = seconds == null ? '' : `${Math.floor(seconds / 86400)}d ${Math.floor(seconds % 86400 / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`
+            const size = capabilities?.databaseSize
+            sizeText = size == null ? '' : size >= 1073741824 ? ec.l10n.format(size / 1073741824, '#,##0.0') + ' GiB'
+                : ec.l10n.format(size / 1048576, '#,##0.0') + ' MiB'
+            isEmbedded = capabilities?.backend == 'embedded-postgres'
+            backupJob = isEmbedded ? ec.entity.find('moqui.service.job.ServiceJob').condition('jobName', 'backup_EmbeddedDatabase_daily').one() : null
+            // External databases (Connections): // whether the server offers external databases to this user (find#DatabaseConnections refuses with "Not available"
+            // on production or without DATABASE_EXTERNAL); asked only of a DATABASE_EXTERNAL holder
+            canExternal = false
+            if (ec.user.hasPermission('DATABASE_EXTERNAL')) {
+                try { ec.service.sync().name('org.moqui.impl.DatabaseServices.find#DatabaseConnections').call(); canExternal = !ec.message.hasError() } catch (e) { canExternal = false }
+                ec.message.clearErrors()
+            }
+            databaseRows = databaseList.map((database) => ({db: database.db, groups: database.label,
+                databaseConf: database.databaseConf}))
+        ]]></script>
+    </actions>
+    <widgets>
+        <section-include name="DroppedKeys" location="component://tools/template/DatabaseParts.xml"/>
+        <section-include name="DatabasePicker" location="component://tools/template/DatabaseParts.xml"/>
+        <container-box><box-header title="${selectedDatabase?.groupNames.join(', ') || 'Database'}"/>
+            <box-toolbar>
+                <link url="refresh" text="Refresh" icon="refresh" tooltip="Ask the database again for what it allows" parameter-map="{db: db}"/>
+                <link url="../Settings" text="Settings" icon="tune" parameter-map="{db: db}"/>
+                <link url="../Connections" text="External databases" icon="cable" condition="canExternal"/>
+            </box-toolbar>
+            <box-body>
+                <section name="Refused" condition="capabilitiesError"><widgets>
+                    <label text="${capabilitiesError}" type="p" style="text-negative"/>
+                </widgets></section>
+                <section name="NotAnswered" condition="capabilities?.available === false"><widgets>
+                    <label text="The database did not answer: ${capabilities.reason || ''}" type="p" style="text-negative"/>
+                </widgets></section>
+                <container-row>
+                    <row-col md="6">
+                        <label text="Server: ${backendText}" type="p"/>
+                        <label text="Version: ${capabilities?.version || ''}" type="p"/>
+                        <label text="Database: ${capabilities?.databaseName || ''}" type="p"/>
+                        <label text="User: ${capabilities?.userName || ''}" type="p" condition="capabilities?.userName"/>
+                    </row-col>
+                    <row-col md="6">
+                        <label text="Started: ${startText}" type="p" condition="startText"/>
+                        <label text="Uptime: ${uptimeText}" type="p" condition="uptimeText"/>
+                        <label text="Size: ${sizeText}" type="p" condition="sizeText"/>
+                    </row-col>
+                </container-row>
+                <section name="Backup" condition="isEmbedded"><widgets>
+                    <label text="${!backupJob ? 'The embedded database has no backup job (backup_EmbeddedDatabase_daily is not loaded).' : backupJob.paused == 'Y' ? 'The embedded database backup job is paused: no backups are made until it is turned on. It can also run now.' : 'The embedded database is backed up by its backup job (' + (backupJob.cronExpression || 'no schedule') + '), which can also run now.'}" type="p" style="m-muted"/>
+                    <link url="//apps/system/ServiceJob/Jobs/ServiceJobDetail" text="Backup job" parameter-map="{jobName: 'backup_EmbeddedDatabase_daily'}"/>
+                </widgets></section>
+            </box-body>
+        </container-box>
+        <container-box><box-header title="What the Tools can do on this database"/><box-body>
+            <form-list name="FeatureList" list="featureList" skip-form="true" paginate="false">
+                <field name="label"><default-field title="Feature"><display/></default-field></field>
+                <field name="available"><default-field title="Available">
+                    <display text="${available ? 'Yes' : 'No'}"/></default-field></field>
+                <field name="reason"><default-field title="Why not, or what limits it"><display/></default-field></field>
+                <columns type="mobile">
+                    <column><field-ref name="label"/></column>
+                    <column><field-ref name="available"/><field-ref name="reason"/></column>
+                </columns>
+            </form-list>
+        </box-body></container-box>
+        <container-box><box-header title="Databases of the entity groups"/><box-body>
+            <form-list name="DatabaseList" list="databaseRows" skip-form="true" paginate="false">
+                <field name="groups"><default-field title="Entity groups"><display/></default-field></field>
+                <field name="databaseConf"><default-field title="Kind"><display/></default-field></field>
+            </form-list>
+        </box-body></container-box>
+    </widgets>
+</screen>

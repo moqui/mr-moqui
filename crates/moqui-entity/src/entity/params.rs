@@ -115,6 +115,7 @@ mod tests {
                 ("total".into(), decimal("100.000000")),
                 ("raw".into(), decimal("2.50")),
             ],
+            origins: None,
         };
         let columns: Vec<(Arc<str>, String)> = vec![
             ("quantity".into(), "java.math.BigDecimal".to_string()),

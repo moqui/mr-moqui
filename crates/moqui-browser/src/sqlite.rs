@@ -363,7 +363,7 @@ fn collect(statement: &mut rusqlite::Statement<'_>, bound: &[SqlValue]) -> Resul
         for (index, name) in names.iter().enumerate() {
             columns.push((name.clone(), from_sql(row.get_ref(index)?)));
         }
-        out.push(DbRow { columns });
+        out.push(DbRow { columns, origins: None });
     }
     Ok(out)
 }

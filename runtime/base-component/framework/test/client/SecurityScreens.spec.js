@@ -92,7 +92,7 @@ feature("A01 a VIEW-only user cannot run a service over HTTP", {
 // screen, so a 302 counts only when it is the login.
 feature("A01 an anonymous data import does not fetch a location", {
     when() {
-        const res = session().post("/apps/tools/Entity/DataImport/load", {
+        const res = session().post("/apps/tools/Data/Load/load", {
             form: { location: "http://127.0.0.1:9/sec-ssrf" },
         })
         return { res, location: res.location ?? "" }
@@ -178,11 +178,11 @@ feature("A01 the SQL Runner does not run a statement from the query string", {
         const s = formSession(USER, PASSWORD)
         const probe = "sec_sql_probe_col"
         const sql = "SELECT 1 AS " + probe
-        const get = s.get("/apps/tools/Entity/SqlRunner", { params: { groupName: "transactional", sql } })
+        const get = s.get("/apps/tools/SqlTui", { params: { db: "group:transactional", sql } })
         if (get.status == 401 || get.status == 403) skip("logged-in user lacks SQL_RUNNER_WEB (need ADMIN_ADV / demo john.doe)")
         if (!s.token()) skip("no CSRF token after login")
-        const post = s.post("/apps/tools/Entity/SqlRunner", {
-            form: { groupName: "transactional", sql, moquiSessionToken: s.token() },
+        const post = s.post("/apps/tools/SqlTui/run", {
+            form: { db: "group:transactional", sql, moquiSessionToken: s.token() },
             follow: true,
         })
         return { getBody: get.text.toLowerCase(), postBody: post.text.toLowerCase(), probe: probe.toLowerCase() }
@@ -195,6 +195,21 @@ feature("A01 the SQL Runner does not run a statement from the query string", {
     },
 })
 
+// The data grid takes a SQL source only in the request body, as the SQL screen takes its SQL.
+feature("A01 the data grid does not run a SQL source from the query string", {
+    when() {
+        const s = formSession(USER, PASSWORD)
+        const sourceJson = JSON.stringify({ type: "sql", db: "group:transactional", sql: "SELECT 1 AS sec_grid_probe" })
+        const res = s.get("/apps/tools/Data/Grid/gridColumns", { params: { sourceJson } })
+        if (res.status == 401 || res.status == 403) skip("logged-in user cannot open the Tools app")
+        return { res, body: res.text.toLowerCase() }
+    },
+    then({ res, body }) {
+        !body.includes("sec_grid_probe")
+        body.includes("request body")
+    },
+})
+
 // test_a01_more.py: test_menu_data_tools_without_login_is_not_the_menu
 feature("A01 menu data for Tools without a login is not the menu", {
     when() {
@@ -202,7 +217,7 @@ feature("A01 menu data for Tools without a login is not the menu", {
         return { res, body: res.text.toLowerCase() }
     },
     then({ res, body }) {
-        res.status == 401 || res.status == 403 || res.status == 302 || !body.includes("auto screens")
+        res.status == 401 || res.status == 403 || res.status == 302 || !body.includes('"schema"')
         !body.includes("groovyshell") || res.status != 200
     },
 })
@@ -226,7 +241,7 @@ feature("A01 a VIEW-only user cannot download a data snapshot", {
     given() { requireFixture(VIEW_USER, VIEW_PASSWORD) },
     when() {
         return {
-            res: formSession(VIEW_USER, VIEW_PASSWORD).get("/apps/tools/Entity/DataSnapshot/downloadSnapshot", {
+            res: formSession(VIEW_USER, VIEW_PASSWORD).get("/apps/tools/Data/Snapshots/downloadSnapshot", {
                 params: { filename: "anything.zip" },
             }),
         }
@@ -239,7 +254,7 @@ feature("A01 a VIEW-only user cannot download a data snapshot", {
 // test_a01_more.py: test_datasnapshot_parent_segment_filename_is_not_found
 feature("A01 a DataSnapshot download of a parent segment is not found", {
     when() {
-        const res = formSession(USER, PASSWORD).get("/apps/tools/Entity/DataSnapshot/downloadSnapshot", {
+        const res = formSession(USER, PASSWORD).get("/apps/tools/Data/Snapshots/downloadSnapshot", {
             params: { filename: "../../conf/MoquiProductionConf.xml" },
         })
         if (res.status == 401 || res.status == 403) skip("user cannot open DataSnapshot")
@@ -255,8 +270,8 @@ feature("A01 a DataSnapshot download of a parent segment is not found", {
 // test_a01_more.py: test_datasnapshot_parent_segment_delete_is_rejected, test_datasnapshot_parent_segment_import_is_rejected
 feature("A01 a DataSnapshot #name of a parent segment is rejected", {
     where: [
-        { name: "delete", path: "/apps/tools/Entity/DataSnapshot/deleteSnapshot", field: "filename" },
-        { name: "import", path: "/apps/tools/Entity/DataSnapshot/importSnapshot", field: "zipFilename" },
+        { name: "delete", path: "/apps/tools/Data/Snapshots/deleteSnapshot", field: "filename" },
+        { name: "import", path: "/apps/tools/Data/Snapshots/importSnapshot", field: "zipFilename" },
     ],
     when({ path, field }) {
         const s = formSession(USER, PASSWORD)
@@ -349,7 +364,7 @@ feature("A01 a data import rejects a remote location", {
     when() {
         const s = formSession(USER, PASSWORD)
         if (!s.token()) skip("no CSRF token after login")
-        const res = s.post("/apps/tools/Entity/DataImport/load", {
+        const res = s.post("/apps/tools/Data/Load/load", {
             form: { location: "http://127.0.0.1:9/sec-ssrf", moquiSessionToken: s.token() },
             follow: true,
         })

@@ -614,7 +614,7 @@ pub fn drop_fts_index(entity: &EntityDefinition, name: &str, dialect: &Dialect) 
 }
 
 /// The generated `tsvector` column of a `text-fts` field on Postgres, Java's `{column}_tsv`.
-pub(crate) fn fts_column_name(field: &FieldDefinition, dialect: &Dialect) -> String {
+pub fn fts_column_name(field: &FieldDefinition, dialect: &Dialect) -> String {
     format!("{}_tsv", physical_column_name(dialect, &field.column_name))
 }
 
@@ -839,6 +839,16 @@ fn write_column(
         sql.push_str(" NOT NULL");
     }
     Ok(())
+}
+
+/// The SQL type [`create_table`] and [`add_column`] give the field's column: the dialect's `database-type`, else the
+/// dictionary type's `default-sql-type`.
+///
+/// # Errors
+///
+/// Returns an error when the field's type is not in the dictionary.
+pub fn field_sql_type(model: &EntityModel, dialect: &Dialect, field: &FieldDefinition) -> Result<String, Error> {
+    column_type(model, dialect, field).map(|(sql_type, _)| sql_type)
 }
 
 fn column_type(model: &EntityModel, dialect: &Dialect, field: &FieldDefinition) -> Result<(String, String), Error> {

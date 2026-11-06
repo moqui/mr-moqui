@@ -51,15 +51,15 @@ along with this software (see the LICENSE.md file). If not, see
             </box-body></container-box></row-col>
             <row-col md="3"><container-box><box-header title="Enumerations"/><box-body>
                 <label text="The coded lists the apps choose from: types, categories and reasons." type="p"/>
-                <link url="//apps/tools/AutoScreen/AutoFind" url-type="screen" text="Enumerations" icon="list">
+                <link url="//apps/tools/Data/Browse/AutoFind" url-type="screen" text="Enumerations" icon="list">
                     <parameter name="aen" value="moqui.basic.Enumeration"/></link>
-                <link url="//apps/tools/AutoScreen/AutoFind" url-type="screen" text="Types" icon="category">
+                <link url="//apps/tools/Data/Browse/AutoFind" url-type="screen" text="Types" icon="category">
                     <parameter name="aen" value="moqui.basic.EnumerationType"/></link>
             </box-body></container-box></row-col>
             <row-col md="3"><container-box><box-header title="Status flows"/><box-body>
                 <label text="The statuses a record moves through and the transitions between them." type="p"/>
                 <link url="//apps/tools/StatusFlows" url-type="screen" text="Status flows" icon="account_tree"/>
-                <link url="//apps/tools/AutoScreen/AutoFind" url-type="screen" text="Status items" icon="flag">
+                <link url="//apps/tools/Data/Browse/AutoFind" url-type="screen" text="Status items" icon="flag">
                     <parameter name="aen" value="moqui.basic.StatusItem"/></link>
             </box-body></container-box></row-col>
         </container-row>

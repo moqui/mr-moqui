@@ -453,6 +453,7 @@ impl DbConnection for RecordingConn {
         let count = if counts.is_empty() { 0 } else { counts.remove(0) };
         Ok(vec![DbRow {
             columns: vec![("row_count".into(), Value::I64(count))],
+            origins: None,
         }])
     }
     fn open_stream(&mut self, _sql: &str, _params: &[Value]) -> Result<(), Error> {

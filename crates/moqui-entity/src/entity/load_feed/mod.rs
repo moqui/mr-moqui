@@ -40,7 +40,10 @@ use moqui_lib::node::MNode;
 
 use super::facade::EntityFacade;
 
-pub use check::{check_entity_data, check_entity_xml_text, check_info_with, check_with, list_with, CheckResult};
+pub use check::{
+    check_entity_data, check_entity_record, check_entity_xml_text, check_info_limited, check_info_with, check_with,
+    list_with, CheckResult,
+};
 #[cfg(any(test, feature = "test-support"))]
 pub use eca::add_eca_rules;
 pub use eca::{eca_rule_count, eca_rules, first_condition, match_rules, reload_eca_rules, EcaRule};
@@ -49,7 +52,8 @@ pub(super) use feed::clear_frame_touches;
 pub use feed::register_feed_insert;
 pub(crate) use feed::{feed_keeps_values, feed_wants_old, note_touch};
 pub use loader::{
-    is_restricted_entity, load_entity_data, load_entity_text_file, load_entity_xml_text, location_in_components,
+    convert_entity_fields, is_restricted_entity, load_entity_data, load_entity_text_file, load_entity_xml_text,
+    location_in_components,
 };
 pub use locations::{component_data_locations, data_directory_locations, data_types_of};
 

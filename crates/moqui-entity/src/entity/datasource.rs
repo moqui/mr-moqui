@@ -130,6 +130,139 @@ impl DatasourceConf {
     }
 }
 
+/// The settings of the embedded cluster a datasource's conf gives (plans/archive/Tools-Database.md §4.4):
+/// `shared-buffers`, `work-mem`, `maintenance-work-mem` and `effective-cache-size`, as Postgres writes a size (`64MB`).
+/// `None` keeps the cluster's default from code. They apply when this process starts the cluster.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EmbeddedSettings {
+    pub shared_buffers: Option<String>,
+    pub work_mem: Option<String>,
+    pub maintenance_work_mem: Option<String>,
+    pub effective_cache_size: Option<String>,
+}
+
+impl EmbeddedSettings {
+    /// Each setting as (its `datasource` attribute, its Postgres name, its value).
+    #[must_use]
+    pub fn entries(&self) -> [(&'static str, &'static str, Option<&str>); 4] {
+        [
+            ("shared-buffers", "shared_buffers", self.shared_buffers.as_deref()),
+            ("work-mem", "work_mem", self.work_mem.as_deref()),
+            (
+                "maintenance-work-mem",
+                "maintenance_work_mem",
+                self.maintenance_work_mem.as_deref(),
+            ),
+            (
+                "effective-cache-size",
+                "effective_cache_size",
+                self.effective_cache_size.as_deref(),
+            ),
+        ]
+    }
+
+    /// Whether any is set.
+    #[must_use]
+    pub fn any(&self) -> bool {
+        self.entries().iter().any(|(_, _, value)| value.is_some())
+    }
+
+    /// Read the four attributes of the embedded `datasource` node of `group`. Each is a size as Postgres writes one:
+    /// digits and a unit of exactly `B`, `kB`, `MB`, `GB` or `TB` (case as written), within the setting's bounds
+    /// ([`size_bounds`]), so nothing but a size the server takes reaches its configuration.
+    ///
+    /// # Errors
+    ///
+    /// Names the datasource and the attribute whose value is not such a size.
+    pub fn of(node: &MNode, group: &str) -> Result<Self, Error> {
+        let read = |name: &str| -> Result<Option<String>, Error> {
+            let value = expanded(node, name);
+            if value.is_empty() {
+                return Ok(None);
+            }
+            let (low, high) = size_bounds(name);
+            match size_bytes(&value) {
+                Some(bytes) if (low..=high).contains(&bytes) => Ok(Some(value)),
+                Some(_) => Err(Error::new(format!(
+                    "datasource {group} attribute {name} \"{value}\" is outside {} to {}",
+                    size_text(low),
+                    size_text(high)
+                ))),
+                None => Err(Error::new(format!(
+                    "datasource {group} attribute {name} \"{value}\" is not a size such as 64MB (a number and B, kB, \
+                     MB, GB or TB)"
+                ))),
+            }
+        };
+        Ok(Self {
+            shared_buffers: read("shared-buffers")?,
+            work_mem: read("work-mem")?,
+            maintenance_work_mem: read("maintenance-work-mem")?,
+            effective_cache_size: read("effective-cache-size")?,
+        })
+    }
+
+    /// The four attributes on a datasource that is not the embedded cluster's: they do not apply, and are ignored with
+    /// a debug line (a bad value there is logged, not refused).
+    #[must_use]
+    pub fn ignored(node: &MNode, group: &str) -> Self {
+        for name in [
+            "shared-buffers",
+            "work-mem",
+            "maintenance-work-mem",
+            "effective-cache-size",
+        ] {
+            let value = expanded(node, name);
+            if !value.is_empty() {
+                tracing::debug!(
+                    "Datasource {group} attribute {name} \"{value}\" is ignored: it sets the embedded cluster only"
+                );
+            }
+        }
+        Self::default()
+    }
+}
+
+/// The bytes of a size as Postgres writes one in its configuration: digits and a unit of exactly `B`, `kB`, `MB`, `GB`
+/// or `TB`, case as written. `None` for anything else, a missing unit included.
+#[must_use]
+pub fn size_bytes(value: &str) -> Option<u64> {
+    let digits = value.chars().take_while(char::is_ascii_digit).count();
+    if digits == 0 || digits > 15 {
+        return None;
+    }
+    let number: u64 = value[..digits].parse().ok()?;
+    let unit: u64 = match &value[digits..] {
+        "B" => 1,
+        "kB" => 1 << 10,
+        "MB" => 1 << 20,
+        "GB" => 1 << 30,
+        "TB" => 1 << 40,
+        _ => return None,
+    };
+    number.checked_mul(unit)
+}
+
+/// The bytes a conf attribute's size may be, low and high: within what Postgres takes and sane for a server.
+#[must_use]
+pub fn size_bounds(attribute: &str) -> (u64, u64) {
+    match attribute {
+        "shared-buffers" => (128 << 10, 64 << 30),
+        "work-mem" => (64 << 10, 2 << 30),
+        "maintenance-work-mem" => (1 << 20, 16 << 30),
+        _ => (8 << 10, 16 << 40),
+    }
+}
+
+fn size_text(bytes: u64) -> String {
+    for (unit, size) in [("TB", 1_u64 << 40), ("GB", 1 << 30), ("MB", 1 << 20), ("kB", 1 << 10)] {
+        if bytes >= size && bytes.is_multiple_of(size) {
+            return format!("{}{unit}", bytes / size);
+        }
+    }
+    format!("{bytes}B")
+}
+
 /// One datasource, with `${}` expanded.
 #[derive(Clone)]
 pub struct DatasourceConf {
@@ -161,6 +294,16 @@ pub struct DatasourceConf {
     pub runtime_add_missing: bool,
     /// `runtime-add-fks`, true unless set to something other than `true`.
     pub runtime_add_fks: bool,
+    /// `pg-stat-statements`, false unless `true`: on Postgres, load `pg_stat_statements` for this datasource's
+    /// database (plans/archive/Tools-Database.md §7.2). Ignored on MySQL.
+    pub pg_stat_statements: bool,
+    /// Whether the embedded cluster preloads `pg_stat_statements` when it starts for this datasource: this one's
+    /// `pg-stat-statements`, or for `transactional` on the embedded cluster that of any embedded datasource
+    /// (`moqui_drivers::entity_db::transactional_conf` sets it), since the cluster's databases share one postmaster.
+    pub preload_pg_stat_statements: bool,
+    /// The embedded cluster's settings this datasource gives (`shared-buffers`, `work-mem`, `maintenance-work-mem`,
+    /// `effective-cache-size`). The cluster takes the transactional datasource's.
+    pub embedded_settings: EmbeddedSettings,
     /// The `inline-jdbc` `read-timeout` in seconds: the most one read from the database waits, for a driver that sets
     /// it once per connection (MySQL). `None` when not given (the driver's default); `Some(ZERO)` for no limit.
     pub read_timeout: Option<Duration>,
@@ -187,6 +330,9 @@ impl std::fmt::Debug for DatasourceConf {
             .field("startup_add_missing", &self.startup_add_missing)
             .field("runtime_add_missing", &self.runtime_add_missing)
             .field("runtime_add_fks", &self.runtime_add_fks)
+            .field("pg_stat_statements", &self.pg_stat_statements)
+            .field("preload_pg_stat_statements", &self.preload_pg_stat_statements)
+            .field("embedded_settings", &self.embedded_settings)
             .field("read_timeout", &self.read_timeout)
             .finish()
     }
@@ -274,8 +420,16 @@ pub fn datasource_conf(conf: &MNode, group: &str) -> Result<DatasourceConf, Erro
             "" => true,
             value => value == "true",
         },
+        pg_stat_statements: expanded(&datasource, "pg-stat-statements") == "true",
+        preload_pg_stat_statements: false,
+        embedded_settings: if kind == DatasourceKind::Embedded {
+            EmbeddedSettings::of(&datasource, group)?
+        } else {
+            EmbeddedSettings::ignored(&datasource, group)
+        },
         read_timeout: read_timeout(inline.as_ref())?,
     };
+    conf.preload_pg_stat_statements = conf.pg_stat_statements;
     if kind == DatasourceKind::Embedded {
         // Only the database: a group other than `transactional` has a database of its own in the embedded cluster,
         // named by the datasource's own `databaseName` (the `database-list` one names the external server's).

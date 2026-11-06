@@ -35,6 +35,7 @@ is in `libs/`. To upgrade, change the version in `refresh.mjs`, run with `--writ
 | Font Awesome | 4.7.0 | `fontawesome/css/font-awesome.min.css`, `fontawesome/fonts/fontawesome-webfont.{woff2,woff,ttf,eot,svg}` | `html` mode theme (every page); `qvt` shell |
 | Tom Select | 2.6.2 | `tom-select/tom-select.complete.min.js`, `tom-select/tom-select.css` | `html` mode, lazy, `footer_scripts` |
 | SortableJS | 1.15.7 | `sortablejs/Sortable.min.js` | `html` mode column picker, lazy |
+| Tabulator | 6.7.0 | `tabulator/tabulator.min.js`, `tabulator/tabulator.min.css`, global `Tabulator`; themed by `css/DataGrid.css` | Lazy, the data grid of Tools › Data (plans/archive/Tools-Database.md §9) |
 | Vue (full, with the template compiler) | 3.5.44 | `vue/vue.global.prod.js`, global `Vue` | `qvt` pages with server-merged output or a merged fragment (needs `unsafe-eval`) |
 | Vue (runtime only) | 3.5.44 | `vue/vue.runtime.global.prod.js`, global `Vue` | `qvt` pages whose output is entirely server-static (render functions compiled on the server, no `unsafe-eval`) |
 | `@vue/compiler-dom` Node build, one bundle for QuickJS | 3.5.44 | `vue/compiler-dom.cjs.js`, global `VueCompilerDOM`, `VERSION` beside it | Server only (read by the host, never linked from a page) |

@@ -117,10 +117,14 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     ec.entity.getAllEntitiesInfo = host.getAllEntitiesInfo;
     ec.entity.getAllEntityInfo = host.getAllEntityInfo;
     ec.entity.getDatasourceGroupNames = host.getDatasourceGroupNames;
+    // The table check of the named entities (of the entity groups `groups` when given), whatever the groups'
+    // add-missing settings say, after forgetting what is known of the tables: `{ddl: [the statements run], errors,
+    // failed: [{entityName, error}]}`, a name that fails skipped. Tools' Check Tables.
+    ec.entity.checkTables = host.checkTables;
     ec.entity.getEecaRuleCount = host.getEecaRuleCount;
-    // Query statistics are a conf flag, off by default in Java (entity-facade@query-stats); the port does not keep them.
-    ec.entity.getQueryStatsList = () => [];
-    ec.entity.clearQueryStats = () => {};
+    // statement stats of this instance when entity-facade@query-stats is on (moqui_entity::entity::query_stats)
+    ec.entity.getQueryStatsList = host.getQueryStatsList;
+    ec.entity.clearQueryStats = host.clearQueryStats;
     ec.entity.runSqlStatement = host.runSqlStatement;
     // another database, named by a map of `entity_ds_db_conf`, `entity_ds_host`, `entity_ds_port`, `entity_ds_database`,
     // `entity_ds_user` and `entity_ds_password`, as Java's `getConfConnection`
@@ -783,6 +787,9 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
         entityEcaDisabled: host.entityEcaDisabled, getStackNameString: host.stackNameString,
         // Java's: disable returns whether authorization was already disabled; it stays so until enable
         disableAuthz: host.disableAuthz, enableAuthz: host.enableAuthz,
+        // body() as the current user, with authorization on whatever disabled it (a ServiceJob, an async call): the
+        // screen at location checked for all actions and pushed under it, as a request to it would be
+        runAsUser: (location, body) => host.runAsUser(String(location), body),
         // whether authorization is disabled now, changing nothing (disableAuthz to ask would hold a guard of its own)
         authzDisabled: host.authzDisabled,
         // Java's: disable returns whether tarpit counting was already disabled; it stays so until enable
@@ -838,6 +845,8 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     ec.factory.getStatusMap = host.getStatusMap;
     ec.factory.getComponentInfoList = host.getComponentInfoList;
     ec.factory.getRuntimePath = host.getRuntimePath;
+    // This server's instance id, as its telemetry and the database audit name it (Tools' Database › Queries).
+    ec.factory.getInstanceId = host.getInstanceId;
     Object.defineProperty(ec.factory, "workerPool", { get: poolInfo });
     Object.defineProperty(ec.factory, "versionMap", { get: () => ({ moqui: ec.factory.moquiVersion }) });
     ec.factory.getThreadList = host.getThreadList;
@@ -1166,6 +1175,37 @@ fn get_eeca_rule_count(ctx: Ctx<'_>) -> rquickjs::Result<i32> {
     })
 }
 
+/// `ec.entity.getQueryStatsList(orderBy, entityFilter, sqlFilter)`: the statement stats of this instance, as Java's.
+fn get_query_stats_list<'js>(
+    ctx: Ctx<'js>,
+    order_by: Opt<JsValue<'js>>,
+    entity_filter: Opt<JsValue<'js>>,
+    sql_filter: Opt<JsValue<'js>>,
+) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        let rows = crate::entity::query_stats::list(
+            &text_or_empty(&ctx, order_by.0.as_ref())?,
+            &text_or_empty(&ctx, entity_filter.0.as_ref())?,
+            &text_or_empty(&ctx, sql_filter.0.as_ref())?,
+        );
+        js_list(&ctx, rows)
+    })
+}
+
+/// `ec.entity.clearQueryStats()`: through `org.moqui.impl.DatabaseServices.reset#QueryStats` (moqui-tools), which
+/// needs `DATABASE_ADMIN` and writes the audit row; a refusal is a message error, as the service adds it.
+fn clear_query_stats(ctx: Ctx<'_>) -> rquickjs::Result<()> {
+    host_guard(&ctx, || {
+        crate::service::call::sync_with(
+            "org.moqui.impl.DatabaseServices.reset#QueryStats",
+            &std::collections::BTreeMap::new(),
+            &crate::service::call::CallOptions::default(),
+        )
+        .map_err(|err| Exception::throw_message(&ctx, err.message()))?;
+        Ok(())
+    })
+}
+
 /// The EECA rules of an entity, each as the XML of its rule.
 fn eeca_rule_texts<'js>(ctx: Ctx<'js>, entity_name: String) -> rquickjs::Result<JsValue<'js>> {
     host_guard(&ctx, || {
@@ -1194,6 +1234,84 @@ fn eeca_rule_texts<'js>(ctx: Ctx<'js>, entity_name: String) -> rquickjs::Result<
             })
             .collect();
         js_texts(&ctx, texts)
+    })
+}
+
+/// Check the tables of `names` (view entities by their members), first forgetting what is known of the tables, as
+/// Java's `forceCheckExistingTables`: `{ddl, errors, failed}`. With `groups`, only the entities of those entity groups
+/// are checked. The names are checked together; when that fails (a view with a member that is not defined), each is
+/// checked on its own, and a name that fails is logged and listed in `failed` (`{entityName, error}`) while the rest
+/// go on.
+fn check_tables<'js>(ctx: Ctx<'js>, names: Vec<String>, groups: Opt<Vec<String>>) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        let facade = facade_of(&ctx)?;
+        let default_group = facade.default_group().to_string();
+        let mut failed: Vec<(String, String)> = Vec::new();
+        let names: Vec<String> = match &groups.0 {
+            None => names,
+            Some(groups) => names
+                .into_iter()
+                .filter(|name| {
+                    match facade.with_entity(name, |entity, _, _| {
+                        Ok(entity.group.clone().unwrap_or_else(|| default_group.clone()))
+                    }) {
+                        Ok(group) => groups.contains(&group),
+                        Err(err) => {
+                            failed.push((name.clone(), err.message().to_string()));
+                            false
+                        }
+                    }
+                })
+                .collect(),
+        };
+        facade.forget_tables();
+        let mut ddl = Vec::new();
+        let mut errors = 0usize;
+        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+        match facade.check_tables_ddl(&refs) {
+            Ok(check) => {
+                ddl = check.ddl;
+                errors = check.errors;
+            }
+            Err(err) => {
+                tracing::warn!(
+                    "Checking the tables together failed, checking each entity: {}",
+                    err.message()
+                );
+                for name in &names {
+                    match facade.check_tables_ddl(&[name.as_str()]) {
+                        Ok(check) => {
+                            ddl.extend(check.ddl);
+                            errors += check.errors;
+                        }
+                        Err(err) => {
+                            tracing::error!("Table check of entity {name} failed: {}", err.message());
+                            failed.push((name.clone(), err.message().to_string()));
+                        }
+                    }
+                }
+            }
+        }
+        let mut map = indexmap::IndexMap::new();
+        map.insert(
+            "ddl".to_string(),
+            Value::List(ddl.into_iter().map(Value::String).collect()),
+        );
+        map.insert(
+            "errors".to_string(),
+            Value::I64(i64::try_from(errors).unwrap_or(i64::MAX)),
+        );
+        let failed = failed
+            .into_iter()
+            .map(|(name, error)| {
+                let mut row = indexmap::IndexMap::new();
+                row.insert("entityName".to_string(), Value::String(name));
+                row.insert("error".to_string(), Value::String(error));
+                Value::Map(row)
+            })
+            .collect();
+        map.insert("failed".to_string(), Value::List(failed));
+        host_to_js(&ctx, Value::Map(map))
     })
 }
 
@@ -1690,6 +1808,14 @@ fn get_status_map<'js>(ctx: Ctx<'js>, include_sensitive: Opt<JsValue<'js>>) -> r
     })
 }
 
+/// `ec.factory.getInstanceId()`: this server's instance id ([`crate::drain::instance_id`]).
+fn get_instance_id(ctx: Ctx<'_>) -> rquickjs::Result<String> {
+    host_guard(&ctx, || {
+        let factory = factory_of(&ctx)?;
+        Ok(crate::drain::instance_id(&factory))
+    })
+}
+
 fn get_component_info_list<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
     host_guard(&ctx, || {
         let factory = factory_of(&ctx)?;
@@ -2074,6 +2200,8 @@ fn conf_db_of<'js>(ctx: &Ctx<'js>, conf: &JsValue<'js>) -> rquickjs::Result<crat
         database: text("entity_ds_database"),
         user: text("entity_ds_user"),
         password: text("entity_ds_password"),
+        ssl_mode: text("entity_ds_sslmode"),
+        ssl_root_cert: text("entity_ds_sslrootcert"),
     })
 }
 
@@ -2416,6 +2544,54 @@ fn enable_entity_eca(ctx: Ctx<'_>) -> rquickjs::Result<()> {
     host_guard(&ctx, || with_ec(&ctx, ExecutionContext::enable_entity_eca))
 }
 
+/// `ec.artifactExecution.runAsUser(location, body)`: authorization required again for the rest of `body` (a ServiceJob
+/// or an async call runs with it off), and the screen `location` checked for all actions as the current user and pushed,
+/// so what `body` calls is authorized as from that screen. A user the screen does not authorize is refused, and `body`
+/// does not run. The script's own disableAuthz state is set aside while `body` runs and put back after, whatever `body`
+/// did with `disableAuthz` and `enableAuthz`, so nothing outside the call changes.
+fn run_as_user<'js>(ctx: Ctx<'js>, location: String, body: Function<'js>) -> rquickjs::Result<JsValue<'js>> {
+    let outer_script_authz = with_ec(&ctx, ExecutionContext::take_script_authz)?;
+    let required = with_ec(&ctx, ExecutionContext::require_authz)?;
+    let pushed = with_ec(&ctx, |ec| {
+        ec.push_checked(
+            "AT_XML_SCREEN",
+            &location,
+            "all",
+            crate::context::Authz::Required,
+            crate::context::Tarpit::Skip,
+            None,
+        )
+    });
+    // the guards go in the reverse of their making: what body left of the script's state, then the requirement, and then
+    // the caller's own state comes back
+    let restore = |required| {
+        ExecutionContext::with_current(|ec| drop(ec.take_script_authz()));
+        drop(required);
+        ExecutionContext::with_current(|ec| ec.put_script_authz(outer_script_authz));
+    };
+    match pushed {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            restore(required);
+            return Err(Exception::throw_message(&ctx, err.message()));
+        }
+        Err(err) => {
+            restore(required);
+            return Err(err);
+        }
+    }
+    let result = body.call::<_, JsValue<'js>>(());
+    // the frame is popped whatever body did
+    let popped = ExecutionContext::with_current(ExecutionContext::pop);
+    restore(required);
+    match popped {
+        Some(Err(err)) => tracing::warn!("Pop after runAsUser of {location}: {}", err.message()),
+        None => tracing::warn!("No execution context to pop after runAsUser of {location}"),
+        Some(Ok(())) => {}
+    }
+    result
+}
+
 /// `ec.artifactExecution.disableAuthz()`: authorization is not checked for this execution context until
 /// `enableAuthz()`. Returns whether it was already disabled, as Java.
 fn disable_authz(ctx: Ctx<'_>) -> rquickjs::Result<bool> {
@@ -2631,10 +2807,12 @@ fn get_available_time_zones<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>
 
 fn is_restricted_generic_entity(ctx: Ctx<'_>, name: Opt<JsValue<'_>>) -> rquickjs::Result<bool> {
     host_guard(&ctx, || {
-        Ok(crate::entity::sensitive::is_restricted_generic_entity(&text_or_empty(
-            &ctx,
-            name.0.as_ref(),
-        )?))
+        let name = text_or_empty(&ctx, name.0.as_ref())?;
+        // a view over a restricted entity is restricted too
+        Ok(match with_ec(&ctx, |ec| ec.factory().entity())? {
+            Some(facade) => crate::entity::sensitive::is_restricted_entity_or_view(&facade, &name),
+            None => crate::entity::sensitive::is_restricted_generic_entity(&name),
+        })
     })
 }
 
@@ -2686,7 +2864,10 @@ pub(super) fn install<'js>(
     method!("entityDefinitionInfo", entity_definition_info);
     method!("prettyName", pretty_name);
     method!("getDatasourceGroupNames", get_datasource_group_names);
+    method!("checkTables", check_tables);
     method!("getEecaRuleCount", get_eeca_rule_count);
+    method!("getQueryStatsList", get_query_stats_list);
+    method!("clearQueryStats", clear_query_stats);
     method!("eecaRuleTexts", eeca_rule_texts);
     method!("runSqlStatement", run_sql_statement);
     method!("writeData", write_data);
@@ -2707,6 +2888,8 @@ pub(super) fn install<'js>(
     method!("getStatusMap", get_status_map);
     method!("getComponentInfoList", get_component_info_list);
     method!("getRuntimePath", get_runtime_path);
+    method!("getInstanceId", get_instance_id);
+    method!("runAsUser", run_as_user);
     method!("getThreadList", get_thread_list);
     method!("waitWorkerPoolEmpty", wait_worker_pool_empty);
     method!("getRequestDetails", get_request_details);

@@ -32,7 +32,7 @@ mod driver {
     use moqui_lib::object::{basic_convert, Value};
     use postgres_types::Type;
 
-    use crate::pgwire::{self, Column, Endpoint, Wire};
+    use crate::pgwire::{self, Columns, Endpoint, Wire};
     use crate::statement_lru::StatementLru;
 
     /// Statements kept prepared on a connection, as pgjdbc's `preparedStatementCacheQueries` default. A data load of
@@ -178,7 +178,7 @@ mod driver {
     struct Prepared {
         name: String,
         params: Vec<Type>,
-        columns: Arc<[Column]>,
+        columns: Columns,
     }
 
     impl Prepared {
@@ -625,9 +625,11 @@ mod driver {
             // A deferred failure is reported, not taken for this statement's.
             self.wire.finish()?;
             // Not kept in the statement cache: a statement typed in the SQL runner runs once. One that does not prepare
-            // is left to run, so its own error is the one reported.
+            // is left to run, so its own error is the one reported; in a transaction the failed Parse has aborted
+            // it, so the statement could only report that, and the Parse error is reported instead.
             match self.wire.prepare("", &rewrite_placeholders(sql)) {
-                Ok(described) => Ok(Some(!described.columns.is_empty())),
+                Ok(described) => Ok(Some(!described.columns.list.is_empty())),
+                Err(err) if self.in_transaction => Err(err),
                 Err(_) => Ok(None),
             }
         }
@@ -752,6 +754,19 @@ mod driver {
                 process_id,
                 secret_key,
             })
+        }
+
+        /// The backend pid the server sent at startup (`BackendKeyData`), which is `pg_backend_pid()`.
+        fn backend_id(&self) -> Option<i64> {
+            let (process_id, _) = self.wire.cancel_key();
+            (process_id != 0).then_some(i64::from(process_id))
+        }
+
+        fn set_application_name(&mut self, name: &str) -> Result<(), Error> {
+            self.flush_batch()?;
+            let quoted = name.replace('\'', "''");
+            self.wire
+                .simple(&format!("SET application_name = '{quoted}'"), "set application_name")
         }
     }
 

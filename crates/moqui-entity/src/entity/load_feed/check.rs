@@ -56,6 +56,8 @@ struct CheckState {
     list: bool,
     /// The file or text being read, for the rows.
     location: String,
+    /// The most rows `diff_info` keeps; the rest are counted in `fields_checked` only.
+    diff_limit: usize,
 }
 
 thread_local! {
@@ -67,6 +69,10 @@ struct CheckScope;
 
 impl CheckScope {
     fn enter(info: bool, list: bool) -> Result<Self, Error> {
+        Self::enter_limited(info, list, usize::MAX)
+    }
+
+    fn enter_limited(info: bool, list: bool, diff_limit: usize) -> Result<Self, Error> {
         CHECKING.with(|slot| {
             let mut slot = slot.borrow_mut();
             if slot.is_some() {
@@ -77,6 +83,7 @@ impl CheckScope {
                 info,
                 list,
                 location: String::new(),
+                diff_limit,
             });
             Ok(CheckScope)
         })
@@ -107,7 +114,15 @@ pub fn check_with<R>(body: impl FnOnce() -> Result<R, Error>) -> Result<(R, Chec
 /// Run `body` as Java's `checkInfo`: like [`check_with`], but what did not match is a row of
 /// [`CheckResult::diff_info`] rather than a message.
 pub fn check_info_with<R>(body: impl FnOnce() -> Result<R, Error>) -> Result<(R, CheckResult), Error> {
-    let scope = CheckScope::enter(true, false)?;
+    check_info_limited(usize::MAX, body)
+}
+
+/// [`check_info_with`] keeping at most `diff_limit` rows of [`CheckResult::diff_info`], for a check of a large source.
+pub fn check_info_limited<R>(
+    diff_limit: usize,
+    body: impl FnOnce() -> Result<R, Error>,
+) -> Result<(R, CheckResult), Error> {
+    let scope = CheckScope::enter_limited(true, false, diff_limit)?;
     let out = body()?;
     Ok((out, scope.finish()))
 }
@@ -184,6 +199,26 @@ pub(super) fn check_file(
     Ok(records)
 }
 
+/// Check one record of `entity` against the database, inside a [`check_with`] or [`check_info_with`] body: an ETL
+/// check's diff (plans/archive/Tools-Database.md §10.3). Outside a check it does nothing.
+///
+/// # Errors
+///
+/// Returns an error for an unknown entity, or when the record cannot be read.
+pub fn check_entity_record(facade: &EntityFacade, entity: &str, fields: FieldMap) -> Result<u64, Error> {
+    if !checking() {
+        return Ok(0);
+    }
+    check_record(
+        facade,
+        &Record {
+            entity: entity.to_string(),
+            fields,
+            children: Vec::new(),
+        },
+    )
+}
+
 /// Check one record read from the data and its nested records. Returns how many records it read, as a store
 /// returns how many it wrote.
 pub(super) fn check_record(facade: &EntityFacade, record: &Record) -> Result<u64, Error> {
@@ -212,7 +247,8 @@ pub(super) fn check_record(facade: &EntityFacade, record: &Record) -> Result<u64
     CHECKING.with(|slot| {
         if let Some(state) = slot.borrow_mut().as_mut() {
             state.result.messages.extend(found.messages);
-            state.result.diff_info.extend(found.diff_info);
+            let room = state.diff_limit.saturating_sub(state.result.diff_info.len());
+            state.result.diff_info.extend(found.diff_info.into_iter().take(room));
             state.result.fields_checked = state.result.fields_checked.saturating_add(found.fields_checked);
         }
     });

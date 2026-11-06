@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One database job (plans/archive/Tools-Database.md §6): its statements as planned, then as they run, with each
+    running statement's progress and the sessions blocking it (get#DatabaseJobStatus, asked every 2 seconds while it
+    runs). Run starts exactly the planned statements (run#DatabaseJob, on a worker); Cancel stops it
+    (cancel#DatabaseJob); a blocker can be cancelled or ended. Running, cancelling and ending need DATABASE_ADMIN. The
+    component is JobDetail.qvue; the terminal twin is JobDetailTui.xml. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Job" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
+
+    <parameter name="jobId" required="true"/>
+
+    <transition name="jobStatus" method="get" begin-transaction="false" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DatabaseJobStatus').parameters({jobId: String(jobId || '')}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors, canAdmin: ec.user.hasPermission('DATABASE_ADMIN')}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the planned statements, queued on a worker: this request returns at once and the page follows the job -->
+    <transition name="runJob" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            let errors = null
+            // queued on a worker (wait false): the page follows the job
+            ec.service.sync().name('org.moqui.impl.DatabaseServices.run#DatabaseJob').parameters({jobId: String(jobId || ''), wait: false}).call()
+            if (ec.message.hasError()) { errors = ec.message.errorsString; ec.message.clearErrors() }
+            ec.web.sendJsonResponse({errors})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <transition name="cancelJob" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.cancel#DatabaseJob').parameters({jobId: String(jobId || '')}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a session blocking the job: cancel its statement or end it (force for a session of this server, confirmed apart) -->
+    <transition name="signalSession" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const name = String(context.signal) == 'terminate' ? 'terminate#DatabaseSession' : 'cancel#DatabaseSession'
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.' + name).parameters({db: context.db || null,
+                pid: Number(context.pid), force: String(context.force) == 'true'}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <render-mode>
+            <text type="qvue" location="component://tools/screen/Tools/Database/JobDetail.qvue" template="false"/>
+            <text type="tui" location="component://tools/screen/Tools/Database/JobDetail.tui.json" template="fancy"/>
+        </render-mode>
+    </widgets>
+</screen>

@@ -1,0 +1,1 @@
+[{"t": "dynamicContainer", "id": "SqlTui", "url": ${JSON.stringify(sri.buildUrl('../SqlTui').addParameter('db', db || null).getUrlWithParams())}}]

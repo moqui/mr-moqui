@@ -657,11 +657,18 @@ fn run_entity(
         ))
     };
     let result = match operation {
-        "list" | "one" | "count" if sensitive::is_identity_admin_entity(&full_name) => return refused("available"),
+        "list" | "one" | "count"
+            if sensitive::is_identity_admin_entity(&full_name)
+                // the Tools database entities: their own services only (DatabaseConnection's password among them)
+                || sensitive::is_audit_entity(&full_name) =>
+        {
+            return refused("available")
+        }
         "list" | "one" => find_entity(&facade, name, master_name, operation, params),
         "count" => count_entity(&facade, name, params),
         "create" | "update" | "store" | "delete" => {
             if sensitive::is_identity_admin_entity(&full_name)
+                || sensitive::is_audit_entity(&full_name)
                 || (sensitive::is_secret_config_entity(&full_name) && !crate::user::is_in_group("ADMIN")?)
             {
                 return refused("writable");
@@ -680,7 +687,12 @@ fn run_entity(
             "Entity operation {other} not supported, must be one of: one, list, count, create, update, store, delete"
         ))),
     }?;
-    Ok(sensitive::strip_user_account_secrets(result))
+    // a view's alias may rename a password field: its origin decides, not its name
+    let renamed = sensitive::secret_fields(&facade, name);
+    Ok(sensitive::strip_fields(
+        sensitive::strip_user_account_secrets(result),
+        &renamed,
+    ))
 }
 
 /// Java's `MethodEntity` one and list: the search form conditions of the parameters. `one` is the first row found,

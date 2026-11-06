@@ -525,6 +525,9 @@ fn changed_now() -> Value {
 pub(crate) struct L10nTargets {
     targets: Vec<LocalTarget>,
     pq_aliases: Vec<PqAlias>,
+    /// The view's fields a `pq-expression` does not see: encrypted ones and `UserAccount` password material, by where
+    /// each alias reads from ([`expression_hidden`]).
+    pq_hidden: Vec<String>,
 }
 
 impl L10nTargets {
@@ -538,6 +541,11 @@ impl L10nTargets {
             .iter()
             .find(|alias| alias.name == name)
             .map(|alias| alias.expression.as_str())
+    }
+
+    /// Whether a `pq-expression` is evaluated without the stored field `name`.
+    pub(crate) fn pq_hides(&self, name: &str) -> bool {
+        self.pq_hidden.iter().any(|hidden| hidden == name)
     }
 
     pub(crate) fn pq_names(&self) -> impl Iterator<Item = &str> {
@@ -586,7 +594,88 @@ pub(crate) fn l10n_targets(facade: &EntityFacade, entity: &EntityDefinition) -> 
         plain_targets(entity)
     };
     let pq_aliases = entity.pq_aliases.clone();
-    (!targets.is_empty() || !pq_aliases.is_empty()).then(|| std::sync::Arc::new(L10nTargets { targets, pq_aliases }))
+    let pq_hidden = if pq_aliases.is_empty() {
+        Vec::new()
+    } else {
+        expression_hidden_for(facade, entity)
+    };
+    (!targets.is_empty() || !pq_aliases.is_empty()).then(|| {
+        std::sync::Arc::new(L10nTargets {
+            targets,
+            pq_aliases,
+            pq_hidden,
+        })
+    })
+}
+
+/// The fields of the view `entity` its `pq-expression` aliases are evaluated without (see [`expression_hidden`]). When
+/// the members cannot be read, every field is left out: an expression then reads nulls, never a secret.
+fn expression_hidden_for(facade: &EntityFacade, entity: &EntityDefinition) -> Vec<String> {
+    let anchor = entity
+        .member_entities
+        .first()
+        .map_or(entity.full_name.as_str(), |member| member.entity_name.as_str());
+    facade
+        .with_entity(anchor, |_, _, model| Ok(expression_hidden(entity, model)))
+        .unwrap_or_else(|err| {
+            tracing::error!(error = %err, "Could not read the members of {}; its expressions see no fields", entity.full_name);
+            entity
+                .aliases
+                .iter()
+                .map(|alias| alias.name.clone())
+                .chain(entity.fields.iter().map(|field| field.name.clone()))
+                .collect()
+        })
+}
+
+/// A view's fields that are encrypted or are `UserAccount` password material, followed through the alias to the field
+/// it reads (a member that is itself a view included), so a renamed alias is still found. An alias whose origin cannot
+/// be followed is left out too.
+pub(crate) fn expression_hidden(view: &EntityDefinition, model: &EntityModel) -> Vec<String> {
+    let mut hidden: Vec<String> = view
+        .fields
+        .iter()
+        .filter(|field| {
+            field.encrypt
+                || (super::sensitive::is_user_account_entity(&view.full_name)
+                    && super::sensitive::USER_ACCOUNT_SECRET_FIELDS.contains(&field.name.as_str()))
+        })
+        .map(|field| field.name.clone())
+        .collect();
+    for alias in &view.aliases {
+        if alias.encrypt || alias_is_secret(view, alias, model, 0) {
+            hidden.push(alias.name.clone());
+        }
+    }
+    hidden
+}
+
+fn alias_is_secret(
+    view: &EntityDefinition,
+    alias: &moqui_db::model::FieldAlias,
+    model: &EntityModel,
+    depth: usize,
+) -> bool {
+    let Some(entity_alias) = alias.entity_alias.as_deref() else {
+        // an expression or a complex alias reads no one field
+        return false;
+    };
+    let Some(member_name) = member_entity_name(view, entity_alias) else {
+        return true;
+    };
+    let Ok(member) = model.entity(&member_name) else {
+        return true;
+    };
+    let field_name = alias.field.as_deref().unwrap_or(&alias.name);
+    if member.is_view {
+        return match member.alias(field_name) {
+            Some(inner) if depth < 8 => inner.encrypt || alias_is_secret(member, inner, model, depth + 1),
+            _ => true,
+        };
+    }
+    member.field(field_name).is_some_and(|field| field.encrypt)
+        || (super::sensitive::is_user_account_entity(&member.full_name)
+            && super::sensitive::USER_ACCOUNT_SECRET_FIELDS.contains(&field_name))
 }
 
 /// The user's locale, as Java's `userFacade.getLocale()`; the facade's own with no execution context.

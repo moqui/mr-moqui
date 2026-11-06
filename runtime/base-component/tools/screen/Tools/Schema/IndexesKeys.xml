@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The entity model against the database (plans/archive/Tools-Database.md §5): each table with a difference, from
+    org.moqui.impl.DatabaseServices.compare#Schema. A selection of tables, one table, every missing index or every foreign
+    key is planned with plan#SchemaChanges, which keeps the plan as a pending database job; its page (Database › Job)
+    shows the statements and runs exactly those. Planning needs DATABASE_ADMIN. Download DDL is get#SchemaDdl. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Indexes and keys" default-menu-index="2">
+
+    <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
+    <!-- a plan of the selected tables (entityNames), or of every table when none is given; changes as plan#SchemaChanges -->
+    <transition name="plan" method="post" authz-action="all">
+        <actions><script><![CDATA[
+            const list = (value) => value == null || value === '' ? [] : [].concat(value).map(String).filter(Boolean)
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.plan#SchemaChanges').parameters({db,
+                entityNames: list(context.entityNames), changes: list(context.changes), names: list(context.names),
+                description: list(context.entityNames).length == 1 ? 'Indexes and keys of ' + list(context.entityNames)[0] : 'Indexes and keys'}).call() || {}
+            planJobId = ec.message.hasError() ? null : out.jobId
+            // no job: nothing to run, or not allowed to run it; the statements are still what would run
+            if (!planJobId && !ec.message.hasError()) ec.message.addMessage(ec.resource.expand('Not planned as a job: ${reason} (${count} statements)', '',
+                {reason: out.jobReason || 'nothing to run', count: (out.statements || []).length}), 'warning')
+            for (const warning of out.warnings || []) ec.message.addMessage(String(warning), 'warning')
+        ]]></script></actions>
+        <conditional-response url="../../Database/JobDetail"><condition><expression>planJobId</expression></condition>
+            <parameter name="jobId" from="planJobId"/></conditional-response>
+        <default-response url="."><parameter name="db"/></default-response>
+        <error-response url="."><parameter name="db"/></error-response>
+    </transition>
+    <transition name="downloadDdl" method="get" read-only="true">
+        <actions><script><![CDATA[
+            const list = (value) => value == null || value === '' ? [] : [].concat(value).map(String).filter(Boolean)
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#SchemaDdl').parameters({db, entityNames: list(context.entityNames)}).call() || {}
+            if (!ec.message.hasError()) ec.web.sendTextResponse(String(out.ddlText || ''), 'application/sql', out.fileName || 'schema.sql')
+        ]]></script></actions>
+        <default-response type="none"/>
+        <error-response url="."><parameter name="db"/></error-response>
+    </transition>
+
+    <actions>
+        <script><![CDATA[
+            compareError = null
+            let diff = null
+            try {
+                diff = ec.service.sync().name('org.moqui.impl.DatabaseServices.compare#Schema').parameters({db, entityNames: []}).call()
+            } catch (e) { compareError = String(e.message || e) }
+            if (ec.message.hasError()) { compareError = ec.message.errorsString; ec.message.clearErrors() }
+            checkedCount = diff?.checked || 0
+            compareErrors = diff?.errors || []
+            const names = (list) => (list || []).map((item) => item.name || item.column || String(item)).join(', ')
+            const filter = String(context.tableFilter || '').toLowerCase()
+            diffList = ((diff && diff.tables) || []).map((table) => ({
+                entityName: table.entityName, tableName: table.tableName, missingTable: !!table.missingTable,
+                columns: [table.missingColumns?.length ? 'missing ' + table.missingColumns.join(', ') : '',
+                    table.extraColumns?.length ? 'extra ' + table.extraColumns.join(', ') : '',
+                    table.columnTypes?.length ? 'type ' + table.columnTypes.map((type) => type.column + ' ' + type.actual + ' (model ' + type.expected + ')').join(', ') : '']
+                    .filter(Boolean).join('; '),
+                indexes: [table.missingIndexes?.length ? 'missing ' + names(table.missingIndexes) : '',
+                    table.invalidIndexes?.length ? 'invalid ' + names(table.invalidIndexes) : '',
+                    table.extraIndexes?.length ? 'extra ' + names(table.extraIndexes) : ''].filter(Boolean).join('; '),
+                keys: [table.missingForeignKeys?.length ? 'missing ' + names(table.missingForeignKeys) : '',
+                    table.extraForeignKeys?.length ? 'extra ' + names(table.extraForeignKeys) : '',
+                    table.unindexedForeignKeys?.length ? 'no index ' + names(table.unindexedForeignKeys) : ''].filter(Boolean).join('; '),
+                missingIndexCount: (table.missingIndexes || []).length + (table.invalidIndexes || []).length,
+                missingKeyCount: (table.missingForeignKeys || []).length}))
+                .filter((row) => !filter || (row.tableName + ' ' + row.entityName).toLowerCase().includes(filter))
+            missingIndexTotal = diffList.reduce((sum, row) => sum + row.missingIndexCount, 0)
+            canPlan = ec.user.hasPermission('DATABASE_ADMIN')
+            changeOptions = [{key: 'missingIndexes', text: 'Create missing indexes'}, {key: 'invalidIndexes', text: 'Rebuild invalid indexes'},
+                {key: 'missingForeignKeys', text: 'Create missing foreign keys'}, {key: 'extraIndexes', text: 'Drop extra indexes'},
+                {key: 'extraForeignKeys', text: 'Drop extra foreign keys'}, {key: 'dropForeignKeys', text: 'Drop every foreign key'}]
+        ]]></script>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Indexes and keys"/>
+            <box-toolbar>
+                <link url="downloadDdl" text="Download DDL" icon="download" parameter-map="{db: db}" tooltip="The CREATE TABLE, index and foreign key statements of every entity on this database"/>
+                <section name="PlanAllSection" condition="canPlan"><widgets>
+                    <link url="plan" text="Plan every missing index" icon="playlist_add" link-type="hidden-form" btn-type="primary"
+                            parameter-map="{db: db, changes: 'missingIndexes'}" condition="missingIndexTotal"/>
+                    <link url="plan" text="Drop all foreign keys" icon="link_off" link-type="hidden-form" btn-type="danger"
+                            parameter-map="{db: db, changes: 'dropForeignKeys'}"
+                            confirmation="Plan dropping every foreign key on this database? The plan is shown before anything runs."/>
+                </widgets></section>
+            </box-toolbar>
+            <box-body>
+                <section-include name="DatabasePicker" location="component://tools/template/DatabaseParts.xml"/>
+                <section name="CompareError" condition="compareError"><widgets>
+                    <label text="${compareError}" type="p" style="text-negative"/>
+                </widgets></section>
+                <label text="${checkedCount} tables checked, ${diffList.length} with a difference. Planning makes a database job whose statements are shown before they run; creating an index uses the online form where the database has one." type="p" style="m-muted"/>
+                <section-iterate name="CompareErrors" list="compareErrors" entry="compareProblem"><widgets>
+                    <label text="${compareProblem}" type="p" style="text-warning"/>
+                </widgets></section-iterate>
+                <form-single name="FilterForm" transition=".">
+                    <field name="db"><default-field><hidden/></default-field></field>
+                    <field name="tableFilter"><default-field title="Table or entity"><text-line size="30"/></default-field></field>
+                    <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+                    <field-layout><field-row-big><field-ref name="tableFilter"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                </form-single>
+                <form-list name="DiffList" list="diffList" skip-form="true">
+                    <row-selection id-field="entityName" parameter="entityNames" list-mode="true" condition="canPlan">
+                        <action>
+                            <dialog button-text="Plan changes" title="Plan the changes of the selected tables"/>
+                            <form-single name="PlanSelected" transition="plan">
+                                <field name="db" from="db"><default-field><hidden/></default-field></field>
+                                <field name="changes"><default-field title="Changes" tooltip="None chosen: the missing and invalid indexes and the missing foreign keys">
+                                    <drop-down allow-multiple="true"><list-options list="changeOptions" key="${key}" text="${text}"/></drop-down>
+                                </default-field></field>
+                                <field name="submitButton"><default-field title="Plan"><submit/></default-field></field>
+                            </form-single>
+                        </action>
+                    </row-selection>
+                    <field name="tableName"><header-field title="Table"/><default-field>
+                        <link url="../Entity" text="${tableName}" link-type="anchor" parameter-map="{selectedEntity: entityName}"/></default-field></field>
+                    <field name="entityName"><header-field title="Entity"/><default-field><display/></default-field></field>
+                    <field name="missingTable"><header-field title="Missing table"/><default-field><display text="${missingTable ? 'missing' : ''}"/></default-field></field>
+                    <field name="columns"><default-field><display/></default-field></field>
+                    <field name="indexes"><default-field><display/></default-field></field>
+                    <field name="keys"><default-field title="Foreign keys"><display/></default-field></field>
+                    <field name="planRow"><default-field title="">
+                        <link url="plan" text="Plan" link-type="hidden-form" condition="canPlan" parameter-map="{db: db, entityNames: entityName}"/>
+                    </default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="tableName"/><field-ref name="entityName"/></column>
+                        <column><field-ref name="indexes"/><field-ref name="planRow"/></column>
+                    </columns>
+                </form-list>
+            </box-body>
+        </container-box>
+    </widgets>
+</screen>

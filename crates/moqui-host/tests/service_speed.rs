@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Service facade timings and allocations: the service calls of `SpeedTest.xml` (the entity-auto CrUD of
+//! Service facade timings and allocations: the service calls of `Tools/Database/SpeedTest.xml` (the entity-auto CrUD of
 //! `moqui.test.TestEntity` and `BasicServices.echo#Data`), called from Rust in an entered `ExecutionContext`, with the
 //! same entity operations called directly in that context for comparison. No screen and no script.
 //!
@@ -30,8 +30,8 @@
 //! the duration metric for every call, spans as `telemetry_sample_ratio` keeps them (0 by default, so none below a
 //! root), and nothing with `telemetry_enabled=false`. Two modes:
 //!
-//! - **one transaction** matches `SpeedTest.xml` (`begin-transaction="true"`): every call joins the batch's
-//!   transaction, which commits once after the timed rows.
+//! - **one transaction** matches `Tools/Database/SpeedTest.xml` (`begin-transaction="true"`): every call joins the
+//!   batch's transaction, which commits once after the timed rows.
 //! - **own transaction**: each service call begins and commits its own (`use-or-begin` with none in place), and each
 //!   direct entity call autocommits.
 

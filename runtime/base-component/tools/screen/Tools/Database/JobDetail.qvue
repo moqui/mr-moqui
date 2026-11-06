@@ -1,0 +1,162 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One database job, served by JobDetail.xml in the qvue render mode: the planned statements and Run, then each
+    statement's state, the running one's progress and the sessions blocking it, asked again every 2 seconds while the
+    job runs. -->
+<template><div class="q-pa-sm">
+    <q-card flat bordered class="q-mb-sm">
+        <q-card-section class="row items-center q-col-gutter-sm">
+            <div class="col">
+                <div class="text-h6">{{job.description || ('Database job ' + jobId)}}</div>
+                <div class="text-caption" :class="mutedClass">{{job.db}}<span v-if="job.createdDate"> · planned {{when(job.createdDate)}}</span>
+                    <span v-if="job.startTime"> · started {{when(job.startTime)}}</span><span v-if="job.endTime"> · ended {{when(job.endTime)}}</span></div>
+            </div>
+            <div class="col-auto"><q-chip dense square class="q-ma-none m-tonal" :class="'text-' + statusColor(job.statusId)">{{statusText(job.statusId)}}</q-chip></div>
+            <div class="col-auto">
+                <q-btn v-if="job.statusId === 'DbjsPending' && canAdmin" unelevated no-caps color="primary" icon="play_arrow" :label="'Run ' + statements.length + ' statements'"
+                        :disable="!statements.length || acting" @click="runJob"></q-btn>
+                <q-btn v-if="job.statusId === 'DbjsRunning' && canAdmin" unelevated no-caps color="negative" icon="stop" label="Cancel" :disable="acting" @click="cancelJob"></q-btn>
+            </div>
+        </q-card-section>
+        <q-card-section v-if="job.statusId === 'DbjsPending'" class="q-pt-none text-body2">
+            These are the statements the job runs, in order, each on its own connection outside a transaction. Nothing has run yet.
+        </q-card-section>
+        <q-card-section v-if="reasonList.length" class="q-pt-none">
+            <div v-for="reason in reasonList" :key="reason" class="text-caption text-warning">Not read: {{reason}}</div>
+        </q-card-section>
+    </q-card>
+
+    <q-list bordered separator class="rounded-borders">
+        <q-item v-for="statement in statements" :key="statement.statementSeqId">
+            <q-item-section avatar><q-chip dense square class="q-ma-none m-tonal" :class="'text-' + statusColor(statement.statusId)">{{statusText(statement.statusId)}}</q-chip></q-item-section>
+            <q-item-section>
+                <q-item-label class="text-mono" style="white-space:pre-wrap">{{statement.statementText}}</q-item-label>
+                <q-item-label caption>
+                    <span>{{statement.statementSeqId}}</span><span v-if="statement.dependsOnSeqId"> · after {{statement.dependsOnSeqId}}</span>
+                    <span v-if="statement.backendPid"> · session {{statement.backendPid}}</span>
+                    <span v-if="statement.rowsAffected != null"> · {{statement.rowsAffected}} rows</span>
+                    <span v-if="statement.startTime"> · {{when(statement.startTime)}}</span><span v-if="statement.endTime"> to {{when(statement.endTime)}}</span>
+                </q-item-label>
+                <q-item-label v-if="statement.errorText" caption class="text-negative" style="white-space:pre-wrap">{{statement.errorText}}</q-item-label>
+                <div v-for="row in progressOf(statement)" :key="row.key" class="q-mt-xs">
+                    <div class="text-caption">{{row.label}}</div>
+                    <q-linear-progress :value="row.value" :indeterminate="row.value == null" size="8px" rounded color="primary"></q-linear-progress>
+                </div>
+                <div v-for="session in blockersOf(statement)" :key="session.pid" class="row items-center q-mt-xs text-caption">
+                    <q-icon name="block" color="warning" class="q-mr-xs"></q-icon>
+                    <span class="col">Blocked by session {{session.pid}} ({{session.user_name || ''}} {{session.state || ''}}): {{(session.query || '').substring(0, 200)}}</span>
+                    <template v-if="canAdmin">
+                        <q-btn flat dense no-caps label="Cancel" @click="signal(session, 'cancel')"></q-btn>
+                        <q-btn flat dense no-caps color="negative" label="End" @click="signal(session, 'terminate')"></q-btn>
+                    </template>
+                </div>
+            </q-item-section>
+        </q-item>
+        <q-item v-if="!statements.length"><q-item-section class="text-caption">{{loading ? 'Loading' : 'This job has no statements'}}</q-item-section></q-item>
+    </q-list>
+</div></template>
+
+<script>
+module.exports = {
+    data() {
+        return { job: {}, statements: [], progress: [], blocking: [], reasons: {}, canAdmin: false, loading: true, acting: false, timer: null };
+    },
+    computed: {
+        jobId() { return (this.$root.currentParameters || {}).jobId || ''; },
+        screenPath() { return this.$root.basePath + '/' + this.$root.currentPathList.join('/'); },
+        mutedClass() { return this.$q.dark.isActive ? 'text-grey-5' : 'text-grey-7'; },
+        reasonList() { return Object.entries(this.reasons || {}).map(([part, reason]) => part + ': ' + reason); }
+    },
+    methods: {
+        url(name) { return this.screenPath + '/' + name; },
+        // a time the services give as epoch milliseconds (or a date text), in the browser's locale
+        when(value) { if (value == null || value === '') return ''; const date = /^\d+$/.test(String(value)) ? new Date(Number(value)) : new Date(value);
+            return isNaN(date.getTime()) ? String(value) : date.toLocaleString(); },
+        statusText(statusId) {
+            return { DbjsPending: 'Pending', DbjsRunning: 'Running', DbjsDone: 'Done', DbjsFailed: 'Failed', DbjsCancelled: 'Cancelled',
+                DbjsSkipped: 'Skipped' }[statusId] || statusId || '';
+        },
+        statusColor(statusId) {
+            return { DbjsRunning: 'primary', DbjsDone: 'positive', DbjsFailed: 'negative', DbjsCancelled: 'warning', DbjsSkipped: 'warning' }[statusId] || 'grey-7';
+        },
+        // the server's progress of a statement's session: blocks or tuples done of total, or a percent (MariaDB)
+        progressOf(statement) {
+            if (!statement.backendPid || statement.statusId !== 'DbjsRunning') return [];
+            return this.progress.filter((row) => String(row.pid) === String(statement.backendPid)).map((row, index) => {
+                const total = Number(row.blocks_total || row.tuples_total || 0), done = Number(row.blocks_done || row.tuples_done || 0);
+                const value = row.progress != null ? Number(row.progress) / 100 : total > 0 ? Math.min(done / total, 1) : null;
+                const label = [row.command, row.phase, row.table_name, row.index_name].filter(Boolean).join(' · ')
+                    + (value != null ? ' · ' + Math.round(value * 100) + '%' : '');
+                return { key: index, label, value };
+            });
+        },
+        blockersOf(statement) {
+            if (statement.statusId !== 'DbjsRunning') return [];
+            return this.blocking.filter((session) => session.blocked_pid == null || String(session.blocked_pid) === String(statement.backendPid));
+        },
+        load() {
+            return moqui.request(this.url('jobStatus'), { params: { jobId: this.jobId } }).then((result) => {
+                const json = result.json || {};
+                this.loading = false;
+                if (json.errors) { moqui.notifyMessages(null, json.errors); this.stop(); return; }
+                this.job = json.job || {}; this.statements = json.statements || []; this.progress = json.progress || [];
+                this.blocking = json.blocking || []; this.reasons = json.reasons || {}; this.canAdmin = !!json.canAdmin;
+                // a cancelled job's statement may still be stopping: follow it until nothing runs
+                if (this.job.statusId === 'DbjsRunning' || this.statements.some((statement) => statement.statusId === 'DbjsRunning')) this.poll();
+                else this.stop();
+            }, (err) => { this.loading = false; this.stop(); moqui.handleAjaxError(err); });
+        },
+        poll() { if (!this.timer && !this.unmounted) this.timer = setTimeout(() => { this.timer = null; this.load(); }, 2000); },
+        stop() { if (this.timer) { clearTimeout(this.timer); this.timer = null; } },
+        post(name, params) {
+            this.acting = true;
+            return moqui.request(this.url(name), { method: 'POST', params: Object.assign({ jobId: this.jobId }, params) }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) { moqui.notifyMessages(null, json.errors); return null; }
+                return json;
+            }, (err) => { moqui.handleAjaxError(err); return null; }).finally(() => { this.acting = false; });
+        },
+        runJob() {
+            this.$q.dialog({ title: 'Run the job', message: 'Run these ' + this.statements.length + ' statements on ' + (this.job.db || 'the database') + '?',
+                cancel: true, persistent: true }).onOk(() => this.post('runJob').then((json) => {
+                if (!json) return;
+                this.job = Object.assign({}, this.job, { statusId: 'DbjsRunning' });
+                this.poll();
+            }));
+        },
+        cancelJob() {
+            this.$q.dialog({ title: 'Cancel the job', message: 'Stop the running statement and start no more?', cancel: true, persistent: true })
+                .onOk(() => this.post('cancelJob').then((json) => { if (json) this.load(); }));
+        },
+        signal(session, signal) {
+            const what = signal === 'terminate' ? 'End session ' + session.pid + '? Its transaction is rolled back.' : 'Cancel the statement of session ' + session.pid + '?';
+            const confirmOwn = () => this.$q.dialog({ title: 'A session of this server', message: 'Session ' + session.pid
+                + ' is one of this server\'s own connections: what uses it fails. Go on?', cancel: true, persistent: true });
+            // a session of this server is refused without force: that refusal asks the second confirmation
+            const send = (force) => moqui.request(this.url('signalSession'), { method: 'POST',
+                params: { jobId: this.jobId, db: this.job.db, pid: session.pid, signal, force } }).then((result) => {
+                const json = result.json || {};
+                if (json.errors && !force && /set force/i.test(json.errors)) { confirmOwn().onOk(() => send(true)); return; }
+                if (json.errors) { moqui.notifyMessages(null, json.errors); return; }
+                moqui.notifyMessages(json.signalled ? 'Done' : 'The session was not found');
+                this.load();
+            }, (err) => moqui.handleAjaxError(err));
+            this.$q.dialog({ title: signal === 'terminate' ? 'End the session' : 'Cancel the statement', message: what, cancel: true, persistent: true })
+                .onOk(() => send(false));
+        }
+    },
+    mounted() { this.load(); },
+    beforeUnmount() { this.unmounted = true; this.stop(); }
+};
+</script>

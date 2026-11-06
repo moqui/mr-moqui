@@ -140,6 +140,7 @@ fn test_row() -> DbRow {
             ("testId".into(), Value::string("T1")),
             ("testMedium".into(), Value::string("kept")),
         ],
+        origins: None,
     }
 }
 
@@ -259,6 +260,7 @@ impl DbConnection for RecConn {
                         ("instanceHostId".into(), Value::string("H1")),
                         ("password".into(), Value::string(password)),
                     ],
+                    origins: None,
                 }]);
             }
         }
@@ -654,6 +656,7 @@ impl DbConnection for CursorConn {
         let number = i64::try_from(tape.fetched).unwrap_or_default();
         Ok(Some(DbRow {
             columns: vec![("n".into(), Value::I64(number))],
+            origins: None,
         }))
     }
 
@@ -2079,6 +2082,59 @@ fn create_db_view(facade: &EntityFacade, name: &str, members: &[(&str, &str, &st
             ],
         );
     }
+}
+
+/// A view's alias that renames a `UserAccount` password field is a secret whatever its name, and a view over a
+/// restricted entity is restricted: a `DbViewEntity` with `pw` for `currentPassword`, and `UserGroupMemberUser`.
+#[test]
+fn a_view_that_renames_a_password_or_reads_a_restricted_entity_is_caught() {
+    let facade = crate::testing::open();
+    create_db_view(
+        &facade,
+        "UserPw",
+        &[("UA", "moqui.security.UserAccount", "")],
+        &[
+            ("userId", "UA", "userId"),
+            ("login", "UA", "username"),
+            ("pw", "UA", "currentPassword"),
+        ],
+    );
+    assert_eq!(super::sensitive::secret_fields(&facade, "UserPw"), ["pw"]);
+    assert_eq!(
+        super::sensitive::secret_fields(&facade, "moqui.security.UserAccount"),
+        super::sensitive::USER_ACCOUNT_SECRET_FIELDS
+            .iter()
+            .filter(|name| facade
+                .with_entity("moqui.security.UserAccount", |entity, _, _| Ok(entity
+                    .field(name)
+                    .is_some()))
+                .unwrap())
+            .map(|name| (*name).to_string())
+            .collect::<Vec<_>>()
+    );
+    assert!(!super::sensitive::is_restricted_entity_or_view(&facade, "UserPw"));
+    assert!(super::sensitive::is_restricted_entity_or_view(
+        &facade,
+        "moqui.security.UserGroupMemberUser"
+    ));
+    assert!(!super::sensitive::is_restricted_generic_entity(
+        "moqui.security.UserGroupMemberUser"
+    ));
+    let stripped = super::sensitive::strip_fields(
+        Value::Map(
+            [
+                ("pw".to_string(), Value::string("hash")),
+                ("login".to_string(), Value::string("a")),
+            ]
+            .into_iter()
+            .collect(),
+        ),
+        &super::sensitive::secret_fields(&facade, "UserPw"),
+    );
+    let Value::Map(stripped) = stripped else {
+        panic!("a map")
+    };
+    assert!(!stripped.contains_key("pw") && stripped.contains_key("login"));
 }
 
 /// Java's `DbViewEntity`: a view-entity built from its member, key map and alias rows on its first use, under its name

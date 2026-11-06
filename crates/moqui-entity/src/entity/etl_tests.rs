@@ -192,3 +192,126 @@ fn error_in_the_run_rolls_back_every_entity_group() {
         None
     );
 }
+
+/// Extracts `count` EnumerationType rows, `EtlBatch1` … in order.
+struct Numbered(usize);
+
+impl moqui_lib::etl::Extractor for Numbered {
+    fn extract(&mut self, etl: &mut SimpleEtl) -> Result<(), moqui_lib::error::Error> {
+        for number in 1..=self.0 {
+            let mut values = std::collections::BTreeMap::new();
+            values.insert("enumTypeId".to_string(), Value::string(format!("EtlBatch{number}")));
+            values.insert("description".to_string(), Value::string("batched"));
+            let _ = etl.process_entry(moqui_lib::etl::SimpleEntry::new("moqui.basic.EnumerationType", values));
+        }
+        Ok(())
+    }
+}
+
+/// Batches of three: the entry that fails rolls its batch back, the next entry starts a new batch, and the last
+/// batch commits; the batches before stay.
+#[test]
+fn a_failed_entry_rolls_back_its_batch_and_the_rest_commit() {
+    let facade = testing::open();
+    let writes = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = std::sync::Arc::clone(&writes);
+    let loader = facade
+        .make_etl_loader()
+        .batch_size(3)
+        .writer(Box::new(move |facade, entry| {
+            counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if entry.values.get("enumTypeId") == Some(&Value::string("EtlBatch8")) {
+                return Err(moqui_lib::error::Error::new("bad row"));
+            }
+            let mut value = facade.make_value("moqui.basic.EnumerationType")?;
+            for (name, field) in &entry.values {
+                value.set(name, field.clone());
+            }
+            value.create(facade)
+        }));
+    let mut etl = SimpleEtl::new(Numbered(11), loader);
+    etl.process();
+    assert_eq!(writes.load(std::sync::atomic::Ordering::SeqCst), 11);
+    let present = |number: usize| {
+        text(
+            &facade,
+            "moqui.basic.EnumerationType",
+            ("enumTypeId", &format!("EtlBatch{number}")),
+            "description",
+        )
+        .is_some()
+    };
+    // 1-3 and 4-6 committed; 7 was in the batch that 8 failed; 9-11 the last batch
+    for number in [1, 2, 3, 4, 5, 6, 9, 10, 11] {
+        assert!(present(number), "row {number}");
+    }
+    for number in [7, 8] {
+        assert!(!present(number), "row {number}");
+    }
+}
+
+/// Extracts `count` EnumerationType rows, `<prefix>1` … in order, stopping when the run stops.
+struct Prefixed(&'static str, usize);
+
+impl moqui_lib::etl::Extractor for Prefixed {
+    fn extract(&mut self, etl: &mut SimpleEtl) -> Result<(), moqui_lib::error::Error> {
+        for number in 1..=self.1 {
+            let mut values = std::collections::BTreeMap::new();
+            values.insert("enumTypeId".to_string(), Value::string(format!("{}{number}", self.0)));
+            values.insert("description".to_string(), Value::string("batched"));
+            if etl
+                .process_entry(moqui_lib::etl::SimpleEntry::new("moqui.basic.EnumerationType", values))
+                .is_err()
+            {
+                return Ok(());
+            }
+        }
+        Ok(())
+    }
+}
+
+/// With stop-on-error, a transform error ends the run and the batch it was in is rolled back, not committed.
+#[test]
+fn a_transform_error_that_stops_the_run_rolls_back_its_batch() {
+    let facade = testing::open();
+    let loader = facade.make_etl_loader().batch_size(3);
+    let mut etl = SimpleEtl::new(Prefixed("EtlStop", 8), loader);
+    etl.add_transformer(|transform: &mut moqui_lib::etl::EntryTransform| {
+        if transform.entry().values.get("enumTypeId") == Some(&Value::string("EtlStop5")) {
+            return Err(moqui_lib::error::Error::new("bad row"));
+        }
+        Ok(())
+    });
+    etl.stop_on_error();
+    etl.process();
+    assert!(etl.stopped());
+    let present = |number: usize| {
+        text(
+            &facade,
+            "moqui.basic.EnumerationType",
+            ("enumTypeId", &format!("EtlStop{number}")),
+            "description",
+        )
+        .is_some()
+    };
+    for number in [1, 2, 3] {
+        assert!(present(number), "row {number}");
+    }
+    for number in [4, 5, 6, 7, 8] {
+        assert!(!present(number), "row {number}");
+    }
+}
+
+/// Joining the caller's transaction: nothing is begun.
+#[test]
+fn a_joining_loader_begins_no_transaction() {
+    use moqui_lib::etl::Loader;
+
+    let facade = testing::open();
+    let tx = facade.transactions_for("moqui.basic.Enumeration").unwrap();
+    let mut loader = facade
+        .make_etl_loader()
+        .transactions(crate::entity::EtlTransactions::JoinCaller);
+    loader.init(None);
+    assert!(!tx.in_transaction(), "a joining loader begins no transaction");
+}

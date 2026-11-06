@@ -107,6 +107,14 @@ pub(crate) fn enforce(
         if row_exists(facade, &job.related, &job.keys)? {
             continue;
         }
+        // no dummy in an entity the generic tools and loads keep away from a request (group membership, permissions,
+        // secret config, the audit): a load naming a missing one fails as its foreign key would
+        if super::sensitive::is_restricted_generic_entity(&related_name) {
+            return Err(Error::new(format!(
+                "No {related_name} for foreign key {} on {entity_name}, and no dummy is made in a restricted entity",
+                job.relationship
+            )));
+        }
         tracing::warn!(
             "Creating dummy {} for foreign key {} on {entity_name}, keys {:?}",
             job.related,
@@ -120,6 +128,46 @@ pub(crate) fn enforce(
         facade.insert_record(&related, stack)?;
     }
     Ok(())
+}
+
+/// A foreign key of a record with no related record: what an ETL check reports (plans/archive/Tools-Database.md §10.3).
+#[derive(Clone, Debug, PartialEq)]
+pub struct MissingRelated {
+    pub relationship: String,
+    pub related: String,
+    pub keys: FieldMap,
+}
+
+/// The foreign keys of `values` (a record of `entity_name`) whose related record is not there, by the rule
+/// [`enforce`] uses to make dummies: each `type="one"` relationship whose keys fill the related primary key, a record
+/// that names itself satisfied by its own insert. Read whatever the dummy flags say.
+///
+/// # Errors
+///
+/// Returns an error for an unknown entity, or when a related record cannot be read.
+pub fn missing_related(
+    facade: &EntityFacade,
+    entity_name: &str,
+    values: &FieldMap,
+) -> Result<Vec<MissingRelated>, Error> {
+    let jobs = facade.with_entity(entity_name, |entity, _, model| fk_jobs(entity, model, values))?;
+    let own_keys = facade.pk_map(entity_name, values).ok();
+    let own_name = facade.with_entity(entity_name, |entity, _, _| Ok(entity.full_name.clone()))?;
+    let mut missing = Vec::new();
+    for job in jobs {
+        let related_name = facade.with_entity(&job.related, |entity, _, _| Ok(entity.full_name.clone()))?;
+        if related_name == own_name && own_keys.as_ref() == Some(&job.keys) {
+            continue;
+        }
+        if !row_exists(facade, &job.related, &job.keys)? {
+            missing.push(MissingRelated {
+                relationship: job.relationship,
+                related: job.related,
+                keys: job.keys,
+            });
+        }
+    }
+    Ok(missing)
 }
 
 fn fk_jobs(entity: &EntityDefinition, model: &EntityModel, values: &FieldMap) -> Result<Vec<FkJob>, Error> {

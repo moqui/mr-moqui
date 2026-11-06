@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- One ETL mapping (plans/archive/Tools-Database.md §10.4): its source, target and options, the source column to
+    target field table with each field's converted sample value and error, a test against a file, a run, a check of the
+    whole source, a schedule (a ServiceJob that calls run#EtlMapping with mappingId) and the mapping's runs. The
+    component is Mapping.qvue, over the JSON transitions of Etl.xml; the terminal shows the mapping, its fields and its
+    runs. With no mappingId it is a new mapping. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Mapping" default-menu-include="false" render-modes="vue,qvue,tui" server-static="vue,qvue">
+
+    <parameter name="mappingId"/>
+
+    <widgets>
+        <render-mode>
+            <text type="qvue" location="component://tools/screen/Tools/Etl/Mapping.qvue" template="false"/>
+            <!-- the terminal: the mapping, its fields and its latest runs, read only -->
+            <text type="tui"><![CDATA[${JSON.stringify((() => {
+                const id = String(context.mappingId || '')
+                if (!id) return [{t: 'text', id: 'MappingNew', text: 'Make a mapping in the browser: Tools › ETL › Mappings › New mapping.'}]
+                const call = (service, parameters) => {
+                    const out = ec.service.sync().name('org.moqui.impl.EtlServices.' + service).parameters(parameters).call() || {}
+                    const error = ec.message.hasError() ? ec.message.errorsString : null
+                    ec.message.clearErrors()
+                    return {out, error}
+                }
+                const found = call('get#EtlMapping', {mappingId: id})
+                if (found.error || !found.out.mapping) return [{t: 'text', id: 'MappingError', style: 'error', text: found.error || 'No mapping ' + id}]
+                const mapping = found.out.mapping
+                const sources = {EtlsEntity: 'Entity', EtlsSql: 'SQL', EtlsFile: 'File', EtlsFlatXml: 'Flat XML'}
+                const source = (sources[mapping.sourceTypeEnumId] || mapping.sourceTypeEnumId) + ': ' + (mapping.sourceEntityName || mapping.sourceLocation || mapping.sourceDb || '')
+                const text = (value) => value == null ? '' : String(value)
+                const runs = call('get#EtlRuns', {mappingId: id, limit: 10}).out.runs || []
+                return [{t: 'text', id: 'MappingTitle', style: 'h5', text: mapping.description || id},
+                    {t: 'text', id: 'MappingSource', text: 'Source ' + source},
+                    {t: 'text', id: 'MappingTarget', text: 'Target ' + (mapping.targetTypeEnumId == 'EtltService' ? 'service ' : 'entity ') + text(mapping.targetName)
+                        + (mapping.batchSize ? ', batches of ' + mapping.batchSize : ', one transaction')},
+                    {t: 'formList', id: 'MappingFields', name: 'MappingFields', columns: [{title: 'Target field'}, {title: 'Source'}, {title: 'Default'}],
+                        rows: (mapping.fields || []).map((field, index) => ({id: String(index), cells: [text(field.targetField),
+                            field.sourceColumn ? text(field.sourceColumn) : field.constantValue != null ? '= ' + field.constantValue : field.expression ? '(expression)' : '',
+                            text(field.defaultValue)]}))},
+                    {t: 'formList', id: 'MappingRuns', name: 'MappingRuns', columns: [{title: 'Run'}, {title: 'Status'}, {title: 'Loaded'}, {title: 'Errors'}],
+                        rows: runs.map((run, index) => ({id: String(index), cells: [{t: 'link', id: 'MappingRun' + index, text: text(run.runId),
+                            url: sri.buildUrl('../Run').addParameter('runId', run.runId).getUrlWithParams(), kind: 'anchor'}, text(run.statusId), text(run.loadCount), text(run.errorCount)]}))}]
+            })())}]]></text>
+        </render-mode>
+    </widgets>
+</screen>

@@ -101,6 +101,8 @@ mod overlay {
                 max_connections: POOL_MAX + SUPERUSER_SLOTS,
                 role: ClusterRole::Sim,
                 install_dir: self.install_dir.clone(),
+                pg_stat_statements: false,
+                settings: moqui_core::entity::datasource::EmbeddedSettings::default(),
             };
             let (cluster, driver) = EmbeddedCluster::start_with(&dir, &options)?;
             let pool = PoolConfig {

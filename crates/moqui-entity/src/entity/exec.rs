@@ -173,42 +173,195 @@ fn existence_text(text: &str) -> bool {
         || text.contains("duplicate foreign key constraint name")
 }
 
-pub(crate) fn split_sql(sql: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut start = 0;
-    let mut in_quote = false;
-    let mut chars = sql.char_indices().peekable();
-    while let Some((index, ch)) = chars.next() {
-        if in_quote {
-            if ch == '\'' {
-                if chars.peek().is_some_and(|(_, next)| *next == '\'') {
-                    chars.next();
-                } else {
-                    in_quote = false;
-                }
-            }
-        } else if ch == '\'' {
-            in_quote = true;
-        } else if ch == ';' {
-            let piece = sql[start..index].trim();
-            if !piece.is_empty() {
-                out.push(piece);
-            }
-            start = index + ch.len_utf8();
+/// How a database quotes and comments SQL text, for [`split_sql_as`] and [`blank_sql`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SqlSyntax {
+    /// Postgres and standard SQL: `'…'` with doubled quotes, `E'…'` with backslash escapes, `"…"` names, dollar-quoted
+    /// bodies (`$$…$$`, `$tag$…$tag$`), `--` comments and nested `/* … */` comments.
+    #[default]
+    Postgres,
+    /// MySQL and MariaDB: `'…'` and `"…"` with backslash escapes and doubled quotes, `` `…` `` names, `#` and `-- `
+    /// (with a space after) comments, and `/* … */` comments that do not nest.
+    Mysql,
+}
+
+impl SqlSyntax {
+    /// The syntax of a dialect's database.
+    #[must_use]
+    pub fn of(dialect: &moqui_db::dialect::Dialect) -> Self {
+        if moqui_db::sql::is_mysql(dialect) {
+            Self::Mysql
+        } else {
+            Self::Postgres
         }
     }
-    let tail = sql[start..].trim();
-    if !tail.is_empty() {
-        out.push(tail);
+}
+
+/// The statements of a Postgres script: [`split_sql_as`] with [`SqlSyntax::Postgres`].
+pub fn split_sql(sql: &str) -> Vec<&str> {
+    split_sql_as(sql, SqlSyntax::Postgres)
+}
+
+/// The statements of a script, split at each `;` outside quoted text, quoted names, dollar-quoted bodies and comments
+/// as `syntax` writes them (plans/archive/Tools-Database.md 8.1). Each statement is trimmed and keeps its comments; a
+/// piece that is only comments and space is left out.
+pub fn split_sql_as(sql: &str, syntax: SqlSyntax) -> Vec<&str> {
+    let blank = blank_sql(sql, syntax);
+    let mut out = Vec::new();
+    let mut start = 0;
+    let mut push = |start: usize, end: usize| {
+        if !blank[start..end].trim().is_empty() {
+            out.push(sql[start..end].trim());
+        }
+    };
+    for (at, byte) in blank.bytes().enumerate() {
+        if byte == b';' {
+            push(start, at);
+            start = at + 1;
+        }
     }
+    push(start, sql.len());
     out
 }
+
+/// `sql` with each comment made spaces and the inside of each quoted text, quoted name and dollar-quoted body made
+/// `_` (their quotes kept), byte for byte, so what is left is the statement's own words at the same positions: what
+/// [`split_sql_as`] splits, and what a check of the statement's keywords reads.
+///
+/// A scanner over byte positions: a region begins and ends at an ASCII byte, and every byte in it is replaced, so the
+/// text stays UTF-8.
+#[must_use]
+pub fn blank_sql(sql: &str, syntax: SqlSyntax) -> String {
+    let bytes = sql.as_bytes();
+    let mut out = bytes.to_vec();
+    let mysql = syntax == SqlSyntax::Mysql;
+    let fill = |out: &mut Vec<u8>, from: usize, to: usize, with: u8| {
+        for byte in &mut out[from..to.min(bytes.len())] {
+            *byte = with;
+        }
+    };
+    let mut at = 0;
+    while at < bytes.len() {
+        let next = bytes.get(at + 1).copied();
+        match bytes[at] {
+            b'-' if next == Some(b'-')
+                && (!mysql || bytes.get(at + 2).is_none_or(|byte| byte.is_ascii_whitespace())) =>
+            {
+                let end = sql[at..].find('\n').map_or(bytes.len(), |end| at + end);
+                fill(&mut out, at, end, b' ');
+                at = end;
+            }
+            b'#' if mysql => {
+                let end = sql[at..].find('\n').map_or(bytes.len(), |end| at + end);
+                fill(&mut out, at, end, b' ');
+                at = end;
+            }
+            b'/' if next == Some(b'*') => {
+                let end = block_comment_end(bytes, at + 2, !mysql);
+                fill(&mut out, at, end, b' ');
+                at = end;
+            }
+            quote @ (b'\'' | b'"' | b'`') => {
+                let escapes = if mysql {
+                    quote != b'`'
+                } else {
+                    // `E'…'` takes backslash escapes; an `E` that ends a longer word is not that prefix.
+                    quote == b'\''
+                        && at > 0
+                        && matches!(bytes[at - 1], b'E' | b'e')
+                        && !(at > 1 && is_word_byte(bytes[at - 2]))
+                };
+                let end = quoted_end(bytes, at + 1, quote, escapes);
+                // The closing quote stays, unless the text runs to the end unclosed.
+                let inner_end = if end <= bytes.len() && bytes.get(end - 1) == Some(&quote) && end > at + 1 {
+                    end - 1
+                } else {
+                    end
+                };
+                fill(&mut out, at + 1, inner_end, b'_');
+                at = end;
+            }
+            b'$' if !mysql && !(at > 0 && is_word_byte(bytes[at - 1])) => match dollar_tag(&sql[at..]) {
+                Some(tag) => {
+                    let body = at + tag.len();
+                    let close = sql[body..].find(tag).map_or(bytes.len(), |end| body + end);
+                    fill(&mut out, body, close, b'_');
+                    at = (close + tag.len()).min(bytes.len());
+                }
+                None => at += 1,
+            },
+            _ => at += 1,
+        }
+    }
+    // Every replaced region starts and ends at an ASCII byte and is replaced whole, so this cannot fail; the original
+    // is the fallback all the same.
+    String::from_utf8(out).unwrap_or_else(|_| sql.to_string())
+}
+
+/// Past the `*/` that closes the block comment whose body starts at `at`, counting nested `/*` when `nests`.
+fn block_comment_end(bytes: &[u8], mut at: usize, nests: bool) -> usize {
+    let mut depth = 1;
+    while at < bytes.len() && depth > 0 {
+        match (bytes[at], bytes.get(at + 1)) {
+            (b'/', Some(b'*')) if nests => {
+                depth += 1;
+                at += 2;
+            }
+            (b'*', Some(b'/')) => {
+                depth -= 1;
+                at += 2;
+            }
+            _ => at += 1,
+        }
+    }
+    at.min(bytes.len())
+}
+
+/// Past the `quote` that closes the quoted text whose body starts at `at`; a doubled quote is one quote in the text.
+fn quoted_end(bytes: &[u8], mut at: usize, quote: u8, escapes: bool) -> usize {
+    while at < bytes.len() {
+        if escapes && bytes[at] == b'\\' {
+            at += 2;
+        } else if bytes[at] == quote {
+            if bytes.get(at + 1) != Some(&quote) {
+                return at + 1;
+            }
+            at += 2;
+        } else {
+            at += 1;
+        }
+    }
+    bytes.len()
+}
+
+/// A letter, digit, `_` or `$`, which continue an identifier, or a byte of a multi-byte character.
+fn is_word_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$' || byte >= 0x80
+}
+
+/// The dollar-quote tag `text` starts with: `$$` or `$name$`, a name not starting with a digit (`$1` is a parameter).
+fn dollar_tag(text: &str) -> Option<&str> {
+    let (name, _) = text.strip_prefix('$')?.split_once('$')?;
+    let valid = name
+        .chars()
+        .enumerate()
+        .all(|(index, ch)| ch == '_' || ch.is_alphabetic() || (index > 0 && ch.is_ascii_digit()));
+    text.get(..name.len() + 2).filter(|_| valid)
+}
+
+#[cfg(test)]
+#[path = "split_sql_tests.rs"]
+mod split_sql_tests;
 
 fn trace<T>(sql: &str, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
     let started = Instant::now();
     let trace = crate::hooks::trace_statement(sql);
     let result = body();
-    let duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    let elapsed = started.elapsed();
+    let duration_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX);
+    if super::query_stats::enabled() {
+        super::query_stats::record(sql, elapsed, result.is_err());
+    }
     STATEMENT_COUNT.fetch_add(1, Ordering::Relaxed);
     STATEMENT_MILLIS.fetch_add(duration_ms, Ordering::Relaxed);
     if duration_ms >= SLOW_MS {
@@ -221,12 +374,21 @@ fn trace<T>(sql: &str, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Err
     result
 }
 
-/// Literal values are never exported, including SQL outside the parameterized entity paths.
+/// Literal values are never exported, including SQL outside the parameterized entity paths. At most about 4 KiB.
 pub fn redact_sql(sql: &str) -> String {
-    let mut output = String::with_capacity(sql.len().min(4096));
+    redact_sql_to(sql, 4096)
+}
+
+/// [`redact_sql`] of the whole text: the key of the query stats (`query_stats::statement_key`).
+pub(crate) fn redact_sql_uncapped(sql: &str) -> String {
+    redact_sql_to(sql, usize::MAX)
+}
+
+fn redact_sql_to(sql: &str, cap: usize) -> String {
+    let mut output = String::with_capacity(sql.len().min(cap));
     let mut chars = sql.chars().peekable();
     while let Some(ch) = chars.next() {
-        if output.len() >= 4096 {
+        if output.len() >= cap {
             break;
         }
         if ch == '\'' {

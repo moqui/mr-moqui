@@ -72,6 +72,15 @@ mod cluster {
         pub role: ClusterRole,
         /// The theseus install. `None` is `install` under the cluster directory.
         pub install_dir: Option<PathBuf>,
+        /// Preload `pg_stat_statements` and turn on `track_io_timing` (a datasource's `pg-stat-statements`,
+        /// plans/archive/Tools-Database.md §7.2). Postmaster-level: it applies when this process starts the cluster,
+        /// not to one it adopts. The extension itself is created per database
+        /// ([`crate::entity_db::create_pg_stat_statements`]).
+        pub pg_stat_statements: bool,
+        /// `shared_buffers`, `work_mem`, `maintenance_work_mem` and `effective_cache_size` from the transactional
+        /// datasource's conf (plans/archive/Tools-Database.md §4.4); `None` keeps the default from code.
+        /// Postmaster-level, as the others here: they apply when this process starts the cluster.
+        pub settings: moqui_core::entity::datasource::EmbeddedSettings,
     }
 
     impl StartOptions {
@@ -81,6 +90,8 @@ mod cluster {
                 max_connections,
                 role: ClusterRole::Entity,
                 install_dir: None,
+                pg_stat_statements: false,
+                settings: moqui_core::entity::datasource::EmbeddedSettings::default(),
             }
         }
     }
@@ -719,6 +730,8 @@ mod cluster {
             max_connections,
             role,
             ref install_dir,
+            pg_stat_statements,
+            settings: ref conf_settings,
         } = *options;
         let mut settings = Settings::new();
         // The unpacked install of this build's version (`install`), trusted as it is: nothing is looked up or
@@ -737,9 +750,19 @@ mod cluster {
             ClusterRole::Entity => "16MB",
             ClusterRole::Sim => "8MB",
         };
-        settings
-            .configuration
-            .insert("shared_buffers".to_string(), buffers.to_string());
+        settings.configuration.insert(
+            "shared_buffers".to_string(),
+            conf_settings
+                .shared_buffers
+                .clone()
+                .unwrap_or_else(|| buffers.to_string()),
+        );
+        // the conf's work_mem, maintenance_work_mem and effective_cache_size; Postgres's defaults otherwise
+        for (_, name, value) in conf_settings.entries() {
+            if let (Some(value), true) = (value, name != "shared_buffers") {
+                settings.configuration.insert(name.to_string(), value.to_string());
+            }
+        }
         settings.configuration.insert("fsync".to_string(), "on".to_string());
         if role == ClusterRole::Sim {
             settings
@@ -751,6 +774,15 @@ mod cluster {
             settings
                 .configuration
                 .insert("summarize_wal".to_string(), "on".to_string());
+        }
+        if pg_stat_statements {
+            // Postmaster-level, as summarize_wal; track_io_timing is not, but belongs with it (I/O time per statement).
+            settings
+                .configuration
+                .insert("shared_preload_libraries".to_string(), "pg_stat_statements".to_string());
+            settings
+                .configuration
+                .insert("track_io_timing".to_string(), "on".to_string());
         }
         settings
             .configuration

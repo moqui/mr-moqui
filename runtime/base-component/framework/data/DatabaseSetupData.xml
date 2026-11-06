@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The Tools app's database administration (framework/entity/DatabaseEntities.xml, org.moqui.impl.DatabaseServices,
+    plans/archive/Tools-Database.md): the kinds and statuses of database jobs and the actions of the audit. The
+    permissions are in tools/data/ToolsSecurityData.xml. -->
+<entity-facade-xml type="seed">
+    <!-- DatabaseJob.kindEnumId (§6) -->
+    <moqui.basic.EnumerationType enumTypeId="DatabaseJobKind" description="Database Job Kind"/>
+    <moqui.basic.Enumeration enumId="DbjDdl" enumTypeId="DatabaseJobKind" sequenceNum="1" description="DDL"/>
+    <moqui.basic.Enumeration enumId="DbjMaintenance" enumTypeId="DatabaseJobKind" sequenceNum="2" description="Maintenance"/>
+    <moqui.basic.Enumeration enumId="DbjLoadWrap" enumTypeId="DatabaseJobKind" sequenceNum="3" description="Load Wrapper"/>
+
+    <!-- DatabaseJob.statusId and DatabaseJobStatement.statusId (§6); the runner sets them, there is no status flow -->
+    <moqui.basic.StatusType statusTypeId="DatabaseJob" description="Database Job"/>
+    <moqui.basic.StatusItem statusId="DbjsPending" statusTypeId="DatabaseJob" sequenceNum="1" description="Pending"/>
+    <moqui.basic.StatusItem statusId="DbjsRunning" statusTypeId="DatabaseJob" sequenceNum="2" description="Running"/>
+    <moqui.basic.StatusItem statusId="DbjsDone" statusTypeId="DatabaseJob" sequenceNum="3" description="Done" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="DbjsFailed" statusTypeId="DatabaseJob" sequenceNum="4" description="Failed" statusColor="negative"/>
+    <moqui.basic.StatusItem statusId="DbjsCancelled" statusTypeId="DatabaseJob" sequenceNum="5" description="Cancelled" statusColor="warning"/>
+    <moqui.basic.StatusItem statusId="DbjsSkipped" statusTypeId="DatabaseJob" sequenceNum="6" description="Skipped" statusColor="warning"/>
+
+    <!-- ========== Schema and jobs: a finished job tells its user (crates/moqui-tools/src/jobs.rs) ========== -->
+    <moqui.security.user.NotificationTopic topic="DatabaseJob" inboxEnumId="NinUpdates" description="Database Job"
+            typeString="info" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y"
+            titleTemplate="Database job ${jobId || ''} ${statusId || ''}"/>
+
+    <!-- DatabaseAudit.actionEnumId (§14.2) -->
+    <moqui.basic.EnumerationType enumTypeId="DatabaseAuditAction" description="Database Audit Action"/>
+    <moqui.basic.Enumeration enumId="DbaSql" enumTypeId="DatabaseAuditAction" sequenceNum="1" description="SQL"/>
+    <moqui.basic.Enumeration enumId="DbaJob" enumTypeId="DatabaseAuditAction" sequenceNum="2" description="Job"/>
+    <moqui.basic.Enumeration enumId="DbaCancel" enumTypeId="DatabaseAuditAction" sequenceNum="3" description="Cancel"/>
+    <moqui.basic.Enumeration enumId="DbaTerminate" enumTypeId="DatabaseAuditAction" sequenceNum="4" description="Terminate"/>
+    <moqui.basic.Enumeration enumId="DbaGridSave" enumTypeId="DatabaseAuditAction" sequenceNum="5" description="Grid Save"/>
+    <moqui.basic.Enumeration enumId="DbaLoad" enumTypeId="DatabaseAuditAction" sequenceNum="6" description="Load"/>
+    <moqui.basic.Enumeration enumId="DbaEtlRun" enumTypeId="DatabaseAuditAction" sequenceNum="7" description="ETL Run"/>
+    <moqui.basic.Enumeration enumId="DbaStatsReset" enumTypeId="DatabaseAuditAction" sequenceNum="8" description="Stats Reset"/>
+
+    <!-- DatabaseAudit rows older than the database_audit_days property (90 by default) go, daily -->
+    <moqui.service.job.ServiceJob jobName="DatabaseAuditPurge" description="Delete DatabaseAudit rows older than database_audit_days"
+            serviceName="org.moqui.impl.DatabaseServices.purge#DatabaseAudit" cronExpression="0 41 3 * * ?" paused="N"
+            errorHistoryOnly="Y"/>
+
+    <!-- ========== ETL (crates/moqui-tools/src/etl, plans/archive/Tools-Database.md §10.2) ========== -->
+    <!-- EtlMapping.sourceTypeEnumId -->
+    <moqui.basic.EnumerationType enumTypeId="EtlSourceType" description="ETL Source Type"/>
+    <moqui.basic.Enumeration enumId="EtlsEntity" enumTypeId="EtlSourceType" sequenceNum="1" description="Entity"/>
+    <moqui.basic.Enumeration enumId="EtlsSql" enumTypeId="EtlSourceType" sequenceNum="2" description="SQL"/>
+    <moqui.basic.Enumeration enumId="EtlsFile" enumTypeId="EtlSourceType" sequenceNum="3" description="File (CSV or Spreadsheet)"/>
+    <moqui.basic.Enumeration enumId="EtlsFlatXml" enumTypeId="EtlSourceType" sequenceNum="4" description="Flat XML File"/>
+    <!-- EtlMapping.targetTypeEnumId -->
+    <moqui.basic.EnumerationType enumTypeId="EtlTargetType" description="ETL Target Type"/>
+    <moqui.basic.Enumeration enumId="EtltEntity" enumTypeId="EtlTargetType" sequenceNum="1" description="Entity"/>
+    <moqui.basic.Enumeration enumId="EtltService" enumTypeId="EtlTargetType" sequenceNum="2" description="Service"/>
+    <!-- EtlMapping.loadModeEnumId -->
+    <moqui.basic.EnumerationType enumTypeId="EtlLoadMode" description="ETL Load Mode"/>
+    <moqui.basic.Enumeration enumId="EtllCreate" enumTypeId="EtlLoadMode" sequenceNum="1" description="Create"/>
+    <moqui.basic.Enumeration enumId="EtllStore" enumTypeId="EtlLoadMode" sequenceNum="2" description="Create or Update"/>
+    <moqui.basic.Enumeration enumId="EtllUpdate" enumTypeId="EtlLoadMode" sequenceNum="3" description="Update"/>
+    <!-- EtlRun.statusId; the runner sets them, there is no status flow -->
+    <moqui.basic.StatusType statusTypeId="EtlRun" description="ETL Run"/>
+    <moqui.basic.StatusItem statusId="EtlrPending" statusTypeId="EtlRun" sequenceNum="1" description="Pending"/>
+    <moqui.basic.StatusItem statusId="EtlrRunning" statusTypeId="EtlRun" sequenceNum="2" description="Running"/>
+    <moqui.basic.StatusItem statusId="EtlrDone" statusTypeId="EtlRun" sequenceNum="3" description="Done" statusColor="positive"/>
+    <moqui.basic.StatusItem statusId="EtlrFailed" statusTypeId="EtlRun" sequenceNum="4" description="Failed" statusColor="negative"/>
+
+    <!-- ========== The grid's file source (crates/moqui-tools/src/files.rs, §9.1) ========== -->
+    <!-- uploads after seven days, and the grid's export files after a day, daily -->
+    <moqui.service.job.ServiceJob jobName="clean_GridUploads_daily" description="Remove old grid uploads and export files"
+            serviceName="org.moqui.impl.EtlServices.clean#GridUploads" cronExpression="0 35 3 * * ?" paused="N"
+            errorHistoryOnly="Y"/>
+</entity-facade-xml>

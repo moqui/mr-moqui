@@ -1,0 +1,173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- SQL on the chosen database (plans/archive/Tools-Database.md §8, §7.5): the editor and results of Sql.qvue, served
+    here in the qvue render mode; its data and actions are the transitions below, each an
+    org.moqui.impl.DatabaseServices call that checks SQL_RUNNER_WEB and authorization for all actions on the Tools app
+    itself. The terminal twin is SqlTui.xml (Sql.tui.json). -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="SQL" default-menu-index="3" menu-image="sym_o_code" menu-image-type="icon"
+        render-modes="vue,qvue,tui" server-static="vue,qvue" begin-transaction="false">
+
+    <always-actions>
+        <!-- the database: db, else the last choice, else the default group's -->
+        <!-- the databases of get#DatabaseList, external connections included -->
+        <set field="databaseList" from="((ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DatabaseList').parameters({includeExternal: true}).call() || {}).databases || []).map((database) =&gt; Object.assign({}, database, {groupNames: database.groupNames || [], label: database.external ? (database.description || database.db) + ' (external)' : (database.groupNames || []).join(', ') + ' (' + database.databaseConf + ')'}))"/>
+        <set field="db" from="[db, ec.user.getPreference('database.selected')].find((name) =&gt; databaseList.some((database) =&gt; database.db == name)) || databaseList[0]?.db"/>
+        <set field="selectedDatabase" from="databaseList.find((database) =&gt; database.db == db)"/>
+    </always-actions>
+
+    <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
+    <!-- the page: the chosen database and the others, the database kind for the editor dialect, and what the user may do -->
+    <transition name="sqlInfo" method="get" begin-transaction="false" read-only="true">
+        <actions><script><![CDATA[
+            const capabilities = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#Capabilities').parameters({db}).call() || {}
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({db, databases: databaseList.map((database) => ({value: database.db,
+                    label: database.label})),
+                backend: capabilities.backend || selectedDatabase?.databaseConf || '', databaseName: capabilities.databaseName || '',
+                canRun: ec.user.hasPermission('SQL_RUNNER_WEB'), canAdmin: ec.user.hasPermission('DATABASE_ADMIN')})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the editor completion schema: tables and columns, entities and their tables -->
+    <transition name="catalog" method="get" begin-transaction="false" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#SqlCatalog').parameters({db}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the statements of a run with changes, to confirm, and the confirmation token -->
+    <transition name="classify" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.classify#Sql').parameters({db, sqlText: String(ec.web.secureRequestParameters.sqlText || '')}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- run the SQL: read only, or with changes and the token; parametersJson binds the :name parameters -->
+    <transition name="run" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const toNumber = (value) => value == null || value === '' ? null : Number(value)
+            // :name values as JSON; text that is not JSON is the caller's error, answered as one
+            let parameters = null
+            try { parameters = context.parametersJson ? JSON.parse(String(context.parametersJson)) : null }
+            catch (e) { ec.web.sendJsonResponse({errors: ec.l10n.localize('The parameters are not JSON: ') + String(e.message || e)}); return }
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.run#Sql').parameters({db, sqlText: String(ec.web.secureRequestParameters.sqlText || ''), parameters,
+                allowChanges: String(context.allowChanges) == 'true', token: context.token || null, confirmDatabaseName: context.confirmDatabaseName || null,
+                eachOnOwn: String(context.eachOnOwn) == 'true', limit: toNumber(context.limit), offset: toNumber(context.offset),
+                timeoutSeconds: toNumber(context.timeoutSeconds), runId: context.runId || null}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- cancel the run (or explain) runId -->
+    <transition name="cancel" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.cancel#SqlRun').parameters({runId: String(context.runId || '')}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the plan of one statement; analyze runs it (rolled back when it may change data, with the token) -->
+    <transition name="explain" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const toNumber = (value) => value == null || value === '' ? null : Number(value)
+            // :name values as JSON; text that is not JSON is the caller's error, answered as one
+            let parameters = null
+            try { parameters = context.parametersJson ? JSON.parse(String(context.parametersJson)) : null }
+            catch (e) { ec.web.sendJsonResponse({errors: ec.l10n.localize('The parameters are not JSON: ') + String(e.message || e)}); return }
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.explain#Sql').parameters({db, sqlText: String(ec.web.secureRequestParameters.sqlText || ''), parameters,
+                analyze: String(context.analyze) == 'true', token: context.token || null, confirmDatabaseName: context.confirmDatabaseName || null,
+                runId: context.runId || null, timeoutSeconds: toNumber(context.timeoutSeconds)}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            // a plan not run (no ANALYZE) says nothing of the rows a seq scan reads: the catalog's estimates of the tables
+            // (get#TableStats) mark one over 10,000
+            let relationRows = null
+            if (!errors && !out.analyzed && out.format == 'json') {
+                const stats = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#TableStats').parameters({db}).call() || {}
+                ec.message.clearErrors()
+                relationRows = {}
+                for (const table of stats.tables || []) if (table.table_name) relationRows[String(table.table_name).toLowerCase()] = table.estimated_rows
+            }
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors, relationRows}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the user's own statements on this database, newest first -->
+    <transition name="history" method="get" begin-transaction="false" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.find#SqlHistory').parameters({db, limit: 100}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the user's saved queries and the shared ones -->
+    <transition name="savedQueries" method="get" begin-transaction="false" read-only="true">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.find#SavedQueries').parameters({db}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- save a query (new without queryId) -->
+    <transition name="storeQuery" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.store#SavedQuery').parameters({queryId: context.queryId || null, description: context.description || null, db, sqlText: String(ec.web.secureRequestParameters.sqlText || ''),
+                isShared: String(context.isShared) == 'true', parametersJson: context.parametersJson || null}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- delete a saved query the user owns -->
+    <transition name="deleteQuery" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.delete#SavedQuery').parameters({queryId: String(context.queryId || '')}).call() || {}
+            const errors = ec.message.hasError() ? ec.message.errorsString : null
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <actions>
+        <if condition="!ec.user.hasPermission('SQL_RUNNER_WEB')">
+            <return error="true" message="User does not have permission to use the SQL Runner"/></if>
+        <if condition="!ec.artifactExecution.isPermitted(sri.getActiveScreenDef().getLocation(), 'AT_XML_SCREEN', 'all')">
+            <return error="true" message="User must be authorized for all actions on this screen"/></if>
+    </actions>
+    <widgets>
+        <render-mode>
+            <text type="qvue" location="component://tools/screen/Tools/Sql.qvue" template="false"/>
+            <!-- the terminal twin: the form and result sets of SqlTui.xml -->
+            <text type="tui" location="component://tools/screen/Tools/Sql.tui.json" template="fancy"/>
+        </render-mode>
+    </widgets>
+</screen>

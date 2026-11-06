@@ -1,0 +1,519 @@
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The SQL editor and its results (plans/archive/Tools-Database.md §8, §7.5), served by Sql.xml in the qvue render
+    mode; every request goes to that screen's transitions (org.moqui.impl.DatabaseServices). The editor is m-code-editor
+    in the database's dialect, completing its tables and columns (get#SqlCatalog) and showing a table's entity on hover.
+    Run takes the statement at the cursor (Ctrl+Enter), the selection, or the whole script (Ctrl+Shift+Enter); each
+    result set is a tab in a read-only grid (Tabulator, css/DataGrid.css), the other statements a line each. Allow
+    changes lists the statements that may change data (classify#Sql) and runs them only once that is confirmed. The pure
+    helpers are moqui.sql (js/WebrootSql.js). -->
+<template><div class="q-pa-sm">
+    <div class="row items-center q-col-gutter-sm q-mb-sm">
+        <div class="col-12 col-sm-4 col-md-3">
+            <q-select dense outlined emit-value map-options v-model="db" :options="databases" label="Database" @update:model-value="chooseDatabase"></q-select>
+        </div>
+        <div class="col-auto">
+            <q-btn-dropdown flat dense no-caps icon="bookmarks" label="Saved" @show="loadSaved">
+                <q-list dense style="min-width:260px;max-width:480px">
+                    <q-item clickable v-close-popup @click="openSave"><q-item-section avatar><q-icon name="bookmark_add"></q-icon></q-item-section>
+                        <q-item-section>Save this query</q-item-section></q-item>
+                    <q-separator></q-separator>
+                    <q-item v-for="saved in savedQueries" :key="saved.queryId" clickable v-close-popup @click="useSaved(saved)">
+                        <q-item-section><q-item-label>{{saved.description || saved.queryId}}</q-item-label>
+                            <q-item-label caption lines="1">{{saved.sqlText}}</q-item-label></q-item-section>
+                        <q-item-section side><q-btn flat round dense size="sm" icon="delete" :aria-label="'Delete ' + (saved.description || saved.queryId)"
+                            @click.stop="deleteSaved(saved)"></q-btn></q-item-section>
+                    </q-item>
+                    <q-item v-if="!savedQueries.length"><q-item-section class="text-caption">No saved queries</q-item-section></q-item>
+                </q-list>
+            </q-btn-dropdown>
+            <q-btn flat dense no-caps icon="history" label="History" @click="openHistory"></q-btn>
+        </div>
+        <q-space></q-space>
+        <div class="col-auto"><q-toggle v-model="allowChanges" dense label="Allow changes" color="negative"><q-tooltip>Statements that may change data
+            run only after you confirm them, in one transaction</q-tooltip></q-toggle></div>
+        <div v-if="allowChanges" class="col-auto"><q-toggle v-model="eachOnOwn" dense label="Each statement on its own"><q-tooltip>Each
+            statement in a transaction of its own, the rest still run when one fails</q-tooltip></q-toggle></div>
+        <div class="col-auto" style="width:90px"><q-input dense outlined v-model.number="limit" type="number" label="Row limit"></q-input></div>
+        <div class="col-auto">
+            <q-btn-dropdown flat dense no-caps icon="account_tree" label="Explain" :disable="running">
+                <q-list dense>
+                    <q-item clickable v-close-popup @click="explain(false)"><q-item-section>Explain the statement</q-item-section></q-item>
+                    <q-item clickable v-close-popup @click="explain(true)"><q-item-section>Explain analyze (runs it)</q-item-section></q-item>
+                </q-list>
+            </q-btn-dropdown>
+        </div>
+        <div class="col-auto">
+            <q-btn v-if="running" unelevated no-caps color="negative" icon="stop" label="Cancel" @click="cancelRun"></q-btn>
+            <q-btn-dropdown v-else split unelevated no-caps color="primary" icon="play_arrow" label="Run" :disable="!canRun" @click="run('statement')">
+                <q-list dense>
+                    <q-item clickable v-close-popup @click="run('statement')"><q-item-section>Run the statement</q-item-section>
+                        <q-item-section side class="text-caption">Ctrl+Enter</q-item-section></q-item>
+                    <q-item clickable v-close-popup :disable="!selectionText" @click="run('selection')"><q-item-section>Run the selection</q-item-section></q-item>
+                    <q-item clickable v-close-popup @click="run('script')"><q-item-section>Run the script</q-item-section>
+                        <q-item-section side class="text-caption">Ctrl+Shift+Enter</q-item-section></q-item>
+                </q-list>
+            </q-btn-dropdown>
+        </div>
+    </div>
+
+    <m-code-editor v-if="codeReady" v-model="sqlText" :language="editorLanguage" :schema="schema" :extensions="editorExtensions"
+            aria-label="SQL" min-height="10rem" max-height="45vh" state-key="tools-sql" @ready="onEditorReady" @cursor="onCursor"></m-code-editor>
+    <q-input v-else type="textarea" outlined v-model="sqlText" label="SQL" autogrow></q-input>
+
+    <div v-if="parameterNames.length" class="row q-col-gutter-sm q-mt-xs">
+        <div v-for="name in parameterNames" :key="name" class="col-6 col-sm-3 col-md-2">
+            <q-input dense outlined v-model="parameterValues[name]" :label="':' + name"></q-input>
+        </div>
+    </div>
+
+    <div v-if="lines.length" class="q-mt-sm">
+        <div v-for="(line, index) in lines" :key="index" class="text-body2" :class="line.error ? 'text-negative' : mutedClass">{{line.text}}</div>
+    </div>
+
+    <div v-if="rowResults.length" class="q-mt-sm">
+        <q-tabs v-model="tab" dense no-caps align="left" class="text-primary" active-color="primary" indicator-color="primary">
+            <q-tab v-for="(result, index) in rowResults" :key="index" :name="index" :label="'Result ' + (index + 1)">
+                <q-tooltip>{{result.sql}}</q-tooltip></q-tab>
+        </q-tabs>
+        <q-separator></q-separator>
+        <div v-if="current" class="row items-center q-col-gutter-sm q-py-xs">
+            <div class="col-auto text-caption" :class="mutedClass">{{current.records.length}} rows{{current.limitReached ? ', more not fetched' : ''}}{{current.durationMs != null ? ', ' + current.durationMs + ' ms' : ''}}</div>
+            <q-space></q-space>
+            <div class="col-auto">
+                <q-btn v-if="current.limitReached" flat dense no-caps icon="expand_more" label="Fetch more" :disable="!current.rerunnable || running"
+                        :loading="fetching" @click="fetchMore(current)">
+                    <q-tooltip v-if="!current.rerunnable">Only a plain query run read only can be run again to fetch more</q-tooltip></q-btn>
+                <q-btn v-if="current.rerunnable" flat dense no-caps icon="grid_on" label="Open in grid" @click="openInGrid(current)">
+                    <q-tooltip>The whole result in the data grid, where a result of one table with its key can be edited</q-tooltip></q-btn>
+                <q-btn-dropdown flat dense no-caps icon="content_copy" label="Copy">
+                    <q-list dense>
+                        <q-item clickable v-close-popup @click="copy('tsv')"><q-item-section>As TSV (spreadsheet)</q-item-section></q-item>
+                        <q-item clickable v-close-popup @click="copy('json')"><q-item-section>As JSON</q-item-section></q-item>
+                        <q-item clickable v-close-popup @click="copy('inserts')"><q-item-section>As INSERT statements</q-item-section></q-item>
+                    </q-list>
+                </q-btn-dropdown>
+                <q-btn-dropdown flat dense no-caps icon="download" label="Download">
+                    <q-list dense>
+                        <q-item clickable v-close-popup @click="downloadCsv"><q-item-section>CSV</q-item-section></q-item>
+                        <q-item clickable v-close-popup @click="downloadXlsx"><q-item-section>XLSX</q-item-section></q-item>
+                    </q-list>
+                </q-btn-dropdown>
+            </div>
+        </div>
+        <div ref="grid" class="m-data-grid"></div>
+    </div>
+
+    <q-dialog v-model="confirmOpen">
+        <q-card style="min-width:360px;max-width:760px">
+            <q-card-section><div class="text-h6">{{confirm.explain ? 'Explain analyze with changes?' : 'Run with changes?'}}</div></q-card-section>
+            <q-card-section class="q-pt-none">
+                <p>{{confirm.changeCount}} {{confirm.changeCount == 1 ? 'statement' : 'statements'}} may change data.
+                    <span v-if="confirm.explain">The statement runs and is rolled back.</span>
+                    <span v-else-if="eachOnOwn">Each statement runs in a transaction of its own, so one that fails leaves the others' changes.</span>
+                    <span v-else>The run is one transaction and stops at the first failure.</span></p>
+                <p v-if="confirm.ownTransactionCount" class="text-warning">{{confirm.ownTransactionCount}} of them (such as VACUUM or CREATE INDEX
+                    CONCURRENTLY) run on their own outside any transaction, so they are not rolled back.</p>
+                <p v-if="confirm.implicitCommit" class="text-warning">On MySQL and MariaDB a schema statement commits what ran before it, so
+                    those changes are not rolled back.</p>
+                <pre v-for="(statement, index) in confirm.statements" :key="index" class="q-pa-xs q-my-xs" style="white-space:pre-wrap;max-height:8rem;overflow:auto">{{statement.sql}}</pre>
+                <q-input v-if="confirm.confirmDatabaseName" dense outlined v-model="typedName" class="q-mt-sm"
+                        :label="'Type the database name (' + confirm.confirmDatabaseName + ') to run on this production server'"></q-input>
+            </q-card-section>
+            <q-card-actions align="right">
+                <q-btn flat no-caps label="Cancel" v-close-popup></q-btn>
+                <q-btn unelevated no-caps color="negative" :label="confirm.explain ? 'Explain analyze' : 'Run with changes'"
+                        :disable="!!confirm.confirmDatabaseName && typedName !== confirm.confirmDatabaseName" @click="confirmed"></q-btn>
+            </q-card-actions>
+        </q-card>
+    </q-dialog>
+
+    <q-dialog v-model="planOpen" full-width>
+        <q-card>
+            <q-card-section class="row items-center"><div class="text-h6">{{plan.analyzed ? 'Explain analyze' : 'Explain'}}</div><q-space></q-space>
+                <q-btn flat round dense icon="close" v-close-popup aria-label="Close"></q-btn></q-card-section>
+            <q-card-section class="q-pt-none">
+                <div v-if="plan.rolledBack" class="text-caption q-mb-xs" :class="mutedClass">The statement ran and was rolled back.</div>
+                <q-markup-table v-if="planRows.length" dense flat bordered wrap-cells>
+                    <thead><tr><th class="text-left">Step</th><th class="text-right">Estimated rows a loop</th><th class="text-right">Actual rows a loop</th><th class="text-right">Loops</th>
+                        <th class="text-right">Cost</th><th class="text-right">Time (ms)</th></tr></thead>
+                    <tbody>
+                        <tr v-for="(row, index) in planRows" :key="index">
+                            <td class="text-left" :style="{paddingLeft: (8 + row.depth * 18) + 'px'}">
+                                <span class="text-weight-medium">{{row.node}}</span> <span class="text-caption" :class="mutedClass">{{row.detail}}</span>
+                                <q-chip v-for="mark in row.marks" :key="mark" dense square class="q-ma-none q-ml-xs m-tonal" :class="'text-' + markColor(mark)">{{markLabel(mark)}}</q-chip>
+                            </td>
+                            <td class="text-right">{{row.estimatedRows == null ? '' : row.estimatedRows}}</td>
+                            <td class="text-right">{{row.actualRows == null ? '' : row.actualRows}}</td>
+                            <td class="text-right">{{row.loops == null ? '' : row.loops}}</td>
+                            <td class="text-right">{{row.totalCost == null ? '' : row.totalCost}}</td>
+                            <td class="text-right">{{row.timeMs == null ? '' : row.timeMs}}</td>
+                        </tr>
+                    </tbody>
+                </q-markup-table>
+                <pre v-else style="white-space:pre-wrap">{{plan.plan}}</pre>
+            </q-card-section>
+        </q-card>
+    </q-dialog>
+
+    <q-dialog v-model="historyOpen">
+        <q-card style="min-width:360px;max-width:900px;width:90vw">
+            <q-card-section class="row items-center"><div class="text-h6">History</div><q-space></q-space>
+                <q-btn flat round dense icon="close" v-close-popup aria-label="Close"></q-btn></q-card-section>
+            <q-list separator style="max-height:65vh;overflow:auto">
+                <q-item v-for="item in history" :key="item.auditId" clickable v-close-popup @click="sqlText = item.statementText">
+                    <q-item-section>
+                        <q-item-label lines="2" class="text-mono">{{item.statementText}}</q-item-label>
+                        <q-item-label caption>{{when(item.startTime)}} · {{item.durationMs}} ms · {{item.isChange == 'Y' || item.isChange === true ? (item.rowsAffected || 0) + ' changed' : (item.rowsReturned || 0) + ' rows'}}</q-item-label>
+                        <q-item-label v-if="item.errorText" caption class="text-negative" lines="2">{{item.errorText}}</q-item-label>
+                    </q-item-section>
+                </q-item>
+                <q-item v-if="!history.length"><q-item-section class="text-caption">No statements run yet</q-item-section></q-item>
+            </q-list>
+        </q-card>
+    </q-dialog>
+
+    <q-dialog v-model="saveOpen">
+        <q-card style="min-width:340px">
+            <q-card-section><div class="text-h6">Save this query</div></q-card-section>
+            <q-card-section class="q-pt-none">
+                <q-input dense outlined v-model="saveDescription" label="Description"></q-input>
+                <q-toggle v-model="saveShared" label="Share with the other users of the SQL screen" class="q-mt-sm"></q-toggle>
+            </q-card-section>
+            <q-card-actions align="right"><q-btn flat no-caps label="Cancel" v-close-popup></q-btn>
+                <q-btn unelevated no-caps color="primary" label="Save" @click="storeSaved"></q-btn></q-card-actions>
+        </q-card>
+    </q-dialog>
+</div></template>
+
+<script>
+module.exports = {
+    data() {
+        return {
+            db: '', databases: [], backend: '', canRun: true, canAdmin: false, codeReady: false, sqlText: '', schema: null, tableEntities: {},
+            limit: 500, allowChanges: false, eachOnOwn: false, insertTable: '', parameterValues: {}, running: false, fetching: false, runId: '', results: [], tab: 0,
+            selectionText: '', cursor: 0, confirmOpen: false, confirm: {}, typedName: '', pending: null, planOpen: false, plan: {},
+            historyOpen: false, history: [], savedQueries: [], saveOpen: false, saveDescription: '', saveShared: false, savedQueryId: null
+        };
+    },
+    computed: {
+        screenPath() { return this.$root.basePath + '/' + this.$root.currentPathList.join('/'); },
+        mutedClass() { return this.$q.dark.isActive ? 'text-grey-5' : 'text-grey-7'; },
+        editorLanguage() { return 'sql:' + (this.backend || 'postgres'); },
+        parameterNames() { return moqui.sql ? moqui.sql.parameterNames(this.sqlText, this.backend) : []; },
+        rowResults() { return this.results.filter((result) => result.givesRows && !result.error && !result.skipped); },
+        current() { return this.rowResults[this.tab] || null; },
+        lines() {
+            return this.results.filter((result) => !result.givesRows || result.error || result.skipped).map((result) => ({
+                error: !!result.error,
+                text: 'Statement ' + result.seq + ': ' + (result.error ? result.error : result.skipped ? 'not run'
+                    : (result.rowsAffected == null ? 'done' : result.rowsAffected + ' rows changed')) + (result.rolledBack ? ' (rolled back)' : '')
+            }));
+        },
+        planRows() { return moqui.sql && this.plan.plan ? moqui.sql.planRows(this.plan.format, this.plan.plan, this.plan.relationRows) : []; }
+    },
+    watch: {
+        tab() { this.$nextTick(() => this.drawGrid()); },
+        results() { this.$nextTick(() => this.drawGrid()); }
+    },
+    methods: {
+        url(name) { return this.screenPath + '/' + name; },
+        // a time the services give as epoch milliseconds (or a date text), in the browser's locale
+        when(value) { if (value == null || value === '') return ''; const date = /^\d+$/.test(String(value)) ? new Date(Number(value)) : new Date(value);
+            return isNaN(date.getTime()) ? String(value) : date.toLocaleString(); },
+        siblingUrl(name) { return this.$root.linkBasePath + '/' + this.$root.currentPathList.slice(0, -1).concat([name]).join('/'); },
+        // a transition's JSON, its errors shown; resolves to null when it failed
+        call(name, method, params) {
+            return moqui.request(this.url(name), { method: method || 'GET', params: Object.assign({ db: this.db }, params || {}) }).then((result) => {
+                const json = result.json || {};
+                if (json.errors) { moqui.notifyMessages(null, json.errors); return null; }
+                return json;
+            }, (err) => { moqui.handleAjaxError(err); return null; });
+        },
+        load() {
+            this.call('sqlInfo').then((info) => {
+                if (!info) return;
+                this.db = info.db; this.databases = info.databases || []; this.backend = info.backend || '';
+                this.canRun = info.canRun !== false; this.canAdmin = !!info.canAdmin;
+                this.loadCatalog();
+            });
+        },
+        loadCatalog() {
+            this.call('catalog').then((catalog) => {
+                if (!catalog) return;
+                this.schema = catalog.tables || null;
+                const byTable = {};
+                for (const [entity, table] of Object.entries(catalog.entities || {})) {
+                    const key = String(table).toLowerCase();
+                    (byTable[key] = byTable[key] || []).push(entity);
+                }
+                this.tableEntities = byTable;
+            });
+        },
+        chooseDatabase(value) {
+            moqui.request(this.url('selectDatabase'), { method: 'POST', params: { db: value } }).catch(() => null)
+                .then(() => { this.results = []; this.load(); });
+        },
+        // the editor's keys and the hover that names a table's entity
+        editorExtensions(CM) {
+            const vm = this;
+            const keys = CM.Prec.highest(CM.keymap.of([
+                { key: 'Mod-Enter', run: () => { vm.run('statement'); return true; } },
+                { key: 'Shift-Mod-Enter', run: () => { vm.run('script'); return true; } }
+            ]));
+            const hover = CM.hoverTooltip((view, pos) => {
+                const line = view.state.doc.lineAt(pos);
+                const text = line.text;
+                let from = pos - line.from, to = from;
+                while (from > 0 && /[\w.$]/.test(text[from - 1])) from--;
+                while (to < text.length && /[\w.$]/.test(text[to])) to++;
+                const word = text.slice(from, to).replace(/^.*\./, '').toLowerCase();
+                const entities = word && vm.tableEntities[word];
+                if (!entities) return null;
+                return { pos: line.from + from, end: line.from + to, above: true, create() {
+                    const dom = document.createElement('div');
+                    dom.className = 'q-pa-xs text-caption';
+                    dom.textContent = 'Entity ' + entities.join(', ');
+                    return { dom };
+                } };
+            });
+            return [keys, hover];
+        },
+        onEditorReady(view) { this.view = view; },
+        onCursor() {
+            if (!this.view) return;
+            const main = this.view.state.selection.main;
+            this.cursor = main.head;
+            this.selectionText = main.empty ? '' : this.view.state.sliceDoc(main.from, main.to);
+        },
+        textFor(scope) {
+            if (this.view) this.onCursor();
+            if (scope === 'selection' && this.selectionText.trim()) return this.selectionText;
+            if (scope === 'script') return this.sqlText;
+            const statement = moqui.sql.statementAt(this.sqlText, this.cursor, this.backend);
+            return statement ? statement.text : '';
+        },
+        parametersFor(text) {
+            const names = moqui.sql.parameterNames(text, this.backend);
+            if (!names.length) return null;
+            const values = {};
+            for (const name of names) values[name] = this.parameterValues[name] == null ? '' : this.parameterValues[name];
+            return JSON.stringify(values);
+        },
+        newRunId() { return Array.from({ length: 4 }, () => Math.floor(Math.random() * 0x10000).toString(16).padStart(4, '0')).join('') + '-' + Date.now().toString(36); },
+        run(scope) {
+            if (this.running || !this.canRun) return;
+            const text = this.textFor(scope);
+            if (!text.trim()) return;
+            if (!this.allowChanges) { this.execute(text, {}); return; }
+            this.classify(text, { explain: false });
+        },
+        // the statements that may change data, then the confirmation; nothing that changes nothing waits for it
+        classify(text, options) {
+            this.call('classify', 'POST', { sqlText: text }).then((out) => {
+                if (!out) return;
+                const changing = (out.statements || []).filter((statement) => statement.changes);
+                // nothing changes data: run it read only, no confirmation, and its result stays rerunnable
+                if (!changing.length) { if (options.explain) this.runExplain(text, true, {}); else this.execute(text, {}); return; }
+                this.confirm = { explain: !!options.explain, text, token: out.token, changeCount: Number(out.changeCount || changing.length),
+                    statements: changing, implicitCommit: !!out.implicitCommit, confirmDatabaseName: out.confirmDatabaseName || '',
+                    ownTransactionCount: changing.filter((statement) => statement.ownTransaction).length };
+                this.typedName = '';
+                this.confirmOpen = true;
+            });
+        },
+        confirmed() {
+            const confirm = this.confirm;
+            this.confirmOpen = false;
+            const extra = { token: confirm.token, confirmDatabaseName: confirm.confirmDatabaseName ? this.typedName : null };
+            if (confirm.explain) this.runExplain(confirm.text, true, extra);
+            else this.execute(confirm.text, Object.assign({ allowChanges: true, eachOnOwn: this.eachOnOwn }, extra));
+        },
+        execute(text, extra) {
+            this.running = true;
+            this.runId = this.newRunId();
+            const params = Object.assign({ sqlText: text, limit: this.limit || 500, runId: this.runId, parametersJson: this.parametersFor(text) }, extra);
+            const ranOn = this.db;
+            this.call('run', 'POST', params).then((out) => {
+                // a refused or failed run leaves no results of the run before it on the page
+                if (!out) { this.results = []; return; }
+                this.results = (out.results || []).map((result) => Object.assign({ records: [], columns: [] }, result, { runText: result.sql || text, db: ranOn }));
+                this.tab = 0;
+                if (out.cancelled) moqui.notifyMessages('The run was cancelled');
+                else if (out.timedOut) moqui.notifyMessages(null, 'The run timed out');
+                else if (out.rolledBack) moqui.notifyMessages(null, 'A statement failed and the changes were rolled back');
+            }).finally(() => { this.running = false; });
+        },
+        cancelRun() {
+            if (!this.runId) return;
+            this.call('cancel', 'POST', { runId: this.runId }).then((out) => {
+                if (out && out.outcome === 'notRunning') moqui.notifyMessages('Nothing is running');
+            });
+        },
+        fetchMore(result) {
+            if (!result.rerunnable || this.fetching) return;
+            this.fetching = true;
+            this.call('run', 'POST', { sqlText: result.runText, limit: this.limit || 500, offset: result.records.length,
+                runId: this.newRunId(), parametersJson: this.parametersFor(result.runText) }).then((out) => {
+                const more = out && (out.results || [])[0];
+                if (!more || more.error) { if (more && more.error) moqui.notifyMessages(null, more.error); return; }
+                result.records = result.records.concat(more.records || []);
+                result.limitReached = !!more.limitReached;
+                this.$nextTick(() => this.drawGrid());
+            }).finally(() => { this.fetching = false; });
+        },
+        explain(analyze) {
+            const text = this.textFor('statement');
+            if (!text.trim()) return;
+            if (analyze) this.classify(text, { explain: true });
+            else this.runExplain(text, false, {});
+        },
+        runExplain(text, analyze, extra) {
+            this.running = true;
+            this.runId = this.newRunId();
+            this.call('explain', 'POST', Object.assign({ sqlText: text, analyze, runId: this.runId, parametersJson: this.parametersFor(text) }, extra))
+                .then((out) => { if (out) { this.plan = out; this.planOpen = true; } }).finally(() => { this.running = false; });
+        },
+        markLabel(mark) { return { seqScan: 'Seq scan over 10k rows', misestimate: 'Estimate off by over 10×', spill: 'Spilled to disk' }[mark] || mark; },
+        markColor(mark) { return mark === 'spill' ? 'negative' : 'warning'; },
+        drawGrid() {
+            const element = this.$refs.grid;
+            if (this.grid) { try { this.grid.destroy(); } catch (_) { /* gone with its element */ } this.grid = null; }
+            const result = this.current;
+            if (!element || !result || !window.Tabulator) return;
+            const columns = (result.columns || []).map((title, index) => ({ title: String(title), field: 'c' + index, headerSort: true,
+                formatter: (cell) => { const value = cell.getValue(); if (value == null) { cell.getElement().classList.add('m-grid-null'); return 'null'; }
+                    return typeof value === 'object' ? JSON.stringify(value) : String(value); } }));
+            const data = (result.records || []).map((record, row) => {
+                const item = { _row: row };
+                record.forEach((value, index) => { item['c' + index] = value; });
+                return item;
+            });
+            this.grid = new window.Tabulator(element, { data, columns, layout: 'fitDataStretch', maxHeight: '60vh', placeholder: 'No rows',
+                clipboard: 'copy', selectableRange: 1, selectableRangeColumns: true, clipboardCopyRowRange: 'range' });
+        },
+        resultText(format, table) {
+            const result = this.current;
+            if (!result) return '';
+            if (format === 'inserts') return moqui.sql.inserts(result.columns, result.records, table, this.backend);
+            return moqui.sql[format](result.columns, result.records);
+        },
+        writeClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => moqui.notifyMessages('Copied ' + this.current.records.length + ' rows'),
+                () => moqui.notifyMessages(null, 'The browser did not allow copying'));
+        },
+        copy(format) {
+            if (format !== 'inserts') { this.writeClipboard(this.resultText(format)); return; }
+            // a result does not say which table its columns are from: the user names it (schema.table, or "quoted")
+            this.$q.dialog({ title: 'INSERT statements', message: 'The table to insert into', prompt: { model: this.insertTable || '', type: 'text' },
+                cancel: true }).onOk((table) => {
+                if (!String(table || '').trim()) return;
+                this.insertTable = String(table).trim();
+                this.writeClipboard(this.resultText('inserts', this.insertTable));
+            });
+        },
+        downloadCsv() {
+            const blob = new Blob([this.resultText('csv')], { type: 'text/csv;charset=utf-8' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'result-' + (this.tab + 1) + '.csv';
+            document.body.appendChild(link); link.click(); link.remove();
+            setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+        },
+        // the statement as a data grid source, handed over in this tab's session storage: no SQL in a URL
+        openInGrid(result) {
+            const sql = result.runText || result.sql;
+            // the grid runs the statement again, a page at a time, with no :name values to bind
+            if (moqui.sql.parameterNames(sql, this.backend).length) {
+                moqui.notifyMessages(null, 'A statement with :name parameters cannot open in the grid: put the values in the statement');
+                return;
+            }
+            const key = this.newRunId();
+            try {
+                window.sessionStorage.setItem('moqui.grid.source.' + key, JSON.stringify({ type: 'sql', db: result.db || this.db, sql }));
+            } catch (_) { moqui.notifyMessages(null, 'The browser keeps no session storage for this'); return; }
+            this.$root.setUrl(this.siblingUrl('Data/Grid') + '?sqlKey=' + encodeURIComponent(key));
+        },
+        // the rows the page holds, made a workbook by SqlDownload.xml: nothing is run again, and the page and its editor stay
+        downloadXlsx() {
+            const result = this.current;
+            if (!result) return;
+            const resultJson = JSON.stringify({ name: 'Result ' + (this.tab + 1), columns: result.columns, records: result.records });
+            if (resultJson.length > 50 * 1024 * 1024) {
+                moqui.notifyMessages(null, 'This result is too large for an XLSX download (' + Math.round(resultJson.length / 1048576) + ' MB); download it as CSV');
+                return;
+            }
+            const body = new URLSearchParams({ resultJson });
+            if (moqui.sessionToken) body.set('moquiSessionToken', moqui.sessionToken);
+            const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
+            if (moqui.sessionToken) headers['X-CSRF-Token'] = moqui.sessionToken;
+            fetch(this.siblingUrl('SqlDownload') + '?renderMode=xlsx', { method: 'POST', credentials: 'same-origin', headers, body })
+                .then((response) => {
+                    if (!response.ok) throw new Error('The download failed (' + response.status + ')');
+                    return response.blob();
+                }).then((blob) => {
+                    const link = document.createElement('a');
+                    link.href = URL.createObjectURL(blob);
+                    link.download = 'result-' + (this.tab + 1) + '.xlsx';
+                    document.body.appendChild(link); link.click(); link.remove();
+                    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+                }).catch((err) => moqui.notifyMessages(null, String(err.message || err)));
+        },
+        openHistory() {
+            this.historyOpen = true;
+            this.call('history').then((out) => { this.history = (out && out.history) || []; });
+        },
+        loadSaved() { this.call('savedQueries').then((out) => { this.savedQueries = (out && out.savedQueries) || []; }); },
+        useSaved(saved) {
+            this.sqlText = saved.sqlText || '';
+            this.savedQueryId = saved.queryId;
+            this.saveDescription = saved.description || '';
+            this.saveShared = saved.isShared === 'Y' || saved.isShared === true;
+            try { Object.assign(this.parameterValues, JSON.parse(saved.parametersJson || '{}')); } catch (_) { /* no defaults */ }
+        },
+        openSave() { this.saveOpen = true; },
+        storeSaved() {
+            const defaults = {};
+            for (const name of this.parameterNames) defaults[name] = this.parameterValues[name] == null ? '' : this.parameterValues[name];
+            this.call('storeQuery', 'POST', { queryId: this.savedQueryId || '', description: this.saveDescription, sqlText: this.sqlText,
+                isShared: this.saveShared, parametersJson: this.parameterNames.length ? JSON.stringify(defaults) : '' }).then((out) => {
+                if (!out) return;
+                this.savedQueryId = out.queryId || this.savedQueryId;
+                this.saveOpen = false;
+                moqui.notifyMessages('Query saved');
+            });
+        },
+        deleteSaved(saved) {
+            this.$q.dialog({ title: 'Delete saved query', message: 'Delete "' + (saved.description || saved.queryId) + '"?', cancel: true, persistent: true })
+                .onOk(() => this.call('deleteQuery', 'POST', { queryId: saved.queryId }).then((out) => {
+                    if (!out) return;
+                    if (this.savedQueryId === saved.queryId) this.savedQueryId = null;
+                    this.loadSaved();
+                }));
+        }
+    },
+    mounted() {
+        moqui.loadStylesheet('/libs/tabulator/tabulator.min.css');
+        moqui.loadStylesheet('/css/DataGrid.css');
+        Promise.all([
+            moqui.loadScript('/js/WebrootSql.js', null, () => !!(moqui.sql && moqui.sql.statements)),
+            moqui.loadScript('/libs/tabulator/tabulator.min.js', null, () => !!window.Tabulator)
+        ]).then(() => this.drawGrid(), (err) => console.error('The SQL screen could not load its libraries', err));
+        moqui.loadScript('/js/WebrootCode.js', null, () => !!(moqui.codeEditor && moqui.codeEditor.components))
+            .then(() => { this.codeReady = true; }, (err) => console.error('The code editor could not load; editing as plain text', err));
+        this.load();
+    },
+    beforeUnmount() { if (this.grid) { try { this.grid.destroy(); } catch (_) { /* gone */ } } }
+};
+</script>

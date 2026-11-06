@@ -1,0 +1,305 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The Tools app's database administration, data grid and ETL (plans/archive/Tools-Database.md): its jobs, saved
+    queries and grid views, the audit of what ran outside the entity facade, the connections to databases the entity
+    groups do not use, and the ETL mappings and runs. The services are org.moqui.impl.DatabaseServices
+    (crates/moqui-tools); the enumerations and status items are in framework/data/DatabaseSetupData.xml. No Java
+    counterpart. -->
+<entities xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/entity-definition-3.xsd">
+
+    <!-- ========== moqui.database ========== -->
+
+    <entity entity-name="DatabaseJob" package="moqui.database" use="transactional" cache="never">
+        <description>DDL or maintenance that runs outside an HTTP request, one statement after another, each on a
+            connection of its own (plans/archive/Tools-Database.md §6). db is group:&lt;groupName&gt; or
+            ext:&lt;connectionId&gt;. instanceId is the instance that runs it: a job left Running under it when the
+            instance starts again is marked Failed.</description>
+        <field name="jobId" type="id" is-pk="true"/>
+        <field name="db" type="text-medium"/>
+        <field name="description" type="text-medium"/>
+        <field name="kindEnumId" type="id"/>
+        <field name="statusId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="instanceId" type="id-long"/>
+        <field name="createdDate" type="date-time" default="ec.user.nowTimestamp"/>
+        <field name="startTime" type="date-time"/>
+        <field name="endTime" type="date-time"/>
+        <field name="lockTimeoutMs" type="number-integer"/>
+        <relationship type="one" title="DatabaseJobKind" related="moqui.basic.Enumeration" short-alias="kind">
+            <key-map field-name="kindEnumId"/></relationship>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="one" related="moqui.security.UserAccount"/>
+        <relationship type="many" related="moqui.database.DatabaseJobStatement" short-alias="statements">
+            <key-map field-name="jobId"/></relationship>
+        <index name="DB_JOB_STATUS"><index-field name="statusId"/><index-field name="instanceId"/></index>
+    </entity>
+    <entity entity-name="DatabaseJobStatement" package="moqui.database" use="transactional" cache="never">
+        <description>One statement of a job. dependsOnSeqId names the statement it waits on (a VALIDATE CONSTRAINT on its
+            NOT VALID): when that one fails this one is skipped. backendPid is the Postgres pid or MySQL connection id that
+            ran it, so any cluster member can cancel it.</description>
+        <field name="jobId" type="id" is-pk="true"/>
+        <field name="statementSeqId" type="id" is-pk="true"/>
+        <field name="statementText" type="text-very-long"/>
+        <field name="dependsOnSeqId" type="id"/>
+        <field name="statusId" type="id"/>
+        <field name="backendPid" type="number-integer"/>
+        <!-- Schema and jobs: when the session backendPid names started (Postgres pg_stat_activity.backend_start as
+            text), so a cancel from another instance reaches that session and not a later one with the pid -->
+        <field name="backendStart" type="text-medium"/>
+        <field name="startTime" type="date-time"/>
+        <field name="endTime" type="date-time"/>
+        <field name="rowsAffected" type="number-integer"/>
+        <field name="errorText" type="text-very-long"/>
+        <relationship type="one" related="moqui.database.DatabaseJob"/>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+    </entity>
+
+    <entity entity-name="SavedQuery" package="moqui.database" use="configuration" cache="never">
+        <description>A SQL statement saved from Tools › SQL (§8.1), with the database it runs on. A :name in sqlText is
+            bound as a value from parametersJson's defaults or the run's input, never pasted into the text. Shared queries
+            (isShared Y) are listed to everyone who may open SQL.</description>
+        <field name="queryId" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="db" type="text-medium"/>
+        <field name="sqlText" type="text-very-long"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="isShared" type="text-indicator"/>
+        <field name="parametersJson" type="text-very-long"/>
+        <relationship type="one" title="Owner" related="moqui.security.UserAccount">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <index name="DB_SAVED_QUERY_OWNER"><index-field name="ownerUserId"/></index>
+    </entity>
+
+    <entity entity-name="GridView" package="moqui.database" use="configuration" cache="never">
+        <description>A saved data grid view (§9.6): its source (an entity find, SQL or a file, sourceJson) and its layout
+            (columns, widths, order, frozen columns, filters and sort, layoutJson).</description>
+        <field name="viewId" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="isShared" type="text-indicator"/>
+        <field name="sourceJson" type="text-very-long"/>
+        <field name="layoutJson" type="text-very-long"/>
+        <relationship type="one" title="Owner" related="moqui.security.UserAccount">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <index name="DB_GRID_VIEW_OWNER"><index-field name="ownerUserId"/></index>
+    </entity>
+
+    <entity entity-name="DatabaseAudit" package="moqui.database" use="nontransactional" cache="never">
+        <description>What ran outside the entity facade (§14.2): every SQL statement, reads included, jobs, cancels and
+            terminates, grid saves, loads, ETL runs and stats resets. Written in a transaction of its own, so it survives a
+            rollback of what it records, and for failed statements too. For a grid save detailJson has the entity and the
+            counts, not the values. Kept 90 days by default (database_audit_days).</description>
+        <field name="auditId" type="id" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="visitId" type="id"/>
+        <field name="instanceId" type="id-long"/>
+        <field name="db" type="text-medium"/>
+        <field name="actionEnumId" type="id"/>
+        <field name="statementText" type="text-very-long"/>
+        <field name="isChange" type="text-indicator"/>
+        <field name="rowsReturned" type="number-integer"/>
+        <field name="rowsAffected" type="number-integer"/>
+        <field name="durationMs" type="number-integer"/>
+        <field name="errorText" type="text-very-long"/>
+        <field name="startTime" type="date-time"/>
+        <field name="detailJson" type="text-very-long"/>
+        <!-- a SQL run's statement: the run id the client named, and the statement's place in the script; the row's id is
+            the server's, so a run id used again replaces nothing -->
+        <field name="runId" type="id"/>
+        <field name="statementSeq" type="number-integer"/>
+        <relationship type="one" title="DatabaseAuditAction" related="moqui.basic.Enumeration" short-alias="action">
+            <key-map field-name="actionEnumId"/></relationship>
+        <relationship type="one" related="moqui.security.UserAccount"/>
+        <index name="DB_AUDIT_USER_TIME"><index-field name="userId"/><index-field name="startTime"/></index>
+        <index name="DB_AUDIT_TIME"><index-field name="startTime"/></index>
+        <index name="DB_AUDIT_RUN"><index-field name="runId"/></index>
+    </entity>
+
+    <entity entity-name="SqlRunToken" package="moqui.database" use="transactional" cache="never">
+        <description>The one-time confirmation of a SQL run with changes allowed (§8.2), issued by classify#Sql and
+            spent by run#Sql or explain#Sql on any instance: a delete that must remove exactly this row. tokenHash is the
+            SHA-256 of the token (the token itself is only the client's); textHash the SHA-256 of the script it confirms.
+            Expired rows are purged with the audit (purge#DatabaseAudit). Never written or read through the generic
+            entity tools.</description>
+        <field name="tokenHash" type="id-long" is-pk="true"/>
+        <field name="userId" type="id"/>
+        <field name="db" type="text-medium"/>
+        <field name="textHash" type="text-medium"/>
+        <field name="expireTime" type="date-time"/>
+        <index name="DB_SQL_TOKEN_EXPIRE"><index-field name="expireTime"/></index>
+    </entity>
+
+    <entity entity-name="DatabaseConnection" package="moqui.database" use="configuration" cache="never">
+        <description>A database the entity groups do not use (§4.3), reached as db=ext:&lt;connectionId&gt;. Refused on a
+            production instance and without the DATABASE_EXTERNAL permission, rows included. dbType is a database-list
+            name (postgres, mysql, mysql8; MariaDB is mysql). A readOnly connection (the default) runs every statement in a
+            read-only transaction.</description>
+        <field name="connectionId" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="dbType" type="text-short"/>
+        <field name="host" type="text-medium"/>
+        <field name="port" type="number-integer"/>
+        <field name="databaseName" type="text-medium"/>
+        <field name="userName" type="text-medium"/>
+        <field name="password" type="text-medium" encrypt="true"/>
+        <field name="sslMode" type="text-short"/>
+        <!-- sslrootcert as the datasource conf takes it: the path of a PEM file of the certificate authorities to trust,
+            not the PEM itself; empty trusts the public ones -->
+        <field name="sslRootCert" type="text-medium"/>
+        <field name="readOnly" type="text-indicator" default="'Y'"/>
+        <field name="ownerUserId" type="id"/>
+        <relationship type="one" title="Owner" related="moqui.security.UserAccount">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+    </entity>
+
+    <!-- ========== moqui.etl ========== -->
+    <!-- The ETL mappings and their runs (plans/archive/Tools-Database.md §10.2), run by org.moqui.impl.EtlServices
+        (crates/moqui-tools/src/etl). -->
+    <entity entity-name="EtlMapping" package="moqui.etl" use="configuration" cache="never">
+        <description>A saved mapping from a source to a target. The source: an entity find (sourceEntityName with
+            sourceConditionsJson, equality by field), a SQL query (sourceDb, sourceSql; needs SQL_RUNNER_WEB), a file
+            (sourceLocation, which may expand ${date}, ${yesterday} or ${now}; fileFormat csv, xlsx or auto by the
+            extension; sheetName, headerRow and firstDataRow from 1, csvDelimiter, csvCharset) or a flat record XML file.
+            The target: an entity or a service (one call per row). loadModeEnumId for an entity; matchFields (comma
+            separated) find an existing record by a natural key when the row has no primary key. batchSize 0 or empty is
+            one transaction for the run; with a batch size a failed batch is rolled back and stopOnError (Y by default)
+            decides whether the run goes on.</description>
+        <field name="mappingId" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="ownerUserId" type="id"/>
+        <field name="sourceTypeEnumId" type="id"/>
+        <field name="sourceEntityName" type="text-medium"/>
+        <field name="sourceConditionsJson" type="text-very-long"/>
+        <field name="sourceDb" type="text-medium"/>
+        <field name="sourceSql" type="text-very-long"/>
+        <field name="sourceLocation" type="text-medium"/>
+        <field name="fileFormat" type="text-short"/>
+        <field name="sheetName" type="text-medium"/>
+        <field name="headerRow" type="number-integer"/>
+        <field name="firstDataRow" type="number-integer"/>
+        <field name="csvDelimiter" type="text-short"/>
+        <field name="csvCharset" type="text-short"/>
+        <field name="targetTypeEnumId" type="id"/>
+        <field name="targetName" type="text-medium"/>
+        <field name="loadModeEnumId" type="id"/>
+        <field name="matchFields" type="text-medium"/>
+        <field name="batchSize" type="number-integer"/>
+        <field name="stopOnError" type="text-indicator"/>
+        <field name="dummyFks" type="text-indicator"/>
+        <field name="timeoutSeconds" type="number-integer"/>
+        <relationship type="one" title="EtlSourceType" related="moqui.basic.Enumeration" short-alias="sourceType">
+            <key-map field-name="sourceTypeEnumId"/></relationship>
+        <relationship type="one" title="EtlTargetType" related="moqui.basic.Enumeration" short-alias="targetType">
+            <key-map field-name="targetTypeEnumId"/></relationship>
+        <relationship type="one" title="EtlLoadMode" related="moqui.basic.Enumeration" short-alias="loadMode">
+            <key-map field-name="loadModeEnumId"/></relationship>
+        <relationship type="one" title="Owner" related="moqui.security.UserAccount">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <relationship type="many" related="moqui.etl.EtlMappingField" short-alias="fields">
+            <key-map field-name="mappingId"/></relationship>
+    </entity>
+    <entity entity-name="EtlMappingField" package="moqui.etl" use="configuration" cache="never">
+        <description>One target field of a mapping. Its value: constantValue, else the source column (sourceColumn: a
+            header, ignoring case, or a column letter or number; else the target field's own name), trimmed when trim is
+            Y, defaultValue when empty, mapped by the value map (case-insensitive), parsed by formatPattern (a Java date
+            pattern such as dd/MM/yyyy, or a number pattern such as #,##0.00 or #.##0,00), looked up (the
+            lookupResultField, or the primary key, of the lookupEntityName record whose lookupMatchField is the value),
+            and then the expression's result (JavaScript with row, value and ec). An empty value is an error when
+            required, left out when skipIfEmpty, else set empty.</description>
+        <field name="mappingId" type="id" is-pk="true"/>
+        <field name="fieldSeqId" type="id" is-pk="true"/>
+        <field name="targetField" type="text-medium"/>
+        <field name="sourceColumn" type="text-medium"/>
+        <field name="constantValue" type="text-medium"/>
+        <field name="defaultValue" type="text-medium"/>
+        <field name="expression" type="text-very-long"/>
+        <field name="valueMapId" type="id"/>
+        <field name="lookupEntityName" type="text-medium"/>
+        <field name="lookupMatchField" type="text-medium"/>
+        <field name="lookupResultField" type="text-medium"/>
+        <field name="formatPattern" type="text-medium"/>
+        <field name="trim" type="text-indicator"/>
+        <field name="required" type="text-indicator"/>
+        <field name="skipIfEmpty" type="text-indicator"/>
+        <relationship type="one" related="moqui.etl.EtlMapping"/>
+        <relationship type="one" related="moqui.etl.EtlValueMap"/>
+    </entity>
+    <entity entity-name="EtlValueMap" package="moqui.etl" use="configuration" cache="never">
+        <description>A map of source values to target values ("Active" to ACTIVE_STATUS), matched
+            case-insensitively. Only its owner, or a DATABASE_ADMIN holder, changes or deletes it.</description>
+        <field name="valueMapId" type="id" is-pk="true"/>
+        <field name="description" type="text-medium"/>
+        <field name="ownerUserId" type="id"/>
+        <relationship type="one-nofk" title="Owner" related="moqui.security.UserAccount">
+            <key-map field-name="ownerUserId" related="userId"/></relationship>
+        <relationship type="many" related="moqui.etl.EtlValueMapEntry" short-alias="entries">
+            <key-map field-name="valueMapId"/></relationship>
+    </entity>
+    <entity entity-name="EtlValueMapEntry" package="moqui.etl" use="configuration" cache="never">
+        <field name="valueMapId" type="id" is-pk="true"/>
+        <field name="fromValue" type="text-medium" is-pk="true"/>
+        <field name="toValue" type="text-medium"/>
+        <relationship type="one" related="moqui.etl.EtlValueMap"/>
+    </entity>
+    <entity entity-name="EtlRun" package="moqui.etl" use="nontransactional" cache="never">
+        <description>One run (or check) of a mapping, saved or inline (mappingId empty). Its counts are written every
+            1,000 rows in a transaction of their own, so the Run screen shows progress: extractCount the rows read,
+            loadCount the rows committed, errorCount the rows with an error. startRow is the first row the run read (0 for
+            the first). lastCommittedRow is the last row of the last batch committed before any batch failed;
+            nextStartRow is where a rerun starts: lastCommittedRow + 1, or the run's own startRow when it committed
+            nothing. sourceLocation is a file source's location as the run expanded it (${yesterday} and the rest), so
+            rerun#EtlRun reads the same file; it is empty for uploaded content and for entity and SQL sources.
+            errorLocation is a CSV of every failed row with its error; the first 1,000 errors are also EtlRunError
+            rows. mappingId has no foreign key, so the runs of a deleted mapping stay.</description>
+        <field name="runId" type="id" is-pk="true"/>
+        <field name="mappingId" type="id"/>
+        <field name="userId" type="id"/>
+        <field name="instanceId" type="id-long"/>
+        <field name="jobRunId" type="id"/>
+        <field name="isCheck" type="text-indicator"/>
+        <field name="statusId" type="id"/>
+        <field name="startTime" type="date-time"/>
+        <field name="endTime" type="date-time"/>
+        <field name="sourceDescription" type="text-medium"/>
+        <field name="sourceLocation" type="text-medium"/>
+        <field name="startRow" type="number-integer"/>
+        <field name="nextStartRow" type="number-integer"/>
+        <field name="extractCount" type="number-integer"/>
+        <field name="skipCount" type="number-integer"/>
+        <field name="loadCount" type="number-integer"/>
+        <field name="errorCount" type="number-integer"/>
+        <field name="lastCommittedRow" type="number-integer"/>
+        <field name="errorLocation" type="text-medium"/>
+        <field name="failureText" type="text-very-long"/>
+        <!-- no foreign key: the runs stay when their mapping is deleted -->
+        <relationship type="one-nofk" related="moqui.etl.EtlMapping"/>
+        <relationship type="one" related="moqui.basic.StatusItem" short-alias="status"/>
+        <relationship type="many" related="moqui.etl.EtlRunError" short-alias="errors">
+            <key-map field-name="runId"/></relationship>
+        <index name="ETL_RUN_MAPPING"><index-field name="mappingId"/><index-field name="startTime"/></index>
+    </entity>
+    <entity entity-name="EtlRunError" package="moqui.etl" use="nontransactional" cache="never">
+        <description>An error of a run: its source row number, the target field (empty for the row as a whole: its load
+            or its type conversion), the message and the source row as JSON.</description>
+        <field name="runId" type="id" is-pk="true"/>
+        <field name="errorSeqId" type="id" is-pk="true"/>
+        <field name="rowNumber" type="number-integer"/>
+        <field name="fieldName" type="text-medium"/>
+        <field name="message" type="text-very-long"/>
+        <field name="rowJson" type="text-very-long"/>
+        <relationship type="one" related="moqui.etl.EtlRun"/>
+    </entity>
+
+</entities>

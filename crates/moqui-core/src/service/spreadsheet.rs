@@ -78,6 +78,79 @@ struct Sheet {
     rows: Vec<Vec<Value>>,
 }
 
+/// One sheet read whole, for the ETL `SheetExtractor` and the grid's file source (plans/archive/Tools-Database.md §9.1,
+/// §10.3): every row of the used area that has a value, each with its row number in the sheet (from 1), cells typed as
+/// [`cell_value`] reads them. No header is taken out; the caller picks its header row.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SheetData {
+    pub sheet_names: Vec<String>,
+    pub sheet_name: String,
+    pub rows: Vec<Vec<Value>>,
+    /// The sheet row number of each of `rows`.
+    pub row_numbers: Vec<u32>,
+}
+
+/// Read sheet `sheet_name` (by index `sheet_index` when empty) of a spreadsheet's bytes (xlsx, xlsm, xlsb, xls or
+/// ods), refusing a used area over [`MAX_SHEET_CELLS`] cells.
+///
+/// # Errors
+///
+/// Returns an error when the bytes are not a spreadsheet, it has no such sheet, or the sheet is too large.
+pub fn read_sheet_bytes(bytes: &[u8], sheet_name: &str, sheet_index: usize) -> Result<SheetData, LibError> {
+    let mut book = open_book(bytes)?;
+    let names = book.sheet_names();
+    let chosen = if sheet_name.is_empty() {
+        names.get(sheet_index).cloned().ok_or_else(|| {
+            LibError::new(format!(
+                "The spreadsheet has no sheet {sheet_index}, it has {}",
+                names.len()
+            ))
+        })?
+    } else if names.iter().any(|name| name == sheet_name) {
+        sheet_name.to_string()
+    } else {
+        return Err(LibError::new(format!(
+            "The spreadsheet has no sheet named {sheet_name}, it has {}",
+            names.join(", ")
+        )));
+    };
+    let range = sheet_range(&mut book, &chosen)?;
+    let zone = crate::l10n::time_zone();
+    let first_row = range.start().map_or(0, |(row, _)| row);
+    let mut rows = Vec::new();
+    let mut row_numbers = Vec::new();
+    for (index, row) in range.rows().enumerate() {
+        let values: Vec<Value> = row.iter().map(|cell| cell_value(cell, &zone)).collect();
+        if values.iter().all(Value::is_null) {
+            continue;
+        }
+        rows.push(values);
+        row_numbers.push(
+            first_row
+                .saturating_add(u32::try_from(index).unwrap_or(u32::MAX))
+                .saturating_add(1),
+        );
+    }
+    Ok(SheetData {
+        sheet_names: names,
+        sheet_name: chosen,
+        rows,
+        row_numbers,
+    })
+}
+
+/// A run of an inline ETL mapping in place of `load#SpreadsheetEntity`'s own loop: moqui-tools installs it
+/// (plans/archive/Tools-Database.md §10.3), so the load maps its rows as an ETL run does; without it the loop below
+/// runs.
+pub type InlineLoad = fn(&BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, LibError>;
+
+static INLINE_LOAD: std::sync::OnceLock<InlineLoad> = std::sync::OnceLock::new();
+
+/// Have `load#SpreadsheetEntity` run through `load`. The first install wins.
+pub fn install_inline_load(load: InlineLoad) {
+    let _ = INLINE_LOAD.set(load);
+}
+
 fn read_sheet(parameters: &BTreeMap<String, Value>) -> Result<Sheet, LibError> {
     let bytes = match parameters.get("contentBytes") {
         Some(Value::Bytes(bytes)) if !bytes.is_empty() => bytes.clone(),
@@ -313,7 +386,7 @@ fn open_book(bytes: &[u8]) -> Result<Sheets<Cursor<Vec<u8>>>, LibError> {
 
 /// The first rows of one sheet, for a preview.
 #[derive(Debug, Default, PartialEq)]
-pub(crate) struct SheetPreview {
+pub struct SheetPreview {
     pub sheet_names: Vec<String>,
     pub sheet_name: String,
     /// From the first used row and column; an empty cell is null.
@@ -328,7 +401,7 @@ pub(crate) struct SheetPreview {
 /// # Errors
 ///
 /// Returns an error when the bytes are not a spreadsheet calamine reads, or it has no sheet of that name.
-pub(crate) fn preview_rows(
+pub fn preview_rows(
     bytes: &[u8],
     sheet_name: &str,
     max_rows: usize,
@@ -490,6 +563,9 @@ fn load_spreadsheet_entity(
     parameters: &BTreeMap<String, Value>,
     _facade: &EntityFacade,
 ) -> Result<BTreeMap<String, Value>, LibError> {
+    if let Some(load) = INLINE_LOAD.get() {
+        return load(parameters);
+    }
     let entity_name = param_text(parameters, "entityName");
     if entity_name.is_empty() {
         return Err(LibError::new("load#SpreadsheetEntity needs an entityName"));

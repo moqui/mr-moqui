@@ -18,26 +18,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <parameter name="dataDocumentId" required="true"/>
 
-    <transition name="DocumentExport.json" read-only="true" authz-action="update">
-        <actions><script><![CDATA[
-            const edd = ec.entity.getEntityDataDocument()
-
-            const prettyPrint = String(context.prettyPrint) == 'true'
-            fromUpdateStamp = fromUpdateStamp ? ec.l10n.parseTimestamp(fromUpdateStamp, null) : null
-            thruUpdateStamp = thruUpdateStamp ? ec.l10n.parseTimestamp(thruUpdateStamp, null) : null
-
-            const filename = String(dataDocumentId) + ".json"
-            const response = ec.web.response
-            response.setContentType("application/json")
-            response.setCharacterEncoding("UTF-8")
-            response.setHeader("Content-Disposition", `attachment; filename="${filename}"; filename*=utf-8''${StringUtilities.encodeAsciiFilename(filename)}`)
-            response.setHeader("Cache-Control", "no-cache, must-revalidate, private")
-            response.getWriter().write("[\n")
-            edd.writeDocumentsToWriter(response.getWriter(), [String(dataDocumentId)], null, fromUpdateStamp, thruUpdateStamp, prettyPrint)
-            response.getWriter().write("]\n")
-        ]]></script></actions>
-        <default-response type="none"/>
-    </transition>
+    <transition-include name="DocumentExport.json" location="component://tools/screen/Tools/Data/Export.xml"/>
 
     <actions>
         <set field="entityName" from="'DataDocument.' + dataDocumentId"/>
@@ -55,13 +36,11 @@ along with this software (see the LICENSE.md file). If not, see
                 <field name="submitButton"><default-field title="Download"><submit/></default-field></field>
             </form-single>
         </container-dialog>
-        <form-list name="DataViewList" list="entityValueList" skip-form="true" dynamic="true" header-dialog="true"
-                show-csv-button="true" show-xlsx-button="true" show-page-size="true" saved-finds="true">
-            <entity-find entity-name="${entityName}" list="entityValueList" cache="false" use-clone="true">
-                <search-form-inputs/></entity-find>
-            <field name="dataDocumentId"><header-field><hidden/></header-field></field>
-            <auto-fields-entity entity-name="${entityName}" field-type="find-display"/>
-            <field name="findButton"><header-field title="Find"><submit/></header-field></field>
-        </form-list>
+        <!-- the document's records are in the data grid (plans/archive/Tools-Database.md §2.1, §9.6), with its saved
+            views -->
+        <container-box><box-header title="The document's records"/><box-body>
+            <label text="The records of this document open in the data grid, where they can be filtered, sorted, exported and kept as saved views." type="p" style="m-muted"/>
+            <link url="//apps/tools/Data/Grid" text="Open in the data grid" btn-type="primary" parameter-map="{entityName: entityName}"/>
+        </box-body></container-box>
     </widgets>
 </screen>

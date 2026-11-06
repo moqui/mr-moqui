@@ -1369,6 +1369,18 @@ impl ExecutionContext {
         drop(guard);
     }
 
+    /// The guard of [`Self::script_disable_authz`], taken out: a scope that must leave the script's authorization state
+    /// as it found it (`ec.artifactExecution.runAsUser`) takes it before and puts it back with
+    /// [`Self::put_script_authz`] after.
+    pub fn take_script_authz(&self) -> Option<AuthzGuard> {
+        self.state.script_authz.borrow_mut().take()
+    }
+
+    /// Put back a guard [`Self::take_script_authz`] took.
+    pub fn put_script_authz(&self, guard: Option<AuthzGuard>) {
+        *self.state.script_authz.borrow_mut() = guard;
+    }
+
     /// Java's `disableEntityEca`: entity ECA rules do not run for writes of this context until
     /// [`Self::enable_entity_eca`]. Returns whether they were already disabled; a caller that found them disabled
     /// leaves them so.
@@ -1402,6 +1414,16 @@ impl ExecutionContext {
     /// Java's `getStackNameString`: the names on the artifact stack, top first.
     pub fn artifact_stack_names(&self) -> String {
         self.state.artifacts.borrow().name_string()
+    }
+
+    /// The entity of the entity frame on top of the artifact stack, if one is, and the first other artifact below it
+    /// (the query stats' artifact). Both `None` while the stack is being changed (an authorization check's own find).
+    pub fn statement_artifact(&self) -> (Option<String>, Option<String>) {
+        self.state
+            .artifacts
+            .try_borrow()
+            .map(|stack| stack.statement_artifact())
+            .unwrap_or_default()
     }
 
     pub fn authz_disabled(&self) -> bool {

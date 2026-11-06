@@ -643,6 +643,18 @@ fn view_members(facade: &EntityFacade, entity_name: &str) -> Result<(String, Opt
 }
 
 impl EntityDbMeta<'_> {
+    /// Compare the tables of these entities with the database, as the table check would make them, and change
+    /// nothing (plans/archive/Tools-Database.md 5.1). View-entities expand to their member entities; no names compares
+    /// every entity. A database whose catalog cannot be read is an entry of [`super::SchemaDiff::errors`], and the
+    /// others are compared.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown entity name.
+    pub fn compare(&self, names: &[&str]) -> Result<super::SchemaDiff, Error> {
+        super::meta_compare::compare(self.facade, names)
+    }
+
     /// Create tables for these entities. View-entities expand to their member entities.
     pub fn check(&self, names: &[&str]) -> Result<(), Error> {
         self.run(names, true, true).map(|_| ())
@@ -791,7 +803,7 @@ struct Probe {
     table: String,
 }
 
-fn expand(facade: &EntityFacade, names: &[&str]) -> Result<Vec<String>, Error> {
+pub(crate) fn expand(facade: &EntityFacade, names: &[&str]) -> Result<Vec<String>, Error> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     for name in names {

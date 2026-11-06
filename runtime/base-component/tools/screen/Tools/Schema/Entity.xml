@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Entity" default-menu-include="false">
+
+    <parameter name="selectedEntity" required="true"/>
+    <parameter name="refresh" required="false"/>
+
+    <transition name="list"><default-response url="../Entities"/></transition>
+    <transition name="find"><default-response url="../../Data/Grid"/></transition>
+    <transition name="autoFind"><default-response url="../../Data/Browse/AutoFind"/></transition>
+    <transition name="checkTable" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            const check = ec.entity.checkTables([String(selectedEntity)])
+            ec.message.addMessage(`Checked the table: ${check.ddl.length} statements ran, ${check.errors} failed`,
+                check.errors || check.failed.length ? 'warning' : 'info')
+            for (const failure of check.failed) ec.message.addMessage(`${failure.entityName} not checked: ${failure.error}`, 'warning')
+            for (const ddl of check.ddl) ec.message.addMessage(ddl, 'info')
+        ]]></script></actions>
+        <default-response url="."/>
+    </transition>
+
+    <actions>
+        <set field="entityDefinition" from="ec.entity.getEntityDefinition(selectedEntity)"/>
+        <set field="entityInfo" from="entityDefinition.entityInfo"/>
+        <set field="entityNode" from="entityDefinition.getEntityNode()"/>
+        <set field="fieldInfos" from="entityInfo.allFieldInfoArray"/>
+        <set field="relationshipInfoList" from="entityDefinition.getRelationshipsInfo(false)"/>
+        <set field="dependents" from="entityDefinition.getDependentsTree()"/>
+        <script><![CDATA[
+            eecas = ec.entity.eecaRulesByEntityName.get(entityDefinition.fullEntityName)
+            secas = []
+            for (const verb of ['create', 'update', 'delete', 'store']) {
+                const rules = ec.service.secaRulesByServiceName.get(verb + entityDefinition.fullEntityName)
+                if (rules) secas.push(...rules)
+            }
+        ]]></script>
+        <set field="entityDescription" from="entityNode.first('description')?.text"/>
+        <!-- the table against the model: compare#Schema of this entity, on its group's database -->
+        <script><![CDATA[
+            // the database of the entity's group, as the selector names it (a group sharing a database goes by the first)
+            const entityGroup = entityNode.attribute('group-name') || databaseList[0]?.groupNames[0]
+            entityDb = (databaseList.find((database) => database.groupNames.includes(entityGroup)) || databaseList[0])?.db
+            tableDiff = null
+            tableDiffError = null
+            if (!entityDefinition.isViewEntity) {
+                try {
+                    const diff = ec.service.sync().name('org.moqui.impl.DatabaseServices.compare#Schema').parameters({db: entityDb,
+                        entityNames: [String(selectedEntity)]}).call()
+                    tableDiff = ((diff && diff.tables) || [])[0] || null
+                } catch (e) { tableDiffError = String(e.message || e) }
+                if (ec.message.hasError()) { tableDiffError = ec.message.errorsString; ec.message.clearErrors() }
+            }
+            const names = (list) => (list || []).map((item) => item.name || item.column || String(item))
+            tableDiffRows = []
+            if (tableDiff) {
+                if (tableDiff.missingTable) tableDiffRows.push({what: 'Table', difference: 'missing', names: tableDiff.tableName})
+                for (const [key, what, difference] of [['missingColumns', 'Columns', 'missing'], ['extraColumns', 'Columns', 'not in the model'],
+                        ['missingIndexes', 'Indexes', 'missing'], ['invalidIndexes', 'Indexes', 'invalid'], ['extraIndexes', 'Indexes', 'not in the model'],
+                        ['missingForeignKeys', 'Foreign keys', 'missing'], ['extraForeignKeys', 'Foreign keys', 'not in the model'],
+                        ['unindexedForeignKeys', 'Foreign keys', 'no index leads with']]) {
+                    if ((tableDiff[key] || []).length) tableDiffRows.push({what, difference, names: names(tableDiff[key]).join(', ')})
+                }
+                for (const type of tableDiff.columnTypes || []) tableDiffRows.push({what: 'Column type', difference: type.column,
+                    names: type.actual + ' (model ' + type.expected + ')'})
+            }
+            canPlan = ec.user.hasPermission('DATABASE_ADMIN')
+        ]]></script>
+    </actions>
+    <widgets>
+        <container>
+            <link url="list" text="Entity List"/>
+            <link url="find" text="Entity Find"/>
+            <link url="autoFind" text="Auto Screen Find" parameter-map="{aen:selectedEntity}"/>
+            <link url="checkTable" link-type="hidden-form" text="Check table" tooltip="Create the missing table, columns, indexes and foreign keys of this entity"/>
+        </container>
+        <container><label text="Entity Detail for ${entityDefinition.getPrettyName(null, null)} (${entityDefinition.fullEntityName})" type="h3"/></container>
+        <container-row>
+            <row-col md="3"><label text="View Entity? ${entityDefinition.isViewEntity}" type="strong"/></row-col>
+            <row-col md="3"><label text="Short Alias: ${entityInfo.shortAlias || 'N/A'}" type="strong"/></row-col>
+            <row-col md="3"><label text="Table Name: ${entityInfo.fullTableName || 'N/A'}" type="strong"/></row-col>
+            <row-col md="3"><label text="Entity Group: ${entityNode.attribute('group-name') || '(default)'}" type="strong"/></row-col>
+        </container-row>
+        <container-row>
+            <row-col md="3"><label text="Needs Encrypt? ${entityInfo.needsEncrypt}" type="strong"/></row-col>
+            <row-col md="3"><label text="Create Only? ${entityInfo.createOnly}" type="strong"/></row-col>
+        </container-row>
+        <container-row>
+            <row-col md="3"><label text="Needs Audit Log? ${entityInfo.needsAuditLog}" type="strong"/></row-col>
+            <row-col md="3"><label text="Entity Audit Default: ${entityNode.attribute('enable-audit-log') || 'false'}" type="strong"/></row-col>
+        </container-row>
+        <label text="${entityDescription}" condition="entityDescription"/>
+
+        <section name="TableDiffSection" condition="!entityDefinition.isViewEntity"><widgets>
+            <container-box><box-header title="The table against the model"/>
+                <box-toolbar>
+                    <link url="../IndexesKeys/plan" text="Plan changes" link-type="hidden-form" condition="canPlan &amp;&amp; tableDiffRows.length"
+                            parameter-map="{db: entityDb, entityNames: selectedEntity}"/>
+                </box-toolbar>
+                <box-body>
+                    <label text="${tableDiffError}" type="p" style="text-negative" condition="tableDiffError"/>
+                    <label text="The table matches the model." type="p" condition="!tableDiffError &amp;&amp; !tableDiffRows.length"/>
+                    <form-list name="TableDiffList" list="tableDiffRows" skip-form="true" paginate="false">
+                        <field name="what"><default-field title=""><display/></default-field></field>
+                        <field name="difference"><default-field><display/></default-field></field>
+                        <field name="names"><default-field title="Names"><display/></default-field></field>
+                    </form-list>
+                </box-body>
+            </container-box>
+        </widgets></section>
+
+        <form-list name="FieldList" list="fieldInfos" list-entry="fieldInfo">
+            <field name="fieldName" from="fieldInfo.name"><default-field><display/></default-field></field>
+            <field name="type" from="fieldInfo.type"><default-field><display/></default-field></field>
+            <field name="column" from="entityDefinition.getColumnName(fieldInfo.name)"><default-field><display/></default-field></field>
+            <field name="isPk" from="fieldInfo.isPk"><default-field title="Is PK"><display/></default-field></field>
+            <field name="audit" from="fieldInfo.enableAuditLog"><default-field><display/></default-field></field>
+            <field name="encrypt" from="fieldInfo.encrypt"><default-field><display/></default-field></field>
+            <field name="localize" from="fieldInfo.enableLocalization"><default-field><display/></default-field></field>
+            <field name="default" from="fieldInfo.defaultStr"><default-field><display/></default-field></field>
+            <field name="description" from="fieldInfo.fieldNode.first('description')?.text || ''"><default-field><display/></default-field></field>
+        </form-list>
+        <form-list name="RelatedEntities" list="relationshipInfoList" list-entry="relInfo">
+            <field name="prettyName"><default-field><display/></default-field></field>
+            <field name="shortAlias"><default-field><display/></default-field></field>
+            <field name="title"><default-field><display/></default-field></field>
+            <field name="relatedEntityName"><default-field><display/></default-field></field>
+            <field name="type"><default-field><display/></default-field></field>
+            <field name="keyMap"><default-field><display/></default-field></field>
+            <field name="link">
+                <default-field title="">
+                    <link text="Detail" url="." link-type="anchor"><parameter name="selectedEntity" from="relInfo.relatedEntityName"/></link>
+                    <link text="Find" url="find" link-type="anchor">
+                        <parameter name="enumTypeId" from="(relInfo.relatedEntityName == 'moqui.basic.Enumeration')? relInfo.title : ''"/> <!-- optional parameter. only assigns a value if relInfo is an Enumeration -->
+                        <parameter name="statusTypeId" from="(relInfo.relatedEntityName == 'moqui.basic.StatusItem')? relInfo.title : ''"/> <!-- optional parameter. only assigns a value if relInfo is a StatusItem -->
+                        <parameter name="selectedEntity" from="relInfo.relatedEntityName"/>
+                    </link>
+                </default-field>
+            </field>
+        </form-list>
+
+        <label text="EECAs and related AutoService SECAs" type="h4" condition="eecas || secas"/>
+        <section-iterate name="Eecas" list="eecas" entry="eeca">
+            <widgets>
+                <container type="pre" style="line-numbers">
+                    <label text="${eeca.eecaNode.toString()}" type="code" style="language-markup" encode="true"/></container>
+            </widgets>
+        </section-iterate>
+        <section-iterate name="Secas" list="secas" entry="seca">
+            <widgets>
+                <container type="pre" style="line-numbers">
+                    <label text="${seca.toString()}" type="code" style="language-markup" encode="true"/></container>
+            </widgets>
+        </section-iterate>
+        <render-mode><text type="html,vuet,qvt"><![CDATA[
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.20.0/themes/prism-twilight.min.css" type="text/css"/>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.20.0/prism.min.js" type="text/javascript"></script>
+        ]]></text>
+        <!-- the highlighter only: nothing to show in the terminal -->
+        <text type="tui" template="false">[]</text></render-mode>
+
+        <label text="Dependents" type="h4"/>
+        <label text="${dependents.toString()}" type="pre" encode="true"/>
+        <label text="All Descendants:" type="h5"/>
+        <section-iterate name="DescendantList" list="dependents.allDescendants" entry="descendantName">
+            <widgets><container><link url="." text="${descendantName}" parameter-map="{selectedEntity:descendantName}" link-type="anchor"/></container></widgets>
+        </section-iterate>
+    </widgets>
+</screen>

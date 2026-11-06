@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The data grid (plans/archive/Tools-Database.md §9): the rows of an entity, a view entity, a data document or a SQL
+    result in a Tabulator grid (Grid.qvue), edited in place and saved in one transaction where the source can be
+    (save#DataGridChanges), exported, and kept as saved views. The source is entityName (or selectedEntity), a saved
+    view (viewId), or a SQL result handed over from the SQL screen. Every request goes to the transitions below, over
+    the data grid services of org.moqui.impl.DatabaseServices; a SQL source needs SQL_RUNNER_WEB. The terminal render is
+    a paged list of the same rows, read only, whose rows open the record form (Record.xml) for an entity. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Grid" default-menu-index="1" render-modes="vue,qvue,tui" server-static="vue,qvue">
+
+    <parameter name="entityName"/>
+    <parameter name="selectedEntity"/>
+    <parameter name="viewId"/>
+
+    <!-- the columns of a source: types, editors, keys, what is editable and where it saves -->
+    <transition name="gridColumns" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // the JSON parameters; a SQL source only from the body, never the URL
+                const parse = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name] != null ? ec.web.secureRequestParameters[name] : context[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                const source = parse('sourceJson', null)
+                if (source && source.type == 'sql' && ec.web.secureRequestParameters.sourceJson == null) throw new Error('A SQL source goes in the request body')
+                out = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DataGridColumns').parameters({source, columns: parse('columnsJson', [])}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a page of rows for Tabulator's progressive load, with its remote sort and filter -->
+    <transition name="gridRows" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // the JSON parameters; a SQL source only from the body, never the URL
+                const parse = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name] != null ? ec.web.secureRequestParameters[name] : context[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                const source = parse('sourceJson', null)
+                if (source && source.type == 'sql' && ec.web.secureRequestParameters.sourceJson == null) throw new Error('A SQL source goes in the request body')
+                out = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DataGridRows').parameters({source, columns: parse('columnsJson', []), page: Number(context.page || 1), size: Number(context.size || 100),
+                    sort: parse('sortJson', []), filter: parse('filterJson', [])}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the exact count of the source's rows with its filter -->
+    <transition name="gridCount" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // the JSON parameters; a SQL source only from the body, never the URL
+                const parse = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name] != null ? ec.web.secureRequestParameters[name] : context[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                const source = parse('sourceJson', null)
+                if (source && source.type == 'sql' && ec.web.secureRequestParameters.sourceJson == null) throw new Error('A SQL source goes in the request body')
+                out = ec.service.sync().name('org.moqui.impl.DatabaseServices.count#DataGridRows').parameters({source, filter: parse('filterJson', [])}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the options of a related-entity column, searched by text -->
+    <transition name="gridLookup" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // the JSON parameters; a SQL source only from the body, never the URL
+                const parse = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name] != null ? ec.web.secureRequestParameters[name] : context[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                const source = parse('sourceJson', null)
+                if (source && source.type == 'sql' && ec.web.secureRequestParameters.sourceJson == null) throw new Error('A SQL source goes in the request body')
+                out = ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DataGridLookup').parameters({entityName: String(context.entityName || ''), field: String(context.field || ''), term: context.term || null, offset: Number(context.offset || 0)}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the grid's changes in one transaction: only the edited fields, each row with its stamp -->
+    <transition name="gridSave" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // the JSON parameters; a SQL source only from the body, never the URL
+                const parse = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name] != null ? ec.web.secureRequestParameters[name] : context[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                const source = parse('sourceJson', null)
+                if (source && source.type == 'sql' && ec.web.secureRequestParameters.sourceJson == null) throw new Error('A SQL source goes in the request body')
+                out = ec.service.sync().name('org.moqui.impl.DatabaseServices.save#DataGridChanges').parameters({entityName: String(context.saveEntityName || ''), updates: parse('updatesJson', []), creates: parse('createsJson', []), deletes: parse('deletesJson', [])}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the whole source as CSV or XLSX, to a location of the user's or to a new one sent as a download -->
+    <transition name="gridExport" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // the JSON parameters; a SQL source only from the body, never the URL
+                const parse = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name] != null ? ec.web.secureRequestParameters[name] : context[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                const source = parse('sourceJson', null)
+                if (source && source.type == 'sql' && ec.web.secureRequestParameters.sourceJson == null) throw new Error('A SQL source goes in the request body')
+                out = ec.service.sync().name('org.moqui.impl.DatabaseServices.export#DataGrid').parameters({source, columns: parse('columnsJson', []), sort: parse('sortJson', []), filter: parse('filterJson', []), format: context.format || 'csv',
+                    location: context.location || null}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- an export written to the user's own temporary place (runtime://tmp/grid-export/<userId>/), sent as a download:
+        any other location, another user's, or a path with .. in it is refused -->
+    <transition name="gridDownload" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const location = String(context.location || '')
+            const prefix = 'runtime://tmp/grid-export/' + ec.user.userId + '/'
+            const rest = location.startsWith(prefix) ? location.substring(prefix.length) : null
+            if (!ec.user.userId || rest == null || !rest || rest.split('/').some((segment) => segment == '..' || segment == '.' || segment == '')
+                    || !ec.resource.getLocationReference(location)?.getExists()) {
+                ec.web.sendJsonError(404, ec.l10n.localize('Export not found'))
+            } else {
+                const fileName = String(context.fileName || rest.split('/').pop()).replace(/[\\/"\r\n]/g, '_')
+                ec.web.sendResourceResponse(location, false, fileName)
+                // the export's own type (text/csv, the XLSX type), not one guessed from the name
+                const types = ['text/csv', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet']
+                if (types.includes(String(context.contentType || ''))) ec.web.response.setContentType(String(context.contentType))
+            }
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the user's saved grid views and the shared ones -->
+    <transition name="gridViews" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // the JSON parameters; a SQL source only from the body, never the URL
+                const parse = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name] != null ? ec.web.secureRequestParameters[name] : context[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                const source = parse('sourceJson', null)
+                if (source && source.type == 'sql' && ec.web.secureRequestParameters.sourceJson == null) throw new Error('A SQL source goes in the request body')
+                out = ec.service.sync().name('org.moqui.impl.DatabaseServices.find#GridViews').parameters({}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- save a grid view: the source and the layout -->
+    <transition name="storeView" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // the JSON parameters; a SQL source only from the body, never the URL
+                const parse = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name] != null ? ec.web.secureRequestParameters[name] : context[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                const source = parse('sourceJson', null)
+                if (source && source.type == 'sql' && ec.web.secureRequestParameters.sourceJson == null) throw new Error('A SQL source goes in the request body')
+                out = ec.service.sync().name('org.moqui.impl.DatabaseServices.store#GridView').parameters({viewId: context.viewId || null, description: context.description || null, isShared: String(context.isShared) == 'true',
+                    sourceJson: String(ec.web.secureRequestParameters.viewSourceJson || ''), layoutJson: ec.web.secureRequestParameters.layoutJson || null}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- delete a grid view the user owns -->
+    <transition name="deleteView" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // the JSON parameters; a SQL source only from the body, never the URL
+                const parse = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name] != null ? ec.web.secureRequestParameters[name] : context[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                const source = parse('sourceJson', null)
+                if (source && source.type == 'sql' && ec.web.secureRequestParameters.sourceJson == null) throw new Error('A SQL source goes in the request body')
+                out = ec.service.sync().name('org.moqui.impl.DatabaseServices.delete#GridView').parameters({viewId: String(context.viewId || '')}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the entity chooser (entity names holding term, 50 at a time), what the user may do, and for a data document or a
+        DbViewEntity (entityName) the entity its Related row action opens in Data › Browse, with that entity's key -->
+    <transition name="gridInfo" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            const term = String(context.term || '').toLowerCase()
+            const names = term ? ec.entity.getAllEntityNames().filter((name) => String(name).toLowerCase().includes(term)).slice(0, 50) : []
+            let related = null
+            const name = String(context.entityName || '')
+            try {
+                let relatedName = null
+                if (name.startsWith('DataDocument.')) {
+                    const doc = ec.entity.find('moqui.entity.document.DataDocument').condition('dataDocumentId', name.substring(13)).one()
+                    relatedName = doc ? doc.primaryEntityName : null
+                } else if (name) {
+                    const master = ec.entity.find('moqui.entity.view.DbViewEntityMember').condition('dbViewEntityName', name).condition('entityAlias', 'MASTER').one()
+                    relatedName = master ? master.entityName : null
+                }
+                if (relatedName && ec.entity.isEntityDefined(relatedName))
+                    related = {entityName: relatedName, pkFieldNames: ec.entity.getEntityDefinition(relatedName).getPkFieldNames()}
+            } catch (e) { related = null }
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse({entityNames: names, userId: ec.user.userId, canSql: ec.user.hasPermission('SQL_RUNNER_WEB'), related})
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <widgets>
+        <render-mode>
+            <text type="qvue" location="component://tools/screen/Tools/Data/Grid.qvue" template="false"/>
+            <!-- the terminal: a page of the entity's rows from get#DataGridRows, read only; each row opens the record form -->
+            <text type="tui"><![CDATA[${JSON.stringify((() => {
+                const name = String(selectedEntity || entityName || '')
+                if (!name) return [{t: 'text', id: 'GridChoose', text: 'Name an entity: Data › Grid?entityName=...'}]
+                const pageIndex = Math.max(0, parseInt(context.pageIndex || '0', 10) || 0)
+                const size = 20
+                const call = (service, parameters) => {
+                    const out = ec.service.sync().name('org.moqui.impl.DatabaseServices.' + service).parameters(parameters).call() || {}
+                    const error = ec.message.hasError() ? ec.message.errorsString : null
+                    ec.message.clearErrors()
+                    return {out, error}
+                }
+                const source = {type: 'entity', entityName: name}
+                const columns = call('get#DataGridColumns', {source})
+                if (columns.error) return [{t: 'text', id: 'GridError', style: 'error', text: columns.error}]
+                const shown = (columns.out.columns || []).slice(0, 8)
+                const rows = call('get#DataGridRows', {source, columns: shown.map((column) => column.name), page: pageIndex + 1, size})
+                if (rows.error) return [{t: 'text', id: 'GridError', style: 'error', text: rows.error}]
+                const data = rows.out.data || []
+                const keys = (columns.out.columns || []).filter((column) => column.pk).map((column) => column.name)
+                const editable = !!columns.out.entityName && !name.startsWith('DataDocument.')
+                const recordUrl = (row) => {
+                    let url = sri.buildUrl('../Record').addParameter('selectedEntity', name)
+                    for (const key of keys) url = url.addParameter(key, row[key] == null ? '' : String(row[key]))
+                    return url.getUrlWithParams()
+                }
+                const text = (value) => value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value)
+                const count = Number(rows.out.last_row || (pageIndex * size + data.length))
+                return [{t: 'text', id: 'GridTitle', style: 'h5', text: name},
+                    {t: 'formList', id: 'GridRows', name: 'GridRows', columns: shown.map((column) => ({title: column.title || column.name})).concat(editable ? [{title: ''}] : []),
+                        rows: data.map((row, index) => ({id: String(index), cells: shown.map((column) => text(row[column.name]))
+                            .concat(editable ? [{t: 'link', id: 'GridEdit' + index, text: 'Edit', url: recordUrl(row), kind: 'anchor'}] : [])})),
+                        paging: {index: pageIndex, size, count, maxIndex: Math.max(0, Math.ceil(count / size) - 1),
+                            rangeLow: data.length ? pageIndex * size + 1 : 0, rangeHigh: pageIndex * size + data.length}}]
+            })())}]]></text>
+        </render-mode>
+    </widgets>
+</screen>

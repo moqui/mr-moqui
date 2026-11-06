@@ -12,9 +12,10 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! The two `UserSecurityChecks` calls that `Security.eecas.xml` makes, as Rust: only a member of a
-//! privileged group may change that group's membership, and only a holder of a sealed permission
-//! may grant it. Both allow the write when authorization is disabled, as a data load runs.
+//! The `UserSecurityChecks` calls that `Security.eecas.xml` makes, as Rust: only a member of a
+//! privileged group may change that group's membership, only a holder of a sealed permission may
+//! grant it, and only a `DATABASE_ADMIN` holder may write a DataDocument field expression. Each
+//! allows the write when authorization is disabled, as a data load runs.
 
 use std::cell::Cell;
 use std::collections::BTreeSet;
@@ -29,7 +30,7 @@ use crate::entity::{EntityFacade, EntityValue};
 
 const DEFAULT_PRIVILEGED_GROUPS: &str = "ADMIN,ADMIN_ADV,SYSMSG_RECEIVE";
 const DEFAULT_SEALED_PERMISSIONS: &str =
-    "GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY";
+    "GROOVY_SHELL_WEB,SQL_RUNNER_WEB,SSH_SHELL,SERVICE_LOAD_RUNNER,ADMIN_LOGIN_AS,ADMIN_PASSWORD,SearchRemote,DashboardRemote,REST_SCHEMA,LlmGatewayUse,COMPONENT_DEPLOY,DATABASE_ADMIN,DATABASE_EXTERNAL";
 
 /// How many times `UserSecurityChecks` ran on this thread, for a load report to show the ECAs fired.
 pub fn security_checks_run() -> u64 {
@@ -101,6 +102,31 @@ pub(crate) fn assert_sealed_permission_grant(facade: &EntityFacade, user_permiss
     Err(crate::context::Error::of_kind(
         crate::context::ErrorKind::Unauthorized,
         format!("User is not authorized to grant permission {user_permission_id}"),
+    )
+    .into())
+}
+
+/// The permission that writing a DataDocument field expression needs. An expression is script that runs, as whoever
+/// reads the document, on the server, which is data manipulation that ends in code running, as `DATABASE_ADMIN` allows.
+const DOCUMENT_EXPRESSION_PERMISSION: &str = "DATABASE_ADMIN";
+
+/// Refuses a create or update of a `DataDocumentField` whose `fieldPath` is an expression (it has a `(`; the
+/// document reads its last element as script) unless the user has `DATABASE_ADMIN`. A path with no `(` and a delete
+/// (`field_path` empty) are allowed, as is any write while authorization is disabled, as a data load runs.
+pub(crate) fn assert_document_expression(facade: &EntityFacade, field_path: &str) -> Result<(), Error> {
+    SECURITY_CHECKS.with(|count| count.set(count.get() + 1));
+    if !field_path.contains('(') {
+        return Ok(());
+    }
+    if authz_disabled() {
+        return Ok(());
+    }
+    if without_authz(|| user_has_permission(facade, DOCUMENT_EXPRESSION_PERMISSION))? {
+        return Ok(());
+    }
+    Err(crate::context::Error::of_kind(
+        crate::context::ErrorKind::Unauthorized,
+        format!("A DataDocument field expression needs the {DOCUMENT_EXPRESSION_PERMISSION} permission"),
     )
     .into())
 }

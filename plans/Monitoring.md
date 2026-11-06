@@ -360,8 +360,8 @@ Each is replaced in the same milestone, so no function or data is lost in betwee
 | Visit list (`Visit/VisitList.xml`) | Hit count per visit | A terms count of request spans over the visit ids on the page, one query per page |
 | `example` Gallery `Report.xml`, and its TUI snapshot `gallery-Report-180x50.txt` | The report archetype over ArtifactHitBin | The same archetype over a report query on `otel_metrics`. It keeps its inline sample for an empty store, and the snapshot is updated |
 | Gallery `Record360.xml` | A user's hit count and recent hits | Request spans by `user.id` |
-| `Tools/Entity/SpeedTest.xml` | Times a render of Artifact Summary | Times a render of the Artifacts dashboard |
-| `DataSnapshot.xml` comment; the openui skill (`openui-lang.md`, `llm/ui/openui_tests.rs`); the Assist agent spec and two replays; `WebrootAssistCanvas.page.js` | Use ArtifactHitSummary as an example path | Use a Monitor screen, or Visit/VisitList where a list is needed |
+| `Tools/Database/SpeedTest.xml` | Times a render of Artifact Summary | Times a render of the Artifacts dashboard |
+| `Data/Snapshots.xml` comment; the openui skill (`openui-lang.md`, `llm/ui/openui_tests.rs`); the Assist agent spec and two replays; `WebrootAssistCanvas.page.js` | Use ArtifactHitSummary as an example path | Use a Monitor screen, or Visit/VisitList where a list is needed |
 | System dashboard Usage box | Links to Artifact Hit Summary, Artifact Hit Bins and Log Viewer | Links to Monitor's Artifacts and Logs |
 
 **Log Viewer (M2)**

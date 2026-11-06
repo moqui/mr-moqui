@@ -35,6 +35,52 @@ fn conf(datasource: &str) -> MNode {
     MNode::parse_text("test", &text).unwrap()
 }
 
+/// The embedded cluster's settings of a datasource: a size each, none when not given; anything but a size refused.
+#[test]
+fn the_embedded_settings_are_sizes_of_the_datasource() {
+    let node = conf(
+        r#"<datasource group-name="transactional" database-conf-name="" shared-buffers="64MB" work-mem="8MB"
+            maintenance-work-mem="128MB"/>"#,
+    );
+    let ds = datasource_conf(&node, "transactional").unwrap();
+    assert_eq!(
+        ds.embedded_settings,
+        EmbeddedSettings {
+            shared_buffers: Some("64MB".to_string()),
+            work_mem: Some("8MB".to_string()),
+            maintenance_work_mem: Some("128MB".to_string()),
+            effective_cache_size: None,
+        }
+    );
+    let none = conf(r#"<datasource group-name="transactional" database-conf-name=""/>"#);
+    assert!(!datasource_conf(&none, "transactional").unwrap().embedded_settings.any());
+    let injected = conf(
+        r#"<datasource group-name="transactional" database-conf-name="" work-mem="8MB'
+fsync=off"/>"#,
+    );
+    assert!(datasource_conf(&injected, "transactional").is_err());
+    for bad in ["64mb", "64", "64 MB", "MB", "1kB", "100GB"] {
+        let node = conf(&format!(
+            r#"<datasource group-name="transactional" database-conf-name="" shared-buffers="{bad}"/>"#
+        ));
+        let err = datasource_conf(&node, "transactional").unwrap_err().to_string();
+        assert!(
+            err.contains("transactional") && err.contains("shared-buffers"),
+            "{bad}: {err}"
+        );
+    }
+    // on a datasource that is not the embedded cluster's they are ignored, a bad value too
+    let external = conf(
+        r#"<datasource group-name="transactional" database-conf-name="postgres" schema-name="public" work-mem="lots"/>"#,
+    );
+    assert!(!datasource_conf(&external, "transactional")
+        .unwrap()
+        .embedded_settings
+        .any());
+    assert_eq!(size_bytes("4096kB"), size_bytes("4MB"));
+    assert_eq!(size_bytes("64mb"), None);
+}
+
 #[test]
 fn h2_and_empty_are_embedded_with_the_postgres_pool() {
     for name in ["h2", ""] {

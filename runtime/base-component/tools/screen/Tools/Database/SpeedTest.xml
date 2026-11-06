@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Speed Test" default-menu-index="8" begin-transaction="true">
+
+    <transition name="speedTest"><default-response url="."/></transition>
+
+    <actions>
+        <script><![CDATA[
+            // The Java test is @CompileStatic Groovy against the JVM caches, EntityFacadeImpl.fastFindOne, ScreenTest,
+            // and RestClient. This runs the same operations through the script host: the timings measure a call from
+            // JavaScript, not from compiled code. fastFindOne has no script call, so those rows are the find one again.
+            beginTime = Date.now()
+
+            baseCalls = baseCalls || '1000'
+            const baseCallsNum = parseInt(baseCalls, 10) || 1000
+
+            const results = []
+            const timed = (operation, entity, calls, body) => {
+                const startTime = Date.now()
+                let error = null
+                try { body() } catch (e) { error = e }
+                const milliseconds = Math.max(Date.now() - startTime, 0.001)
+                results.push({operation: operation + (error ? " GOT ERROR: " + error : ""), entity: entity,
+                    calls: calls, milliseconds: milliseconds, msPerCall: milliseconds / calls,
+                    callsPerSecond: (calls / milliseconds) * 1000})
+            }
+
+            const nowTs = ec.user.nowTimestamp
+            let calls = baseCallsNum * 2
+
+            // direct cache writes and reads; only a cache the conf defines holds values here
+            const cacheName = ec.cache.cacheExists("test.cache.local") ? "test.cache.local" : "l10n.message"
+            const testLocalCache = ec.cache.getCache(cacheName)
+            const conditionList = []
+            timed(`create EntityCondition (${calls})`, "", calls, () => {
+                for (let i = 0; i < calls; i++) conditionList.push(ec.entity.conditionFactory.makeCondition("enumId", "equals", "_NA_" + i))
+            })
+            timed(`direct cache writes - local ${cacheName}`, "moqui.basic.Enumeration", calls, () => {
+                for (let i = 0; i < calls; i++) testLocalCache.put("speedTest_NA_" + i, "_NA_")
+            })
+            timed("direct cache reads - local", "moqui.basic.Enumeration", calls * 5, () => {
+                for (let i = 0; i < calls; i++) for (let j = 0; j < 5; j++) testLocalCache.get("speedTest_NA_" + i)
+            })
+            for (let i = 0; i < calls; i++) testLocalCache.remove("speedTest_NA_" + i)
+
+            // find with the entity cache
+            calls = baseCallsNum
+            ec.entity.find("moqui.basic.Enumeration").condition("enumId", "_NA_").useCache(true).one()
+            timed("one PK cache", "moqui.basic.Enumeration", calls, () => {
+                for (let i = 0; i < calls; i++) ec.entity.find("moqui.basic.Enumeration").condition("enumId", "_NA_").useCache(true).one()
+            })
+            ec.entity.find("moqui.basic.Enumeration").condition("enumTypeId", "EntitySyncArtifactAppl").useCache(true).list()
+            timed("list cache by type", "moqui.basic.Enumeration", calls, () => {
+                for (let i = 0; i < calls; i++) ec.entity.find("moqui.basic.Enumeration").condition("enumTypeId", "EntitySyncArtifactAppl").useCache(true).list()
+            })
+
+            // find without the cache
+            timed("one PK", "moqui.basic.Enumeration", calls, () => {
+                for (let i = 0; i < calls; i++) ec.entity.find("moqui.basic.Enumeration").condition("enumId", "_NA_").useCache(false).one()
+            })
+            timed("list by type", "moqui.basic.Enumeration", calls, () => {
+                for (let i = 0; i < calls; i++) ec.entity.find("moqui.basic.Enumeration").condition("enumTypeId", "EntitySyncArtifactAppl").useCache(false).list()
+            })
+
+            // direct CrUD, for the database entity and the NoSQL one (a group this configuration may not have)
+            for (const entityName of ["moqui.test.TestEntity", "moqui.test.TestNoSqlEntity"]) {
+                const created = []
+                timed("direct create with sequenced ID", entityName, calls, () => {
+                    for (let i = 0; i < calls; i++) {
+                        const ev = ec.entity.makeValue(entityName)
+                        ev.setFields({testMedium: "Medium " + i, testLong: "Long " + i, testIndicator: "Y", testDateTime: nowTs,
+                            testNumberInteger: i, testNumberDecimal: String(i + 0.5)}, true, null, null)
+                        ev.setSequencedIdPrimary()
+                        ev.create()
+                        created.push(ev)
+                    }
+                })
+                timed("direct create with preset ID", entityName, calls, () => {
+                    for (let i = 0; i < calls; i++) {
+                        const ev = ec.entity.makeValue(entityName)
+                        ev.setFields({testId: "speed" + i, testMedium: "Medium " + i, testLong: "Long " + i, testIndicator: "Y",
+                            testDateTime: nowTs, testNumberInteger: i, testNumberDecimal: String(i + 0.5)}, true, null, null)
+                        ev.create()
+                        created.push(ev)
+                    }
+                })
+                timed("direct update", entityName, created.length || 1, () => {
+                    for (const ev of created) { ev.testMedium = ev.testMedium + " - Updated"; ev.update() }
+                })
+                timed("direct delete", entityName, created.length || 1, () => {
+                    for (const ev of created) ev.delete()
+                })
+            }
+
+            // service CrUD
+            const createdIds = []
+            timed("service create with sequenced ID", "moqui.test.TestEntity", calls, () => {
+                for (let i = 0; i < calls; i++) createdIds.push(ec.service.sync().name("create#moqui.test.TestEntity").parameters({
+                    testMedium: "Medium " + i, testLong: "Long " + i, testIndicator: "Y", testDateTime: nowTs,
+                    testNumberInteger: i, testNumberDecimal: String(i + 0.5)}).call().testId)
+            })
+            timed("service update", "moqui.test.TestEntity", createdIds.length || 1, () => {
+                for (const id of createdIds) ec.service.sync().name("update#moqui.test.TestEntity").parameters({testId: id, testMedium: "Updated Text"}).call()
+            })
+            timed("service delete", "moqui.test.TestEntity", createdIds.length || 1, () => {
+                for (const id of createdIds) ec.service.sync().name("delete#moqui.test.TestEntity").parameters({testId: id}).call()
+            })
+
+            // service call
+            timed("Call BasicServices.echo#Data Service", "", calls, () => {
+                for (let i = 0; i < calls; i++) ec.service.sync().name("org.moqui.impl.BasicServices.echo#Data")
+                    .parameters({textIn1: "foo", numberIn: "12.34", timestampIn: ec.user.nowTimestamp}).call()
+            })
+
+            // screen render; the screen path is the one the Java test uses, apps/system
+            const renderCalls = Math.floor(baseCallsNum / 100) || 1
+            timed("Render System Dashboard Screen", "", renderCalls, () => {
+                for (let i = 0; i < renderCalls; i++) ec.screen.render({screenPath: "apps/system/dashboard", renderMode: "html"})
+            })
+            timed("Render Monitor Artifacts Dashboard", "", renderCalls, () => {
+                for (let i = 0; i < renderCalls; i++) ec.screen.render({screenPath: "apps/monitor/Artifacts",
+                    renderMode: "html", parameters: {"var-artifactType": "AT_XML_SCREEN"}})
+            })
+            // The Java test also calls the REST API through RestClient; there is no RestClient in the script host.
+            performanceList = results
+        ]]></script>
+    </actions>
+    <widgets>
+        <form-single name="SelectBaseCalls" transition="speedTest">
+            <field name="baseCalls"><default-field><text-line size="10"/></default-field></field>
+            <field name="submitButton"><default-field title="Run"><submit/></default-field></field>
+            <field-layout><field-row-big><field-ref name="baseCalls"/><field-ref name="submitButton"/></field-row-big></field-layout>
+        </form-single>
+        <form-list name="PerformanceResults" list="performanceList">
+            <field name="operation"><default-field><display/></default-field></field>
+            <field name="entity"><default-field><display/></default-field></field>
+            <field name="calls"><default-field><display/></default-field></field>
+            <field name="milliseconds"><default-field><display format="0.000"/></default-field></field>
+            <field name="msPerCall"><default-field><display format="0.000000"/></default-field></field>
+            <field name="callsPerSecond"><default-field><display format="#,##0.00"/></default-field></field>
+        </form-list>
+        <label text="Total Time ${ec.l10n.format((Date.now() - beginTime)/1000, '0.00')}s" type="strong"/>
+    </widgets>
+</screen>

@@ -55,6 +55,9 @@ pub(crate) mod xlsx;
 #[cfg(not(feature = "xlsx"))]
 #[path = "xlsx_off.rs"]
 pub(crate) mod xlsx;
+/// The xlsx workbook, for a table written outside a screen render (the Tools data grid's export); in a build without
+/// the `xlsx` feature its `to_bytes` reports that xlsx is not built in.
+pub use xlsx::{CellHints, XlsxBook};
 
 use std::collections::BTreeMap;
 use std::sync::Arc;

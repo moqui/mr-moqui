@@ -502,6 +502,9 @@ pub fn for_factory(factory: &ExecutionContextFactory) -> Arc<Telemetry> {
         if !name.is_empty() {
             resource.service_name = name;
         }
+        // The database sessions carry the instance id, so the server's activity shows whose they are
+        // (plans/archive/Tools-Database.md 7.3).
+        crate::driver::set_application_name(&resource.instance_id);
         Arc::new(Telemetry::from_conf(&factory.conf_text(), resource))
     }));
     if !telemetry.shared.config.warnings.is_empty() && !telemetry.shared.warned_legacy.swap(true, Ordering::Relaxed) {
@@ -708,6 +711,7 @@ impl Telemetry {
         if instance_id.is_empty() {
             return;
         }
+        crate::driver::set_application_name(&instance_id);
         let mut resource = lock(&self.shared.resource);
         resource.instance_id = instance_id;
         resource.attribution_uncertain = false;

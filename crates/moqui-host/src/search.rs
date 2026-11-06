@@ -221,6 +221,8 @@ fn embedded_tx(runtime_dir: &Path, store: &mut SearchStore) -> Result<Transactio
         max_connections: search_pool().max + crate::db::entity_db::SUPERUSER_SLOTS,
         role: ClusterRole::Entity,
         install_dir: Some(shared_install_dir(runtime_dir, &dir)),
+        pg_stat_statements: false,
+        settings: moqui_core::entity::datasource::EmbeddedSettings::default(),
     };
     let (cluster, driver) = EmbeddedCluster::start_with(&dir, &options)?;
     store.cluster = Some(cluster);

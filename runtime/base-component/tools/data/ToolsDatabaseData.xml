@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The load wrap of Data › Load and Data › Snapshots (service/moqui/tools/DatabaseLoadServices.xml): the ServiceJob that
+    runs it, its notification, and its authorization, which the job runs under (the Tools app's own, for ADMIN; the
+    database jobs it runs check DATABASE_ADMIN). -->
+<entity-facade-xml type="seed">
+    <moqui.security.user.NotificationTopic topic="DatabaseLoadWrap" inboxEnumId="NinUpdates" description="Data load with foreign keys dropped and made again"
+            typeString="success" showAlert="Y" persistOnSend="Y" receiveNotifications="Y" isPrivate="Y" emailTemplateId="NOTIFICATION"
+            titleTemplate="${results.outcome}" errorTitleTemplate="Data load with the foreign keys dropped: ${results.outcome || 'see the job run'}"
+            linkTemplate="/apps/tools/Database/Jobs"/>
+    <moqui.service.job.ServiceJob jobName="DatabaseLoadWrap" description="Data load with the foreign keys dropped and made again"
+            serviceName="moqui.tools.DatabaseLoadServices.run#LoadWrap" topic="DatabaseLoadWrap" transactionTimeout="7200"/>
+    <artifactGroups artifactGroupId="TOOLS_DATABASE_LOAD" description="Tools database load wrap service">
+        <artifacts artifactName="moqui.tools.DatabaseLoadServices.run#LoadWrap" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y"/>
+        <authz artifactAuthzId="TOOLS_DATABASE_LOAD_ADMIN" userGroupId="ADMIN" authzTypeEnumId="AUTHZT_ALWAYS" authzActionEnumId="AUTHZA_ALL"/>
+    </artifactGroups>
+</entity-facade-xml>

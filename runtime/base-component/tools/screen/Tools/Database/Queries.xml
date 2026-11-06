@@ -1,0 +1,187 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- The entity facade's statement statistics of this instance (plans/archive/Tools-Database.md §7.1): each statement's
+    hits, errors and times, and the screens, services and REST paths that ran it. Counted when the conf's entity-facade
+    query-stats is true. Reset (org.moqui.impl.DatabaseServices.reset#QueryStats) needs DATABASE_ADMIN. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Queries" default-menu-index="3">
+
+    <transition-include name="selectDatabase" location="component://tools/template/DatabaseParts.xml"/>
+    <transition name="resetDatabaseStatements" method="post" authz-action="all">
+        <actions>
+            <service-call name="org.moqui.impl.DatabaseServices.reset#DatabaseStatements" in-map="{db: db}"/>
+            <message>The database's statement statistics were reset</message>
+        </actions>
+        <default-response url="."><parameter name="db"/></default-response>
+        <error-response url="."><parameter name="db"/></error-response>
+    </transition>
+    <transition name="resetStats" method="post" authz-action="all">
+        <actions>
+            <service-call name="org.moqui.impl.DatabaseServices.reset#QueryStats"/>
+            <message>Statement statistics reset</message>
+        </actions>
+        <default-response url="."/>
+        <error-response url="."/>
+    </transition>
+
+    <actions>
+        <set field="orderByField" from="orderByField || '-totalTime'"/>
+        <set field="queryStatsList" from="ec.entity.getQueryStatsList(orderByField, entityFilter, sqlFilter)"/>
+        <set field="statementCount" from="queryStatsList.length"/>
+        <set field="filtered" from="!!(entityFilter || sqlFilter)"/>
+        <!-- each order the column headers give, so Find keeps the current one -->
+        <script><![CDATA[
+            orderOptions = []
+            for (const [field, label, numeric] of [['totalTime', 'Total time', true], ['average', 'Average time', true],
+                    ['maxTime', 'Longest time', true], ['minTime', 'Shortest time', true], ['stdDev', 'Std dev', true],
+                    ['hitCount', 'Hits', true], ['errorCount', 'Errors', true], ['entityName', 'Entity', false], ['sql', 'SQL', false]]) {
+                orderOptions.push({key: '-' + field, text: label + (numeric ? ', highest first' : ', Z to A')})
+                orderOptions.push({key: field, text: label + (numeric ? ', lowest first' : ', A to Z')})
+            }
+        ]]></script>
+        <set field="pageSize" from="pageSize || '40'"/>
+        <script>CollectionUtilities.paginateList("queryStatsList", null, context)</script>
+        <!-- read here, so a server-static template reads them from the screen package -->
+        <set field="instanceId" from="ec.factory.getInstanceId()"/>
+        <set field="canReset" from="ec.user.hasPermission('DATABASE_ADMIN')"/>
+        <!-- the database's own statement statistics (pg_stat_statements, performance_schema), read the same way on each kind -->
+        <script><![CDATA[
+            databaseStatements = []
+            databaseStatementsReason = null
+            let found = null
+            try {
+                found = ec.service.sync().name('org.moqui.impl.DatabaseServices.list#DatabaseStatements').parameters({db, limit: 100}).call()
+            } catch (e) { databaseStatementsReason = String(e.message || e) }
+            if (ec.message.hasError()) { databaseStatementsReason = ec.message.errorsString; ec.message.clearErrors() }
+            else if (found && found.available === false) databaseStatementsReason = found.reason || 'Not available on this database'
+            const number = (value) => value == null || value === '' ? null : Number(value)
+            for (const row of (found && found.statements) || []) {
+                const mysql = row.sum_timer_wait != null
+                const calls = number(row.calls)
+                const totalMs = mysql ? number(row.sum_timer_wait) / 1e9 : number(row.total_exec_time)
+                databaseStatements.push({queryId: row.query_id == null ? '' : String(row.query_id), query: row.query || '', calls,
+                    totalMs, meanMs: mysql ? (calls ? totalMs / calls : null) : number(row.mean_exec_time),
+                    rows: mysql ? number(row.sum_rows_examined) : number(row.rows),
+                    blocksRead: mysql ? null : number(row.shared_blks_read), blocksHit: mysql ? null : number(row.shared_blks_hit),
+                    tempBlocks: mysql ? null : number(row.temp_blks_written), noIndexUsed: mysql ? number(row.sum_no_index_used) : null})
+            }
+            databaseStatementsMysql = databaseStatements.some((row) => row.noIndexUsed != null)
+        ]]></script>
+    </actions>
+    <widgets>
+        <container-box><box-header title="Statements on instance ${instanceId}"/>
+            <box-toolbar>
+                <section name="ResetSection" condition="canReset"><widgets>
+                    <link url="resetStats" text="Reset" icon="restart_alt" btn-type="danger" link-type="hidden-form"
+                            confirmation="Reset the statement statistics of instance ${instanceId}?"/>
+                </widgets></section>
+            </box-toolbar>
+            <box-body>
+                <label text="Statements run on this instance since it started or since the last reset. Times are in microseconds; each statement lists the screens, services and REST paths that ran it." type="p" style="m-muted"/>
+                <form-single name="FilterForm" transition=".">
+                    <field name="entityFilter"><default-field title="Entity"><text-line size="30"/></default-field></field>
+                    <field name="sqlFilter"><default-field title="SQL"><text-line size="30"/></default-field></field>
+                    <field name="orderByField"><default-field title="Order by">
+                        <drop-down><list-options list="orderOptions" key="${key}" text="${text}"/></drop-down>
+                    </default-field></field>
+                    <field name="submitButton"><default-field title="Find"><submit/></default-field></field>
+                    <field-layout><field-row-big><field-ref name="entityFilter"/><field-ref name="sqlFilter"/>
+                        <field-ref name="orderByField"/><field-ref name="submitButton"/></field-row-big></field-layout>
+                </form-single>
+                <section name="NoMatch" condition="!statementCount &amp;&amp; filtered"><widgets>
+                    <label text="No statement matches the filter." type="p"/>
+                </widgets></section>
+                <section name="NoStatements" condition="!statementCount &amp;&amp; !filtered"><widgets>
+                    <label text="No statements counted. Statements are counted when the conf's entity-facade query-stats is true (the dev conf sets it)." type="p"/>
+                </widgets></section>
+                <form-list name="QueryStatsList" list="queryStatsList" skip-form="true">
+                    <row-actions>
+                        <set field="artifactInfoList" from="Object.entries(artifactCounts || {}).map(([artifact, count]) =&gt; ({artifact, count})).sort((a, b) =&gt; b.count - a.count)"/>
+                    </row-actions>
+                    <field name="entityName"><header-field title="Entity" show-order-by="true"/><default-field><display/></default-field></field>
+                    <field name="sql">
+                        <header-field title="SQL" show-order-by="true"/>
+                        <conditional-field condition="sql != null &amp;&amp; sql.length &gt; 500">
+                            <display text="${sql.substring(0, 500)} "/>
+                            <container-dialog id="ViewSql" button-text="All" width="800"><label text="${sql}"/></container-dialog>
+                        </conditional-field>
+                        <default-field><display/></default-field>
+                    </field>
+                    <field name="artifactCounts"><default-field title="Run by">
+                        <section-iterate name="ArtifactCounts" list="artifactInfoList" entry="artifactInfo"><widgets>
+                            <label text="${artifactInfo.artifact} (${artifactInfo.count})" type="div"/>
+                        </widgets></section-iterate>
+                    </default-field></field>
+                    <field name="hitCount" align="right"><header-field title="Hits" show-order-by="true"/><default-field><display format="#,##0"/></default-field></field>
+                    <field name="errorCount" align="right"><header-field title="Errors" show-order-by="true"/><default-field><display format="#,##0"/></default-field></field>
+
+                    <field name="minTime" align="right"><header-field title="Min" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
+                    <field name="maxTime" align="right"><header-field title="Max" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
+                    <field name="totalTime" align="right"><header-field title="Total" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
+                    <field name="average" align="right"><header-field title="Avg" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
+                    <field name="stdDev" align="right"><header-field title="Std Dev" show-order-by="true"/><default-field><display format="#,##0.0"/></default-field></field>
+
+                    <columns>
+                        <column><field-ref name="entityName"/><field-ref name="sql"/><field-ref name="artifactCounts"/></column>
+                        <column><field-ref name="hitCount"/><field-ref name="errorCount"/></column>
+                        <column><field-ref name="minTime"/><field-ref name="maxTime"/><field-ref name="average"/></column>
+                        <column><field-ref name="totalTime"/><field-ref name="stdDev"/></column>
+                    </columns>
+                    <columns type="mobile">
+                        <column><field-ref name="entityName"/><field-ref name="sql"/></column>
+                        <column><field-ref name="hitCount"/><field-ref name="totalTime"/></column>
+                    </columns>
+                </form-list>
+            </box-body>
+        </container-box>
+        <container-box><box-header title="Statements in the database"/>
+            <box-toolbar>
+                <section name="ResetDatabaseSection" condition="canReset &amp;&amp; !databaseStatementsReason"><widgets>
+                    <link url="resetDatabaseStatements" text="Reset" icon="restart_alt" btn-type="danger" link-type="hidden-form"
+                            parameter-map="{db: db}" confirmation="Reset the database's own statement statistics, for every user of the database?"/>
+                </widgets></section>
+            </box-toolbar>
+            <box-body>
+                <section-include name="DatabasePicker" location="component://tools/template/DatabaseParts.xml"/>
+                <label text="What the database itself counted for each statement, from every instance and every client, the most costly first. Times are in milliseconds." type="p" style="m-muted"/>
+                <section name="DatabaseStatementsNot" condition="databaseStatementsReason"><widgets>
+                    <label text="Not available: ${databaseStatementsReason}" type="p"/>
+                </widgets></section>
+                <form-list name="DatabaseStatementList" list="databaseStatements" skip-form="true" paginate="false">
+                    <field name="query">
+                        <conditional-field condition="query.length &gt; 500">
+                            <display text="${query.substring(0, 500)} "/>
+                            <container-dialog id="ViewQuery_${queryId}" button-text="All" width="800"><label text="${query}"/></container-dialog>
+                        </conditional-field>
+                        <default-field title="Statement"><display/></default-field>
+                    </field>
+                    <field name="calls" align="right"><default-field><display format="#,##0"/></default-field></field>
+                    <field name="totalMs" align="right"><default-field title="Total"><display format="#,##0.0"/></default-field></field>
+                    <field name="meanMs" align="right"><default-field title="Mean"><display format="#,##0.00"/></default-field></field>
+                    <field name="rows" align="right"><default-field title="Rows"><display format="#,##0"/></default-field></field>
+                    <field name="blocksRead" align="right" hide="databaseStatementsMysql"><default-field title="Blocks read"><display format="#,##0"/></default-field></field>
+                    <field name="blocksHit" align="right" hide="databaseStatementsMysql"><default-field title="Blocks hit"><display format="#,##0"/></default-field></field>
+                    <field name="tempBlocks" align="right" hide="databaseStatementsMysql"><default-field title="Temp blocks"><display format="#,##0"/></default-field></field>
+                    <field name="noIndexUsed" align="right" hide="!databaseStatementsMysql"><default-field title="No index used"><display format="#,##0"/></default-field></field>
+                    <columns type="mobile">
+                        <column><field-ref name="query"/></column>
+                        <column><field-ref name="calls"/><field-ref name="totalMs"/></column>
+                    </columns>
+                </form-list>
+            </box-body>
+        </container-box>
+    </widgets>
+</screen>

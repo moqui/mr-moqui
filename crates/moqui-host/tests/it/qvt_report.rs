@@ -93,7 +93,7 @@ fn the_report_over_every_screen_and_the_verdict_of_the_gate_3_fixture() {
         user.render()
     );
     // A dynamic form keeps a screen a server merge, and the report says it is not eligible.
-    let auto = find("tools/screen/Tools/AutoScreen/AutoFind.xml");
+    let auto = find("tools/screen/Tools/Data/Browse/AutoFind.xml");
     assert!(
         !auto.eligible && auto.reasons.iter().any(|reason| reason.contains("dynamic")),
         "{}",

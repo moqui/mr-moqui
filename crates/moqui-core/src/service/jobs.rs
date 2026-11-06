@@ -68,6 +68,51 @@ const DEFAULT_RETRY_MINUTES: i64 = 5;
 const DEFAULT_JOB_TIMEOUT_SECONDS: u64 = 1800;
 const TEXT_LIMIT: usize = 4000;
 
+/// A job run in progress on this thread: its `jobRunId` and `jobName`.
+type CurrentJobRun = Option<(String, String)>;
+
+thread_local! {
+    /// The `ServiceJobRun` whose service is running on this thread, while it runs.
+    static CURRENT_JOB_RUN: std::cell::RefCell<CurrentJobRun> = const { std::cell::RefCell::new(None) };
+}
+
+/// Puts back the job run that was current before, when dropped.
+struct JobRunScope(CurrentJobRun);
+
+impl JobRunScope {
+    fn enter(job_run_id: &str, job_name: &str) -> Self {
+        Self(CURRENT_JOB_RUN.with(|slot| slot.replace(Some((job_run_id.to_string(), job_name.to_string())))))
+    }
+}
+
+impl Drop for JobRunScope {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        CURRENT_JOB_RUN.with(|slot| *slot.borrow_mut() = previous);
+    }
+}
+
+/// The `jobRunId` of the `ServiceJobRun` whose service is running on this thread: set while a job's service is called,
+/// so a service can tell it runs as a job (an ETL run records it on its `EtlRun`). None outside a job.
+#[must_use]
+pub fn current_job_run_id() -> Option<String> {
+    CURRENT_JOB_RUN.with(|slot| slot.borrow().as_ref().map(|(run_id, _)| run_id.clone()))
+}
+
+/// Run `body` as the service of the job run `job_run_id` of `job_name` would run, for [`current_job_run_id`] and
+/// [`current_job_name`]: for a test that makes more than one call in one job's context.
+#[doc(hidden)]
+pub fn in_job_run<T>(job_run_id: &str, job_name: &str, body: impl FnOnce() -> T) -> T {
+    let _job_run = JobRunScope::enter(job_run_id, job_name);
+    body()
+}
+
+/// The `jobName` of the ServiceJob whose service is running on this thread, as [`current_job_run_id`].
+#[must_use]
+pub fn current_job_name() -> Option<String> {
+    CURRENT_JOB_RUN.with(|slot| slot.borrow().as_ref().map(|(_, job_name)| job_name.clone()))
+}
+
 /// The time zone a ServiceJob cron expression is read in: the machine's zone, the one the operating
 /// system reports. It is not the server zone `default_time_zone` names.
 pub fn job_time_zone() -> jiff::tz::TimeZone {
@@ -803,6 +848,7 @@ pub(crate) fn run_job(job: JobRun) {
     // The job's time bounds its scripts even when the service begins no transaction; a transaction inside keeps the
     // earlier of the two.
     let _deadline = crate::script::DeadlineGuard::new(job.script_limit);
+    let _job_run = JobRunScope::enter(&job.job_run_id, &job.job_name);
     let called = match &job.rules {
         Some(rules) => {
             let mut rules = super::pool::TxRules {

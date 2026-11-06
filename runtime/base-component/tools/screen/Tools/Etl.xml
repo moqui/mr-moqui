@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+This software is in the public domain under CC0 1.0 Universal plus a 
+Grant of Patent License.
+
+To the extent possible under law, the author(s) have dedicated all
+copyright and related and neighboring rights to this software to the
+public domain worldwide. This software is distributed without any
+warranty.
+
+You should have received a copy of the CC0 Public Domain Dedication
+along with this software (see the LICENSE.md file). If not, see
+<http://creativecommons.org/publicdomain/zero/1.0/>.
+-->
+<!-- Mappings that load a file, a query result or entity data into an entity or a service
+    (plans/archive/Tools-Database.md §10.4): Mappings, a Mapping's form (Mapping.qvue), Runs, a Run and Value maps, over
+    org.moqui.impl.EtlServices. The JSON transitions here serve Mapping.qvue and the data grid's "Load into…"; every
+    write is a POST. -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="ETL" default-menu-index="5" menu-image="sym_o_move_down" menu-image-type="icon">
+    <always-actions>
+        <!-- the database: db, else the last choice, else the default group's (template/DatabaseParts.xml) -->
+        <!-- the databases of get#DatabaseList, the entity groups' only -->
+        <set field="databaseList" from="((ec.service.sync().name('org.moqui.impl.DatabaseServices.get#DatabaseList').parameters({includeExternal: false}).call() || {}).databases || []).map((database) =&gt; Object.assign({}, database, {groupNames: database.groupNames || [], label: database.external ? (database.description || database.db) + ' (external)' : (database.groupNames || []).join(', ') + ' (' + database.databaseConf + ')'}))"/>
+        <set field="db" from="[db, ec.user.getPreference('database.selected')].find((name) =&gt; databaseList.some((database) =&gt; database.db == name)) || databaseList[0]?.db"/>
+        <set field="selectedDatabase" from="databaseList.find((database) =&gt; database.db == db)"/>
+    </always-actions>
+
+    <!-- ===== JSON transitions for Etl/Mapping (Mapping.qvue) and the data grid's "Load into…" (Data/Grid.qvue), over
+        org.moqui.impl.EtlServices; each answers {..., errors} ===== -->
+    <!-- what the forms offer: the targets holding term, the value maps, whether the user may write expressions -->
+    <transition name="etlInfo" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // a JSON parameter from the request body only (a mapping may hold a SQL source), never the URL
+                const body = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                const term = String(context.term || '').toLowerCase()
+                const kind = String(context.targetTypeEnumId || 'EtltEntity')
+                const names = !term ? [] : kind == 'EtltService' ? Array.from(ec.service.knownServiceNames || []).filter((name) => String(name).toLowerCase().includes(term) && !String(name).includes('.delete#')).sort().slice(0, 50)
+                    : ec.entity.getAllEntityNames().filter((name) => String(name).toLowerCase().includes(term)).slice(0, 50)
+                const valueMaps = ec.entity.find('moqui.etl.EtlValueMap').orderBy('valueMapId').list().map((row) => ({valueMapId: row.valueMapId, description: row.description}))
+                out = {targetNames: names, valueMaps, canExpression: ec.user.hasPermission('GROOVY_SHELL_WEB'), canSql: ec.user.hasPermission('SQL_RUNNER_WEB'),
+                    userId: ec.user.userId, isAdmin: ec.user.hasPermission('DATABASE_ADMIN')}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a saved mapping as an inline map with its fields -->
+    <transition name="etlMapping" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // a JSON parameter from the request body only (a mapping may hold a SQL source), never the URL
+                const body = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                out = ec.service.sync().name('org.moqui.impl.EtlServices.get#EtlMapping').parameters({mappingId: String(context.mappingId || '')}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- create or replace a mapping and its fields -->
+    <transition name="etlStore" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // a JSON parameter from the request body only (a mapping may hold a SQL source), never the URL
+                const body = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                out = ec.service.sync().name('org.moqui.impl.EtlServices.store#EtlMapping').parameters({mapping: body('mappingJson', null)}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the target field of each source column -->
+    <transition name="etlMatch" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // a JSON parameter from the request body only (a mapping may hold a SQL source), never the URL
+                const body = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                out = ec.service.sync().name('org.moqui.impl.EtlServices.match#EtlFields').parameters({columns: body('columnsJson', []), targetTypeEnumId: context.targetTypeEnumId || 'EtltEntity', targetName: String(context.targetName || '')}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a file's sheets, columns and first rows -->
+    <transition name="etlFileInfo" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // a JSON parameter from the request body only (a mapping may hold a SQL source), never the URL
+                const body = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                out = ec.service.sync().name('org.moqui.impl.EtlServices.get#GridFileInfo').parameters({location: String(context.location || ''), sheet: context.sheet || null, headerRow: Number(context.headerRow || 1), format: context.format || 'auto', limit: Number(context.limit || 20)}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the first rows (200 by default) through the mapping: converted values and errors -->
+    <transition name="etlCheck" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // a JSON parameter from the request body only (a mapping may hold a SQL source), never the URL
+                const body = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                out = ec.service.sync().name('org.moqui.impl.EtlServices.check#EtlSample').parameters({mappingId: context.mappingId || null, mapping: body('mappingJson', null), location: context.location || null, maxRows: Number(context.maxRows || 200)}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a run (check true: the whole source checked, nothing written) on the worker pool -->
+    <transition name="etlRun" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // a JSON parameter from the request body only (a mapping may hold a SQL source), never the URL
+                const body = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                out = ec.service.sync().name('org.moqui.impl.EtlServices.run#EtlMapping').parameters({mappingId: context.mappingId || null, mapping: body('mappingJson', null), check: String(context.check) == 'true', location: context.location || null,
+                    startRow: context.startRow ? Number(context.startRow) : null}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- the latest runs of a mapping -->
+    <transition name="etlRuns" method="get" read-only="true" begin-transaction="false">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // a JSON parameter from the request body only (a mapping may hold a SQL source), never the URL
+                const body = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                out = ec.service.sync().name('org.moqui.impl.EtlServices.get#EtlRuns').parameters({mappingId: context.mappingId || null, limit: Number(context.limit || 20)}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- an uploaded CSV or spreadsheet kept for the user: its location -->
+    <transition name="etlUpload" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            let out = {}, errors = null
+            try {
+                // a JSON parameter from the request body only (a mapping may hold a SQL source), never the URL
+                const body = (name, fallback) => {
+                    const text = ec.web.secureRequestParameters[name]
+                    if (text == null || text === '') return fallback
+                    try { return JSON.parse(String(text)) } catch (e) { throw new Error(name + ' is not JSON') }
+                }
+                out = ec.service.sync().name('org.moqui.impl.EtlServices.upload#GridFile').parameters({file: context.file}).call() || {}
+            } catch (e) { errors = String(e.message || e) }
+            if (ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+    <!-- a ServiceJob that calls run#EtlMapping with mappingId on a schedule, with a ServiceJobUser of the mapping's owner
+        (the run is the owner's only when that row names the owner); the mapping's owner or a DATABASE_ADMIN holder only
+        (the store refuses anyone else, so it is the check) -->
+    <transition name="etlSchedule" method="post" begin-transaction="false" authz-action="all">
+        <actions><script><![CDATA[
+            let out = {}, errors = null, jobName = null
+            const failed = () => ec.message.hasError()
+            try {
+                const mappingId = String(context.mappingId || '')
+                const cronExpression = String(context.cronExpression || '').trim()
+                if (!mappingId || !cronExpression) throw new Error('A schedule needs a mapping and a cron expression')
+                // the framework's Quartz cron parser: it throws on a bad expression, and null is one that is never due
+                let nextRun = null
+                try { nextRun = ec.service.nextCronExecution(cronExpression, null) } catch (e) { throw new Error('Not a cron expression: ' + String(e.message || e)) }
+                if (nextRun == null) throw new Error('The cron expression ' + cronExpression + ' is never due')
+                // the same check as a change of the mapping: store it as it is
+                const mapping = (ec.service.sync().name('org.moqui.impl.EtlServices.get#EtlMapping').parameters({mappingId}).call() || {}).mapping
+                if (!mapping || failed()) throw new Error(ec.message.errorsString || 'No mapping ' + mappingId)
+                ec.service.sync().name('org.moqui.impl.EtlServices.store#EtlMapping').parameters({mapping}).call()
+                if (failed()) throw new Error(ec.message.errorsString)
+                // a name of at most 60 that keeps its unique end: the mapping id is cut, never the time and random part
+                const unique = '_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
+                jobName = 'EtlMapping_' + mappingId.slice(0, 60 - 'EtlMapping_'.length - unique.length) + unique
+                // made paused, and unpaused only once its parameter and user are there, so the scheduler never sees half
+                ec.service.sync().name('create#moqui.service.job.ServiceJob').parameters({jobName, description: 'ETL mapping ' + (mapping.description || mappingId),
+                    serviceName: 'org.moqui.impl.EtlServices.run#EtlMapping', cronExpression, paused: 'Y'}).call()
+                if (failed()) { jobName = null; throw new Error(ec.message.errorsString) }
+                ec.service.sync().name('create#moqui.service.job.ServiceJobParameter').parameters({jobName, parameterName: 'mappingId', parameterValue: mappingId}).call()
+                if (failed()) throw new Error(ec.message.errorsString)
+                // the job's user is the mapping's owner (an admin may schedule another's mapping): run#EtlMapping runs a
+                // scheduled job as the owner only when this row names that owner; the owner is told of each run
+                ec.service.sync().name('create#moqui.service.job.ServiceJobUser').parameters({jobName, userId: mapping.ownerUserId || ec.user.userId, receiveNotifications: 'Y'}).call()
+                if (failed()) throw new Error(ec.message.errorsString)
+                ec.service.sync().name('update#moqui.service.job.ServiceJob').parameters({jobName, paused: 'N'}).call()
+                if (failed()) throw new Error(ec.message.errorsString)
+                out = {jobName, nextRun}
+            } catch (e) {
+                errors = String(e.message || e)
+                // remove what was made, each piece on its own
+                if (jobName) {
+                    ec.message.clearErrors()
+                    for (const name of ['ServiceJobUser', 'ServiceJobParameter', 'ServiceJob']) {
+                        try { ec.entity.find('moqui.service.job.' + name).condition('jobName', jobName).deleteAll() }
+                        catch (cleanup) { ec.logger.error('ETL schedule: could not remove ' + name + ' of ' + jobName + ': ' + String(cleanup.message || cleanup)) }
+                    }
+                }
+            }
+            if (!errors && ec.message.hasError()) errors = ec.message.errorsString
+            ec.message.clearErrors()
+            ec.web.sendJsonResponse(Object.assign({}, out, {errors}))
+        ]]></script></actions>
+        <default-response type="none"/>
+    </transition>
+
+    <subscreens default-item="Mappings"/>
+    <widgets>
+        <subscreens-panel id="etl-panel" type="popup"/>
+    </widgets>
+</screen>

@@ -22,6 +22,7 @@ pub mod fence;
 pub mod field_rw;
 pub mod load_feed;
 pub mod query_rest;
+pub mod query_stats;
 pub mod sensitive;
 
 mod data_writer;
@@ -34,6 +35,7 @@ mod find;
 mod fk;
 pub mod info;
 mod meta;
+mod meta_compare;
 mod params;
 mod relink;
 mod schema;
@@ -49,7 +51,7 @@ pub use cache::screen_config_generation;
 pub use data_writer::{DataFileType, EntityDataWriter};
 pub use dbresource::{DbResourceChild, DbResourceInfo, DbResourceStat, DbResourceVersion};
 pub use derived::{generation as definition_generation, ByDefinition};
-pub use etl::EtlLoader;
+pub use etl::{EtlLoader, EtlTransactions, EtlWriter};
 // for the tests in moqui-core that run these with a context entered
 pub use exec::statement_stats;
 pub use facade::{EntityFacade, EntityFlags, EntityGroup, SimStarter};
@@ -57,7 +59,11 @@ pub use find::{EntityFind, EntityListIterator, Purged, BULK_CHUNK};
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub use fk::FkScope;
+pub use fk::{missing_related, MissingRelated};
 pub use meta::{DdlConf, EntityDbMeta, TableCheck};
+pub use meta_compare::{
+    CatalogForeignKey, CatalogIndex, ColumnTypeDiff, ForeignKeyDiff, IndexDiff, IndexKind, SchemaDiff, TableDiff,
+};
 /// The condition tree `EntityFind::condition` takes, so callers need not depend on `moqui-db`.
 pub use moqui_db::sql::{CompareOp, Condition};
 pub use relink::{RelinkPreview, RelinkReport};
