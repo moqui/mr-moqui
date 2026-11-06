@@ -46,6 +46,7 @@ use super::value::{EntityList, EntityValue};
 use crate::driver::{DbConnection, DbRow};
 use crate::transaction::TransactionManager;
 
+mod batch;
 mod hold;
 mod stats;
 mod tx;

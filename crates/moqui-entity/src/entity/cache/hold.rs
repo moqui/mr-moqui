@@ -190,6 +190,11 @@ impl FrameHold {
             .any(|hold| !hold.by_pk.is_empty())
     }
 
+    /// The writes held, a collapsed one among them until the hold is written.
+    pub(super) fn len(&self) -> usize {
+        self.order.len()
+    }
+
     /// Whether the frame holds no write.
     pub(super) fn is_empty(&self) -> bool {
         self.order.iter().all(Option::is_none)

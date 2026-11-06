@@ -23,12 +23,13 @@ use std::sync::Arc;
 use moqui_db::sql::{select, Condition, FieldRef, LimitOffset, OrderBy};
 use moqui_lib::error::Error;
 
+use super::batch::{flush_writes, Flushed};
 use super::hold::{FrameHold, Held, Overlay};
 use super::stats::{self, FlushCause};
 use super::{
     entity_columns, load_plain, may_match, pk_condition, pk_of, query_tx, row_key, row_matches, rows_plain,
-    sim_session_open, sim_view, sort_rows, statement_for, EntityFacade, EntityValue, FieldMap, MemRow, Op, ReadMeta,
-    SelectPlan, SimView,
+    sim_session_open, sim_view, sort_rows, EntityFacade, EntityValue, FieldMap, MemRow, Op, ReadMeta, SelectPlan,
+    SimView,
 };
 use crate::driver::DbConnection;
 use crate::transaction::{CacheMode, TransactionManager};
@@ -101,48 +102,11 @@ pub(super) fn flush_early(
     tx.with_connection(|conn| flush_held(facade, token, conn)).map(|_| ())
 }
 
-/// The statements and rows one flush wrote.
-pub(super) struct Flushed {
-    statements: u64,
-    rows: u64,
-}
-
 pub(super) fn flush_held(facade: &EntityFacade, token: u64, conn: &mut dyn DbConnection) -> Result<Flushed, Error> {
     let held_rows = TX_HOLD
         .with(|slot| slot.borrow_mut().remove(&token))
         .unwrap_or_default();
     flush_writes(facade, held_rows.into_order(), conn)
-}
-
-/// Write `writes` in order. A failure names the write, its key and the service that held it; an update that changed no
-/// row is one, as a direct update's is (plans/TX-Cache.md G4), except on MySQL, which counts an update that leaves the
-/// row as it was as none.
-fn flush_writes(
-    facade: &EntityFacade,
-    writes: impl Iterator<Item = Rc<Held>>,
-    conn: &mut dyn DbConnection,
-) -> Result<Flushed, Error> {
-    let mut flushed = Flushed { statements: 0, rows: 0 };
-    for row in writes {
-        let statement = facade.with_group(&row.entity_name, |entity, dialect, _, _| {
-            Ok(statement_for(entity, dialect, row.operation, &row.sealed)?
-                .map(|statement| (statement, moqui_db::sql::is_mysql(dialect))))
-        });
-        let named = |err: Error| Error::new(format!("Could not write the {}", row.describe())).with_source(err);
-        let Some(((sql, params), mysql)) = statement.map_err(named)? else {
-            continue;
-        };
-        let count = conn.execute(&sql, &params).map_err(named)?;
-        if count == 0 && row.operation == Op::Update && !mysql {
-            return Err(Error::new(format!(
-                "Could not write the {}: the record was not found",
-                row.describe()
-            )));
-        }
-        flushed.statements += 1;
-        flushed.rows += 1;
-    }
-    Ok(flushed)
 }
 
 /// What the frame of `tx` knows of one row: `Some(true)` when its last held write leaves the row there, `Some(false)` when
@@ -205,8 +169,18 @@ pub(super) fn hold(tx: &TransactionManager, facade: &EntityFacade, held: Held) -
         register_cache_flush(facade, tx)?;
     }
     stats::note_held(token, held.operation);
-    push_hold(token, held)
+    push_hold(token, held)?;
+    // Past the cap the hold is written and the frame goes on holding, so a long batch job does not grow without bound
+    // (plans/TX-Cache.md D6).
+    let held = TX_HOLD.with(|slot| slot.borrow().get(&token).map_or(0, FrameHold::len));
+    if held >= HOLD_CAP {
+        flush_early(facade, tx, token, FlushCause::Size, "")?;
+    }
+    Ok(())
 }
+
+/// Held writes a frame keeps before it writes them early ([`FlushCause::Size`]).
+const HOLD_CAP: usize = 10_000;
 
 /// Forget the held rows and counts of every frame on this thread.
 pub(super) fn clear_holds() {

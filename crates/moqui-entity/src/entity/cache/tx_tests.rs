@@ -340,7 +340,8 @@ fn held_rows_collapse_a_create_and_delete_and_stay_deleted() {
         .iter()
         .map(|sql| sql.split_whitespace().next().unwrap_or_default())
         .collect();
-    assert_eq!(kinds, ["UPDATE", "DELETE", "INSERT"], "{flushed:?}");
+    // KEPT's update and delete are one delete (plans/TX-Cache.md D6).
+    assert_eq!(kinds, ["DELETE", "INSERT"], "{flushed:?}");
     assert!(!found(&facade, ENUM, "enumId", "BRIEF"));
     assert!(!found(&facade, ENUM, "enumId", "KEPT"));
     assert!(found(&facade, ENUM, "enumId", "LATER"));
@@ -371,8 +372,8 @@ fn a_frame_counts_its_held_writes_reads_early_flushes_and_commit_batch() {
     assert_eq!(stats.early_flush_count(), 0);
     assert_eq!((stats.batch_statements, stats.batch_rows), (3, 3));
     assert_eq!(
-        stats.batch_round_trips, 3,
-        "one wait per statement before the commit batch is pipelined"
+        stats.batch_round_trips, 1,
+        "the commit batch waits once (plans/TX-Cache.md D6)"
     );
     assert!(crate::driver::thread_round_trips() > trips);
 
@@ -656,4 +657,55 @@ fn a_find_by_key_of_a_created_row_runs_no_query() {
         Ok(())
     })
     .unwrap();
+}
+
+/// D6: the commit batch merges each row's writes (a create and its updates are one insert of the final values, updates
+/// one update of their columns), keeps a parent before its child, and waits once.
+#[test]
+fn the_commit_batch_merges_each_rows_writes_and_waits_once() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    put_enum(&facade, "UPD", "A", "stored");
+    put(&facade, TYPE, "enumTypeId", "A");
+    let tx = facade.transactions_for(ENUM).unwrap();
+    let before = enum_statements(&tape, false).len();
+    let before_stats = super::super::tx_cache_stats();
+    run(&tx, TransactionAttribute::Cache, || {
+        put(&facade, TYPE, "enumTypeId", "NEWTYPE");
+        put_enum(&facade, "NEW", "NEWTYPE", "one");
+        set_enum(&facade, "NEW", "description", "two")?;
+        set_enum(&facade, "UPD", "description", "three")?;
+        set_enum(&facade, "UPD", "enumCode", "C")?;
+        Ok(())
+    })
+    .unwrap();
+    let written = enum_statements(&tape, false)[before..].to_vec();
+    let kinds: Vec<&str> = written
+        .iter()
+        .map(|sql| sql.split_whitespace().next().unwrap_or_default())
+        .collect();
+    assert_eq!(kinds, ["INSERT", "UPDATE"], "{written:?}");
+    assert!(
+        written[1].contains("\"description\"") && written[1].contains("\"enum_code\""),
+        "{written:?}"
+    );
+    let stats = super::super::tx_cache_stats().since(&before_stats);
+    assert_eq!((stats.batch_statements, stats.batch_rows), (3, 5));
+    assert_eq!(stats.batch_round_trips, 1);
+    let row = facade
+        .find(ENUM)
+        .unwrap()
+        .eq("enumId", Value::string("NEW"))
+        .one()
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.get("description"), Some(&Value::string("two")));
+    let row = facade
+        .find(ENUM)
+        .unwrap()
+        .eq("enumId", Value::string("UPD"))
+        .one()
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.get("enumCode"), Some(&Value::string("C")));
 }
