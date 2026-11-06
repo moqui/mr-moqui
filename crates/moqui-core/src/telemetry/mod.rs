@@ -1030,21 +1030,29 @@ impl Telemetry {
                 stats.entry(key).or_default().record(seconds)
             }
         };
-        if metrics {
-            let mut attributes = Document::new();
-            attributes.insert("moqui.artifact.type".into(), Value::string(kind));
-            attributes.insert("moqui.artifact.name".into(), Value::string(name));
-            attributes.insert("moqui.artifact.action".into(), Value::string(action));
-            if let Some(sub_type) = sub_type {
-                attributes.insert("moqui.artifact.sub_type".into(), Value::string(sub_type));
-            }
-            if slow {
-                self.record_duration("moqui.artifact.duration", seconds, attributes.clone());
-                self.add_counter("moqui.artifact.slow", 1, attributes);
-            } else {
-                self.record_duration("moqui.artifact.duration", seconds, attributes);
+        #[cfg(feature = "telemetry")]
+        if metrics && self.shared.config.enabled && !is_suppressed() {
+            if let Some(sdk) = &self.sdk {
+                // The attribute set is made once per artifact and kept: the key covers the sub type too.
+                let attributes_key = {
+                    use std::hash::BuildHasher;
+                    std::hash::BuildHasherDefault::<std::collections::hash_map::DefaultHasher>::default()
+                        .hash_one((kind, name, action, sub_type))
+                };
+                sdk.record_artifact(attributes_key, seconds, slow, || {
+                    let mut attributes = Document::new();
+                    attributes.insert("moqui.artifact.type".into(), Value::string(kind));
+                    attributes.insert("moqui.artifact.name".into(), Value::string(name));
+                    attributes.insert("moqui.artifact.action".into(), Value::string(action));
+                    if let Some(sub_type) = sub_type {
+                        attributes.insert("moqui.artifact.sub_type".into(), Value::string(sub_type));
+                    }
+                    attributes
+                });
             }
         }
+        #[cfg(not(feature = "telemetry"))]
+        let _ = (metrics, sub_type);
         slow
     }
 }

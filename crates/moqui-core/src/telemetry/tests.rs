@@ -1611,7 +1611,11 @@ fn slow_root_ms_comes_from_the_conf_and_a_bad_value_keeps_the_default() {
     assert_eq!(config.slow_root, Duration::from_millis(250));
     let config = Config::from_conf(r#"<moqui-conf><telemetry slow-root-ms="soon"/></moqui-conf>"#);
     assert_eq!(config.slow_root, Duration::from_secs(1));
-    assert!(config.warnings.iter().any(|warning| warning.contains("slow-root-ms")), "{:?}", config.warnings);
+    assert!(
+        config.warnings.iter().any(|warning| warning.contains("slow-root-ms")),
+        "{:?}",
+        config.warnings
+    );
 }
 
 /// The live config of Monitor › Settings (plans/archive/Monitor-Settings.md): an override changes what the decisions read, and
@@ -1659,7 +1663,10 @@ mod live {
 
     #[test]
     fn a_sample_ratio_override_keeps_children_until_it_is_reverted() {
-        let telemetry = Telemetry::from_conf(r#"<moqui-conf><telemetry sample-ratio="0"/></moqui-conf>"#, Resource::default());
+        let telemetry = Telemetry::from_conf(
+            r#"<moqui-conf><telemetry sample-ratio="0"/></moqui-conf>"#,
+            Resource::default(),
+        );
         let memory = Arc::new(Memory::default());
         telemetry.set_exporter(memory.clone());
         let disk = telemetry.config().clone();
@@ -1668,12 +1675,16 @@ mod live {
         assert_eq!(telemetry.live_config().sample_ratio, 1.0);
         assert_eq!(telemetry.config().sample_ratio, 0.0, "the on-disk config stays");
         let root = telemetry.start_span("live-root", SpanKind::Server, None);
-        telemetry.start_span("live-kept", SpanKind::Internal, root.context()).finish();
+        telemetry
+            .start_span("live-kept", SpanKind::Internal, root.context())
+            .finish();
         root.finish();
 
         telemetry.set_live(telemetry_config(&disk, &BTreeMap::new()));
         let root = telemetry.start_span("disk-root", SpanKind::Server, None);
-        telemetry.start_span("disk-dropped", SpanKind::Internal, root.context()).finish();
+        telemetry
+            .start_span("disk-dropped", SpanKind::Internal, root.context())
+            .finish();
         root.finish();
         telemetry.flush();
 
@@ -1686,7 +1697,10 @@ mod live {
 
     #[test]
     fn artifact_overrides_change_the_ratio_and_stop_spans() {
-        let telemetry = Telemetry::from_conf(r#"<moqui-conf><telemetry sample-ratio="0"/></moqui-conf>"#, Resource::default());
+        let telemetry = Telemetry::from_conf(
+            r#"<moqui-conf><telemetry sample-ratio="0"/></moqui-conf>"#,
+            Resource::default(),
+        );
         let disk = telemetry.config().clone();
         telemetry.set_live(telemetry_config(
             &disk,
@@ -1728,9 +1742,52 @@ mod live {
         assert!(global.contains(&"http.request.method".to_string()), "{global:?}");
         telemetry.set_live(telemetry_config(
             &disk,
-            &overrides(&[("telemetry/metric[http.server.request.duration]@attributes", "http.route")]),
+            &overrides(&[(
+                "telemetry/metric[http.server.request.duration]@attributes",
+                "http.route",
+            )]),
         ));
         assert_eq!(kept(), ["http.route"]);
+        telemetry.set_live(telemetry_config(&disk, &BTreeMap::new()));
+        assert_eq!(kept(), global);
+        telemetry.shutdown();
+    }
+
+    /// An artifact's metric attributes are made once and kept by the thread, and made again after the attribute lists
+    /// change.
+    #[test]
+    fn kept_artifact_attributes_follow_an_attributes_override() {
+        let telemetry = Telemetry::from_conf("<moqui-conf/>", Resource::default());
+        let disk = telemetry.config().clone();
+        let sdk = telemetry.sdk.as_ref().expect("telemetry is on");
+        let made = std::cell::Cell::new(0);
+        let kept = || {
+            let mut keys: Vec<String> = sdk
+                .artifact_attributes(0, 42, "moqui.artifact.duration", &|| {
+                    made.set(made.get() + 1);
+                    let mut attributes = Document::new();
+                    attributes.insert("moqui.artifact.type".into(), Value::string("AT_SERVICE"));
+                    attributes.insert("moqui.artifact.name".into(), Value::string("a.b.c#D"));
+                    attributes
+                })
+                .iter()
+                .map(|pair| pair.key.to_string())
+                .collect();
+            keys.sort();
+            keys
+        };
+        let global = kept();
+        assert_eq!(global, ["moqui.artifact.name", "moqui.artifact.type"]);
+        assert_eq!(kept(), global);
+        assert_eq!(made.get(), 1, "made once");
+        telemetry.set_live(telemetry_config(
+            &disk,
+            &overrides(&[(
+                "telemetry/metric[moqui.artifact.duration]@attributes",
+                "moqui.artifact.type",
+            )]),
+        ));
+        assert_eq!(kept(), ["moqui.artifact.type"]);
         telemetry.set_live(telemetry_config(&disk, &BTreeMap::new()));
         assert_eq!(kept(), global);
         telemetry.shutdown();
@@ -1741,7 +1798,10 @@ mod live {
         let telemetry = Telemetry::from_conf("<moqui-conf/>", Resource::default());
         let disk = telemetry.config().clone();
         assert!(telemetry.operation("app.Orders.place#Order", None, None).is_some());
-        telemetry.set_live(telemetry_config(&disk, &overrides(&[("telemetry/operations@record", "none")])));
+        telemetry.set_live(telemetry_config(
+            &disk,
+            &overrides(&[("telemetry/operations@record", "none")]),
+        ));
         assert!(telemetry.operation("app.Orders.place#Order", None, None).is_none());
         telemetry.shutdown();
     }

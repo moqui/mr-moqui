@@ -627,6 +627,21 @@ pub fn before_selective_find(
     Ok(Some(EntityList::new(rows)))
 }
 
+/// Drop what the transaction-cache frame of `entity_name` read of that entity, when there is one: a transaction of its
+/// own committed rows of it the frame read as missing (a directory made beside the frame), and a read again sees them.
+/// Held writes stay.
+pub fn forget_frame_reads(facade: &EntityFacade, entity_name: &str) {
+    let Ok(tx) = facade.transactions_for(entity_name) else {
+        return;
+    };
+    let Some((token, _)) = tx.cache_frame() else {
+        return;
+    };
+    if let Ok(meta) = read_meta(facade, entity_name) {
+        tx::forget_reads(token, Some(&meta.full_name));
+    }
+}
+
 /// The key a select-field find is kept by in a cache frame (`tx::projected_rows`): the find's own key and its fields.
 /// `None` for one that is not kept: a lock, an aggregate, a page, or no fields named.
 fn projected_key(lookup: &FindLookup, selective: &Selective) -> Option<String> {

@@ -41,8 +41,9 @@ use serde_json::{json, Value as Json};
 
 use super::context::{Approvals, Exhausted, RunRef, ScreenHandle, Spill, ToolCallRef, UserRef};
 use super::{
-    engine, held, in_tx, lease, load_run, now_millis, pool, quietly, stamp, transition, AgentDef, Budget, Change,
-    EventSink, Hold, Holder, LocalRun, RunRow, RunState, TurnContext, INPUT, MESSAGE, PART, QUESTION, RUN, TOOL_CALL,
+    engine, held, in_cache_tx, in_tx, lease, load_run, now_millis, pool, quietly, stamp, transition, AgentDef, Budget,
+    Change, EventSink, Hold, Holder, LocalRun, RunRow, RunState, TurnContext, INPUT, MESSAGE, PART, QUESTION, RUN,
+    TOOL_CALL,
 };
 use crate::prompt::{self, Catalog, PrefixSpec, PromptTexts, PromptVars};
 use crate::provider::{
@@ -165,7 +166,7 @@ fn append_message_as(
     replay: Option<&ReplayBag>,
     message: Option<EntityValue>,
 ) -> Result<String, Error> {
-    in_tx(facade, || {
+    in_cache_tx(facade, || {
         append_in_tx(
             facade,
             conversation_id,
@@ -614,7 +615,7 @@ fn store_result_with(
         Some(_) => Some(sink.factory().ok_or_else(|| Error::new("the server is stopping"))?),
         None => None,
     };
-    let stored = in_tx(facade, || {
+    let stored = in_cache_tx(facade, || {
         held(facade, &run.run_id, &holder, hold)?;
         if let (Some(artifact), Some(factory)) = (artifact, &factory) {
             artifact.write(factory.resource(), facade)?;
@@ -679,7 +680,7 @@ fn set_call_status(
     tool_call_id: &str,
     status_id: &str,
 ) -> Result<(), Error> {
-    in_tx(facade, || {
+    in_cache_tx(facade, || {
         held(facade, run_id, holder, Hold::Lease)?;
         let mut fields = vec![("statusId".to_string(), Value::string(status_id))];
         if status_id == "AgtcRunning" {
@@ -1037,7 +1038,7 @@ fn tool_counts(facade: &EntityFacade, run_id: &str) -> Result<HashMap<String, u3
 }
 
 fn add_active_time(facade: &EntityFacade, run_id: &str, holder: &Holder, millis: i64) -> Result<(), Error> {
-    in_tx(facade, || {
+    in_cache_tx(facade, || {
         // a step that paused or ended the run gave its lease up already
         let mut row = held(facade, run_id, holder, Hold::LeaseOrNone)?;
         let carried = int_of(&row, "activeSeconds").unwrap_or(0) * 1000;
@@ -1886,8 +1887,9 @@ impl Turn {
             )
         }));
         let holder = self.sink.holder().clone();
-        let (calls, bad) = in_tx(&facade, || {
-            held(&facade, &run.run_id, &holder, Hold::Lease)?;
+        let (calls, bad) = in_cache_tx(&facade, || {
+            // the run's row as the lease check locked it, updated at the end with the step's counts
+            let mut row = held(&facade, &run.run_id, &holder, Hold::Lease)?;
             let mut step = facade.make_value("moqui.agent.AgentRunStep")?;
             step.set("runId", Value::string(&run.run_id));
             step.set("stepSeq", Value::I64(step_seq));
@@ -1979,15 +1981,6 @@ impl Turn {
                 reply.replay.as_ref(),
                 Some(message.clone()),
             )?;
-            let Some(mut row) = facade
-                .find(RUN)?
-                .eq("runId", Value::string(&run.run_id))
-                .for_update(true)
-                .disable_authz()
-                .one()?
-            else {
-                return Err(Error::new(format!("there is no agent run {}", run.run_id)));
-            };
             let add = |row: &EntityValue, field: &str, value: u64| {
                 Value::I64(int_of(row, field).unwrap_or(0) + i64::try_from(value).unwrap_or(i64::MAX))
             };

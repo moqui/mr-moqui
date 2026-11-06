@@ -509,7 +509,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters><parameter name="endpoint" required="true"/></in-parameters>
     </service>
     <service verb="send" noun="WebPush" type="rust" location="moqui_core::service::web_push::send_web_push"
-            authenticate="false" allow-remote="false">
+            authenticate="false" allow-remote="false" transaction="ignore">
         <description>Internal: run on a service worker when a persisted notification is sent, and for a call's ring
             and its end. Pushes title, link, topic and tag (the notification message id) to each active subscription and
             registration of userIdList. A browser's (PushWeb) is encrypted (RFC 8291) with a VAPID token (RFC 8292); a

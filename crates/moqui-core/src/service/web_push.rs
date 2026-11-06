@@ -760,17 +760,70 @@ fn send_web_push(
         .partition(|row| field(row, "pushProviderEnumId") == PROVIDER_FCM);
     // a ring's end is for an app's ring screen; a browser's notification of the ring is replaced by the call's state
     let ring_ended = matches!(push.notice.kind, super::fcm::Kind::RingEnded { .. });
+    let mut results = Results::default();
     if push_crypto::BUILT && !ring_ended && !browsers.is_empty() {
-        send_browsers(facade, &browsers, &push, &mut tally);
+        send_browsers(&browsers, &push, &mut tally, &mut results);
     }
     if !native.is_empty() {
-        send_native(facade, &native, &push.notice, &mut tally);
+        send_native(facade, &native, &push.notice, &mut tally, &mut results);
     }
+    results.store(facade);
     Ok(summary(&tally))
 }
 
+/// What the pushes came to, written after them: the service holds no transaction across its HTTP calls, and the rows
+/// go in one transaction-cache frame, one batch (plans/TX-Cache.md, second set 8).
+#[derive(Default)]
+struct Results<'a> {
+    outcomes: Vec<(&'a EntityValue, Outcome)>,
+    /// FCM registrations whose device key has ended.
+    ended: Vec<&'a EntityValue>,
+}
+
+impl Results<'_> {
+    /// Write them all in one frame; when that fails (a subscription deleted meanwhile), each on its own, a failure
+    /// logged and the rest written, as each was before.
+    fn store(&self, facade: &EntityFacade) {
+        if self.outcomes.is_empty() && self.ended.is_empty() {
+            return;
+        }
+        let Ok(tx) = facade.transactions_for(SUBSCRIPTION) else {
+            return;
+        };
+        let all = tx.run(crate::transaction::TransactionAttribute::ForceCache, None, || {
+            for row in &self.ended {
+                row.delete(facade)?;
+            }
+            for (row, outcome) in &self.outcomes {
+                record(facade, row, outcome)?;
+            }
+            Ok(())
+        });
+        let Err(err) = all else {
+            return;
+        };
+        tracing::debug!(error = %err, "push results not stored together; storing each");
+        for row in &self.ended {
+            let deleted = tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+                row.delete(facade)
+            });
+            if let Err(err) = deleted {
+                tracing::warn!(subscription_id = %field(row, "subscriptionId"), error = %err, "FCM registration not deleted");
+            }
+        }
+        for (row, outcome) in &self.outcomes {
+            let stored = tx.run(crate::transaction::TransactionAttribute::ForceNew, None, || {
+                record(facade, row, outcome)
+            });
+            if let Err(err) = stored {
+                tracing::warn!(subscription_id = %field(row, "subscriptionId"), error = %err, "push result was not stored");
+            }
+        }
+    }
+}
+
 /// Web Push to each browser, encrypted to it with the server's VAPID token.
-fn send_browsers(facade: &EntityFacade, rows: &[&EntityValue], push: &Push, tally: &mut Tally) {
+fn send_browsers<'a>(rows: &[&'a EntityValue], push: &Push, tally: &mut Tally, results: &mut Results<'a>) {
     let key = match vapid() {
         Ok(key) => key,
         Err(reason) => {
@@ -800,15 +853,19 @@ fn send_browsers(facade: &EntityFacade, rows: &[&EntityValue], push: &Push, tall
             }
         };
         tally.count(result == Outcome::Delivered);
-        if let Err(err) = record(facade, row, &result) {
-            tracing::warn!(subscription_id = %id, error = %err, "Web Push result was not stored");
-        }
+        results.outcomes.push((row, result));
     }
 }
 
 /// FCM to each native app whose device key is still good; a registration whose key has ended (revoked, expired, or
 /// deleted) is deleted instead. Without `fcm_service_account` nothing is sent, with one info line in the log.
-fn send_native(facade: &EntityFacade, rows: &[&EntityValue], notice: &super::fcm::Notice, tally: &mut Tally) {
+fn send_native<'a>(
+    facade: &EntityFacade,
+    rows: &[&'a EntityValue],
+    notice: &super::fcm::Notice,
+    tally: &mut Tally,
+    results: &mut Results<'a>,
+) {
     let keys: Vec<Value> = rows.iter().map(|row| Value::string(field(row, "loginKey"))).collect();
     let now = crate::user::now_millis();
     let live: std::collections::HashSet<String> = match facade
@@ -833,9 +890,7 @@ fn send_native(facade: &EntityFacade, rows: &[&EntityValue], notice: &super::fcm
         rows.iter().partition(|row| live.contains(&field(row, "loginKey")));
     for row in ended {
         tracing::info!(subscription_id = %field(row, "subscriptionId"), "FCM registration's device key has ended; deleted");
-        if let Err(err) = row.delete(facade) {
-            tracing::warn!(subscription_id = %field(row, "subscriptionId"), error = %err, "FCM registration not deleted");
-        }
+        results.ended.push(row);
     }
     if rows.is_empty() {
         return;
@@ -872,9 +927,7 @@ fn send_native(facade: &EntityFacade, rows: &[&EntityValue], notice: &super::fcm
             }
         };
         tally.count(result == Outcome::Delivered);
-        if let Err(err) = record(facade, row, &result) {
-            tracing::warn!(subscription_id = %id, error = %err, "FCM result was not stored");
-        }
+        results.outcomes.push((row, result));
     }
 }
 

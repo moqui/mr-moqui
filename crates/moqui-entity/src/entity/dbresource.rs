@@ -276,16 +276,16 @@ impl EntityFacade {
         // the file where it is, also under a duplicate of one of its directories (see `node_at`)
         let mut path = parts.clone();
         path.push(filename.clone());
-        let id = match self.node_at(&path)? {
+        let (id, new) = match self.node_at(&path)? {
             Some(node) if !node.is_file => {
                 return Err(Error::new(format!(
                     "Cannot write a file at {location}, it is a directory"
                 )))
             }
-            Some(node) => node.id,
+            Some(node) => (node.id, false),
             None => {
                 let parent = self.directory_id(&parts)?;
-                self.create_node(parent.as_deref(), &filename, true)?
+                (self.create_node(parent.as_deref(), &filename, true)?, true)
             }
         };
         self.write_bytes(
@@ -293,6 +293,7 @@ impl EntityFacade {
             &filename,
             content,
             note.map(str::trim).filter(|note| !note.is_empty()),
+            new,
         )
     }
 
@@ -605,6 +606,8 @@ impl EntityFacade {
             });
         }
         drop(held);
+        // This transaction may be a cache frame that read the directory as missing: it reads it again, and keeps it.
+        crate::entity::cache::forget_frame_reads(self, DB_RESOURCE);
         if let Err(error) = &made {
             // most likely another process made it first; it is read below
             tracing::warn!(
@@ -784,12 +787,18 @@ impl EntityFacade {
         filename: &str,
         content: NewContent<'_>,
         note: Option<&str>,
+        new_node: bool,
     ) -> Result<(), Error> {
         let (file_data, blob_id) = match &content {
             NewContent::Inline(bytes) => (Value::Bytes(bytes.to_vec()), Value::Null),
             NewContent::Blob(info) => (Value::Null, Value::string(&info.id)),
         };
-        let existing = self.find(DB_FILE)?.eq("resourceId", Value::string(resource_id)).one()?;
+        // A node this write made has no file row yet: nothing to read.
+        let existing = if new_node {
+            None
+        } else {
+            self.find(DB_FILE)?.eq("resourceId", Value::string(resource_id)).one()?
+        };
         let note_value = note.map_or(Value::Null, Value::string);
         let size = Value::I64(i64::try_from(content.size()).unwrap_or(i64::MAX));
         let Some(existing) = existing else {

@@ -385,7 +385,7 @@ fn a_file_under_a_duplicate_directory_reads_and_writes() {
     let second = facade.create_node(Some(&dup), "a", false).unwrap();
     let file = facade.create_node(Some(&second), "two.txt", true).unwrap();
     facade
-        .write_bytes(&file, "two.txt", super::NewContent::Inline(b"two"), None)
+        .write_bytes(&file, "two.txt", super::NewContent::Inline(b"two"), None, false)
         .unwrap();
     assert_eq!(
         facade.read_db_resource_bytes("dbresource://dup/a/two.txt").unwrap(),
@@ -430,7 +430,7 @@ fn duplicated(facade: &EntityFacade) -> (String, String) {
     for (name, bytes) in [("two.txt", b"two"), ("one.txt", b"new")] {
         let file = facade.create_node(Some(&second), name, true).unwrap();
         facade
-            .write_bytes(&file, name, super::NewContent::Inline(bytes), None)
+            .write_bytes(&file, name, super::NewContent::Inline(bytes), None, false)
             .unwrap();
     }
     facade.create_node(None, "dup", false).unwrap();
