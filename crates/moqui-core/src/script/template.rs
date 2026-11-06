@@ -617,8 +617,10 @@ fn compiled(source: &str, escape: Escape, scope: Scope) -> Result<Arc<str>, Erro
 
 // ---- compiler ----
 
+/// A piece of a template. The theme adapter reads the tags and expressions of a source with their offsets
+/// ([`tokens_at`]) to check them with a file and line (`script/theme`).
 #[derive(Debug, PartialEq)]
-enum Token {
+pub(crate) enum Token {
     Text(String),
     Interp(String),
     If(String),
@@ -678,7 +680,7 @@ fn compile(source: &str, escape: Escape, scope: Scope) -> Result<String, Error> 
     Ok(text)
 }
 
-fn line_of(source: &str, offset: usize) -> usize {
+pub(crate) fn line_of(source: &str, offset: usize) -> usize {
     source[..offset.min(source.len())].matches('\n').count() + 1
 }
 
@@ -730,18 +732,32 @@ fn scan_expression(source: &str, from: usize, terminator: u8) -> Option<usize> {
 }
 
 fn tokenize(source: &str) -> Result<Vec<Token>, Error> {
+    let tokens = tokens_at(source)?.into_iter().map(|(_, token)| token).collect();
+    Ok(strip_tag_lines(tokens))
+}
+
+/// The tokens of `source` with the byte offset each starts at, before tag-only lines are stripped.
+///
+/// # Errors
+///
+/// Returns the first error of a tag or `${` that is not closed or not part of the dialect, with its line.
+pub(crate) fn tokens_at(source: &str) -> Result<Vec<(usize, Token)>, Error> {
     let mut tokens = Vec::new();
     let mut text = String::new();
+    let mut text_start = 0;
     let mut index = 0;
     macro_rules! flush {
         () => {
             if !text.is_empty() {
-                tokens.push(Token::Text(std::mem::take(&mut text)));
+                tokens.push((text_start, Token::Text(std::mem::take(&mut text))));
             }
         };
     }
     while index < source.len() {
         let rest = &source[index..];
+        if text.is_empty() {
+            text_start = index;
+        }
         if rest.starts_with("\\${") {
             text.push_str("${");
             index += 3;
@@ -753,19 +769,19 @@ fn tokenize(source: &str) -> Result<Vec<Token>, Error> {
                 .find("-->")
                 .ok_or_else(|| fail(source, index, "comment is not closed"))?;
             flush!();
-            tokens.push(Token::Comment);
+            tokens.push((index, Token::Comment));
             index += end + 3;
         } else if rest.starts_with("${") {
             let end =
                 scan_expression(source, index + 2, b'}').ok_or_else(|| fail(source, index, "${ has no closing }"))?;
             flush!();
-            tokens.push(Token::Interp(source[index + 2..end].to_string()));
+            tokens.push((index, Token::Interp(source[index + 2..end].to_string())));
             index = end + 1;
         } else if rest.starts_with("<#") || rest.starts_with("</#") || rest.starts_with("<@") || rest.starts_with("</@")
         {
             flush!();
             let (token, next) = tag(source, index)?;
-            tokens.push(token);
+            tokens.push((index, token));
             index = next;
         } else {
             let ch = rest.chars().next().unwrap_or('\u{FFFD}');
@@ -774,7 +790,7 @@ fn tokenize(source: &str) -> Result<Vec<Token>, Error> {
         }
     }
     flush!();
-    Ok(strip_tag_lines(tokens))
+    Ok(tokens)
 }
 
 fn tag(source: &str, start: usize) -> Result<(Token, usize), Error> {
@@ -1058,8 +1074,8 @@ const SANDBOX_LOCKDOWN: &str = r#"
 struct Sandbox {
     functions: RefCell<super::bounded::BoundedMap<String, Persistent<Function<'static>>>>,
     context: Context,
-    // The context borrows this runtime. Drop order frees the context first.
-    #[allow(dead_code)]
+    // The context borrows this runtime. Drop order frees the context first. A theme render lowers its memory limit for
+    // the call (`render_locked_bounded`).
     runtime: Runtime,
 }
 
@@ -1149,6 +1165,31 @@ fn locked_localize(ctx: Ctx<'_>, text: String) -> rquickjs::Result<String> {
 }
 
 fn render_locked(compiled: &str, json: &str) -> Result<String, Error> {
+    render_locked_until(compiled, json, Instant::now() + LOCKED_TIME_LIMIT, LOCKED_MEMORY_LIMIT)
+}
+
+/// The locked renderer's own budgets: a theme's operator limits may lower them, never raise them.
+pub(crate) const LOCKED_BUDGET: (Duration, usize) = (LOCKED_TIME_LIMIT, LOCKED_MEMORY_LIMIT);
+
+/// Render `source` (HTML escaped) in the locked-down renderer with `json` as its snapshot, stopped at `deadline` and
+/// with at most `memory` bytes for the sandbox, each capped at the renderer's own limits. The theme adapter calls this
+/// for each layout, section and block, with the page's deadline and its operator's memory (`script/theme`).
+///
+/// # Errors
+///
+/// Returns an error when the template does not compile, throws, or runs past its deadline or memory.
+pub(crate) fn render_locked_bounded(
+    source: &str,
+    json: &str,
+    deadline: Instant,
+    memory: usize,
+) -> Result<String, Error> {
+    let compiled = compiled(source, Escape::Html, Scope::Snapshot)?;
+    let deadline = deadline.min(Instant::now() + LOCKED_TIME_LIMIT);
+    render_locked_until(&compiled, json, deadline, memory.min(LOCKED_MEMORY_LIMIT))
+}
+
+fn render_locked_until(compiled: &str, json: &str, deadline: Instant, memory: usize) -> Result<String, Error> {
     SANDBOX.with(|cell| {
         if cell.borrow().is_none() {
             *cell.borrow_mut() = Some(Sandbox::start()?);
@@ -1158,7 +1199,11 @@ fn render_locked(compiled: &str, json: &str) -> Result<String, Error> {
             .as_ref()
             .ok_or_else(|| Error::new("template sandbox did not start"))?;
         let previous = LOCKED_DEADLINE.with(Cell::get);
-        LOCKED_DEADLINE.with(|deadline| deadline.set(Some(Instant::now() + LOCKED_TIME_LIMIT)));
+        LOCKED_DEADLINE.with(|cell| cell.set(Some(deadline)));
+        let lowered = memory < LOCKED_MEMORY_LIMIT;
+        if lowered {
+            sandbox.runtime.set_memory_limit(memory);
+        }
         let result = sandbox.context.with(|ctx| {
             let saved = sandbox.functions.borrow_mut().get(compiled);
             let function = match saved {
@@ -1183,7 +1228,10 @@ fn render_locked(compiled: &str, json: &str) -> Result<String, Error> {
                 .catch(&ctx)
                 .map_err(|err| Error::new(err.to_string()))
         });
-        LOCKED_DEADLINE.with(|deadline| deadline.set(previous));
+        if lowered {
+            sandbox.runtime.set_memory_limit(LOCKED_MEMORY_LIMIT);
+        }
+        LOCKED_DEADLINE.with(|cell| cell.set(previous));
         result
     })
 }

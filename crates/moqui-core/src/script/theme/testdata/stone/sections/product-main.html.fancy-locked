@@ -1,0 +1,9 @@
+<article class="product">
+  <h1>${product.name}</h1>
+  <p class="price">${product.price.display}</p>
+  <#if section.settings.showSku>
+  <p class="sku">SKU ${product.sku}</p>
+  </#if>
+  <div class="description">${product.description}</div>
+  ${components["shop.productPurchase"]}
+</article>

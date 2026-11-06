@@ -1,0 +1,1 @@
+<a href="${product.url}">${product.name}</a> <#include "price">

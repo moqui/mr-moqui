@@ -1,0 +1,7 @@
+{
+  "name": "Text",
+  "settings": [
+    {"id": "body", "type": "text", "required": true},
+    {"id": "rich", "type": "richText"}
+  ]
+}

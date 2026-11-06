@@ -253,3 +253,33 @@ fn barcode_and_gs1_resource_helpers_preserve_validated_values() {
         r#"(()=>{try {ec.resource.barcodeSvg('EAN-13','4006381333930');return false} catch(e){return String(e).includes('check digit')}})()"#,
     );
 }
+
+#[test]
+fn a_service_validates_and_renders_a_theme_package() {
+    clear_context_stack();
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    let setup = r#"(globalThis.themeFiles = {files: {
+        "theme.json": JSON.stringify({schemaVersion: 1, name: "T", engine: "js-fancy", viewApiVersion: 1}),
+        "templates/home.json": JSON.stringify({sections: {hero: {type: "hero", settings: {heading: "Hi <b>"}}}}),
+        "sections/hero.schema.json": JSON.stringify({settings: [{id: "heading", type: "text"}]}),
+        "sections/hero.html.fancy-locked": "<h2>${section.settings.heading} ${site.name}</h2>"
+    }}) !== null"#;
+    holds(setup);
+    holds(r#"ec.resource.theme.engines().join() === "js-fancy" && ec.resource.theme.limits().maxSections === 100"#);
+    holds(r#"ec.resource.theme.validate(themeFiles, {requiredPageKinds: ["home"]}).ok === true"#);
+    holds(
+        r#"ec.resource.theme.render(themeFiles, {pageKind: "home", view: {site: {name: "S"}}}).html
+            === "<h2>Hi &lt;b&gt; S</h2>""#,
+    );
+    // A template naming ec fails validation with its file and line.
+    holds(
+        r#"(() => { const files = Object.assign({}, themeFiles.files);
+            files["sections/hero.html.fancy-locked"] = "<h2>\n${ec.user.userId}</h2>";
+            const v = ec.resource.theme.validate({files});
+            const d = v.diagnostics.find(d => d.code === "forbidden-name");
+            return !v.ok && d.file === "sections/hero.html.fancy-locked" && d.line === 2; })()"#,
+    );
+    holds(r#"ec.resource.theme.sanitizeSvg('<svg onload="x"><script>y</script></svg>') === "<svg></svg>""#);
+    clear_context_stack();
+}
