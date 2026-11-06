@@ -541,26 +541,32 @@ impl Column {
     /// dates as epoch millis text, so that form is read as a moment. Timestamp text without an offset is in the
     /// session time zone ([`moqui_lib::object::text_time_zone`]), as a parameter or a data file reads it.
     fn typed(&self, value: Value) -> Value {
-        let (Some(java_type), Value::String(text)) = (self.java_type.as_deref(), &value) else {
-            return value;
-        };
-        let simple = java_type.rsplit('.').next().unwrap_or(java_type);
-        let temporal = matches!(simple, "Date" | "Timestamp" | "Time");
-        let number = matches!(
-            simple,
-            "BigDecimal" | "BigInteger" | "Long" | "Integer" | "Double" | "Float"
-        );
-        if !temporal && !number {
-            return value;
-        }
-        let source = match text.trim().parse::<i64>() {
-            Ok(millis) if temporal => moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value,
-            _ => value.clone(),
-        };
-        match moqui_lib::object::basic_convert_text(&source, java_type).value {
-            Value::String(_) => value,
-            converted => converted,
-        }
+        typed_value(self.java_type.as_deref(), value)
+    }
+}
+
+/// A text value converted to a field's date, time, or number Java type, as a condition binds it; anything else as
+/// given. For a caller that binds a statement rendered once ([`Column::typed`] for the rest).
+pub fn typed_value(java_type: Option<&str>, value: Value) -> Value {
+    let (Some(java_type), Value::String(text)) = (java_type, &value) else {
+        return value;
+    };
+    let simple = java_type.rsplit('.').next().unwrap_or(java_type);
+    let temporal = matches!(simple, "Date" | "Timestamp" | "Time");
+    let number = matches!(
+        simple,
+        "BigDecimal" | "BigInteger" | "Long" | "Integer" | "Double" | "Float"
+    );
+    if !temporal && !number {
+        return value;
+    }
+    let source = match text.trim().parse::<i64>() {
+        Ok(millis) if temporal => moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value,
+        _ => value.clone(),
+    };
+    match moqui_lib::object::basic_convert_text(&source, java_type).value {
+        Value::String(_) => value,
+        converted => converted,
     }
 }
 

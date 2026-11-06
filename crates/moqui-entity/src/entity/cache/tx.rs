@@ -28,8 +28,8 @@ use super::hold::{FrameHold, Held, KeptList, Overlay};
 use super::stats::{self, FlushCause};
 use super::{
     entity_columns, load_by_pk, load_plain, may_match, owned_lookup_key, pk_condition, pk_of, query_tx, row_key,
-    row_matches, rows_plain, sim_session_open, sim_view, sort_rows, write_pk, EntityFacade, EntityValue, FieldMap,
-    FindLookup, MemRow, Op, ReadMeta, SelectPlan, SimView,
+    row_matches, rows_plain, sim_session_open, sim_view, sort_rows, with_lookup_key, write_pk, EntityFacade,
+    EntityValue, FieldMap, FindLookup, MemRow, Op, ReadMeta, SelectPlan, SimView,
 };
 use crate::driver::DbConnection;
 use crate::transaction::{CacheMode, TransactionManager};
@@ -268,20 +268,23 @@ pub(super) fn overlay_rows(
     let relevant = holds
         .iter()
         .any(|held| held.operation != Op::Create || may_match(condition, &held.plain));
-    let list_key = list.filter(|_| cacheable).map(owned_lookup_key);
-    let list_key = list_key.as_deref();
+    let list = list.filter(|_| cacheable);
     let new_rows_only = lock.is_none() && pins_created_parent(facade, meta, token, condition);
-    if !relevant && list_key.is_none() && !new_rows_only {
+    if !relevant && list.is_none() && !new_rows_only {
         // Nothing the frame holds or kept can change the answer: the database gives it, with its limit and offset.
         return Ok(None);
     }
-    let kept = list_key
-        .and_then(|key| TX_HOLD.with(|slot| slot.borrow().get(&token).and_then(|frame| frame.kept_list(entity, key))));
+    // The kept list is looked up by the key written into a thread buffer; an owned key is made only to keep one.
+    let kept = list.and_then(|lookup| {
+        with_lookup_key(lookup, |key| {
+            TX_HOLD.with(|slot| slot.borrow().get(&token).and_then(|frame| frame.kept_list(entity, key)))
+        })
+    });
     let mut memory = true;
-    let loaded: Vec<FieldMap> = if new_rows_only {
+    let loaded: Vec<Arc<FieldMap>> = if new_rows_only {
         Vec::new()
     } else if let Some(kept) = kept {
-        kept.iter().map(|row| FieldMap::clone(row)).collect()
+        kept.iter().map(Arc::clone).collect()
     } else {
         memory = false;
         let window = page.limit.map(|limit| {
@@ -292,21 +295,24 @@ pub(super) fn overlay_rows(
                 .saturating_add(limit.max(0))
                 .saturating_add(held)
         });
-        let loaded = load_plain(facade, meta, condition, order, window, None, lock)?;
+        let loaded: Vec<Arc<FieldMap>> = load_plain(facade, meta, condition, order, window, None, lock)?
+            .into_iter()
+            .map(Arc::new)
+            .collect();
         TX_HOLD.with(|slot| {
             let mut map = slot.borrow_mut();
             let frame = map.entry(token).or_default();
-            match list_key {
-                Some(key) => {
-                    let rows: KeptList = Rc::new(loaded.iter().map(|row| Rc::new(row.clone())).collect());
-                    frame.keep_list(entity, key, rows, &meta.pk_fields);
+            match list {
+                Some(lookup) => {
+                    let rows: KeptList = Rc::new(loaded.clone());
+                    frame.keep_list(entity, &owned_lookup_key(lookup), rows, &meta.pk_fields);
                 }
                 None => {
                     let mut buffer = String::new();
                     for row in &loaded {
                         buffer.clear();
                         if write_pk(row, &meta.pk_fields, &mut buffer) {
-                            frame.keep_stored(entity, &buffer, Some(Rc::new(row.clone())));
+                            frame.keep_stored(entity, &buffer, Some(Arc::clone(row)));
                         }
                     }
                 }
@@ -316,7 +322,10 @@ pub(super) fn overlay_rows(
     };
     let rows: Vec<MemRow> = loaded
         .into_iter()
-        .map(|fields| MemRow { fields, trusted: true })
+        .map(|fields| MemRow {
+            fields,
+            trusted: true,
+        })
         .collect();
     let overlay = Overlay::new(rows, &holds, &meta.pk_fields);
     // An update of a row the condition did not load starts from the whole stored row, not the fields it set.
@@ -333,7 +342,7 @@ pub(super) fn overlay_rows(
 fn values_of(meta: &ReadMeta, rows: Vec<MemRow>) -> Vec<EntityValue> {
     let name: Arc<str> = Arc::from(meta.full_name.as_str());
     rows.into_iter()
-        .map(|row| EntityValue::from_fields(Arc::clone(&name), row.fields))
+        .map(|row| EntityValue::from_shared(Arc::clone(&name), row.fields))
         .collect()
 }
 
@@ -364,7 +373,7 @@ fn pinned_row(
         // A row the frame created is not on the database, unless the frame read it there (then the overlay fails it).
         (None, Some(Op::Create)) => (None, true),
         (None, _) => {
-            let row = load_by_pk(facade, entity, keys)?.map(Rc::new);
+            let row = load_by_pk(facade, entity, keys)?.map(Arc::new);
             TX_HOLD.with(|slot| {
                 slot.borrow_mut()
                     .entry(token)
@@ -378,7 +387,7 @@ fn pinned_row(
     // The condition is the key: every row the overlay gives, of that key alone, matches it.
     let rows: Vec<MemRow> = base
         .map(|row| MemRow {
-            fields: FieldMap::clone(&row),
+            fields: row,
             trusted: true,
         })
         .into_iter()
@@ -412,7 +421,7 @@ fn pins_created_parent(facade: &EntityFacade, meta: &ReadMeta, token: u64, condi
             for (field, related_field) in pairs {
                 match pinned.get(field.as_str()) {
                     Some(value) => {
-                        keys.insert(Arc::from(related_field.as_str()), (*value).clone());
+                        keys.insert(Arc::from(related_field.as_str()), value.clone());
                     }
                     None => return false,
                 }
@@ -429,21 +438,44 @@ fn pins_created_parent(facade: &EntityFacade, meta: &ReadMeta, token: u64, condi
     })
 }
 
-/// The fields a condition compares by equality at the top level, with their values.
-fn equalities(condition: &Condition) -> HashMap<&str, &Value> {
-    let parts: Vec<&Condition> = match condition {
-        Condition::And(list) => list.iter().collect(),
-        other => vec![other],
+/// The fields a condition compares by equality at the top level, with their values; few, so a vector.
+fn equalities(condition: &Condition) -> Equalities<'_> {
+    let parts: &[Condition] = match condition {
+        Condition::And(list) => list,
+        other => std::slice::from_ref(other),
     };
-    let mut out = HashMap::new();
-    for part in parts {
-        if let Condition::Equals(field, value) = part {
-            if field.entity_alias.is_none() && !value.is_null() {
-                out.insert(field.name.as_str(), value);
-            }
-        }
+    Equalities(
+        parts
+            .iter()
+            .filter_map(|part| match part {
+                Condition::Equals(field, value) if field.entity_alias.is_none() && !value.is_null() => {
+                    Some((field.name.as_str(), value))
+                }
+                _ => None,
+            })
+            .collect(),
+    )
+}
+
+struct Equalities<'c>(Vec<(&'c str, &'c Value)>);
+
+impl<'c> Equalities<'c> {
+    fn get(&self, name: &str) -> Option<&'c Value> {
+        self.0.iter().find(|(field, _)| *field == name).map(|(_, value)| *value)
     }
-    out
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The distinct fields compared.
+    fn len(&self) -> usize {
+        self.0
+            .iter()
+            .enumerate()
+            .filter(|(at, (field, _))| !self.0[..*at].iter().any(|(earlier, _)| earlier == field))
+            .count()
+    }
 }
 
 /// The key text and key fields of a condition that is the whole key and nothing else: an equality of each key field at
@@ -461,7 +493,7 @@ fn pinned_keys(condition: Option<&Condition>, pk_fields: &[String]) -> Option<(S
     }
     let mut keys = FieldMap::new();
     for name in pk_fields {
-        keys.insert(Arc::from(name.as_str()), (*pinned.get(name.as_str())?).clone());
+        keys.insert(Arc::from(name.as_str()), pinned.get(name.as_str())?.clone());
     }
     let pk = pk_of(&keys, pk_fields)?;
     Some((pk, keys))
@@ -525,7 +557,10 @@ fn sim_overlay_rows(
     }
     let rows: Vec<MemRow> = loaded
         .into_iter()
-        .map(|fields| MemRow { fields, trusted: true })
+        .map(|fields| MemRow {
+            fields: Arc::new(fields),
+            trusted: true,
+        })
         .collect();
     let overlay = Overlay::new(rows, &holds, &meta.pk_fields);
     // An update of a row the condition did not load starts from the whole stored row, not the fields it set.
@@ -543,7 +578,10 @@ fn sim_overlay_rows(
                 if let Some(pk) = pk_of(&fields, &meta.pk_fields) {
                     rows.retain(|row| pk_of(&row.fields, &meta.pk_fields).as_deref() != Some(pk.as_str()));
                 }
-                rows.push(MemRow { fields, trusted: true });
+                rows.push(MemRow {
+                    fields: Arc::new(fields),
+                    trusted: true,
+                });
             }
         }
     }
@@ -553,13 +591,13 @@ fn sim_overlay_rows(
     let name: Arc<str> = Arc::from(meta.full_name.as_str());
     let values = rows
         .into_iter()
-        .map(|row| EntityValue::from_fields(Arc::clone(&name), row.fields))
+        .map(|row| EntityValue::from_shared(Arc::clone(&name), row.fields))
         .collect();
     Ok(Some(values))
 }
 
 /// The stored row of each held key an overlay needs; `None` where the database has none.
-type StoredRows<'h> = HashMap<&'h str, Option<Rc<FieldMap>>>;
+type StoredRows<'h> = HashMap<&'h str, Option<Arc<FieldMap>>>;
 
 /// Held keys read in one query of [`stored_rows`].
 const STORED_BATCH: usize = 100;
@@ -584,7 +622,7 @@ pub(super) fn stored_rows<'h>(
         };
         for (pk, fields) in overlay.loaded_updates() {
             if frame.stored(&meta.full_name, pk).is_none() {
-                frame.keep_stored(&meta.full_name, pk, Some(Rc::new(fields.clone())));
+                frame.keep_stored(&meta.full_name, pk, Some(Arc::clone(fields)));
             }
         }
         for held in &needed {
@@ -599,10 +637,10 @@ pub(super) fn stored_rows<'h>(
     let read = !missing.is_empty();
     for batch in missing.chunks(STORED_BATCH) {
         let keys: Vec<&FieldMap> = batch.iter().map(|held| &held.plain).collect();
-        let mut found: HashMap<String, Rc<FieldMap>> = HashMap::with_capacity(batch.len());
+        let mut found: HashMap<String, Arc<FieldMap>> = HashMap::with_capacity(batch.len());
         for row in load_by_pks(facade, &meta.full_name, &keys)? {
             if let Some(pk) = pk_of(&row, &meta.pk_fields) {
-                found.insert(pk, Rc::new(row));
+                found.insert(pk, Arc::new(row));
             }
         }
         TX_HOLD.with(|slot| {
@@ -776,7 +814,7 @@ pub(super) fn load_by_pks(
         Ok(SelectPlan {
             sql: statement.sql,
             params: statement.params,
-            columns: entity_columns(entity, model),
+            columns: entity_columns(entity, model).into(),
             tx: tx.clone(),
         })
     })?;

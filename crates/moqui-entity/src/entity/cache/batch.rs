@@ -23,7 +23,14 @@ use std::rc::Rc;
 use moqui_lib::error::Error;
 
 use super::hold::Held;
-use super::{bind_columns, statement_for, EntityFacade, FieldMap, Op};
+use std::sync::Arc;
+
+use moqui_db::dialect::Dialect;
+use moqui_db::model::EntityDefinition;
+use moqui_lib::object::Value;
+
+use super::super::sql_cache;
+use super::{bind_columns, pk_condition, present_columns, EntityFacade, FieldMap, Op};
 use crate::driver::DbConnection;
 
 /// The statements and rows one flush wrote: `statements` merged writes sent, `rows` held writes they stand for.
@@ -131,14 +138,10 @@ pub(super) fn flush_writes(
         let statement = facade
             .with_group(&held.entity_name, |entity, dialect, _, _| {
                 let mysql = moqui_db::sql::is_mysql(dialect);
-                if write.operation == Op::Create {
-                    // Every column, null where unset, so the creates of an entity share one statement and the driver
-                    // can join them. No column has a database default.
-                    let columns: Vec<&str> = entity.fields.iter().map(|field| field.name.as_str()).collect();
-                    let sql = moqui_db::sql::insert(entity, dialect, &columns)?;
-                    return Ok(Some(((sql, bind_columns(&columns, &write.sealed)), mysql)));
-                }
-                Ok(statement_for(entity, dialect, write.operation, &write.sealed)?.map(|statement| (statement, mysql)))
+                Ok(
+                    cached_statement(facade, entity, dialect, write.operation, &write.sealed)?
+                        .map(|statement| (statement, mysql)),
+                )
             })
             .map_err(named)?;
         let Some(((sql, params), mysql)) = statement else {
@@ -165,6 +168,79 @@ pub(super) fn flush_writes(
         .with_source(err)
     })?;
     Ok(flushed)
+}
+
+/// A statement's SQL text, shared with `sql_cache`, and its parameters.
+type Statement = (Arc<str>, Vec<Value>);
+
+/// The statement of one merged write, its SQL rendered once per entity, operation and columns (`sql_cache`). A create
+/// writes every column, null where unset, so the creates of an entity share one statement and the driver can join
+/// them (no column has a database default); an update writes the columns it holds; `None` is an update of none.
+fn cached_statement(
+    facade: &EntityFacade,
+    entity: &EntityDefinition,
+    dialect: &Dialect,
+    operation: Op,
+    values: &FieldMap,
+) -> Result<Option<Statement>, Error> {
+    let pk_values = || -> Result<Vec<Value>, Error> {
+        entity
+            .pk_field_names()
+            .into_iter()
+            .map(|name| {
+                values
+                    .get(name)
+                    .filter(|value| !value.is_null())
+                    .map(|value| moqui_db::sql::typed_value(entity.java_type_of(name), value.clone()))
+                    .ok_or_else(|| Error::new(format!("primary key {name} is required on {}", entity.full_name)))
+            })
+            .collect()
+    };
+    let mut key = format!("{}|{}|txc-", entity.full_name, dialect.name);
+    match operation {
+        Op::Create => {
+            let columns: Vec<&str> = entity.fields.iter().map(|field| field.name.as_str()).collect();
+            key.push_str("insert");
+            let sql = sql_cache::cached(facade, &key, || moqui_db::sql::insert(entity, dialect, &columns))?;
+            Ok(Some((sql, bind_columns(&columns, values))))
+        }
+        Op::Delete => {
+            let params = pk_values()?;
+            key.push_str("delete");
+            let sql = sql_cache::cached(facade, &key, || {
+                Ok(moqui_db::sql::delete(entity, dialect, Some(&pk_condition(entity, values)?))?.sql)
+            })?;
+            Ok(Some((sql, params)))
+        }
+        Op::Update | Op::Upsert => {
+            let update = operation == Op::Update;
+            let columns = present_columns(entity, values, update, update);
+            if columns.is_empty() {
+                if update {
+                    return Ok(None);
+                }
+                return Err(Error::new(format!("upsert has no columns for {}", entity.full_name)));
+            }
+            key.push_str(if update { "update|" } else { "upsert|" });
+            for column in &columns {
+                key.push_str(column);
+                key.push(',');
+            }
+            let mut params = bind_columns(&columns, values);
+            let sql = if update {
+                params.extend(pk_values()?);
+                sql_cache::cached(facade, &key, || {
+                    let condition = pk_condition(entity, values)?;
+                    Ok(moqui_db::sql::update(entity, dialect, &columns, Some(&condition))?.sql)
+                })?
+            } else {
+                sql_cache::cached(facade, &key, || {
+                    moqui_db::sql::insert_or_update(entity, dialect, &columns)
+                })?
+            };
+            Ok(Some((sql, params)))
+        }
+    }
 }
 
 /// The key of a created row for [`DbConnection::execute_deferred_row`]: a row whose key is among those the driver holds

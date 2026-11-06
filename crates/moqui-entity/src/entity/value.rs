@@ -344,6 +344,18 @@ impl EntityValue {
         }
     }
 
+    /// [`Self::from_fields`] for a row the transaction cache keeps: the value shares it until a `set`.
+    pub(crate) fn from_shared(entity_name: Arc<str>, fields: Arc<FieldMap>) -> Self {
+        Self {
+            entity_name,
+            fields,
+            names: None,
+            l10n: None,
+            l10n_memo: L10nMemo::default(),
+            read: ReadState::read(),
+        }
+    }
+
     /// The field map, moved out when this value is the only owner.
     pub(crate) fn into_fields(self) -> FieldMap {
         Arc::try_unwrap(self.fields).unwrap_or_else(|fields| (*fields).clone())

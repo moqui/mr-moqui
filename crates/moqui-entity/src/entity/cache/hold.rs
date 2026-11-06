@@ -68,7 +68,7 @@ pub(super) struct FrameHold {
 pub(super) const READ_CAP: usize = 10_000;
 
 /// The rows of a list find as the database gave them, kept by the find's key (plans/TX-Cache.md D3).
-pub(super) type KeptList = Rc<Vec<Rc<FieldMap>>>;
+pub(super) type KeptList = Rc<Vec<Arc<FieldMap>>>;
 
 #[derive(Default)]
 struct EntityHold {
@@ -80,7 +80,7 @@ struct EntityHold {
     /// `None` when it has no such row (plans/TX-Cache.md D2). The frame's own writes are applied on top when it reads:
     /// while it holds them they are not on the database, so these rows stay as read. A write of the frame to the
     /// database (an early flush, or any write in read-through mode) drops them.
-    stored: HashMap<String, Option<Rc<FieldMap>>>,
+    stored: HashMap<String, Option<Arc<FieldMap>>>,
     /// List finds of the entity with no limit or offset, by the find's key, as the database answered them
     /// (plans/TX-Cache.md D3); dropped as `stored` is.
     lists: HashMap<String, KeptList>,
@@ -212,12 +212,12 @@ impl FrameHold {
     }
 
     /// The stored row under a held update of `entity`, when this frame has read it: `Some(None)` when there is none.
-    pub(super) fn stored(&self, entity: &str, pk: &str) -> Option<Option<Rc<FieldMap>>> {
+    pub(super) fn stored(&self, entity: &str, pk: &str) -> Option<Option<Arc<FieldMap>>> {
         self.entities.get(entity)?.stored.get(pk).cloned()
     }
 
     /// Keep a row of `entity` as read now from the database; nothing past [`READ_CAP`] rows.
-    pub(super) fn keep_stored(&mut self, entity: &str, pk: &str, row: Option<Rc<FieldMap>>) {
+    pub(super) fn keep_stored(&mut self, entity: &str, pk: &str, row: Option<Arc<FieldMap>>) {
         if self.kept >= READ_CAP {
             return;
         }
@@ -244,7 +244,7 @@ impl FrameHold {
         for row in rows.iter() {
             buffer.clear();
             if super::write_pk(row, pk_fields, &mut buffer) {
-                self.keep_stored(entity, &buffer, Some(Rc::clone(row)));
+                self.keep_stored(entity, &buffer, Some(Arc::clone(row)));
             }
         }
         let hold = self.entities.entry(entity.to_string()).or_default();
@@ -326,7 +326,7 @@ impl<'h> Overlay<'h> {
     }
 
     /// The loaded rows under a held update, by primary key, as stored rows to keep for the frame.
-    pub(super) fn loaded_updates(&self) -> impl Iterator<Item = (&'h str, &FieldMap)> + '_ {
+    pub(super) fn loaded_updates(&self) -> impl Iterator<Item = (&'h str, &Arc<FieldMap>)> + '_ {
         self.at_pk.iter().filter_map(|(&pk, &index)| {
             let update = matches!(self.first.get(pk), Some(Op::Update | Op::Upsert));
             let row = self.rows[index].as_ref().filter(|_| update)?;
@@ -340,7 +340,7 @@ impl<'h> Overlay<'h> {
     ///
     /// A held create of a row the find loaded from the database, with no held delete of it before, fails here, as
     /// Java's `checkUpdateValue`, not at the commit (plans/TX-Cache.md G5).
-    pub(super) fn apply(mut self, stored: &HashMap<&str, Option<Rc<FieldMap>>>) -> Result<Vec<MemRow>, Error> {
+    pub(super) fn apply(mut self, stored: &HashMap<&str, Option<Arc<FieldMap>>>) -> Result<Vec<MemRow>, Error> {
         let loaded = self.rows.len();
         let mut deleted: HashSet<&str> = HashSet::new();
         for held in self.holds {
@@ -364,14 +364,15 @@ impl<'h> Overlay<'h> {
                     }
                     self.at_pk.insert(pk, self.rows.len());
                     self.rows.push(Some(MemRow {
-                        fields: held.plain.clone(),
+                        fields: Arc::new(held.plain.clone()),
                         trusted: false,
                     }));
                 }
                 Op::Update | Op::Upsert => {
                     if let Some(row) = self.at_pk.get(pk).and_then(|&index| self.rows[index].as_mut()) {
+                        let fields = Arc::make_mut(&mut row.fields);
                         for (key, value) in &held.plain {
-                            row.fields.insert(key.clone(), value.clone());
+                            fields.insert(key.clone(), value.clone());
                         }
                         row.trusted = false;
                         continue;
@@ -391,7 +392,10 @@ impl<'h> Overlay<'h> {
                         (None, _) => continue,
                     };
                     self.at_pk.insert(pk, self.rows.len());
-                    self.rows.push(Some(MemRow { fields, trusted: false }));
+                    self.rows.push(Some(MemRow {
+                        fields: Arc::new(fields),
+                        trusted: false,
+                    }));
                 }
             }
         }

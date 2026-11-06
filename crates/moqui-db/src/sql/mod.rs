@@ -31,7 +31,9 @@ mod view;
 use moqui_lib::error::Error;
 use moqui_lib::object::{basic_convert, Value};
 
-pub use condition::{comparison, render_condition, CompareOp, Condition, FieldRef, LimitOffset, Nulls, OrderBy};
+pub use condition::{
+    comparison, render_condition, typed_value, CompareOp, Condition, FieldRef, LimitOffset, Nulls, OrderBy,
+};
 pub use ident::{
     is_mysql, is_sqlite, legacy_name, physical_column_name, physical_name, quote_column, quote_ident,
     quote_physical_ident,

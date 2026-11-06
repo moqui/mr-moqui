@@ -1804,7 +1804,10 @@ fn unresolved_members_and_relationships_are_left_out() {
         problems.contains("Left out view-entity sample.FactView: member-entity moqui.olap.NoSuchFact"),
         "{problems}"
     );
-    assert!(problems.contains("Left out view-entity sample.OnFactView"), "{problems}");
+    assert!(
+        problems.contains("Left out view-entity sample.OnFactView"),
+        "{problems}"
+    );
 }
 
 /// Framework, mantle, and the other component entities in the Java tree, when it is next to this one. The tool

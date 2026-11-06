@@ -30,7 +30,7 @@ use std::sync::Arc;
 use moqui_db::dialect::Dialect;
 use moqui_db::model::EntityDefinition;
 use moqui_db::sql::{
-    create_table, delete, insert, insert_or_update, select, select_with, update, CompareOp, Condition, FieldRef,
+    create_table, delete, insert, insert_or_update, select_with_head, update, CompareOp, Condition, FieldRef,
     LimitOffset, Nulls, OrderBy,
 };
 use moqui_lib::cache::{CacheConfig, MCache};
@@ -141,8 +141,10 @@ impl ReadMeta {
     }
 }
 
+/// A row of a find in memory: shared with the frame's kept rows and the values it gives out until a held write
+/// changes it.
 struct MemRow {
-    fields: FieldMap,
+    fields: Arc<FieldMap>,
     trusted: bool,
 }
 
@@ -1917,16 +1919,40 @@ fn load_plain(
     rows_plain(facade, &meta.full_name, &plan.columns, db_rows)
 }
 
+/// The stored row of the key in `values`. The statement is rendered once per entity and dialect (`sql_cache`): its
+/// parameters are the key's values, in key order.
 fn load_by_pk(facade: &EntityFacade, entity_name: &str, values: &FieldMap) -> Result<Option<FieldMap>, Error> {
     let owner = facade.clone();
-    let plan = facade.with_group(entity_name, |entity, dialect, model, tx| {
-        let condition = pk_condition(entity, values)?;
-        let fields: Vec<FieldRef> = entity.fields.iter().map(|field| FieldRef::new(&field.name)).collect();
-        let statement = select(entity, dialect, &fields, Some(&condition), &[], LimitOffset::default())?;
+    let plan = facade.with_group(entity_name, |entity, dialect, _, tx| {
+        let shape = super::sql_cache::read_shape(&owner, entity, dialect);
+        let mut params = Vec::new();
+        for name in entity.pk_field_names() {
+            let value = values
+                .get(name)
+                .filter(|value| !value.is_null())
+                .ok_or_else(|| Error::new(format!("primary key {name} is required on {}", entity.full_name)))?;
+            // as the condition the statement was rendered from would bind it
+            params.push(moqui_db::sql::typed_value(entity.java_type_of(name), value.clone()));
+        }
+        let key = format!("{}|{}|txc-pk", entity.full_name, dialect.name);
+        let sql = super::sql_cache::cached(&owner, &key, || {
+            let condition = pk_condition(entity, values)?;
+            let options = moqui_db::sql::SelectOptions::default();
+            Ok(select_with_head(
+                &shape.head,
+                entity,
+                dialect,
+                Some(&condition),
+                &[],
+                LimitOffset::default(),
+                &options,
+            )?
+            .sql)
+        })?;
         Ok(SelectPlan {
-            sql: statement.sql,
-            params: statement.params,
-            columns: entity_columns(entity, model),
+            sql: sql.to_string(),
+            params,
+            columns: Arc::clone(&shape.columns),
             tx: tx.clone(),
         })
     })?;
@@ -1938,7 +1964,7 @@ fn load_by_pk(facade: &EntityFacade, entity_name: &str, values: &FieldMap) -> Re
 struct SelectPlan {
     sql: String,
     params: Vec<Value>,
-    columns: Vec<(Arc<str>, String)>,
+    columns: Arc<[(Arc<str>, String)]>,
     tx: TransactionManager,
 }
 
@@ -1950,22 +1976,23 @@ fn plan_select(
     limit: Option<i64>,
     lock: Option<bool>,
 ) -> Result<SelectPlan, Error> {
-    facade.with_group(entity_name, |entity, dialect, model, tx| {
+    facade.with_group(entity_name, |entity, dialect, _, tx| {
         if entity.is_view {
             return Err(Error::new(format!("cannot overlay view-entity {}", entity.full_name)));
         }
-        let fields: Vec<FieldRef> = entity.fields.iter().map(|field| FieldRef::new(&field.name)).collect();
+        // Every column, so the head (`SELECT ... FROM`) and the columns are the entity's read shape, rendered once.
+        let shape = super::sql_cache::read_shape(facade, entity, dialect);
         let page = LimitOffset { limit, offset: None };
         let options = moqui_db::sql::SelectOptions {
             for_update: lock.is_some(),
             skip_locked: lock.unwrap_or(false),
             ..Default::default()
         };
-        let statement = select_with(entity, dialect, &fields, condition, order, page, &options)?;
+        let statement = select_with_head(&shape.head, entity, dialect, condition, order, page, &options)?;
         Ok(SelectPlan {
             sql: statement.sql,
             params: statement.params,
-            columns: entity_columns(entity, model),
+            columns: Arc::clone(&shape.columns),
             tx: tx.clone(),
         })
     })
