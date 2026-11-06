@@ -1,6 +1,6 @@
 # Transaction cache
 
-Status 2026-11-05: Phases 0 to 4 built: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G8 (G9 is by design and goes in the guide), D6's commit batch, D2 to D5's reads, and S1 to S5 on the cache. [Results](#results) has the censuses and the numbers.
+Status 2026-11-05: Phases 0 to 5 built: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G8 (G9 is by design and goes in the guide), D6's commit batch, D2 to D5's reads, S1 to S5 on the cache, and a first pass of F1 to F5. [Results](#results) has the censuses and the numbers.
 
 The transaction cache holds a transaction's writes in memory and writes them all at commit; while it holds them, the transaction's reads see them. Done well, it gives a large speedup for high-volume transactional work and a large cut in database load, without refactoring reusable services and without callers keeping records in hand to avoid re-reading them: a service that reads `OrderItem` again, as each of several services in one operation does, gets it from memory. Moqui Java got real gains from this in a few places. Here the framework is ours to change and services can be reviewed in bulk, so the aim is more: make the cache fast and correct enough that a common transactional service runs from its first write to its commit without touching the database for anything it has already read or written, and its writes go out in one batch.
 
@@ -389,6 +389,50 @@ The table's other changes (rows passed down instead of read again) are not made:
 ```
 
 S3's statements rise by one in both rows: the search index now runs after the commit, on a worker the process-wide count still sees.
+
+### The framework logic (Phase 5)
+
+A first pass of each:
+
+- **F1**: the notification persist is a `force-cache` frame: the message and its users go out in one batch. The email message id is still written after, by `store_email_message_id`.
+- **F2**: the end of a job run (its end record, or its row removed with no read first, and a queued call's job and parameters removed) is one `force-cache` frame; when that batch fails, each step runs on its own as before, each failure logged. The lock claim and release stay their own transactions on the reserve connection (a lock other instances wait on); the pass's per-job lock reads and the start record are not changed. Not timed: runs go to the job workers.
+- **F3**: the visitor and visit of a new visit are one `force-cache` frame, and so are a login's account update and the visit's link to the user (`session::in_cache_frame`; inside a transaction they join it, as before). Session start and login are still two calls, so not yet one frame.
+- **F4**: the audit rows of a held update are held with it (the audit service joins the frame), so they go in its batch; nothing more was needed. Outside a cache frame they are as before.
+- **F5**: the pending rows of a commit are inserted in one savepoint, sent deferred, with one wait, in place of a savepoint per row (three waited round trips each). The per-touch re-read and walk to the primary entity are unchanged.
+
+With 200 us of added delay (F1 and F3 have only an "on" row now; compare with the baseline):
+
+```
+  operation                                        calls  median ms   us/call    calls/s    allocs      bytes      kept    sql     rt        min-max ms
+  S1 heartbeat#UserStatus, cache off                 200    452.562   2262.81        442    1475.6     254465     20808   7.00   8.00  440.532-459.395 
+  S3 send#Message, cache off                         200    973.536   4867.68        205    4339.2     561767     23557  13.99  15.01  924.805-986.130 
+  S2 mark#Read, cache off                            200    266.088   1330.44        752    1045.3     207535      6783   3.00   4.00  264.227-269.352 
+  S4 update#WikiPage, cache off                      200   6704.952  33524.76         30   29033.4    6396039    103132 116.00 117.01 6097.290-7418.027
+  S5 set#MessageFlags, cache off                     200    940.512   4702.56        213    5261.2    1960054     20873  15.98  20.98  933.254-1018.972
+  F4 audited update UserAccount.username, cache off     200    237.450   1187.25        842     640.8     272997      1820   3.04   4.07  223.137-256.671 
+  F5 fed update EmailMessage.isFlagged, cache off     200    479.433   2397.16        417    1865.1     663202      2879   8.98  13.98  471.309-500.177 
+  S1 heartbeat#UserStatus, cache on                  200    311.604   1558.02        642    1595.9     243066      6484   3.02   5.03  308.526-350.653 
+  S3 send#Message, cache on                          200    819.755   4098.78        244    5271.8     629945     20133   9.99  12.00  753.600-869.730 
+  S2 mark#Read, cache on                             200    271.746   1358.73        736    1489.1     237098      6783   3.00   4.00  265.582-318.710 
+  S4 update#WikiPage, cache on                       200   1969.028   9845.14        102   48141.1   10077588     19012  15.00  17.01 1530.967-4359.339
+  S5 set#MessageFlags, cache on                      200    839.526   4197.63        238    6204.8    2011157     15850  12.98  18.98  813.103-891.563 
+  F1 notification persist, 3 users, cache on         200    276.777   1383.88        723     864.9      89138       -53   2.04   5.07  268.810-285.129 
+  F4 audited update UserAccount.username, cache on     200    194.532    972.66       1028     998.1     300246       925   1.01   3.03  185.092-200.594 
+  F5 fed update EmailMessage.isFlagged, cache on     200    449.478   2247.39        445    2308.9     687037      2879   6.97  12.97  424.486-486.156 
+  F3 session start and password login, cache on      200   2573.854  12869.27         78     799.5   20010001      3465   3.04   7.05 2544.336-2639.901
+  transaction cache per call                      frames    held   mem rd    db rd    early batch st batch rt
+  F1 notification persist, 3 users, cache on        2.00    4.00     0.00     0.00     0.00     4.00     1.00
+  F3 session start and password login, cache on     1.00    3.00     0.00     0.00     0.00     2.00     1.00
+  F4 audited update UserAccount.username, cache on    1.00    2.00     0.00     1.00     0.00     2.00     1.00
+  F5 fed update EmailMessage.isFlagged, cache on    1.00    1.00     1.00     2.00     0.00     1.00     1.00
+  S1 heartbeat#UserStatus, cache on                 1.00    1.00     3.00     3.00     0.00     1.00     1.00
+  S2 mark#Read, cache on                            1.00    0.00     0.00     3.00     0.00     0.00     0.00
+  S3 send#Message, cache on                         1.00    3.00     1.00     8.00     0.00     3.00     1.00
+  S4 update#WikiPage, cache on                      1.00    4.00    97.00    15.00     0.00     4.00     1.00
+  S5 set#MessageFlags, cache on                     1.00    1.00     2.00     8.00     0.00     1.00     1.00
+```
+
+F1 goes from 2.15 to 1.38 ms a call (8 to 5 waited round trips); F3 from 8 to 7 round trips (its time is the argon2 check). F5 is unchanged here: one pending row costs a savepoint, the insert and a release either way; the batch helps only a commit with several pending rows.
 
 ## Tests
 

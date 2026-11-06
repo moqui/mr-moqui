@@ -271,6 +271,7 @@ fn insert_pending(
     // When the rows were made, so the drain can tell rows that keep failing from new ones.
     let stamp = Value::Timestamp(jiff::Timestamp::now());
     let mut inserted = Vec::new();
+    let mut rows: Vec<Vec<Value>> = Vec::new();
     // Writes that carry their values: the document id is found from them, and the last write to
     // a document decides between index and delete.
     let mut resolved: indexmap::IndexMap<(String, String), (String, &'static str)> = indexmap::IndexMap::new();
@@ -337,7 +338,7 @@ fn insert_pending(
             origin,
             stamp.clone(),
         ];
-        probe_execute(conn, &insert_sql, &params)?;
+        rows.push(params);
         inserted.push(row_id);
     }
     // Writes recorded without values, which only the Postgres xmin probe can key.
@@ -389,12 +390,27 @@ fn insert_pending(
                     legacy_origin(&touches, entity_name).map_or(Value::Null, Value::String),
                     stamp.clone(),
                 ];
-                probe_execute(conn, &insert_sql, &params)?;
+                rows.push(params);
                 inserted.push(row_id);
             }
         }
     }
+    insert_rows(conn, &insert_sql, rows)?;
     Ok(inserted)
+}
+
+/// The pending rows in one savepoint, sent without waiting so the driver may join them into multi-row inserts, and one
+/// wait (plans/TX-Cache.md F5): a savepoint per row was three waited round trips a row. A missing table inserts none.
+fn insert_rows(conn: &mut dyn DbConnection, sql: &str, rows: Vec<Vec<Value>>) -> Result<(), Error> {
+    if rows.is_empty() {
+        return Ok(());
+    }
+    probe(conn, (), |conn| {
+        for (index, params) in rows.into_iter().enumerate() {
+            conn.execute_deferred_row(sql, params, u64::try_from(index).unwrap_or(u64::MAX))?;
+        }
+        conn.finish_deferred()
+    })
 }
 
 /// The agent that made every value-less write of `entity_name` in the frame, else `None`.
@@ -1009,10 +1025,6 @@ fn select_sql(
 
 pub(super) fn probe_query(conn: &mut dyn DbConnection, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
     probe(conn, Vec::new(), |conn| conn.query(sql, params))
-}
-
-fn probe_execute(conn: &mut dyn DbConnection, sql: &str, params: &[Value]) -> Result<(), Error> {
-    probe(conn, (), |conn| conn.execute(sql, params).map(|_| ()))
 }
 
 /// A savepoint that could not be rolled back: the transaction is unusable and must not commit.

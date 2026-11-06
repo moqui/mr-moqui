@@ -965,34 +965,39 @@ fn finish_run(facade: &EntityFacade, job: &JobRun, outcome: &RunOutcome) {
     // `errorHistoryOnly`: a success is not history. The row existed so the lock could point at it and Job Detail
     // could open the active run; a success removes it. Java keeps every run. An error row stays, so the retry delay
     // and the job error screen still have it. The lock's lastRunTime, set above, is what says the job ran.
-    if job.error_history_only && !outcome.has_error {
-        delete_run(facade, &job.job_run_id);
-    } else {
-        record(
-            facade,
-            &job.job_run_id,
-            &[
-                ("endTime", now_stamp()),
-                ("results", outcome.results.clone().map_or(Value::Null, Value::String)),
-                ("messages", Value::string(&outcome.messages)),
-                ("hasError", Value::string(if outcome.has_error { "Y" } else { "N" })),
-                (
-                    "errors",
-                    if outcome.has_error {
-                        Value::string(&outcome.errors)
-                    } else {
-                        Value::Null
-                    },
-                ),
-            ],
-        );
+    let forget_run = job.error_history_only && !outcome.has_error;
+    let end_fields = [
+        ("endTime", now_stamp()),
+        ("results", outcome.results.clone().map_or(Value::Null, Value::String)),
+        ("messages", Value::string(&outcome.messages)),
+        ("hasError", Value::string(if outcome.has_error { "Y" } else { "N" })),
+        (
+            "errors",
+            if outcome.has_error {
+                Value::string(&outcome.errors)
+            } else {
+                Value::Null
+            },
+        ),
+    ];
+    // The run's end and a queued call's removal in one transaction-cache frame, one commit batch (plans/TX-Cache.md
+    // F2). Each is history or cleanup on its own: when the batch fails they are done one at a time, each failure logged.
+    if let Err(err) = finish_records(facade, job, forget_run, &end_fields) {
+        tracing::debug!(job = %job.job_name, run = %job.job_run_id, error = %err, "job run end batch failed; writing each");
+        if forget_run {
+            delete_run(facade, &job.job_run_id);
+        } else {
+            record(facade, &job.job_run_id, &end_fields);
+        }
+        if job.delete_when_done {
+            delete_queued(facade, &job.job_name);
+        }
     }
     if outcome.has_error {
         tracing::warn!(job = %job.job_name, run = %job.job_run_id, errors = %outcome.errors, "service job ended with errors");
     }
     send_job_notifications(facade, job, outcome);
     if job.delete_when_done {
-        delete_queued(facade, &job.job_name);
         if let Err(err) = LockPlan::new(facade).and_then(|plan| plan.delete_lock(&job.job_name)) {
             tracing::warn!(job = %job.job_name, error = %err, "could not remove a queued job's lock");
         }
@@ -1115,6 +1120,40 @@ fn release_lock(facade: &EntityFacade, job: &JobRun, last_run: &Value) {
     if let Err(err) = LockPlan::new(facade).and_then(|plan| plan.release(&job.job_name, &job.job_run_id, last_run)) {
         tracing::warn!(job = %job.job_name, run = %job.job_run_id, error = %err, "could not clear the job lock");
     }
+}
+
+/// The run's end (its fields, or its row removed) and a queued call's job and parameters removed, in one
+/// transaction-cache frame. The rows are removed by key, with no read first.
+fn finish_records(
+    facade: &EntityFacade,
+    job: &JobRun,
+    forget_run: bool,
+    end_fields: &[(&str, Value)],
+) -> Result<(), Error> {
+    let tx = facade.transactions_for(JOB_RUN)?;
+    tx.run(TransactionAttribute::ForceCache, None, || {
+        let mut run = facade.make_value(JOB_RUN)?;
+        run.set("jobRunId", Value::string(&job.job_run_id));
+        if forget_run {
+            run.delete(facade)?;
+        } else {
+            for (name, value) in end_fields {
+                run.set(*name, value.clone());
+            }
+            run.update(facade)?;
+        }
+        if job.delete_when_done {
+            facade
+                .find(JOB_PARAMETER)?
+                .eq("jobName", Value::string(&job.job_name))
+                .delete_all()?;
+            let mut queued = facade.make_value(SERVICE_JOB)?;
+            queued.set("jobName", Value::string(&job.job_name));
+            queued.delete(facade)?;
+        }
+        Ok(())
+    })?;
+    Ok(())
 }
 
 fn delete_queued(facade: &EntityFacade, job_name: &str) {

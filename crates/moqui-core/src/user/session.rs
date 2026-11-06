@@ -1607,14 +1607,40 @@ fn ensure_visit(factory: &ExecutionContextFactory, visitor_cookie: Option<&str>)
     }
     let _authz = without_authz();
     let facade = factory.entity().ok_or_else(|| Error::new("no entity facade"))?;
-    let visitor_id = resolve_visitor(&facade, visitor_cookie)?;
-    let visit_id = create_visit(&facade, &visitor_id)?;
+    let (visitor_id, visit_id) = in_cache_frame(&facade, VISIT, || {
+        let visitor_id = resolve_visitor(&facade, visitor_cookie)?;
+        let visit_id = create_visit(&facade, &visitor_id)?;
+        Ok((visitor_id, visit_id))
+    })?;
     set_visit(&visit_id, &visitor_id);
     // Java defines first-hit-in-visit and never runs it; here it runs when a request starts a visit (Parity-Diffs P9-02)
     factory
         .webapp_scripts()
         .run_actions_logged("first-hit-in-visit", &BTreeMap::new());
     Ok(())
+}
+
+/// Run `body` in a transaction-cache frame of its own when no transaction is in place, so its writes go to the database
+/// in one batch at its commit (plans/TX-Cache.md F3); inside a transaction it is part of that one, as before.
+pub(crate) fn in_cache_frame<T>(
+    facade: &EntityFacade,
+    entity: &str,
+    body: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
+    let tx = facade.transactions_for(entity).map_err(Error::from)?;
+    if tx.in_transaction() {
+        return body();
+    }
+    // The body's own error, kept whole: the transaction manager carries the entity layer's.
+    let mut failed = None;
+    let ran = tx.run(crate::transaction::TransactionAttribute::ForceCache, None, || {
+        body().map_err(|err| {
+            let carried = moqui_lib::error::Error::new(err.to_string());
+            failed = Some(err);
+            carried
+        })
+    });
+    ran.map_err(|err| failed.take().unwrap_or_else(|| Error::from(err)))
 }
 
 fn resolve_visitor(facade: &EntityFacade, cookie: Option<&str>) -> Result<String, Error> {

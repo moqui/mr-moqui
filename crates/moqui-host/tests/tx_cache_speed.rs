@@ -15,8 +15,8 @@
 //! The transaction cache candidates of plans/TX-Cache.md, with the cache off and on: the five services (S1 to S5)
 //! called as a user, and the pieces of framework logic outside services (F1, F3, F4, F5) as their callers run them.
 //! Each row is one operation per call, in its own transaction. "on" calls a service with `use_transaction_cache`, or
-//! runs the logic in a `cache` frame; where the cache cannot be on yet (F1's own `force-new` frame, F3 outside any
-//! transaction) the row is "off" only. F2 (a `ServiceJob` run) runs on the job workers and is not timed here.
+//! runs the logic in a `cache` frame. F1 and F3 hold their writes themselves (their own `force-cache` frames), so they
+//! have an "on" row only, to compare with the baseline in plans/TX-Cache.md. F2 (a `ServiceJob` run) runs on the job workers and is not timed here.
 //!
 //! Out of the default `cargo test` link, and ignored so naming the binary does not start a postmaster.
 //!
@@ -207,7 +207,8 @@ fn one_batch(
                 ],
             );
         });
-        if cache == Cache::Off {
+        // F1 and F3 hold their writes themselves (force-cache) since Phase 5: one row, compared with the baseline.
+        if cache == Cache::On {
             row("F1 notification persist, 3 users", cache, &mut |index| {
                 let mut note = moqui_core::notify::NotificationMessage::new();
                 note.topic("SpeedTopic")
@@ -235,7 +236,7 @@ fn one_batch(
                 value.update(facade)
             });
         });
-        if cache == Cache::Off {
+        if cache == Cache::On {
             row("F3 session start and password login", cache, &mut |_| {
                 let guard = moqui_core::user::bind(factory, None, None, false).expect("bind");
                 moqui_core::user::login_user(USER_A, PASSWORD).expect("login");

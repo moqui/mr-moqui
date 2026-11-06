@@ -1225,17 +1225,20 @@ fn finish_login(facade: &EntityFacade, account: &EntityValue, plain: Option<&str
         fields.push(("disabledDateTime", Value::Null));
         fields.push(("hasLoggedOut", Value::string("N")));
     }
-    if !fields.is_empty() {
-        update_user(facade, &user_id, &fields)?;
-    }
-    drop_stamps_of_others(&user_id);
-    session::set_user(&user_id, &username);
-    forget_shell_providers();
-    let locale = nonempty(text_field(account, "locale"));
-    let zone = nonempty(text_field(account, "timeZone"));
-    session::set_locale(locale.as_deref());
-    session::set_time_zone(zone.as_deref());
-    link_visit(facade, &user_id)?;
+    // The account's update and the visit's link to it in one transaction-cache frame (plans/TX-Cache.md F3).
+    session::in_cache_frame(facade, USER_ACCOUNT, || {
+        if !fields.is_empty() {
+            update_user(facade, &user_id, &fields)?;
+        }
+        drop_stamps_of_others(&user_id);
+        session::set_user(&user_id, &username);
+        forget_shell_providers();
+        let locale = nonempty(text_field(account, "locale"));
+        let zone = nonempty(text_field(account, "timeZone"));
+        session::set_locale(locale.as_deref());
+        session::set_time_zone(zone.as_deref());
+        link_visit(facade, &user_id)
+    })?;
     // As Java's `UserFacadeImpl`, a web login runs the webapp's after-login actions.
     if crate::web::current_request().is_some() {
         if let Some(factory) = ExecutionContext::with_current(|ec| Arc::clone(ec.factory())) {

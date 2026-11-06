@@ -554,7 +554,8 @@ fn as_timestamp(value: &Value) -> Option<jiff::Timestamp> {
     }
 }
 
-/// ForceNew commits before the caller can roll back.
+/// ForceNew commits before the caller can roll back; force-cache, so the message and its users go to the database in
+/// one batch at the commit (plans/TX-Cache.md F1).
 #[allow(clippy::too_many_arguments)]
 fn persist_rows(
     facade: &EntityFacade,
@@ -571,7 +572,7 @@ fn persist_rows(
     users: &[String],
 ) -> Result<String, Error> {
     let tx = facade.transactions_for(MESSAGE)?;
-    tx.run(TransactionAttribute::ForceNew, None, || {
+    tx.run(TransactionAttribute::ForceCache, None, || {
         let mut row = facade.make_value(MESSAGE)?;
         row.set_sequenced_id_primary(facade)?;
         let id = field_str(&row, "notificationMessageId")
