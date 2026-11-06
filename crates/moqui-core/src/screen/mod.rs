@@ -695,9 +695,11 @@ fn error_page(
 }
 
 /// A 200 that names its version with an `ETag` (a screen or script set it) becomes a 304 with no body when the request's
-/// `If-None-Match` names the same, as a static file's does (`static_files::respond_opened`).
+/// `If-None-Match` names the same, as a static file's does (`static_files::respond_opened`). Only for a `GET` or `HEAD`:
+/// another method has done its work, and its answer is not one a cache holds.
 fn not_modified(request: &WebRequest, response: &mut WebResponse) {
-    if response.status != 200 {
+    let method = request.method.as_str();
+    if response.status != 200 || !(method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")) {
         return;
     }
     let Some(presented) = request.header("if-none-match") else {
