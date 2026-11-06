@@ -110,7 +110,8 @@ impl TxCacheStats {
         self.early_flushes[cause.index()]
     }
 
-    fn add(&mut self, other: &TxCacheStats) {
+    /// Add `other`'s counts to these.
+    pub fn add(&mut self, other: &TxCacheStats) {
         self.frames += other.frames;
         self.held_creates += other.held_creates;
         self.held_updates += other.held_updates;

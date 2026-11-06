@@ -1,6 +1,6 @@
 # Transaction cache
 
-Status 2026-11-05: plan for the first pass, with its [decisions](#decisions) made; nothing built. Written from a review of the cache code and two surveys of the framework (services, and Rust code outside services). Line numbers are as of commit `9a13cbe4`.
+Status 2026-11-05: Phase 0 built (the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`); [Results](#results) has the first census and the baseline. Written from a review of the cache code and two surveys of the framework (services, and Rust code outside services). Line numbers are as of commit `9a13cbe4`.
 
 The transaction cache holds a transaction's writes in memory and writes them all at commit; while it holds them, the transaction's reads see them. Done well, it gives a large speedup for high-volume transactional work and a large cut in database load, without refactoring reusable services and without callers keeping records in hand to avoid re-reading them: a service that reads `OrderItem` again, as each of several services in one operation does, gets it from memory. Moqui Java got real gains from this in a few places. Here the framework is ours to change and services can be reviewed in bulk, so the aim is more: make the cache fast and correct enough that a common transactional service runs from its first write to its commit without touching the database for anything it has already read or written, and its writes go out in one batch.
 
@@ -157,6 +157,50 @@ Each phase ends with its regression tests passing and `./moq test-framework` bef
 4. **The five services.** Turn the cache on for each (S1 to S5), run its tests in strict mode, and change it until it commits in one batch with results the same as cache off.
 5. **The five pieces of framework logic** (F1 to F5).
 6. **Profile and tune.** samply and heaptrack on the speed test rows ([Profiling](Profiling.md#how-to-measure)): the overlay, the read cache lookups, the batch's statement building. Record the numbers as a new round in Profiling and a line in [Performance-Summary](Performance-Summary.md). Write a "Transaction cache" section in [docs/logic/Services.md](../docs/logic/Services.md): when to mark a service `cache` (the operation's first service, not a shared inner one), what reads see (the [decisions](#decisions)), that the locks writes take come at commit while `for-update` locks at once, when to run without the cache instead (an interim lock from a write, a very large operation), what makes it flush, and strict and census modes.
+
+## Results
+
+### Census 1 (Phase 0)
+
+Census mode (`MOQUI_TX_CACHE_EVERYWHERE=true`, every frame a `run` begins or joins holds) over the specs of `basic-comms`, `framework`, `tools`, `webroot`, `dev-aide` and `example` (`./moq test`), before any fix: 393 features, 235 passed, 33 failed, 125 skipped after a failure in a stepwise spec, and 2 spec setups failed (`ChatKeys`, `ChatKeyBackup`).
+
+- **Chat and everything over it** (the Chat, Calls, Voice, XMPP and basic-comms specs): `No chat change counter for user ...` (`record#UserChange`'s lock-then-read of `ChatUserState`) and `Chat room ... not found` (a `for-update` or select-field find of a room the frame created). Both are G1.
+- **Commit flush failures**: `DatabaseServices.save#DataGridChanges` (a held create of an `Enumeration` the database has fails only at commit, so the rows saved before it are not rolled back one by one as the spec expects: G5), and one with no service on the stack, an insert of `WorkEffortParty` whose `WorkEffort` was not there (a data load).
+- **Early flushes, all of views** (in Mantle services run by the demo data load): `ProductServices.create#VariantProduct` 12 (`ProductAssocAndToFeatureAppl`), `TimeServices.create#TimePeriod` 3 (`PartyDetail`), and one each in `CalendarServices.store#CalendarFeedEvents`, `LedgerServices.get#OrganizationFiscalTimePeriods` and `CommunicationServices.create#EmailCommunicationEvent`.
+
+### Baseline (Phase 0)
+
+`tx_cache_speed` (`crates/moqui-host/tests/tx_cache_speed.rs`), release, embedded Postgres over a Unix socket, 200 calls x 5 batches, one transaction a call. `sql` is statements per call, `rt` waited round trips per call (begin and commit among them). The second table is the transaction cache's own counts per call of the "on" rows. F2 runs on the job workers and is not timed here; F1 and F3 have no "on" row until Phase 5.
+
+```
+  operation                                        calls  median ms   us/call    calls/s    allocs      bytes      kept    sql     rt        min-max ms
+  S1 heartbeat#UserStatus, cache off                 200     62.437    312.18       3203    1416.0     240784      9478   6.32   7.32   58.953-68.873  
+  S3 send#Message, cache off                         200    220.110   1100.55        909    4387.1     573201     23306  13.00  14.00  206.356-240.316 
+  S2 mark#Read, cache off                            200     42.976    214.88       4654    1052.8     210520      6783   3.00   4.00   38.208-49.768  
+  S4 update#WikiPage, cache off                      200   1043.396   5216.98        192   29090.4    6430497    103006 116.00 117.00  671.923-1415.849
+  S5 set#MessageFlags, cache off                     200    234.737   1173.69        852    5363.9    1982923     20836  15.99  21.00  218.151-348.654 
+  F1 notification persist, 3 users, cache off        200     30.627    153.13       6530     653.7      66536       261   6.02   8.04   26.833-31.025  
+  F4 audited update UserAccount.username, cache off     200     24.755    123.78       8079     644.8     274059      1816   3.02   4.04   23.147-25.037  
+  F5 fed update EmailMessage.isFlagged, cache off     200    174.212    871.06       1148    1857.1     664188      2879   8.97  13.96   85.657-312.590 
+  F3 session start and password login, cache off     200   2261.358  11306.79         88     602.7   19990339      3738   6.04   8.05 2230.679-2262.019
+  S1 heartbeat#UserStatus, cache on                  200     69.626    348.13       2872    1545.7     246774      9275   6.00   7.35   56.709-86.028  
+  S3 send#Message, cache on                          200    214.338   1071.69        933    4492.6     583795     20925  10.00  14.01  199.635-228.953 
+  S2 mark#Read, cache on                             200     40.467    202.33       4942    1053.3     210573      6783   3.00   4.00   36.592-47.793  
+  S4 update#WikiPage, cache on                       200   1220.113   6100.57        164   33054.9    7418241    100202 112.00 117.00  802.206-1549.231
+  S5 set#MessageFlags, cache on                      200    236.380   1181.90        846    4251.1    1634534     18594  13.99  20.00  174.542-349.577 
+  F4 audited update UserAccount.username, cache on     200     30.222    151.11       6618     772.2     291265       925   2.02   5.05   28.951-35.003  
+  F5 fed update EmailMessage.isFlagged, cache on     200    193.355    966.77       1034     870.1     335624      1284   6.99  12.98   70.316-314.949 
+  transaction cache per call                      frames    held   mem rd    db rd    early batch st batch rt
+  F4 audited update UserAccount.username, cache on    1.00    2.00     0.00     2.00     0.00     2.00     2.00
+  F5 fed update EmailMessage.isFlagged, cache on    1.00    1.00     0.00     2.00     0.00     1.00     1.00
+  S1 heartbeat#UserStatus, cache on                 1.00    0.34     0.00     6.00     0.00     0.34     0.34
+  S2 mark#Read, cache on                            1.00    0.00     0.00     3.00     0.00     0.00     0.00
+  S3 send#Message, cache on                         1.00    3.00     0.00     9.00     0.00     3.00     3.00
+  S4 update#WikiPage, cache on                      1.00    4.00     0.00   112.00     0.00     4.00     4.00
+  S5 set#MessageFlags, cache on                     1.00    1.00     0.00     9.00     0.00     1.00     1.00
+```
+
+Read with care: this machine's times swing; the counts do not. With the cache on today, a call sends as many statements as with it off (the held writes go out one at a time at commit, `batch rt` equals `batch st`), and pays the overlay on top. S4 sends 116 statements a save and S5 16, mostly reads of rows the call already read. F3's time is the argon2 password check.
 
 ## Tests
 
