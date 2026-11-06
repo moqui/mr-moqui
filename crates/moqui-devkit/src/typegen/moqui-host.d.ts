@@ -611,6 +611,10 @@ interface MoquiWebFacade {
     readonly sessionToken: string;
     /** Rotate the browser session after authentication, preserving its server-side state. */
     rotateSession(): void;
+    /** Send this response no session: no session or visitor cookie and no session token. A request that came with no
+     * session and nobody signed in keeps none and starts no Visit; one that has a session keeps it and is sent nothing
+     * new (docs/security/Attack-Surface.md, Pages without a session). */
+    declineSession(): void;
     readonly savedMessages: string[];
     readonly savedErrors: string[];
     readonly savedValidationErrors: unknown[];

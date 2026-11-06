@@ -65,6 +65,17 @@ The MAC is HMAC-SHA256 of the session id under `session_cookie_key`, base64 URL-
 
 `session_cookie_key` ships as `CHANGEME` with `is-secret="true"`. Startup generates a value into `runtime/.env` when the property still ends in `CHANGEME`. See [Secrets](#secrets).
 
+#### Pages without a session
+
+A request that comes with no session cookie starts no Visit until the cookie comes back or a user signs in. Two kinds of page send no session at all, so no cookie comes back:
+
+- A page a shared cache may keep (`Cache-Control` with `public`), for a request with no verified session cookie and nobody signed in: no `Set-Cookie`, `moquiSessionToken` or `X-CSRF-Token`, and the session made for the request is discarded unwritten.
+- A page whose screen or servlet calls `ec.web.declineSession()`, whatever its caching (a preview frame on its own host, an embed, a beacon). For a request with no session of its own and nobody signed in it is the same as the public page. A request that has a session keeps it and is sent nothing new: no cookie and no token. Either way a Visit the request started at the bind (a returning `moqui.visitor` or a session cookie with no visit yet) is deleted, with a Visitor made for it, and the session forgets it, so no Visit has a declined request as its `initialRequest`. A Visit a sign-in in the request started stays. A page that signs a user in should not decline.
+
+```js
+ec.web.declineSession()   // e.g. mr-pass Shop/ShopPreview.js, before it writes the preview
+```
+
 ### CSRF
 
 `webapp_require_session_token` is `true`. POST, PUT, PATCH, and DELETE on a transition that runs actions must send `moquiSessionToken`, or a header `moquisessiontoken`, `sessiontoken`, or `x-csrf-token`. The compare is constant time. A missing or wrong token is 401 `Session token is missing or is not valid`. A transition may set `require-session-token="false"`. Header authentication skips the check: Basic, `api_key`, `login_key`, or `authUsername`. A new session skips it too. Responses set `moquiSessionToken` and `X-CSRF-Token` when the cookie is new or the token changed.
