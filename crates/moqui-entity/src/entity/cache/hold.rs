@@ -18,6 +18,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use moqui_lib::error::Error;
 
@@ -30,6 +31,26 @@ pub(super) struct Held {
     pub(super) plain: FieldMap,
     pub(super) sealed: FieldMap,
     pub(super) pk: String,
+    /// The service on the artifact stack when the write was held, for the errors of a later find or of the flush
+    /// (plans/TX-Cache.md G5).
+    pub(super) service: Option<Arc<str>>,
+}
+
+impl Held {
+    /// What a flush or find error says of this write: its operation, entity, key and service.
+    pub(super) fn describe(&self) -> String {
+        let operation = match self.operation {
+            Op::Create => "create",
+            Op::Update => "update",
+            Op::Delete => "delete",
+            Op::Upsert => "upsert",
+        };
+        let key = self.pk.replace('\u{1f}', ", ");
+        match &self.service {
+            Some(service) => format!("{operation} of {} [{key}] held by {service}", self.entity_name),
+            None => format!("{operation} of {} [{key}]", self.entity_name),
+        }
+    }
 }
 
 /// One frame's held writes.
@@ -56,6 +77,10 @@ impl FrameHold {
     /// Hold `held` after the frame's other writes. A create of a row the frame holds (other than deleted) is refused;
     /// a delete of a row the frame created drops every held write of that row, and the delete itself.
     pub(super) fn push(&mut self, held: Held) -> Result<(), Error> {
+        self.push_rc(Rc::new(held))
+    }
+
+    fn push_rc(&mut self, held: Rc<Held>) -> Result<(), Error> {
         let Self { order, entities } = self;
         if !entities.contains_key(&held.entity_name) {
             entities.insert(held.entity_name.clone(), EntityHold::default());
@@ -93,8 +118,47 @@ impl FrameHold {
                 entity.by_pk.insert(held.pk.clone(), vec![at]);
             }
         }
-        order.push(Some(Rc::new(held)));
+        order.push(Some(held));
         Ok(())
+    }
+
+    /// The last held operation of one row of `entity`; `None` when the frame holds none.
+    pub(super) fn last_op(&self, entity: &str, pk: &str) -> Option<Op> {
+        let slots = self.entities.get(entity)?.by_pk.get(pk)?;
+        slots
+            .iter()
+            .rev()
+            .find_map(|&at| self.order[at].as_ref())
+            .map(|held| held.operation)
+    }
+
+    /// Whether the frame holds a write of `entity`.
+    pub(super) fn holds_entity(&self, entity: &str) -> bool {
+        self.entities.get(entity).is_some_and(|hold| !hold.by_pk.is_empty())
+    }
+
+    /// Take the held writes up to and including the last one of `entity`, in order, and keep holding the rest (an
+    /// early flush of a selective find, plans/TX-Cache.md D4). The stored rows are dropped, as the flush changes them.
+    /// `None` when the frame holds no write of `entity`.
+    pub(super) fn split_through(&mut self, entity: &str) -> Option<Vec<Rc<Held>>> {
+        let last = self
+            .entities
+            .get(entity)?
+            .slots
+            .iter()
+            .rev()
+            .copied()
+            .find(|&at| self.order[at].is_some())?;
+        let mut order = std::mem::take(&mut self.order);
+        let rest: Vec<Rc<Held>> = order.split_off(last + 1).into_iter().flatten().collect();
+        self.entities.clear();
+        for held in rest {
+            // Each was accepted in this order before, so none is refused now.
+            if let Err(err) = self.push_rc(held) {
+                tracing::error!(error = %err, "a held write kept after a partial flush was refused");
+            }
+        }
+        Some(order.into_iter().flatten().collect())
     }
 
     /// The held writes of `entity`, in order.
@@ -214,7 +278,11 @@ impl<'h> Overlay<'h> {
     /// Apply the held writes in order. `stored` has the stored row of each of [`Self::unloaded_updates`]: an update
     /// starts from it, and an update of a row the database lacks (or the frame deleted) writes nothing, while an upsert
     /// of one is its whole row.
-    pub(super) fn apply(mut self, stored: &HashMap<&str, Option<Rc<FieldMap>>>) -> Vec<MemRow> {
+    ///
+    /// A held create of a row the find loaded from the database, with no held delete of it before, fails here, as
+    /// Java's `checkUpdateValue`, not at the commit (plans/TX-Cache.md G5).
+    pub(super) fn apply(mut self, stored: &HashMap<&str, Option<Rc<FieldMap>>>) -> Result<Vec<MemRow>, Error> {
+        let loaded = self.rows.len();
         let mut deleted: HashSet<&str> = HashSet::new();
         for held in self.holds {
             let pk = held.pk.as_str();
@@ -227,6 +295,12 @@ impl<'h> Overlay<'h> {
                 }
                 Op::Create => {
                     if let Some(index) = self.at_pk.remove(pk) {
+                        if index < loaded && self.first.get(pk) == Some(&Op::Create) {
+                            return Err(Error::new(format!(
+                                "The {} in this transaction is of a record that is already in the database",
+                                held.describe()
+                            )));
+                        }
                         self.rows[index] = None;
                     }
                     self.at_pk.insert(pk, self.rows.len());
@@ -262,6 +336,6 @@ impl<'h> Overlay<'h> {
                 }
             }
         }
-        self.rows.into_iter().flatten().collect()
+        Ok(self.rows.into_iter().flatten().collect())
     }
 }

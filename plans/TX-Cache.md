@@ -1,6 +1,6 @@
 # Transaction cache
 
-Status 2026-11-05: Phase 0 built (the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`); [Results](#results) has the first census and the baseline. Written from a review of the cache code and two surveys of the framework (services, and Rust code outside services). Line numbers are as of commit `9a13cbe4`.
+Status 2026-11-05: Phases 0 and 1 built: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, and G1 to G7 (G7's test waits for Phase 3; G8 and G9 are by design and go in the guide). [Results](#results) has the censuses and the baseline.
 
 The transaction cache holds a transaction's writes in memory and writes them all at commit; while it holds them, the transaction's reads see them. Done well, it gives a large speedup for high-volume transactional work and a large cut in database load, without refactoring reusable services and without callers keeping records in hand to avoid re-reading them: a service that reads `OrderItem` again, as each of several services in one operation does, gets it from memory. Moqui Java got real gains from this in a few places. Here the framework is ours to change and services can be reviewed in bulk, so the aim is more: make the cache fast and correct enough that a common transactional service runs from its first write to its commit without touching the database for anything it has already read or written, and its writes go out in one batch.
 
@@ -167,6 +167,17 @@ Census mode (`MOQUI_TX_CACHE_EVERYWHERE=true`, every frame a `run` begins or joi
 - **Chat and everything over it** (the Chat, Calls, Voice, XMPP and basic-comms specs): `No chat change counter for user ...` (`record#UserChange`'s lock-then-read of `ChatUserState`) and `Chat room ... not found` (a `for-update` or select-field find of a room the frame created). Both are G1.
 - **Commit flush failures**: `DatabaseServices.save#DataGridChanges` (a held create of an `Enumeration` the database has fails only at commit, so the rows saved before it are not rolled back one by one as the spec expects: G5), and one with no service on the stack, an insert of `WorkEffortParty` whose `WorkEffort` was not there (a data load).
 - **Early flushes, all of views** (in Mantle services run by the demo data load): `ProductServices.create#VariantProduct` 12 (`ProductAssocAndToFeatureAppl`), `TimeServices.create#TimePeriod` 3 (`PartyDetail`), and one each in `CalendarServices.store#CalendarFeedEvents`, `LedgerServices.get#OrganizationFiscalTimePeriods` and `CommunicationServices.create#EmailCommunicationEvent`.
+
+### Census 2 (Phase 1)
+
+The same run after G1 to G6: 393 features, 389 passed, 4 failed, no spec setup failed. The chat failures were G1 and, under it, G4's quiet update: a `createOrUpdate` of a missing `ChatUserState` sent its update probe, which a held write answered as done, so the row was never made. Left:
+
+- `DataGrid` (`save#DataGridChanges`): the held create of an `Enumeration` the database has fails at the commit, naming itself (`Could not write the create of moqui.basic.Enumeration [enumId=GS_B] held by create#moqui.basic.Enumeration`), not row by row as the spec expects. By design (G5 checks only rows a find loads); a service that saves rows one by one and reports each refusal runs without the cache.
+- `Units` (`UnitServices.store#UnitConversion`): `Conversion changed; reload before saving`.
+- `BasicCommsEncrypted`, a poll in a plain room: `cannot read property 'contentJson' of null`.
+- `Chat` search: a member finds nothing (the search reads what was indexed).
+
+These are census findings for the next round, not candidates of this one.
 
 ### Baseline (Phase 0)
 

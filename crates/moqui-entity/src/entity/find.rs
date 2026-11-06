@@ -306,6 +306,15 @@ impl EntityFind {
         self.distinct || self.for_update || !self.having.is_empty() || !self.select_fields.is_empty()
     }
 
+    /// What [`Self::bypasses_cache`] looks at, for a find in a transaction-cache frame ([`cache::before_selective_find`]).
+    fn selective(&self) -> cache::Selective {
+        cache::Selective {
+            lock: self.for_update.then_some(self.skip_locked),
+            fields: self.select_fields.clone(),
+            aggregate: self.distinct || !self.having.is_empty(),
+        }
+    }
+
     pub fn limit(mut self, limit: i64) -> Self {
         self.limit = Some(limit);
         self
@@ -349,10 +358,14 @@ impl EntityFind {
             return Ok(self.attach_l10n(EntityList::new(values)));
         }
         let bypass = self.bypasses_cache();
-        if !bypass {
-            if let Some(cached) = cache::before_find(&self.facade, &lookup) {
-                return Ok(self.attach_l10n(cached));
-            }
+        let cached = if bypass {
+            self.require_transaction_for_lock()?;
+            cache::before_selective_find(&self.facade, &lookup, &self.selective())?
+        } else {
+            cache::before_find(&self.facade, &lookup)?
+        };
+        if let Some(cached) = cached {
+            return Ok(self.attach_l10n(cached));
         }
         // As Java: a find on a table that does not exist finds nothing.
         if !self.facade.table_ready(&self.entity_name) {
@@ -512,7 +525,15 @@ impl EntityFind {
         let condition = self.combined();
         let lookup = self.lookup(condition.as_ref());
         let bypass = self.bypasses_cache();
-        if let Some(count) = cache::before_count(&self.facade, &lookup).filter(|_| !bypass) {
+        // A distinct or having count of rows the frame holds goes to the database once they are written there; any other
+        // count, a for-update or select-field one too, counts the rows the overlay gives (plans/TX-Cache.md G1).
+        let held_count = if self.distinct || !self.having.is_empty() {
+            cache::before_selective_count(&self.facade, &self.entity_name)?;
+            None
+        } else {
+            cache::before_count(&self.facade, &lookup)?
+        };
+        if let Some(count) = held_count {
             return Ok(count);
         }
         if !self.facade.table_ready(&self.entity_name) {
@@ -591,10 +612,14 @@ impl EntityFind {
         let _artifact = EntityArtifact::push(&self.facade, &self.entity_name, "view", "iterator")?;
         let condition = self.combined();
         let lookup = self.lookup(condition.as_ref());
-        if !self.bypasses_cache() {
-            if let Some(cached) = cache::before_find(&self.facade, &lookup) {
-                return Ok(EntityListIterator::memory(self.facade, self.entity_name, cached));
-            }
+        let cached = if self.bypasses_cache() {
+            self.require_transaction_for_lock()?;
+            cache::before_selective_find(&self.facade, &lookup, &self.selective())?
+        } else {
+            cache::before_find(&self.facade, &lookup)?
+        };
+        if let Some(cached) = cached {
+            return Ok(EntityListIterator::memory(self.facade, self.entity_name, cached));
         }
         if !self.facade.table_ready(&self.entity_name) {
             return Ok(EntityListIterator::memory(

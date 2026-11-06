@@ -30,8 +30,8 @@ use std::sync::Arc;
 use moqui_db::dialect::Dialect;
 use moqui_db::model::EntityDefinition;
 use moqui_db::sql::{
-    create_table, delete, insert, insert_or_update, select, update, CompareOp, Condition, FieldRef, LimitOffset, Nulls,
-    OrderBy,
+    create_table, delete, insert, insert_or_update, select, select_with, update, CompareOp, Condition, FieldRef,
+    LimitOffset, Nulls, OrderBy,
 };
 use moqui_lib::cache::{CacheConfig, MCache};
 use moqui_lib::error::Error;
@@ -485,74 +485,135 @@ const FRAME_WRITES_MAX: usize = 200;
 /// Look up a cached list, or rows held by the active transaction frame or the sim overlay.
 ///
 /// `Some` skips SQL. Plaintext only: `after_find` stored decrypted rows, and held rows were
-/// normalized before `gate_write`.
-pub fn before_find(facade: &EntityFacade, lookup: &FindLookup) -> Option<EntityList> {
-    let meta = match read_meta(facade, &lookup.entity_name) {
-        Ok(meta) => meta,
-        Err(err) => {
-            tracing::error!(error = %err, "entity cache find skipped");
-            return None;
-        }
-    };
+/// normalized before `gate_write`. An error of the overlay (a held create of a row the database has, plans/TX-Cache.md
+/// G5) or of a view's early flush fails the find: the database alone would answer without the frame's held rows.
+pub fn before_find(facade: &EntityFacade, lookup: &FindLookup) -> Result<Option<EntityList>, Error> {
+    let meta = read_meta(facade, &lookup.entity_name)?;
     if meta.is_view {
         // A view is read from the database, so the frame's held rows of its members go there first.
-        if let Err(err) = flush_for_view(facade, &lookup.entity_name) {
-            tracing::error!(error = %err, entity = %meta.full_name, "could not flush held rows for a view read");
-        }
+        flush_for_view(facade, &lookup.entity_name)?;
     } else {
         let page = LimitOffset {
             limit: lookup.limit,
             offset: lookup.offset,
         };
-        match overlay_rows(facade, &meta, lookup.condition.as_ref(), &lookup.order, page) {
-            Ok(Some(rows)) => {
-                return Some(EntityList::new(page_rows(rows, lookup.limit, lookup.offset)));
-            }
-            Ok(None) => {}
-            Err(err) => {
-                tracing::error!(error = %err, entity = %meta.full_name, "entity cache find skipped");
-                return None;
-            }
+        if let Some(rows) = overlay_rows(facade, &meta, lookup.condition.as_ref(), &lookup.order, page, None)? {
+            return Ok(Some(EntityList::new(page_rows(rows, lookup.limit, lookup.offset))));
         }
     }
     if meta.caches(lookup) && !frame_wrote(facade, &lookup.entity_name, &meta) {
-        return cache_get(facade, &meta.full_name, lookup);
+        return Ok(cache_get(facade, &meta.full_name, lookup));
     }
-    None
+    Ok(None)
 }
 
 /// Count held and sim rows when this thread has overlaid that entity. Otherwise miss.
 ///
-/// `Some` is the count itself. The merged list is unlimited, so its length is that count.
-pub fn before_count(facade: &EntityFacade, lookup: &FindLookup) -> Option<i64> {
-    let meta = match read_meta(facade, &lookup.entity_name) {
-        Ok(meta) => meta,
-        Err(err) => {
-            tracing::error!(error = %err, "entity cache count skipped");
-            return None;
-        }
-    };
+/// `Some` is the count itself. The merged list is unlimited, so its length is that count. Errors as [`before_find`].
+pub fn before_count(facade: &EntityFacade, lookup: &FindLookup) -> Result<Option<i64>, Error> {
+    let meta = read_meta(facade, &lookup.entity_name)?;
     if meta.is_view {
-        if let Err(err) = flush_for_view(facade, &lookup.entity_name) {
-            tracing::error!(error = %err, entity = %meta.full_name, "could not flush held rows for a view count");
-        }
-    } else {
-        match overlay_rows(facade, &meta, lookup.condition.as_ref(), &[], LimitOffset::default()) {
-            Ok(Some(rows)) => return Some(i64::try_from(rows.len()).unwrap_or(i64::MAX)),
-            Ok(None) => {}
-            Err(err) => {
-                tracing::error!(error = %err, entity = %meta.full_name, "entity cache count skipped");
-                return None;
-            }
-        }
+        flush_for_view(facade, &lookup.entity_name)?;
+    } else if let Some(rows) = overlay_rows(
+        facade,
+        &meta,
+        lookup.condition.as_ref(),
+        &[],
+        LimitOffset::default(),
+        None,
+    )? {
+        return Ok(Some(i64::try_from(rows.len()).unwrap_or(i64::MAX)));
     }
     if meta.caches(lookup) && !frame_wrote(facade, &lookup.entity_name, &meta) {
-        let cache = facade.with_slot_read(OneCaches::default, |caches| caches.counts.get(&meta.full_name).cloned())?;
-        return with_lookup_key(lookup, |key| {
+        let Some(cache) =
+            facade.with_slot_read(OneCaches::default, |caches| caches.counts.get(&meta.full_name).cloned())
+        else {
+            return Ok(None);
+        };
+        return Ok(with_lookup_key(lookup, |key| {
             cache.get_arc(key).ok().flatten().map(|cached| cached.count)
-        });
+        }));
     }
-    None
+    Ok(None)
+}
+
+/// What a find asks beyond its condition, order and page, which the cache and the overlay do not key on.
+#[derive(Clone, Debug, Default)]
+pub struct Selective {
+    /// `for-update`, and with it `skip_locked`.
+    pub lock: Option<bool>,
+    /// The fields selected; empty for every field.
+    pub fields: Vec<String>,
+    /// `distinct`, a `having` condition or an aggregate: the rows the database gives are not the entity's rows.
+    pub aggregate: bool,
+}
+
+/// A selective find (plans/TX-Cache.md D4, G1) in a frame that holds rows: a view writes the held rows of its members
+/// first, as any view read; a `distinct`, `having` or aggregate find of an entity the frame holds rows of writes the
+/// held writes up to the last of that entity first (an early flush, cause "selective find") and leaves the read to the
+/// database; a `for-update` or select-field find reads whole rows through the overlay (locking them, for update) and
+/// returns the fields asked for. `None` when the database answers alone.
+pub fn before_selective_find(
+    facade: &EntityFacade,
+    lookup: &FindLookup,
+    selective: &Selective,
+) -> Result<Option<EntityList>, Error> {
+    let meta = read_meta(facade, &lookup.entity_name)?;
+    if meta.is_view {
+        flush_for_view(facade, &lookup.entity_name)?;
+        return Ok(None);
+    }
+    if !tx::holds_entity(facade, &meta.full_name) {
+        return Ok(None);
+    }
+    if selective.aggregate {
+        tx::flush_through(facade, &meta.full_name)?;
+        return Ok(None);
+    }
+    let page = LimitOffset {
+        limit: lookup.limit,
+        offset: lookup.offset,
+    };
+    let Some(rows) = overlay_rows(
+        facade,
+        &meta,
+        lookup.condition.as_ref(),
+        &lookup.order,
+        page,
+        selective.lock,
+    )?
+    else {
+        return Ok(None);
+    };
+    let mut rows = page_rows(rows, lookup.limit, lookup.offset);
+    if !selective.fields.is_empty() {
+        let name: Arc<str> = Arc::from(meta.full_name.as_str());
+        rows = rows
+            .into_iter()
+            .map(|row| {
+                let fields = row
+                    .into_fields()
+                    .into_iter()
+                    .filter(|(field, _)| selective.fields.iter().any(|wanted| wanted == &**field))
+                    .collect();
+                EntityValue::from_fields(Arc::clone(&name), fields)
+            })
+            .collect();
+    }
+    Ok(Some(EntityList::new(rows)))
+}
+
+/// A count with `distinct` or `having` in a frame that holds rows of the entity (or a view of it): the held writes go
+/// to the database first, as for [`before_selective_find`].
+pub fn before_selective_count(facade: &EntityFacade, entity_name: &str) -> Result<(), Error> {
+    let meta = read_meta(facade, entity_name)?;
+    if meta.is_view {
+        return flush_for_view(facade, entity_name);
+    }
+    if tx::holds_entity(facade, &meta.full_name) {
+        tx::flush_through(facade, &meta.full_name)?;
+    }
+    Ok(())
 }
 
 /// Store a count the database gave, as Java's count cache, unless the entity's caches were evicted or cleared since
@@ -1029,13 +1090,19 @@ fn build_views_by_member(facade: &EntityFacade) -> HashMap<String, Vec<String>> 
 }
 
 /// Hold the write, or send it to the sim overlay. `Proceed` leaves SQL to the caller. `quiet` is an update that matches
-/// no row, or a create of a row that is there, without an error: `update_if_exists` and `create_if_missing`.
+/// no row, or a create of a row that is there, without an error: `update_if_exists` and `create_if_missing`. `stored` is
+/// the row an update read first, which its audit log compares with (plans/TX-Cache.md G6).
+///
+/// A held write checks what the frame knows of its row (plans/TX-Cache.md G4): an update of a row the frame deleted, or
+/// read as missing, fails now, and a quiet update or create that would write nothing is `Missed`; a quiet one of a row
+/// the frame knows nothing of reads it first.
 pub fn gate_write(
     facade: &EntityFacade,
     entity_name: &str,
     operation: &str,
     values: &FieldMap,
     quiet: bool,
+    stored: Option<&FieldMap>,
 ) -> Result<WriteGate, Error> {
     let op = parse_op(operation)?;
     if super::fence::active() {
@@ -1055,7 +1122,7 @@ pub fn gate_write(
     if !sim && !tx.transaction_cache_active() {
         return Ok(WriteGate::Proceed);
     }
-    let prepared = prepare_handled(facade, entity_name, operation, values)?;
+    let prepared = prepare_handled(facade, entity_name, operation, values, stored)?;
     if sim {
         if tx.in_transaction() {
             tx.with_connection(|_| Ok(()))?;
@@ -1064,6 +1131,25 @@ pub fn gate_write(
         let written = write_sim(facade, entity_name, op, values, &prepared, quiet)?;
         return Ok(if written { WriteGate::Handled } else { WriteGate::Missed });
     }
+    if matches!(op, Op::Update | Op::Create) {
+        let mut exists = tx::row_known(&tx, &prepared.full_name, &prepared.pk);
+        if quiet && exists.is_none() {
+            exists = Some(load_by_pk(facade, entity_name, values)?.is_some());
+        }
+        match (op, exists) {
+            (Op::Update, Some(false)) if quiet => return Ok(WriteGate::Missed),
+            (Op::Update, Some(false)) => {
+                return Err(Error::new(format!(
+                    "Could not update {} [{}]: the record was not found in this transaction",
+                    prepared.full_name,
+                    prepared.pk.replace(PK_SEP, ", ")
+                )));
+            }
+            (Op::Create, Some(true)) if quiet => return Ok(WriteGate::Missed),
+            _ => {}
+        }
+    }
+    let service = (crate::hooks::get().artifact_name)().artifact.map(Arc::from);
     tx::hold(
         &tx,
         facade,
@@ -1073,6 +1159,7 @@ pub fn gate_write(
             plain: values.clone(),
             sealed: prepared.sealed,
             pk: prepared.pk,
+            service,
         },
     )?;
     Ok(WriteGate::Handled)
@@ -1397,7 +1484,7 @@ pub(super) fn sim_written_rows(facade: &EntityFacade, entity_name: &str) -> Resu
     if !view.table {
         return Ok(Vec::new());
     }
-    let rows = load_plain(facade, &meta, None, &[], None, Some(&view.schema))?;
+    let rows = load_plain(facade, &meta, None, &[], None, Some(&view.schema), None)?;
     Ok(rows
         .into_iter()
         .filter(|row| pk_of(row, &meta.pk_fields).is_some_and(|pk| view.hide.contains(&row_key(&meta.full_name, &pk))))
@@ -1799,8 +1886,9 @@ fn load_plain(
     order: &[OrderBy],
     limit: Option<i64>,
     overlay_schema: Option<&str>,
+    lock: Option<bool>,
 ) -> Result<Vec<FieldMap>, Error> {
-    let plan = plan_select(facade, &meta.full_name, condition, order, limit)?;
+    let plan = plan_select(facade, &meta.full_name, condition, order, limit, lock)?;
     let db_rows = if let Some(schema) = overlay_schema {
         query_sim(facade, schema, &plan.sql, &plan.params)?
     } else {
@@ -1840,6 +1928,7 @@ fn plan_select(
     condition: Option<&Condition>,
     order: &[OrderBy],
     limit: Option<i64>,
+    lock: Option<bool>,
 ) -> Result<SelectPlan, Error> {
     facade.with_group(entity_name, |entity, dialect, model, tx| {
         if entity.is_view {
@@ -1847,7 +1936,12 @@ fn plan_select(
         }
         let fields: Vec<FieldRef> = entity.fields.iter().map(|field| FieldRef::new(&field.name)).collect();
         let page = LimitOffset { limit, offset: None };
-        let statement = select(entity, dialect, &fields, condition, order, page)?;
+        let options = moqui_db::sql::SelectOptions {
+            for_update: lock.is_some(),
+            skip_locked: lock.unwrap_or(false),
+            ..Default::default()
+        };
+        let statement = select_with(entity, dialect, &fields, condition, order, page, &options)?;
         Ok(SelectPlan {
             sql: statement.sql,
             params: statement.params,
@@ -1983,6 +2077,7 @@ fn prepare_handled(
     entity_name: &str,
     operation: &str,
     values: &FieldMap,
+    stored: Option<&FieldMap>,
 ) -> Result<SealedWrite, Error> {
     let owner = facade.clone();
     let operation = operation.to_string();
@@ -1993,7 +2088,7 @@ fn prepare_handled(
         } else {
             operation.as_str()
         };
-        let sealed = field_rw::before_write(&owner, entity, seal_operation, values.clone())?;
+        let sealed = field_rw::before_write_known(&owner, entity, seal_operation, values.clone(), stored)?;
         Ok(SealedWrite {
             full_name: entity.full_name.clone(),
             pk,

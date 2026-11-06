@@ -1359,58 +1359,65 @@ impl EntityFacade {
             None => Cow::Borrowed(&*cache_values),
         };
         let mut affected = 1;
-        let gate = cache::gate_write(self, entity_name, operation, &plain, probe || if_missing)?;
+        // What the run-after rules and the data feed need of the row as it was is read before the write: a held write
+        // (plans/TX-Cache.md G2, G3) hides it from a read after.
+        let mut after_values = eca_after.then(|| (*cache_values).clone());
+        // An after rule with `get-original-value` on an update or delete gets the row as it was before the write.
+        let pre_row = if eca
+            && (operation == "update" || operation == "delete")
+            && rules.iter().any(|rule| !rule.run_before && rule.get_original_value)
+        {
+            let keys = self.pk_map(entity_name, &plain)?;
+            self.find_by_pk(entity_name, &keys)?
+        } else {
+            None
+        };
+        // As for the stored row an update reads (see `write_update`): the row as this update leaves it.
+        if let (Some(values), Some(row), Some(modified)) = (after_values.as_mut(), &pre_row, &modified) {
+            if operation == "update" {
+                take_unmodified(values, row.fields(), modified);
+            }
+        }
+        // The data feed feeds an update only when a document field changes, so it needs the row as it was.
+        let feed_old = if operation == "update" && !probe && load_feed::feed_wants_old(self, entity_name) {
+            match (&stored, &pre_row) {
+                (Some(row), _) => Some(row.clone()),
+                (None, Some(row)) => Some(row.fields().clone()),
+                (None, None) => {
+                    let keys = self.pk_map(entity_name, &plain)?;
+                    let _raw = super::field_rw::RawReadGuard::enter();
+                    self.find_by_pk(entity_name, &keys)?.map(|row| row.fields().clone())
+                }
+            }
+        } else {
+            None
+        };
+        // A run-after rule on a delete sees the row as it was: read it now, before the row is gone.
+        if let Some(values) = after_values.as_mut().filter(|_| operation == "delete") {
+            if rules.iter().any(|rule| !rule.run_before && rule.get_entire_entity) {
+                if let Some(row) = self
+                    .refresh_fields(entity_name, values)
+                    .ok()
+                    .filter(|row| !row.is_empty())
+                {
+                    for (name, value) in row {
+                        values.entry(name).or_insert(value);
+                    }
+                }
+            }
+        }
+        let gate = cache::gate_write(
+            self,
+            entity_name,
+            operation,
+            &plain,
+            probe || if_missing,
+            stored.as_ref(),
+        )?;
         if gate == WriteGate::Missed {
             return Ok(0);
         }
-        if gate == WriteGate::Handled {
-            load_feed::note_touch(self, entity_name, seal_operation, Some(&cache_values), None);
-        } else {
-            let mut after_values = eca_after.then(|| (*cache_values).clone());
-            // An after rule with `get-original-value` on an update or delete gets the row as it was before the write.
-            let pre_row = if eca
-                && (operation == "update" || operation == "delete")
-                && rules.iter().any(|rule| !rule.run_before && rule.get_original_value)
-            {
-                let keys = self.pk_map(entity_name, &plain)?;
-                self.find_by_pk(entity_name, &keys)?
-            } else {
-                None
-            };
-            // As for the stored row an update reads (see `write_update`): the row as this update leaves it.
-            if let (Some(values), Some(row), Some(modified)) = (after_values.as_mut(), &pre_row, &modified) {
-                if operation == "update" {
-                    take_unmodified(values, row.fields(), modified);
-                }
-            }
-            // The data feed feeds an update only when a document field changes, so it needs the row as it was.
-            let feed_old = if operation == "update" && !probe && load_feed::feed_wants_old(self, entity_name) {
-                match (&stored, &pre_row) {
-                    (Some(row), _) => Some(row.clone()),
-                    (None, Some(row)) => Some(row.fields().clone()),
-                    (None, None) => {
-                        let keys = self.pk_map(entity_name, &plain)?;
-                        let _raw = super::field_rw::RawReadGuard::enter();
-                        self.find_by_pk(entity_name, &keys)?.map(|row| row.fields().clone())
-                    }
-                }
-            } else {
-                None
-            };
-            // A run-after rule on a delete sees the row as it was: read it now, before the row is gone.
-            if let Some(values) = after_values.as_mut().filter(|_| operation == "delete") {
-                if rules.iter().any(|rule| !rule.run_before && rule.get_entire_entity) {
-                    if let Some(row) = self
-                        .refresh_fields(entity_name, values)
-                        .ok()
-                        .filter(|row| !row.is_empty())
-                    {
-                        for (name, value) in row {
-                            values.entry(name).or_insert(value);
-                        }
-                    }
-                }
-            }
+        if gate == WriteGate::Proceed {
             // Java's `checkTableRuntime` before each write, when the group adds missing tables at runtime.
             self.check_table_runtime(entity_name);
             // A create that may write nothing is audited once it has inserted.
@@ -1507,18 +1514,18 @@ impl EntityFacade {
                     field_rw::audit_write(self, entity, "create", &cache_values)
                 })?;
             }
-            load_feed::note_touch(self, entity_name, seal_operation, Some(&cache_values), feed_old);
-            if let Some(mut values) = after_values {
-                (crate::hooks::get().run_eca)(
-                    self,
-                    entity_name,
-                    seal_operation,
-                    false,
-                    &rules,
-                    &mut values,
-                    pre_row.as_ref(),
-                )?;
-            }
+        }
+        load_feed::note_touch(self, entity_name, seal_operation, Some(&cache_values), feed_old);
+        if let Some(mut values) = after_values {
+            (crate::hooks::get().run_eca)(
+                self,
+                entity_name,
+                seal_operation,
+                false,
+                &rules,
+                &mut values,
+                pre_row.as_ref(),
+            )?;
         }
         // As Java's `EntityCache`, a cache clear or cluster publish that fails is logged; the write already ran.
         if let Err(err) = cache::on_write_shared(self, entity_name, operation, &cache_values) {

@@ -307,7 +307,7 @@ fn a_paged_find_over_held_rows_reads_a_bounded_window() {
 }
 
 /// The held rows keep their order and their collapsing: a create and a delete of one row write nothing, and an update
-/// after a held delete does not bring the row back.
+/// after a held delete fails, as it would on the database (plans/TX-Cache.md G4), and does not bring the row back.
 #[test]
 fn held_rows_collapse_a_create_and_delete_and_stay_deleted() {
     let tape = Arc::new(Mutex::new(Vec::new()));
@@ -321,8 +321,9 @@ fn held_rows_collapse_a_create_and_delete_and_stay_deleted() {
         delete_enum(&facade, "BRIEF")?;
         set_enum(&facade, "KEPT", "description", "held")?;
         delete_enum(&facade, "KEPT")?;
-        // An update after the delete writes nothing on the database, so the row stays gone here too.
-        set_enum(&facade, "KEPT", "description", "again")?;
+        // An update after the delete finds no row, as on the database.
+        let err = set_enum(&facade, "KEPT", "description", "again").unwrap_err();
+        assert!(err.to_string().contains("not found"), "{err}");
         let of_a = facade.find(ENUM)?.eq("enumTypeId", Value::string("A")).list()?;
         assert!(of_a.is_empty(), "{:?}", enum_ids(&of_a));
         assert!(facade
@@ -339,7 +340,7 @@ fn held_rows_collapse_a_create_and_delete_and_stay_deleted() {
         .iter()
         .map(|sql| sql.split_whitespace().next().unwrap_or_default())
         .collect();
-    assert_eq!(kinds, ["UPDATE", "DELETE", "UPDATE", "INSERT"], "{flushed:?}");
+    assert_eq!(kinds, ["UPDATE", "DELETE", "INSERT"], "{flushed:?}");
     assert!(!found(&facade, ENUM, "enumId", "BRIEF"));
     assert!(!found(&facade, ENUM, "enumId", "KEPT"));
     assert!(found(&facade, ENUM, "enumId", "LATER"));
@@ -455,6 +456,203 @@ fn flush_and_disable_turns_the_frame_to_read_through() {
             Ok(())
         })?;
         assert_eq!(statements(&tape, "INSERT"), 2, "the joined write went through");
+        Ok(())
+    })
+    .unwrap();
+}
+
+fn set_test(facade: &EntityFacade, id: &str, field: &str, value: Value) -> Result<(), Error> {
+    let mut row = facade.make_value(TEST)?;
+    row.set("testId", Value::string(id));
+    row.set(field, value);
+    row.update(facade)
+}
+
+fn plain(row: &crate::entity::EntityValue, field: &str) -> String {
+    row.get(field)
+        .map(moqui_lib::object::to_plain_string)
+        .unwrap_or_default()
+}
+
+/// G1: a for-update find (lock the counter row, then read it) sees the frame's held rows, a held update and a held
+/// create, and still locks with `FOR UPDATE`; a for-update count counts them.
+#[test]
+fn a_for_update_find_sees_the_frames_held_rows() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    put(&facade, TEST, "testId", "CTR");
+    let tx = facade.transactions_for(TEST).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        set_test(&facade, "CTR", "testNumberInteger", Value::I64(5))?;
+        let locked = facade
+            .find(TEST)?
+            .eq("testId", Value::string("CTR"))
+            .for_update(true)
+            .one()?;
+        assert_eq!(locked.map(|row| plain(&row, "testNumberInteger")).as_deref(), Some("5"));
+        put(&facade, TEST, "testId", "NEW");
+        let created = facade
+            .find(TEST)?
+            .eq("testId", Value::string("NEW"))
+            .for_update(true)
+            .list()?;
+        assert_eq!(created.len(), 1);
+        let counted = facade
+            .find(TEST)?
+            .eq("testId", Value::string("NEW"))
+            .for_update(true)
+            .count()?;
+        assert_eq!(counted, 1);
+        Ok(())
+    })
+    .unwrap();
+    assert!(statements(&tape, "FOR UPDATE") >= 1, "{:?}", tape.lock().unwrap());
+}
+
+/// G1: a select-field find sees a held create and gives the fields asked for.
+#[test]
+fn a_select_field_find_sees_the_frames_held_rows() {
+    let facade = testing::open();
+    let tx = facade.transactions_for(TEST).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        let mut row = facade.make_value(TEST)?;
+        row.set("testId", Value::string("SEL"));
+        row.set("testMedium", Value::string("held"));
+        row.set("value", Value::string("other"));
+        row.create(&facade)?;
+        let found = facade
+            .find(TEST)?
+            .eq("testMedium", Value::string("held"))
+            .select_field("testId")
+            .select_field("testMedium")
+            .list()?;
+        assert_eq!(found.len(), 1);
+        assert_eq!(plain(&found.values()[0], "testId"), "SEL");
+        assert!(found.values()[0].get("value").is_none(), "only the fields asked for");
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// G1: a distinct find of an entity the frame holds rows of writes the held writes up to that entity's last (an early
+/// flush, cause "selective find") and goes on holding the rest.
+#[test]
+fn a_distinct_find_writes_the_held_prefix_first() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    let tx = facade.transactions_for(TEST).unwrap();
+    let before = super::super::tx_cache_stats();
+    run(&tx, TransactionAttribute::Cache, || {
+        let mut row = facade.make_value(TEST)?;
+        row.set("testId", Value::string("D1"));
+        row.set("testMedium", Value::string("m"));
+        row.create(&facade)?;
+        put(&facade, TYPE, "enumTypeId", "AFTER");
+        // What the find does before its query (the test driver cannot run a DISTINCT).
+        let lookup = super::super::FindLookup {
+            entity_name: TEST.to_string(),
+            use_cache: None,
+            condition: None,
+            order: Vec::new(),
+            limit: None,
+            offset: None,
+            filtered: false,
+        };
+        let selective = super::super::Selective {
+            aggregate: true,
+            ..Default::default()
+        };
+        assert!(super::super::before_selective_find(&facade, &lookup, &selective)?.is_none());
+        assert_eq!(
+            statements(&tape, "INSERT INTO \"test_entity\""),
+            1,
+            "the prefix is written"
+        );
+        assert_eq!(
+            statements(&tape, "INSERT INTO \"enumeration_type\""),
+            0,
+            "the rest stays held"
+        );
+        Ok(())
+    })
+    .unwrap();
+    let stats = super::super::tx_cache_stats().since(&before);
+    assert_eq!(stats.early_flushes_of(super::FlushCause::SelectiveFind), 1);
+    assert!(found(&facade, TYPE, "enumTypeId", "AFTER"));
+}
+
+/// G4: a held update of a row that is not there fails, at the commit when the frame knows nothing of the row, and at
+/// once when the frame deleted it. A quiet one (`create_or_update`'s update probe) writes nothing, so the row is
+/// created.
+#[test]
+fn a_held_update_of_a_missing_row_fails_and_create_or_update_creates_it() {
+    let facade = testing::open();
+    let tx = facade.transactions_for(TEST).unwrap();
+    let err = run(&tx, TransactionAttribute::Cache, || {
+        set_test(&facade, "NOPE", "testMedium", Value::string("x"))
+    })
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("not found") && err.contains("moqui.test.TestEntity"),
+        "{err}"
+    );
+    run(&tx, TransactionAttribute::Cache, || {
+        let mut row = facade.make_value(TEST)?;
+        row.set("testId", Value::string("COU"));
+        row.set("testMedium", Value::string("made"));
+        row.create_or_update(&facade)?;
+        let found = facade.find(TEST)?.eq("testId", Value::string("COU")).one()?;
+        assert_eq!(found.map(|row| plain(&row, "testMedium")).as_deref(), Some("made"));
+        Ok(())
+    })
+    .unwrap();
+    assert!(found(&facade, TEST, "testId", "COU"));
+}
+
+/// G5: a held create of a row the database has fails at the first find that loads the row, not at the commit; a
+/// create-if-missing of it writes nothing; and a flush failure names the write and its key.
+#[test]
+fn a_held_create_of_a_stored_row_fails_at_the_next_find() {
+    let facade = testing::open();
+    put(&facade, TEST, "testId", "DUP");
+    let tx = facade.transactions_for(TEST).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        put(&facade, TEST, "testId", "DUP");
+        let err = facade
+            .find(TEST)?
+            .eq("testId", Value::string("DUP"))
+            .one()
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("already in the database") && err.contains("testId=DUP"),
+            "{err}"
+        );
+        Err::<(), _>(Error::new("rolled back"))
+    })
+    .unwrap_err();
+    run(&tx, TransactionAttribute::Cache, || {
+        let mut row = facade.make_value(TEST)?;
+        row.set("testId", Value::string("DUP"));
+        assert!(!row.create_if_missing(&facade)?, "the row is there");
+        Ok(())
+    })
+    .unwrap();
+}
+
+/// G7 (plans/TX-Cache.md D2, Phase 3): a find by key of a row the frame created runs no query.
+#[test]
+#[ignore = "plans/TX-Cache.md G7: the read cache of Phase 3"]
+fn a_find_by_key_of_a_created_row_runs_no_query() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    let tx = facade.transactions_for(TEST).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        put(&facade, TEST, "testId", "MINE");
+        let reads = statements(&tape, "SELECT");
+        assert!(facade.find(TEST)?.eq("testId", Value::string("MINE")).one()?.is_some());
+        assert_eq!(statements(&tape, "SELECT"), reads, "no query");
         Ok(())
     })
     .unwrap();

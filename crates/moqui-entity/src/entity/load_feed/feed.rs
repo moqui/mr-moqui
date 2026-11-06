@@ -62,6 +62,11 @@ impl Touch {
     pub(super) fn keeps_fields(&self) -> bool {
         self.fields.is_some()
     }
+
+    #[cfg(test)]
+    pub(super) fn keeps_old(&self) -> bool {
+        self.old.is_some()
+    }
 }
 
 struct Agg {

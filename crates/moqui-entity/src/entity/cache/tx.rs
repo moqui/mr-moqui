@@ -111,18 +111,84 @@ pub(super) fn flush_held(facade: &EntityFacade, token: u64, conn: &mut dyn DbCon
     let held_rows = TX_HOLD
         .with(|slot| slot.borrow_mut().remove(&token))
         .unwrap_or_default();
+    flush_writes(facade, held_rows.into_order(), conn)
+}
+
+/// Write `writes` in order. A failure names the write, its key and the service that held it; an update that changed no
+/// row is one, as a direct update's is (plans/TX-Cache.md G4), except on MySQL, which counts an update that leaves the
+/// row as it was as none.
+fn flush_writes(
+    facade: &EntityFacade,
+    writes: impl Iterator<Item = Rc<Held>>,
+    conn: &mut dyn DbConnection,
+) -> Result<Flushed, Error> {
     let mut flushed = Flushed { statements: 0, rows: 0 };
-    for row in held_rows.into_order() {
+    for row in writes {
         let statement = facade.with_group(&row.entity_name, |entity, dialect, _, _| {
-            statement_for(entity, dialect, row.operation, &row.sealed)
-        })?;
-        if let Some((sql, params)) = statement {
-            conn.execute(&sql, &params)?;
-            flushed.statements += 1;
-            flushed.rows += 1;
+            Ok(statement_for(entity, dialect, row.operation, &row.sealed)?
+                .map(|statement| (statement, moqui_db::sql::is_mysql(dialect))))
+        });
+        let named = |err: Error| Error::new(format!("Could not write the {}", row.describe())).with_source(err);
+        let Some(((sql, params), mysql)) = statement.map_err(named)? else {
+            continue;
+        };
+        let count = conn.execute(&sql, &params).map_err(named)?;
+        if count == 0 && row.operation == Op::Update && !mysql {
+            return Err(Error::new(format!(
+                "Could not write the {}: the record was not found",
+                row.describe()
+            )));
         }
+        flushed.statements += 1;
+        flushed.rows += 1;
     }
     Ok(flushed)
+}
+
+/// What the frame of `tx` knows of one row: `Some(true)` when its last held write leaves the row there, `Some(false)` when
+/// it deleted it or read it as missing, `None` when it knows nothing.
+pub(super) fn row_known(tx: &TransactionManager, entity: &str, pk: &str) -> Option<bool> {
+    let token = tx.frame_token()?;
+    TX_HOLD.with(|slot| {
+        let map = slot.borrow();
+        let frame = map.get(&token)?;
+        match frame.last_op(entity, pk) {
+            Some(Op::Delete) => Some(false),
+            Some(_) => Some(true),
+            None => frame.stored(entity, pk).map(|row| row.is_some()),
+        }
+    })
+}
+
+/// Whether the active frame of `entity` holds a write of it.
+pub(super) fn holds_entity(facade: &EntityFacade, entity: &str) -> bool {
+    let Some(token) = hold_token(facade, entity) else {
+        return false;
+    };
+    TX_HOLD.with(|slot| {
+        slot.borrow()
+            .get(&token)
+            .is_some_and(|frame| frame.holds_entity(entity))
+    })
+}
+
+/// Write the active frame's held writes up to and including its last of `entity`, and go on holding the rest: the
+/// early flush of a selective find (plans/TX-Cache.md D4).
+pub(super) fn flush_through(facade: &EntityFacade, entity: &str) -> Result<(), Error> {
+    let tx = facade.transactions_for(entity)?;
+    let Some(token) = tx.frame_token() else {
+        return Ok(());
+    };
+    let Some(prefix) = TX_HOLD.with(|slot| {
+        slot.borrow_mut()
+            .get_mut(&token)
+            .and_then(|frame| frame.split_through(entity))
+    }) else {
+        return Ok(());
+    };
+    stats::note_early_flush(&tx, token, FlushCause::SelectiveFind, entity);
+    tx.with_connection(|conn| flush_writes(facade, prefix.into_iter(), conn))
+        .map(|_| ())
 }
 
 pub(super) fn push_hold(token: u64, held: Held) -> Result<(), Error> {
@@ -167,6 +233,7 @@ pub(super) fn overlay_rows(
     condition: Option<&Condition>,
     order: &[OrderBy],
     page: LimitOffset,
+    lock: Option<bool>,
 ) -> Result<Option<Vec<EntityValue>>, Error> {
     let sim = if sim_session_open() {
         sim_view(&meta.full_name)
@@ -212,7 +279,7 @@ pub(super) fn overlay_rows(
         }
         _ => None,
     };
-    let loaded = load_plain(facade, meta, condition, order, window, None)?;
+    let loaded = load_plain(facade, meta, condition, order, window, None, lock)?;
     if let Some(token) = token {
         stats::note_read_of(token, false);
     }
@@ -223,7 +290,7 @@ pub(super) fn overlay_rows(
     let overlay = Overlay::new(rows, &holds, &meta.pk_fields);
     // An update of a row the condition did not load starts from the whole stored row, not the fields it set.
     let stored = stored_rows(facade, meta, token, &overlay)?;
-    let mut rows = overlay.apply(&stored);
+    let mut rows = overlay.apply(&stored)?;
     rows.retain(|row| row.trusted || row_matches(condition, &row.fields));
     if sim.affects() {
         rows.retain(|row| match pk_of(&row.fields, &meta.pk_fields) {
@@ -231,7 +298,7 @@ pub(super) fn overlay_rows(
             None => true,
         });
         if sim.table {
-            let extra = load_plain(facade, meta, condition, order, None, Some(&sim.schema))?;
+            let extra = load_plain(facade, meta, condition, order, None, Some(&sim.schema), None)?;
             for fields in extra {
                 if let Some(pk) = pk_of(&fields, &meta.pk_fields) {
                     rows.retain(|row| pk_of(&row.fields, &meta.pk_fields).as_deref() != Some(pk.as_str()));

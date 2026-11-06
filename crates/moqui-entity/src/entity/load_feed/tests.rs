@@ -113,6 +113,8 @@ struct Script {
     broken_rollback: AtomicBool,
     /// `DataFeedPending` inserts fail while set.
     fail_pending: AtomicBool,
+    /// A find of `moqui.test.Foo` gives the stored row `F1` while set.
+    foo_stored: AtomicBool,
 }
 
 fn new_script(missing_feed: bool, fail_inserts: bool) -> Arc<Script> {
@@ -124,6 +126,7 @@ fn new_script(missing_feed: bool, fail_inserts: bool) -> Arc<Script> {
         savepoints: AtomicUsize::new(0),
         broken_rollback: AtomicBool::new(false),
         fail_pending: AtomicBool::new(false),
+        foo_stored: AtomicBool::new(false),
     })
 }
 
@@ -150,6 +153,9 @@ impl DbConnection for ScriptConn {
         if self.script.missing_feed && sql.contains("data_feed") {
             let source = std::io::Error::other("relation \"DataFeed\" does not exist");
             return Err(Error::new("postgres query").with_source(source));
+        }
+        if self.script.foo_stored.load(Ordering::SeqCst) && sql.starts_with("SELECT") && sql.contains("\"foo\"") {
+            return Ok(vec![db_row(&[("fooId", "F1"), ("fooText", "stored")])]);
         }
         if sql.contains("xmin") {
             return Ok(vec![db_row(&[("fooId", "F1")])]);
@@ -824,6 +830,34 @@ fn frame_touches() -> usize {
 /// Whether each touch of the open frames keeps its written values.
 fn touch_fields_kept() -> Vec<bool> {
     TOUCHES.with(|touches| touches.borrow().values().flatten().map(Touch::keeps_fields).collect())
+}
+
+/// plans/TX-Cache.md G3: the touch of an update held in a transaction-cache frame carries the row as it was, as a
+/// direct update's does, so an update that changes no document field is not fed.
+#[test]
+fn a_held_update_touch_carries_the_old_row() {
+    let script = new_script(false, false);
+    let facade = open_with(Arc::new(ScriptDriver {
+        script: Arc::clone(&script),
+    }));
+    // A first commit loads the feed definitions.
+    facade.begin("moqui.test.Foo", None).unwrap();
+    create_foo(&facade, "F0").unwrap();
+    facade.commit("moqui.test.Foo").unwrap();
+    script.foo_stored.store(true, Ordering::SeqCst);
+    let tx = facade.transactions_for("moqui.test.Foo").unwrap();
+    tx.run(crate::transaction::TransactionAttribute::Cache, None, || {
+        let mut value = facade.make_value("moqui.test.Foo")?;
+        value.set("fooId", Value::string("F1"));
+        value.set("fooText", Value::string("changed"));
+        value.update(&facade)?;
+        assert!(tx.transaction_cache_active());
+        let olds: Vec<bool> =
+            TOUCHES.with(|touches| touches.borrow().values().flatten().map(Touch::keeps_old).collect());
+        assert_eq!(olds, vec![true], "the held update's touch has the old row");
+        Err::<(), _>(Error::new("rolled back"))
+    })
+    .unwrap_err();
 }
 
 #[test]

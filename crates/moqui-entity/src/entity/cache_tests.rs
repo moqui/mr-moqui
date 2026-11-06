@@ -469,12 +469,14 @@ fn a_find_read_before_an_autocommit_write_is_not_stored_after_its_eviction() {
         "the rows read before the write are refused"
     );
     assert!(
-        super::before_find(&facade, &lookup).is_none(),
+        super::before_find(&facade, &lookup).unwrap().is_none(),
         "nothing stale is cached"
     );
     assert!(found(&facade, TYPE, "enumTypeId", "FENCED"), "the next read is fresh");
     assert!(
-        super::before_find(&facade, &lookup).is_some_and(|rows| rows.len() == 1),
+        super::before_find(&facade, &lookup)
+            .unwrap()
+            .is_some_and(|rows| rows.len() == 1),
         "and is cached"
     );
     // The same for a count.
