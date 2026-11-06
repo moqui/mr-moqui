@@ -47,10 +47,12 @@ use crate::driver::{DbConnection, DbRow};
 use crate::transaction::TransactionManager;
 
 mod hold;
+mod stats;
 mod tx;
 
 use hold::Held;
-pub use tx::{flush_and_disable, register_cache_flush};
+pub use stats::{tx_cache_stats, FlushCause, TxCacheStats};
+pub use tx::{flush_and_disable, flush_before_sql, register_cache_flush};
 use tx::{flush_for_view, overlay_rows};
 
 const LIST_MAX: usize = 10_000;
@@ -1076,6 +1078,12 @@ pub fn gate_write(
     Ok(WriteGate::Handled)
 }
 
+/// A find or count that queried the database, counted for the active frame of `tx` when it has the transaction
+/// cache on (plans/TX-Cache.md D1).
+pub(crate) fn note_db_read(tx: &TransactionManager) {
+    stats::note_read(tx, false);
+}
+
 /// Counts writes to the screen configuration entities (`SubscreensItem`, `SubscreensDefault`), here or from a cluster
 /// peer, so a screen definition read before the last one is loaded again. Kept with the facade: the rows are its
 /// database's, and another facade's writes do not make these screens stale. Reading it takes no lock.
@@ -1214,7 +1222,9 @@ pub fn peers_may_cache(facade: &EntityFacade, entity_name: &str) -> bool {
         || is_feed_definition(name)
         || name == "moqui.basic.LocalizedEntityField"
         || name == "moqui.basic.LocalizedMessage"
-        || name.starts_with("moqui.entity.view.DbViewEntity");
+        || name.starts_with("moqui.entity.view.DbViewEntity")
+        // Kept in memory by the user's authorization (`moqui_core::user::authz`), moved by the entity-changed notice.
+        || name == "moqui.security.ArtifactTarpitLock";
     noticed
         || views_by_member(facade).get(name).is_some_and(|views| {
             views

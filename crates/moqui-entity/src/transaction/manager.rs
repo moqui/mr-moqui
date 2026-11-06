@@ -60,7 +60,7 @@ struct Frame {
     /// Set by a `force_new` that suspended the frame below, which this frame's end resumes.
     resumes_parent: bool,
     rollback_only: Option<RollbackInfo>,
-    cache_hold: bool,
+    cache_mode: CacheMode,
     fired: Arc<AtomicBool>,
     deadline_token: u64,
     /// When the frame began, in epoch milliseconds, as Java's `transactionBeginStartTime`.
@@ -121,10 +121,26 @@ pub enum TransactionAttribute {
     ForceCache,
 }
 
+/// What a transaction frame does with the transaction cache (plans/TX-Cache.md D1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CacheMode {
+    /// No transaction cache: writes go to the database at once and finds read it.
+    Off,
+    /// Writes are held in memory until the commit, and finds see them (`cache` and `force-cache`).
+    Hold,
+    /// Writes go to the database at once, and the frame's read cache is kept (Java's read-only transaction cache):
+    /// what a frame turns to after an early flush that stops holding (`no-tx-cache`).
+    ReadThrough,
+}
+
 struct Inner {
     id: u64,
     pool: Pool,
     use_transaction_cache: AtomicBool,
+    /// `moqui.tx_cache.strict` (tests): an early flush of a hold frame marks it rollback-only.
+    tx_cache_strict: AtomicBool,
+    /// `moqui.tx_cache.everywhere` (dev and test census): every frame a `run` begins or joins holds.
+    tx_cache_everywhere: AtomicBool,
     use_statement_timeout: AtomicBool,
     use_lock_track: AtomicBool,
     /// The managers one transaction spans, this one among them, in commit order ([`TransactionManager::link`]);
@@ -155,6 +171,8 @@ impl TransactionManager {
                 id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
                 pool: Pool::new(driver, config)?,
                 use_transaction_cache: AtomicBool::new(true),
+                tx_cache_strict: AtomicBool::new(property_flag("moqui.tx_cache.strict")),
+                tx_cache_everywhere: AtomicBool::new(property_flag("moqui.tx_cache.everywhere")),
                 use_statement_timeout: AtomicBool::new(false),
                 use_lock_track: AtomicBool::new(false),
                 linked: RwLock::new(Vec::new()),
@@ -175,7 +193,33 @@ impl TransactionManager {
         self.set_use_transaction_cache(conf_flag(node.attribute("use-transaction-cache"), true));
         self.set_use_lock_track(conf_flag(node.attribute("use-lock-track"), false));
         self.set_use_statement_timeout(conf_flag(node.attribute("use-statement-timeout"), false));
+        self.set_tx_cache_strict(property_flag("moqui.tx_cache.strict"));
+        self.set_tx_cache_everywhere(property_flag("moqui.tx_cache.everywhere"));
         Ok(())
+    }
+
+    /// Strict mode (plans/TX-Cache.md D1, tests only): an early flush of a hold frame marks the frame rollback-only, so
+    /// a test sees an operation that does not commit in one batch fail. `moqui.tx_cache.strict` (or
+    /// `MOQUI_TX_CACHE_STRICT`) sets it when the manager is made or configured.
+    pub fn set_tx_cache_strict(&self, value: bool) {
+        self.inner.tx_cache_strict.store(value, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn tx_cache_strict(&self) -> bool {
+        self.inner.tx_cache_strict.load(Ordering::Relaxed)
+    }
+
+    /// Census mode (plans/TX-Cache.md D1, dev and test only): every frame a `run` begins or joins holds its writes, so a
+    /// run of the tests lists each operation that flushes early or fails under the cache. `moqui.tx_cache.everywhere`
+    /// (or `MOQUI_TX_CACHE_EVERYWHERE`) sets it when the manager is made or configured.
+    pub fn set_tx_cache_everywhere(&self, value: bool) {
+        self.inner.tx_cache_everywhere.store(value, Ordering::Relaxed);
+    }
+
+    #[must_use]
+    pub fn tx_cache_everywhere(&self) -> bool {
+        self.inner.tx_cache_everywhere.load(Ordering::Relaxed)
     }
 
     pub fn set_use_transaction_cache(&self, value: bool) {
@@ -194,7 +238,18 @@ impl TransactionManager {
     /// `force-cache` turn it on, and `use-transaction-cache="false"` keeps it off.
     pub fn transaction_cache_active(&self) -> bool {
         self.absorb_deadline();
-        self.with_frames(|frames| active(frames).is_some_and(|frame| frame.cache_hold))
+        self.with_frames(|frames| active(frames).is_some_and(|frame| frame.cache_mode == CacheMode::Hold))
+    }
+
+    /// The active frame's token and transaction cache mode, when it has one on ([`CacheMode::Hold`] or
+    /// [`CacheMode::ReadThrough`]).
+    #[must_use]
+    pub fn cache_frame(&self) -> Option<(u64, CacheMode)> {
+        self.with_frames(|frames| {
+            active(frames)
+                .filter(|frame| frame.cache_mode != CacheMode::Off)
+                .map(|frame| (frame.deadline_token, frame.cache_mode))
+        })
     }
 
     /// True when `other` is a clone of this manager, so the two share one frame stack.
@@ -324,7 +379,7 @@ impl TransactionManager {
                 suspended: false,
                 resumes_parent,
                 rollback_only: None,
-                cache_hold: false,
+                cache_mode: CacheMode::Off,
                 fired,
                 deadline_token,
                 began_millis,
@@ -1121,9 +1176,15 @@ impl TransactionManager {
         // The scope rolls back, or poisons a joined frame, when the body unwinds.
         let scope = self.scope_after(began)?;
         // As Java `initTransactionCache`: the frame keeps the cache once this call returns, even when
-        // this call joined. Held rows would otherwise flush after later direct writes to the same rows.
+        // this call joined. Held rows would otherwise flush after later direct writes to the same rows. A frame that
+        // turned to read-through stays so, as Java's read-only cache does.
+        let cache = cache || self.inner.tx_cache_everywhere.load(Ordering::Relaxed);
         if cache && self.inner.use_transaction_cache.load(Ordering::Relaxed) {
-            self.set_cache_hold(true)?;
+            self.with_frames(|frames| {
+                if let Some(frame) = active_mut(frames).filter(|frame| frame.cache_mode == CacheMode::Off) {
+                    frame.cache_mode = CacheMode::Hold;
+                }
+            });
         }
         match body() {
             Ok(value) => {
@@ -1239,10 +1300,10 @@ impl TransactionManager {
         Ok(())
     }
 
-    pub(crate) fn set_cache_hold(&self, hold: bool) -> Result<(), Error> {
+    pub(crate) fn set_cache_mode(&self, mode: CacheMode) -> Result<(), Error> {
         self.with_frames(|frames| {
             let frame = active_mut(frames).ok_or_else(|| Error::new("no transaction in place"))?;
-            frame.cache_hold = hold;
+            frame.cache_mode = mode;
             Ok(())
         })
     }
@@ -1578,6 +1639,17 @@ fn discard_conn(conn: &Rc<RefCell<Option<PooledConn>>>) {
         tracing::debug!("closing a connection whose deadline cancel was sent");
         pooled.discard();
     }
+}
+
+/// A process property (or its environment variable: `moqui.tx_cache.strict` is `MOQUI_TX_CACHE_STRICT`) that is
+/// `true`.
+fn property_flag(name: &str) -> bool {
+    let env_name = name.to_ascii_uppercase().replace('.', "_");
+    [name, env_name.as_str()].iter().any(|name| {
+        moqui_lib::env::get_prop_or_env(name)
+            .trim()
+            .eq_ignore_ascii_case("true")
+    })
 }
 
 fn conf_flag(raw: Option<String>, default: bool) -> bool {

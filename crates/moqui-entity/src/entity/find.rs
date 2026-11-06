@@ -364,6 +364,7 @@ impl EntityFind {
         let rows = query_tx(&plan.tx, &plan.sql, &plan.params)?;
         self.record_query(&plan.sql);
         after_statement(&self.facade, &plan.tx, false);
+        cache::note_db_read(&plan.tx);
         let values = self.rows_to_values(&plan, rows)?;
         let list = EntityList::new(values);
         if let Some(fence) = fence {
@@ -522,6 +523,7 @@ impl EntityFind {
         let rows = query_tx(&plan.tx, &plan.sql, &plan.params)?;
         self.record_query(&plan.sql);
         after_statement(&self.facade, &plan.tx, false);
+        cache::note_db_read(&plan.tx);
         let count = count_of(&rows)?;
         if let Some(fence) = fence {
             if let Err(err) = cache::after_count(&self.facade, &lookup, &fence, count) {
@@ -614,6 +616,7 @@ impl EntityFind {
             .with_connection(|conn| conn.open_stream(&plan.sql, &plan.params))?;
         self.record_query(&plan.sql);
         after_statement(&self.facade, &plan.tx, false);
+        cache::note_db_read(&plan.tx);
         let token = plan.tx.frame_token();
         Ok(EntityListIterator::stream(
             self.facade,

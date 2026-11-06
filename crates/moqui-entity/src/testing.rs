@@ -283,6 +283,10 @@ struct MemConn {
     changes: Vec<Change>,
     /// The rows of the open stream not read yet. The select runs whole when the stream opens.
     stream: Option<std::collections::VecDeque<DbRow>>,
+    /// Statements sent without waiting since the last wait, as a pipelining driver has; the next call that waits
+    /// counts one round trip for them and itself, and reports the first failure among them.
+    sent: bool,
+    deferred_error: Option<Error>,
 }
 
 /// One write. `key` is the WHERE equality columns, when every comparison in the condition is an equality.
@@ -310,16 +314,52 @@ impl DbDriver for MemDriver {
             dirty: BTreeSet::new(),
             changes: Vec::new(),
             stream: None,
+            sent: false,
+            deferred_error: None,
         }))
     }
 }
 
 impl DbConnection for MemConn {
     fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64, Error> {
+        self.wait()?;
         Ok(self.apply(sql, params)?.0)
     }
 
+    fn execute_deferred(&mut self, sql: &str, params: Vec<Value>, zero_rows: Option<String>) -> Result<(), Error> {
+        if self.local.is_none() {
+            return self.execute(sql, &params).and_then(|count| match zero_rows {
+                Some(message) if count == 0 => Err(Error::new(message)),
+                _ => Ok(()),
+            });
+        }
+        self.sent = true;
+        match self.apply(sql, &params) {
+            Ok((0, _)) if zero_rows.is_some() => {
+                self.deferred_error
+                    .get_or_insert_with(|| Error::new(zero_rows.unwrap_or_default()));
+            }
+            Ok(_) => {}
+            Err(err) => {
+                self.deferred_error.get_or_insert(err);
+            }
+        }
+        Ok(())
+    }
+
+    fn execute_deferred_row(&mut self, sql: &str, params: Vec<Value>, _key: u64) -> Result<(), Error> {
+        self.execute_deferred(sql, params, None)
+    }
+
+    fn finish_deferred(&mut self) -> Result<(), Error> {
+        if self.sent {
+            self.wait()?;
+        }
+        Ok(())
+    }
+
     fn query(&mut self, sql: &str, params: &[Value]) -> Result<Vec<DbRow>, Error> {
+        self.wait()?;
         Ok(self.apply(sql, params)?.1)
     }
 
@@ -357,6 +397,12 @@ impl DbConnection for MemConn {
     }
 
     fn commit(&mut self) -> Result<(), Error> {
+        if let Err(err) = self.wait() {
+            self.local = None;
+            self.dirty.clear();
+            self.changes.clear();
+            return Err(err);
+        }
         let Some(local) = self.local.take() else {
             return Ok(());
         };
@@ -379,6 +425,8 @@ impl DbConnection for MemConn {
     }
 
     fn rollback(&mut self) -> Result<(), Error> {
+        self.sent = false;
+        self.deferred_error = None;
         self.local = None;
         self.dirty.clear();
         self.changes.clear();
@@ -403,6 +451,17 @@ impl DbConnection for MemConn {
 }
 
 impl MemConn {
+    /// One waited round trip: the statements sent before it are answered too, and the first of them that failed is
+    /// reported.
+    fn wait(&mut self) -> Result<(), Error> {
+        self.sent = false;
+        crate::driver::note_round_trip();
+        match self.deferred_error.take() {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
+    }
+
     fn apply(&mut self, sql: &str, params: &[Value]) -> Result<(u64, Vec<DbRow>), Error> {
         let sql = sql.trim();
         // The pool checks out a connection with `SELECT 1`.

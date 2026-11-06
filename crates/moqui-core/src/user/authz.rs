@@ -19,7 +19,7 @@
 //! check, and a deny anywhere on the stack stops a plain allow. The checks for a user's groups
 //! are read once and kept for the current user, as Java's UserInfo caches them.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -78,6 +78,7 @@ pub(crate) fn is_authz_entity(entity_name: &str) -> bool {
             | "moqui.security.ArtifactGroupMember"
             | "moqui.security.UserGroupMember"
             | "moqui.security.ArtifactTarpit"
+            | "moqui.security.ArtifactTarpitLock"
             | "moqui.security.ArtifactAuthzFilter"
             | "moqui.security.EntityFilterSet"
             | "moqui.security.EntityFilter"
@@ -681,17 +682,9 @@ fn check_tarpit(artifact_type: &str, name: &str) -> Result<(), Error> {
         ExecutionContext::with_current(|ec| {
             ec.factory().record_tarpit_hit(&key, now, longest.max(60_000));
         });
-        let locks = facade
-            .find("moqui.security.ArtifactTarpitLock")?
-            .eq("userId", Value::string(&user_id))
-            .eq("artifactName", Value::string(name))
-            .eq("artifactTypeEnumId", Value::string(artifact_type))
-            .list()?;
+        let releases = tarpit_releases(&facade, &user_id, name, artifact_type)?;
         let now_value = super::login::now_value();
-        for lock in locks.values() {
-            let Some(release) = lock.get("releaseDateTime").filter(|value| !value.is_null()) else {
-                continue;
-            };
+        for release in releases.iter() {
             if moqui_lib::object::compare_obj(release, &now_value).ok() == Some(std::cmp::Ordering::Greater) {
                 let seconds = match release {
                     Value::Timestamp(stamp) => (stamp.as_millisecond() - now) / 1000,
@@ -723,6 +716,55 @@ fn check_tarpit(artifact_type: &str, name: &str) -> Result<(), Error> {
         ExecutionContext::with_current(|ec| ec.factory().clear_tarpit_hits(&key));
     }
     Ok(())
+}
+
+/// The release times of the user's tarpit locks of one artifact, kept in memory per facade until the authorization
+/// generation moves: a lock write moves it ([`is_authz_entity`]), here or on a cluster peer. A request that the tarpit
+/// counts read the locks every time before (plans/TX-Cache.md, found along the way).
+#[derive(Default)]
+struct TarpitLocks {
+    generation: u64,
+    releases: HashMap<(String, String, String), Arc<[Value]>>,
+}
+
+fn tarpit_releases(
+    facade: &EntityFacade,
+    user_id: &str,
+    name: &str,
+    artifact_type: &str,
+) -> Result<Arc<[Value]>, Error> {
+    let key = (user_id.to_string(), artifact_type.to_string(), name.to_string());
+    let loaded_at = generation();
+    let known = facade.with_slot_read(TarpitLocks::default, |locks| {
+        (locks.generation == loaded_at)
+            .then(|| locks.releases.get(&key).cloned())
+            .flatten()
+    });
+    if let Some(known) = known {
+        return Ok(known);
+    }
+    let rows = facade
+        .find("moqui.security.ArtifactTarpitLock")?
+        .eq("userId", Value::string(user_id))
+        .eq("artifactName", Value::string(name))
+        .eq("artifactTypeEnumId", Value::string(artifact_type))
+        .list()?;
+    let releases: Arc<[Value]> = rows
+        .values()
+        .iter()
+        .filter_map(|row| row.get("releaseDateTime").filter(|value| !value.is_null()).cloned())
+        .collect();
+    facade.with_slot(TarpitLocks::default, |locks| {
+        if locks.generation != loaded_at {
+            locks.generation = loaded_at;
+            locks.releases.clear();
+        }
+        // A lock written while this read ran moved the generation: the next read loads again.
+        if generation() == loaded_at {
+            locks.releases.insert(key, Arc::clone(&releases));
+        }
+    });
+    Ok(releases)
 }
 
 fn artifact_flag(artifact_type: &str, flag: &str) -> bool {
@@ -898,9 +940,11 @@ fn load_group_checks(facade: &EntityFacade, mut ordered: Vec<&String>) -> Result
     ordered.dedup();
     let mut checks = Vec::new();
     for group in ordered {
+        // Read through the entity cache, as Java's `useCache(true)`: a member write evicts it.
         let rows = facade
             .find("moqui.security.ArtifactAuthzCheckView")?
             .eq("userGroupId", Value::string(group))
+            .use_cache(true)
             .list()?;
         for row in rows.values() {
             let authz_id = text(row, "artifactAuthzId");
@@ -946,6 +990,7 @@ fn load_tarpit_checks(facade: &EntityFacade, artifact_type: &str) -> Result<Arc<
             .find("moqui.security.ArtifactTarpitCheckView")?
             .eq("userGroupId", Value::string(group))
             .eq("artifactTypeEnumId", Value::string(artifact_type))
+            .use_cache(true)
             .list()?;
         for row in rows.values() {
             checks.push(TarpitCheck {

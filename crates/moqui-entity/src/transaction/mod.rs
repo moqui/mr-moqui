@@ -27,7 +27,7 @@ mod pool;
 #[cfg(any(test, feature = "test-support"))]
 #[doc(hidden)]
 pub use manager::single_threaded;
-pub use manager::{thread_in_transaction, TransactionAttribute, TransactionManager, TxScope};
+pub use manager::{thread_in_transaction, CacheMode, TransactionAttribute, TransactionManager, TxScope};
 pub use pool::{Pool, PoolConfig, PoolCounters, PoolStats};
 
 #[cfg(test)]

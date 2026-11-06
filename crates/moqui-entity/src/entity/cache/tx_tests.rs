@@ -23,7 +23,7 @@ use super::super::tests::{
 };
 use crate::entity::EntityFacade;
 use crate::testing;
-use crate::transaction::TransactionAttribute;
+use crate::transaction::{CacheMode, TransactionAttribute};
 
 /// The overlay: an update of a row the condition did not load comes back whole (stored row plus the update), a
 /// find by key sees the held write, and a view read writes the held rows first.
@@ -343,4 +343,119 @@ fn held_rows_collapse_a_create_and_delete_and_stay_deleted() {
     assert!(!found(&facade, ENUM, "enumId", "BRIEF"));
     assert!(!found(&facade, ENUM, "enumId", "KEPT"));
     assert!(found(&facade, ENUM, "enumId", "LATER"));
+}
+
+/// plans/TX-Cache.md D1: a frame's held writes, its reads, its early flushes by cause and its commit batch are counted,
+/// and go to this thread's totals when it ends.
+#[test]
+fn a_frame_counts_its_held_writes_reads_early_flushes_and_commit_batch() {
+    let facade = testing::open();
+    put(&facade, TYPE, "enumTypeId", "A");
+    put_enum(&facade, "S1", "A", "stored");
+    let tx = facade.transactions_for(ENUM).unwrap();
+    let before = super::super::tx_cache_stats();
+    let trips = crate::driver::thread_round_trips();
+    run(&tx, TransactionAttribute::Cache, || {
+        put_enum(&facade, "S2", "A", "held");
+        set_enum(&facade, "S1", "description", "held")?;
+        assert_eq!(facade.find(ENUM)?.eq("enumTypeId", Value::string("A")).list()?.len(), 2);
+        put_enum(&facade, "S3", "A", "held");
+        Ok(())
+    })
+    .unwrap();
+    let stats = super::super::tx_cache_stats().since(&before);
+    assert_eq!(stats.frames, 1);
+    assert_eq!((stats.held_creates, stats.held_updates), (2, 1));
+    assert!(stats.db_reads >= 1, "{stats:?}");
+    assert_eq!(stats.early_flush_count(), 0);
+    assert_eq!((stats.batch_statements, stats.batch_rows), (3, 3));
+    assert_eq!(
+        stats.batch_round_trips, 3,
+        "one wait per statement before the commit batch is pipelined"
+    );
+    assert!(crate::driver::thread_round_trips() > trips);
+
+    let before = super::super::tx_cache_stats();
+    run(&tx, TransactionAttribute::Cache, || {
+        put_enum(&facade, "S4", "A", "held");
+        let view = facade
+            .find("moqui.basic.EnumerationAndType")?
+            .eq("enumTypeId", Value::string("A"))
+            .list()?;
+        assert!(!view.is_empty());
+        Ok(())
+    })
+    .unwrap();
+    let stats = super::super::tx_cache_stats().since(&before);
+    assert_eq!(stats.early_flushes_of(super::FlushCause::View), 1, "{stats:?}");
+    assert_eq!(
+        stats.batch_statements, 0,
+        "the view read wrote the held row before the commit"
+    );
+}
+
+/// Strict mode: an early flush marks the frame rollback-only, so the operation fails and writes nothing.
+#[test]
+fn strict_mode_fails_a_frame_that_flushes_early() {
+    let facade = testing::open();
+    let tx = facade.transactions_for(ENUM).unwrap();
+    tx.set_tx_cache_strict(true);
+    let held = run(&tx, TransactionAttribute::Cache, || {
+        put_enum(&facade, "STRICT", "A", "held");
+        facade
+            .find("moqui.basic.EnumerationAndType")?
+            .eq("enumTypeId", Value::string("A"))
+            .list()?;
+        Ok(())
+    });
+    tx.set_tx_cache_strict(false);
+    let err = held.unwrap_err().to_string();
+    assert!(err.contains("strict") || err.contains("rollback"), "{err}");
+    assert!(!found(&facade, ENUM, "enumId", "STRICT"));
+    // A frame that commits in one batch is not affected.
+    tx.set_tx_cache_strict(true);
+    run(&tx, TransactionAttribute::Cache, || {
+        put_enum(&facade, "STRICT", "A", "held");
+        Ok(())
+    })
+    .unwrap();
+    tx.set_tx_cache_strict(false);
+    assert!(found(&facade, ENUM, "enumId", "STRICT"));
+}
+
+/// Census mode: a frame begun without `cache` holds too.
+#[test]
+fn census_mode_holds_every_frame() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    let tx = facade.transactions_for(TEST).unwrap();
+    tx.set_tx_cache_everywhere(true);
+    let held = run(&tx, TransactionAttribute::UseOrBegin, || {
+        put(&facade, TEST, "testId", "Census");
+        Ok(statements(&tape, "INSERT"))
+    });
+    tx.set_tx_cache_everywhere(false);
+    assert_eq!(held.unwrap(), 0, "the insert is held");
+    assert_eq!(statements(&tape, "INSERT"), 1);
+}
+
+/// `no-tx-cache` (`flush_and_disable`) turns the frame to read-through, and a `cache` call that joins it later does
+/// not turn holding on again, as Java's read-only cache stays read-only.
+#[test]
+fn flush_and_disable_turns_the_frame_to_read_through() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    let tx = facade.transactions_for(TEST).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        put(&facade, TEST, "testId", "Held");
+        super::flush_and_disable(&facade, &tx)?;
+        assert_eq!(tx.cache_frame().map(|(_, mode)| mode), Some(CacheMode::ReadThrough));
+        run(&tx, TransactionAttribute::Cache, || {
+            put(&facade, TEST, "testId", "Joined");
+            Ok(())
+        })?;
+        assert_eq!(statements(&tape, "INSERT"), 2, "the joined write went through");
+        Ok(())
+    })
+    .unwrap();
 }

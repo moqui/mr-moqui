@@ -24,13 +24,14 @@ use moqui_db::sql::{select, Condition, FieldRef, LimitOffset, OrderBy};
 use moqui_lib::error::Error;
 
 use super::hold::{FrameHold, Held, Overlay};
+use super::stats::{self, FlushCause};
 use super::{
     entity_columns, load_plain, may_match, pk_condition, pk_of, query_tx, row_key, row_matches, rows_plain,
     sim_session_open, sim_view, sort_rows, statement_for, EntityFacade, EntityValue, FieldMap, MemRow, Op, ReadMeta,
     SelectPlan, SimView,
 };
 use crate::driver::DbConnection;
-use crate::transaction::TransactionManager;
+use crate::transaction::{CacheMode, TransactionManager};
 
 thread_local! {
     /// Held rows by transaction frame token.
@@ -46,9 +47,25 @@ pub fn register_cache_flush(facade: &EntityFacade, tx: &TransactionManager) -> R
         return Err(Error::new("no transaction in place"));
     };
     let facade = facade.clone();
-    tx.on_cache_flush(move |conn| flush_held(&facade, token, conn))?;
+    let owner = tx.clone();
+    tx.on_cache_flush(move |conn| {
+        let round_trips = crate::driver::thread_round_trips();
+        let flushed = flush_held(&facade, token, conn);
+        match &flushed {
+            Ok(batch) => stats::note_batch(
+                token,
+                batch.statements,
+                batch.rows,
+                crate::driver::thread_round_trips() - round_trips,
+            ),
+            Err(err) => stats::note_flush_failed(&owner, err),
+        }
+        stats::end_frame(token);
+        flushed.map(|_| ())
+    })?;
     tx.on_rollback(move || {
         TX_HOLD.with(|slot| slot.borrow_mut().remove(&token));
+        stats::end_frame(token);
     })?;
     Ok(())
 }
@@ -63,23 +80,49 @@ pub fn flush_and_disable(facade: &EntityFacade, tx: &TransactionManager) -> Resu
     let Some(token) = tx.frame_token() else {
         return Ok(());
     };
-    tx.with_connection(|conn| flush_held(facade, token, conn))?;
-    tx.set_cache_hold(false)
+    flush_early(facade, tx, token, FlushCause::NoTxCache, "")?;
+    tx.set_cache_mode(CacheMode::ReadThrough)
 }
 
-pub(super) fn flush_held(facade: &EntityFacade, token: u64, conn: &mut dyn DbConnection) -> Result<(), Error> {
+/// Write the held rows of the frame `token` of `tx` before its commit, and go on as the frame was. Counted and
+/// logged as an early flush of `cause`; nothing when the frame holds no rows.
+pub(super) fn flush_early(
+    facade: &EntityFacade,
+    tx: &TransactionManager,
+    token: u64,
+    cause: FlushCause,
+    entity: &str,
+) -> Result<(), Error> {
+    let holds = TX_HOLD.with(|slot| slot.borrow().get(&token).is_some_and(|frame| !frame.is_empty()));
+    if !holds {
+        return Ok(());
+    }
+    stats::note_early_flush(tx, token, cause, entity);
+    tx.with_connection(|conn| flush_held(facade, token, conn)).map(|_| ())
+}
+
+/// The statements and rows one flush wrote.
+pub(super) struct Flushed {
+    statements: u64,
+    rows: u64,
+}
+
+pub(super) fn flush_held(facade: &EntityFacade, token: u64, conn: &mut dyn DbConnection) -> Result<Flushed, Error> {
     let held_rows = TX_HOLD
         .with(|slot| slot.borrow_mut().remove(&token))
         .unwrap_or_default();
+    let mut flushed = Flushed { statements: 0, rows: 0 };
     for row in held_rows.into_order() {
         let statement = facade.with_group(&row.entity_name, |entity, dialect, _, _| {
             statement_for(entity, dialect, row.operation, &row.sealed)
         })?;
         if let Some((sql, params)) = statement {
             conn.execute(&sql, &params)?;
+            flushed.statements += 1;
+            flushed.rows += 1;
         }
     }
-    Ok(())
+    Ok(flushed)
 }
 
 pub(super) fn push_hold(token: u64, held: Held) -> Result<(), Error> {
@@ -95,12 +138,23 @@ pub(super) fn hold(tx: &TransactionManager, facade: &EntityFacade, held: Held) -
     if !tx.has_cache_flush() {
         register_cache_flush(facade, tx)?;
     }
+    stats::note_held(token, held.operation);
     push_hold(token, held)
 }
 
-/// Forget the held rows of every frame on this thread.
+/// Forget the held rows and counts of every frame on this thread.
 pub(super) fn clear_holds() {
     TX_HOLD.with(|slot| slot.borrow_mut().clear());
+    stats::clear_frames();
+}
+
+/// Before raw SQL in the active frame of `tx`: its held rows go to the database first (an early flush), since the
+/// statement reads or writes the tables without them.
+pub fn flush_before_sql(facade: &EntityFacade, tx: &TransactionManager) -> Result<(), Error> {
+    match tx.cache_frame() {
+        Some((token, CacheMode::Hold)) => flush_early(facade, tx, token, FlushCause::RawSql, ""),
+        _ => Ok(()),
+    }
 }
 
 /// The rows of a find of `meta` with this frame's held writes and the sim overlay on them; `None` when the database
@@ -159,6 +213,9 @@ pub(super) fn overlay_rows(
         _ => None,
     };
     let loaded = load_plain(facade, meta, condition, order, window, None)?;
+    if let Some(token) = token {
+        stats::note_read_of(token, false);
+    }
     let rows: Vec<MemRow> = loaded
         .into_iter()
         .map(|fields| MemRow { fields, trusted: true })
@@ -294,7 +351,7 @@ pub(super) fn flush_for_view(facade: &EntityFacade, view: &str) -> Result<(), Er
     })?;
     let held = TX_HOLD.with(|slot| slot.borrow().get(&token).is_some_and(|frame| frame.holds_any(&members)));
     if held {
-        tx.with_connection(|conn| flush_held(facade, token, conn))?;
+        flush_early(facade, &tx, token, FlushCause::View, view)?;
     }
     Ok(())
 }

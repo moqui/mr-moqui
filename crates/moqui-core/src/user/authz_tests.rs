@@ -772,6 +772,78 @@ fn a_service_over_its_hit_limit_is_locked() {
     assert!(err.retry_after().is_some_and(|seconds| seconds > 0), "{err}");
 }
 
+/// plans/TX-Cache.md: the tarpit's lock rows and the check views are read once, not on every counted hit or every new
+/// session (a stateless client starts one per request); a lock written moves the authorization generation, so the next
+/// hit reads the locks again and is refused.
+#[test]
+fn tarpit_locks_and_check_views_are_read_once_until_a_lock_is_written() {
+    let tape = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let world = world_with(crate::testing::open_with_tape(std::sync::Arc::clone(&tape)));
+    let _entered = world.context.enter();
+    let reads = |table: &str| {
+        let needle = format!("\"{table}\"");
+        let tape = tape.lock().unwrap_or_else(|err| err.into_inner());
+        tape.iter()
+            .filter(|sql| sql.starts_with("SELECT") && sql.contains(&needle))
+            .count()
+    };
+    session::set_user("nobody", "nobody");
+    grant(
+        &world,
+        "TARPIT_ONCE",
+        "AT_SERVICE",
+        "test.Once#Row",
+        "AUTHZT_ALLOW",
+        "N",
+    );
+    {
+        let _guard = world.context.disable_authz();
+        create(
+            &world.facade,
+            "moqui.security.ArtifactTarpit",
+            &[
+                ("userGroupId", "ALL_USERS"),
+                ("artifactGroupId", "TARPIT_ONCE"),
+                ("maxHitsCount", "3"),
+                ("maxHitsDuration", "60"),
+                ("tarpitDuration", "120"),
+            ],
+        );
+    }
+    let hit = || {
+        let pushed = world.context.push_checked(
+            "AT_SERVICE",
+            "test.Once#Row",
+            "all",
+            Authz::Required,
+            Tarpit::Count,
+            None,
+        );
+        if pushed.is_ok() {
+            world.context.pop().unwrap();
+        }
+        pushed
+    };
+    hit().expect("first hit");
+    let (locks, checks) = (reads("artifact_tarpit_lock"), reads("artifact_tarpit"));
+    assert_eq!(locks, 1, "the first hit reads the locks");
+    // A new session (as a stateless client's next request) and two more hits read neither again.
+    session::set_user("nobody", "nobody");
+    hit().expect("second hit");
+    hit().expect("third hit");
+    assert_eq!(reads("artifact_tarpit_lock"), locks, "the locks are kept in memory");
+    assert_eq!(
+        reads("artifact_tarpit"),
+        checks,
+        "the tarpit checks come from the entity cache"
+    );
+    // The fourth hit is over the limit and writes a lock, which moves the generation: the next hit reads it.
+    hit().expect("the hit that sets the lock");
+    let err = hit().expect_err("locked");
+    assert_eq!(err.kind(), crate::context::ErrorKind::Tarpit, "{err}");
+    assert!(reads("artifact_tarpit_lock") > locks);
+}
+
 #[test]
 fn a_hit_older_than_max_hits_duration_does_not_count() {
     let world = world();

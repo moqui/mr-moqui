@@ -74,6 +74,33 @@ impl DbRow {
     }
 }
 
+/// Waited round trips of every thread ([`note_round_trip`]).
+static ROUND_TRIPS: AtomicU64 = AtomicU64::new(0);
+
+thread_local! {
+    static THREAD_ROUND_TRIPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// A driver calls this each time it waits for the reply to what it has sent: one waited round trip, however many
+/// statements went out before it (plans/TX-Cache.md D1). Statements sent without waiting count when a later call
+/// waits for them.
+pub fn note_round_trip() {
+    ROUND_TRIPS.fetch_add(1, Ordering::Relaxed);
+    THREAD_ROUND_TRIPS.with(|count| count.set(count.get() + 1));
+}
+
+/// The waited round trips of every thread so far, beside [`crate::entity::statement_stats`].
+#[must_use]
+pub fn round_trips() -> u64 {
+    ROUND_TRIPS.load(Ordering::Relaxed)
+}
+
+/// The waited round trips of this thread so far: a driver waits on the thread that called it.
+#[must_use]
+pub fn thread_round_trips() -> u64 {
+    THREAD_ROUND_TRIPS.with(std::cell::Cell::get)
+}
+
 /// Opens connections. The pool calls this. One connection is one client.
 pub trait DbDriver: Send + Sync {
     fn connect(&self) -> Result<Box<dyn DbConnection>, Error>;

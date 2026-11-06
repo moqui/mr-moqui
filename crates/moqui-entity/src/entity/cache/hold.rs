@@ -126,6 +126,11 @@ impl FrameHold {
             .any(|hold| !hold.by_pk.is_empty())
     }
 
+    /// Whether the frame holds no write.
+    pub(super) fn is_empty(&self) -> bool {
+        self.order.iter().all(Option::is_none)
+    }
+
     /// Every held write, in flush order.
     pub(super) fn into_order(self) -> impl Iterator<Item = Rc<Held>> {
         self.order.into_iter().flatten()

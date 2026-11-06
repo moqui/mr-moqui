@@ -150,6 +150,9 @@ pub(super) struct Wire {
     handshake_deadline: Option<Instant>,
     /// The longest a read waits after the startup ([`Wire::set_read_timeout`]); `None` waits as long as it takes.
     read_timeout: Option<Duration>,
+    /// Requests went out since the last read that waited, so the next one is a waited round trip
+    /// ([`moqui_core::driver::note_round_trip`]).
+    sent: bool,
 }
 
 /// What failed a request: the server, or this side while reading the reply (a cell that does not decode).
@@ -501,6 +504,7 @@ impl Wire {
             secret_key: 0,
             handshake_deadline: Some(deadline),
             read_timeout: None,
+            sent: false,
         };
         if !matches!(wire.stream, Stream::Tls(_)) {
             wire.stream
@@ -663,6 +667,7 @@ impl Wire {
         }
         let written = self.send_all();
         self.write.clear();
+        self.sent = true;
         written.map_err(|err| {
             self.dead = true;
             io_error("write", err)
@@ -783,6 +788,9 @@ impl Wire {
         loop {
             if let Some(message) = self.parse_buffered()? {
                 return Ok(message);
+            }
+            if std::mem::take(&mut self.sent) {
+                moqui_core::driver::note_round_trip();
             }
             self.fill()?;
         }

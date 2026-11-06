@@ -21,6 +21,8 @@
 //! - **bytes/call**: bytes those asked for, freed or not. The memory traffic ("pressure").
 //! - **kept/call**: bytes allocated and not freed on this thread by the end of the batch, a cache or a log that grows.
 //! - **sql/call**: statements the entity layer ran (`statement_stats`), on any thread. Begin and commit are not counted.
+//! - **rt/call**: waited round trips (`driver::round_trips`), on any thread: the times a driver sent requests and then
+//!   waited for the reply. Begin and commit are counted, and pipelined statements share one.
 //! - **js kept/call** (rows with `js` set): bytes this thread's QuickJS engines hold from `malloc` at the end of the
 //!   batch less at its start, with no collection between. QuickJS allocates with the C library's `malloc`, so the
 //!   columns above do not see it.
@@ -235,12 +237,14 @@ pub struct Measured {
     pub bytes: u64,
     pub kept: i64,
     pub statements: u64,
+    pub round_trips: u64,
     pub js_kept: i64,
 }
 
 /// Time `body` and count what this thread allocated in it.
 pub fn measure<T>(body: impl FnOnce() -> T) -> (Measured, T) {
     let (statements_before, _) = moqui_core::entity::statement_stats();
+    let trips_before = moqui_core::driver::round_trips();
     let js_before = moqui_core::script::engine_memory(false).malloc_size;
     let before = counts();
     let started = Instant::now();
@@ -249,12 +253,14 @@ pub fn measure<T>(body: impl FnOnce() -> T) -> (Measured, T) {
     let after = counts();
     let js_after = moqui_core::script::engine_memory(false).malloc_size;
     let (statements_after, _) = moqui_core::entity::statement_stats();
+    let trips_after = moqui_core::driver::round_trips();
     let measured = Measured {
         elapsed,
         allocs: after.allocs - before.allocs,
         bytes: after.bytes - before.bytes,
         kept: after.live - before.live,
         statements: statements_after - statements_before,
+        round_trips: trips_after - trips_before,
         js_kept: js_after - js_before,
     };
     (measured, out)
@@ -290,6 +296,7 @@ impl Rows {
     pub fn run_threads(&mut self, operation: &str, threads: usize, calls: usize, body: impl Fn(usize) + Sync) {
         let barrier = std::sync::Barrier::new(threads);
         let (statements_before, _) = moqui_core::entity::statement_stats();
+        let trips_before = moqui_core::driver::round_trips();
         let each: Vec<Measured> = std::thread::scope(|scope| {
             let handles: Vec<_> = (0..threads)
                 .map(|thread| {
@@ -307,12 +314,14 @@ impl Rows {
                 .collect()
         });
         let (statements_after, _) = moqui_core::entity::statement_stats();
+        let trips_after = moqui_core::driver::round_trips();
         let measured = Measured {
             elapsed: each.iter().map(|one| one.elapsed).max().unwrap_or_default(),
             allocs: each.iter().map(|one| one.allocs).sum(),
             bytes: each.iter().map(|one| one.bytes).sum(),
             kept: each.iter().map(|one| one.kept).sum(),
             statements: statements_after - statements_before,
+            round_trips: trips_after - trips_before,
             js_kept: each.iter().map(|one| one.js_kept).sum(),
         };
         self.note(operation, threads * calls, measured);
@@ -341,8 +350,18 @@ impl Rows {
             String::new()
         };
         println!(
-            "  {:<46} {:>7} {:>10} {:>9} {:>10} {:>9} {:>10} {:>9} {:>6}{js} {:>17}",
-            "operation", "calls", "median ms", "us/call", "calls/s", "allocs", "bytes", "kept", "sql", "min-max ms"
+            "  {:<46} {:>7} {:>10} {:>9} {:>10} {:>9} {:>10} {:>9} {:>6} {:>6}{js} {:>17}",
+            "operation",
+            "calls",
+            "median ms",
+            "us/call",
+            "calls/s",
+            "allocs",
+            "bytes",
+            "kept",
+            "sql",
+            "rt",
+            "min-max ms"
         );
         for row in &self.rows {
             let mut order: Vec<usize> = (0..row.batches.len()).collect();
@@ -359,7 +378,7 @@ impl Rows {
                 String::new()
             };
             println!(
-                "  {:<46} {:>7} {:>10.3} {:>9.2} {:>10.0} {:>9.1} {:>10.0} {:>9.0} {:>6.2}{js} {:>8.3}-{:<8.3}",
+                "  {:<46} {:>7} {:>10.3} {:>9.2} {:>10.0} {:>9.1} {:>10.0} {:>9.0} {:>6.2} {:>6.2}{js} {:>8.3}-{:<8.3}",
                 row.operation,
                 row.calls,
                 seconds * 1.0e3,
@@ -369,6 +388,7 @@ impl Rows {
                 median.bytes as f64 / calls,
                 median.kept as f64 / calls,
                 median.statements as f64 / calls,
+                median.round_trips as f64 / calls,
                 fastest,
                 slowest,
             );
