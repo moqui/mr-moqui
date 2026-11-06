@@ -447,7 +447,13 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="host" type="xs:string" use="required"/>
                     <xs:attribute name="site-id" type="xs:string" use="required"/>
                     <xs:attribute name="screen-location" type="xs:string" use="required"/>
-                    <xs:attribute name="resolver-service" type="xs:string"/>
+                    <xs:attribute name="resolver-service" type="xs:string">
+                        <xs:annotation><xs:documentation>A service called with siteId, hostname and path for each request
+                            under a mount; it answers screenPath, optionally the Forum's topicId, topicSlug and postId, and
+                            optionally screenParameters, a Map of named screen parameters (they replace request parameters
+                            of the same name; siteId, resolvedSiteId and the Forum's three are bound after them). A mount at
+                            "/" claims only this host; a path under any other mount is concealed on hosts no public-site
+                            names.</xs:documentation></xs:annotation></xs:attribute>
                     </xs:complexType>
                 </xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="token-route">
