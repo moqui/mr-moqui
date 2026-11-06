@@ -630,6 +630,76 @@ Next, all in shared layers:
 4. A Rust service gets its parameters borrowed, so one that keeps the map copies it.
 5. A deferred statement on a cold connection still waits to prepare (Round 5's item 3).
 
+## Round 18: finds by keys in memory, the update check on the server, cold statements
+
+Round 17's next steps.
+
+1. **A find by an `in` of keys the frame knows** (rows it read or created, a one-field primary key, no page, no order of more than one row) is answered from memory, the held writes on the rows, in the order of the keys; one key the frame does not know sends it to the database. S1 read the `UserStatus` row it had just locked by `userId in [..]`: it reads 2 rows from the database now, and waits 3 round trips (4).
+2. **The "must change a row" check on the server.** On Postgres a held update the frame did not lock goes out as `WITH moqui_changed AS (UPDATE ... RETURNING 1) SELECT 1 / COUNT(*) FROM moqui_changed`: no row changed is a `division_by_zero` (SQLSTATE 22012) on the server, which fails the transaction, and the driver reports it as the update's "record was not found". Nothing here waits on the check, so the `COMMIT` goes out behind the batch (`DbConnection::execute_deferred_update`; other drivers check the count here, as before). A commit with a data-feed insert still waits once for the batch before the feed's savepoint (Round 17), so S3 and S5, whose entities are fed, keep their count; a frame that writes no fed entity saves the round trip.
+3. **Script objects to host maps** are made at their size (QuickJS knows the count of own properties first) instead of grown, which reallocated the entries and rehashed. The keys and string values are still one copy each: host strings are owned.
+4. **A Rust service's parameters** stay borrowed: the call keeps its cleaned map after the service runs (post-service rules, tx-commit rules, callbacks), so handing it over would only move the copy. Not done.
+5. **A cold deferred statement** (the first of its SQL on a connection, in a transaction, no parameter bytes) is prepared as it is sent: Parse, Bind and Execute together, parameters in text for the server to type, no wait (`send_parse_execute`). It is kept in the cache as not described; a waited call or one with bytes prepares it again with its types. A rollback, or a rollback to a savepoint, drops the statements prepared so in the transaction, as one sent behind a failed statement was never prepared.
+
+Embedded Postgres:
+
+```
+  operation                                        calls  median ms   us/call    calls/s    allocs      bytes      kept    sql     rt        min-max ms
+  S1 heartbeat#UserStatus, cache off                 200     65.916    329.58       3034    1162.7     122003     11016   6.33   7.33   49.813-73.676  
+  S3 send#Message, cache off                         200    200.154   1000.77        999    3605.7     404257     25700  13.00  14.00  187.035-250.229 
+  S2 mark#Read, cache off                            200     37.322    186.61       5359     815.5      97843      8288   3.00   4.00   32.608-44.162  
+  S4 update#WikiPage, cache off                      200    602.854   3014.27        332   18595.9    3442098     70479  76.00  77.00  443.606-790.346 
+  S5 set#MessageFlags, cache off                     200    132.254    661.27       1512    3410.5     438163     21740  10.00  12.00  129.101-149.615 
+  F4 audited update UserAccount.username, cache off     200     19.654     98.27      10176     447.6      63110      1816   3.02   4.04   18.563-21.817  
+  F5 fed update EmailMessage.isFlagged, cache off     200     43.453    217.27       4603    1244.9     214762      2222   3.00   5.00   40.355-52.782  
+  S1 heartbeat#UserStatus, cache on                  200     41.760    208.80       4789    1041.9     103292      9039   2.00   3.00   39.910-46.402  
+  S3 send#Message, cache on                          200    187.774    938.87       1065    3747.8     423861     21690   9.00  11.00  184.237-201.220 
+  S2 mark#Read, cache on                             200     34.402    172.01       5814     861.9      99693     20404   3.00   4.00   33.961-42.142  
+  S4 update#WikiPage, cache on                       200    465.469   2327.34        430   18175.6    3767455     18210  13.00  15.00  339.950-616.590 
+  S5 set#MessageFlags, cache on                      200    140.270    701.35       1426    3583.8     442631     16699   7.00  10.00  129.544-157.681 
+  F1 notification persist, 3 users, cache on         200     25.182    125.91       7942     764.9      85649       -53   2.02   4.04   23.132-29.434  
+  F4 audited update UserAccount.username, cache on     200     17.633     88.17      11342     525.0      74646       925   1.01   3.03   17.136-19.106  
+  F5 fed update EmailMessage.isFlagged, cache on     200     39.829    199.15       5021    1276.0     211018      2222   1.00   4.00   38.896-40.175  
+  F3 session start and password login, cache on      200   2223.920  11119.60         90     725.7   20006419      3613   3.01   6.02 2214.668-2232.226
+```
+
+With 200 us of added delay:
+
+```
+  operation                                        calls  median ms   us/call    calls/s    allocs      bytes      kept    sql     rt        min-max ms
+  S1 heartbeat#UserStatus, cache off                 200    437.082   2185.41        458    1222.3     127390     11484   7.00   8.00  426.595-456.906 
+  S3 send#Message, cache off                         200    899.940   4499.70        222    3606.2     403130     25062  13.00  14.00  886.199-945.163 
+  S2 mark#Read, cache off                            200    259.637   1298.19        770     815.5      97827      8288   3.00   4.00  252.924-263.522 
+  S4 update#WikiPage, cache off                      200   4230.848  21154.24         47   18592.0    3441963     70479  76.00  77.00 4033.741-4475.850
+  S5 set#MessageFlags, cache off                     200    783.436   3917.18        255    3407.4     438226     21721  10.00  12.00  764.074-802.093 
+  F4 audited update UserAccount.username, cache off     200    220.752   1103.76        906     447.7      63072      1816   3.02   4.04  219.439-239.481 
+  F5 fed update EmailMessage.isFlagged, cache off     200    291.256   1456.28        687    1242.8     214669      2222   3.00   5.00  287.832-319.806 
+  S1 heartbeat#UserStatus, cache on                  200    213.976   1069.88        935    1147.9     115733      7005   2.00   3.00  209.896-240.235 
+  S3 send#Message, cache on                          200    741.756   3708.78        270    3749.1     423895     21639   9.00  11.00  713.272-821.536 
+  S2 mark#Read, cache on                             200    258.041   1290.20        775     862.7      99721     20404   3.00   4.00  257.896-292.689 
+  S4 update#WikiPage, cache on                       200   1380.704   6903.52        145   22175.7    4778737     18210  13.00  15.00 1180.876-1391.233
+  S5 set#MessageFlags, cache on                      200    683.310   3416.55        293    3579.2     442789     16874   7.00  10.00  653.341-702.313 
+  F1 notification persist, 3 users, cache on         200    240.507   1202.53        832     765.0      85812       137   2.02   4.04  232.259-247.759 
+  F4 audited update UserAccount.username, cache on     200    176.086    880.43       1136     525.2      74620       925   1.01   3.03  173.378-187.935 
+  F5 fed update EmailMessage.isFlagged, cache on     200    248.830   1244.15        804    1273.6     210905      2222   1.00   4.00  243.035-272.930 
+  F3 session start and password login, cache on      200   2513.842  12569.21         80     725.7   20006312      3551   3.01   6.02 2509.954-2528.981
+```
+
+| Call, us | off, local | on, local | off, delay | on, delay | Round 17 on, delay |
+|---|---|---|---|---|---|
+| S1 `heartbeat#UserStatus` | 330 | 209 | 2,185 | 1,070 | 1,364 |
+| S2 `mark#Read` | 187 | 172 | 1,298 | 1,290 | 1,295 |
+| S3 `send#Message` | 1,001 | 939 | 4,500 | 3,709 | 3,670 |
+| S4 `update#WikiPage` | 3,014 | 2,327 | 21,154 | 6,904 | 6,720 |
+| S5 `set#MessageFlags` | 661 | 701 | 3,917 | 3,417 | 3,376 |
+| F1 notification persist | | 126 | | 1,203 | 1,143 |
+| F4 audited update | 98 | 88 | 1,104 | 880 | 892 |
+| F5 fed update | 217 | 199 | 1,456 | 1,244 | 1,252 |
+
+Next, in shared layers:
+1. The data feed's insert at commit waits for the batch before its savepoint, so a fed frame waits twice before its `COMMIT`. The savepoint could go out behind the batch, with a failure of the batch reported as the transaction's (the probe's rollback to a savepoint that was never made would then name it).
+2. A data-feed delivery per commit (`process#DataFeedPending`, run on a worker) logs in as the user and reads the pending rows twice; those reads are not in a timed row but are a transaction per fed write.
+3. Allocations of a service call itself, now the largest part of S1 and S2 (each about 1,000 a call): the artifact stack frame, telemetry span and authorization checks per call and per entity operation.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
@@ -640,6 +710,8 @@ Next, all in shared layers:
 - A transaction-cache frame's commit batch is answered by the commit's wait: a failure of a held write is the commit's error ("commit failed", with the database's message), not "Could not write the transaction cache's N held writes". A held update of a row the frame read with a locking find is not checked for a changed row.
 - A Postgres `COMMIT` the server answers with `ROLLBACK` (a statement of the transaction failed and its failure was reported before) is an error.
 - A service call builder of a script hands its parameters to the call: calling the same builder again sends only what was set since.
+- On Postgres a transaction-cache update the frame did not lock is sent as a `WITH ... UPDATE ... RETURNING` statement the server fails when no row changed; its error is still "the record was not found".
+- A Postgres statement first sent deferred on a connection is prepared with text parameters typed by the server, not described first.
 - `no-tx-cache` turns a frame to read-through (writes go to the database, reads still kept), and a later `cache` call that joins it no longer turns holding back on.
 - A find of a view built in code (a data document, a REST query view) writes the frame's held rows first, as a view entity read does.
 

@@ -110,6 +110,10 @@ mod driver {
         /// Rows [`DbConnection::execute_deferred_row`] holds. Every other call sends them first, and a rollback drops
         /// them.
         batch: Option<RowBatch>,
+        /// The SQL of statements prepared deferred in this transaction ([`Self::send_deferred`]): a prepare that failed
+        /// left no statement, so a rollback (or a rollback to a savepoint) takes them out of the cache. A commit keeps
+        /// them.
+        unconfirmed: Vec<String>,
     }
 
     /// Rows of one `INSERT ... VALUES (?, ...)` statement, gathered to go out as statements of many rows.
@@ -179,6 +183,9 @@ mod driver {
         name: String,
         params: Vec<Type>,
         columns: Columns,
+        /// False for a statement prepared as it was first sent, deferred ([`PostgresConn::send_deferred`]): its types and
+        /// columns are not known here, so it takes parameters in text and is prepared again before a query or bytes.
+        described: bool,
     }
 
     impl Prepared {
@@ -331,6 +338,7 @@ mod driver {
                 wire,
                 endpoint,
                 cache: StatementLru::new(CACHE_CAP),
+                unconfirmed: Vec::new(),
                 next_statement: 0,
                 in_transaction: false,
                 streaming: false,
@@ -386,7 +394,10 @@ mod driver {
 
         fn prepared(&mut self, sql: &str) -> Result<Arc<Prepared>, Error> {
             if let Some(prepared) = self.cache.get(sql) {
-                return Ok(Arc::clone(prepared));
+                if prepared.described {
+                    return Ok(Arc::clone(prepared));
+                }
+                self.forget_statement(sql)?;
             }
             let name = self.statement_name();
             let described = self.wire.prepare(&name, &rewrite_placeholders(sql))?;
@@ -397,7 +408,10 @@ mod driver {
         /// ([`Self::first_run`]), which sends every parameter in text: none of them is bytes.
         fn cached(&mut self, sql: &str, params: &[Value]) -> Result<Option<Arc<Prepared>>, Error> {
             if let Some(prepared) = self.cache.get(sql) {
-                return Ok(Some(Arc::clone(prepared)));
+                if prepared.described {
+                    return Ok(Some(Arc::clone(prepared)));
+                }
+                self.forget_statement(sql)?;
             }
             if params.iter().any(|value| matches!(value, Value::Bytes(_))) {
                 return self.prepared(sql).map(Some);
@@ -437,15 +451,7 @@ mod driver {
                     .unwrap_or(1);
                 let chunk = &batch.params[done * batch.width..(done + size) * batch.width];
                 done += size;
-                let prepared = self.prepared(&batch.statement(size))?;
-                let formats = prepared.formats(chunk);
-                self.wire.send_execute(
-                    &prepared.name,
-                    &formats,
-                    chunk.len(),
-                    &mut |index, buf| encode_param(&chunk[index], prepared.params.get(index), buf),
-                    None,
-                )?;
+                self.send_deferred(&batch.statement(size), chunk, None, None)?;
             }
             Ok(())
         }
@@ -457,11 +463,84 @@ mod driver {
         }
 
         /// Keep statement `name` for `sql`, and close the one the cache lets go for it.
+        /// Take `sql`'s statement out of the cache and close it, with the next request.
+        fn forget_statement(&mut self, sql: &str) -> Result<(), Error> {
+            match self.cache.remove(sql) {
+                Some(prepared) => self.wire.close_statement(&prepared.name),
+                None => Ok(()),
+            }
+        }
+
+        /// Send a deferred statement: by its cached statement, else (in a transaction, no parameter bytes) prepared as
+        /// it goes out, with no wait for the prepare, which a first statement on a connection used to cost.
+        fn send_deferred(
+            &mut self,
+            sql: &str,
+            params: &[Value],
+            zero_rows: Option<String>,
+            missing: Option<String>,
+        ) -> Result<(), Error> {
+            let bytes = params.iter().any(|value| matches!(value, Value::Bytes(_)));
+            let cached = match self.cache.get(sql) {
+                Some(prepared) if prepared.described || !bytes => Some(Arc::clone(prepared)),
+                _ => None,
+            };
+            let prepared = match cached {
+                Some(prepared) => prepared,
+                None if !bytes => {
+                    self.forget_statement(sql)?;
+                    let name = self.statement_name();
+                    self.wire.send_parse_execute(
+                        &name,
+                        &rewrite_placeholders(sql),
+                        params.len(),
+                        &mut |index, buf| encode_param(&params[index], None, buf),
+                        zero_rows,
+                        missing,
+                    )?;
+                    let prepared = Arc::new(Prepared {
+                        name,
+                        params: Vec::new(),
+                        columns: Columns::default(),
+                        described: false,
+                    });
+                    if let Some(evicted) = self.cache.insert(sql, prepared) {
+                        self.wire.close_statement(&evicted.name)?;
+                    }
+                    self.unconfirmed.push(sql.to_string());
+                    return Ok(());
+                }
+                None => self.prepared(sql)?,
+            };
+            let formats = prepared.formats(params);
+            let encode = &mut |index: usize, buf: &mut _| encode_param(&params[index], prepared.params.get(index), buf);
+            match missing {
+                Some(missing) => self
+                    .wire
+                    .send_checked_update(&prepared.name, &formats, params.len(), encode, missing),
+                None => self
+                    .wire
+                    .send_execute(&prepared.name, &formats, params.len(), encode, zero_rows),
+            }
+        }
+
+        /// After a rollback: the statements prepared deferred in the transaction are taken out of the cache, as one
+        /// whose prepare failed is not there.
+        fn forget_unconfirmed(&mut self) -> Result<(), Error> {
+            for sql in std::mem::take(&mut self.unconfirmed) {
+                if self.cache.get(&sql).is_some_and(|prepared| !prepared.described) {
+                    self.forget_statement(&sql)?;
+                }
+            }
+            Ok(())
+        }
+
         fn remember(&mut self, sql: &str, name: String, described: pgwire::Described) -> Result<Arc<Prepared>, Error> {
             let prepared = Arc::new(Prepared {
                 name,
                 params: described.params,
                 columns: described.columns,
+                described: true,
             });
             if let Some(evicted) = self.cache.insert(sql, Arc::clone(&prepared)) {
                 self.wire.close_statement(&evicted.name)?;
@@ -499,6 +578,12 @@ mod driver {
                 self.wire.simple(sql, sql)
             };
             self.in_transaction = false;
+            // A committed transaction ran every prepare it sent; otherwise one may have failed.
+            if commit && finished.is_ok() {
+                self.unconfirmed.clear();
+            } else {
+                self.forget_unconfirmed()?;
+            }
             finished
         }
 
@@ -565,15 +650,19 @@ mod driver {
                 };
             }
             check_scalar(&params)?;
-            let prepared = self.prepared(sql)?;
-            let formats = prepared.formats(&params);
-            self.wire.send_execute(
-                &prepared.name,
-                &formats,
-                params.len(),
-                &mut |index, buf| encode_param(&params[index], prepared.params.get(index), buf),
-                zero_rows,
-            )
+            self.send_deferred(sql, &params, zero_rows, None)
+        }
+
+        /// In a transaction the update goes out as one the server fails when it changes no row (`checked_update_sql`),
+        /// so no wait here is needed for the check and a commit after it goes out with it. Out of one it runs as
+        /// [`Self::execute`] with the count checked.
+        fn execute_deferred_update(&mut self, sql: &str, params: Vec<Value>, missing: String) -> Result<(), Error> {
+            if !self.in_transaction {
+                return self.execute_deferred(sql, params, Some(missing));
+            }
+            self.flush_batch()?;
+            check_scalar(&params)?;
+            self.send_deferred(&crate::pgwire::checked_update_sql(sql), &params, None, Some(missing))
         }
 
         /// In a transaction the row is held with the rows before it of the same statement, and they go out as one
@@ -741,7 +830,9 @@ mod driver {
             self.wire.simple(
                 &format!("ROLLBACK TO SAVEPOINT {}", quote_ident(name)),
                 "rollback to savepoint",
-            )
+            )?;
+            // a statement prepared deferred since may have failed to prepare
+            self.forget_unconfirmed()
         }
 
         /// Not waited for: it goes out with the next request (the commit, often), whose wait reports a failure. A

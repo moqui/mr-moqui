@@ -125,10 +125,23 @@ enum Describe {
 enum Expect {
     /// A simple query, its rows unread.
     Simple { context: &'static str },
-    /// An execute: a failure, or `zero_rows` as the error when it changed no row.
-    Execute { zero_rows: Option<String> },
+    /// An execute: a failure, or `zero_rows` as the error when it changed no row. `missing` is the error of a statement
+    /// the server failed for changing no row ([`Wire::send_checked_update`]).
+    Execute {
+        zero_rows: Option<String>,
+        missing: Option<String>,
+    },
     /// The close of a prepared statement the cache let go.
     Close,
+}
+
+/// The SQLSTATE of the failure [`checked_update_sql`] makes for an update that changed no row (`division_by_zero`).
+const NO_ROW_CHANGED: &str = "22012";
+
+/// An `UPDATE` the server fails when it changes no row: the count of the rows it changed divides one, so none is a
+/// `division_by_zero` ([`NO_ROW_CHANGED`]), which fails the transaction as any failed statement does.
+pub(super) fn checked_update_sql(update: &str) -> String {
+    format!("WITH moqui_changed AS ({update} RETURNING 1) SELECT 1 / COUNT(*) FROM moqui_changed")
 }
 
 pub(super) struct Wire {
@@ -173,6 +186,8 @@ impl Failure {
 /// The parts of the server's `ErrorResponse` a message shows, as `tokio_postgres`'s `DbError` showed them.
 #[derive(Debug)]
 pub(super) struct DbError {
+    /// The SQLSTATE.
+    code: String,
     severity: String,
     message: String,
     detail: Option<String>,
@@ -197,6 +212,7 @@ impl std::error::Error for DbError {}
 impl DbError {
     fn parse(mut fields: ErrorFields<'_>) -> Self {
         let mut error = DbError {
+            code: String::new(),
             severity: String::new(),
             message: String::new(),
             detail: None,
@@ -206,6 +222,7 @@ impl DbError {
             let value = || String::from_utf8_lossy(field.value_bytes()).into_owned();
             match field.type_() {
                 b'S' => error.severity = value(),
+                b'C' => error.code = value(),
                 b'M' => error.message = value(),
                 b'D' => error.detail = Some(value()),
                 b'H' => error.hint = Some(value()),
@@ -863,7 +880,8 @@ impl Wire {
             })?;
             let failure = match expect {
                 Expect::Simple { context } => failure.map(|failure| failure.into_error(context)),
-                Expect::Execute { zero_rows } => match failure {
+                Expect::Execute { zero_rows, missing } => match failure {
+                    Some(Failure::Db(db)) if db.code == NO_ROW_CHANGED && missing.is_some() => missing.map(Error::new),
                     Some(failure) => Some(failure.into_error("execute")),
                     None if rows == 0 => zero_rows.map(Error::new),
                     None => None,
@@ -890,7 +908,7 @@ impl Wire {
             && !self
                 .pending
                 .iter()
-                .any(|expect| matches!(expect, Expect::Execute { zero_rows: Some(_) }))
+                .any(|expect| matches!(expect, Expect::Execute { zero_rows: Some(_), .. }))
     }
 
     /// Every reply in, and the first failure among them.
@@ -1142,7 +1160,49 @@ impl Wire {
         zero_rows: Option<String>,
     ) -> Result<(), Error> {
         self.bind_execute(None, statement, Describe::None, formats, count, encode)?;
-        self.leave(Expect::Execute { zero_rows }, true)
+        self.leave(
+            Expect::Execute {
+                zero_rows,
+                missing: None,
+            },
+            true,
+        )
+    }
+
+    /// Prepare `sql` as statement `name` and run it with every parameter in text, unanswered: the server infers the
+    /// parameter types, and the reply comes with the next wait, as [`Self::send_execute`]'s does. `zero_rows` and
+    /// `missing` are as there.
+    pub(super) fn send_parse_execute(
+        &mut self,
+        name: &str,
+        sql: &str,
+        count: usize,
+        encode: Encode<'_>,
+        zero_rows: Option<String>,
+        missing: Option<String>,
+    ) -> Result<(), Error> {
+        self.bind_execute(Some(sql), name, Describe::None, &[TEXT], count, encode)?;
+        self.leave(Expect::Execute { zero_rows, missing }, true)
+    }
+
+    /// [`Self::send_execute`] of an update made by [`checked_update_sql`], which the server fails when it changed no
+    /// row: `missing` is then the error, and nothing here waits on it.
+    pub(super) fn send_checked_update(
+        &mut self,
+        statement: &str,
+        formats: &[i16],
+        count: usize,
+        encode: Encode<'_>,
+        missing: String,
+    ) -> Result<(), Error> {
+        self.bind_execute(None, statement, Describe::None, formats, count, encode)?;
+        self.leave(
+            Expect::Execute {
+                zero_rows: None,
+                missing: Some(missing),
+            },
+            true,
+        )
     }
 
     /// Run prepared `statement` with its `columns`, waited for; its rows, each cell made by `decode`.

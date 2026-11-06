@@ -339,8 +339,10 @@ fn js_value_to_host_in<'js>(ctx: &Ctx<'_>, value: &JsValue<'js>, path: &mut Vec<
             return Ok(Value::Map(map));
         }
         // A method of the object is not data, so it is left out, as the unwrapped projection leaves out a function.
-        let mut map = indexmap::IndexMap::new();
-        for entry in object.props::<String, JsValue>() {
+        // QuickJS knows the count of own properties first, so the map is made once at its size.
+        let props = object.props::<String, JsValue>();
+        let mut map = indexmap::IndexMap::with_capacity(props.size_hint().0);
+        for entry in props {
             let (key, item) = entry.map_err(|err| js_caught(ctx, err))?;
             if item.is_function() {
                 continue;

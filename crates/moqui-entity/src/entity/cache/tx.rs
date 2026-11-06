@@ -267,6 +267,11 @@ pub(super) fn overlay_rows(
     if let Some((pk, keys)) = pinned {
         return pinned_row(facade, meta, token, &pk, &keys).map(Some);
     }
+    if lock.is_none() && page.limit.is_none() && page.offset.is_none() {
+        if let Some(rows) = known_in_rows(meta, token, condition, order)? {
+            return Ok(Some(rows));
+        }
+    }
     let holds = TX_HOLD.with(|slot| {
         slot.borrow()
             .get(&token)
@@ -354,6 +359,71 @@ fn values_of(meta: &ReadMeta, rows: Vec<MemRow>) -> Vec<EntityValue> {
     rows.into_iter()
         .map(|row| EntityValue::from_shared(Arc::clone(&name), row.fields))
         .collect()
+}
+
+/// A find by an `in` of keys of a one-field primary key (and nothing else), with no page and no order of more than one
+/// row, when the frame knows every one of the rows (it read it, or created it): the rows from memory, in the order of
+/// the keys, with the frame's held writes on them. `None` when one is not known, for the database to answer.
+fn known_in_rows(
+    meta: &ReadMeta,
+    token: u64,
+    condition: Option<&Condition>,
+    order: &[OrderBy],
+) -> Result<Option<Vec<EntityValue>>, Error> {
+    let [pk_field] = meta.pk_fields.as_slice() else {
+        return Ok(None);
+    };
+    let Some(Condition::In(field, values)) = condition else {
+        return Ok(None);
+    };
+    if field.entity_alias.is_some() || field.expr.is_some() || &field.name != pk_field || values.is_empty() {
+        return Ok(None);
+    }
+    if !order.is_empty() && values.len() > 1 {
+        return Ok(None);
+    }
+    let entity = meta.full_name.as_str();
+    let mut seen = std::collections::HashSet::new();
+    let mut found = Vec::with_capacity(values.len());
+    let known = TX_HOLD.with(|slot| {
+        let map = slot.borrow();
+        let Some(frame) = map.get(&token) else {
+            return false;
+        };
+        for value in values {
+            let mut keys = FieldMap::new();
+            keys.insert(Arc::from(pk_field.as_str()), value.clone());
+            let Some(pk) = pk_of(&keys, &meta.pk_fields) else {
+                return false;
+            };
+            if !seen.insert(pk.clone()) {
+                continue;
+            }
+            let base = match (frame.stored(entity, &pk), frame.first_op(entity, &pk)) {
+                (Some(row), _) => row,
+                (None, Some(Op::Create)) => None,
+                (None, _) => return false,
+            };
+            found.push((base, frame.holds_of(entity, &pk)));
+        }
+        true
+    });
+    if !known {
+        return Ok(None);
+    }
+    stats::note_read_of(token, true);
+    let mut rows = Vec::with_capacity(found.len());
+    for (base, holds) in found {
+        let stored: Vec<MemRow> = base
+            .map(|row| MemRow {
+                fields: row,
+                trusted: true,
+            })
+            .into_iter()
+            .collect();
+        rows.extend(Overlay::new(stored, &holds, &meta.pk_fields).apply(&HashMap::new())?);
+    }
+    Ok(Some(values_of(meta, rows)))
 }
 
 /// A find by the whole key in a cache frame: the row the frame keeps, or for a row it created its held writes alone,

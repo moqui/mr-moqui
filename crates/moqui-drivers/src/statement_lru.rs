@@ -82,6 +82,14 @@ impl<S> StatementLru<S> {
         evicted
     }
 
+    /// Take the statement for `sql` out, for the caller to close.
+    #[cfg_attr(not(feature = "postgres"), allow(dead_code))]
+    pub(crate) fn remove(&mut self, sql: &str) -> Option<S> {
+        let removed = self.entries.remove(sql).map(|(statement, _)| statement);
+        self.compact();
+        removed
+    }
+
     /// Every statement, in no order.
     #[cfg_attr(not(feature = "mysql"), allow(dead_code))]
     pub(crate) fn into_values(self) -> impl Iterator<Item = S> {

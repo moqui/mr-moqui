@@ -125,6 +125,13 @@ pub trait DbConnection: Send {
         }
     }
 
+    /// [`Self::execute_deferred`] of an `UPDATE` that must change a row: `missing` is the error when it changed none.
+    /// The default checks the count here, which a commit after it has to wait for; a driver that can have the server
+    /// fail the statement instead does, so the commit goes out with it.
+    fn execute_deferred_update(&mut self, sql: &str, params: Vec<Value>, missing: String) -> Result<(), Error> {
+        self.execute_deferred(sql, params, Some(missing))
+    }
+
     /// [`Self::execute_deferred`] of a one-row `INSERT` (an upsert among them) that the driver may hold and send with
     /// the rows of the same statement that follow it, as one `INSERT` of many rows. `key` names the row's primary key:
     /// a row whose key is among those held goes after them, as one upsert cannot change a row twice. A row changing no

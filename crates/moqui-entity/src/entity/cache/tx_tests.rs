@@ -836,6 +836,35 @@ fn a_for_update_find_locks_every_time_and_keeps_its_rows() {
     .unwrap();
 }
 
+/// A find by an `in` of keys the frame knows (rows it read or created) is answered from memory, the held writes on
+/// them, in the order of the keys; a key the frame does not know sends the find to the database.
+#[test]
+fn a_find_by_keys_the_frame_knows_runs_no_query() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    put_enum(&facade, "I1", "A", "one");
+    put_enum(&facade, "I2", "A", "two");
+    put_enum(&facade, "I3", "B", "three");
+    let tx = facade.transactions_for(ENUM).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        set_enum(&facade, "I2", "description", "held")?;
+        assert_eq!(facade.find(ENUM)?.eq("enumTypeId", Value::string("A")).list()?.len(), 2);
+        put_enum(&facade, "I4", "A", "created");
+        let keys =
+            |ids: &[&str]| moqui_db::sql::Condition::is_in("enumId", ids.iter().map(|id| Value::string(*id)).collect());
+        let before = enum_reads(&tape);
+        let rows = facade.find(ENUM)?.condition(keys(&["I4", "I2", "I1", "I2"])).list()?;
+        assert_eq!(enum_reads(&tape) - before, 0, "no query");
+        assert_eq!(enum_ids(&rows), ["I4", "I2", "I1"]);
+        assert_eq!(rows.values()[1].get("description"), Some(&Value::string("held")));
+        let rows = facade.find(ENUM)?.condition(keys(&["I1", "I3"])).list()?;
+        assert_eq!(enum_reads(&tape) - before, 1, "I3 is read from the database");
+        assert_eq!(rows.len(), 2);
+        Ok(())
+    })
+    .unwrap();
+}
+
 /// A held update of a row a locking find of the frame read goes out with no check that it changed a row (no other
 /// transaction can delete it), so the commit need not wait for it; an update of a row only read keeps the check.
 #[test]

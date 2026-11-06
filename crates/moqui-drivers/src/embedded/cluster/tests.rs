@@ -1029,6 +1029,53 @@ fn a_savepoint_waits_with_the_statements_after_it(conn: &mut PostgresConn) {
     assert!(unchanged.message().contains("no row changed"), "{unchanged}");
     conn.rollback().unwrap();
 
+    // an update the server checks goes with the commit: one round trip, and one that changes no row fails it
+    let update = "UPDATE sp_trips SET n = ? WHERE n = ?";
+    for _ in 0..2 {
+        conn.begin().unwrap();
+        conn.execute_deferred_update(update, vec![Value::I32(4), Value::I32(4)], "not there".to_string())
+            .unwrap();
+        conn.commit().unwrap();
+    }
+    conn.begin().unwrap();
+    conn.execute_deferred_update(update, vec![Value::I32(4), Value::I32(4)], "not there".to_string())
+        .unwrap();
+    let before = moqui_core::driver::thread_round_trips();
+    conn.commit().unwrap();
+    assert_eq!(moqui_core::driver::thread_round_trips() - before, 1);
+    conn.begin().unwrap();
+    conn.execute_deferred(insert, vec![Value::I32(8)], None).unwrap();
+    conn.execute_deferred_update(
+        update,
+        vec![Value::I32(9), Value::I32(99)],
+        "row 99 not there".to_string(),
+    )
+    .unwrap();
+    let missing = conn.commit().unwrap_err();
+    assert_eq!(missing.message(), "row 99 not there");
+    conn.rollback().unwrap();
+
+    // a deferred statement never prepared on this connection is prepared as it goes: no wait of its own
+    let cold = "UPDATE sp_trips SET n = n WHERE n = ? AND 'cold' = 'cold'";
+    conn.begin().unwrap();
+    let before = moqui_core::driver::thread_round_trips();
+    conn.execute_deferred(cold, vec![Value::I32(1)], None).unwrap();
+    conn.commit().unwrap();
+    assert_eq!(moqui_core::driver::thread_round_trips() - before, 1);
+    // one sent behind a failed write was never prepared: the rollback forgets it, and the next use prepares it
+    let later = "UPDATE sp_trips SET n = n WHERE n = ? AND 'later' = 'later'";
+    conn.begin().unwrap();
+    conn.execute_deferred(insert, vec![Value::I32(1)], None).unwrap();
+    conn.execute_deferred(later, vec![Value::I32(1)], None).unwrap();
+    assert!(conn.commit().is_err());
+    conn.rollback().unwrap();
+    conn.begin().unwrap();
+    conn.execute_deferred(later, vec![Value::I32(1)], None).unwrap();
+    conn.execute_deferred(later, vec![Value::I32(2)], None).unwrap();
+    conn.commit().unwrap();
+    // a statement prepared deferred is prepared again, with its types, for a waited call
+    assert_eq!(conn.execute(cold, &[Value::I32(1)]).unwrap(), 1);
+
     let rows = conn.query("SELECT n FROM sp_trips ORDER BY n", &[]).unwrap();
     let numbers: Vec<_> = rows.iter().filter_map(|row| row.get("n").cloned()).collect();
     assert_eq!(

@@ -152,13 +152,13 @@ pub(super) fn flush_writes(
         };
         match write.operation {
             Op::Create | Op::Upsert => conn.execute_deferred_row(&sql, params, row_key(held)),
-            Op::Update => {
-                // a row the frame locked is there until the commit; with no check here the COMMIT need not wait
-                let checked = !mysql && !locked.contains(&(held.entity_name.clone(), held.pk.clone()));
-                let zero_rows =
-                    checked.then(|| format!("Could not write the {}: the record was not found", held.describe()));
-                conn.execute_deferred(&sql, params, zero_rows)
+            // A row the frame locked is there until the commit and needs no check. Another must change a row: the
+            // driver has the server check that where it can, so the COMMIT need not wait for it.
+            Op::Update if !mysql && !locked.contains(&(held.entity_name.clone(), held.pk.clone())) => {
+                let missing = format!("Could not write the {}: the record was not found", held.describe());
+                conn.execute_deferred_update(&sql, params, missing)
             }
+            Op::Update => conn.execute_deferred(&sql, params, None),
             Op::Delete => conn.execute_deferred(&sql, params, None),
         }
         .map_err(named)?;
