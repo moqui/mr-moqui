@@ -608,7 +608,7 @@ mod telemetry_tests {
             if let Some(slow) = slow.first() {
                 assert_eq!(
                     slow.get("parent_span_id").and_then(Value::as_str),
-                    Some(parent.span_id.as_str())
+                    Some(parent.span_id.to_string().as_str())
                 );
                 assert_eq!(slow.get("moqui.artifact.slow"), Some(&Value::Bool(true)));
                 assert_eq!(

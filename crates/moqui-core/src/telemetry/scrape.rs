@@ -688,7 +688,7 @@ fn check_one(ec: &ExecutionContext, row: &crate::entity::EntityValue) -> (Result
     span.set_attribute("synthetic.check.id", Value::string(check_id));
     span.set_attribute("synthetic.check.name", Value::string(name));
     span.set_attribute("url.full", Value::string(crate::outbound::redacted(url)));
-    let trace_id = span.context().map(|context| context.trace_id.clone());
+    let trace_id = span.context().map(|context| context.trace_id.to_string());
     let method = match text(row, "method").to_ascii_uppercase().as_str() {
         "HEAD" => crate::outbound::Method::Head,
         "POST" => crate::outbound::Method::Post,

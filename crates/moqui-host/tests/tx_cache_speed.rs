@@ -130,6 +130,8 @@ struct World {
     first_seq: Value,
     /// The mail account's Inbox, which N1 imports into.
     inbox: String,
+    /// The mail account, whose draft N4 saves.
+    mail_account: String,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -288,6 +290,32 @@ fn one_batch(
                 [("notificationMessageIdList", Value::List(chunk.to_vec()))],
             );
         });
+        // N4: an autosave of a draft, the draft made first.
+        let draft = service_out(
+            "org.moqui.impl.EmailClientServices.save#Draft",
+            [
+                ("emailAccountId", Value::string(&world.mail_account)),
+                ("toAddresses", Value::string("someone@speed.test")),
+                ("subject", Value::string("Speed draft")),
+                ("body", Value::string("<p>draft</p>")),
+            ],
+        )
+        .get("emailMessageId")
+        .cloned()
+        .expect("draft emailMessageId");
+        row("N4 save#Draft, an autosave", cache, &mut |index| {
+            service(
+                "org.moqui.impl.EmailClientServices.save#Draft",
+                cache,
+                [
+                    ("emailMessageId", draft.clone()),
+                    ("emailAccountId", Value::string(&world.mail_account)),
+                    ("toAddresses", Value::string("someone@speed.test")),
+                    ("subject", Value::string("Speed draft")),
+                    ("body", Value::string(format!("<p>draft {index}</p>"))),
+                ],
+            );
+        });
         if cache == Cache::On {
             row("F3 session start and password login", cache, &mut |_| {
                 let guard = moqui_core::user::bind(factory, None, None, false).expect("bind");
@@ -426,7 +454,12 @@ fn seed(facade: &EntityFacade) -> World {
     state.set("lastChangeSeq", Value::I64(0));
     state.set("purgedThruSeq", Value::I64(0));
     state.create(facade).expect("create state");
-    World { room, first_seq, inbox }
+    World {
+        room,
+        first_seq,
+        inbox,
+        mail_account,
+    }
 }
 
 /// A received message with two attachments, of a Message-ID of its own.

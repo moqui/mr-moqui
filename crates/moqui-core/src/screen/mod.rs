@@ -159,7 +159,7 @@ pub fn serve_at(factory: &Arc<ExecutionContextFactory>, mut request: WebRequest,
             "telemetryPageTraceId".into(),
             Value::string(
                 crate::telemetry::capture()
-                    .map(|trace| trace.trace_id)
+                    .map(|trace| trace.trace_id.to_string())
                     .unwrap_or_default(),
             ),
         );

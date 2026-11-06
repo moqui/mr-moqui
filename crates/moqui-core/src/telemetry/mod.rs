@@ -87,8 +87,8 @@ const MAX_SERIES: usize = 20_000;
 /// A W3C context that can cross worker and async boundaries without an SDK or a thread guard.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TraceContext {
-    pub trace_id: String,
-    pub span_id: String,
+    pub trace_id: HexId<16>,
+    pub span_id: HexId<8>,
     pub sampled: bool,
     pub tracestate: String,
     /// Made by this process's SDK, so `sampled` is this server's own head decision. A context extracted from a caller's
@@ -117,8 +117,8 @@ impl TraceContext {
             tracestate
         };
         Some(Self {
-            trace_id: trace_id.to_string(),
-            span_id: span_id.to_string(),
+            trace_id: HexId::from_hex(trace_id)?,
+            span_id: HexId::from_hex(span_id)?,
             sampled: u8::from_str_radix(flags, 16).ok()? & 1 != 0,
             tracestate: tracestate.to_string(),
             local: false,
@@ -131,6 +131,62 @@ impl TraceContext {
 
     pub fn tracestate(&self) -> &str {
         &self.tracestate
+    }
+}
+
+/// A trace id (16 bytes) or span id (8), kept as its bytes and written as lowercase hex, as W3C Trace Context and OTLP
+/// JSON write it: a span's context is copied with no text made, and its text only where it is written out.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct HexId<const N: usize>(pub [u8; N]);
+
+impl<const N: usize> HexId<N> {
+    /// The id of `text`, `2 * N` lowercase or uppercase hex digits; `None` otherwise.
+    #[must_use]
+    pub fn from_hex(text: &str) -> Option<Self> {
+        let digits = text.as_bytes();
+        if digits.len() != 2 * N {
+            return None;
+        }
+        let mut bytes = [0u8; N];
+        for (index, pair) in digits.as_chunks::<2>().0.iter().enumerate() {
+            let high = (pair[0] as char).to_digit(16)?;
+            let low = (pair[1] as char).to_digit(16)?;
+            bytes[index] = u8::try_from(high * 16 + low).ok()?;
+        }
+        Some(Self(bytes))
+    }
+}
+
+impl<const N: usize> std::fmt::Display for HexId<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for byte in self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+impl<const N: usize> std::fmt::Debug for HexId<N> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
+}
+
+impl<const N: usize> PartialEq<str> for HexId<N> {
+    fn eq(&self, other: &str) -> bool {
+        Self::from_hex(other).is_some_and(|id| id == *self)
+    }
+}
+
+impl<const N: usize> PartialEq<&str> for HexId<N> {
+    fn eq(&self, other: &&str) -> bool {
+        self == *other
+    }
+}
+
+impl<const N: usize> PartialEq<String> for HexId<N> {
+    fn eq(&self, other: &String) -> bool {
+        self == other.as_str()
     }
 }
 

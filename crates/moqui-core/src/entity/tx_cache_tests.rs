@@ -204,7 +204,7 @@ fn a_transaction_is_a_span_with_its_cache_counts_inside_a_trace() {
     assert_eq!(transactions.len(), 1, "{spans:?}");
     assert_eq!(
         transactions[0].get("parent_span_id").and_then(Value::as_str),
-        Some(root_id.as_str())
+        Some(root_id.to_string().as_str())
     );
     let text = format!("{:?}", transactions[0]);
     for expected in [

@@ -143,7 +143,7 @@ fn a_rest_service_is_a_span_of_the_request() {
                     .to_string()
             })
     };
-    assert_eq!(named("echo.ping#Rest"), Some(root_id), "{spans:?}");
+    assert_eq!(named("echo.ping#Rest"), Some(root_id.to_string()), "{spans:?}");
     for path in ["/moqui", "/moqui/basic", "/moqui/basic/echo"] {
         assert_eq!(named(path), None, "{path}: {spans:?}");
     }

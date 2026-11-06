@@ -1,5 +1,17 @@
 use super::*;
 
+/// An id is its bytes, written as lowercase hex; uppercase is read, a wrong length or digit is not an id.
+#[test]
+fn a_hex_id_reads_and_writes_its_bytes() {
+    let id = HexId::<8>::from_hex("00F067aa0ba902b7").unwrap();
+    assert_eq!(id.0, [0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7]);
+    assert_eq!(id.to_string(), "00f067aa0ba902b7");
+    assert!(id == "00f067aa0ba902b7");
+    assert!(HexId::<8>::from_hex("00f067aa0ba902b").is_none());
+    assert!(HexId::<8>::from_hex("00f067aa0ba902bg").is_none());
+    assert!(HexId::<16>::from_hex("4bf92f3577b34da6a3ce929d0e0e4736").is_some());
+}
+
 #[test]
 fn w3c_context_validates_and_restores() {
     assert!(TraceContext::extract("00-00000000000000000000000000000000-0123456789abcdef-01", "").is_none());
@@ -36,10 +48,7 @@ fn w3c_context_validates_and_restores() {
         "vendor=a\r\nX-Injected: 1".into(),
     ] {
         let kept = TraceContext::extract(&context.traceparent(), &tracestate).expect("the traceparent survives");
-        assert_eq!(
-            (kept.trace_id.as_str(), kept.span_id.as_str()),
-            (context.trace_id.as_str(), context.span_id.as_str())
-        );
+        assert_eq!((kept.trace_id, kept.span_id), (context.trace_id, context.span_id));
         assert_eq!(kept.tracestate(), "");
     }
 }
@@ -503,10 +512,10 @@ mod enabled {
             .iter()
             .find(|(_, document)| text(document, "name") == "service")
             .unwrap();
-        assert_eq!(text(&child.1, "parent_span_id"), context.span_id);
+        assert_eq!(text(&child.1, "parent_span_id"), context.span_id.to_string());
         assert!(first
             .iter()
-            .any(|(index, document)| index == "otel_logs" && text(document, "trace_id") == context.trace_id));
+            .any(|(index, document)| index == "otel_logs" && context.trace_id == text(document, "trace_id")));
         let metrics: Vec<_> = first.iter().filter(|(index, _)| index == "otel_metrics").collect();
         assert_eq!(metrics.len(), 1, "{first:?}");
         assert_eq!(number(&metrics[0].1, "count"), 2.0);
@@ -774,7 +783,7 @@ mod enabled {
             telemetry.flush();
             let entries = lock(&memory.0);
             let root = entries.iter().find(|(index, _)| index == "otel_spans").unwrap();
-            assert_eq!(text(&root.1, "parent_span_id"), parent.span_id);
+            assert_eq!(text(&root.1, "parent_span_id"), parent.span_id.to_string());
             assert_eq!(root.1.get("sampled"), Some(&Value::Bool(sampled)));
             drop(entries);
             telemetry.shutdown();
@@ -898,8 +907,8 @@ mod enabled {
                 .find(|(span, _)| span == name)
                 .map(|(_, parent)| parent.clone())
         };
-        assert_eq!(parent("echo.ping#Rest"), Some(root_id.clone()), "{spans:?}");
-        assert_eq!(parent("after.screen"), Some(root_id), "{spans:?}");
+        assert_eq!(parent("echo.ping#Rest"), Some(root_id.to_string()), "{spans:?}");
+        assert_eq!(parent("after.screen"), Some(root_id.to_string()), "{spans:?}");
         for hidden in [
             "/moqui/basic/echo",
             "component://webroot/screen/webroot/sso.xml",

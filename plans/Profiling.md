@@ -894,6 +894,92 @@ Next, in shared layers:
 3. The rest of the second set: IMAP flag sync preloading its rows (5), `save#Draft` (6), the chat bridge's inbound
    item (7).
 
+## Round 21: span ids as bytes, the lock check, the rest of the second set
+
+Round 20's next steps, on the tree merged with the Commerce and Shop framework work (its moqui-core tests pass).
+
+1. **Span ids as bytes.** `TraceContext` keeps its trace and span ids as their bytes (`HexId<16>`, `HexId<8>`), written as
+   hex only where they are exported or propagated: a span no longer formats two ids as text, and a child's parent is
+   no longer parsed back from text. Span names are still copied, and the transaction's span sets its attributes per
+   call.
+2. **The lock check of each DbResource write** read the `ResourceLock` rows around the location from the database (its
+   time a parameter, so never kept). A cached count of all lock rows answers "none" from memory, the usual case;
+   `ResourceLock` is `cache="false"` (it was `never`), and a write of a lock clears the count here and on cluster
+   peers. The count needed a condition every row meets (`lockKey is not null`): the entity cache keeps no find or
+   count without a condition, which a first try without one showed (its count went to the database on every write).
+3. **The rest of the second set.** The IMAP flag sync reads the rows that change in one `in` find first, so each
+   update's rule reads its row as it was from the frame (second set 5); `save#Draft` (6) and the chat bridge's
+   `process#InboundItem` (7) are `transaction="cache"`. Strict mode passes the mail, mail client and chat bridge tests
+   and specs. A new row, N4, times an autosave of a draft: 15 statements to 9, 5.4 to 4.1 ms with the delay.
+
+Embedded Postgres:
+
+```
+  operation                                        calls  median ms   us/call    calls/s    allocs      bytes      kept    sql     rt        min-max ms
+  S1 heartbeat#UserStatus, cache off                 200     50.467    252.34       3963     938.9     106712     10960   6.25   7.25   48.334-73.282  
+  S3 send#Message, cache off                         200    180.892    904.46       1106    3238.4     379086     25007  13.00  14.00  176.579-206.257 
+  S2 mark#Read, cache off                            200     33.382    166.91       5991     652.0      86388      8288   3.00   4.00   32.393-38.344  
+  S4 update#WikiPage, cache off                      200    610.623   3053.11        328   17340.2    3351810     70156  76.00  77.00  433.682-792.140 
+  S5 set#MessageFlags, cache off                     200    183.408    917.04       1090    3464.3     425344     24720  14.02  16.05  162.267-197.469 
+  F4 audited update UserAccount.username, cache off     200     18.771     93.85      10655     407.5      54211      1827   3.02   4.04   18.020-22.392  
+  F5 fed update EmailMessage.isFlagged, cache off     200     74.361    371.81       2690    1746.1     246748      5266   7.02   9.04   72.664-87.998  
+  N1 mail store, 2 attachments, a cursor, cache off     200    418.671   2093.35        478    7895.1     860738     54530  49.19  54.38  402.223-482.609 
+  N2 react#Message, cache off                        200    277.148   1385.74        722    3913.5     436328     30297  20.50  21.50  221.860-286.966 
+  N3 mark#NotificationsViewed of 5, cache off        200    118.294    591.47       1691     930.0     101865      7015   6.00   7.00  116.029-145.983 
+  N4 save#Draft, an autosave, cache off              200    178.496    892.48       1120    3230.9     434205     24341  15.05  16.93  170.874-217.132 
+  S1 heartbeat#UserStatus, cache on                  200     42.498    212.49       4706     853.2      89902      9177   2.00   3.00   37.650-57.610  
+  S3 send#Message, cache on                          200    188.883    944.41       1059    3426.2     405324     21744   9.00  11.00  185.146-193.572 
+  S2 mark#Read, cache on                             200     33.359    166.79       5995     699.0      88473     20596   3.00   4.00   32.827-36.343  
+  S4 update#WikiPage, cache on                       200    539.993   2699.96        370   23994.2    5997778     17887  13.00  15.00  336.184-769.090 
+  S5 set#MessageFlags, cache on                      200    164.763    823.82       1214    3796.1     442853     18893  10.02  13.04  163.764-192.353 
+  F1 notification persist, 3 users, cache on         200     24.405    122.03       8195     764.9      85656        -7   2.02   4.04   24.276-28.057  
+  F4 audited update UserAccount.username, cache on     200     18.511     92.55      10804     491.1      66190       929   1.02   3.04   17.628-24.439  
+  F5 fed update EmailMessage.isFlagged, cache on     200     72.905    364.52       2743    1863.1     252746      4461   4.02   7.04   70.527-85.087  
+  N1 mail store, 2 attachments, a cursor, cache on     200    411.475   2057.38        486    7435.9     852706     33462  22.00  28.20  340.255-451.386 
+  N2 react#Message, cache on                         200    253.081   1265.41        790    4170.0     477306     26438  15.00  16.50  221.230-299.019 
+  N3 mark#NotificationsViewed of 5, cache on         200    114.922    574.61       1740    1042.2     118089      3389   1.00   3.00  108.637-130.262 
+  N4 save#Draft, an autosave, cache on               200    162.525    812.63       1231    3361.9     414573     15588   9.02  11.66  158.356-179.627 
+  F3 session start and password login, cache on      200   2227.195  11135.97         90     724.7   20006508      3612   3.01   6.02 2225.278-2247.279
+```
+
+With 200 us of added delay:
+
+```
+  operation                                        calls  median ms   us/call    calls/s    allocs      bytes      kept    sql     rt        min-max ms
+  S1 heartbeat#UserStatus, cache off                 200    431.243   2156.22        464    1001.5     112771     11484   7.00   8.00  430.213-466.345 
+  S3 send#Message, cache off                         200    894.640   4473.20        224    3240.9     379255     25016  13.00  14.00  888.507-960.703 
+  S2 mark#Read, cache off                            200    257.706   1288.53        776     652.0      86344      8288   3.00   4.00  251.532-265.382 
+  S4 update#WikiPage, cache off                      200   4298.295  21491.48         47   17340.2    3351766     70154  76.00  77.00 3996.679-4413.134
+  S5 set#MessageFlags, cache off                     200   1016.452   5082.26        197    3460.3     425256     24720  14.02  16.05  999.274-1078.939
+  F4 audited update UserAccount.username, cache off     200    219.631   1098.15        911     407.1      54129      1816   3.02   4.04  217.516-296.219 
+  F5 fed update EmailMessage.isFlagged, cache off     200    545.642   2728.21        367    1745.8     246674      5262   7.01   9.03  495.906-564.760 
+  N1 mail store, 2 attachments, a cursor, cache off     200   3075.036  15375.18         65    7895.4     860589     54517  49.20  54.40 2964.756-3095.250
+  N2 react#Message, cache off                        200   1364.006   6820.03        147    3913.5     436284     30297  20.50  21.50 1317.628-1425.785
+  N3 mark#NotificationsViewed of 5, cache off        200    428.105   2140.53        467     930.0     101821      7015   6.00   7.00  414.055-564.493 
+  N4 save#Draft, an autosave, cache off              200   1073.802   5369.01        186    3272.7     441516     24524  15.05  17.07 1058.850-1082.222
+  S1 heartbeat#UserStatus, cache on                  200    257.616   1288.08        776     958.0     102273      7005   2.00   3.00  235.923-413.403 
+  S3 send#Message, cache on                          200    853.603   4268.02        234    3427.9     405157     21538   9.00  11.00  791.563-950.261 
+  S2 mark#Read, cache on                             200    280.245   1401.23        714     699.0      88429     20596   3.00   4.00  263.682-325.078 
+  S4 update#WikiPage, cache on                       200   1446.512   7232.56        138   30394.2    7837888     17887  13.00  15.00 1204.490-1882.229
+  S5 set#MessageFlags, cache on                      200    879.490   4397.45        227    3792.1     442765     18893  10.02  13.04  855.999-1462.538
+  F1 notification persist, 3 users, cache on         200    302.733   1513.67        661     764.9      85572        -7   2.02   4.04  228.513-561.836 
+  F4 audited update UserAccount.username, cache on     200    196.959    984.80       1015     491.1      66146       929   1.02   3.04  172.645-253.616 
+  F5 fed update EmailMessage.isFlagged, cache on     200    461.331   2306.65        434    1863.1     252698      4461   4.02   7.04  425.039-1020.216
+  N1 mail store, 2 attachments, a cursor, cache on     200   1836.837   9184.18        109    7623.7     865005     33960  23.20  29.41 1835.809-1882.730
+  N2 react#Message, cache on                         200   1107.250   5536.25        181    4170.0     477262     26438  15.00  16.50 1092.013-1124.362
+  N3 mark#NotificationsViewed of 5, cache on         200    235.098   1175.49        851    1042.0     118030      3381   1.00   3.00  226.304-252.832 
+  N4 save#Draft, an autosave, cache on               200    821.895   4109.47        243    3418.7     424500     15832   9.02  12.04  813.228-838.007 
+  F3 session start and password login, cache on      200   2529.531  12647.66         79     724.7   20006433      3581   3.01   6.02 2515.672-2535.874
+```
+
+Next:
+1. The entity cache's rule that a find or count with no condition is not kept: a count of all rows (the lock count's
+   case) or a list of a small configuration entity are worth keeping; `caches` could allow a count with none.
+2. The census over mr-boss and mr-mantle specs (TX-Cache "Later rounds"), now that the framework's own paths are on
+   the cache: which of their services hold cleanly and which flush early, before turning the cache on for them.
+3. `expire#UserStatuses` (second set 9) with a decision on one user's failure failing the batch, and `run#EmailRules`
+   (10) merged into the store's frame.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
@@ -909,6 +995,8 @@ Next, in shared layers:
 - An async service call or job logs in as its user through the entity cache.
 - A select-field find in a transaction-cache frame is answered from what the frame read until the frame writes that entity.
 - `send#WebPush` runs with no transaction around its pushes and writes their outcomes after them, in one batch.
+- `ResourceLock` is `cache="false"`; a write's lock check reads a cached count of all locks first. `save#Draft` and `process#InboundItem` are `transaction="cache"`.
+- `TraceContext.trace_id` and `span_id` are `HexId` values (their bytes), not `String`s; `to_string()` gives the hex.
 - Mail stored by IMAP and POP3 sync, SMTP delivery and import, and the IMAP flag sync, run in transaction-cache frames; `react#Message`, `edit#Message`, `redact#Message`, `vote#Poll`, `mark#AllRead` and `mark#NotificationsViewed` are `transaction="cache"`, and a redacted message leaves the search index after its commit.
 - `no-tx-cache` turns a frame to read-through (writes go to the database, reads still kept), and a later `cache` call that joins it no longer turns holding back on.
 - A find of a view built in code (a data document, a REST query view) writes the frame's held rows first, as a view entity read does.

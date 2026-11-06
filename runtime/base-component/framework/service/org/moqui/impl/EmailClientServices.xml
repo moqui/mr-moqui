@@ -3141,7 +3141,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="save" noun="Draft">
+    <service verb="save" noun="Draft" transaction="cache">
         <description>
             Create or update a draft (ES_DRAFT) in the Drafts folder of an account the user may send from: emailMessageId
             for an existing draft (a send that failed becomes a draft again), else a new one in the account of

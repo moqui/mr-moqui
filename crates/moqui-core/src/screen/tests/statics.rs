@@ -882,7 +882,7 @@ fn a_static_screen_is_recorded_in_the_screen_history() {
     let mut request = crate::web::WebRequest::new("GET", "/Clean.qvt");
     request.peer_ip = "127.0.0.1".to_string();
     request.query.push(("keep".to_string(), "1".to_string()));
-    request.set_header("cookie", &format!("moqui.session={value}"));
+    request.set_header("cookie", format!("moqui.session={value}"));
     let response = crate::screen::serve_at(&world.factory, request, &root());
     assert_eq!(response.status, 200, "{}", response.body_text());
     assert_eq!(response.header("X-Moqui-Qvt"), Some("static-template"));

@@ -351,11 +351,12 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.resource.ContentBlob" short-alias="blob">
             <key-map field-name="oid" related="blobId"/></relationship>
     </entity>
-    <entity entity-name="ResourceLock" package="moqui.resource" use="transactional" cache="never">
+    <entity entity-name="ResourceLock" package="moqui.resource" use="transactional" cache="false">
         <description>A WebDAV write lock on a resource location (a file, or a folder and with depth infinity what is under
             it), which every writer on every member of a cluster keeps (crates/moqui-core/src/resource/locks.rs). The key
             is the SHA-256 (base64url) of lockPath, so a write's check reads by primary key. A row past expiresDate
-            holds nothing and is removed as locks are taken.</description>
+            holds nothing and is removed as locks are taken. Not cached, except the count of all rows: a write's check
+            reads nothing more when there are none, the usual case, and a write of a lock clears it.</description>
         <field name="lockKey" type="text-short" is-pk="true"/>
         <field name="lockPath" type="text-long"/>
         <field name="lockToken" type="text-medium"/>

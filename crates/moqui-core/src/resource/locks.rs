@@ -110,6 +110,18 @@ fn lock_of(row: &EntityValue) -> (String, Lock) {
 
 /// The live locks of `key` and the folders above it (by row key), and with `tree` those under it, as (path, lock).
 fn live_around(facade: &EntityFacade, key: &str, tree: bool) -> Result<Vec<(String, Lock)>, Error> {
+    // Locks are rare (WebDAV clients take them): with no row at all, nothing is read. The count is cached (by a
+    // condition every row meets, as the entity cache keeps no find without one), and a write of a lock, here or on a
+    // cluster peer, clears it.
+    let any = facade
+        .find(LOCK_ENTITY)?
+        .condition(Condition::is_not_null("lockKey"))
+        .use_cache(true)
+        .disable_authz()
+        .count()?;
+    if any == 0 {
+        return Ok(Vec::new());
+    }
     let keys: Vec<Value> = with_ancestors(key)
         .iter()
         .map(|key| Value::string(row_key(key)))

@@ -2650,6 +2650,24 @@ fn apply_flags(
     let facade = session.facade;
     let pending = &session.pending_local;
     force_cache(facade, || {
+        // The rows that change, read in one find and kept by the frame: each update's rule reads its row as it was
+        // (Email.eecas.xml), and the frame answers that from memory instead of a query a message.
+        let ids: Vec<Value> = flags
+            .iter()
+            .filter_map(|(uid, set)| locals.get(uid).map(|row| (row, set)))
+            .filter(|(row, set)| {
+                !pending.contains(&row.id)
+                    && (row.read != set.seen || row.flagged != set.flagged || row.answered != set.answered)
+            })
+            .map(|(row, _)| Value::string(&row.id))
+            .collect();
+        if ids.len() > 1 {
+            facade
+                .find(MESSAGE)?
+                .condition(moqui_core::entity::Condition::is_in("emailMessageId", ids))
+                .disable_authz()
+                .list()?;
+        }
         let mut changed = 0;
         for (uid, set) in flags {
             let Some(row) = locals.get(uid) else {

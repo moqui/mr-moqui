@@ -685,11 +685,11 @@ pub mod trace_tests {
         };
         let span = spans
             .iter()
-            .find(|span| text(span, "span_id") == parent.span_id)
+            .find(|span| parent.span_id == text(span, "span_id"))
             .unwrap_or_else(|| panic!("no span {} in {spans:?}", parent.span_id));
         assert_eq!(text(span, "kind"), "CLIENT", "{span:?}");
         assert_eq!(text(span, "name"), format!("HTTP {method}"), "{span:?}");
-        assert_eq!(text(span, "parent_span_id"), root.span_id, "{span:?}");
+        assert_eq!(text(span, "parent_span_id"), root.span_id.to_string(), "{span:?}");
         assert_eq!(text(span, "http.request.method"), method, "{span:?}");
         assert_eq!(text(span, "url.full"), url, "{span:?}");
         assert_eq!(text(span, "http.response.status_code"), "200", "{span:?}");

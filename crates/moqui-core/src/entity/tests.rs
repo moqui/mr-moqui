@@ -1339,7 +1339,7 @@ fn a_statement_is_a_span_only_inside_a_trace() {
     assert_eq!(statements.len(), 1, "{spans:?}");
     assert_eq!(
         statements[0].get("parent_span_id").and_then(Value::as_str),
-        Some(root_id.as_str())
+        Some(root_id.to_string().as_str())
     );
     drop(spans);
     telemetry.shutdown();

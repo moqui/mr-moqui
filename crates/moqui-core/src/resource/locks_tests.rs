@@ -35,6 +35,23 @@ fn lock(user_id: &str, depth_infinity: bool) -> Lock {
     }
 }
 
+/// With no lock at all a write's check reads nothing but the cached count; a lock taken clears it, so the next check
+/// sees the lock, and its removal lets the write through again.
+#[test]
+fn the_count_of_no_locks_is_kept_until_a_lock_is_taken() {
+    let facade = facade();
+    let location = "dbresource://locks-test-count/docs/a.txt";
+    assert!(check(&facade, location, Some("bob"), false).is_ok());
+    assert!(check(&facade, location, Some("bob"), false).is_ok());
+    put(&facade, location, &lock("alice", false)).unwrap();
+    assert!(
+        check(&facade, location, Some("bob"), false).is_err(),
+        "the lock is seen"
+    );
+    remove(&facade, location).unwrap();
+    assert!(check(&facade, location, Some("bob"), false).is_ok());
+}
+
 #[test]
 fn a_lock_holds_its_own_location_and_nothing_beside_it() {
     let facade = facade();

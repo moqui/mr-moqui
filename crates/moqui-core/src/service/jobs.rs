@@ -820,7 +820,7 @@ pub(crate) fn run_job(job: JobRun) {
                 "traceId",
                 trace_context
                     .as_ref()
-                    .map_or(Value::Null, |context| Value::string(&context.trace_id)),
+                    .map_or(Value::Null, |context| Value::string(context.trace_id.to_string())),
             ),
             ("hostAddress", Value::string(host_address)),
             ("hostName", Value::string(host_name)),

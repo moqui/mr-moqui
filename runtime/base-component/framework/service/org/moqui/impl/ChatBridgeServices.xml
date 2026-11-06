@@ -324,7 +324,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="process" noun="InboundItem" allow-remote="false">
+    <service verb="process" noun="InboundItem" allow-remote="false" transaction="cache">
         <description>Internal: one item of a batch, in the caller's new transaction: checked, deduped, its external user and
             actor found or made (a member of the room from its first item on), then sent, edited, reacted or deleted through
             ChatServices as that actor with the bridge as its source. Out: outcome (accepted, duplicate, echo, waiting, stale,

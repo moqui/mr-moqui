@@ -251,19 +251,18 @@ impl Runtime {
         });
         let mut span = self.tracer.build_with_context(builder, &parent_context);
         let span_context = span.span_context();
-        let trace_id = span_context.trace_id().to_string();
+        let trace_id = super::HexId(span_context.trace_id().to_bytes());
         // The configured ratio decides from the trace id, not a caller's sampled flag, so a client cannot turn full
         // tracing on, and every span of a trace (and every service with the same ratio) decides alike.
         let sampled = retain || {
-            let value = trace_id
-                .get(..16)
-                .and_then(|high| u64::from_str_radix(high, 16).ok())
-                .unwrap_or(0);
+            let mut high = [0u8; 8];
+            high.copy_from_slice(&trace_id.0[..8]);
+            let value = u64::from_be_bytes(high);
             (value as f64 / u64::MAX as f64) < sample_ratio
         };
         let context = TraceContext {
             trace_id,
-            span_id: span_context.span_id().to_string(),
+            span_id: super::HexId(span_context.span_id().to_bytes()),
             sampled,
             tracestate: parent.map_or_else(String::new, |parent| parent.tracestate),
             local: true,
@@ -415,7 +414,11 @@ impl Runtime {
         let body = super::redact_owned(clip_owned(input.body, 16_384));
         record.set_body(opentelemetry::logs::AnyValue::String(body.into()));
         if let Some(context) = input.context {
-            if let (Ok(trace), Ok(span)) = (TraceId::from_hex(&context.trace_id), SpanId::from_hex(&context.span_id)) {
+            {
+                let (trace, span) = (
+                    TraceId::from_bytes(context.trace_id.0),
+                    SpanId::from_bytes(context.span_id.0),
+                );
                 record.set_trace_context(
                     trace,
                     span,
@@ -452,8 +455,8 @@ impl Runtime {
 
 fn sdk_context(context: &TraceContext) -> Context {
     let span_context = SpanContext::new(
-        TraceId::from_hex(&context.trace_id).unwrap_or(TraceId::INVALID),
-        SpanId::from_hex(&context.span_id).unwrap_or(SpanId::INVALID),
+        TraceId::from_bytes(context.trace_id.0),
+        SpanId::from_bytes(context.span_id.0),
         if context.sampled {
             TraceFlags::SAMPLED
         } else {
