@@ -79,3 +79,52 @@ the declared `<parameter>` element as Java's `ParameterInfo` holds it: its attri
 parameters and validations (`first('matches')`, `children()`). `getInParameter(name)` returns the same node. The
 transition metadata of `ec.screen.getTransitionInfo` gives each `parameterMap` entry a `hasDefault`, true when the
 transition's `<parameter>` sets a `from` or a `value`.
+
+## Transaction cache
+
+A service marked `transaction="cache"` (or `force-cache`, a frame of its own) holds the writes of its transaction in
+memory and sends them to the database at the commit, in one batch: each row's writes merged where that is safe, the
+statements sent without waiting (an entity's creates joined into multi-row inserts on Postgres) and one wait for them.
+While it holds them its finds see them, and a row it has read or written is not read from the database again. The
+design and the numbers are in [plans/TX-Cache.md](../../plans/TX-Cache.md); the code is `moqui-entity`
+`entity/cache/tx.rs`, `hold.rs` and `batch.rs`.
+
+**Which service to mark.** The service an operation starts with (a screen transition's, a REST call's, a job's), not an
+inner service many callers share: a `cache` call that joins its caller's transaction turns holding on for the rest of
+that transaction, as Java's `initTransactionCache` does, so a shared inner service would change its callers.
+
+**What reads see.** Within the transaction, the rows it holds and every row it has read, kept as first read: a row
+another transaction commits a change to after this one read it is not seen again until this one ends (between
+repeatable read and the database's read committed; usually what a service wants, and cheaper). A row it has not read
+yet is read as last committed. A find by the whole key of a row the transaction created, or a list of the children of
+a row it created (a condition on a type-one relationship's key), reads nothing from the database. A find the shared
+entity cache answers is left to it. A service that must see another transaction's commit mid-way runs without the
+cache.
+
+**Locks.** A `for-update` find always goes to the database and locks there, then sees the held writes. The locks that
+creates, updates and deletes take come at the commit, when the batch writes them, so they are held for the shortest
+time. A service that needs an interim lock from a write (an insert that makes another request wait, a counter row
+created so the next one waits on it) takes it with a `for-update` find of a row that is there, or makes that row in a
+`force-new` call first (as `ChatServices.record#UserChange` makes a user's `ChatUserState` with `ensure#UserStates`),
+or runs without the cache. A very large operation may want its locks as it goes, and runs without it too.
+
+**Errors.** An update of a row the transaction deleted or read as missing fails at once; one of a row it knows nothing
+of fails at the commit if it changes no row, as a direct update does. A create of a row the database has fails at the
+first find that loads that row, else at the commit; the commit's failure names the write, its key and the service that
+held it. A service that must report each row it could not write on its own (`save#DataGridChanges`) runs without the
+cache.
+
+**What writes the held rows early** (an early flush, which costs a batch of its own): a find or count of a view entity,
+or of a view built in code (a data document, a REST query view), when a held row of a member may be in its result; a
+`distinct`, `having` or aggregate find of an entity the transaction holds rows of (the held writes up to that entity's
+last); raw SQL (`run_sql`); a `no-tx-cache` service joining (after which the transaction writes through and keeps what
+it read); more than 10,000 held writes. Read the member entity instead of a view of rows the service just wrote, and do
+work that reads a document of those rows (a search index) after the commit (`registerOnCommit`).
+
+**Strict and census modes.** `moqui.tx_cache.strict=true` (or `MOQUI_TX_CACHE_STRICT=true`, tests only) makes an early
+flush mark the transaction rollback-only, so a test of a `cache` service fails when it does not commit in one batch.
+`moqui.tx_cache.everywhere=true` (`MOQUI_TX_CACHE_EVERYWHERE`, dev and test only) makes every transaction hold; with
+`MOQUI_TX_CACHE_CENSUS_FILE` set, each early flush and each failed commit batch is a line in that file, naming the
+service: run it over a component's specs to find the next services to mark, and what stops them. Each transaction's
+counts (held writes, reads from memory and from the database, early flushes by cause, the batch's statements and waited
+round trips) are a debug event at its end, and `entity::cache::tx_cache_stats()` sums them for the thread.

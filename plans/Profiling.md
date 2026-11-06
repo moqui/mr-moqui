@@ -347,7 +347,53 @@ What changed:
 
 What is left of a row: the interpreter running the macro closures (a fifth of the time), the regular expression tests that remain (the qvt `fields-initial` values, `t` and `e` of each cell), and the row frame's one copy.
 
+## Round 14: the transaction cache
+
+[TX-Cache](TX-Cache.md) Phases 0 to 5 made the transaction cache correct and fast enough to turn on, and turned it on for five framework services and parts of five pieces of framework logic. A new opt-in test, `tx_cache_speed`, times each with the cache off and on, one transaction a call; the harness has a waited round-trips column now (`rt`, from `driver::round_trips`, counted by the Postgres wire client when a read waits after a send). Numbers are per call, release build; "delay" is an external Postgres in docker with `tc netem delay 200us`, where a waited round trip costs about 0.3 ms.
+
+| Call | rt off | rt on | ms off, delay | ms on, delay | ms off, local | ms on, local |
+|---|---|---|---|---|---|---|
+| S1 `heartbeat#UserStatus` | 8 | 5 | 2.26 | 1.56 | 0.30 | 0.27-0.32 |
+| S2 `mark#Read` | 4 | 4 | 1.33 | 1.36 | 0.19 | 0.22 |
+| S3 `send#Message` | 14 | 12 | 4.87 | 4.10 | 0.98 | 1.15 |
+| S4 `update#WikiPage` | 117 | 17 | 33.5 | 9.85 | 5.2 | 5.9 |
+| S5 `set#MessageFlags` | 21 | 19 | 4.70 | 4.20 | 1.13 | 1.24 |
+| F1 notification persist, 3 users | 8 | 5 | 2.15 | 1.38 | 0.15 | |
+| F4 audited update | 4 | 3 | 1.19 | 0.97 | 0.12 | 0.13 |
+| F5 fed update | 14 | 13 | 2.40 | 2.25 | 0.94 | 1.06 |
+
+"off" for F1 is the baseline (its persist is a `force-cache` frame now). Local times swing; the round trips do not.
+
+With a network between the server and the database the cache wins wherever a call reads a row again or writes several: S4 reads its page and space over and over and goes from 117 waited round trips to 17. Over a local socket a call that reads little again is a little slower with the cache on (S3, S4, S5): what the cache does costs more than the round trips it saves there.
+
+**Where the cache's own cost is** (heaptrack, allocations of the timed row only, `--flamegraph-cost-type allocations`; samply needs `perf_event_paranoid` at 1, which was 4 on this run, so no CPU profile yet). S4 with the cache on makes about 12,200 allocations a call (48,000 in the full run, where its page has more versions by then: `set_sequenced_id_secondary` and the wiki's resource reads grow with them, 17% and 29% of this row, and are the wiki's, not the cache's). Of the row:
+
+| Share | What |
+|---|---|
+| 44% | everything under `overlay_rows`, the cache's read path |
+| 16% | `load_plain`; of it 7% `plan_select`, the select SQL text built again on every read (the plain find path takes it from `sql_cache`) |
+| 8% | `keep_list`, each row of a list find copied into an `Rc` to keep |
+| 6% | `pinned_row`, a find by key; `load_by_pk` builds its SQL each time too |
+| 3.5% | `owned_lookup_key`, the list key string built for every find |
+| 2.6% | `values_of`, kept rows copied back out into `EntityValue`s |
+| 2.2% | `pinned_keys` and `equalities`, a `HashMap` for every find |
+
+S3's row (5,250 allocations a call) has the same first item: building select SQL (`plan_select`, `load_by_pk`) is 14% of it, and the commit batch building its statements 4%.
+
+What to try next, by expected payoff:
+1. **SQL text from `sql_cache`** for the cache's selects (`plan_select`, `load_by_pk`, `load_by_pks`) and the commit batch's statements, as the find and write paths have it.
+2. **Kept rows shared, not copied.** Keep rows as `Arc<FieldMap>` and give the `EntityValue` the same `Arc` (it holds its fields in one), copying only a row a held write changes; the kept list the same.
+3. **No string key for a list find**: look the list up through `with_lookup_key`'s thread buffer, and build the owned key only to keep one.
+4. **No `HashMap` for the key equalities**: the key fields are few; a small vector.
+5. A CPU profile (samply) of the S rows with the cache on, to see what is not allocation: the overlay's condition checks and sorting, `Value::clone` (11% of S4's allocations, much of it the copies above).
+6. Then the read paths of the five services themselves: S5 reads 8 rows from the database a call with the cache on, S3 8, S4 15; rows passed down rather than read again by key, as the plan's table lists, now cost nothing when kept, so what is left is reads of rows read once.
+
 ## Behaviour changes to know
+
+- In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
+- A chat message is indexed for search after its transaction commits, on a worker, not in it.
+- `no-tx-cache` turns a frame to read-through (writes go to the database, reads still kept), and a later `cache` call that joins it no longer turns holding back on.
+- A find of a view built in code (a data document, a REST query view) writes the frame's held rows first, as a view entity read does.
 
 - A data-feed touch of an entity no feed document has keeps no values, once the feed configuration has been read and no definition was written since. If a definition that adds the entity is committed by another thread between the write and its commit, that commit feeds the write through the Postgres `xmin` probe (other databases miss it), as for a touch recorded without values.
 - A write in a transaction of an entity with no cached find or count clears the entity's caches whole at the end of the frame, instead of evicting by the values written. Only a find cached by another thread during the frame is affected, and it is cleared rather than kept.
