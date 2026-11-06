@@ -9,7 +9,7 @@ Design, status and review documents for MR Moqui. User guides for built features
 - [Performance-Summary.md](Performance-Summary.md): digest of the performance plan, the recorded numbers and the Mantle USL audit.
 
 **Phase 13: LLM, A2A and Assist**
-- [LLM-A2A-Assist.md](LLM-A2A-Assist.md): the design and implementation plan for the agent runtime, the Assist drawer, chat and triggered agents, A2A, MCP and the OpenAI-compatible gateway, with the review of the Java prototype it replaces and the ideas taken from other assistants. Built: 13.1 to 13.14; its leftovers are in Remaining-Work.
+- [LLM-A2A-Assist.md](LLM-A2A-Assist.md): the design and implementation plan for the agent runtime, the Assist drawer, chat and triggered agents, A2A, MCP and the OpenAI-compatible gateway, with the review of the Java prototype it replaces and the ideas taken from other assistants. Built: 13.1 to 13.14. The Constitution default JSON is available for review; its runtime and Admin integration (13.15, §7.10) are proposed. Open work is in Remaining-Work.
 
 **Reference** (long-lived, kept current)
 - [Parity-Mapping.md](Parity-Mapping.md): every Rust module mapped to the Java, Groovy, XML and FreeMarker it was ported from, and the reverse index; what is excluded on purpose; the cross-cutting threads a review carries.
