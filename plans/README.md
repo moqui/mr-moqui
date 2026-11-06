@@ -20,6 +20,7 @@ Design, status and review documents for MR Moqui. User guides for built features
 - [Performance-Implementation.md](Performance-Implementation.md): outcomes and recorded before/after numbers for schema inspection, macro compilation reuse, definition loading and build feedback.
 - [Profiling.md](Profiling.md): the speed tests and how to run and profile them, what four rounds of entity, service, data load and XML work changed, the measured results, and next steps (external Postgres next).
 - [MantleUSL-Performance-Audit.md](MantleUSL-Performance-Audit.md): static review of mr-mantle for avoidable work amplification.
+- [TX-Cache.md](TX-Cache.md): the transaction cache made correct and fast (a read cache, locking finds, one batch at commit), then applied to five framework services and five pieces of framework logic so each commits in one batch; the first pass, mr-mantle next.
 - [MantleUSL-Execution-Benchmark-Plan.md](MantleUSL-Execution-Benchmark-Plan.md): Stages A–E, the correctness gate, and the execution-method comparison. The audit and this plan cite `../experiments/mantle-execution/README.md`, which lives on a separate experiment branch, not in this repository.
 
 **After performance: monitoring**
