@@ -16,7 +16,10 @@
 //! locks nothing there, and a failed insert aborts the whole transaction, so each locks a row that is always there
 //! before it looks again. Several joins of a room by one user at once (`ChatServices.add#Member`, which locks the
 //! `ChatRoom`) all succeed with one member row, one membership event and one chat actor (made with one create-or-update); several first saves of one wiki page
-//! (`WikiServices.update#WikiPage`, which locks the `WikiSpace`) all succeed with one `WikiPage` row.
+//! (`WikiServices.update#WikiPage`, which locks the `WikiSpace`) all succeed with one `WikiPage` row. Several first chat
+//! changes of one user at once (`ChatServices.mark#Read`, a transaction-cache service whose `record#UserChange` makes
+//! the user's missing `ChatUserState` in a transaction of its own and then locks it, plans/TX-Cache.md G8) all succeed
+//! with one counter row.
 
 #![cfg(all(unix, feature = "embedded-postgres", feature = "axum"))]
 
@@ -130,6 +133,76 @@ fn racing_first_joins_and_first_page_saves_all_succeed() {
             &[("wikiSpaceId", "RACE"), ("pagePath", &page_name)],
         );
         assert_eq!(pages, 1, "round {round}: one page row");
+    }
+}
+
+#[test]
+fn racing_first_chat_changes_of_one_user_all_succeed() {
+    if !crate::common::own_process() {
+        return;
+    }
+    let gate = crate::common::start_with_data("first-chat-changes", DATA);
+    let factory = Arc::clone(gate.server.factory());
+    // a room of john.doe's and the user for each call, so the calls lock no member row in common
+    let rooms: Vec<String> = as_user(&factory, "john.doe", || {
+        (0..CALLS)
+            .map(|index| {
+                let room = call(
+                    "org.moqui.impl.ChatServices.create#Room",
+                    &[
+                        ("roomTypeEnumId", Value::string("private")),
+                        ("roomName", Value::string(format!("First changes {index}"))),
+                        ("memberUserIdList", Value::List(vec![Value::string("RACE_1")])),
+                    ],
+                )
+                .unwrap();
+                let room = to_plain_string(room.get("chatRoomId").unwrap());
+                call(
+                    "org.moqui.impl.ChatServices.send#Message",
+                    &[
+                        ("chatRoomId", Value::string(room.clone())),
+                        ("body", Value::string("<p>hello</p>")),
+                    ],
+                )
+                .unwrap();
+                room
+            })
+            .collect()
+    });
+    for round in 0..ROUNDS {
+        // the user's counter missing, as before their first change
+        {
+            let context = factory.new_context();
+            let _entered = context.enter();
+            let _authz = context.disable_authz();
+            let facade = factory.entity().unwrap();
+            for entity in ["moqui.chat.ChatUserChange", "moqui.chat.ChatUserState"] {
+                facade
+                    .find(entity)
+                    .unwrap()
+                    .eq("userId", Value::string("RACE_1"))
+                    .delete_all()
+                    .unwrap();
+            }
+        }
+        let rooms = rooms.clone();
+        let results = race(&factory, "race.1", move |index| {
+            // read to the latest, then unread from the first, so each round is a change
+            let mut parameters = vec![("chatRoomId", Value::string(rooms[index].clone()))];
+            if round % 2 == 1 {
+                parameters.push(("markUnread", Value::Bool(true)));
+                parameters.push(("eventSeq", Value::I64(1)));
+            }
+            call("org.moqui.impl.ChatServices.mark#Read", &parameters)
+        });
+        for (index, result) in results.iter().enumerate() {
+            assert!(result.is_ok(), "round {round}: change {index}: {result:?}");
+        }
+        assert_eq!(
+            count(&factory, "moqui.chat.ChatUserState", &[("userId", "RACE_1")]),
+            1,
+            "round {round}: one counter row"
+        );
     }
 }
 

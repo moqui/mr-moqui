@@ -954,3 +954,34 @@ fn the_commit_batch_keeps_a_cleared_reference_before_the_delete_it_allows() {
     let child_update = enum_statements(&tape, false)[before + 1].clone();
     assert!(child_update.contains("parent_enum_id"), "{child_update}");
 }
+
+/// A held row is judged in memory as the database would judge it: a number given as a float or as text in an `in` or
+/// an equality matches the stored integer.
+#[test]
+fn a_held_row_matches_a_condition_of_another_number_type() {
+    let facade = testing::open();
+    let event = "moqui.chat.ChatEvent";
+    let tx = facade.transactions_for(event).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        let mut row = facade.make_value(event)?;
+        row.set("chatRoomId", Value::string("R2"));
+        row.set("eventSeq", Value::I64(7));
+        row.set("eventTypeEnumId", Value::string("CetMessage"));
+        row.create(&facade)?;
+        let found = facade
+            .find(event)?
+            .eq("chatRoomId", Value::string("R2"))
+            .condition(moqui_db::sql::Condition::In("eventSeq".into(), vec![Value::F64(7.0)]))
+            .list()?;
+        assert_eq!(found.len(), 1);
+        let found = facade
+            .find(event)?
+            .eq("chatRoomId", Value::string("R2"))
+            .eq("eventTypeEnumId", Value::string("CetMessage"))
+            .eq("eventSeq", Value::string("7"))
+            .list()?;
+        assert_eq!(found.len(), 1);
+        Ok(())
+    })
+    .unwrap();
+}

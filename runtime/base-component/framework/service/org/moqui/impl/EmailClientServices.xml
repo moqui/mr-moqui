@@ -2201,7 +2201,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="set" noun="MessageFlags">
+    <service verb="set" noun="MessageFlags" transaction="cache">
         <description>Mark messages (or a thread) read or unread (read permission), flagged or answered (send permission).
             A flag not given is left as it is.</description>
         <in-parameters>

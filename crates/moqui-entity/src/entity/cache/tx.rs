@@ -697,6 +697,34 @@ pub(super) fn flush_for_view(facade: &EntityFacade, view: &str, condition: Optio
     Ok(())
 }
 
+/// Before a read of a view built in code (a data document, a REST query): when the frame holds a row of one of its
+/// `members`, write every held row now, as [`flush_for_view`] does with no condition to judge by.
+pub(crate) fn flush_for_members(facade: &EntityFacade, members: &[String], view: &str) -> Result<(), Error> {
+    if TX_HOLD.with(|slot| slot.borrow().is_empty()) {
+        return Ok(());
+    }
+    let Some(first) = members.first() else {
+        return Ok(());
+    };
+    let tx = facade.transactions_for(first)?;
+    let Some(token) = tx.frame_token() else {
+        return Ok(());
+    };
+    let full_names: Vec<String> = members
+        .iter()
+        .map(|name| super::read_meta(facade, name).map_or_else(|_| name.clone(), |meta| meta.full_name.clone()))
+        .collect();
+    let holds = TX_HOLD.with(|slot| {
+        slot.borrow()
+            .get(&token)
+            .is_some_and(|frame| full_names.iter().any(|name| frame.holds_entity(name)))
+    });
+    if holds {
+        flush_early(facade, &tx, token, FlushCause::View, view)?;
+    }
+    Ok(())
+}
+
 /// Whether a held write of a view member may change a view read with `condition`: the row before or after it may
 /// match, judged on the view's aliases of the member's fields.
 fn held_may_show(frame: &FrameHold, held: &Held, aliases: &[(String, String)], condition: Option<&Condition>) -> bool {

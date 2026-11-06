@@ -567,7 +567,7 @@ along with this software (see the LICENSE.md file). If not, see
         </actions>
     </service>
 
-    <service verb="update" noun="WikiPage">
+    <service verb="update" noun="WikiPage" transaction="cache">
         <description>Write a page's text as a new version and, when its name or parent changes, move it (move#WikiPage, which
             keeps its history and leaves an alias at the old path). A page is found by wikiPageId, else by its exact path
             in the space (a path that is only an alias of a moved page is a new page there, and the alias goes). The

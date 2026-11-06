@@ -564,6 +564,19 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
+    <service verb="ensure" noun="UserStates" allow-remote="false">
+        <description>Internal: make the ChatUserState of each user of userIdList that has none. record#UserChange calls
+            it in a transaction of its own, so the row is there for its lock.</description>
+        <in-parameters><parameter name="userIdList" type="List" required="true"/></in-parameters>
+        <actions><script><![CDATA[
+            for (const id of Array.from(userIdList)) {
+                const state = ec.entity.makeValue('moqui.chat.ChatUserState')
+                state.set('userId', id)
+                state.createOrUpdate()
+            }
+        ]]></script></actions>
+    </service>
+
     <service verb="record" noun="UserChange" allow-remote="false">
         <description>Internal: add a change to the feed of each user of userIdList (ChatUserChange), in the caller's
             transaction, numbered from the user's ChatUserState, which stays locked to the commit. changeKind (a code or
@@ -619,7 +632,9 @@ along with this software (see the LICENSE.md file). If not, see
             }
             if (!users.length) return
 
-            // each user's counter, locked in userId order; a missing one is made with an insert that waits for another's
+            // each user's counter, locked in userId order; a missing one is made in a transaction of its own (one row per
+            // user, ever), so the lock below waits on another first change of the user even when this one holds its
+            // writes to its commit (plans/TX-Cache.md G8)
             const lock = () => {
                 const found = {}
                 for (let start = 0; start < users.length; start += 500)
@@ -630,12 +645,16 @@ along with this software (see the LICENSE.md file). If not, see
             let states = lock()
             const missing = users.filter((id) => !states[id])
             if (missing.length) {
-                for (const id of missing) {
-                    const state = ec.entity.makeValue('moqui.chat.ChatUserState')
-                    state.set('userId', id)
-                    state.createOrUpdate()
-                }
+                ec.service.sync().name('org.moqui.impl.ChatServices.ensure#UserStates').parameters({userIdList: missing})
+                        .requireNewTransaction(true).disableAuthz().call()
                 states = lock()
+                // a database that reads this transaction's snapshot does not show those rows yet: make them here
+                const still = users.filter((id) => !states[id])
+                if (still.length) {
+                    ec.service.sync().name('org.moqui.impl.ChatServices.ensure#UserStates').parameters({userIdList: still})
+                            .disableAuthz().call()
+                    states = lock()
+                }
             }
             const now = ec.user.nowTimestamp
             for (const entry of entries) {
@@ -2138,7 +2157,7 @@ along with this software (see the LICENSE.md file). If not, see
 
     <!-- ========== Messages ========== -->
 
-    <service verb="send" noun="Message">
+    <service verb="send" noun="Message" transaction="cache">
         <description>A message from the current user (a member of the room, which is not archived). body is safe HTML (the
             m-rich-text light value: mentions are span data-mention-id); a message needs a body or attachments
             (chatAttachmentIdList, files the sender uploaded to this room with upload#Attachment and not yet sent).
@@ -2465,7 +2484,9 @@ along with this software (see the LICENSE.md file). If not, see
                     chatRoomId: chatRoomId, eventSeq: eventSeq, roomName: room.roomName || event.senderName || chatRoomId, authorUserId: sender,
                     authorName: event.senderName || sender, bodyText: ciphertext ? null : bodyText, roomUrl: roomUrl || null, encrypted: !!ciphertext}).call()
             }
-            if (!ciphertext) ec.service.sync().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).call()
+            // indexed once the transaction commits: the document is read through a view of rows this one may hold to
+            // its commit (plans/TX-Cache.md D5), and a message that rolls back is not indexed
+            if (!ciphertext) ec.service.special().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).registerOnCommit()
             if (html && !externalActor && !ciphertext) ec.service.sync().name('org.moqui.impl.ChatServices.queue#LinkPreviews').parameters({chatRoomId: chatRoomId,
                 eventSeq: eventSeq, senderUserId: sender, body: html}).call()
             // the counts of the members whose count it changes
@@ -2658,7 +2679,9 @@ along with this software (see the LICENSE.md file). If not, see
             if (notify.length) ec.service.sync().name('org.moqui.impl.ChatServices.notify#Mention').parameters({userIdList: notify,
                 chatRoomId: chatRoomId, eventSeq: eventSeq, roomName: room.roomName || event.senderName || chatRoomId, authorUserId: me,
                 authorName: event.senderName || me, bodyText: ciphertext ? null : bodyText, roomUrl: roomUrl || null, encrypted: !!ciphertext}).call()
-            if (!ciphertext) ec.service.sync().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).call()
+            // indexed once the transaction commits: the document is read through a view of rows this one may hold to
+            // its commit (plans/TX-Cache.md D5), and a message that rolls back is not indexed
+            if (!ciphertext) ec.service.special().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq}).registerOnCommit()
             if (!externalActor && !ciphertext && !parse(original.linkPreviewJson).removed) ec.service.sync().name('org.moqui.impl.ChatServices.queue#LinkPreviews').parameters({
                 chatRoomId: chatRoomId, eventSeq: eventSeq, senderUserId: me, body: html}).call()
             if (added.length || dropped.length) ec.service.sync().name('org.moqui.impl.ChatServices.publish#ChatCounts')
@@ -2964,7 +2987,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="mark" noun="Read">
+    <service verb="mark" noun="Read" transaction="cache">
         <description>Move the current user's read marker in a room: to eventSeq (the room's last event by default; a marker
             only moves forward), or with markUnread to just before eventSeq ("mark unread from here"). The user's other
             tabs hear of it on chatUser:userId and the room's members on chatRoom:id (read receipts, unless the user's
@@ -4194,7 +4217,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="heartbeat" noun="UserStatus">
+    <service verb="heartbeat" noun="UserStatus" transaction="cache">
         <description>The client's heartbeat (each minute while a page is open, and at once when the user comes back from
             idle): the user is connected now, and was last active idleSeconds ago (active true for now, false for not
             since the last beat). Presence changes are published on userStatus. Out: myStatus.</description>

@@ -159,7 +159,7 @@ pub(super) fn flush_writes(
     }
     conn.finish_deferred().map_err(|err| {
         Error::new(format!(
-            "Could not write the transaction cache's {} held writes: {err}",
+            "Could not write the transaction cache's {} held writes",
             flushed.rows
         ))
         .with_source(err)

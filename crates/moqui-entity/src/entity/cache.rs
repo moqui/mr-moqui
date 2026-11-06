@@ -53,6 +53,7 @@ mod tx;
 
 use hold::Held;
 pub use stats::{tx_cache_stats, FlushCause, TxCacheStats};
+pub(crate) use tx::flush_for_members;
 pub use tx::{flush_and_disable, flush_before_sql, register_cache_flush};
 use tx::{flush_for_view, overlay_rows};
 
@@ -2614,10 +2615,10 @@ fn row_matches(condition: Option<&Condition>, fields: &FieldMap) -> bool {
 
 fn eval_condition(condition: &Condition, fields: &FieldMap) -> bool {
     match condition {
-        Condition::Equals(field, expected) => field_value(fields, &field.name) == *expected,
+        Condition::Equals(field, expected) => same_value(&field_value(fields, &field.name), expected),
         Condition::NotEquals(field, expected) => {
             let got = field_value(fields, &field.name);
-            !got.is_null() && got != *expected
+            !got.is_null() && !same_value(&got, expected)
         }
         // A null value is IS NULL and IS NOT NULL in the SQL, as Java writes it.
         Condition::Like(field, pattern) | Condition::Between(field, pattern, _) if pattern.is_null() => {
@@ -2643,14 +2644,14 @@ fn eval_condition(condition: &Condition, fields: &FieldMap) -> bool {
                 return false;
             }
             let got = field_value(fields, &field.name);
-            values.contains(&got)
+            values.iter().any(|value| same_value(&got, value))
         }
         Condition::NotIn(field, values) => {
             if values.is_empty() {
                 return true;
             }
             let got = field_value(fields, &field.name);
-            !got.is_null() && !values.contains(&got)
+            !got.is_null() && !values.iter().any(|value| same_value(&got, value))
         }
         Condition::Between(field, low, high) => {
             let got = field_value(fields, &field.name);
@@ -2725,6 +2726,18 @@ fn upper_values(condition: Condition) -> Condition {
 
 fn field_value(fields: &FieldMap, name: &str) -> Value {
     fields.get(name).cloned().unwrap_or(Value::Null)
+}
+
+/// Whether a row's value equals a condition's as the database would compare them: the same value, or of other types
+/// (a number given as text or as a float, plans/TX-Cache.md) the same by ordering or as text.
+fn same_value(got: &Value, expected: &Value) -> bool {
+    if got == expected {
+        return true;
+    }
+    if got.is_null() || expected.is_null() {
+        return false;
+    }
+    compare_obj(got, expected).ok() == Some(Ordering::Equal) || same_key(got, expected)
 }
 
 fn cmp_present(left: &Value, right: &Value) -> Option<Ordering> {

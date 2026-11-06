@@ -1,6 +1,6 @@
 # Transaction cache
 
-Status 2026-11-05: Phases 0 to 3 built: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G7 (G8 and G9 are by design and go in the guide), D6's commit batch, and D2 to D5's reads. [Results](#results) has the censuses and the numbers.
+Status 2026-11-05: Phases 0 to 4 built: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G8 (G9 is by design and goes in the guide), D6's commit batch, D2 to D5's reads, and S1 to S5 on the cache. [Results](#results) has the censuses and the numbers.
 
 The transaction cache holds a transaction's writes in memory and writes them all at commit; while it holds them, the transaction's reads see them. Done well, it gives a large speedup for high-volume transactional work and a large cut in database load, without refactoring reusable services and without callers keeping records in hand to avoid re-reading them: a service that reads `OrderItem` again, as each of several services in one operation does, gets it from memory. Moqui Java got real gains from this in a few places. Here the framework is ours to change and services can be reviewed in bulk, so the aim is more: make the cache fast and correct enough that a common transactional service runs from its first write to its commit without touching the database for anything it has already read or written, and its writes go out in one batch.
 
@@ -348,6 +348,47 @@ External Postgres with 200 us of added delay:
 ```
 
 With the delay, cache on against off: S1 2.34 to 1.55 ms (-34%), S3 4.74 to 3.79 ms (-20%), S4 33.3 to 10.0 ms (-70%: 117 waited round trips to 17), S5 4.86 to 4.19 ms (-14%), F4 1.24 to 0.95 ms (-23%), S2 the same. Allocations are up with the cache on (S4 29k to 48k a call): the kept rows and lists are copied out for each read, a first target for Phase 6.
+
+### The five services (Phase 4)
+
+S1 to S5 are `transaction="cache"`. Their Rust tests (`chat_tests.rs`, `wiki_tests.rs`, `client_tests.rs`, `moqui-host` `user_status` and `lock_then_insert`) pass in strict mode, and so do the 393 features of the framework and example specs (`MOQUI_TX_CACHE_STRICT=true ./moq test`): none of the five, nor a call that joins one, flushes early. What it took:
+
+- **G8** (`record#UserChange`): a missing `ChatUserState` is made by `ensure#UserStates` in a `force-new` call, then locked with the `for-update` find, so two first changes of one user wait on each other. A database that gives the outer transaction its snapshot (the test driver) does not show the row: then it is made in the frame, as before. `racing_first_chat_changes_of_one_user_all_succeed` (`moqui-host/tests/it/lock_then_insert.rs`, first changes in six rooms at once) fails without it on a duplicate key at the commit batch.
+- **S3**: `send#Message` and `edit#Message` index the message for search once the transaction commits (`registerOnCommit`), not in it: the `MoquiChatEvent` document is read through a view built in code, which writes the held rows first (an early flush). A message that rolls back is no longer indexed.
+- **Views built in code** (data documents, REST query views) now write the frame's held rows of their members first, as a view entity does; they read the database without them before.
+- **In-memory conditions** compare as the database does: a number given as a float or as text equals the stored integer (`create#Poll` reads its held `ChatPoll` with `eventSeq in [...]` of JavaScript numbers).
+
+The table's other changes (rows passed down instead of read again) are not made: those reads now come from the frame (`mem rd`), and what is left is the next round's. With 200 us of added delay:
+
+```
+  operation                                        calls  median ms   us/call    calls/s    allocs      bytes      kept    sql     rt        min-max ms
+  S1 heartbeat#UserStatus, cache off                 200    447.136   2235.68        447    1474.4     243596      9977   7.02   8.03  435.094-482.836 
+  S3 send#Message, cache off                         200    983.847   4919.24        203    4338.9     561743     23610  13.99  15.00  941.861-1040.824
+  S2 mark#Read, cache off                            200    262.418   1312.09        762    1045.1     207526      6801   3.00   4.00  258.737-273.477 
+  S4 update#WikiPage, cache off                      200   6917.929  34589.64         29   35430.9    8157048    103003 116.00 129.19 6105.629-7213.672
+  S5 set#MessageFlags, cache off                     200   1002.151   5010.75        200    5360.3    1978999     20836  15.97  20.98  925.424-1124.715
+  F1 notification persist, 3 users, cache off        200    421.866   2109.33        474     649.1      64549       288   6.04   8.06  401.704-433.774 
+  F4 audited update UserAccount.username, cache off     200    252.018   1260.09        794     640.6     272983      1816   3.02   4.04  234.082-258.632 
+  F5 fed update EmailMessage.isFlagged, cache off     200    487.651   2438.25        410    1858.0     662148      2879   8.97  13.97  470.064-491.494 
+  F3 session start and password login, cache off     200   2706.959  13534.80         74     603.5   19989284      3686   6.04   8.05 2646.991-3369.451
+  S1 heartbeat#UserStatus, cache on                  200    313.768   1568.84        637    1596.4     243104      6496   3.00   5.00  311.412-343.049 
+  S3 send#Message, cache on                          200    787.476   3937.38        254    5272.4     630069     20080  10.00  12.01  773.793-813.118 
+  S2 mark#Read, cache on                             200    269.825   1349.13        741    1489.6     237156      6783   3.00   4.00  266.984-300.107 
+  S4 update#WikiPage, cache on                       200   1981.140   9905.70        101   48140.8   10077607     19012  15.00  17.01 1483.592-2555.674
+  S5 set#MessageFlags, cache on                      200    842.898   4214.49        237    6099.8    1990193     15893  12.97  18.98  835.916-848.195 
+  F4 audited update UserAccount.username, cache on     200    193.646    968.23       1033     998.6     300284       929   1.04   3.07  184.243-230.927 
+  F5 fed update EmailMessage.isFlagged, cache on     200    449.040   2245.20        445    2301.8     686000      2879   6.97  12.97  427.822-471.243 
+  transaction cache per call                      frames    held   mem rd    db rd    early batch st batch rt
+  F4 audited update UserAccount.username, cache on    1.00    2.00     0.00     1.00     0.00     2.00     1.00
+  F5 fed update EmailMessage.isFlagged, cache on    1.00    1.00     1.00     2.00     0.00     1.00     1.00
+  S1 heartbeat#UserStatus, cache on                 1.00    1.00     3.00     3.00     0.00     1.00     1.00
+  S2 mark#Read, cache on                            1.00    0.00     0.00     3.00     0.00     0.00     0.00
+  S3 send#Message, cache on                         1.00    3.00     1.00     8.00     0.00     3.00     1.00
+  S4 update#WikiPage, cache on                      1.00    4.00    97.00    15.00     0.00     4.00     1.01
+  S5 set#MessageFlags, cache on                     1.00    1.00     2.00     8.00     0.00     1.00     1.00
+```
+
+S3's statements rise by one in both rows: the search index now runs after the commit, on a worker the process-wide count still sees.
 
 ## Tests
 

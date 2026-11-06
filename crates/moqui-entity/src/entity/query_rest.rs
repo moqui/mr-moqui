@@ -1382,6 +1382,13 @@ fn run_view(facade: &EntityFacade, built: &BuiltView, authorize: bool) -> Result
         model.complete_view(&mut view)?;
         Ok((view, tx.clone()))
     })?;
+    // As a view entity's read: the frame's held rows of a member go to the database first (plans/TX-Cache.md D5).
+    let members: Vec<String> = view
+        .member_entities
+        .iter()
+        .map(|member| member.entity_name.clone())
+        .collect();
+    super::cache::flush_for_members(facade, &members, &view.entity_name)?;
     let mut condition = built.condition.clone();
     let mut artifacts = Vec::new();
     if authorize {
