@@ -462,7 +462,8 @@ fn a_duplicated_directory_lists_its_copies_children_once() {
         Some(b"one".to_vec())
     );
     let entry = facade.db_resource_entry("dbresource://dup/a").unwrap();
-    assert_eq!(entry.children.len(), 2);
+    assert!(entry.exists && !entry.is_file);
+    assert_eq!(facade.db_resource_children("dbresource://dup/a").unwrap().len(), 2);
 }
 
 #[test]

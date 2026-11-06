@@ -88,14 +88,15 @@ fn http_get(url: &str, sim: bool) -> Result<String, String> {
     }
 }
 
-/// A `dbresource` node as found. A file's bytes are read when they are first asked for.
+/// A `dbresource` node as found. A file's bytes and a directory's children are read when they are first asked for: a
+/// reference made to ask whether a page is there reads neither.
 #[derive(Clone)]
 struct DbSnap {
     exists: bool,
     is_file: bool,
     bytes: Arc<OnceLock<Result<Vec<u8>, String>>>,
     facade: Option<EntityFacade>,
-    children: Vec<DbSnapChild>,
+    children: Arc<OnceLock<Vec<DbSnapChild>>>,
 }
 
 impl std::fmt::Debug for DbSnap {
@@ -116,8 +117,32 @@ impl DbSnap {
             is_file: exists,
             bytes: Arc::new(OnceLock::new()),
             facade,
-            children: Vec::new(),
+            children: Arc::new(OnceLock::from(Vec::new())),
         }
+    }
+
+    /// The children of a directory, listed the first time they are asked for; a listing that fails is logged and empty,
+    /// as a directory deleted since.
+    fn children(&self, location: &str) -> &[DbSnapChild] {
+        self.children.get_or_init(|| {
+            let Some(facade) = self.facade.as_ref().filter(|_| self.exists && !self.is_file) else {
+                return Vec::new();
+            };
+            match facade.db_resource_children(location) {
+                Ok(children) => children
+                    .into_iter()
+                    .map(|child| DbSnapChild {
+                        location: join_location(location, &child.name),
+                        name: child.name,
+                        is_file: child.is_file,
+                    })
+                    .collect(),
+                Err(err) => {
+                    tracing::warn!(error = %err, "Could not list {location}");
+                    Vec::new()
+                }
+            }
+        })
     }
 
     fn bytes(&self, location: &str) -> Result<Vec<u8>, Error> {
@@ -292,7 +317,7 @@ impl ResourceRef {
             }
             Stored::Http(_) => Ok(Vec::new()),
             Stored::Db(snap) => Ok(snap
-                .children
+                .children(&self.location)
                 .iter()
                 .filter(|child| child.is_file)
                 .map(|child| Self {
@@ -331,7 +356,7 @@ impl ResourceRef {
                     return self.clone();
                 }
                 if let Some(child) = snap
-                    .children
+                    .children(&self.location)
                     .iter()
                     .find(|child| child.is_file && child.name == relative)
                 {
@@ -1005,7 +1030,7 @@ impl ResourceFacade {
         }
         Ok(ResourceRef {
             location: location.to_string(),
-            stored: Stored::Db(db_snap(location, &info, facade.clone())),
+            stored: Stored::Db(db_snap(&info, facade.clone())),
         })
     }
 
@@ -1054,21 +1079,13 @@ impl ResourceFacade {
     }
 }
 
-fn db_snap(location: &str, info: &DbResourceInfo, facade: EntityFacade) -> DbSnap {
+fn db_snap(info: &DbResourceInfo, facade: EntityFacade) -> DbSnap {
     DbSnap {
         exists: info.exists,
         is_file: info.is_file,
         bytes: Arc::new(OnceLock::new()),
         facade: Some(facade),
-        children: info
-            .children
-            .iter()
-            .map(|child| DbSnapChild {
-                location: join_location(location, &child.name),
-                name: child.name.clone(),
-                is_file: child.is_file,
-            })
-            .collect(),
+        children: Arc::new(OnceLock::new()),
     }
 }
 

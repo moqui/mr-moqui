@@ -407,6 +407,19 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     const childOf = (childRef, directoryRef) => { if (childRef != null) childRef.childOfLocation = directoryRef.location; return childRef; };
     const joinPath = (location, path) => location.replace(/\/$/, "") + (path.charAt(0) === "/" ? "" : "/") + path;
     wrappers.Resource = function (ref) {
+        // size, lastModified and children are read the first time a script asks for them
+        if (!("size" in ref)) {
+            let stat = ref.exists ? null : {};
+            const statOf = () => stat ??= (host.resourceStat(ref.location) || {});
+            Object.defineProperty(ref, "size", { get: () => statOf().size ?? null, enumerable: true, configurable: true });
+            Object.defineProperty(ref, "lastModified", { get: () => statOf().lastModified ?? null, enumerable: true,
+                configurable: true });
+        }
+        if (ref.directory && !("children" in ref)) {
+            let children = null;
+            Object.defineProperty(ref, "children", { get: () => children ??= host.resourceEntries(ref.location),
+                enumerable: false, configurable: true });
+        }
         Object.assign(ref, {
             getLocation: () => ref.location, getFileName: () => ref.fileName, getExists: () => ref.exists,
             isDirectory: () => ref.directory, isFile: () => ref.file, getSize: () => ref.size,
@@ -1857,15 +1870,26 @@ fn resource_ref(ctx: &Ctx<'_>, location: &str) -> rquickjs::Result<crate::contex
     found.map_err(|err| throw_context(ctx, &err))
 }
 
-fn resource_info_value(resource: &crate::context::ResourceRef, children: bool) -> Value {
-    let location = resource.location().to_string();
+/// `{location, fileName, exists, directory, file, contentType, text, binary}` of a resource. Its size, last-modified
+/// time and children are read when a script asks for them (`resourceStat`, `resourceEntries`): a reference made to ask
+/// whether a file is there reads no file and lists no directory.
+fn resource_info_value(resource: &crate::context::ResourceRef) -> Value {
+    info_value(
+        resource.location(),
+        resource.exists(),
+        resource.is_directory(),
+        resource.is_file(),
+    )
+}
+
+fn info_value(location: &str, exists: bool, directory: bool, file: bool) -> Value {
     let file_name = location.rsplit('/').next().unwrap_or_default().to_string();
     let mut map = indexmap::IndexMap::new();
-    map.insert("location".to_string(), Value::string(&location));
+    map.insert("location".to_string(), Value::string(location));
     map.insert("fileName".to_string(), Value::string(&file_name));
-    map.insert("exists".to_string(), Value::Bool(resource.exists()));
-    map.insert("directory".to_string(), Value::Bool(resource.is_directory()));
-    map.insert("file".to_string(), Value::Bool(resource.is_file()));
+    map.insert("exists".to_string(), Value::Bool(exists));
+    map.insert("directory".to_string(), Value::Bool(directory));
+    map.insert("file".to_string(), Value::Bool(file));
     // `ResourceReference.getContentType`, `isText`, `isBinary`: from the file name's extension.
     let content_type = moqui_lib::resource::content_type_for_name(&file_name);
     map.insert(
@@ -1880,32 +1904,38 @@ fn resource_info_value(resource: &crate::context::ResourceRef, children: bool) -
         "binary".to_string(),
         Value::Bool(content_type.is_some_and(moqui_lib::resource::is_binary_content_type)),
     );
-    map.insert(
-        "size".to_string(),
-        resource
-            .size()
-            .map_or(Value::Null, |size| Value::I64(i64::try_from(size).unwrap_or(i64::MAX))),
-    );
-    map.insert(
-        "lastModified".to_string(),
-        resource.last_modified().map_or(Value::Null, Value::I64),
-    );
-    if children && resource.is_directory() {
-        let entries = resource.children().unwrap_or_default();
-        map.insert(
-            "children".to_string(),
-            Value::List(entries.iter().map(|child| resource_info_value(child, false)).collect()),
-        );
-    }
     Value::Map(map)
 }
 
-/// `{location, fileName, exists, directory, file, size, lastModified, children}`, or null for a location no scheme
+/// `{size, lastModified}` of a resource (each null when it has none), or null for a location no scheme resolves.
+fn resource_stat<'js>(ctx: Ctx<'js>, location: String) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || {
+        match with_ec(&ctx, |ec| ec.factory().resource().get(&location))? {
+            Ok(resource) => {
+                let mut map = indexmap::IndexMap::new();
+                map.insert(
+                    "size".to_string(),
+                    resource
+                        .size()
+                        .map_or(Value::Null, |size| Value::I64(i64::try_from(size).unwrap_or(i64::MAX))),
+                );
+                map.insert(
+                    "lastModified".to_string(),
+                    resource.last_modified().map_or(Value::Null, Value::I64),
+                );
+                host_to_js(&ctx, Value::Map(map))
+            }
+            Err(_) => Null.into_js(&ctx),
+        }
+    })
+}
+
+/// [`resource_info_value`] of a location, or null for a location no scheme
 /// resolves. A `dbresource://` location with no row is a reference that does not exist, as Java's.
 fn resource_info<'js>(ctx: Ctx<'js>, location: String) -> rquickjs::Result<JsValue<'js>> {
     host_guard(&ctx, || {
         match with_ec(&ctx, |ec| ec.factory().resource().get(&location))? {
-            Ok(resource) => host_to_js(&ctx, resource_info_value(&resource, true)),
+            Ok(resource) => host_to_js(&ctx, resource_info_value(&resource)),
             Err(_) if location.starts_with("dbresource:") => host_to_js(&ctx, missing_info_value(&location)),
             Err(_) => Null.into_js(&ctx),
         }
@@ -1913,29 +1943,7 @@ fn resource_info<'js>(ctx: Ctx<'js>, location: String) -> rquickjs::Result<JsVal
 }
 
 fn missing_info_value(location: &str) -> Value {
-    let file_name = location.rsplit('/').next().unwrap_or_default().to_string();
-    let content_type = moqui_lib::resource::content_type_for_name(&file_name);
-    let mut map = indexmap::IndexMap::new();
-    map.insert("location".to_string(), Value::string(location));
-    map.insert("fileName".to_string(), Value::string(&file_name));
-    map.insert("exists".to_string(), Value::Bool(false));
-    map.insert("directory".to_string(), Value::Bool(false));
-    map.insert("file".to_string(), Value::Bool(false));
-    map.insert(
-        "contentType".to_string(),
-        content_type.map_or(Value::Null, Value::string),
-    );
-    map.insert(
-        "text".to_string(),
-        Value::Bool(content_type.is_some_and(moqui_lib::resource::is_text_content_type)),
-    );
-    map.insert(
-        "binary".to_string(),
-        Value::Bool(content_type.is_some_and(moqui_lib::resource::is_binary_content_type)),
-    );
-    map.insert("size".to_string(), Value::Null);
-    map.insert("lastModified".to_string(), Value::Null);
-    Value::Map(map)
+    info_value(location, false, false, false)
 }
 
 /// The text at a location; a `#versionName` suffix reads that version (`ec.resource.getLocationText`).
@@ -2023,8 +2031,8 @@ fn resource_delete(ctx: Ctx<'_>, location: String) -> rquickjs::Result<bool> {
     })
 }
 
-/// `getDirectoryEntries`: the files and directories directly under a directory, each as [`resource_info`] without
-/// its children. A location the facade cannot list (such as `classpath`) has its child files only.
+/// `getDirectoryEntries`: the files and directories directly under a directory, each as [`resource_info`] gives it,
+/// from the listing (no child is looked up again). A location the facade cannot list (such as `classpath`) has its child files only.
 fn resource_entries<'js>(ctx: Ctx<'js>, location: String) -> rquickjs::Result<JsValue<'js>> {
     host_guard(&ctx, || {
         let factory = factory_of(&ctx)?;
@@ -2032,15 +2040,14 @@ fn resource_entries<'js>(ctx: Ctx<'js>, location: String) -> rquickjs::Result<Js
         let entries = match resources.list(&location) {
             Ok(entries) => entries
                 .iter()
-                .filter_map(|entry| resources.get(&entry.location).ok())
-                .map(|entry| resource_info_value(&entry, false))
+                .map(|entry| info_value(&entry.location, true, !entry.is_file, entry.is_file))
                 .collect(),
             Err(_) => match resources.get(&location) {
                 Ok(resource) if resource.is_directory() => resource
                     .children()
                     .unwrap_or_default()
                     .iter()
-                    .map(|child| resource_info_value(child, false))
+                    .map(resource_info_value)
                     .collect(),
                 _ => Vec::new(),
             },
@@ -2898,6 +2905,7 @@ pub(super) fn install<'js>(
     method!("isRestrictedGenericEntity", is_restricted_generic_entity);
     method!("getAvailableTimeZones", get_available_time_zones);
     method!("resourceInfo", resource_info);
+    method!("resourceStat", resource_stat);
     method!("resourceVersionStream", resource_version_stream);
     method!("restRootResources", rest_root_resources);
     method!("resolveRestService", resolve_rest_service);

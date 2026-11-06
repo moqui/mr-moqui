@@ -473,11 +473,17 @@ mod driver {
         /// is then aborted, and a `COMMIT` would roll it back without an error. `ROLLBACK` drops their failures. `COMMIT`
         /// closes an open stream's cursor first. `ROLLBACK` does not, since it closes the cursor itself and a `CLOSE` in
         /// an aborted transaction would fail before the rollback is sent. Either way the stream is gone.
+        /// A `COMMIT` goes out behind the writes still unanswered, in one round trip, when the server checks all of
+        /// them: it ends a transaction one of them failed as a rollback, and that write's failure is the error. When a
+        /// write is checked here (an update that must change a row) the writes are waited for first, so a failed check
+        /// stops the commit.
         fn finish_transaction(&mut self, sql: &str) -> Result<(), Error> {
             let commit = sql == "COMMIT";
             if commit {
                 self.flush_batch()?;
-                self.wire.finish()?;
+                if !self.wire.server_checks_all() {
+                    self.wire.finish()?;
+                }
             } else {
                 self.batch = None;
                 self.wire.abandon();
@@ -486,9 +492,10 @@ mod driver {
             let closed = if close { self.close_stream() } else { Ok(()) };
             self.clear_stream();
             closed?;
-            self.wire.simple(sql, sql)?;
+            // the transaction is over on the server whether this fails or an earlier write's failure is reported
+            let finished = self.wire.simple(sql, sql);
             self.in_transaction = false;
-            Ok(())
+            finished
         }
 
         fn fetch_stream(&mut self) -> Result<(), Error> {
@@ -712,10 +719,17 @@ mod driver {
             self.finish_transaction("ROLLBACK")
         }
 
+        /// Not waited for when nothing before it is unanswered: it goes out with the next request, whose wait reports
+        /// it. With writes unanswered it waits, so a failure of theirs is reported here and not taken for one of the
+        /// statements the savepoint is meant to undo.
         fn savepoint(&mut self, name: &str) -> Result<(), Error> {
             self.flush_batch()?;
-            self.wire
-                .simple(&format!("SAVEPOINT {}", quote_ident(name)), "savepoint")
+            let sql = format!("SAVEPOINT {}", quote_ident(name));
+            if self.wire.settled() {
+                self.wire.queue_simple(&sql, "savepoint")
+            } else {
+                self.wire.simple(&sql, "savepoint")
+            }
         }
 
         fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), Error> {
@@ -726,10 +740,12 @@ mod driver {
             )
         }
 
+        /// Not waited for: it goes out with the next request (the commit, often), whose wait reports a failure. A
+        /// release fails only in a transaction that is already failed.
         fn release_savepoint(&mut self, name: &str) -> Result<(), Error> {
             self.flush_batch()?;
             self.wire
-                .simple(&format!("RELEASE SAVEPOINT {}", quote_ident(name)), "release savepoint")
+                .queue_simple(&format!("RELEASE SAVEPOINT {}", quote_ident(name)), "release savepoint")
         }
 
         /// `SET LOCAL` lasts until the transaction ends, so clearing is a no-op. Not waited for, as `BEGIN` is not.

@@ -899,10 +899,7 @@ fn flush_tracked(ctx: &Ctx<'_>, engine: &Engine, mode: Flush) -> Result<(), Erro
                         .insert(name.clone(), Released { value: saved, written });
                 }
                 STACK.with(|stack| {
-                    let mut stack = stack.borrow_mut();
-                    if !stack.put_existing(&name, host.clone()) {
-                        let _ = stack.put(name.clone(), host);
-                    }
+                    let _ = stack.borrow_mut().put_nearest(&name, host);
                 });
             }
             Err(err) => {
@@ -1931,6 +1928,11 @@ pub fn js_error(err: impl ToString) -> Error {
 }
 
 /// Read one name from the thread-local stack. `None` when the name is missing.
+/// [`context_value`], moved out of the top frame when only the stack holds it: for a frame about to be popped.
+pub fn take_context_value(name: &str) -> Option<Value> {
+    STACK.with(|stack| stack.borrow_mut().take(name))
+}
+
 pub fn context_value(name: &str) -> Option<Value> {
     match stack_get(name) {
         Lookup::Value(value) => Some(value),

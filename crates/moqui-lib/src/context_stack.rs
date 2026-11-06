@@ -190,13 +190,40 @@ impl ContextStack {
     /// Replace `key` in the nearest frame that holds it, so a callee's change to a caller's
     /// list stays with the caller. Returns false and stores nothing when no frame holds it.
     pub fn put_existing(&mut self, key: &str, value: Value) -> bool {
+        self.replace_existing(key, value).is_ok()
+    }
+
+    /// [`Self::put_existing`], giving `value` back when no frame holds `key`.
+    fn replace_existing(&mut self, key: &str, value: Value) -> Result<(), Value> {
         for frame in self.top_down() {
-            if frame.borrow().contains_key(key) {
-                frame.borrow_mut().insert(key.to_string(), value);
-                return true;
+            if let Some(slot) = frame.borrow_mut().get_mut(key) {
+                *slot = value;
+                return Ok(());
             }
         }
-        false
+        Err(value)
+    }
+
+    /// Replace `key` in the nearest frame that holds it ([`Self::put_existing`]), else put it in the top frame.
+    pub fn put_nearest(&mut self, key: &str, value: Value) -> Result<(), Error> {
+        match self.replace_existing(key, value) {
+            Ok(()) => Ok(()),
+            Err(value) => self.put(key, value).map(|_| ()),
+        }
+    }
+
+    /// The value of `key`, moved out of the top frame when that frame holds it and nothing else shares the frame (a
+    /// frame about to be dropped: a service's results); else a copy, as [`Self::get`] gives.
+    pub fn take(&mut self, key: &str) -> Option<Value> {
+        if let Some(frame) = self.top.as_ref().filter(|frame| Rc::strong_count(frame) == 1) {
+            if let Some(value) = frame.borrow_mut().swap_remove(key) {
+                return Some(value);
+            }
+        }
+        match self.get(key) {
+            Lookup::Value(value) => Some(value),
+            Lookup::Missing | Lookup::Context => None,
+        }
     }
 
     pub fn remove(&mut self, key: &str) -> Option<Value> {
@@ -326,6 +353,39 @@ mod tests {
         stack.pop().unwrap();
         assert_eq!(stack.get("a"), Lookup::Value(Value::string("root")));
         assert!(stack.pop().is_err());
+    }
+
+    #[test]
+    fn take_moves_out_of_an_unshared_top_frame_and_copies_otherwise() {
+        let mut stack = ContextStack::new();
+        stack.put("below", Value::string("kept")).unwrap();
+        stack.push();
+        stack.put("out", Value::string("moved")).unwrap();
+        assert_eq!(stack.take("out"), Some(Value::string("moved")));
+        assert_eq!(stack.get("out"), Lookup::Missing);
+        // in a frame below: copied, and still there
+        assert_eq!(stack.take("below"), Some(Value::string("kept")));
+        assert_eq!(stack.get("below"), Lookup::Value(Value::string("kept")));
+        // a top frame someone else holds keeps its values
+        let frame = Frame::default();
+        stack.push_map(Rc::clone(&frame)).unwrap();
+        stack.put("shared", Value::I32(1)).unwrap();
+        assert_eq!(stack.take("shared"), Some(Value::I32(1)));
+        assert_eq!(frame.borrow().get("shared"), Some(&Value::I32(1)));
+        assert_eq!(stack.take("missing"), None);
+    }
+
+    #[test]
+    fn put_nearest_replaces_where_the_name_is_else_puts_on_top() {
+        let mut stack = ContextStack::new();
+        stack.put("list", Value::I32(1)).unwrap();
+        stack.push();
+        stack.put_nearest("list", Value::I32(2)).unwrap();
+        stack.put_nearest("fresh", Value::I32(3)).unwrap();
+        stack.pop().unwrap();
+        assert_eq!(stack.get("list"), Lookup::Value(Value::I32(2)));
+        assert_eq!(stack.get("fresh"), Lookup::Missing);
+        assert!(stack.put_nearest("context", Value::Null).is_err());
     }
 
     #[test]

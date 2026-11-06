@@ -181,6 +181,7 @@ fn embedded_cluster_queries_stream_cache_and_drops() {
 
     round_trip_scalars(&mut conn);
     savepoint_keeps_the_first_row(&mut conn);
+    a_savepoint_waits_with_the_statements_after_it(&mut conn);
     stream_requires_a_transaction(&mut conn);
     stream_reads_every_inserted_row(&mut conn);
     a_refused_stream_fails_at_open_and_a_closed_one_reopens(&mut conn);
@@ -968,6 +969,72 @@ fn savepoint_keeps_the_first_row(conn: &mut PostgresConn) {
     let rows = conn.query("SELECT n FROM sp", &[]).unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].get("n"), Some(&Value::I32(1)));
+}
+
+/// A savepoint with nothing unanswered before it, and a release, go out with the next statement that waits: a savepoint
+/// around deferred rows is one round trip, and its release goes with the commit. With a write unanswered the savepoint
+/// waits, and the write's failure is its error. A commit goes out with the writes before it unless one is checked here.
+fn a_savepoint_waits_with_the_statements_after_it(conn: &mut PostgresConn) {
+    conn.execute("CREATE TABLE sp_trips (n int PRIMARY KEY)", &[]).unwrap();
+    let insert = "INSERT INTO sp_trips (n) VALUES (?)";
+    conn.begin().unwrap();
+    // the statement prepared first (a cold deferred statement waits to prepare)
+    conn.execute_deferred(insert, vec![Value::I32(1)], None).unwrap();
+    conn.finish_deferred().unwrap();
+    let before = moqui_core::driver::thread_round_trips();
+    conn.savepoint("trips").unwrap();
+    conn.execute_deferred(insert, vec![Value::I32(2)], None).unwrap();
+    conn.finish_deferred().unwrap();
+    conn.release_savepoint("trips").unwrap();
+    conn.commit().unwrap();
+    assert_eq!(moqui_core::driver::thread_round_trips() - before, 2);
+
+    conn.begin().unwrap();
+    conn.savepoint("undo").unwrap();
+    let duplicate = conn.execute(insert, &[Value::I32(1)]).unwrap_err();
+    assert!(duplicate.message().contains("duplicate key"), "{duplicate}");
+    conn.rollback_to_savepoint("undo").unwrap();
+    conn.release_savepoint("undo").unwrap();
+    conn.execute(insert, &[Value::I32(3)]).unwrap();
+    conn.commit().unwrap();
+
+    conn.begin().unwrap();
+    conn.execute_deferred(insert, vec![Value::I32(1)], None).unwrap();
+    let earlier = conn.savepoint("late").unwrap_err();
+    assert!(earlier.message().contains("duplicate key"), "{earlier}");
+    conn.rollback().unwrap();
+
+    // the COMMIT goes out with the writes; a write that fails is the commit's error, and nothing of it is written
+    conn.begin().unwrap();
+    conn.execute_deferred(insert, vec![Value::I32(4)], None).unwrap();
+    let before = moqui_core::driver::thread_round_trips();
+    conn.commit().unwrap();
+    assert_eq!(moqui_core::driver::thread_round_trips() - before, 1);
+    conn.begin().unwrap();
+    conn.execute_deferred(insert, vec![Value::I32(5)], None).unwrap();
+    conn.execute_deferred(insert, vec![Value::I32(1)], None).unwrap();
+    let failed = conn.commit().unwrap_err();
+    assert!(failed.message().contains("duplicate key"), "{failed}");
+    conn.rollback().unwrap();
+    // an update that must change a row is waited for first, and one that changed none stops the commit
+    conn.begin().unwrap();
+    conn.execute_deferred(insert, vec![Value::I32(6)], None).unwrap();
+    conn.execute_deferred(
+        "UPDATE sp_trips SET n = 7 WHERE n = ?",
+        vec![Value::I32(99)],
+        Some("no row changed".to_string()),
+    )
+    .unwrap();
+    let unchanged = conn.commit().unwrap_err();
+    assert!(unchanged.message().contains("no row changed"), "{unchanged}");
+    conn.rollback().unwrap();
+
+    let rows = conn.query("SELECT n FROM sp_trips ORDER BY n", &[]).unwrap();
+    let numbers: Vec<_> = rows.iter().filter_map(|row| row.get("n").cloned()).collect();
+    assert_eq!(
+        numbers,
+        vec![Value::I32(1), Value::I32(2), Value::I32(3), Value::I32(4)]
+    );
 }
 
 fn stream_requires_a_transaction(conn: &mut PostgresConn) {

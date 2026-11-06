@@ -52,7 +52,20 @@ pub(crate) fn clean(
             continue;
         }
         known.insert(param.name.clone());
-        match clean_param(param, &params, &mut scope, def.validate_input) {
+        // A value that is there is taken out to clean, not copied (a map or list may be large), and put back when the
+        // parameter keeps it as it was; a blank one stays, for a default that reads it.
+        let blank = is_blank(params.get(&param.name));
+        let current = if blank {
+            params.get(&param.name).cloned()
+        } else {
+            params.remove(&param.name)
+        };
+        let mut kept = None;
+        let cleaned = clean_value(param, current, &params, &mut scope, def.validate_input, &mut kept);
+        if let Some(value) = kept.filter(|_| !blank) {
+            params.insert(param.name.clone(), value);
+        }
+        match cleaned {
             Ok(Some(value)) => {
                 let value = nested(param, value, &param.name, &mut failed, def.validate_input);
                 scope.set(&param.name, &value)?;
@@ -122,18 +135,43 @@ fn nested(param: &ParamDef, value: Value, path: &str, failed: &mut Vec<(String, 
 /// declared checks. The value to store, if any, or Java's message for each thing that failed: a missing required
 /// value or a failed conversion stops there, and each check that fails is a message of its own. As Java,
 /// `validate="false"` skips the required, HTML and declared checks but still converts.
+/// The value of the parameter `param` in `params`, cleaned: `Ok(None)` leaves the parameter as it was.
 fn clean_param(
     param: &ParamDef,
     params: &BTreeMap<String, Value>,
     scope: &mut DefaultScope,
     validate: bool,
 ) -> Result<Option<Value>, Vec<String>> {
+    clean_value(
+        param,
+        params.get(&param.name).cloned(),
+        params,
+        scope,
+        validate,
+        &mut None,
+    )
+}
+
+/// [`clean_param`] of `current`, the parameter's value taken out of `params`. When the result does not carry `current`
+/// on (`Ok(None)`, or a failure) it is left in `kept`, for the caller to put back.
+fn clean_value(
+    param: &ParamDef,
+    current: Option<Value>,
+    params: &BTreeMap<String, Value>,
+    scope: &mut DefaultScope,
+    validate: bool,
+    kept: &mut Option<Value>,
+) -> Result<Option<Value>, Vec<String>> {
     let mut defaulted = None;
-    if is_blank(params.get(&param.name)) {
+    if is_blank(current.as_ref()) {
         defaulted = default_for(param, params, scope).map_err(|err| vec![err.message().to_string()])?;
     }
-    let current = defaulted.clone().or_else(|| params.get(&param.name).cloned());
+    let current = match &defaulted {
+        Some(value) => Some(value.clone()),
+        None => current,
+    };
     if validate && param.required == Required::True && is_blank(current.as_ref()) {
+        *kept = current;
         return Err(vec![localized("Field cannot be empty")]);
     }
     let Some(value) = current else {
@@ -146,6 +184,9 @@ fn clean_param(
         if defaulted.is_none() && !has_default && !empty_matches_type(&value, &param.java_type) {
             return Ok(Some(Value::Null));
         }
+        if defaulted.is_none() {
+            *kept = Some(value);
+        }
         return Ok(defaulted);
     }
     // Convert first, so the checks see the type they were written for.
@@ -157,9 +198,15 @@ fn clean_param(
         converted
     } else if param.format.is_some() && matches!(value, Value::String(_)) && is_number_type(&param.java_type) {
         // Java parses a number by its format and adds this error when it does not read
-        return Err(vec![not_converted(param, &value)]);
+        let message = not_converted(param, &value);
+        *kept = Some(value);
+        return Err(vec![message]);
+    } else if let Some(converted) = crate::l10n::convert_checked(&value, &param.java_type) {
+        converted
     } else {
-        crate::l10n::convert_checked(&value, &param.java_type).ok_or_else(|| vec![not_converted(param, &value)])?
+        let message = not_converted(param, &value);
+        *kept = Some(value);
+        return Err(vec![message]);
     };
     if !validate {
         return Ok(Some(value));
@@ -172,6 +219,7 @@ fn clean_param(
     if failures.is_empty() {
         Ok(Some(value))
     } else {
+        *kept = Some(value);
         Err(failures)
     }
 }

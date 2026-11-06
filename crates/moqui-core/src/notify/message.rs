@@ -346,7 +346,7 @@ impl NotificationMessage {
         let wrapped = wrapped_message(
             self,
             topic.as_ref(),
-            &message,
+            message,
             &type_name,
             persist,
             show_alert,
@@ -407,16 +407,14 @@ impl NotificationMessage {
         Ok(())
     }
 
+    /// The message map, or the message JSON read as one: a copy, which the wrapped message takes.
     fn resolved_message(&self) -> Result<IndexMap<String, Value>, Error> {
         if let Some(message) = &self.message_map {
             return Ok(message.clone());
         }
-        let Some(json) = &self.message_json else {
+        let Some(json) = self.message_json.as_deref().filter(|json| !json.is_empty()) else {
             return Ok(IndexMap::new());
         };
-        if json.is_empty() {
-            return Ok(IndexMap::new());
-        }
         let parsed = serde_json::from_str::<serde_json::Value>(json)
             .map_err(|err| Error::new(format!("notification message is not JSON: {err}")))?;
         match moqui_lib::json::from_json(&parsed) {
@@ -620,7 +618,7 @@ pub const ROUTE_USER_IDS: &str = "userIds";
 fn wrapped_message(
     message: &NotificationMessage,
     topic: Option<&EntityValue>,
-    body: &IndexMap<String, Value>,
+    body: IndexMap<String, Value>,
     type_name: &str,
     persist: bool,
     show_alert: bool,
@@ -654,7 +652,7 @@ fn wrapped_message(
             .map(Value::string)
             .unwrap_or(Value::Null),
     );
-    wrapped.insert("message".to_string(), Value::Map(body.clone()));
+    wrapped.insert("message".to_string(), Value::Map(body));
     wrapped.insert(
         "title".to_string(),
         Value::string(message.title_text.as_deref().unwrap_or("")),

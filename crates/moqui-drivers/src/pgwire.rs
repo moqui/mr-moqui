@@ -877,6 +877,22 @@ impl Wire {
         Ok(())
     }
 
+    /// No request waits for its reply and no failure waits to be reported.
+    pub(super) fn settled(&self) -> bool {
+        self.pending.is_empty() && self.failed.is_none()
+    }
+
+    /// Whether a request may go out behind the unanswered ones with no wait for them first: no failure is known, and
+    /// none of them is checked here after the server ran it (an update that must change a row), which the server
+    /// cannot know to stop at.
+    pub(super) fn server_checks_all(&self) -> bool {
+        self.failed.is_none()
+            && !self
+                .pending
+                .iter()
+                .any(|expect| matches!(expect, Expect::Execute { zero_rows: Some(_) }))
+    }
+
     /// Every reply in, and the first failure among them.
     pub(super) fn finish(&mut self) -> Result<(), Error> {
         self.settle_to(0)?;

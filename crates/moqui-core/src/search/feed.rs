@@ -681,13 +681,17 @@ fn claim_pending(facade: &EntityFacade, pending_id: &str) -> Result<bool, Error>
     Ok(facade.delete_value_counted(&value)? > 0)
 }
 
-/// Real-time push feeds, by the document ids they contain.
+/// Real-time push feeds, by the document ids they contain. Read through the entity cache: each delivery of pending rows reads them.
 fn realtime_feeds(facade: &EntityFacade) -> Result<IndexMap<String, Vec<Feed>>, Error> {
     let feeds = facade
         .find("moqui.entity.feed.DataFeed")?
         .eq("dataFeedTypeEnumId", Value::string(REALTIME_PUSH))
+        .use_cache(true)
         .list()?;
-    let links = facade.find("moqui.entity.feed.DataFeedDocument")?.list()?;
+    let links = facade
+        .find("moqui.entity.feed.DataFeedDocument")?
+        .use_cache(true)
+        .list()?;
     let mut out: IndexMap<String, Vec<Feed>> = IndexMap::new();
     for feed in feeds.iter() {
         let text = |name: &str| feed.get(name).map(to_plain_string).filter(|text| !text.is_empty());

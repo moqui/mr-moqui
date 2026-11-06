@@ -1361,13 +1361,14 @@ fn run_inline(def: &ServiceDef, parameters: &BTreeMap<String, Value>) -> Result<
 }
 
 /// The declared out-parameters, read from the script frame.
+/// The out-parameters a body left in its context, moved out of it: the context is popped next.
 fn collect_outputs(def: &ServiceDef) -> BTreeMap<String, Value> {
     let mut out = BTreeMap::new();
     for param in super::validate::expanded_out(def).iter() {
         if param.name.is_empty() || param.required == super::define::Required::Disabled {
             continue;
         }
-        if let Some(value) = crate::script::context_value(&param.name) {
+        if let Some(value) = crate::script::take_context_value(&param.name) {
             out.insert(param.name.clone(), value);
         }
     }

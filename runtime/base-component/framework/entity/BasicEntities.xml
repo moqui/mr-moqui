@@ -1056,10 +1056,12 @@ along with this software (see the LICENSE.md file). If not, see
         <relationship type="one" related="moqui.basic.email.EmailAccount" short-alias="account"/>
         <index name="EMAIL_RCHG_ACCT"><index-field name="emailAccountId"/><index-field name="createdDate"/></index>
     </entity>
-    <entity entity-name="EmailUserState" package="moqui.basic.email" use="transactional" cache="never">
+    <entity entity-name="EmailUserState" package="moqui.basic.email" use="transactional" cache="false">
         <description>A user's mail change cursor (EmailClientServices.get#MailChanges), made by the user's first read of
             it: only a user who has one gets EmailUserChange rows, so a user with no syncing client keeps no log. The row is
-            locked while the changes written since are numbered, so the numbers follow the order the changes committed.</description>
+            locked while the changes written since are numbered, so the numbers follow the order the changes committed.
+            Not cached, except the count of the states that are not dormant, which every message write reads
+            (note#MessageChange).</description>
         <field name="userId" type="id" is-pk="true"/>
         <field name="lastChangeSeq" type="number-integer"><description>The last changeSeq given out</description></field>
         <field name="purgedThruSeq" type="number-integer"><description>A cursor at or before this is too old: the log

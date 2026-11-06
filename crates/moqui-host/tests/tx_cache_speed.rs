@@ -17,6 +17,8 @@
 //! Each row is one operation per call, in its own transaction. "on" calls a service with `use_transaction_cache`, or
 //! runs the logic in a `cache` frame. F1 and F3 hold their writes themselves (their own `force-cache` frames), so they
 //! have an "on" row only, to compare with the baseline in plans/TX-Cache.md. F2 (a `ServiceJob` run) runs on the job workers and is not timed here.
+//! The factory runs async work inline: what a row's calls queue (the data feed's receive, a chat message's indexing)
+//! runs after the row, outside its time and its counts.
 //!
 //! Out of the default `cargo test` link, and ignored so naming the binary does not start a postmaster.
 //!
@@ -38,7 +40,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use moqui_core::context::{ExecutionContext, ExecutionContextFactory};
+use moqui_core::context::{BootOptions, ExecutionContext, ExecutionContextFactory, Executor};
 use moqui_core::driver::DbDriver;
 use moqui_core::entity::cache::{tx_cache_stats, TxCacheStats};
 use moqui_core::entity::load_feed::{conf_data_locations, load_entity_data, LoadOptions};
@@ -76,7 +78,13 @@ fn tx_cache_speed() {
     let (cluster, driver) = speed::SpeedDb::start(&cluster_dir, 20);
     let driver: Arc<dyn DbDriver> = Arc::new(driver);
     let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
-    let factory = ExecutionContextFactory::boot_with_framework(&runtime, &framework).expect("boot");
+    // Async work (the data feed's receive of each pending row, a chat message's indexing) runs on this thread after
+    // each row, outside its time, so a row times only its own calls and its statements are only its own.
+    let options = BootOptions {
+        executor: Executor::Inline,
+        ..BootOptions::default()
+    };
+    let factory = ExecutionContextFactory::boot_with_options(&runtime, &framework, options).expect("boot");
     let facade = open_entity_facade(&framework, Arc::clone(&driver), pool()).expect("open entity facade");
     attach(&factory, facade.clone());
     facade.check_all_tables().expect("check tables");
@@ -160,6 +168,8 @@ fn one_batch(
             entry.0 += u64::try_from(calls).unwrap_or(u64::MAX);
             entry.1.add(&tx_cache_stats().since(&before));
         }
+        factory.run_pending();
+        clear_errors();
     };
     for cache in [Cache::Off, Cache::On] {
         row("S1 heartbeat#UserStatus", cache, &mut |_| {

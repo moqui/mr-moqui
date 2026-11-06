@@ -486,10 +486,84 @@ Next:
 3. The wiki service's own reads: S4 still reads 16 rows from the database a save, and its resource reads are a third of it.
 4. Allocation: `Value::clone` is still the most frequent allocation site, much of it maps built to call services.
 
+## Round 16: quiet rows, a wiki save's reads, round trips at commit, copies
+
+Round 15's four next steps, against the same `tx_cache_speed` rows, embedded Postgres and the docker Postgres with 200 µs of delay.
+
+1. **Quiet rows.** The test boots its factory with the inline executor (`Executor::Inline`) and runs the async work a row queued (the data feed's receive of each pending row, a chat message's indexing) after the row, outside its time and its counts. S5 and F5 were the rows that showed the cache slower: their min-max ranges were three times the difference, from feed receives running on the workers beside them. Quiet, they are level or faster with the cache on (S5 692 off, 670 on; F5 221 off, 211 on), with ranges of a few percent. `rt` was the process's waited round trips, so it counted the workers' too: S5's went from 21 to 13 off.
+2. **The data feed at commit (F5).** A fed update of a primary entity rereads nothing (the per-touch reread is for related entities only). What it waited on was the savepoint around the pending rows: `SAVEPOINT`, the rows, `RELEASE`, each a round trip. A savepoint with nothing unanswered before it is now sent with the next request, a release always (it fails only in a transaction already failed), and a `COMMIT` goes out behind the writes still unanswered when the server checks them all (a failed write ends the transaction as a rollback on the server, and its failure is the error); writes with a check made here (an update that must change a row) are still waited for first. F5 went from 7 waited round trips to 4 on, 8 to 5 off. The delivery of pending rows (`realtime_feeds`) reads `DataFeed` and `DataFeedDocument` through the entity cache. Every message write also ran `note#MessageChange`'s count of awake `EmailUserState` rows (one waited round trip, S5 and F5 alike); the count is cached now (`EmailUserState` is `cache="false"`, not `never`, and a write of one clears it).
+3. **The wiki save's reads (S4).** `ec.resource.getLocationReference` read a file's size and last-modified time when the reference was made, and a directory's children each with its size: the space directory's reference listed every page of the space and read each one's `DbResourceFile` row, bytes included. A reference now reads size, last-modified time and children when a script asks for them (`resourceStat`, `resourceEntries`), `getDirectoryEntries` builds its entries from the listing (no lookup of each child), and a `dbresource` reference lists a directory's children the first time they are wanted. S4 reads 14 rows from the database (16 before), 59 from the frame (96), and a space with many pages no longer costs a read of each on every save.
+4. **Copies of service values.** A service's out-parameters are moved out of its context frame, which is popped next (`ContextStack::take`, when nothing else shares the frame), not copied; parameter validation takes each value out of the parameter map to clean it and puts it back, rather than copying it; a script's bare names are written back without a second copy (`put_nearest`); a notification's message is copied once, into the wrapped message. S1 went from 1,267 to 1,150 allocations a call on, S3 from 4,393 to 4,124, S5 from 3,980 to 3,820.
+
+Embedded Postgres:
+
+```
+  operation                                        calls  median ms   us/call    calls/s    allocs      bytes      kept    sql     rt        min-max ms
+  S1 heartbeat#UserStatus, cache off                 200     62.392    311.96       3206    1238.9     131194     11002   6.32   7.32   55.245-74.248  
+  S3 send#Message, cache off                         200    193.382    966.91       1034    4005.2     452919     36499  13.00  14.00  180.802-235.664 
+  S2 mark#Read, cache off                            200     33.156    165.78       6032     928.9     105765      8288   3.00   4.00   32.771-33.791  
+  S4 update#WikiPage, cache off                      200    603.519   3017.59        331   17143.2    3376802     71474  77.00  78.00  421.925-737.004 
+  S5 set#MessageFlags, cache off                     200    132.262    661.31       1512    3649.2     465143     21728  10.00  12.00  129.417-153.307 
+  F4 audited update UserAccount.username, cache off     200     19.208     96.04      10412     444.8      63075      1816   3.02   4.04   18.797-20.215  
+  F5 fed update EmailMessage.isFlagged, cache off     200     42.145    210.72       4746    1365.0     232250      2222   3.00   5.00   40.959-42.888  
+  S1 heartbeat#UserStatus, cache on                  200     43.738    218.69       4573    1150.3     116789      7990   3.00   4.22   43.162-44.387  
+  S3 send#Message, cache on                          200    185.932    929.66       1076    4123.6     457795     21639   9.00  11.00  184.516-205.652 
+  S2 mark#Read, cache on                             200     35.287    176.43       5668     976.2     108488      8289   3.00   4.00   34.170-38.703  
+  S4 update#WikiPage, cache on                       200    457.392   2286.96        437   16313.2    3689458     19205  14.00  16.00  373.611-593.342 
+  S5 set#MessageFlags, cache on                      200    130.163    650.82       1537    3820.1     469523     16699   7.00  10.00  127.870-138.054 
+  F1 notification persist, 3 users, cache on         200     25.347    126.73       7891     760.9      85554       -53   2.02   5.04   25.076-26.101  
+  F4 audited update UserAccount.username, cache on     200     18.432     92.16      10851     520.5      74587       929   1.02   3.04   17.429-18.654  
+  F5 fed update EmailMessage.isFlagged, cache on     200     40.884    204.42       4892    1393.9     228446      2222   1.00   4.00   38.860-56.854  
+  F3 session start and password login, cache on      200   2222.704  11113.52         90     721.5   20006349      3615   3.00   7.01 2214.628-2237.784
+```
+
+With 200 us of added delay:
+
+```
+  operation                                        calls  median ms   us/call    calls/s    allocs      bytes      kept    sql     rt        min-max ms
+  S1 heartbeat#UserStatus, cache off                 200    453.784   2268.92        441    1299.6     136820     11484   7.00   8.00  451.638-494.596 
+  S3 send#Message, cache off                         200    927.556   4637.78        216    4007.8     441175     25062  13.00  14.00  909.263-968.772 
+  S2 mark#Read, cache off                            200    263.871   1319.36        758     929.2     105757      8288   3.00   4.00  259.214-280.670 
+  S4 update#WikiPage, cache off                      200   4365.656  21828.28         46   17143.0    3376548     71480  77.00  78.00 4158.628-4518.217
+  S5 set#MessageFlags, cache off                     200    829.678   4148.39        241    3647.6     465206     21721  10.00  12.00  823.107-848.031 
+  F4 audited update UserAccount.username, cache off     200    224.958   1124.79        889     444.7      63013      1816   3.02   4.04  222.314-288.948 
+  F5 fed update EmailMessage.isFlagged, cache off     200    311.064   1555.32        643    1367.0     232224      2222   3.00   5.00  292.732-338.102 
+  S1 heartbeat#UserStatus, cache on                  200    307.537   1537.69        650    1256.8     129270      7990   3.00   5.00  304.408-365.897 
+  S3 send#Message, cache on                          200    779.832   3899.16        256    4125.9     458299     21907   9.00  11.00  728.941-834.142 
+  S2 mark#Read, cache on                             200    265.796   1328.98        752     976.1     108410      8289   3.00   4.00  265.315-269.914 
+  S4 update#WikiPage, cache on                       200   1450.829   7254.15        138   22712.6    5660751     19205  14.00  16.00 1281.823-1468.884
+  S5 set#MessageFlags, cache on                      200    703.910   3519.55        284    3818.2     469423     16699   7.00  10.00  684.362-721.904 
+  F1 notification persist, 3 users, cache on         200    292.491   1462.45        684     760.9      85466       -53   2.02   5.04  276.229-374.611 
+  F4 audited update UserAccount.username, cache on     200    188.145    940.73       1063     520.5      74550       929   1.02   3.04  179.964-226.337 
+  F5 fed update EmailMessage.isFlagged, cache on     200    261.473   1307.36        765    1395.6     228373      2222   1.00   4.00  252.727-306.980 
+  F3 session start and password login, cache on      200   2575.368  12876.84         78     723.6   20006551      3629   3.02   7.03 2544.403-2604.865
+```
+
+| Call, us | off, local | on, local | off, delay | on, delay | Round 15 off / on, delay |
+|---|---|---|---|---|---|
+| S1 `heartbeat#UserStatus` | 312 | 219 | 2,269 | 1,538 | 2,209 / 1,531 |
+| S2 `mark#Read` | 166 | 176 | 1,319 | 1,329 | 1,324 / 1,338 |
+| S3 `send#Message` | 967 | 930 | 4,638 | 3,899 | 4,749 / 3,885 |
+| S4 `update#WikiPage` | 3,018 | 2,287 | 21,828 | 7,254 | 30,916 / 7,719 |
+| S5 `set#MessageFlags` | 661 | 651 | 4,148 | 3,520 | 4,534 / 4,024 |
+| F4 audited update | 96 | 92 | 1,125 | 941 | 1,122 / 890 |
+| F5 fed update | 211 | 204 | 1,555 | 1,307 | 2,352 / 2,146 |
+
+With quiet rows every call but `mark#Read` (which holds nothing) is as fast or faster with the cache on, over a local socket and with the delay. S4's allocations depend on how many versions the page has by then (each save diffs against the last), so they are not comparable between runs of a different length. How these were found: the server's statement log (`log_statement = all` on the docker Postgres, two calls of a row) for the reads and round trips, heaptrack's stacks (`heaptrack_print -F`, demangled, folded under the timed closure) for the copies.
+
+Next:
+1. Script host bridging is now the largest allocation site of S3: `HostGlobalNames::name_of` and the entity bindings turn a property atom into a `String` on each bare-name or field read (about 9% of S3's allocations). An atom-keyed memo of names would take most of it.
+2. Parameter maps a Rust service gets are borrowed, so a service that keeps one (`push#Signal`'s message) copies it; services taking their parameters by value would save that copy and the one `validate::clean` makes of the whole map.
+3. A held update carries the "must change a row" check, so its commit batch waits before the `COMMIT`. Where the frame read the row under a lock (a `for-update` find) the check could be dropped and the `COMMIT` sent with the batch.
+4. The wiki save still reads the whole version list of its file for the next version name, and the past version's row by key after it; the second is answered by the first.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
 - A chat message is indexed for search after its transaction commits, on a worker, not in it.
+- On Postgres a `SAVEPOINT` with nothing unanswered before it, and every `RELEASE SAVEPOINT`, go out with the next request; a failure of either is reported there. A `COMMIT` goes out behind the writes still unanswered unless one has a check made here; a write that fails is then the commit's error, and the server has already ended the transaction (the rollback after it is a no-op).
+- `ec.resource.getLocationReference` reads a reference's size, last-modified time and children when a script first asks for them, not when it is made; a `dbresource` directory reference lists its children then too. An entry of `getDirectoryEntries` is built from the listing and reads its size when asked.
+- The count of awake `EmailUserState` rows that every message write reads is cached; `EmailUserState` is `cache="false"` (it was `never`).
 - `no-tx-cache` turns a frame to read-through (writes go to the database, reads still kept), and a later `cache` call that joins it no longer turns holding back on.
 - A find of a view built in code (a data document, a REST query view) writes the frame's held rows first, as a view entity read does.
 

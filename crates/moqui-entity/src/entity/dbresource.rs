@@ -164,39 +164,36 @@ impl EntityFacade {
         })
     }
 
-    /// [`EntityFacade::read_db_resource`] without a file's bytes, which
-    /// [`EntityFacade::read_db_resource_bytes`] reads when they are wanted.
+    /// [`EntityFacade::read_db_resource`] without a file's bytes, which [`EntityFacade::read_db_resource_bytes`] reads
+    /// when they are wanted, or a directory's children, which [`EntityFacade::db_resource_children`] lists.
     pub fn db_resource_entry(&self, location: &str) -> Result<DbResourceInfo, Error> {
         self.ensure_db_tables()?;
         let parts = db_parts(location)?;
-        if parts.is_empty() {
-            return Ok(DbResourceInfo {
-                exists: true,
-                is_file: false,
-                bytes: Vec::new(),
-                children: self.list_children(None)?,
-            });
-        }
-        Ok(match self.node_at(&parts)? {
-            None => DbResourceInfo {
-                exists: false,
-                is_file: false,
-                bytes: Vec::new(),
-                children: Vec::new(),
-            },
-            Some(node) if node.is_file => DbResourceInfo {
-                exists: true,
-                is_file: true,
-                bytes: Vec::new(),
-                children: Vec::new(),
-            },
-            Some(_) => DbResourceInfo {
-                exists: true,
-                is_file: false,
-                bytes: Vec::new(),
-                children: self.list_directory(&parts)?,
-            },
+        let (exists, is_file) = if parts.is_empty() {
+            (true, false)
+        } else {
+            match self.node_at(&parts)? {
+                None => (false, false),
+                Some(node) => (true, node.is_file),
+            }
+        };
+        Ok(DbResourceInfo {
+            exists,
+            is_file,
+            bytes: Vec::new(),
+            children: Vec::new(),
         })
+    }
+
+    /// The files and directories directly under the directory at a `dbresource://` location, by name; none for a
+    /// file or a location with nothing there.
+    pub fn db_resource_children(&self, location: &str) -> Result<Vec<DbResourceChild>, Error> {
+        self.ensure_db_tables()?;
+        let parts = db_parts(location)?;
+        if parts.is_empty() {
+            return self.list_children(None);
+        }
+        self.list_directory(&parts)
     }
 
     /// The bytes of the file at a `dbresource://` location, `None` when no file is there.

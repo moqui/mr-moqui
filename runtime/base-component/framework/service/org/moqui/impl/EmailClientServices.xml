@@ -2607,7 +2607,8 @@ along with this software (see the LICENSE.md file). If not, see
             It never fails the write: anything that goes wrong is logged and no error is left (a service error would mark
             the writer's transaction for rollback). The framework has no savepoint for it, so its statements are kept to
             plain reads by key and inserts with a sequenced key, which do not fail on good data. When no user keeps a cursor
-            at all (one count, the usual case of a server without desktop clients) it reads nothing else.</description>
+            at all (one count, the usual case of a server without desktop clients) it reads nothing else; the count is
+            cached, and a write of any EmailUserState clears it.</description>
         <in-parameters>
             <parameter name="emailMessageId" required="true"/>
             <parameter name="operation" required="true"/>
@@ -2619,7 +2620,7 @@ along with this software (see the LICENSE.md file). If not, see
             const cf = ec.entity.conditionFactory
             try {
                 const awake = cf.makeCondition('dormantDate', 'is-null', null)
-                if (ec.entity.find(STATE).condition(awake).disableAuthz().count() === 0) return
+                if (ec.entity.find(STATE).condition(awake).useCache(true).disableAuthz().count() === 0) return
                 let prior = before || null, next = after || null
                 if (operation === 'related' || operation === 'label') {
                     const row = ec.entity.find('moqui.basic.email.EmailMessage').condition('emailMessageId', emailMessageId).selectField('emailAccountId')
