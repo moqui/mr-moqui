@@ -62,6 +62,9 @@ pub(super) struct FrameHold {
     entities: HashMap<String, EntityHold>,
     /// Rows kept in `stored` over every entity, up to [`READ_CAP`] (plans/TX-Cache.md D2).
     kept: usize,
+    /// The rows (entity, primary key text) a locking find of the frame read: no other transaction can delete one before
+    /// the commit, so a held update of one needs no check that it changed a row.
+    locked: HashSet<(String, String)>,
 }
 
 /// Rows a frame keeps of what it read; past it, nothing more is kept (plans/TX-Cache.md D2). Reaching it is not a flush.
@@ -206,9 +209,14 @@ impl FrameHold {
         self.order.iter().all(Option::is_none)
     }
 
-    /// Every held write, in flush order.
-    pub(super) fn into_order(self) -> impl Iterator<Item = Rc<Held>> {
-        self.order.into_iter().flatten()
+    /// Every held write in flush order, with the rows the frame locked.
+    pub(super) fn into_parts(self) -> (impl Iterator<Item = Rc<Held>>, HashSet<(String, String)>) {
+        (self.order.into_iter().flatten(), self.locked)
+    }
+
+    /// A row of `entity` a locking find read.
+    pub(super) fn note_locked(&mut self, entity: &str, pk: &str) {
+        self.locked.insert((entity.to_string(), pk.to_string()));
     }
 
     /// The stored row under a held update of `entity`, when this frame has read it: `Some(None)` when there is none.

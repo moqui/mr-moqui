@@ -1247,7 +1247,7 @@ impl HostEntity {
                     "an entity value field name is not a symbol",
                 ));
             };
-            self.set_field(ctx, name, &value)?;
+            self.set_field(ctx, name.to_string(), &value)?;
             Ok(true)
         });
         keep_assigned(value);
@@ -1862,11 +1862,8 @@ pub(super) fn keep_assigned(value: JsValue<'_>) {
 }
 
 /// The text of a property name, or None for a symbol.
-pub(super) fn atom_name(atom: &Atom<'_>) -> rquickjs::Result<Option<String>> {
-    if atom.to_value()?.is_symbol() {
-        return Ok(None);
-    }
-    atom.to_string().map(Some)
+pub(super) fn atom_name<'js>(atom: &Atom<'js>) -> rquickjs::Result<Option<super::AtomText<'js>>> {
+    super::AtomText::of(&atom.to_value()?)
 }
 
 /// Members of an entity list that are simplest in JavaScript: iteration, Groovy's `size()` and `isEmpty()`, and the

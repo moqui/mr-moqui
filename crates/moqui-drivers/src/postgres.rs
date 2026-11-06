@@ -493,7 +493,11 @@ mod driver {
             self.clear_stream();
             closed?;
             // the transaction is over on the server whether this fails or an earlier write's failure is reported
-            let finished = self.wire.simple(sql, sql);
+            let finished = if commit {
+                self.wire.commit()
+            } else {
+                self.wire.simple(sql, sql)
+            };
             self.in_transaction = false;
             finished
         }

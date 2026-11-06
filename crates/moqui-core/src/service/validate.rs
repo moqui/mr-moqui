@@ -30,16 +30,16 @@ use crate::entity::EntityFacade;
 pub fn validate(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, Error> {
     let def = super::define::find(name).ok_or_else(|| Error::new(format!("no service named {name}")))?;
     let facade = current_facade();
-    clean(&def, parameters, facade.as_ref())
+    clean(&def, std::borrow::Cow::Borrowed(parameters), facade.as_ref())
 }
 
 pub(crate) fn clean(
     def: &ServiceDef,
-    input: &BTreeMap<String, Value>,
+    input: std::borrow::Cow<'_, BTreeMap<String, Value>>,
     facade: Option<&EntityFacade>,
 ) -> Result<BTreeMap<String, Value>, Error> {
     let declared = declared_in(def, facade)?;
-    let mut params = input.clone();
+    let mut params = input.into_owned();
     let mut known = BTreeSet::new();
     // As Java, every parameter is checked and each that fails is a validation error for its field, so a form shows
     // them all beside their fields; the service does not run when there is one.

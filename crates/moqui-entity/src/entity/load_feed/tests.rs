@@ -115,6 +115,8 @@ struct Script {
     fail_pending: AtomicBool,
     /// A find of `moqui.test.Foo` gives the stored row `F1` while set.
     foo_stored: AtomicBool,
+    /// A deferred statement's failure waits for the next wait (a pipelining driver), while set.
+    defer_failures: AtomicBool,
 }
 
 fn new_script(missing_feed: bool, fail_inserts: bool) -> Arc<Script> {
@@ -127,11 +129,14 @@ fn new_script(missing_feed: bool, fail_inserts: bool) -> Arc<Script> {
         broken_rollback: AtomicBool::new(false),
         fail_pending: AtomicBool::new(false),
         foo_stored: AtomicBool::new(false),
+        defer_failures: AtomicBool::new(false),
     })
 }
 
 struct ScriptConn {
     script: Arc<Script>,
+    /// The failure of a deferred statement, for the next wait.
+    deferred: Option<Error>,
 }
 
 impl DbConnection for ScriptConn {
@@ -146,7 +151,25 @@ impl DbConnection for ScriptConn {
         }
         Ok(1)
     }
+    fn execute_deferred(&mut self, sql: &str, params: Vec<Value>, _zero_rows: Option<String>) -> Result<(), Error> {
+        match self.execute(sql, &params) {
+            Err(err) if self.script.defer_failures.load(Ordering::SeqCst) => {
+                self.deferred.get_or_insert(err);
+                Ok(())
+            }
+            other => other.map(|_| ()),
+        }
+    }
+    fn execute_deferred_row(&mut self, sql: &str, params: Vec<Value>, _key: u64) -> Result<(), Error> {
+        self.execute_deferred(sql, params, None)
+    }
+    fn finish_deferred(&mut self) -> Result<(), Error> {
+        self.deferred.take().map_or(Ok(()), Err)
+    }
     fn query(&mut self, sql: &str, _params: &[Value]) -> Result<Vec<DbRow>, Error> {
+        if let Some(err) = self.deferred.take() {
+            return Err(err);
+        }
         if (sql.contains("data_feed") || sql.contains("data_document")) && !sql.contains("data_feed_pending") {
             self.script.definition_reads.fetch_add(1, Ordering::SeqCst);
         }
@@ -204,7 +227,7 @@ impl DbConnection for ScriptConn {
         Ok(())
     }
     fn commit(&mut self) -> Result<(), Error> {
-        Ok(())
+        self.deferred.take().map_or(Ok(()), Err)
     }
     fn rollback(&mut self) -> Result<(), Error> {
         Ok(())
@@ -235,6 +258,7 @@ impl DbDriver for ScriptDriver {
     fn connect(&self) -> Result<Box<dyn DbConnection>, Error> {
         Ok(Box::new(ScriptConn {
             script: Arc::clone(&self.script),
+            deferred: None,
         }))
     }
 }
@@ -789,6 +813,7 @@ fn a_missing_table_probe_fails_when_the_savepoint_rollback_fails() {
     let script = new_script(true, false);
     let mut conn = ScriptConn {
         script: Arc::clone(&script),
+        deferred: None,
     };
     let rows = probe_query(&mut conn, "SELECT * FROM data_feed", &[]).unwrap();
     assert!(rows.is_empty());
@@ -858,6 +883,38 @@ fn a_held_update_touch_carries_the_old_row() {
         Err::<(), _>(Error::new("rolled back"))
     })
     .unwrap_err();
+}
+
+/// A transaction-cache frame's commit batch is left for the commit's wait. The feed insert, which runs between them,
+/// waits for it before its own statements, and a failure of the batch fails the commit: it is never logged as the
+/// feed's and committed past.
+#[test]
+fn a_held_write_that_fails_at_the_commit_fails_it_through_the_feed_insert() {
+    let script = new_script(false, false);
+    let facade = open_with(Arc::new(ScriptDriver {
+        script: Arc::clone(&script),
+    }));
+    // A first commit loads the feed definitions.
+    facade.begin("moqui.test.Foo", None).unwrap();
+    create_foo(&facade, "F0").unwrap();
+    facade.commit("moqui.test.Foo").unwrap();
+    let pending = script.inserts.lock().expect("inserts").len();
+    script.defer_failures.store(true, Ordering::SeqCst);
+    script.fail_inserts.store(true, Ordering::SeqCst);
+    let tx = facade.transactions_for("moqui.test.Foo").unwrap();
+    let failed = tx
+        .run(crate::transaction::TransactionAttribute::Cache, None, || {
+            create_foo(&facade, "F1")?;
+            assert!(tx.transaction_cache_active());
+            Ok(())
+        })
+        .unwrap_err();
+    assert!(error_chain(&failed).contains("duplicate key"), "{failed:?}");
+    assert_eq!(
+        script.inserts.lock().expect("inserts").len(),
+        pending,
+        "no pending row for a write that failed"
+    );
 }
 
 #[test]

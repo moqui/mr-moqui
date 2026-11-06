@@ -22,7 +22,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use moqui_db::model::EntityDefinition;
 use moqui_db::sql::{delete, insert, insert_if_missing, insert_or_update, update, Condition};
 use moqui_lib::error::Error;
-use moqui_lib::object::{basic_convert, Value};
+use moqui_lib::object::{basic_convert, to_plain_string, Value};
 use moqui_lib::sync::{lock, read, write};
 
 use super::cache::WriteGate;
@@ -1607,6 +1607,16 @@ impl EntityFacade {
     }
 
     pub(crate) fn next_secondary_id(&self, entity_name: &str, values: &FieldMap) -> Result<(String, String), Error> {
+        self.secondary_ids(entity_name, values)
+            .map(|(field, next, _)| (field, next))
+    }
+
+    /// [`Self::next_secondary_id`], with the sequence values the siblings have now as text.
+    pub(crate) fn secondary_ids(
+        &self,
+        entity_name: &str,
+        values: &FieldMap,
+    ) -> Result<(String, String, Vec<String>), Error> {
         let (seq_field, pad, keys) = self.with_entity(entity_name, |entity, _, _| {
             let pks = entity.pk_field_names();
             let Some((seq_field, primary)) = pks.split_last().filter(|(_, primary)| !primary.is_empty()) else {
@@ -1637,10 +1647,12 @@ impl EntityFacade {
         let rows = find.list()?;
         let mut highest: i64 = 0;
         let mut found = false;
+        let mut existing = Vec::with_capacity(rows.len());
         for row in rows.iter() {
             let Some(value) = row.get(&seq_field) else {
                 continue;
             };
+            existing.push(to_plain_string(value));
             if let Value::I64(number) = basic_convert(value, "Long").value {
                 found = true;
                 highest = highest.max(number);
@@ -1648,7 +1660,7 @@ impl EntityFacade {
         }
         let next = if found { highest.saturating_add(1) } else { 1 };
         let width = usize::try_from(pad).unwrap_or(2);
-        Ok((seq_field, format!("{next:0width$}")))
+        Ok((seq_field, format!("{next:0width$}"), existing))
     }
 
     /// Each field converted to its type. A create sets a missing `lastUpdatedStamp`; an update (`update`) leaves the

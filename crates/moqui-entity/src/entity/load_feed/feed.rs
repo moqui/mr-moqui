@@ -255,6 +255,15 @@ fn insert_pending(
     if aggs.is_empty() {
         return Ok(Vec::new());
     }
+    // The transaction cache's commit batch may still be unanswered on `conn`. Before the first statement of the feed it
+    // is waited for, and a failure of it is the transaction's, passed on, never logged as the feed's and committed past.
+    // A frame with no write the feed may take sends nothing here, and the commit's wait answers the batch.
+    let own_definitions_written = aggs.keys().any(|entity_name| {
+        model_name(facade, entity_name).is_some_and(|name| crate::entity::cache::is_feed_definition(&name))
+    });
+    if own_definitions_written || aggs.keys().any(|entity_name| feed_may_target(facade, entity_name)) {
+        conn.finish_deferred().map_err(earlier_failure)?;
+    }
     // A frame that wrote a feed definition reads its own uncommitted rows, which no other frame may see.
     let own_definitions = aggs.keys().any(|entity_name| {
         model_name(facade, entity_name).is_some_and(|name| crate::entity::cache::is_feed_definition(&name))
@@ -1048,6 +1057,11 @@ fn unusable(undo: Error) -> Error {
         "could not roll back savepoint {SAVEPOINT}, the transaction is unusable: {undo}"
     ))
     .with_source(Unusable(undo))
+}
+
+/// A failure of the transaction's statements before the feed's: the transaction cannot commit.
+fn earlier_failure(err: Error) -> Error {
+    Error::new(format!("the transaction's writes before the data feed failed: {err}")).with_source(Unusable(err))
 }
 
 fn is_unusable(err: &Error) -> bool {

@@ -16,7 +16,7 @@
 //! ([`super::hold`]) and writes them at its commit; while it holds them, its finds see them through the overlay.
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -52,7 +52,8 @@ pub fn register_cache_flush(facade: &EntityFacade, tx: &TransactionManager) -> R
     let owner = tx.clone();
     tx.on_cache_flush(move |conn| {
         let round_trips = crate::driver::thread_round_trips();
-        let flushed = flush_held(&facade, token, conn);
+        // The commit's own wait reports the batch (the transaction manager waits first when a hook comes between).
+        let flushed = flush_held(&facade, token, conn, false);
         match &flushed {
             Ok(batch) => stats::note_batch(
                 token,
@@ -98,14 +99,22 @@ pub(super) fn flush_early(
         return Ok(());
     }
     stats::note_early_flush(tx, token, cause, entity);
-    tx.with_connection(|conn| flush_held(facade, token, conn)).map(|_| ())
+    tx.with_connection(|conn| flush_held(facade, token, conn, true))
+        .map(|_| ())
 }
 
-pub(super) fn flush_held(facade: &EntityFacade, token: u64, conn: &mut dyn DbConnection) -> Result<Flushed, Error> {
+/// Write the frame's held rows; with `wait`, wait for them, else leave them for the next statement that waits.
+pub(super) fn flush_held(
+    facade: &EntityFacade,
+    token: u64,
+    conn: &mut dyn DbConnection,
+    wait: bool,
+) -> Result<Flushed, Error> {
     let held_rows = TX_HOLD
         .with(|slot| slot.borrow_mut().remove(&token))
         .unwrap_or_default();
-    flush_writes(facade, held_rows.into_order(), conn)
+    let (writes, locked) = held_rows.into_parts();
+    flush_writes(facade, writes, &locked, conn, wait)
 }
 
 /// What the frame of `tx` knows of one row: `Some(true)` when its last held write leaves the row there, `Some(false)` when
@@ -150,7 +159,7 @@ pub(super) fn flush_through(facade: &EntityFacade, entity: &str) -> Result<(), E
         return Ok(());
     };
     stats::note_early_flush(&tx, token, FlushCause::SelectiveFind, entity);
-    tx.with_connection(|conn| flush_writes(facade, prefix.into_iter(), conn))
+    tx.with_connection(|conn| flush_writes(facade, prefix.into_iter(), &HashSet::new(), conn, true))
         .map(|_| ())
 }
 
@@ -270,8 +279,9 @@ pub(super) fn overlay_rows(
         .any(|held| held.operation != Op::Create || may_match(condition, &held.plain));
     let list = list.filter(|_| cacheable);
     let new_rows_only = lock.is_none() && pins_created_parent(facade, meta, token, condition);
-    if !relevant && list.is_none() && !new_rows_only {
-        // Nothing the frame holds or kept can change the answer: the database gives it, with its limit and offset.
+    if !relevant && list.is_none() && !new_rows_only && lock.is_none() {
+        // Nothing the frame holds or kept can change the answer: the database gives it, with its limit and offset. A
+        // locking find is read here all the same, so the frame keeps the rows it locked and knows them locked.
         return Ok(None);
     }
     // The kept list is looked up by the key written into a thread buffer; an owned key is made only to keep one.
@@ -313,6 +323,9 @@ pub(super) fn overlay_rows(
                         buffer.clear();
                         if write_pk(row, &meta.pk_fields, &mut buffer) {
                             frame.keep_stored(entity, &buffer, Some(Arc::clone(row)));
+                            if lock.is_some() {
+                                frame.note_locked(entity, &buffer);
+                            }
                         }
                     }
                 }
@@ -322,10 +335,7 @@ pub(super) fn overlay_rows(
     };
     let rows: Vec<MemRow> = loaded
         .into_iter()
-        .map(|fields| MemRow {
-            fields,
-            trusted: true,
-        })
+        .map(|fields| MemRow { fields, trusted: true })
         .collect();
     let overlay = Overlay::new(rows, &holds, &meta.pk_fields);
     // An update of a row the condition did not load starts from the whole stored row, not the fields it set.

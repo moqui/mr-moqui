@@ -580,7 +580,10 @@ pub fn before_selective_find(
         flush_for_view(facade, &lookup.entity_name, lookup.condition.as_ref())?;
         return Ok(None);
     }
-    if !tx::holds_entity(facade, &meta.full_name) {
+    // A locking find goes through the frame even when it holds nothing of the entity, so the frame keeps the rows it
+    // locked and knows them locked (a held update of one needs no check at the commit).
+    let holds = tx::holds_entity(facade, &meta.full_name);
+    if !holds && (selective.lock.is_none() || selective.aggregate) {
         return Ok(None);
     }
     if selective.aggregate {

@@ -84,7 +84,9 @@ transition's `<parameter>` sets a `from` or a `value`.
 
 A service marked `transaction="cache"` (or `force-cache`, a frame of its own) holds the writes of its transaction in
 memory and sends them to the database at the commit, in one batch: each row's writes merged where that is safe, the
-statements sent without waiting (an entity's creates joined into multi-row inserts on Postgres) and one wait for them.
+statements sent without waiting (an entity's creates joined into multi-row inserts on Postgres) and, on Postgres,
+the `COMMIT` sent behind them, one wait for it all (an update of a row the transaction did not lock is checked for a
+changed row first, which waits for the batch before the `COMMIT`).
 While it holds them its finds see them, and a row it has read or written is not read from the database again. The
 design and the numbers are in [plans/TX-Cache.md](../../plans/TX-Cache.md); the code is `moqui-entity`
 `entity/cache/tx.rs`, `hold.rs` and `batch.rs`.

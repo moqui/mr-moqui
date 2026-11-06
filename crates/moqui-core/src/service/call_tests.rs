@@ -1380,7 +1380,7 @@ fn entity_auto_parameters_are_the_declared_ones_or_all_for_an_implicit_call() {
     let implicit =
         super::super::define::ServiceDef::implicit("store#moqui.test.TestEntity", "store", "moqui.test.TestEntity");
     params.insert("notAField".to_string(), Value::string("x"));
-    let cleaned = super::validate::clean(&implicit, &params, Some(&facade)).unwrap();
+    let cleaned = super::validate::clean(&implicit, std::borrow::Cow::Borrowed(&params), Some(&facade)).unwrap();
     assert_eq!(cleaned, params);
     sync("store#moqui.test.TestEntity", &params).unwrap();
     let row = facade

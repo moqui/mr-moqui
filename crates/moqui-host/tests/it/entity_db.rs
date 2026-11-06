@@ -342,6 +342,85 @@ fn epoch_zero_date_time_and_timestamp_round_trip_in_the_session_zone() {
     drop(cluster);
 }
 
+/// A transaction-cache frame's commit batch goes out with the `COMMIT`: an update of a row the frame locked and a
+/// create commit in the lock's round trip and the commit's. A held create of a row that is there fails at the commit,
+/// and nothing of the frame is written.
+#[test]
+fn a_cache_frames_batch_goes_with_its_commit_on_postgres() {
+    use moqui_core::transaction::TransactionAttribute;
+    let _lock = crate::common::shared();
+    let dir = temp_dir("moqui-txc-commit");
+    let _guard = DirGuard(dir.clone());
+    std::fs::create_dir_all(&dir).unwrap();
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let driver: Arc<dyn DbDriver> = Arc::new(driver);
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let facade = open_entity_facade(&framework, Arc::clone(&driver), pool()).unwrap();
+    let entity = "moqui.test.TestFts";
+    facade.check_tables(&[entity]).unwrap();
+    let make = |id: &str, body: &str| {
+        let mut row = facade.make_value(entity).unwrap();
+        row.set("testFtsId", Value::string(id));
+        row.set("body", Value::string(body));
+        row
+    };
+    make("C1", "stored").create(&facade).unwrap();
+    let body_of = |id: &str| {
+        facade
+            .find(entity)
+            .unwrap()
+            .eq("testFtsId", Value::string(id))
+            .one()
+            .unwrap()
+            .and_then(|row| row.get("body").cloned())
+    };
+    let tx = facade.transactions_for(entity).unwrap();
+    // warm: the statements prepared, so the count below is of this frame's waits only
+    for warm in ["W1", "W2"] {
+        tx.run(TransactionAttribute::Cache, None, || {
+            facade
+                .find(entity)?
+                .eq("testFtsId", Value::string("C1"))
+                .for_update(true)
+                .one()?;
+            make("C1", "warm").update(&facade)?;
+            make(warm, "warm").create(&facade)
+        })
+        .unwrap();
+    }
+    let before = moqui_core::driver::thread_round_trips();
+    tx.run(TransactionAttribute::Cache, None, || {
+        let locked = facade
+            .find(entity)?
+            .eq("testFtsId", Value::string("C1"))
+            .for_update(true)
+            .one()?;
+        assert!(locked.is_some());
+        make("C1", "locked and changed").update(&facade)?;
+        make("C2", "created").create(&facade)?;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        moqui_core::driver::thread_round_trips() - before,
+        2,
+        "the lock, and the commit with the batch"
+    );
+    assert_eq!(body_of("C1"), Some(Value::string("locked and changed")));
+    assert_eq!(body_of("C2"), Some(Value::string("created")));
+
+    let failed = tx.run(TransactionAttribute::Cache, None, || {
+        make("C3", "never").create(&facade)?;
+        make("C2", "again").create(&facade)
+    });
+    let err = failed.unwrap_err();
+    assert!(format!("{err:?}").contains("duplicate key"), "{err:?}");
+    assert_eq!(body_of("C3"), None);
+    assert_eq!(body_of("C2"), Some(Value::string("created")));
+    drop(facade);
+    drop(cluster);
+}
+
 fn pool() -> PoolConfig {
     PoolConfig {
         min: 0,

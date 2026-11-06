@@ -118,7 +118,7 @@ impl HostTool {
     fn own_property<'js>(&self, ctx: &Ctx<'js>, atom: Atom<'js>) -> rquickjs::Result<Option<PropertyDescriptor<'js>>> {
         match atom_name(&atom)? {
             Some(name) if self.is_method(&name) => Ok(Some(PropertyDescriptor::new_value(
-                self.method(ctx, name)?,
+                self.method(ctx, name.to_string())?,
                 false,
                 false,
                 false,

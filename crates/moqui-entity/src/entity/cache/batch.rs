@@ -121,14 +121,17 @@ fn sets_key_field(facade: &EntityFacade, key_fields: &mut HashMap<String, HashSe
     held.sealed.keys().any(|name| fields.contains(&**name))
 }
 
-/// Send `writes` as the commit batch on `conn` and wait for them once. A failure found when sending names its write;
+/// Send `writes` as the commit batch on `conn` and wait for them once (without `wait`, the next statement that waits
+/// does: the commit). A failure found when sending names its write;
 /// one found by the wait names the batch, and the database's message names the row. An update that changed no row
 /// fails the batch, as a direct update does (plans/TX-Cache.md G4), except on MySQL, which counts an update that leaves
-/// the row as it was as none.
+/// the row as it was as none, and except for a row in `locked`, which a locking find of the frame read.
 pub(super) fn flush_writes(
     facade: &EntityFacade,
     writes: impl Iterator<Item = Rc<Held>>,
+    locked: &HashSet<(String, String)>,
     conn: &mut dyn DbConnection,
+    wait: bool,
 ) -> Result<Flushed, Error> {
     let merged = merge(facade, writes);
     let mut flushed = Flushed { statements: 0, rows: 0 };
@@ -150,8 +153,10 @@ pub(super) fn flush_writes(
         match write.operation {
             Op::Create | Op::Upsert => conn.execute_deferred_row(&sql, params, row_key(held)),
             Op::Update => {
+                // a row the frame locked is there until the commit; with no check here the COMMIT need not wait
+                let checked = !mysql && !locked.contains(&(held.entity_name.clone(), held.pk.clone()));
                 let zero_rows =
-                    (!mysql).then(|| format!("Could not write the {}: the record was not found", held.describe()));
+                    checked.then(|| format!("Could not write the {}: the record was not found", held.describe()));
                 conn.execute_deferred(&sql, params, zero_rows)
             }
             Op::Delete => conn.execute_deferred(&sql, params, None),
@@ -159,6 +164,9 @@ pub(super) fn flush_writes(
         .map_err(named)?;
         flushed.statements += 1;
         flushed.rows += write.writes;
+    }
+    if !wait {
+        return Ok(flushed);
     }
     conn.finish_deferred().map_err(|err| {
         Error::new(format!(

@@ -376,8 +376,8 @@ fn a_frame_counts_its_held_writes_reads_early_flushes_and_commit_batch() {
     assert_eq!(stats.early_flush_count(), 0);
     assert_eq!((stats.batch_statements, stats.batch_rows), (3, 3));
     assert_eq!(
-        stats.batch_round_trips, 1,
-        "the commit batch waits once (plans/TX-Cache.md D6)"
+        stats.batch_round_trips, 0,
+        "the commit batch is answered by the commit's wait (plans/TX-Cache.md D6)"
     );
     assert!(crate::driver::thread_round_trips() > trips);
 
@@ -659,7 +659,7 @@ fn a_find_by_key_of_a_created_row_runs_no_query() {
 }
 
 /// D6: the commit batch merges each row's writes (a create and its updates are one insert of the final values, updates
-/// one update of their columns), keeps a parent before its child, and waits once.
+/// one update of their columns), keeps a parent before its child, and goes with the commit, one wait for it all.
 #[test]
 fn the_commit_batch_merges_each_rows_writes_and_waits_once() {
     let tape = Arc::new(Mutex::new(Vec::new()));
@@ -690,7 +690,8 @@ fn the_commit_batch_merges_each_rows_writes_and_waits_once() {
     );
     let stats = super::super::tx_cache_stats().since(&before_stats);
     assert_eq!((stats.batch_statements, stats.batch_rows), (3, 5));
-    assert_eq!(stats.batch_round_trips, 1);
+    // the batch goes with the commit, whose wait answers it
+    assert_eq!(stats.batch_round_trips, 0);
     let row = facade
         .find(ENUM)
         .unwrap()
@@ -833,6 +834,43 @@ fn a_for_update_find_locks_every_time_and_keeps_its_rows() {
         Ok(())
     })
     .unwrap();
+}
+
+/// A held update of a row a locking find of the frame read goes out with no check that it changed a row (no other
+/// transaction can delete it), so the commit need not wait for it; an update of a row only read keeps the check.
+#[test]
+fn a_held_update_of_a_locked_row_is_not_checked_at_the_commit() {
+    let facade = testing::open();
+    put_enum(&facade, "K1", "A", "one");
+    put_enum(&facade, "K2", "B", "two");
+    let tx = facade.transactions_for(ENUM).unwrap();
+    let before = testing::checked_deferred();
+    run(&tx, TransactionAttribute::Cache, || {
+        let locked = facade
+            .find(ENUM)?
+            .eq("enumTypeId", Value::string("A"))
+            .for_update(true)
+            .list()?;
+        assert_eq!(locked.len(), 1);
+        set_enum(&facade, "K1", "description", "locked")?;
+        assert!(facade.find(ENUM)?.eq("enumId", Value::string("K2")).one()?.is_some());
+        set_enum(&facade, "K2", "description", "read")?;
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        testing::checked_deferred() - before,
+        1,
+        "only the row read without a lock is checked"
+    );
+    let one = facade
+        .find(ENUM)
+        .unwrap()
+        .eq("enumId", Value::string("K1"))
+        .one()
+        .unwrap()
+        .unwrap();
+    assert_eq!(one.get("description"), Some(&Value::string("locked")));
 }
 
 /// D5: a view read writes the held rows first only when a held row of a member may be in its result.

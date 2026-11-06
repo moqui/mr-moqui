@@ -278,6 +278,12 @@ impl HostService {
         host_guard(&ctx, || {
             // The callee may read or change the caller's names, so they are written back first.
             flush_current(&ctx, true)?;
+            // the parameters of a plain call go with it, validated in place, not copied: a builder is called once
+            let plain = {
+                let call = self.call.borrow();
+                !call.is_async && !call.options.multi && !call.options.throw_on_error
+            };
+            let owned = plain.then(|| std::mem::take(&mut self.call.borrow_mut().parameters));
             let call = self.call.borrow();
             if call.is_async {
                 if let Err(err) = crate::service::call::async_call(&call.name, &call.parameters) {
@@ -291,7 +297,7 @@ impl HostService {
             } else if call.options.throw_on_error {
                 crate::service::call::sync_checked(&call.name, &call.parameters, &call.options)
             } else {
-                crate::service::call::sync_with(&call.name, &call.parameters, &call.options)
+                crate::service::call::sync_with_owned(&call.name, owned.unwrap_or_default(), &call.options)
             };
             match called {
                 Ok(results) => host_to_js(&ctx, Value::Map(results.into_iter().collect())),

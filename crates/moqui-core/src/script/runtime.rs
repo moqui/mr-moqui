@@ -1142,12 +1142,9 @@ mod __impl_exotic_HostGlobalNames__ {
     pub(crate) struct ExoticImpl;
 
     /// The name an atom is, or `None` for a symbol.
-    fn name_of<'js>(atom: &Atom<'js>) -> rquickjs::Result<Option<(std::string::String, JsValue<'js>)>> {
+    fn name_of<'js>(atom: &Atom<'js>) -> rquickjs::Result<Option<(super::AtomText<'js>, JsValue<'js>)>> {
         let key = atom.to_value()?;
-        if key.is_symbol() {
-            return Ok(None);
-        }
-        Ok(Some((atom.to_string()?, key)))
+        Ok(super::AtomText::of(&key)?.map(|text| (text, key)))
     }
 
     impl ExoticImpl {
@@ -1214,6 +1211,39 @@ mod __impl_exotic_HostGlobalNames__ {
         ) -> rquickjs::Result<Vec<PropertyName<'js>>> {
             Ok(Vec::new())
         }
+    }
+}
+
+/// The text of a property name, read in place: QuickJS hands out an ASCII string's own bytes, so a name read on each
+/// bare-name or field access makes no copy (a name with other characters is converted on QuickJS's heap).
+pub(crate) struct AtomText<'js>(rquickjs::CString<'js>);
+
+impl<'js> AtomText<'js> {
+    /// The text of a property key, `None` for a symbol.
+    pub(crate) fn of(key: &JsValue<'js>) -> rquickjs::Result<Option<Self>> {
+        if key.is_symbol() {
+            return Ok(None);
+        }
+        let text = match key.as_string() {
+            Some(text) => text.clone(),
+            // a number key (an index) as its text
+            None => rquickjs::convert::Coerced::<rquickjs::String<'js>>::from_js(key.ctx(), key.clone())?.0,
+        };
+        Ok(Some(Self(text.to_cstring()?)))
+    }
+}
+
+impl std::ops::Deref for AtomText<'_> {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+impl PartialEq<&str> for AtomText<'_> {
+    fn eq(&self, other: &&str) -> bool {
+        self.0.as_str() == *other
     }
 }
 

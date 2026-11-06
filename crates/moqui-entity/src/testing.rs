@@ -96,6 +96,16 @@ pub fn seed_status_flows(facade: &EntityFacade) {
     }
 }
 
+thread_local! {
+    static CHECKED_DEFERRED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The deferred statements this thread sent with a check that they changed a row (an update of the transaction cache's
+/// commit batch), so far.
+pub fn checked_deferred() -> u64 {
+    CHECKED_DEFERRED.with(std::cell::Cell::get)
+}
+
 /// A facade whose statements are recorded on `tape`.
 pub fn open_with_tape(tape: Arc<Mutex<Vec<String>>>) -> EntityFacade {
     open_with(
@@ -327,6 +337,9 @@ impl DbConnection for MemConn {
     }
 
     fn execute_deferred(&mut self, sql: &str, params: Vec<Value>, zero_rows: Option<String>) -> Result<(), Error> {
+        if zero_rows.is_some() {
+            CHECKED_DEFERRED.with(|count| count.set(count.get() + 1));
+        }
         if self.local.is_none() {
             return self.execute(sql, &params).and_then(|count| match zero_rows {
                 Some(message) if count == 0 => Err(Error::new(message)),

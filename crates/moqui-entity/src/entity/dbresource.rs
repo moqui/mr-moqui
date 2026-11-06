@@ -815,16 +815,12 @@ impl EntityFacade {
         let current = text_of(existing.get("versionName"));
         // The next version's name first: the replaced version's delta is made against it.
         let mut history = self.new_history(resource_id, current.as_deref())?;
-        history.set_sequenced_id_secondary(self)?;
-        let next = text_of(history.get("versionName"))
-            .ok_or_else(|| Error::new(format!("no next version name for DbResource {resource_id}")))?;
+        // The versions there are come with the next name, so whether the replaced version has its history row is known
+        // without reading it.
+        let (field, next, versions) = self.secondary_ids(DB_HISTORY, history.fields())?;
+        history.set(field, Value::string(&next));
         if let Some(current) = &current {
-            let past = self
-                .find(DB_HISTORY)?
-                .eq("resourceId", Value::string(resource_id))
-                .eq("versionName", Value::string(current))
-                .one()?;
-            if past.is_some() {
+            if versions.iter().any(|name| name == current) {
                 let mime = text_of(existing.get("mimeType"))
                     .or_else(|| moqui_lib::resource::content_type_for_name(filename).map(str::to_string));
                 let mut past = EntityValue::make(self, DB_HISTORY)?;

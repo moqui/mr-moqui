@@ -329,7 +329,7 @@ pub(super) fn prepare_async(name: &str, parameters: &BTreeMap<String, Value>) ->
     if def.kind == ServiceKind::Interface {
         return Err(Error::new(format!("Cannot run interface service [{}]", def.name)));
     }
-    let mut cleaned = match validate::clean(&def, parameters, facade.as_ref()) {
+    let mut cleaned = match validate::clean(&def, std::borrow::Cow::Borrowed(parameters), facade.as_ref()) {
         Ok(cleaned) => cleaned,
         Err(err) if err.kind() == crate::context::ErrorKind::Validation => {
             tracing::warn!(service = %def.name, "async call not queued, input failed validation: {}", err.message());
@@ -424,6 +424,27 @@ pub fn sync_with(
     parameters: &BTreeMap<String, Value>,
     options: &CallOptions,
 ) -> Result<BTreeMap<String, Value>, Error> {
+    sync_input(name, std::borrow::Cow::Borrowed(parameters), options)
+}
+
+/// [`sync_with`] of parameters the caller gives up: they are validated in place, not copied first.
+///
+/// # Errors
+///
+/// Returns the errors of [`sync`].
+pub fn sync_with_owned(
+    name: &str,
+    parameters: BTreeMap<String, Value>,
+    options: &CallOptions,
+) -> Result<BTreeMap<String, Value>, Error> {
+    sync_input(name, std::borrow::Cow::Owned(parameters), options)
+}
+
+fn sync_input(
+    name: &str,
+    parameters: std::borrow::Cow<'_, BTreeMap<String, Value>>,
+    options: &CallOptions,
+) -> Result<BTreeMap<String, Value>, Error> {
     let _authz = if options.disable_authz {
         crate::context::ExecutionContext::with_current(|ctx| ctx.disable_authz())
     } else {
@@ -460,14 +481,16 @@ pub fn sync_with(
         }
     }
     if let Some(entry) = delegated {
-        return delegate_checked(&name, def.as_deref(), &entry, parameters);
+        return delegate_checked(&name, def.as_deref(), &entry, &parameters);
     }
     let Some(def) = def else {
         return Err(Error::new(format!("Service {name} not found")));
     };
     super::coverage::record(&def.name);
     // Java's `currentParameters`: what a pre-validate rule sets is what is validated.
-    let mut input = std::borrow::Cow::Borrowed(parameters);
+    // the credentials of the call as given, before a rule changes them (they log in after validation)
+    let credentials = auth_credentials(&parameters);
+    let mut input = parameters;
     let mut operation_retry = options.operation_retry;
     if let Some(retry) = input.get(crate::telemetry::operation::RETRY_PARAMETER) {
         operation_retry |= moqui_lib::object::to_plain_string(retry) == "true";
@@ -479,7 +502,7 @@ pub fn sync_with(
     // Input that fails its checks is validation errors in the message facade and no run, as in Java: the caller sees
     // the errors (a screen shows them by their fields) instead of a failed call.
     let mark = crate::context::ExecutionContext::with_current(|ctx| ctx.message().error_mark());
-    let mut cleaned = match validate::clean(&def, &input, facade.as_ref()) {
+    let mut cleaned = match validate::clean(&def, input, facade.as_ref()) {
         Ok(cleaned) => cleaned,
         Err(err) if err.kind() == crate::context::ErrorKind::Validation && options.soft_validate => {
             if let Some(mark) = mark {
@@ -500,7 +523,7 @@ pub fn sync_with(
     };
     // A call with credentials logs in first, as Java does with authUsername and authPassword, and the caller's user
     // is back when the call returns, as Java's logoutLocal in finally.
-    let _login = match auth_credentials(parameters) {
+    let _login = match credentials {
         Some((username, password)) => match crate::user::login_user_local(&username, &password) {
             Ok(login) => Some(login),
             Err(err) => {
@@ -1232,7 +1255,11 @@ impl ToolService {
     /// Returns the validation errors, each with its field.
     pub fn clean(&self, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, Error> {
         let mark = ExecutionContext::with_current(|ctx| ctx.message().error_mark());
-        let cleaned = validate::clean(&self.def, parameters, current_facade().as_ref());
+        let cleaned = validate::clean(
+            &self.def,
+            std::borrow::Cow::Borrowed(parameters),
+            current_facade().as_ref(),
+        );
         if let Some(mark) = mark {
             ExecutionContext::with_current(|ctx| ctx.message().take_errors_since(mark));
         }

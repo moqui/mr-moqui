@@ -1564,6 +1564,8 @@ fn try_commit(phase: &mut Phase) -> Result<(), Error> {
         }
         return Err(Error::new("no connection enlisted"));
     }
+    // The cache's batch is left for the commit's wait. The feed insert, between them, waits for it first when it has
+    // a statement to send, and passes a failure of it on (load_feed::insert_pending).
     if let Err(err) = run_conn_hooks(&phase.conn, std::mem::take(&mut phase.cache_flush)) {
         rollback_after_failure(&phase.conn);
         return Err(err);

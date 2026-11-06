@@ -994,6 +994,26 @@ impl Wire {
         Ok(())
     }
 
+    /// `COMMIT`, waited for with the replies before it. A transaction a statement failed in ends as a rollback with no
+    /// error from the server: the statement's failure is the error, or, if it was reported before, that the server
+    /// rolled back.
+    pub(super) fn commit(&mut self) -> Result<(), Error> {
+        self.encode(|buf| frontend::query("COMMIT", buf).map_err(|err| io_error("COMMIT", err)))?;
+        let mut tag = String::new();
+        self.round("COMMIT", |message| {
+            if let Message::CommandComplete(body) = message {
+                tag = body.tag().map(str::to_string).unwrap_or_default();
+            }
+            Ok(())
+        })?;
+        if tag == "ROLLBACK" {
+            return Err(Error::new(
+                "postgres: the server rolled the transaction back at its commit, as a statement of it had failed",
+            ));
+        }
+        Ok(())
+    }
+
     /// One or more statements by the simple query protocol, waited for.
     pub(super) fn simple(&mut self, sql: &str, context: &str) -> Result<(), Error> {
         self.encode(|buf| frontend::query(sql, buf).map_err(|err| io_error(context, err)))?;
