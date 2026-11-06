@@ -143,8 +143,9 @@ const DENIED_ELEMENTS: &[&str] = &[
     "fencedframe",
 ];
 
-/// Elements denied inside an `<svg>`: foreign content, animation that can set a link, and `<style>`, which an SVG parses
-/// as markup rather than raw text.
+/// SVG elements denied wherever they stand: foreign content, and animation that can set a link. They mean nothing
+/// outside an `<svg>`, and the tokenizer's count of open `<svg>`s is not a tree builder's (`<svg><desc><div></svg>`
+/// leaves the browser in the SVG), so they are not left to that count.
 const DENIED_SVG: &[&str] = &[
     "foreignobject",
     "animate",
@@ -154,12 +155,36 @@ const DENIED_SVG: &[&str] = &[
     "discard",
     "handler",
     "listener",
-    "style",
-    "script",
+];
+
+/// Attributes of SVG drawing that take a CSS `url()` reference, which is checked as CSS is.
+const URL_ATTRIBUTES: &[&str] = &[
+    "fill",
+    "stroke",
+    "filter",
+    "mask",
+    "clip-path",
+    "marker-start",
+    "marker-mid",
+    "marker-end",
+    "cursor",
 ];
 
 /// Attributes that are never safe in a theme.
-const DENIED_ATTRIBUTES: &[&str] = &["srcdoc", "formaction", "action", "ping", "http-equiv", "is"];
+/// `form` and its overrides would join a control to a trusted component's form, or change where it submits.
+const DENIED_ATTRIBUTES: &[&str] = &[
+    "srcdoc",
+    "formaction",
+    "formmethod",
+    "formenctype",
+    "formtarget",
+    "formnovalidate",
+    "form",
+    "action",
+    "ping",
+    "http-equiv",
+    "is",
+];
 
 /// `<link rel>` values a theme may use: the stylesheet and icon loads, preload, and navigation relations.
 const LINK_RELS: &[&str] = &[
@@ -195,13 +220,23 @@ pub(crate) fn check_html(text: &str, mode: &Mode<'_>, policy: &Policy<'_>) -> Ve
             message: format!("<{open}> is not closed"),
         });
     }
+    // A render's output becomes a fragment its parent places in text: one that leaves an `<svg>` open would put what
+    // follows it in the parent into SVG, where markup this check read as text is parsed as markup.
+    if matches!(mode, Mode::Output { .. }) && state.svg > 0 {
+        state.problems.push(Problem {
+            line: 0,
+            code: "unsafe-markup",
+            message: "an <svg> is not closed".to_string(),
+        });
+    }
     state.problems
 }
 
 #[derive(Default)]
 struct State {
     problems: Vec<Problem>,
-    /// The raw text element the tokenizer is in (`style`, `title`, `textarea`).
+    /// The raw text element the tokenizer is in (`style`), or the escapable raw text element the sink is in (`title`,
+    /// `textarea`), whose content is tokenized as markup so a tag in it is seen.
     raw: Option<String>,
     raw_line: usize,
     style_text: String,
@@ -267,6 +302,13 @@ impl Sink<'_> {
                         .push(problem(line, "unsafe-markup", format!("a fragment inside <{raw}>")));
                     return;
                 }
+                // A fragment was checked as HTML; inside an SVG a browser parses it as foreign content.
+                if state.svg > 0 {
+                    state
+                        .problems
+                        .push(problem(line, "unsafe-markup", "a fragment inside an <svg>"));
+                    return;
+                }
                 match fragment_refs(text, nonce) {
                     Ok(refs) => {
                         if refs.iter().any(|found| !allowed.contains(&found.index)) {
@@ -293,6 +335,16 @@ impl Sink<'_> {
             ));
             return TokenSinkResult::Continue;
         }
+        // A browser reads the content of `<title>` and `<textarea>` as text, but inside an SVG (where the tokenizer's
+        // count may not see it is) as markup: so no tag may stand in it.
+        if let Some(raw) = state.raw.clone() {
+            if raw != "style" && !(tag.kind == TagKind::EndTag && raw == name) {
+                state
+                    .problems
+                    .push(problem(line, "unsafe-markup", format!("a tag inside <{raw}>")));
+                return TokenSinkResult::Continue;
+            }
+        }
         if tag.kind == TagKind::EndTag {
             if state.raw.as_deref() == Some(name) {
                 state.raw = None;
@@ -314,11 +366,11 @@ impl Sink<'_> {
                 format!("<{name}> is not allowed in a theme"),
             ));
         }
-        if state.svg > 0 && DENIED_SVG.contains(&name) {
+        if DENIED_SVG.contains(&name) || (state.svg > 0 && name == "style") {
             state.problems.push(problem(
                 line,
                 "unsafe-markup",
-                format!("<{name}> is not allowed inside an <svg>"),
+                format!("<{name}> is not allowed in a theme's SVG"),
             ));
         }
         for attribute in &tag.attrs {
@@ -350,15 +402,14 @@ impl Sink<'_> {
         }
         // The tokenizer alone does not know which elements hold raw text; the sink says so, as a tree builder would.
         if state.svg == 0 {
-            let raw = match name {
-                "style" => Some(RawKind::Rawtext),
-                "title" | "textarea" => Some(RawKind::Rcdata),
-                _ => None,
-            };
-            if let Some(kind) = raw {
+            if name == "style" {
                 state.raw = Some(name.to_string());
                 state.raw_line = line;
-                return TokenSinkResult::RawData(kind);
+                return TokenSinkResult::RawData(RawKind::Rawtext);
+            }
+            if matches!(name, "title" | "textarea") {
+                state.raw = Some(name.to_string());
+                state.raw_line = line;
             }
         }
         TokenSinkResult::Continue
@@ -397,12 +448,12 @@ impl Sink<'_> {
             ));
             return;
         }
-        if name == "style" {
+        if name == "style" || (URL_ATTRIBUTES.contains(&name) && value.to_ascii_lowercase().contains("url")) {
             for found in check_css(value, self.policy, None) {
                 state.problems.push(problem(
                     line,
                     found.code,
-                    format!("style attribute of <{element}>: {}", found.message),
+                    format!("`{name}` attribute of <{element}>: {}", found.message),
                 ));
             }
             return;
@@ -478,6 +529,15 @@ impl Sink<'_> {
                 .push(problem(line, "unsafe-css", "a fragment inside <style>"));
             return;
         }
+        // Inside an SVG a browser parses a `<style>`'s content as markup; with no `<` there is none to parse. CSS
+        // writes a `<` in a string as `\3c`.
+        if css.contains('<') {
+            let at = line + css[..css.find('<').unwrap_or(0)].matches('\n').count();
+            state
+                .problems
+                .push(problem(at, "unsafe-css", "a `<` inside <style> (write it as \\3c)"));
+            return;
+        }
         let css = css.replace(EXPRESSION_MARK, "x");
         for found in check_css(&css, self.policy, None) {
             let at = if found.line > 0 { line + found.line - 1 } else { line };
@@ -505,10 +565,15 @@ fn has_scheme_or_authority(start: &str) -> bool {
     cleaned.starts_with("//") || scheme_of(&cleaned).is_some()
 }
 
-/// The URL as a browser reads it: ASCII tabs and newlines removed anywhere, and leading and trailing spaces and
-/// controls trimmed.
+/// The URL as a browser reads it: ASCII tabs and newlines removed anywhere, leading and trailing spaces and controls
+/// trimmed, and `\` as `/` (as a browser reads it in an http, https or relative URL: `\\evil.example` is
+/// `//evil.example`, and `https://evil.example\@cdn.example` is evil.example's).
 fn clean_url(value: &str) -> String {
-    let removed: String = value.chars().filter(|ch| !matches!(ch, '\t' | '\n' | '\r')).collect();
+    let removed: String = value
+        .chars()
+        .filter(|ch| !matches!(ch, '\t' | '\n' | '\r'))
+        .map(|ch| if ch == '\\' { '/' } else { ch })
+        .collect();
     removed.trim_matches(|ch: char| ch <= ' ').to_string()
 }
 

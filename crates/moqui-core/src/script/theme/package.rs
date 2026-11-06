@@ -816,6 +816,38 @@ fn assemble_at(
     Ok(out)
 }
 
+/// The errors of a template with its snippets put in, when it has any. Each file is checked alone with its includes
+/// blank, so an expression or tag that only the assembly makes (`${"` before an include and `"}` after it, with the
+/// snippet between) is checked here, once the files pass alone. The lines are those of the assembled text.
+pub(crate) fn check_assembled(
+    package: &Package,
+    file: &str,
+    assembled: &Assembled,
+    origins: &[String],
+) -> Vec<Diagnostic> {
+    if assembled.files.len() <= 1 {
+        return Vec::new();
+    }
+    let alone_fails = assembled.files.iter().any(|used| {
+        package.files.get(used).is_some_and(|text| {
+            check_template_file(used, text, origins)
+                .iter()
+                .any(Diagnostic::is_error)
+        })
+    });
+    if alone_fails {
+        return Vec::new();
+    }
+    check_template_file(file, &assembled.text, origins)
+        .iter()
+        .filter(|diagnostic| diagnostic.is_error())
+        .map(|diagnostic| Diagnostic {
+            message: format!("with its snippets put in: {}", diagnostic.message),
+            ..diagnostic.clone()
+        })
+        .collect()
+}
+
 type CheckCache = Mutex<crate::script::BoundedMap<(String, Arc<str>), Arc<[Diagnostic]>>>;
 
 fn check_cache() -> &'static CheckCache {
@@ -1088,8 +1120,9 @@ fn validate_file(package: &Package, path: &str, options: &ValidateOptions, diagn
             return;
         };
         diagnostics.extend(check_template_file(path, text, origins).iter().cloned());
-        if let Err(diagnostic) = assemble(package, path, options.limits.max_include_depth) {
-            diagnostics.push(diagnostic);
+        match assemble(package, path, options.limits.max_include_depth) {
+            Ok(assembled) => diagnostics.extend(check_assembled(package, path, &assembled, origins)),
+            Err(diagnostic) => diagnostics.push(diagnostic),
         }
         if let Some(kind) = path
             .strip_prefix("sections/")

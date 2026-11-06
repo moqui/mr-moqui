@@ -139,14 +139,29 @@ fn walk(node: &Json, found: &mut Vec<Problem>) {
                     }
                 }
                 "MemberExpression" | "ComputedMemberExpression" => {
-                    // `x["constructor"]` names the property as a string.
+                    // `x["constructor"]` and x[`constructor`] name the property as a string. A name built at run time
+                    // (`x["con" + "structor"]`) is not seen here; the frozen sandbox holds nothing it could reach.
                     if map.get("computed").and_then(Json::as_bool) == Some(true) {
-                        if let Some(name) = map
-                            .get("property")
-                            .filter(|property| property.get("type").and_then(Json::as_str) == Some("Literal"))
-                            .and_then(|property| property.get("value"))
-                            .and_then(Json::as_str)
-                        {
+                        let property = map.get("property");
+                        let kind = property
+                            .and_then(|property| property.get("type"))
+                            .and_then(Json::as_str);
+                        let named = match kind {
+                            Some("Literal") => property.and_then(|property| property.get("value")),
+                            Some("TemplateLiteral") => property
+                                .filter(|property| {
+                                    property
+                                        .get("expressions")
+                                        .and_then(Json::as_array)
+                                        .is_some_and(Vec::is_empty)
+                                })
+                                .and_then(|property| property.get("quasis"))
+                                .and_then(|quasis| quasis.get(0))
+                                .and_then(|quasi| quasi.get("value"))
+                                .and_then(|value| value.get("cooked")),
+                            _ => None,
+                        };
+                        if let Some(name) = named.and_then(Json::as_str) {
                             if is_denied_name(name) {
                                 found.push(Problem {
                                     code: "forbidden-name",

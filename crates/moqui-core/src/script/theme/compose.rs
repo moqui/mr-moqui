@@ -630,6 +630,9 @@ impl Page<'_> {
                 );
             }
         }
+        if problems.is_empty() {
+            problems = package::check_assembled(self.package, file, &assembled, &self.request.allowed_origins);
+        }
         if let Some(first) = problems.first() {
             return Err(Failure {
                 file: first.file.clone(),

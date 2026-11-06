@@ -330,6 +330,14 @@ impl State {
                     Ok(()) => Some("an image outside the SVG".to_string()),
                     Err(message) => Some(message),
                 }
+            } else if matches!(kept, "xmlns" | "xmlns:xlink") {
+                // Another namespace would make the drawing elements something else, such as XHTML.
+                let expected = if kept == "xmlns" {
+                    "http://www.w3.org/2000/svg"
+                } else {
+                    "http://www.w3.org/1999/xlink"
+                };
+                (value.trim() != expected).then(|| format!("a namespace other than {expected}"))
             } else if kept == "style" {
                 markup::check_css(value, &policy, None)
                     .first()

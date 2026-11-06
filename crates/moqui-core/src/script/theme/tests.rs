@@ -490,6 +490,9 @@ fn each_budget() {
         "{:?}",
         rendered.omitted
     );
+    // A limit of 0 is the least, not QuickJS's "no limit": nothing renders.
+    request.limits = Limits::default().lowered_by(&json!({"memoryBytes": 0}));
+    assert!(!render(&hungry, &request).ok);
     // The renderer still renders at its own limits afterwards.
     assert!(render(&stone(), &product_request()).ok);
 }
@@ -642,4 +645,131 @@ fn svg_and_css_assets() {
         "{found:?}"
     );
     assert_eq!(sanitize_rich_text("<p onclick=x>a<script>b</script></p>"), "<p>a</p>");
+}
+
+/// The errors of the stone package with `changes`, as `code file:line message`, which must include one with `needle`.
+fn refuses(changes: &[(&str, Option<&str>)], needle: &str) {
+    let found = errors(&validate_stone(changes));
+    assert!(
+        found.iter().any(|error| error.contains(needle)),
+        "no `{needle}` in {found:?}"
+    );
+}
+
+/// The check reads markup with a tokenizer, not a tree builder: what a browser parses differently inside an SVG
+/// (`<style>`, `<title>` and `<textarea>` content as markup, animation) is refused wherever it stands, and a fragment
+/// cannot be put inside an SVG or leave one open for what follows it.
+#[test]
+fn foreign_content_cannot_hide_markup() {
+    let block = "blocks/text.html.fancy-locked";
+    // `</svg>` inside an HTML element of an SVG's <desc> does not close it, so this <style> is the SVG's.
+    refuses(
+        &[(
+            block,
+            Some("<svg><desc><div></svg></div></desc><style><img src=x onerror=alert(1)></style>"),
+        )],
+        "a `<` inside <style>",
+    );
+    refuses(
+        &[(block, Some("<title><img src=x onerror=alert(1)></title>"))],
+        "a tag inside <title>",
+    );
+    refuses(
+        &[(block, Some("<textarea><img src=x onerror=alert(1)></textarea>"))],
+        "a tag inside <textarea>",
+    );
+    refuses(
+        &[(
+            block,
+            Some("<a href=\"#\"><animate attributeName=\"href\" values=\"javascript:alert(1)\"/>x</a>"),
+        )],
+        "<animate> is not allowed",
+    );
+    refuses(
+        &[(
+            block,
+            Some("<svg><rect fill=\"url(https://evil.example/p.svg#a)\"/></svg>"),
+        )],
+        "`fill` attribute of <rect>",
+    );
+    // A text with an escaped `<` is still text.
+    let rendered = render(&stone(), &product_request());
+    assert!(
+        rendered.html.contains("<title>Stone &lt;Market&gt;</title>"),
+        "{}",
+        rendered.html
+    );
+
+    // A block placed inside the section's SVG, and a block that leaves an SVG open, are left out.
+    let inside = stone_with(&[(
+        "sections/hero.html.fancy-locked",
+        Some("<section><svg><#list blocks as block>${block.html}</#list></svg></section>"),
+    )]);
+    let rendered = render(&inside, &product_request());
+    assert!(
+        rendered
+            .omitted
+            .iter()
+            .any(|omitted| omitted.section == "story" && omitted.reason.contains("inside an <svg>")),
+        "{:?}",
+        rendered.omitted
+    );
+    let open = stone_with(&[(block, Some("<svg><g>"))]);
+    let rendered = render(&open, &product_request());
+    assert!(
+        rendered
+            .omitted
+            .iter()
+            .any(|omitted| omitted.block.as_deref() == Some("b1") && omitted.reason.contains("not closed")),
+        "{:?}",
+        rendered.omitted
+    );
+}
+
+#[test]
+fn urls_forms_and_assembled_expressions() {
+    let block = "blocks/text.html.fancy-locked";
+    // A browser reads `\` as `/` in these URLs.
+    refuses(
+        &[(block, Some("<img src=\"\\\\evil.example/x.png\" alt=\"\">"))],
+        "not approved",
+    );
+    refuses(
+        &[(block, Some("<img src=\"/\\evil.example/x.png\" alt=\"\">"))],
+        "not approved",
+    );
+    let found = errors(&validate(
+        &stone_with(&[(
+            block,
+            Some("<img src=\"https://evil.example\\@cdn.example/x.png\" alt=\"\">"),
+        )]),
+        &ValidateOptions {
+            allowed_origins: vec!["https://cdn.example".into()],
+            ..ValidateOptions::default()
+        },
+    ));
+    assert!(found.iter().any(|error| error.contains("not approved")), "{found:?}");
+    // A control cannot join a trusted component's form.
+    refuses(
+        &[(block, Some("<button form=\"checkout\" type=\"submit\">Go</button>"))],
+        "attribute `form`",
+    );
+    // A property named by a template literal.
+    refuses(&[(block, Some("${block[`constructor`]}"))], "`constructor`");
+    // An expression only the assembly makes: the file's `${"` and `"}` around an include.
+    refuses(
+        &[
+            (block, Some("<p>${\"<#include \"leak\">\"}</p>")),
+            (
+                "snippets/leak.html.fancy-locked",
+                Some("\" + block.constructor.constructor(\"return 1\")() + \""),
+            ),
+        ],
+        "with its snippets put in",
+    );
+    // An SVG asset in another namespace loses it.
+    assert_eq!(
+        sanitize_svg("<svg xmlns=\"http://www.w3.org/1999/xhtml\"><rect/></svg>"),
+        "<svg><rect/></svg>"
+    );
 }

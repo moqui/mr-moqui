@@ -88,18 +88,26 @@ null is kept. A reference that does not resolve is null with a warning, or a fai
 
 - Expressions name no framework object (`ec`, `sri`, `context`), no `raw()`, nothing of the renderer's own (`$…`), and
   nothing that reaches the global object or makes code (`globalThis`, `Function`, `constructor`, `__proto__`,
-  `Reflect`…); no `this`, `new`, function bodies, assignments (use `<#assign>`), `delete` or `import`.
+  `Reflect`…); no `this`, `new`, function bodies, assignments (use `<#assign>`), `delete` or `import`. A file is checked
+  alone and again with its snippets put in. A property name built at run time (`x["con" + "structor"]`) is not seen;
+  it reaches only the frozen sandbox, which holds the snapshot, `format` and `localize`.
 - Markup is checked in source (with each `${}` as a mark, so a finding has its line) and again in each render's output:
-  no `<script>`, frame, plugin, `<form>`, `<base>`, `<noscript>`, `<math>`; no `<style>`, `<foreignObject>` or animation
-  in an `<svg>`; no `on…` attribute, `srcdoc`, `action`, `formaction` or `http-equiv`; no expression in a tag or attribute
-  name. Links (`<a href>`) take http, https, mailto, tel and relative URLs. What the page loads (`src`, `srcset`,
-  `<link href>`, CSS `url()`) is the page's own origin, an `allowedOrigins` origin, or a raster `data:` image. CSS has no
-  `@import`, `expression()`, `image-set()` or binding, read after its comments and escapes. `<link rel>` is one of
+  no `<script>`, frame, plugin, `<form>`, `<base>`, `<noscript>`, `<math>`; no `<foreignObject>` or animation anywhere,
+  and no `<style>` in an `<svg>`; no `on…` attribute, `srcdoc`, `action`, `form` or `formaction` (and the other `form…`
+  overrides) or `http-equiv`; no expression in a tag or attribute name. The check is a tokenizer's, not a tree
+  builder's, so what a browser would parse as markup inside an SVG is refused everywhere: no `<` in a `<style>` (CSS
+  writes it `\3c`) and no tag in a `<title>` or `<textarea>`. Links (`<a href>`) take http, https, mailto, tel and
+  relative URLs. What the page loads (`src`, `srcset`, `<link href>`, CSS `url()`, an SVG `fill`, `filter`, `mask`…
+  `url()`) is the page's own origin, an `allowedOrigins` origin, or a raster `data:` image; a `\` in a URL is read as
+  `/`, as a browser reads it. CSS has no `@import`, `expression()`, `image-set()` or binding, read after its comments
+  and escapes. `<link rel>` is one of
   stylesheet, icon, apple-touch-icon, preload, canonical, alternate, next, prev, author and license.
 - Fragments (rendered blocks and sections, sanitized rich text, trusted components) are placeholders until the end and
-  may stand only in text, where the render's own view gave them. A reserved character in data is removed first.
+  may stand only in text outside an `<svg>`, where the render's own view gave them, and a render's output leaves no
+  `<svg>` open. A reserved character in data is removed first.
 - Snippet includes are static: one that includes itself, directly or through others, is a `recursion` error.
-- SVG assets are cleaned to drawing elements and attributes; validation reports each unsafe removal.
+- SVG assets are cleaned to drawing elements and attributes, in the SVG and XLink namespaces only; validation reports
+  each unsafe removal.
 
 Codes: `syntax`, `forbidden-name`, `forbidden-expression`, `unsafe-markup`, `unsafe-url`, `unsafe-css`, `unsafe-svg`,
 `recursion`, `include-depth`, `invalid-include`, `budget`, `invalid-json`, `invalid-manifest`, `invalid-template`,

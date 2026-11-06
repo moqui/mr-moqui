@@ -1186,7 +1186,8 @@ pub(crate) fn render_locked_bounded(
 ) -> Result<String, Error> {
     let compiled = compiled(source, Escape::Html, Scope::Snapshot)?;
     let deadline = deadline.min(Instant::now() + LOCKED_TIME_LIMIT);
-    render_locked_until(&compiled, json, deadline, memory.min(LOCKED_MEMORY_LIMIT))
+    // QuickJS reads a memory limit of 0 as none, so the least is 1 byte (every allocation fails), never 0.
+    render_locked_until(&compiled, json, deadline, memory.clamp(1, LOCKED_MEMORY_LIMIT))
 }
 
 fn render_locked_until(compiled: &str, json: &str, deadline: Instant, memory: usize) -> Result<String, Error> {
