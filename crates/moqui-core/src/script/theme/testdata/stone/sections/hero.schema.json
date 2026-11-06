@@ -1,0 +1,12 @@
+{
+  "name": "Hero",
+  "settings": [
+    {"id": "heading", "type": "text", "label": "Heading", "maxLength": 160, "default": "Hello"},
+    {"id": "background", "type": "color", "label": "Background", "default": "#ffffff"},
+    {"id": "image", "type": "image", "label": "Image"},
+    {"id": "destination", "type": "resourceLink", "label": "Link"}
+  ],
+  "blocks": [{"type": "text", "limit": 4}],
+  "allowedPageKinds": ["home", "product", "category", "page"],
+  "placeholder": "<section class=\"store-hero\"></section>"
+}

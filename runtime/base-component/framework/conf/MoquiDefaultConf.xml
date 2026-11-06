@@ -892,6 +892,9 @@
             so that the extension becomes a default extension and doesn't have to be in the URL -->
         <template-renderer extension="html" class="org.moqui.impl.context.renderer.NoTemplateRenderer"/>
 
+        <!-- the theme composition adapter's budgets (ec.resource.theme, docs/ui/Themes.md); an operator may lower
+            any of them here, e.g. <theme-limits max-sections="50" page-time-ms="2000"/> -->
+
         <script-runner extension=".xml" class="org.moqui.impl.context.runner.XmlActionsScriptRunner"/>
         <script-runner extension=".js" engine="javascript"/>
     </resource-facade>

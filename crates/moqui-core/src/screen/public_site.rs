@@ -4,7 +4,7 @@ use crate::web::WebRequest;
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct PublicSiteRoute {
     pub root: String,
     pub path: String,
@@ -12,6 +12,10 @@ pub(super) struct PublicSiteRoute {
     pub topic_id: Option<String>,
     pub topic_slug: Option<String>,
     pub post_id: Option<String>,
+    /// The resolver service's `screenParameters` map: named screen parameters for this path (a shop's product or
+    /// category id). They take the place of request parameters of the same name; the site ids and the Forum's three
+    /// ids are bound after them.
+    pub screen_parameters: std::collections::BTreeMap<String, Value>,
 }
 
 /// First path segments that always belong to the framework, never to a public site.
@@ -96,12 +100,16 @@ fn resolve_conf(conf: &MNode, request: &WebRequest, current_root: &str) -> Resul
     if FRAMEWORK_ROUTES.contains(&first) {
         return Ok(None);
     }
+    // A path under a site's named mount (`/forum`) on a host no site names is concealed. A mount at the root claims
+    // only its own host: every other host's paths stay with the webapp's screens (a shop at the root of its host
+    // beside the BOSS app on another).
     let mut public_path = false;
     for webapp in list.named_iter("webapp") {
         if !webapp.attribute_is("name", "webroot") {
             continue;
         }
         for route in webapp.named_iter("public-site") {
+            let own_host = route.attribute("host").map(|h| normalize_host(&h)).as_deref() == Some(host.as_str());
             let mut matches_site_path = false;
             for mount in route.named_iter("mount") {
                 let prefix = mount.attribute("path").unwrap_or_default();
@@ -110,12 +118,9 @@ fn resolve_conf(conf: &MNode, request: &WebRequest, current_root: &str) -> Resul
                         .path
                         .starts_with(&(prefix.trim_end_matches('/').to_string() + "/"))
                 {
-                    public_path = true;
-                    matches_site_path = true;
+                    matches_site_path |= own_host;
+                    public_path |= !prefix.trim_matches('/').is_empty();
                 }
-            }
-            if route.attribute("host").map(|h| normalize_host(&h)).as_deref() != Some(host.as_str()) {
-                continue;
             }
             if !matches_site_path {
                 continue;
@@ -154,6 +159,10 @@ fn resolve_conf(conf: &MNode, request: &WebRequest, current_root: &str) -> Resul
                     return Err(Error::of_kind(ErrorKind::NotFound, "Page not found"));
                 }
                 let text = |name: &str| output.get(name).and_then(Value::as_str).map(str::to_string);
+                let screen_parameters = match output.get("screenParameters") {
+                    Some(Value::Map(entries)) => entries.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+                    _ => std::collections::BTreeMap::new(),
+                };
                 return Ok(Some(PublicSiteRoute {
                     root,
                     path,
@@ -161,6 +170,7 @@ fn resolve_conf(conf: &MNode, request: &WebRequest, current_root: &str) -> Resul
                     topic_id: text("topicId"),
                     topic_slug: text("topicSlug"),
                     post_id: text("postId"),
+                    screen_parameters,
                 }));
             }
             let mut selected = None;
@@ -194,6 +204,7 @@ fn resolve_conf(conf: &MNode, request: &WebRequest, current_root: &str) -> Resul
                         topic_id: None,
                         topic_slug: None,
                         post_id: None,
+                        screen_parameters: std::collections::BTreeMap::new(),
                     })
                 })
                 .ok_or_else(|| Error::of_kind(ErrorKind::NotFound, "Page not found"));
@@ -210,6 +221,7 @@ pub(super) fn parameters(
     input: &std::collections::BTreeMap<String, Value>,
 ) -> std::collections::BTreeMap<String, Value> {
     let mut out = input.clone();
+    out.extend(route.screen_parameters.clone());
     for (key, value) in [
         ("rootCommEventId", &route.topic_id),
         ("requestedTopicSlug", &route.topic_slug),
@@ -283,5 +295,79 @@ mod tests {
         let mut request = WebRequest::new("GET", "/Topics");
         request.headers.insert("host".into(), "forum.test".into());
         assert!(resolve_conf(&conf, &request, "webroot").expect("site").is_some());
+    }
+    fn root_and_forum() -> MNode {
+        MNode::parse_shared("test", r#"<moqui-conf><webapp-list><webapp name="webroot"><public-site host="shop.test" site-id="SHOP" screen-location="component://mr-shop/screen/Shop.xml"><mount path="/" screen="Store"/></public-site><public-site host="forum.test" site-id="SITE_A" screen-location="component://mr-pass/screen/Pass.xml"><mount path="/forum" screen="Forum"/></public-site></webapp></webapp-list></moqui-conf>"#).expect("conf")
+    }
+    fn on(host: &str, path: &str) -> WebRequest {
+        let mut request = WebRequest::new("GET", path);
+        request.headers.insert("host".into(), host.into());
+        request
+    }
+    #[test]
+    fn a_root_mount_claims_only_its_own_host() {
+        let conf = root_and_forum();
+        // another host's paths, and a request with no host, stay with the webapp
+        for request in [
+            on("boss.test", "/Topics"),
+            on("boss.test", "/"),
+            WebRequest::new("GET", "/Login2"),
+        ] {
+            assert!(
+                resolve_conf(&conf, &request, "webroot").expect("webapp").is_none(),
+                "{} stays the webapp's",
+                request.path
+            );
+        }
+        // the root mount's own host still routes, its paths and its root
+        let route = resolve_conf(&conf, &on("Shop.Test:8443", "/p/Widget"), "webroot")
+            .expect("route")
+            .expect("shop");
+        assert_eq!(
+            (route.site_id.as_str(), route.path.as_str()),
+            ("SHOP", "/Store/p/Widget")
+        );
+        assert!(resolve_conf(&conf, &on("shop.test", "/"), "webroot")
+            .expect("route")
+            .is_some());
+        // on the shop's host a named mount of another site's is the shop's path
+        let route = resolve_conf(&conf, &on("shop.test", "/forum"), "webroot")
+            .expect("route")
+            .expect("shop");
+        assert_eq!(route.site_id, "SHOP");
+        // framework paths stay reserved on the shop's host and elsewhere
+        for host in ["shop.test", "boss.test"] {
+            for path in ["/apps/Boss", "/rest/s1/pass", "/Login", "/status"] {
+                assert!(resolve_conf(&conf, &on(host, path), "webroot").expect(path).is_none());
+            }
+        }
+        // a named mount on a host no site names is still concealed
+        assert_eq!(
+            resolve_conf(&conf, &on("boss.test", "/forum/Topics"), "webroot")
+                .expect_err("concealed")
+                .kind(),
+            ErrorKind::NotFound
+        );
+    }
+    #[test]
+    fn resolver_screen_parameters_bind_before_the_site_and_forum_ids() {
+        let route = PublicSiteRoute {
+            root: "component://mr-shop/screen/Shop.xml".into(),
+            path: "/Store/Product".into(),
+            site_id: "SHOP".into(),
+            topic_id: Some("T1".into()),
+            topic_slug: None,
+            post_id: None,
+            screen_parameters: std::collections::BTreeMap::from([
+                ("productId".into(), Value::string("WIDGET")),
+                ("siteId".into(), Value::string("OTHER")),
+                ("rootCommEventId".into(), Value::string("T2")),
+            ]),
+        };
+        let input = std::collections::BTreeMap::from([("productId".into(), Value::string("FROM_REQUEST"))]);
+        let out = parameters(&route, &input);
+        assert_eq!(out.get("productId"), Some(&Value::string("WIDGET")));
+        assert_eq!(out.get("siteId"), Some(&Value::string("SHOP")));
+        assert_eq!(out.get("rootCommEventId"), Some(&Value::string("T1")));
     }
 }

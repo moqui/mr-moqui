@@ -881,6 +881,58 @@ fn cookieless_requests_keep_the_table_within_its_cap() {
 }
 
 #[test]
+fn a_discarded_session_is_never_written() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    let guard = bind(&factory, None, None, false).unwrap();
+    save_parameter("color", "blue");
+    let id = guard.session_id();
+    discard_bound_session();
+    drop(guard);
+    assert!(!lock_sessions(&factory).sessions.contains_key(&id));
+    flush_dirty(&factory).unwrap();
+    assert!(read_row(&facade, &id).unwrap().is_none());
+    assert_eq!(count_entity(&facade, HTTP_SESSION), 0);
+    assert_eq!(count_entity(&facade, VISIT), 0);
+}
+
+/// A request that declines its session (impl-commerce F86) takes back the Visit and Visitor its returning cookie started
+/// at the bind; the session itself stays, with no visit, so a later request starts its own. Outside a request's scope a
+/// decline does nothing.
+#[test]
+fn a_declined_request_takes_back_the_visit_it_started() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    let guard = bind(&factory, None, None, false).unwrap();
+    let session_id = guard.session_id();
+    let cookie = guard.session_cookie_header().unwrap();
+    drop(guard);
+    {
+        let _scope = RequestSessionScope::begin();
+        decline_session();
+        assert!(session_declined());
+        let guard = bind(&factory, Some(cookie_value(&cookie)), None, false).unwrap();
+        assert!(
+            visit_id().unwrap().is_some(),
+            "the returning cookie starts a visit at the bind"
+        );
+        take_back_request_visit();
+        assert!(visit_id().unwrap().is_none());
+        assert_eq!(guard.session_id(), session_id);
+        drop(guard);
+    }
+    assert_eq!(count_entity(&facade, VISIT), 0);
+    assert_eq!(count_entity(&facade, VISITOR), 0);
+    flush_dirty(&factory).unwrap();
+    assert_eq!(text(&load_session(&facade, &session_id), "visitId"), "");
+    assert!(!session_declined());
+    decline_session();
+    assert!(!session_declined(), "no request, no decline");
+}
+
+#[test]
 fn eviction_writes_a_dirty_session_before_dropping_it() {
     let (_lock, ctx, facade, _key) = setup();
     let _entered = ctx.enter();

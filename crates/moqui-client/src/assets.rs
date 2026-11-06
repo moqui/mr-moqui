@@ -22,7 +22,8 @@ use std::path::{Path, PathBuf};
 
 /// The content security policy of the shell's page: its own scripts only (from its own files' paths, not the server's
 /// forwarded ones), no eval (only WebAssembly's compile, for the crypto device's module, `libs/matrix-sdk-crypto`), no
-/// frames (a mail body's `srcdoc` frame, `m-html-view`, is not one, and takes this policy), one worker, its requests to
+/// frames (a mail body's `srcdoc` frame, `m-html-view`, is not one, and takes this policy) but the preview origins
+/// [`configured_shell_csp`] adds, one worker, its requests to
 /// its own origin (which the host forwards) and to Tauri's IPC. Chromium adds the hashes of the app's initialization
 /// scripts.
 ///
@@ -37,6 +38,50 @@ pub const SHELL_CSP: &str = "default-src 'self'; \
      connect-src 'self' http://ipc.localhost; media-src 'self' blob:; frame-src 'none'; \
      worker-src http://moqui-shell.localhost/js/WebrootSFrameWorker.js; \
      object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
+
+/// The environment variable that lists the origins the shell may frame, comma separated: a theme preview's isolated
+/// origin, framed by the Commerce editor (impl-commerce P5). Unset, the shell frames nothing.
+pub const FRAME_ORIGINS_VAR: &str = "moqui_shell_frame_origins";
+
+/// The origins of a comma separated list that the shell may frame: `https://host[:port]`, or `http://` for localhost
+/// in development, with no path. Anything else is left out, so the list cannot widen the policy beyond origins.
+pub fn frame_origins_from(text: &str) -> Vec<String> {
+    text.split(',')
+        .map(|origin| origin.trim().trim_end_matches('/').to_ascii_lowercase())
+        .filter(|origin| {
+            let Some((scheme, authority)) = origin.split_once("://") else {
+                return false;
+            };
+            let host = authority.rsplit_once(':').map_or(authority, |(host, port)| {
+                if port.chars().all(|ch| ch.is_ascii_digit()) && !port.is_empty() {
+                    host
+                } else {
+                    ""
+                }
+            });
+            let host_ok = !host.is_empty()
+                && host
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '.');
+            host_ok && (scheme == "https" || (scheme == "http" && matches!(host, "localhost" | "127.0.0.1")))
+        })
+        .collect()
+}
+
+/// [`SHELL_CSP`] with `frame-src` allowing `origins` (none keeps `'none'`).
+pub fn shell_csp(origins: &[String]) -> String {
+    if origins.is_empty() {
+        return SHELL_CSP.to_string();
+    }
+    SHELL_CSP.replace("frame-src 'none'", &format!("frame-src {}", origins.join(" ")))
+}
+
+/// The shell's policy with the frame origins of [`FRAME_ORIGINS_VAR`].
+pub fn configured_shell_csp() -> String {
+    shell_csp(&frame_origins_from(
+        &std::env::var(FRAME_ORIGINS_VAR).unwrap_or_default(),
+    ))
+}
 
 /// The script of an encrypted call's SFrame worker (`WebrootCallKeys.js` starts it for `RTCRtpScriptTransform`), the
 /// one worker the shell's CSP allows.

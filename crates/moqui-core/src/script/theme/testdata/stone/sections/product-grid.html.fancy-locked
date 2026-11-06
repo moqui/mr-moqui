@@ -1,0 +1,5 @@
+<ul class="grid">
+  <#list productList as product>
+  <li><#include "product-card"></li>
+  </#list>
+</ul>

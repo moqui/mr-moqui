@@ -207,6 +207,8 @@ fn handle(
     let just_content =
         ScreenUrlInfo::parse(factory, root, &request.path, 0).is_ok_and(|info| info.file_resource.is_some());
     let _no_visit = user::session::NoVisitGuard::set(just_content);
+    // what the request decides about its session (a screen may decline one), from before the bind
+    let _request_session = user::session::RequestSessionScope::begin();
     let guard = user::bind(
         factory,
         session_cookie.as_deref(),
@@ -260,17 +262,37 @@ fn handle(
         scripts.fire("requestDestroyed", Value::Null);
     }
     scripts.run_actions_logged("after-request", parameters);
+    // A page a shared cache may keep, for a visitor with no session and nobody signed in, gets no session: no cookie or
+    // token is sent and the session made for the request is not kept (impl-shop F42). A screen that declined a session
+    // (`ec.web.declineSession()`, impl-commerce F86) gets the same whatever its caching, and a session the request
+    // brought is kept but sent nothing new; either way the Visit the request started is taken back.
+    let declined = user::session::session_declined();
+    let anonymous = user::session::current_user_id()?.is_none();
+    let discard = anonymous
+        && ((presented.is_none() && matches!(&outcome, Ok(response) if is_public(response)))
+            || (declined && new_session));
+    if declined {
+        user::session::take_back_request_visit();
+    }
+    if discard {
+        user::session::discard_bound_session();
+    }
     let response = match end.finish() {
         Err(err) if !web::output_sent() && outcome.is_ok() => web::json_error_of(&err),
         _ => outcome?,
     };
-    let mut response = attach_session(
-        response,
-        &guard,
-        presented.as_deref(),
-        visitor_cookie.as_deref(),
-        token_before.as_deref(),
-    )?;
+    let mut response = if discard || declined {
+        response
+    } else {
+        attach_session(
+            response,
+            &guard,
+            presented.as_deref(),
+            visitor_cookie.as_deref(),
+            token_before.as_deref(),
+        )?
+    };
+    not_modified(request, &mut response);
     // the preferences this request set, for the page to apply at once (docs/ui/Qvt-Client.md, Preferences)
     let changed = web::take_changed_preferences();
     if !changed.is_empty() {
@@ -530,9 +552,10 @@ fn dispatch_request(
         return Ok(pdf);
     }
     let stream = web::take_stream();
-    let (status, headers, body, sent) = web::take_output();
+    // The status is 200 unless the screen or transition set one, which holds whether or not a body was written.
+    let (status, headers, body, _) = web::take_output();
     Ok(WebResponse {
-        status: if sent { status } else { 200 },
+        status,
         headers,
         body,
         stream,
@@ -678,6 +701,41 @@ fn error_page(
         body,
         stream,
         http_log: web::HttpLogIdentity::default(),
+    })
+}
+
+/// A 200 that names its version with an `ETag` (a screen or script set it) becomes a 304 with no body when the request's
+/// `If-None-Match` names the same, as a static file's does (`static_files::respond_opened`). Only for a `GET` or `HEAD`:
+/// another method has done its work, and its answer is not one a cache holds.
+fn not_modified(request: &WebRequest, response: &mut WebResponse) {
+    let method = request.method.as_str();
+    if response.status != 200 || !(method.eq_ignore_ascii_case("GET") || method.eq_ignore_ascii_case("HEAD")) {
+        return;
+    }
+    let Some(presented) = request.header("if-none-match") else {
+        return;
+    };
+    let matches = response
+        .headers
+        .iter()
+        .any(|(name, tag)| name.eq_ignore_ascii_case("etag") && static_files::matches_tag(presented, tag));
+    if matches {
+        response.status = 304;
+        response.body.clear();
+        response.stream = None;
+        response
+            .headers
+            .retain(|(name, _)| !name.eq_ignore_ascii_case("content-length"));
+    }
+}
+
+/// Whether the response says a shared cache may keep it: a `Cache-Control` with the `public` directive.
+fn is_public(response: &WebResponse) -> bool {
+    response.headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("cache-control")
+            && value
+                .split(',')
+                .any(|directive| directive.trim().eq_ignore_ascii_case("public"))
     })
 }
 

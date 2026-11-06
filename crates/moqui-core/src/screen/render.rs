@@ -272,12 +272,8 @@ impl ScreenRender {
         let fenced = self.options.write_fence || self.options.gate != TransitionGate::Open;
         let _fence = fenced.then(|| crate::entity::fence::enter(format!("the screen render of {}", self.path)));
         run_job(&self.factory, &job)?;
-        let (status, headers, body, sent) = web::take_output();
-        Ok(RenderOutput {
-            status: if sent { status } else { 200 },
-            headers,
-            body,
-        })
+        let (status, headers, body, _) = web::take_output();
+        Ok(RenderOutput { status, headers, body })
     }
 }
 
@@ -868,10 +864,15 @@ fn add_server_static_header(state: &RenderState) {
 /// request, so it is never cached, and `X-Moqui-Qvt` names how the client handles the text: `merged-fragment` is a
 /// template with the request's values in it. (A server-static template says `static-template` and caches.)
 fn add_client_component_headers(state: &RenderState) {
-    if !matches!(state.render_mode.as_str(), "qvt" | "qjs" | "qvue")
-        || !web::output_sent()
-        || web::output_status() != 200
-    {
+    if !matches!(state.render_mode.as_str(), "qvt" | "qjs" | "qvue") || !web::output_sent() {
+        return;
+    }
+    let status = web::output_status();
+    if status != 200 {
+        // A status the screen's actions set (a 404, a 503) is still one user's render, and is never cached either.
+        if !(300..400).contains(&status) && web::response_header_values("Cache-Control").is_empty() {
+            web::add_header("Cache-Control", "private, no-store");
+        }
         return;
     }
     web::add_header("Cache-Control", "private, no-store");
@@ -1041,7 +1042,7 @@ fn render_body(state: &RenderState) -> Result<(), Error> {
         if !web::output_sent() && !state.dont_do_render.get() {
             let bytes = state.xlsx.borrow().to_bytes()?;
             web::send_bytes_with_headers(
-                200,
+                web::output_status(),
                 vec![("Content-Type".to_string(), state.content_type.clone())],
                 bytes,
             );
@@ -1053,7 +1054,7 @@ fn render_body(state: &RenderState) -> Result<(), Error> {
         wrap_json_envelope(state);
     }
     if !web::output_sent() && !state.dont_do_render.get() {
-        web::start_output(200, &super::sri::content_type_header(state));
+        web::start_output(&super::sri::content_type_header(state));
     }
     Ok(())
 }
@@ -1074,7 +1075,7 @@ fn tui_unsupported_screen(info: &ScreenUrlInfo) -> Result<(), Error> {
 /// and does not come through here.
 fn wrap_json_envelope(state: &RenderState) {
     if !web::output_sent() {
-        web::start_output(200, &super::sri::content_type_header(state));
+        web::start_output(&super::sri::content_type_header(state));
     }
     let raw = web::with_body(<[u8]>::to_vec);
     let nodes = json_root_array(&raw, &state.url_info);
@@ -1675,7 +1676,7 @@ fn transition_outcome(
         held,
         header_authenticated: (job.header_authenticated && job.options.origin == RenderOrigin::Browser)
             || user::header_login_session(),
-        status: if web::output_sent() { web::output_status() } else { 200 },
+        status: web::output_status(),
         location: web::response_header_values("Location").into_iter().next(),
         error: result.as_ref().err().map(|error| error.message().to_string()),
         errors,

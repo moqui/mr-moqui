@@ -66,7 +66,7 @@ instead; the two never share a page (both define `window.moqui`). The full refer
 | `MoquiLib.js` | the `moqui` object: type checks, URLs, `request` (fetch with the session token), `loadScript`, `parseVue`, `NotificationClient`, `LruMap`, `saveBlob` |
 | `MoquiL10n.js` | `moqui.l10n`: number, currency and date formatting, a copy of `moqui-lib`'s `format.rs` and `datefmt.rs` |
 | `WebrootVue.qvt.js` | the `m-*` components and the `/qapps` application |
-| `WebrootPublic.qvt.js` | the public shell of the anonymous token routes (`/s/<token>`) |
+| `WebrootPublic.qvt.js` | the public shell of the anonymous token routes (`/s/<token>`), and island mode (`shell: "island"`): screens mounted at named elements of a server-rendered page |
 | `WebrootChat.js` | `moqui.chat`: the chat store and presence, and the account menu's status components |
 | `WebrootExt.js` | `moqui.ext`: the declared actions and panels of a screen (`/extItems`), and `m-ext-actions` and `m-ext-panel`, which a `.qvue` screen puts in its menus and panes ([Qvt-Client](../../../../../../docs/ui/Qvt-Client.md#declared-actions-and-panels)) |
 | `WebrootPush.js` | `moqui.push`: registers the service worker `/sw.js`, the account menu's Notifications on this device (`m-push-item`), and the Web Push subscription kept to the signed-in user ([Qvt-Client](../../../../../../docs/ui/Qvt-Client.md#install-and-web-push)) |

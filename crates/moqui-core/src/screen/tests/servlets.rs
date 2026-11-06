@@ -292,3 +292,168 @@ fn the_shipped_auth_filter_wants_a_user_with_the_permission() {
     assert_eq!(response.body_text(), "in");
     assert!(scripts.path().exists());
 }
+
+/// A page marked `Cache-Control: public` for a visitor with no session gets no cookie and no session token, and keeps
+/// no session (impl-shop F42); the same page for a visitor with a session still gets them.
+#[test]
+fn a_public_page_for_a_cookieless_visitor_sends_no_session() {
+    let scripts = Scripts::new("public");
+    let servlet = scripts.write(
+        "Public.js",
+        r#"({ doGet(request, response) {
+            response.setHeader("Cache-Control", request.getParameter("cache") || "public, max-age=60")
+            response.setHeader("ETag", '"v1"')
+            response.setContentType("text/html")
+            response.write("<p>catalog</p>")
+        } })"#,
+    );
+    let world = World::open_in_framework(&conf(&format!(
+        r#"<servlet name="Public" location="{servlet}"><url-pattern>/catalog/*</url-pattern></servlet>"#
+    )));
+    let root = webroot().to_string_lossy().into_owned();
+    let sessions = |world: &World| {
+        crate::user::session::flush_dirty(&world.factory).unwrap();
+        world
+            .facade
+            .find("moqui.server.HttpSession")
+            .unwrap()
+            .list()
+            .unwrap()
+            .len()
+    };
+    let before = sessions(&world);
+    for _ in 0..2 {
+        let response = serve_at(&world.factory, request("GET", "/catalog/mugs"), &root);
+        assert_eq!(response.status, 200, "{}", response.body_text());
+        assert_eq!(response.body_text(), "<p>catalog</p>");
+        assert_eq!(header_value(&response, "Set-Cookie"), None);
+        assert_eq!(header_value(&response, "moquiSessionToken"), None);
+        assert_eq!(
+            header_value(&response, "Cache-Control").as_deref(),
+            Some("public, max-age=60")
+        );
+    }
+    assert_eq!(sessions(&world), before, "no session row for the public page");
+    // The page's ETag answers a revalidation with a 304 and no body.
+    let mut revalidate = request("GET", "/catalog/mugs");
+    revalidate.set_header("if-none-match", "W/\"v1\"");
+    let response = serve_at(&world.factory, revalidate, &root);
+    assert_eq!(response.status, 304);
+    assert!(response.body.is_empty());
+    assert_eq!(header_value(&response, "Set-Cookie"), None);
+    // A private answer still starts a session.
+    let mut private = request("GET", "/catalog/cart");
+    private.query.push(("cache".to_string(), "no-store".to_string()));
+    let response = serve_at(&world.factory, private, &root);
+    let cookie = header_value(&response, "Set-Cookie").expect("a session cookie");
+    assert!(cookie.starts_with("moqui.session="), "{cookie}");
+    assert!(header_value(&response, "moquiSessionToken").is_some());
+    // A visitor who has a session keeps it on a public page.
+    let mut again = request("GET", "/catalog/mugs");
+    again.set_header("cookie", cookie.split(';').next().unwrap());
+    let response = serve_at(&world.factory, again, &root);
+    assert_eq!(response.status, 200);
+    assert_eq!(sessions(&world), before + 1);
+}
+
+/// A page that declines a session (`ec.web.declineSession()`, impl-commerce F86), whatever its caching, sends no cookie
+/// or token: a cookieless visitor's session is discarded unwritten, and a visitor's own session is kept but sent nothing
+/// new. No Visit records a declined request as its `initialRequest`, even one the request's cookies started at the bind.
+#[test]
+fn a_page_that_declines_a_session_sends_none_and_starts_no_visit() {
+    let scripts = Scripts::new("decline");
+    let servlet = scripts.write(
+        "Frame.js",
+        r#"({ doGet(request, response) {
+            if (request.getParameter("keep") !== "Y") ec.web.declineSession()
+            response.setHeader("Cache-Control", "no-store")
+            response.setContentType("text/html")
+            response.write("<p>preview</p>")
+        } })"#,
+    );
+    let world = World::open_in_framework(&conf(&format!(
+        r#"<servlet name="Frame" location="{servlet}"><url-pattern>/f86-frame/*</url-pattern></servlet>"#
+    )));
+    let root = webroot().to_string_lossy().into_owned();
+    let count = |world: &World, entity: &str| {
+        crate::user::session::flush_dirty(&world.factory).unwrap();
+        world.facade.find(entity).unwrap().list().unwrap().len()
+    };
+    let recorded = |world: &World, token: &str| {
+        let visits = world.facade.find("moqui.server.Visit").unwrap().list().unwrap();
+        let found = visits.iter().any(|visit| {
+            visit
+                .get("initialRequest")
+                .and_then(moqui_lib::object::Value::as_str)
+                .is_some_and(|url| url.contains(token))
+        });
+        found
+    };
+    let cookies = |response: &crate::web::WebResponse| -> Vec<String> {
+        response
+            .headers
+            .iter()
+            .filter(|(name, _)| name.eq_ignore_ascii_case("set-cookie"))
+            .map(|(_, value)| value.split(';').next().unwrap_or_default().to_string())
+            .collect()
+    };
+    let sends_nothing = |response: &crate::web::WebResponse| {
+        assert_eq!(response.status, 200, "{}", response.body_text());
+        assert_eq!(response.body_text(), "<p>preview</p>");
+        assert_eq!(cookies(response), Vec::<String>::new());
+        assert_eq!(header_value(response, "moquiSessionToken"), None);
+        assert_eq!(header_value(response, "X-CSRF-Token"), None);
+    };
+    let sessions_before = count(&world, "moqui.server.HttpSession");
+    let visitors_before = count(&world, "moqui.server.Visitor");
+
+    // A cookieless frame: no session is kept and no Visit starts.
+    sends_nothing(&serve_at(&world.factory, request("GET", "/f86-frame/tokA"), &root));
+    assert_eq!(count(&world, "moqui.server.HttpSession"), sessions_before);
+    assert!(!recorded(&world, "tokA"));
+
+    // A visitor with a session of their own (no Visit yet) keeps it on a declined page, and the Visit their cookie
+    // starts at the bind is taken back, so the next page that keeps a session records itself.
+    let mut start = request("GET", "/f86-frame/start");
+    start.query.push(("keep".to_string(), "Y".to_string()));
+    let response = serve_at(&world.factory, start, &root);
+    let session = cookies(&response).into_iter().next().expect("a session cookie");
+    assert!(session.starts_with("moqui.session="), "{session}");
+    let mut declined = request("GET", "/f86-frame/tokB");
+    declined.set_header("cookie", &session);
+    sends_nothing(&serve_at(&world.factory, declined, &root));
+    assert!(
+        !recorded(&world, "tokB"),
+        "the declined request is no Visit's initialRequest"
+    );
+    assert_eq!(count(&world, "moqui.server.HttpSession"), sessions_before + 1);
+    let mut next = request("GET", "/f86-frame/after");
+    next.query.push(("keep".to_string(), "Y".to_string()));
+    next.set_header("cookie", &session);
+    let response = serve_at(&world.factory, next, &root);
+    let sent = cookies(&response);
+    assert!(
+        !sent.iter().any(|cookie| cookie.starts_with("moqui.session=")),
+        "the same session: {sent:?}"
+    );
+    let visitor = sent
+        .into_iter()
+        .find(|cookie| cookie.starts_with("moqui.visitor="))
+        .expect("the visit starts now");
+    assert!(recorded(&world, "/f86-frame/after"));
+    let visitors = count(&world, "moqui.server.Visitor");
+    assert_eq!(visitors, visitors_before + 1);
+
+    // A returning visitor with no session: the bind starts a Visit for the visitor cookie, which the decline takes back
+    // with the session made for the request.
+    let mut returning = request("GET", "/f86-frame/tokC");
+    returning.set_header("cookie", &visitor);
+    sends_nothing(&serve_at(&world.factory, returning, &root));
+    assert!(!recorded(&world, "tokC"));
+    assert_eq!(count(&world, "moqui.server.HttpSession"), sessions_before + 1);
+    assert_eq!(
+        count(&world, "moqui.server.Visitor"),
+        visitors,
+        "the known visitor stays"
+    );
+}

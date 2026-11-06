@@ -449,7 +449,13 @@ along with this software (see the LICENSE.md file). If not, see
                     <xs:attribute name="host" type="xs:string" use="required"/>
                     <xs:attribute name="site-id" type="xs:string" use="required"/>
                     <xs:attribute name="screen-location" type="xs:string" use="required"/>
-                    <xs:attribute name="resolver-service" type="xs:string"/>
+                    <xs:attribute name="resolver-service" type="xs:string">
+                        <xs:annotation><xs:documentation>A service called with siteId, hostname and path for each request
+                            under a mount; it answers screenPath, optionally the Forum's topicId, topicSlug and postId, and
+                            optionally screenParameters, a Map of named screen parameters (they replace request parameters
+                            of the same name; siteId, resolvedSiteId and the Forum's three are bound after them). A mount at
+                            "/" claims only this host; a path under any other mount is concealed on hosts no public-site
+                            names.</xs:documentation></xs:annotation></xs:attribute>
                     </xs:complexType>
                 </xs:element>
                 <xs:element minOccurs="0" maxOccurs="unbounded" name="token-route">
@@ -949,6 +955,7 @@ along with this software (see the LICENSE.md file). If not, see
             <xs:sequence>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="resource-reference"/>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="template-renderer"/>
+                <xs:element minOccurs="0" maxOccurs="1" ref="theme-limits"/>
                 <xs:element minOccurs="0" maxOccurs="unbounded" ref="script-runner"/>
             </xs:sequence>
             <xs:attribute name="xml-actions-template-location" type="xs:string"/>
@@ -979,6 +986,22 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:complexType>
             <xs:attribute name="extension" type="xs:string" use="required"/>
             <xs:attribute name="class" type="xs:string" use="required"/>
+        </xs:complexType>
+    </xs:element>
+    <xs:element name="theme-limits">
+        <xs:annotation><xs:documentation>The operator's budgets of the theme composition adapter (ec.resource.theme,
+            docs/ui/Themes.md). Each lowers its default; a value above the default is ignored. The defaults are 100
+            sections a page, 100 blocks a section, depth 8, include depth 8, 2 MiB of output, 1000 ms a render,
+            5000 ms a page and 32 MiB of sandbox memory.</xs:documentation></xs:annotation>
+        <xs:complexType>
+            <xs:attribute name="max-sections" type="xs:positiveInteger"/>
+            <xs:attribute name="max-blocks" type="xs:positiveInteger"/>
+            <xs:attribute name="max-depth" type="xs:positiveInteger"/>
+            <xs:attribute name="max-include-depth" type="xs:positiveInteger"/>
+            <xs:attribute name="max-output-bytes" type="xs:positiveInteger"/>
+            <xs:attribute name="render-time-ms" type="xs:positiveInteger"/>
+            <xs:attribute name="page-time-ms" type="xs:positiveInteger"/>
+            <xs:attribute name="memory-bytes" type="xs:positiveInteger"/>
         </xs:complexType>
     </xs:element>
     <xs:element name="script-runner">

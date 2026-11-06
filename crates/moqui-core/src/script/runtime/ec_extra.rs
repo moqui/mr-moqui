@@ -225,7 +225,9 @@ pub(super) fn add_resource_functions<'js>(ctx: &Ctx<'js>, resource: &Object<'js>
         ctx,
         "resource.getTemplateRendererExtensionSet",
         resource.set("getTemplateRendererExtensionSet", extensions),
-    )
+    )?;
+    // the theme composition adapter, ec.resource.theme (theme_host.rs)
+    super::theme_host::add_theme(ctx, resource)
 }
 
 /// `ec.resource.getTemplateRendererExtensionSet()`: the file extensions a template renderer is configured for (`md`,

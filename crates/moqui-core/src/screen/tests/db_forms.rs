@@ -55,7 +55,13 @@ fn seed(world: &World) {
     };
     let from_2020 = ("fromDate", stamp(JAN_2020));
     field("kind", "Kind", "DBFFT_drop-down", "1", std::slice::from_ref(&from_2020));
-    field("serial", "Serial", "DBFFT_text-line", "2", std::slice::from_ref(&from_2020));
+    field(
+        "serial",
+        "Serial",
+        "DBFFT_text-line",
+        "2",
+        std::slice::from_ref(&from_2020),
+    );
     field(
         "oldQ",
         "Old question",

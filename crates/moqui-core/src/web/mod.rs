@@ -773,9 +773,11 @@ pub(crate) fn base_url() -> String {
     })
 }
 
-/// Open the response body for a screen render: status, `Content-Type`, and an empty body that
-/// [`write_output`] appends to. A response something already sent is left alone and `false` returns.
-pub(crate) fn start_output(status: u16, content_type: &str) -> bool {
+/// Open the response body for a screen render: `Content-Type`, and an empty body that [`write_output`] appends to. The
+/// status is the one the request has so far: 200, or what the screen's actions set before the output began
+/// (`ec.web.response.setStatus`), as a servlet's writer commits the status it was given. A response something already
+/// sent is left alone and `false` returns.
+pub(crate) fn start_output(content_type: &str) -> bool {
     WEB.with(|slot| {
         let mut web = slot.borrow_mut();
         let Some(web) = web.as_mut() else {
@@ -785,7 +787,6 @@ pub(crate) fn start_output(status: u16, content_type: &str) -> bool {
             return false;
         }
         web.sent = true;
-        web.status = status;
         web.headers.push(("Content-Type".to_string(), content_type.to_string()));
         true
     })
@@ -1944,6 +1945,10 @@ pub fn finish_response(
 /// Java's `WebappInfo.addHeaders`: the conf's `response-header` entries for `kind` (`screen-render`, `cors-actual`). An
 /// entry replaces the header, or adds a value when it says `add="true"`. With `only_missing`, a header the response
 /// already has is left as it is. With no factory given, the current context's conf, else the shipped entries.
+///
+/// A response that sets its own `Content-Security-Policy` with `frame-ancestors` gets no `X-Frame-Options`: the policy
+/// says who may frame it (a theme preview framed by its editor's origin, impl-commerce P5), and a browser that knows
+/// `frame-ancestors` ignores `X-Frame-Options` anyway, while an older one would refuse the allowed parent.
 pub(crate) fn apply_conf_headers(
     factory: Option<&crate::context::ExecutionContextFactory>,
     kind: &str,
@@ -1955,8 +1960,14 @@ pub(crate) fn apply_conf_headers(
         None => ExecutionContext::with_current(|ec| ec.factory().response_headers("webroot", kind))
             .unwrap_or_else(|| crate::context::ExecutionContextFactory::default_response_headers(kind)),
     };
+    let own_frame_ancestors = headers.iter().any(|(key, value)| {
+        key.eq_ignore_ascii_case("content-security-policy") && value.to_ascii_lowercase().contains("frame-ancestors")
+    });
     for (name, value, add) in entries {
         if only_missing && headers.iter().any(|(key, _)| key.eq_ignore_ascii_case(&name)) {
+            continue;
+        }
+        if own_frame_ancestors && name.eq_ignore_ascii_case("x-frame-options") {
             continue;
         }
         if !add {

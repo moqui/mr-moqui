@@ -134,6 +134,34 @@ fn the_shell_compiles_webassembly_and_evaluates_no_script_text() {
     assert!(!WORKER_CSP.contains("unsafe"));
 }
 
+#[test]
+fn the_shell_frames_only_the_configured_preview_origins() {
+    assert_eq!(shell_csp(&[]), SHELL_CSP);
+    let origins = frame_origins_from(
+        " https://preview.shop.example , https://p2.example:8443/, javascript:alert(1), https://x.example/path, \
+         http://evil.example, http://localhost:8080, 'self', *",
+    );
+    assert_eq!(
+        origins,
+        vec![
+            "https://preview.shop.example",
+            "https://p2.example:8443",
+            "http://localhost:8080"
+        ]
+    );
+    let policy = shell_csp(&origins);
+    assert_eq!(
+        directive(&policy, "frame-src"),
+        vec![
+            "https://preview.shop.example",
+            "https://p2.example:8443",
+            "http://localhost:8080"
+        ]
+    );
+    // nothing else of the policy changes
+    assert_eq!(policy.replace(&origins.join(" "), "'none'"), SHELL_CSP);
+}
+
 /// The directive `name` of a policy, as its sources.
 fn directive<'a>(policy: &'a str, name: &str) -> Vec<&'a str> {
     policy

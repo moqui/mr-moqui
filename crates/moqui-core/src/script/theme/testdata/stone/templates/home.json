@@ -1,0 +1,4 @@
+{
+  "sections": {"hero": {"type": "hero", "settings": {"heading": "Welcome"}}},
+  "order": ["hero"]
+}

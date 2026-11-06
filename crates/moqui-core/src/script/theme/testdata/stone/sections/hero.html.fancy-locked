@@ -1,0 +1,12 @@
+<section class="store-hero" style="background-color: ${section.settings.background}">
+  <h2>${section.settings.heading}</h2>
+  <#if section.settings.image>
+  <img src="${section.settings.image.url}" alt="${section.settings.image.alt}" loading="lazy">
+  </#if>
+  <#if section.settings.destination>
+  <a href="${section.settings.destination.url}">${section.settings.destination.label}</a>
+  </#if>
+  <#list blocks as block>
+  ${block.html}
+  </#list>
+</section>

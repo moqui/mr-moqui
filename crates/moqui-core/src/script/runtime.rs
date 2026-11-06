@@ -65,6 +65,7 @@ mod screen_host;
 mod search;
 mod services;
 mod sftp;
+mod theme_host;
 mod tools_host;
 mod upload;
 mod urls;
