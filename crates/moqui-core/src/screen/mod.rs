@@ -543,9 +543,10 @@ fn dispatch_request(
         return Ok(pdf);
     }
     let stream = web::take_stream();
-    let (status, headers, body, sent) = web::take_output();
+    // The status is 200 unless the screen or transition set one, which holds whether or not a body was written.
+    let (status, headers, body, _) = web::take_output();
     Ok(WebResponse {
-        status: if sent { status } else { 200 },
+        status,
         headers,
         body,
         stream,

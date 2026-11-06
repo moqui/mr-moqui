@@ -773,9 +773,11 @@ pub(crate) fn base_url() -> String {
     })
 }
 
-/// Open the response body for a screen render: status, `Content-Type`, and an empty body that
-/// [`write_output`] appends to. A response something already sent is left alone and `false` returns.
-pub(crate) fn start_output(status: u16, content_type: &str) -> bool {
+/// Open the response body for a screen render: `Content-Type`, and an empty body that [`write_output`] appends to. The
+/// status is the one the request has so far: 200, or what the screen's actions set before the output began
+/// (`ec.web.response.setStatus`), as a servlet's writer commits the status it was given. A response something already
+/// sent is left alone and `false` returns.
+pub(crate) fn start_output(content_type: &str) -> bool {
     WEB.with(|slot| {
         let mut web = slot.borrow_mut();
         let Some(web) = web.as_mut() else {
@@ -785,7 +787,6 @@ pub(crate) fn start_output(status: u16, content_type: &str) -> bool {
             return false;
         }
         web.sent = true;
-        web.status = status;
         web.headers.push(("Content-Type".to_string(), content_type.to_string()));
         true
     })

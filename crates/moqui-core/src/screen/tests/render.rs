@@ -332,6 +332,71 @@ fn a_standalone_redirect_stays_on_this_site() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Shop P3 F-SP3-1: a status the screen's actions set before the output begins is the response's, as in Java, with
+/// the widgets rendered under it and the headers kept; with none set it is 200. A transition's holds too.
+#[test]
+fn a_status_the_actions_set_before_output_is_the_responses() {
+    let dir = std::env::temp_dir().join(format!("moqui-screen-status-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("Root")).unwrap();
+    let write = |name: &str, xml: &str| std::fs::write(dir.join(name), xml).unwrap();
+    write(
+        "Root.xml",
+        r#"<screen require-authentication="false"><widgets><subscreens-active/></widgets></screen>"#,
+    );
+    write(
+        "Root/Gone.xml",
+        r#"<screen require-authentication="false">
+            <always-actions><script>ec.web.response.setStatus(404)</script></always-actions>
+            <widgets><label text="No such product"/></widgets>
+        </screen>"#,
+    );
+    write(
+        "Root/Down.xml",
+        r#"<screen require-authentication="false">
+            <transition name="hold"><actions><script>ec.web.response.setStatus(202)</script></actions>
+                <default-response type="none"/></transition>
+            <actions><script>ec.web.response.setStatus(503); ec.web.response.setHeader('Retry-After', '120')</script></actions>
+            <widgets><label text="Back soon"/></widgets>
+        </screen>"#,
+    );
+    write(
+        "Root/Fine.xml",
+        r#"<screen require-authentication="false"><widgets><label text="All here"/></widgets></screen>"#,
+    );
+    let root = dir.join("Root.xml").to_string_lossy().into_owned();
+    let world = World::open("");
+
+    let gone = serve_at(&world.factory, request("GET", "/Gone.text"), &root);
+    assert_eq!(gone.status, 404, "{}", gone.body_text());
+    assert!(gone.body_text().contains("No such product"), "{}", gone.body_text());
+    // qvt: the status holds and the per-user render is still not cached.
+    let gone_qvt = serve_at(&world.factory, request("GET", "/Gone.qvt"), &root);
+    assert_eq!(gone_qvt.status, 404, "{}", gone_qvt.body_text());
+    assert!(
+        gone_qvt.body_text().contains("No such product"),
+        "{}",
+        gone_qvt.body_text()
+    );
+    assert_eq!(
+        super::header_value(&gone_qvt, "Cache-Control").as_deref(),
+        Some("private, no-store")
+    );
+
+    let down = serve_at(&world.factory, request("GET", "/Down.text"), &root);
+    assert_eq!(down.status, 503, "{}", down.body_text());
+    assert_eq!(super::header_value(&down, "Retry-After").as_deref(), Some("120"));
+    assert!(down.body_text().contains("Back soon"), "{}", down.body_text());
+
+    let held = serve_at(&world.factory, request("POST", "/Down/hold"), &root);
+    assert_eq!(held.status, 202, "{}", held.body_text());
+
+    let fine = serve_at(&world.factory, request("GET", "/Fine.text"), &root);
+    assert_eq!(fine.status, 200, "{}", fine.body_text());
+    assert!(fine.body_text().contains("All here"), "{}", fine.body_text());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// No execution context: the location is still sanitized and an off-site `http(s)` URL still collapses.
 #[test]
 fn a_redirect_with_no_context_is_still_held_to_this_site() {
