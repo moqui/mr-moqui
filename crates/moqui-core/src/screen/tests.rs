@@ -464,6 +464,33 @@ fn redirect_json_list_security_headers_and_cors() {
         .contains("api_key"));
 }
 
+/// A response with its own `frame-ancestors` policy gets no conf `X-Frame-Options`; one without gets the conf's.
+#[test]
+fn an_own_frame_ancestors_policy_leaves_out_x_frame_options() {
+    let header = |headers: &[(String, String)], name: &str| {
+        headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.clone())
+    };
+    let mut plain = Vec::new();
+    crate::web::apply_conf_headers(None, "screen-render", &mut plain, true);
+    assert_eq!(header(&plain, "X-Frame-Options").as_deref(), Some("sameorigin"));
+    assert!(header(&plain, "Content-Security-Policy")
+        .unwrap()
+        .contains("frame-ancestors 'none'"));
+    let policy = "frame-ancestors https://boss.example; default-src 'self'";
+    let mut preview = vec![("Content-Security-Policy".to_string(), policy.to_string())];
+    crate::web::apply_conf_headers(None, "screen-render", &mut preview, true);
+    assert_eq!(header(&preview, "X-Frame-Options"), None);
+    assert_eq!(header(&preview, "Content-Security-Policy").as_deref(), Some(policy));
+    assert_eq!(header(&preview, "X-Content-Type-Options").as_deref(), Some("nosniff"));
+    // A policy without frame-ancestors keeps the conf's X-Frame-Options.
+    let mut other = vec![("Content-Security-Policy".to_string(), "default-src 'self'".to_string())];
+    crate::web::apply_conf_headers(None, "screen-render", &mut other, true);
+    assert_eq!(header(&other, "X-Frame-Options").as_deref(), Some("sameorigin"));
+}
+
 /// The webapp's `response-header` entries and its `handle-cors` and `allow-origins` attributes come from the conf, as
 /// Java's `WebappInfo` reads them; the properties are only the fallback.
 #[test]

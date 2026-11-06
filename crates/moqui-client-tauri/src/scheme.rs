@@ -192,7 +192,7 @@ pub fn answer(
                     .header("Content-Type", asset.content_type)
                     .header("Cache-Control", "no-cache");
                 if asset.page {
-                    response = response.header("Content-Security-Policy", assets::SHELL_CSP);
+                    response = response.header("Content-Security-Policy", assets::configured_shell_csp());
                 } else if asset.worker {
                     response = response.header("Content-Security-Policy", assets::WORKER_CSP);
                 }

@@ -292,3 +292,66 @@ fn the_shipped_auth_filter_wants_a_user_with_the_permission() {
     assert_eq!(response.body_text(), "in");
     assert!(scripts.path().exists());
 }
+
+/// A page marked `Cache-Control: public` for a visitor with no session gets no cookie and no session token, and keeps
+/// no session (impl-shop F42); the same page for a visitor with a session still gets them.
+#[test]
+fn a_public_page_for_a_cookieless_visitor_sends_no_session() {
+    let scripts = Scripts::new("public");
+    let servlet = scripts.write(
+        "Public.js",
+        r#"({ doGet(request, response) {
+            response.setHeader("Cache-Control", request.getParameter("cache") || "public, max-age=60")
+            response.setHeader("ETag", '"v1"')
+            response.setContentType("text/html")
+            response.write("<p>catalog</p>")
+        } })"#,
+    );
+    let world = World::open_in_framework(&conf(&format!(
+        r#"<servlet name="Public" location="{servlet}"><url-pattern>/catalog/*</url-pattern></servlet>"#
+    )));
+    let root = webroot().to_string_lossy().into_owned();
+    let sessions = |world: &World| {
+        crate::user::session::flush_dirty(&world.factory).unwrap();
+        world
+            .facade
+            .find("moqui.server.HttpSession")
+            .unwrap()
+            .list()
+            .unwrap()
+            .len()
+    };
+    let before = sessions(&world);
+    for _ in 0..2 {
+        let response = serve_at(&world.factory, request("GET", "/catalog/mugs"), &root);
+        assert_eq!(response.status, 200, "{}", response.body_text());
+        assert_eq!(response.body_text(), "<p>catalog</p>");
+        assert_eq!(header_value(&response, "Set-Cookie"), None);
+        assert_eq!(header_value(&response, "moquiSessionToken"), None);
+        assert_eq!(
+            header_value(&response, "Cache-Control").as_deref(),
+            Some("public, max-age=60")
+        );
+    }
+    assert_eq!(sessions(&world), before, "no session row for the public page");
+    // The page's ETag answers a revalidation with a 304 and no body.
+    let mut revalidate = request("GET", "/catalog/mugs");
+    revalidate.set_header("if-none-match", "W/\"v1\"");
+    let response = serve_at(&world.factory, revalidate, &root);
+    assert_eq!(response.status, 304);
+    assert!(response.body.is_empty());
+    assert_eq!(header_value(&response, "Set-Cookie"), None);
+    // A private answer still starts a session.
+    let mut private = request("GET", "/catalog/cart");
+    private.query.push(("cache".to_string(), "no-store".to_string()));
+    let response = serve_at(&world.factory, private, &root);
+    let cookie = header_value(&response, "Set-Cookie").expect("a session cookie");
+    assert!(cookie.starts_with("moqui.session="), "{cookie}");
+    assert!(header_value(&response, "moquiSessionToken").is_some());
+    // A visitor who has a session keeps it on a public page.
+    let mut again = request("GET", "/catalog/mugs");
+    again.set_header("cookie", cookie.split(';').next().unwrap());
+    let response = serve_at(&world.factory, again, &root);
+    assert_eq!(response.status, 200);
+    assert_eq!(sessions(&world), before + 1);
+}

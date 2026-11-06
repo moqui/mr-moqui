@@ -1,0 +1,4 @@
+<p class="text">${block.settings.body}</p>
+<#if block.settings.rich>
+<div class="rich">${block.settings.rich}</div>
+</#if>

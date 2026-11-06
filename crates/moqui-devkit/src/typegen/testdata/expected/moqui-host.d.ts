@@ -388,6 +388,69 @@ interface MoquiEntityFacade {
     };
 }
 
+/** A finding of the theme adapter, with its package file and line (0 when not at a line). */
+interface MoquiThemeDiagnostic {
+    severity: "error" | "warning";
+    code: string;
+    file: string;
+    line: number;
+    message: string;
+    section?: string;
+    block?: string;
+}
+
+/** Lower the operator's theme budgets for one call; a higher value is ignored. */
+interface MoquiThemeLimits {
+    maxSections?: number;
+    maxBlocks?: number;
+    maxDepth?: number;
+    maxIncludeDepth?: number;
+    maxOutputBytes?: number;
+    renderTimeMs?: number;
+    pageTimeMs?: number;
+    memoryBytes?: number;
+}
+
+/** A theme package: its text files by path; a binary asset's value is anything that is not text. */
+interface MoquiThemePackage {
+    files: Record<string, unknown>;
+}
+
+interface MoquiThemeAdapter {
+    validate(
+        pkg: MoquiThemePackage,
+        options?: { requiredPageKinds?: string[]; apiVersion?: number; allowedOrigins?: string[]; limits?: MoquiThemeLimits } | null,
+    ): { ok: boolean; engine: string; diagnostics: MoquiThemeDiagnostic[] };
+    render(
+        pkg: MoquiThemePackage,
+        request: {
+            template?: string;
+            pageKind?: string;
+            view: MoquiMap;
+            components?: Record<string, { html?: string; error?: string; required?: boolean }>;
+            references?: Record<string, MoquiMap>;
+            media?: Record<string, MoquiMap>;
+            sources?: Record<string, unknown>;
+            assetUrls?: Record<string, string>;
+            assetBase?: string;
+            allowedOrigins?: string[];
+            releaseId?: string;
+            limits?: MoquiThemeLimits;
+        },
+    ): {
+        ok: boolean;
+        html: string;
+        diagnostics: MoquiThemeDiagnostic[];
+        omitted: { section: string; block?: string; reason: string }[];
+        failedRequired: string[];
+        dependencies: string[];
+    };
+    engines(): string[];
+    limits(): Required<MoquiThemeLimits>;
+    sanitizeSvg(text: string): string;
+    sanitizeRichText(html: string): string;
+}
+
 interface MoquiResourceFacade {
     /** Localizes text shorter than 256 characters, then expands `${}` against the context and `map`. */
     expand(text: string, location?: string | null, map?: MoquiMap | null): string;
@@ -411,6 +474,9 @@ interface MoquiResourceFacade {
             quietZone?: number | boolean;
         } | null,
     ): string;
+    /** The theme composition adapter on the locked renderer (docs/ui/Themes.md): a theme package's files as data,
+     * validated, and one page rendered with its view, within the budgets. */
+    theme: MoquiThemeAdapter;
     /** A change set under one root (docs/data/Revision-Management.md, Change sets): one commit on git://, the changes in order elsewhere. */
     makeChangeSet(root: string): MoquiChangeSet;
     /** Write with a note for the version (the commit message on git://, versionNote on dbresource://). */

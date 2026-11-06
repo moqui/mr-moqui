@@ -671,6 +671,18 @@ pub(crate) fn install_session_end(factory: &Arc<ExecutionContextFactory>) {
     }
 }
 
+/// Forget the session bound to this thread, which was made for this request and is not to be sent: a cookieless
+/// visitor's page marked `Cache-Control: public` (impl-shop F42), whose response must carry no cookie so a shared cache
+/// can keep it. The session is never written, and the thread is left unbound, so the guard's drop stores nothing.
+pub fn discard_bound_session() {
+    let view = with_session(thread_view);
+    let (Some(id), Some(factory)) = (view.bound_id, view.factory) else {
+        return;
+    };
+    clear_bind();
+    lock_sessions(&factory).sessions.remove(&id);
+}
+
 /// Stop serving the live copy of a session another server ended: it is retired as a rotated-away session is, so a
 /// request with its cookie starts over and it is not flushed (which would write its deleted row back).
 pub(crate) fn drop_live(factory: &ExecutionContextFactory, id: &str) {

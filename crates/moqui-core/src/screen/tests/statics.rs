@@ -863,20 +863,30 @@ fn a_static_screen_is_recorded_in_the_screen_history() {
     // World sets the session cookie key and holds its lock. A second lock on this thread would deadlock.
     // The cookie that comes back starts a visit, which needs an entity facade. The in-memory one is enough.
     let world = super::World::open("");
+    // A server-static template is `public`, so a visitor with no session gets none from it (the page that loads it
+    // gives one); this visitor has a session.
+    let value = {
+        let context = world.factory.new_context();
+        let _entered = context.enter();
+        let guard = crate::user::bind(&world.factory, None, None, false).expect("bind");
+        let cookie = guard.session_cookie_header().expect("cookie");
+        cookie
+            .split(';')
+            .next()
+            .expect("pair")
+            .split_once('=')
+            .expect("value")
+            .1
+            .to_string()
+    };
     let mut request = crate::web::WebRequest::new("GET", "/Clean.qvt");
     request.peer_ip = "127.0.0.1".to_string();
     request.query.push(("keep".to_string(), "1".to_string()));
+    request.set_header("cookie", &format!("moqui.session={value}"));
     let response = crate::screen::serve_at(&world.factory, request, &root());
     assert_eq!(response.status, 200, "{}", response.body_text());
     assert_eq!(response.header("X-Moqui-Qvt"), Some("static-template"));
-    let cookie = response.header("Set-Cookie").expect("session cookie");
-    let value = cookie
-        .split(';')
-        .next()
-        .expect("pair")
-        .split_once('=')
-        .expect("value")
-        .1;
+    let value = value.as_str();
     let context = world.factory.new_context();
     let entered = context.enter();
     let guard = crate::user::bind(&world.factory, Some(value), None, false).expect("bind");

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "name": "Stone Market",
+  "engine": "js-fancy",
+  "viewApiVersion": 1,
+  "layout": "store",
+  "requiredComponents": ["shop.productPurchase"],
+  "styles": ["assets/store.css"],
+  "defaultTemplates": {"home": "home", "product": "product"}
+}

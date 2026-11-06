@@ -19,6 +19,7 @@ pub mod bounded;
 pub mod parse;
 mod runtime;
 pub mod template;
+pub mod theme;
 pub(crate) mod walker;
 
 pub(crate) use actions::run_actions_at;

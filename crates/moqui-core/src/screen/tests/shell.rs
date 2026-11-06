@@ -432,7 +432,8 @@ fn world_with(dir: &std::path::Path, conf: &str) -> World {
 }
 
 fn shell_services_xml() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework/service/org/moqui/impl/ShellServices.xml")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../runtime/base-component/framework/service/org/moqui/impl/ShellServices.xml")
 }
 
 fn load_services(world: &World, services: &[PathBuf]) {
@@ -1433,9 +1434,27 @@ fn the_appearance_policy_and_services_of_the_theme_decide_what_a_user_may_change
         );
     }
     theme_value(&world, "DEFAULT_QUASAR", 1, "STRT_DEFAULT_COLOR_SCHEME", "FIRST");
-    theme_value(&world, "DEFAULT_QUASAR", 2, "STRT_APPEARANCE_POLICY", r#"{"accent": false}"#);
-    theme_value(&world, "DEFAULT_QUASAR", 3, "STRT_APPEARANCE_SERVICE", "test.Look.fail#Appearance");
-    theme_value(&world, "DEFAULT_QUASAR", 4, "STRT_APPEARANCE_SERVICE", "test.Look.adjust#Appearance");
+    theme_value(
+        &world,
+        "DEFAULT_QUASAR",
+        2,
+        "STRT_APPEARANCE_POLICY",
+        r#"{"accent": false}"#,
+    );
+    theme_value(
+        &world,
+        "DEFAULT_QUASAR",
+        3,
+        "STRT_APPEARANCE_SERVICE",
+        "test.Look.fail#Appearance",
+    );
+    theme_value(
+        &world,
+        "DEFAULT_QUASAR",
+        4,
+        "STRT_APPEARANCE_SERVICE",
+        "test.Look.adjust#Appearance",
+    );
 
     let root = super::webroot().to_string_lossy().into_owned();
     let set = |key: &str, value: &str| {
@@ -1452,7 +1471,11 @@ fn the_appearance_policy_and_services_of_the_theme_decide_what_a_user_may_change
         assert!(response.body_text().contains(key), "{}", response.body_text());
     }
     assert_eq!(set("THEME_RADIUS", "square").status, 200);
-    assert_eq!(set("QUASAR_LEFT_OPEN", "true").status, 200, "not an appearance preference");
+    assert_eq!(
+        set("QUASAR_LEFT_OPEN", "true").status,
+        200,
+        "not an appearance preference"
+    );
 
     let ctx = world.factory.new_context();
     let _entered = ctx.enter();
@@ -1475,7 +1498,10 @@ fn the_appearance_policy_and_services_of_the_theme_decide_what_a_user_may_change
     );
     // the policy alone, as JSON text, is the same
     let out = crate::service::sync("org.moqui.impl.ShellServices.get#AppearancePolicy", &BTreeMap::new()).unwrap();
-    let text = out.get("policy").map(moqui_lib::object::to_plain_string).unwrap_or_default();
+    let text = out
+        .get("policy")
+        .map(moqui_lib::object::to_plain_string)
+        .unwrap_or_default();
     let policy: serde_json::Value = serde_json::from_str(&text).unwrap();
     assert_eq!(policy, appearance["policy"], "{text}");
     let _ = std::fs::remove_dir_all(&dir);

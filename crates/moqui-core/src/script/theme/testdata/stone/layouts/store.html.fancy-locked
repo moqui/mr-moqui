@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="${locale}">
+<head>
+<meta charset="utf-8">
+<title>${site.displayName}</title>
+${styles}</head>
+<body style="--accent: ${settings.accent}">
+<header><img src="${assets["assets/logo.svg"]}" alt="${site.displayName}"></header>
+<main>
+${content}</main>
+</body>
+</html>

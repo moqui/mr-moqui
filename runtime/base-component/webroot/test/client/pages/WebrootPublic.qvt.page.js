@@ -73,3 +73,54 @@ test("a link under the route reloads the screen with its parameters; another URL
     vm.addNotify("Saved", "positive");
     assert.equal(vm.notifyHistoryList[0].message, "Saved");
 });
+
+test("the islands of a page are found by their configs, each at its own mount element", () => {
+    const added = [];
+    const add = (node) => { document.body.appendChild(node); added.push(node); return node; };
+    const script = (mount, config) => {
+        const node = document.createElement("script");
+        node.type = "application/json";
+        node.setAttribute("data-moqui-island", mount);
+        node.textContent = JSON.stringify(config);
+        return add(node);
+    };
+    try {
+        for (const id of ["cart-island", "review-island"]) { const div = document.createElement("div"); div.id = id; add(div); }
+        script("cart-island", { route: { name: "cart", basePath: "/shop/cart", renderModes: ["qvue"] } });
+        script("review-island", { route: { name: "reviews", basePath: "/shop/reviews/10000" } });
+        script("missing-island", { route: { basePath: "/x" } });
+        const found = moqui.publicIslandConfigs(document);
+        assert.deepEqual(found.map((config) => [config.mount, config.shell, config.route.basePath]),
+            [["cart-island", "island", "/shop/cart"], ["review-island", "island", "/shop/reviews/10000"]]);
+        assert.ok(!moqui.publicIslandTemplate.includes("q-layout"), "an island has no layout");
+        // Page markup with the config's id (a theme's <div>) is not a config.
+        const fake = document.createElement("div");
+        fake.id = "moqui-public-config";
+        fake.textContent = JSON.stringify({ shell: "island", mount: "cart-island", route: { basePath: "/evil" } });
+        document.body.insertBefore(fake, document.body.firstChild);
+        added.push(fake);
+        assert.deepEqual(moqui.publicIslandConfigs(document).map((config) => config.route.basePath), ["/shop/cart", "/shop/reviews/10000"]);
+    } finally {
+        for (const node of added) node.remove();
+    }
+});
+
+test("a link under an island's route reloads the island and leaves the page's URL", () => {
+    const options = moqui.publicRootOptions(Object.assign({}, config, { shell: "island", mount: "cart-island" }));
+    const vm = Object.assign({}, options.data(), options.methods);
+    let loads = 0;
+    vm.load = () => { loads++; };
+    const before = location.href;
+    const original = history.replaceState;
+    let replaced = 0;
+    history.replaceState = function () { replaced++; return original.apply(this, arguments); };
+    try {
+        vm.setUrl("/s/TOKEN1234?page=2");
+    } finally {
+        history.replaceState = original;
+    }
+    assert.equal(loads, 1);
+    assert.deepEqual(vm.currentParameters, { page: "2" });
+    assert.equal(replaced, 0);
+    assert.equal(location.href, before);
+});

@@ -1,0 +1,17 @@
+{
+  "layout": "store",
+  "sections": {
+    "main": {"type": "product-main", "settings": {"showSku": true}, "required": true},
+    "story": {
+      "type": "hero",
+      "settings": {"heading": "Made for everyday use", "destination": "page:about"},
+      "blocks": {
+        "b1": {"type": "text", "settings": {"body": "Fired at 1240 °C"}},
+        "b2": {"type": "text", "settings": {"body": "Glazed <by hand>", "rich": "<p>Safe <em>rich</em> text<script>alert(1)</script></p>"}}
+      },
+      "blockOrder": ["b1", "b2"]
+    },
+    "related": {"type": "product-grid"}
+  },
+  "order": ["main", "story", "related"]
+}
