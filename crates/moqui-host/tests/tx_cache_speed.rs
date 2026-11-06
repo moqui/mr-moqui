@@ -126,6 +126,10 @@ fn tx_cache_speed() {
 
 struct World {
     room: Value,
+    /// The room's first message, which N2 reacts to.
+    first_seq: Value,
+    /// The mail account's Inbox, which N1 imports into.
+    inbox: String,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -246,6 +250,44 @@ fn one_batch(
                 value.update(facade)
             });
         });
+        // N1 to N3 (plans/Profiling.md, Round 19): framework paths the cache was applied to beyond the first set. N1's
+        // frame is the code's own (force-cache), so its "off" row turns the cache off for the whole manager.
+        let tx = facade
+            .transactions_for("moqui.basic.email.EmailMessage")
+            .expect("transactions");
+        tx.set_use_transaction_cache(cache == Cache::On);
+        row("N1 mail store, 2 attachments, a cursor", cache, &mut |index| {
+            service(
+                "org.moqui.impl.EmailClientServices.import#EmailMessages",
+                cache,
+                [
+                    ("emailFolderId", Value::string(&world.inbox)),
+                    ("messageText", Value::string(mail_text(index))),
+                ],
+            );
+        });
+        tx.set_use_transaction_cache(true);
+        row("N2 react#Message", cache, &mut |_| {
+            service(
+                &format!("{CHAT}.react#Message"),
+                cache,
+                [
+                    ("chatRoomId", world.room.clone()),
+                    ("eventSeq", world.first_seq.clone()),
+                    ("key", Value::string("+1")),
+                ],
+            );
+        });
+        let ids = unviewed_notifications(facade, calls * 5);
+        let mut chunks = ids.chunks(5);
+        row("N3 mark#NotificationsViewed of 5", cache, &mut |_| {
+            let chunk = chunks.next().unwrap_or_default();
+            service(
+                "org.moqui.impl.NotificationServices.mark#NotificationsViewed",
+                cache,
+                [("notificationMessageIdList", Value::List(chunk.to_vec()))],
+            );
+        });
         if cache == Cache::On {
             row("F3 session start and password login", cache, &mut |_| {
                 let guard = moqui_core::user::bind(factory, None, None, false).expect("bind");
@@ -320,10 +362,13 @@ fn seed(facade: &EntityFacade) -> World {
     .get("chatRoomId")
     .cloned()
     .expect("chatRoomId");
-    service_out(
+    let first_seq = service_out(
         &format!("{CHAT}.send#Message"),
         [("chatRoomId", room.clone()), ("body", Value::string("<p>first</p>"))],
-    );
+    )
+    .get("eventSeq")
+    .cloned()
+    .expect("eventSeq");
     service_out(
         "org.moqui.impl.WikiServices.create#WikiSpace",
         [
@@ -354,7 +399,73 @@ fn seed(facade: &EntityFacade) -> World {
         message.set("isFlagged", Value::string("N"));
         message.create(facade).expect("create message");
     }
-    World { room }
+    // N1: a mail account of user A's, and a mail change cursor of A's, so each write of a stored message makes a change
+    // row (note#MessageChange reads the account's users and their states for each).
+    let mail = service_out(
+        "org.moqui.impl.EmailClientServices.create#EmailAccount",
+        [
+            ("emailAddress", Value::string("speed.mail@speed.test")),
+            ("accountName", Value::string("Speed mail")),
+        ],
+    );
+    let mail_account = mail
+        .get("emailAccountId")
+        .map(moqui_lib::object::to_plain_string)
+        .expect("emailAccountId");
+    let inbox = facade
+        .find("moqui.basic.email.EmailFolder")
+        .expect("folder")
+        .eq("emailAccountId", Value::string(&mail_account))
+        .eq("folderKindEnumId", Value::string("EfkInbox"))
+        .one()
+        .expect("inbox")
+        .and_then(|row| row.get("emailFolderId").map(moqui_lib::object::to_plain_string))
+        .expect("an Inbox");
+    let mut state = facade.make_value("moqui.basic.email.EmailUserState").expect("state");
+    state.set("userId", Value::string("SPEED_A"));
+    state.set("lastChangeSeq", Value::I64(0));
+    state.set("purgedThruSeq", Value::I64(0));
+    state.create(facade).expect("create state");
+    World { room, first_seq, inbox }
+}
+
+/// A received message with two attachments, of a Message-ID of its own.
+fn mail_text(index: usize) -> String {
+    format!(
+        "From: sender@speed.test\r\nTo: speed.mail@speed.test\r\nSubject: Speed {index}\r\n\
+         Message-ID: <speed-{index}-{nanos}@speed.test>\r\nDate: Fri, 6 Nov 2026 10:00:00 +0000\r\nMIME-Version: 1.0\r\n\
+         Content-Type: multipart/mixed; boundary=\"b\"\r\n\r\n--b\r\nContent-Type: text/plain\r\n\r\nBody {index}\r\n\
+         --b\r\nContent-Type: text/plain; name=\"one.txt\"\r\nContent-Disposition: attachment; filename=\"one.txt\"\r\n\r\n\
+         one\r\n--b\r\nContent-Type: text/plain; name=\"two.txt\"\r\nContent-Disposition: attachment; filename=\"two.txt\"\r\n\
+         \r\ntwo\r\n--b--\r\n",
+        nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_nanos())
+    )
+}
+
+/// `count` notifications of user A, unviewed, for N3 to mark viewed five a call.
+fn unviewed_notifications(facade: &EntityFacade, count: usize) -> Vec<Value> {
+    let tx = facade
+        .transactions_for("moqui.security.user.NotificationMessage")
+        .expect("transactions");
+    tx.run(TransactionAttribute::UseOrBegin, None, || {
+        let mut ids = Vec::with_capacity(count);
+        for _ in 0..count {
+            let id = moqui_core::entity::uuid_v4()?;
+            let mut message = facade.make_value("moqui.security.user.NotificationMessage")?;
+            message.set("notificationMessageId", Value::string(&id));
+            message.set("topic", Value::string("SpeedTopic"));
+            message.create(facade)?;
+            let mut user = facade.make_value("moqui.security.user.NotificationMessageUser")?;
+            user.set("notificationMessageId", Value::string(&id));
+            user.set("userId", Value::string("SPEED_A"));
+            user.create(facade)?;
+            ids.push(Value::string(id));
+        }
+        Ok(ids)
+    })
+    .expect("notifications")
 }
 
 fn service_out<const N: usize>(name: &str, parameters: [(&str, Value); N]) -> BTreeMap<String, Value> {

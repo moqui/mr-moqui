@@ -57,7 +57,7 @@ use std::net::TcpStream;
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{to_plain_string, Value};
 
-use super::implementation::{find_one, force_new, note_error, note_message, parse_port, require_host};
+use super::implementation::{find_one, force_cache, force_new, note_error, note_message, parse_port, require_host};
 use super::inbound::{
     connect_tcp, folder_kind, is_loopback, name_attribute, plain_allowed, plain_refused, run_stored_ecas, stamp_millis,
     use_tls, wrap_tls, Net, Pop3, StoreSettings, StoredMessage,
@@ -2649,7 +2649,7 @@ fn apply_flags(
     };
     let facade = session.facade;
     let pending = &session.pending_local;
-    force_new(facade, || {
+    force_cache(facade, || {
         let mut changed = 0;
         for (uid, set) in flags {
             let Some(row) = locals.get(uid) else {
@@ -2796,7 +2796,7 @@ fn store_new(
         HashMap::new()
     };
     let facade = session.facade;
-    force_new(facade, || {
+    force_cache(facade, || {
         let id = store::store_message(facade, &parsed, &place)?;
         if !labels.is_empty() {
             sync_labels(facade, &id, &labels, &flags.keywords)?;
@@ -3098,7 +3098,7 @@ fn pop_sync(
             server_size: None,
             archived: false,
         };
-        match force_new(facade, || store::store_message(facade, &parsed, &place)) {
+        match force_cache(facade, || store::store_message(facade, &parsed, &place)) {
             Ok(id) => {
                 report.new_count += 1;
                 progress.fetched_one();

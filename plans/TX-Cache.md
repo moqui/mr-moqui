@@ -1,6 +1,6 @@
 # Transaction cache
 
-Status 2026-11-05: Phases 0 to 6 built, Phase 6 as a first profiling pass: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G8, D6's commit batch, D2 to D5's reads, S1 to S5 on the cache, a first pass of F1 to F5, and the guide ([Services](../docs/logic/Services.md#transaction-cache)). [Results](#results) has the censuses and the numbers; [Profiling, Rounds 14 to 18](Profiling.md#round-18-finds-by-keys-in-memory-the-update-check-on-the-server-cold-statements) the profiles and the tuning. Each transaction is an `AT_TRANSACTION` telemetry span with the cache's counts ([Monitoring](../docs/tools/Monitoring.md)).
+Status 2026-11-05: Phases 0 to 6 built, Phase 6 as a first profiling pass: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G8, D6's commit batch, D2 to D5's reads, S1 to S5 on the cache, a first pass of F1 to F5, and the guide ([Services](../docs/logic/Services.md#transaction-cache)). [Results](#results) has the censuses and the numbers; [Profiling, Rounds 14 to 19](Profiling.md#round-19-the-feed-behind-the-batch-a-service-calls-own-allocations-the-second-set-of-candidates) the profiles and the tuning. Each transaction is an `AT_TRANSACTION` telemetry span with the cache's counts ([Monitoring](../docs/tools/Monitoring.md)).
 
 The transaction cache holds a transaction's writes in memory and writes them all at commit; while it holds them, the transaction's reads see them. Done well, it gives a large speedup for high-volume transactional work and a large cut in database load, without refactoring reusable services and without callers keeping records in hand to avoid re-reading them: a service that reads `OrderItem` again, as each of several services in one operation does, gets it from memory. Moqui Java got real gains from this in a few places. Here the framework is ours to change and services can be reviewed in bulk, so the aim is more: make the cache fast and correct enough that a common transactional service runs from its first write to its commit without touching the database for anything it has already read or written, and its writes go out in one batch.
 
@@ -134,6 +134,30 @@ Not candidates: `SystemMessageServices` writes its status rows in `force-new` fr
 | F5 | Data feed insert at commit | `moqui-entity/src/entity/load_feed/feed.rs:240-393, 1049-1074` | Runs after the cache flush on every commit that touched a feed document. Each statement is in its own savepoint (savepoint, statement, release: 3 waited round trips); each touch reads its row again and walks to the primary entity one step and one touch at a time; one insert per document. A 10-item order is about 60 round trips | Part of the commit batch: one savepoint around the insert, touches deduplicated by entity and key, one read per entity for the rows a touch lacks, one walk per path for all rows, one multi-row insert: about 6. The touch of a held update carries its old row (G3) |
 
 Next in line: agent run events (`moqui-llm/src/run/events.rs:372-399`: every 300 ms or 512 characters while a run streams, the `AgentRun` lock, one insert per event, the `AgentRun` update and a commit, N+3 round trips; hold mode and D6 make it about 3, but it is busy only while an agent streams), the `HttpSession` flush (a transaction per dirty session each minute, `user/session.rs:1881-2048`), and the feed receiver's delete per pending row (`moqui-core/src/search/feed.rs:480-496`).
+
+### Second set (Profiling Round 19)
+
+A survey of the framework for frequent transactions with repeated reads or several writes, beyond the first set. The
+first three are on the cache and timed (`tx_cache_speed` N1 to N3); the rest are ranked by frequency times statements
+saved, not yet changed. Counts are from reading the code unless timed.
+
+| # | Where | How often | What repeats | State |
+|---|---|---|---|---|
+| N1 | Storing a received message: `moqui-mail` `store::store_message` from IMAP and POP3 sync, SMTP/LMTP delivery and import | each message received; thousands on a first sync | `note#MessageChange` (Email.eecas.xml) for the message and each attachment and label reads the account, its users and their cursors each time; attachments write DbResource rows | `force_cache` on the four store paths and `apply_flags`; select-field finds kept in the frame (D3, Round 19). 51 to 23 statements a message with two attachments, 15.8 to 10.2 ms with the delay |
+| N2 | `react#Message`, `edit#Message`, `redact#Message`, `vote#Poll` (ChatServices.xml) | each reaction, edit, vote | as S3: the room twice, access, the event, `append#Event` | `transaction="cache"`; `redact#Message` removes from the index after commit. `react#Message` 21 to 15 statements |
+| N3 | `mark#NotificationsViewed` (NotificationServices.xml); `mark#AllRead` (ChatServices.xml) has the same shape | each opening of the notification panel, each click | N updates by key after one read | `transaction="cache"`: 6 to 1 statement for five |
+| 4 | Agent step bookkeeping, `moqui-llm/src/run/step.rs` `store_reply`, `store_result_with`, `set_call_status` | each model step and tool call | the `AgentRun` lock twice, the conversation lock, step, call, message and part inserts, about 13 round trips for a reply with two calls | `in_tx` (`run/mod.rs:314`) as a cache frame, the second `AgentRun` lock reusing the row |
+| 5 | IMAP flag sync `apply_flags` (`moqui-mail/src/sync.rs`) | each sync pass with changes | N updates, each with the rule's original-value read and `note#MessageChange` | on the cache with N1; preloading the N rows with one `in` find would answer the original-value reads |
+| 6 | `save#Draft` (EmailClientServices.xml) | each compose save and autosave | the draft created then updated again, attachments deleted and made again then listed | not changed |
+| 7 | `process#InboundItem` (ChatBridgeServices.xml) | each bridged event | 8-10 reads, the room read twice, then `send#Message` joins | not changed |
+| 8 | `send#WebPush` (NotificationServices.xml, `service/web_push.rs`) | each persisted notification for users with a subscription | one update per subscription, and a transaction open across the push HTTP calls | not changed: `transaction="ignore"` around the calls, the updates in one cache frame after |
+| 9 | `expire#UserStatuses` (ChatServices.xml) | each minute, per online user | `publish#UserStatus` reads `UserStatus` again after the list | not changed: one user's failure would fail the batch |
+| 10 | `run#EmailRules` | each delivered Inbox message | the stored message read again, account configuration | not changed |
+| 11 | Alert rule finish, `moqui-report/src/alert.rs` | each rule each minute | K state rows deleted and written | not changed |
+
+Not candidates, checked: artifact hits (telemetry, not rows), `UserLoginHistory` (async, once a minute a user), LLM
+quota admission (lock rows and aggregate counts), collab document writes (one lock, one write), the edge queue (claims
+as locks), search index writes (raw SQL), the per-minute mail and git jobs (usually nothing to do).
 
 ### Found along the way, not the transaction cache
 

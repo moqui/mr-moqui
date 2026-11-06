@@ -583,6 +583,9 @@ pub fn before_selective_find(
     // A locking find goes through the frame even when it holds nothing of the entity, so the frame keeps the rows it
     // locked and knows them locked (a held update of one needs no check at the commit).
     let holds = tx::holds_entity(facade, &meta.full_name);
+    if !holds && projected_key(lookup, selective).is_some() {
+        return Ok(tx::projected_rows(facade, &meta, lookup, selective));
+    }
     if !holds && (selective.lock.is_none() || selective.aggregate) {
         return Ok(None);
     }
@@ -622,6 +625,42 @@ pub fn before_selective_find(
             .collect();
     }
     Ok(Some(EntityList::new(rows)))
+}
+
+/// The key a select-field find is kept by in a cache frame (`tx::projected_rows`): the find's own key and its fields.
+/// `None` for one that is not kept: a lock, an aggregate, a page, or no fields named.
+fn projected_key(lookup: &FindLookup, selective: &Selective) -> Option<String> {
+    if selective.lock.is_some()
+        || selective.aggregate
+        || selective.fields.is_empty()
+        || lookup.limit.is_some()
+        || lookup.offset.is_some()
+    {
+        return None;
+    }
+    let mut key = owned_lookup_key(lookup);
+    key.push_str("\u{1f}fields:");
+    for field in &selective.fields {
+        key.push_str(field);
+        key.push(',');
+    }
+    Some(key)
+}
+
+/// After a select-field find read the database in a cache frame that holds no write of the entity: keep its rows, so
+/// the same find again in the frame is answered from memory (a rule that runs for each row a service writes reads the
+/// same configuration each time). Not kept outside a cache frame, or past the frame's first write of the entity.
+pub fn after_selective_find(facade: &EntityFacade, lookup: &FindLookup, selective: &Selective, list: &EntityList) {
+    let Some(key) = projected_key(lookup, selective) else {
+        return;
+    };
+    let Ok(meta) = read_meta(facade, &lookup.entity_name) else {
+        return;
+    };
+    if meta.is_view {
+        return;
+    }
+    tx::keep_projected(facade, &meta, key, list);
 }
 
 /// A count with `distinct` or `having` in a frame that holds rows of the entity (or a view of it): the held writes go

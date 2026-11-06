@@ -181,6 +181,12 @@ pub trait DbConnection: Send {
     fn rollback(&mut self) -> Result<(), Error>;
 
     fn savepoint(&mut self, name: &str) -> Result<(), Error>;
+    /// [`Self::savepoint`] sent behind the statements still unanswered, with no wait for them: their failure, if any,
+    /// comes out of the next call that waits, and a rollback to this savepoint then fails. For a caller that passes
+    /// such a failure on as the transaction's. The default is [`Self::savepoint`].
+    fn savepoint_behind(&mut self, name: &str) -> Result<(), Error> {
+        self.savepoint(name)
+    }
 
     fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), Error>;
 

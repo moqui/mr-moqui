@@ -18,6 +18,8 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
+
+use crate::entity::EntityList;
 use std::sync::Arc;
 
 use moqui_db::sql::{select, Condition, FieldRef, LimitOffset, OrderBy};
@@ -208,6 +210,49 @@ pub fn flush_before_sql(facade: &EntityFacade, tx: &TransactionManager) -> Resul
         }
         _ => Ok(()),
     }
+}
+
+/// The rows of a select-field find the cache frame of `meta`'s entity kept ([`super::after_selective_find`]), when it
+/// holds no write of the entity; `None` for the database to answer.
+pub(super) fn projected_rows(
+    facade: &EntityFacade,
+    meta: &ReadMeta,
+    lookup: &FindLookup,
+    selective: &super::Selective,
+) -> Option<EntityList> {
+    let (token, _) = facade.transactions_for(&meta.full_name).ok()?.cache_frame()?;
+    let key = super::projected_key(lookup, selective)?;
+    let rows = TX_HOLD.with(|slot| slot.borrow().get(&token)?.projected(&meta.full_name, &key))?;
+    stats::note_read_of(token, true);
+    let name: Arc<str> = Arc::from(meta.full_name.as_str());
+    Some(EntityList::new(
+        rows.iter()
+            .map(|row| EntityValue::from_shared(Arc::clone(&name), Arc::clone(row)))
+            .collect(),
+    ))
+}
+
+/// Keep the rows of a select-field find in the cache frame of `meta`'s entity ([`super::after_selective_find`]).
+pub(super) fn keep_projected(facade: &EntityFacade, meta: &ReadMeta, key: String, list: &EntityList) {
+    let Some((token, _)) = facade
+        .transactions_for(&meta.full_name)
+        .ok()
+        .and_then(|tx| tx.cache_frame())
+    else {
+        return;
+    };
+    let rows: KeptList = Rc::new(
+        list.values()
+            .iter()
+            .map(|value| Arc::new(value.fields().clone()))
+            .collect(),
+    );
+    TX_HOLD.with(|slot| {
+        slot.borrow_mut()
+            .entry(token)
+            .or_default()
+            .keep_projected(&meta.full_name, key, rows)
+    });
 }
 
 /// Drop what the frame `token` read of `entity`, or of every entity (plans/TX-Cache.md D2).

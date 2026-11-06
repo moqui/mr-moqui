@@ -31,7 +31,7 @@ use std::io::{BufRead, BufReader, Read};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::{to_plain_string, Value};
 
-use super::implementation::{find_one, force_new, note_error};
+use super::implementation::{find_one, force_cache, note_error};
 use super::store::{self, parse_message, Placement, MESSAGE};
 use super::sync::{value_number, FOLDER};
 use moqui_core::context::ExecutionContext;
@@ -230,7 +230,7 @@ impl Import<'_> {
                 archived: self.archived,
             };
             let facade = self.facade;
-            match force_new(facade, || store::store_message(facade, &parsed, &place)) {
+            match force_cache(facade, || store::store_message(facade, &parsed, &place)) {
                 Ok(id) => {
                     self.imported += 1;
                     self.ids.push(Value::string(id));

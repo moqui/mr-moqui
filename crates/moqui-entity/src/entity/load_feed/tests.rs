@@ -137,10 +137,16 @@ struct ScriptConn {
     script: Arc<Script>,
     /// The failure of a deferred statement, for the next wait.
     deferred: Option<Error>,
+    /// A statement failed in the transaction: as on Postgres, a savepoint set after it is not made, so a rollback to it
+    /// fails.
+    aborted: bool,
 }
 
 impl DbConnection for ScriptConn {
     fn execute(&mut self, sql: &str, params: &[Value]) -> Result<u64, Error> {
+        if self.aborted {
+            return Err(Error::new("current transaction is aborted"));
+        }
         if sql.contains("data_feed_pending") {
             if self.script.fail_pending.load(Ordering::SeqCst) {
                 return Err(Error::new("postgres execute: deadlock detected"));
@@ -155,6 +161,7 @@ impl DbConnection for ScriptConn {
         match self.execute(sql, &params) {
             Err(err) if self.script.defer_failures.load(Ordering::SeqCst) => {
                 self.deferred.get_or_insert(err);
+                self.aborted = true;
                 Ok(())
             }
             other => other.map(|_| ()),
@@ -227,9 +234,11 @@ impl DbConnection for ScriptConn {
         Ok(())
     }
     fn commit(&mut self) -> Result<(), Error> {
+        self.aborted = false;
         self.deferred.take().map_or(Ok(()), Err)
     }
     fn rollback(&mut self) -> Result<(), Error> {
+        self.aborted = false;
         Ok(())
     }
     fn savepoint(&mut self, _name: &str) -> Result<(), Error> {
@@ -237,6 +246,9 @@ impl DbConnection for ScriptConn {
         Ok(())
     }
     fn rollback_to_savepoint(&mut self, _name: &str) -> Result<(), Error> {
+        if self.aborted {
+            return Err(Error::new("savepoint \"moqui_feed\" does not exist"));
+        }
         if self.script.broken_rollback.load(Ordering::SeqCst) {
             return Err(Error::new("current transaction is aborted"));
         }
@@ -259,6 +271,7 @@ impl DbDriver for ScriptDriver {
         Ok(Box::new(ScriptConn {
             script: Arc::clone(&self.script),
             deferred: None,
+            aborted: false,
         }))
     }
 }
@@ -814,6 +827,7 @@ fn a_missing_table_probe_fails_when_the_savepoint_rollback_fails() {
     let mut conn = ScriptConn {
         script: Arc::clone(&script),
         deferred: None,
+        aborted: false,
     };
     let rows = probe_query(&mut conn, "SELECT * FROM data_feed", &[]).unwrap();
     assert!(rows.is_empty());

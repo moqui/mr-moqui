@@ -718,6 +718,14 @@ pub(super) fn force_new<T>(facade: &EntityFacade, body: impl FnOnce() -> Result<
     tx.run(TransactionAttribute::ForceNew, None, body)
 }
 
+/// [`force_new`] as a transaction-cache frame (plans/TX-Cache.md): its writes go to the database at the commit, in one
+/// batch, and a row it read or wrote is not read again. For a message stored with its attachments and labels, and the
+/// change rows every one of those writes makes for the users who keep a cursor.
+pub(super) fn force_cache<T>(facade: &EntityFacade, body: impl FnOnce() -> Result<T, LibError>) -> Result<T, LibError> {
+    let tx = facade.transactions_for(MESSAGE)?;
+    tx.run(TransactionAttribute::ForceCache, None, body)
+}
+
 fn filter_recipients(letter: &mut Letter, allowed: &str, email_message_id: &str) -> bool {
     let domains: Vec<String> = allowed
         .split(',')

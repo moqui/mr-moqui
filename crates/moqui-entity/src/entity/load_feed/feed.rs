@@ -255,19 +255,18 @@ fn insert_pending(
     if aggs.is_empty() {
         return Ok(Vec::new());
     }
-    // The transaction cache's commit batch may still be unanswered on `conn`. Before the first statement of the feed it
-    // is waited for, and a failure of it is the transaction's, passed on, never logged as the feed's and committed past.
-    // A frame with no write the feed may take sends nothing here, and the commit's wait answers the batch.
-    let own_definitions_written = aggs.keys().any(|entity_name| {
-        model_name(facade, entity_name).is_some_and(|name| crate::entity::cache::is_feed_definition(&name))
-    });
-    if own_definitions_written || aggs.keys().any(|entity_name| feed_may_target(facade, entity_name)) {
-        conn.finish_deferred().map_err(earlier_failure)?;
-    }
+    // The transaction cache's commit batch may still be unanswered on `conn`. It is waited for before the feed's first
+    // read, so a failure of it is the transaction's, passed on, never logged as the feed's and committed past. The
+    // pending rows alone (a write of a document's primary entity, the configuration known) go out behind it, in their
+    // savepoint, and their one wait answers both ([`probe`] with `behind`).
+    let mut batch = Unanswered(true);
     // A frame that wrote a feed definition reads its own uncommitted rows, which no other frame may see.
     let own_definitions = aggs.keys().any(|entity_name| {
         model_name(facade, entity_name).is_some_and(|name| crate::entity::cache::is_feed_definition(&name))
     });
+    if own_definitions || cached_feed_config(facade).is_none() {
+        batch.wait(conn)?;
+    }
     let config = feed_config(facade, conn, !own_definitions)?;
     let targets = &config.targets;
     if !aggs
@@ -314,6 +313,7 @@ fn insert_pending(
                 resolved.shift_remove(&key);
                 resolved.insert(key, (hit.primary_entity.clone(), operation));
             } else {
+                batch.wait(conn)?;
                 let row = if touch.operation == "delete" {
                     fields.clone()
                 } else {
@@ -368,6 +368,7 @@ fn insert_pending(
         if hits.is_empty() {
             continue;
         }
+        batch.wait(conn)?;
         let Some(keys) = primary_keys(facade, conn, entity_name)? else {
             continue;
         };
@@ -404,17 +405,30 @@ fn insert_pending(
             }
         }
     }
-    insert_rows(conn, &insert_sql, rows)?;
+    insert_rows(conn, &insert_sql, rows, batch.0)?;
     Ok(inserted)
+}
+
+/// Whether statements sent before the feed (the transaction cache's batch) may still be unanswered on the connection.
+struct Unanswered(bool);
+
+impl Unanswered {
+    /// Wait for them, once; a failure of theirs is the transaction's ([`earlier_failure`]).
+    fn wait(&mut self, conn: &mut dyn DbConnection) -> Result<(), Error> {
+        if std::mem::replace(&mut self.0, false) {
+            conn.finish_deferred().map_err(earlier_failure)?;
+        }
+        Ok(())
+    }
 }
 
 /// The pending rows in one savepoint, sent without waiting so the driver may join them into multi-row inserts, and one
 /// wait (plans/TX-Cache.md F5): a savepoint per row was three waited round trips a row. A missing table inserts none.
-fn insert_rows(conn: &mut dyn DbConnection, sql: &str, rows: Vec<Vec<Value>>) -> Result<(), Error> {
+fn insert_rows(conn: &mut dyn DbConnection, sql: &str, rows: Vec<Vec<Value>>, behind: bool) -> Result<(), Error> {
     if rows.is_empty() {
         return Ok(());
     }
-    probe(conn, (), |conn| {
+    probe_behind(conn, (), behind, |conn| {
         for (index, params) in rows.into_iter().enumerate() {
             conn.execute_deferred_row(sql, params, u64::try_from(index).unwrap_or(u64::MAX))?;
         }
@@ -642,6 +656,12 @@ pub(super) struct FeedConfig {
 
 /// The feed configuration, from the facade when no definition was written since it was read. Otherwise it is read
 /// on the enlisted connection, and kept when `keep`.
+/// The feed configuration as last read, when no definition was written since: [`feed_config`] reads nothing then.
+fn cached_feed_config(facade: &EntityFacade) -> Option<Arc<FeedConfig>> {
+    let generation = crate::entity::cache::feed_definition_generation(facade);
+    with_load_slot(facade, |slot| slot.feed_config.clone()).filter(|config| config.generation == generation)
+}
+
 fn feed_config(facade: &EntityFacade, conn: &mut dyn DbConnection, keep: bool) -> Result<Arc<FeedConfig>, Error> {
     let generation = crate::entity::cache::feed_definition_generation(facade);
     if keep {
@@ -1082,7 +1102,23 @@ fn probe<T>(
     missing: T,
     run: impl FnOnce(&mut dyn DbConnection) -> Result<T, Error>,
 ) -> Result<T, Error> {
-    conn.savepoint(SAVEPOINT).map_err(unusable)?;
+    probe_behind(conn, missing, false, run)
+}
+
+/// [`probe`]; with `behind`, the savepoint goes out behind statements still unanswered
+/// ([`DbConnection::savepoint_behind`]). A failure of theirs then comes out of `run`, and the rollback to the savepoint
+/// fails (the transaction failed before it was made): that is the error, naming their failure.
+fn probe_behind<T>(
+    conn: &mut dyn DbConnection,
+    missing: T,
+    behind: bool,
+    run: impl FnOnce(&mut dyn DbConnection) -> Result<T, Error>,
+) -> Result<T, Error> {
+    if behind {
+        conn.savepoint_behind(SAVEPOINT).map_err(unusable)?;
+    } else {
+        conn.savepoint(SAVEPOINT).map_err(unusable)?;
+    }
     match run(conn) {
         Ok(value) => {
             conn.release_savepoint(SAVEPOINT).map_err(unusable)?;
@@ -1093,6 +1129,10 @@ fn probe<T>(
                 .rollback_to_savepoint(SAVEPOINT)
                 .and_then(|()| conn.release_savepoint(SAVEPOINT));
             match undone {
+                Err(undo) if behind => {
+                    tracing::debug!("Could not roll back savepoint {SAVEPOINT} after a failed probe: {undo}");
+                    Err(earlier_failure(err))
+                }
                 Err(undo) => {
                     tracing::warn!("Could not roll back savepoint {SAVEPOINT} after a failed probe: {err}");
                     Err(unusable(undo))

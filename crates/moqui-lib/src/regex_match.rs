@@ -68,7 +68,15 @@ impl CompiledRegex {
     pub fn is_full_match(&self, text: &str) -> bool {
         match &self.0 {
             None => text.is_empty(),
-            Some(program) => program.is_full_match(&text.chars().collect::<Vec<char>>()),
+            Some(program) => SCRATCH.with(|scratch| match scratch.try_borrow_mut() {
+                Ok(mut scratch) => {
+                    let hit = program.is_full_match_in(text, &mut scratch);
+                    scratch.trim();
+                    hit
+                }
+                // a match inside a match (none today) gets buffers of its own
+                Err(_) => program.is_full_match_in(text, &mut Scratch::default()),
+            }),
         }
     }
 }
@@ -98,7 +106,31 @@ pub fn is_full_match(text: &str, pattern: &str) -> Result<bool, Error> {
 /// Compiled patterns a thread keeps; past this many they are all dropped and compiled again as they come.
 const COMPILED_CAP: usize = 512;
 
+/// A thread's buffers for matching, kept between matches: an authorization check matches several patterns on every
+/// service call and entity operation, and a match made five vectors and one more per character of the text.
+#[derive(Default)]
+struct Scratch {
+    text: Vec<char>,
+    seen: Vec<usize>,
+    current: Vec<usize>,
+    next: Vec<usize>,
+    stack: Vec<usize>,
+}
+
+impl Scratch {
+    /// The text buffer of a long text is not kept.
+    fn trim(&mut self) {
+        if self.text.capacity() > SCRATCH_KEEP {
+            self.text = Vec::new();
+        }
+    }
+}
+
+/// The most characters of text a thread's [`Scratch`] keeps room for.
+const SCRATCH_KEEP: usize = 4096;
+
 thread_local! {
+    static SCRATCH: std::cell::RefCell<Scratch> = std::cell::RefCell::new(Scratch::default());
     static COMPILED: std::cell::RefCell<std::collections::HashMap<String, std::rc::Rc<CompiledRegex>>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
@@ -491,24 +523,35 @@ impl Program {
 
     /// Step the set of live states over `text`: a state is kept once per position, so the work is the text length
     /// times the program length.
-    fn is_full_match(&self, text: &[char]) -> bool {
-        let mut seen = vec![usize::MAX; self.0.len()];
-        let mut current = Vec::new();
-        let mut stack = Vec::new();
-        self.closure(0, 0, text, &mut seen, &mut stack, &mut current);
+    fn is_full_match_in(&self, text: &str, scratch: &mut Scratch) -> bool {
+        let Scratch {
+            text: chars,
+            seen,
+            current,
+            next,
+            stack,
+        } = scratch;
+        chars.clear();
+        chars.extend(text.chars());
+        let text = chars.as_slice();
+        seen.clear();
+        seen.resize(self.0.len(), usize::MAX);
+        current.clear();
+        stack.clear();
+        self.closure(0, 0, text, seen, stack, current);
         for (pos, ch) in text.iter().enumerate() {
-            let mut next = Vec::new();
-            for pc in std::mem::take(&mut current) {
+            next.clear();
+            for &pc in current.iter() {
                 if let Inst::Char(test) = &self.0[pc] {
                     if test.hits(*ch) {
-                        self.closure(pc + 1, pos + 1, text, &mut seen, &mut stack, &mut next);
+                        self.closure(pc + 1, pos + 1, text, seen, stack, next);
                     }
                 }
             }
             if next.is_empty() {
                 return false;
             }
-            current = next;
+            std::mem::swap(current, next);
         }
         current.iter().any(|pc| matches!(self.0[*pc], Inst::Match))
     }

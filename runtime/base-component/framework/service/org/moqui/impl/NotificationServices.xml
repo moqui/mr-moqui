@@ -176,7 +176,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="mark" noun="NotificationsViewed">
+    <service verb="mark" noun="NotificationsViewed" transaction="cache">
         <description>Mark the current user's notifications viewed: those of notificationMessageIdList, or, without one, all
             of the user's unviewed, of one inbox when inboxEnumId is given, except the approvals waiting (notifications of
             a topic with an approve service), which are decided, not read. Only the user's own rows change.</description>

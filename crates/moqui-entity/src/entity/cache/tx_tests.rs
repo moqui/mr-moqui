@@ -836,6 +836,36 @@ fn a_for_update_find_locks_every_time_and_keeps_its_rows() {
     .unwrap();
 }
 
+/// A select-field find in a cache frame that holds no write of the entity is kept as it was answered and answered again
+/// from memory; the frame's first held write of the entity drops it, and the find reads the database again.
+#[test]
+fn a_select_field_find_is_kept_until_the_frame_writes_the_entity() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    put_enum(&facade, "P1", "PA", "one");
+    put_enum(&facade, "P2", "PA", "two");
+    let tx = facade.transactions_for(ENUM).unwrap();
+    run(&tx, TransactionAttribute::Cache, || {
+        let ids = || -> Result<Vec<String>, Error> {
+            let rows = facade
+                .find(ENUM)?
+                .eq("enumTypeId", Value::string("PA"))
+                .select_field("enumId")
+                .order_by("enumId", false)
+                .list()?;
+            Ok(enum_ids(&rows))
+        };
+        let before = enum_reads(&tape);
+        assert_eq!(ids()?, ["P1", "P2"]);
+        assert_eq!(ids()?, ["P1", "P2"]);
+        assert_eq!(enum_reads(&tape) - before, 1, "the second find is answered from memory");
+        put_enum(&facade, "P3", "PA", "three");
+        assert_eq!(ids()?, ["P1", "P2", "P3"], "the held row is in the answer");
+        Ok(())
+    })
+    .unwrap();
+}
+
 /// A find by an `in` of keys the frame knows (rows it read or created) is answered from memory, the held writes on
 /// them, in the order of the keys; a key the frame does not know sends the find to the database.
 #[test]

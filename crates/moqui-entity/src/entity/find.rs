@@ -380,6 +380,9 @@ impl EntityFind {
         cache::note_db_read(&plan.tx);
         let values = self.rows_to_values(&plan, rows)?;
         let list = EntityList::new(values);
+        if bypass {
+            cache::after_selective_find(&self.facade, &lookup, &self.selective(), &list);
+        }
         if let Some(fence) = fence {
             // The rows were read; a cache that cannot hold them only costs the next read.
             if let Err(err) = cache::after_find(&self.facade, &lookup, &fence, &list) {

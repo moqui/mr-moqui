@@ -421,7 +421,9 @@ fn internal_login(username: &str) -> (Option<String>, Result<(), Error>) {
         Ok(facade) => facade,
         Err(err) => return (None, Err(err)),
     };
-    let account = match find_username(&facade, username) {
+    // Through the entity cache: every async call and job run logs in this way as the user who queued it, and a write of
+    // the account (disabling it, a new password) clears the cached row. A password login reads the row itself.
+    let account = match find_username_cached(&facade, username) {
         Ok(Some(account)) => account,
         Ok(None) => return (None, Err(Error::new(INVALID_LOGIN))),
         Err(err) => return (None, Err(err)),
@@ -1430,6 +1432,15 @@ fn find_username(facade: &EntityFacade, username: &str) -> Result<Option<EntityV
     Ok(facade
         .find(USER_ACCOUNT)?
         .eq("username", Value::string(username))
+        .one()?)
+}
+
+/// [`find_username`] through the entity cache.
+fn find_username_cached(facade: &EntityFacade, username: &str) -> Result<Option<EntityValue>, Error> {
+    Ok(facade
+        .find(USER_ACCOUNT)?
+        .eq("username", Value::string(username))
+        .use_cache(true)
         .one()?)
 }
 

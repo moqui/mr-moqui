@@ -2515,7 +2515,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="edit" noun="Message">
+    <service verb="edit" noun="Message" transaction="cache">
         <description>Change the text of one's own message (not redacted) within the edit window: the property
             chat_edit_window_minutes, 1440 by default, 0 for no limit. An edit event with the new body and mentions; the
             message keeps its place, shows the new text and is edited. New mentions are counted and notified, dropped ones
@@ -2689,7 +2689,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="redact" noun="Message">
+    <service verb="redact" noun="Message" transaction="cache">
         <description>Delete a message: one's own, or any (not in a direct room) as a moderator or owner. Its content, its
             edits' content, its files, its link previews and its poll go, its mentions no longer count, it leaves the search
             index, and the timeline shows "message removed" in its place (a redaction event, content {target: 'message',
@@ -2830,11 +2830,11 @@ along with this software (see the LICENSE.md file). If not, see
             }
             ec.entity.find('moqui.chat.ChatEvent').condition('chatRoomId', chatRoomId).condition('eventSeq', eventSeq)
                     .updateAll({linkPreviewJson: null})
-            ec.service.sync().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq, remove: true}).call()
+            ec.service.special().name('org.moqui.impl.ChatServices.index#ChatEvent').parameters({chatRoomId: chatRoomId, eventSeq: eventSeq, remove: true}).registerOnCommit()
         ]]></script></actions>
     </service>
 
-    <service verb="react" noun="Message">
+    <service verb="react" noun="Message" transaction="cache">
         <description>Toggle the current user's reaction key (an emoji, up to 32 characters) on a message: a reaction event
             when the user had none with that key, else that reaction is taken back (a redaction event, content {target:
             'reaction', messageSeq, key}). A member of a room that is not archived. A message that went to a bridge whose
@@ -3033,7 +3033,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="mark" noun="AllRead">
+    <service verb="mark" noun="AllRead" transaction="cache">
         <description>Read everything in the current user's rooms. The user's tabs hear of it on chatUser:userId ({kind: 'read',
             all: true}); the user's counts are published.</description>
         <out-parameters><parameter name="roomCount" type="Integer"/></out-parameters>
@@ -3566,7 +3566,7 @@ along with this software (see the LICENSE.md file). If not, see
         ]]></script></actions>
     </service>
 
-    <service verb="vote" noun="Poll">
+    <service verb="vote" noun="Poll" transaction="cache">
         <description>The current user's vote on a poll of a room they may post in, while it is open: optionIdList replaces the
             user's votes (one option, or several in a poll that takes them); an empty list takes the vote back. The state is
             pushed as an update (push#Update). Out: poll, with the user's own votes.</description>

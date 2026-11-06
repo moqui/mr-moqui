@@ -87,6 +87,10 @@ struct EntityHold {
     /// List finds of the entity with no limit or offset, by the find's key, as the database answered them
     /// (plans/TX-Cache.md D3); dropped as `stored` is.
     lists: HashMap<String, KeptList>,
+    /// Select-field finds of the entity (no limit, offset, lock or aggregate), by the find's key and fields, as the
+    /// database answered them: the rows have those fields only, so no held write can be put on them, and they are
+    /// dropped at the frame's first held write of the entity, as when `stored` is.
+    projected: HashMap<String, KeptList>,
 }
 
 impl FrameHold {
@@ -104,6 +108,7 @@ impl FrameHold {
         let entity = entities
             .get_mut(&held.entity_name)
             .expect("the entity's hold was inserted just above");
+        entity.projected.clear();
         let op_at = |at: Option<&usize>| at.and_then(|&at| order[at].as_ref()).map(|held| held.operation);
         let (first, last) = match entity.by_pk.get(&held.pk) {
             Some(slots) => (op_at(slots.first()), op_at(slots.last())),
@@ -266,8 +271,31 @@ impl FrameHold {
                 self.kept = self.kept.saturating_sub(hold.stored.len());
                 hold.stored.clear();
                 hold.lists.clear();
+                hold.projected.clear();
             }
         }
+    }
+
+    /// A select-field find of `entity` kept by its key, while the frame holds no write of the entity.
+    pub(super) fn projected(&self, entity: &str, key: &str) -> Option<KeptList> {
+        let hold = self.entities.get(entity)?;
+        if !hold.slots.is_empty() {
+            return None;
+        }
+        hold.projected.get(key).cloned()
+    }
+
+    /// Keep the rows of a select-field find of `entity` (with no held write of it), while the cap allows.
+    pub(super) fn keep_projected(&mut self, entity: &str, key: String, rows: KeptList) {
+        if self.kept.saturating_add(rows.len()) > READ_CAP {
+            return;
+        }
+        let hold = self.entities.entry(entity.to_string()).or_default();
+        if !hold.slots.is_empty() {
+            return;
+        }
+        self.kept += rows.len();
+        hold.projected.insert(key, rows);
     }
 
     /// The first held write of one row of `entity`.

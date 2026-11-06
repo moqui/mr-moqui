@@ -53,7 +53,7 @@ use std::collections::{HashMap, HashSet};
 use moqui_lib::error::Error as LibError;
 use moqui_lib::object::Value;
 
-use super::implementation::{find_one, force_new};
+use super::implementation::{find_one, force_cache};
 use super::inbound::{run_stored_ecas, StoredMessage};
 use super::store::{self, header_value, parse_message, Placement, MESSAGE};
 use super::sync::{account_info, after_new_mail, load_folders, publish_counts, run_rules, ACCOUNT};
@@ -768,7 +768,7 @@ fn deliver_one(
         server_size: None,
         archived: false,
     };
-    let id = force_new(facade, || store::store_message(facade, &parsed, &place)).map_err(failed)?;
+    let id = force_cache(facade, || store::store_message(facade, &parsed, &place)).map_err(failed)?;
     if junk.is_none() {
         let server_id = field_text(&row, "emailServerId");
         let ids = vec![id.clone()];

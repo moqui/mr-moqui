@@ -179,12 +179,16 @@ impl ContextStack {
         self.with_value(key, |found| found == value).unwrap_or(false)
     }
 
-    pub fn put(&mut self, key: impl Into<String>, value: Value) -> Result<Option<Value>, Error> {
-        let key = key.into();
-        if self.include_context && key == "context" {
+    pub fn put(&mut self, key: impl Into<String> + AsRef<str>, value: Value) -> Result<Option<Value>, Error> {
+        if self.include_context && key.as_ref() == "context" {
             return Err(Error::new("cannot put with key 'context'"));
         }
-        Ok(self.top_frame().borrow_mut().insert(key, value))
+        let mut frame = self.top_frame().borrow_mut();
+        // A name the frame has already is replaced in place, with no new key.
+        if let Some(slot) = frame.get_mut(key.as_ref()) {
+            return Ok(Some(std::mem::replace(slot, value)));
+        }
+        Ok(frame.insert(key.into(), value))
     }
 
     /// Replace `key` in the nearest frame that holds it, so a callee's change to a caller's

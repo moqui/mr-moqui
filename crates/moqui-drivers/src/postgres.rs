@@ -835,6 +835,19 @@ mod driver {
             self.forget_unconfirmed()
         }
 
+        /// Behind the unanswered statements when the server checks them all, so one that failed fails the transaction
+        /// there (and the rollback to this savepoint after it); with a check made here among them it waits, as
+        /// [`Self::savepoint`] does, so that failure is reported first.
+        fn savepoint_behind(&mut self, name: &str) -> Result<(), Error> {
+            self.flush_batch()?;
+            let sql = format!("SAVEPOINT {}", quote_ident(name));
+            if self.wire.server_checks_all() {
+                self.wire.queue_simple(&sql, "savepoint")
+            } else {
+                self.wire.simple(&sql, "savepoint")
+            }
+        }
+
         /// Not waited for: it goes out with the next request (the commit, often), whose wait reports a failure. A
         /// release fails only in a transaction that is already failed.
         fn release_savepoint(&mut self, name: &str) -> Result<(), Error> {
