@@ -62,12 +62,10 @@ pub fn register_cache_flush(facade: &EntityFacade, tx: &TransactionManager) -> R
             ),
             Err(err) => stats::note_flush_failed(&owner, err),
         }
-        stats::end_frame(token);
         flushed.map(|_| ())
     })?;
     tx.on_rollback(move || {
         TX_HOLD.with(|slot| slot.borrow_mut().remove(&token));
-        stats::end_frame(token);
     })?;
     Ok(())
 }

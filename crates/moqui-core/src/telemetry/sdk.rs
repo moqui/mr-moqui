@@ -120,7 +120,9 @@ impl Runtime {
             .build();
         use opentelemetry::logs::LoggerProvider;
         let logger = logger_provider.logger("moqui");
-        let allowed = Arc::new(arc_swap::ArcSwap::from_pointee(allowed_keys(&shared.config.metric_attributes)));
+        let allowed = Arc::new(arc_swap::ArcSwap::from_pointee(allowed_keys(
+            &shared.config.metric_attributes,
+        )));
         Self {
             provider,
             tracer,
@@ -587,6 +589,8 @@ const ALLOWED_ATTRIBUTES: &[&str] = &[
     "http.response.status_code",
     "db.system.name",
     "outcome",
+    // a transaction's cache mode: off, hold or read-through (moqui.transaction.duration)
+    "moqui.transaction.cache",
     "moqui.operation.name",
     // the edge link's queue and replication (plans/Edge-Node.md §5.9): names from its conf, never from a request
     "moqui.edgelink.kind",

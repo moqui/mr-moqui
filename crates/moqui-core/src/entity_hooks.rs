@@ -20,7 +20,7 @@ use moqui_lib::object::Value;
 
 use crate::context::{Authz, ExecutionContext, Executor, Tarpit};
 use crate::telemetry::{ContextGuard, Span, SpanKind, Telemetry};
-use moqui_entity::hooks::{EntityHooks, Guard, StatementArtifact, StatementTrace};
+use moqui_entity::hooks::{EntityHooks, Guard, StatementArtifact, StatementTrace, TransactionTrace};
 
 moqui_entity::hooks::submit! {
     EntityHooks {
@@ -95,6 +95,7 @@ moqui_entity::hooks::submit! {
         registration_failures: crate::service::define::registration_failures,
         cluster_note_write: note_write,
         trace_statement,
+        trace_transaction,
         artifact_name: || {
             let (entity, artifact) =
                 ExecutionContext::with_current(ExecutionContext::statement_artifact).unwrap_or_default();
@@ -127,6 +128,61 @@ struct SqlTrace {
     system: Option<std::sync::Arc<str>>,
     span: Option<Span>,
     _attached: Option<ContextGuard>,
+}
+
+/// The `AT_TRANSACTION` artifact type: a transaction's span, inside a trace (as a statement's), and its duration metric
+/// `moqui.transaction.duration` by outcome and cache mode. `telemetry/artifact type="AT_TRANSACTION"` sets `spans`,
+/// `metrics` and `sample-ratio`, as for the other types.
+const AT_TRANSACTION: &str = "AT_TRANSACTION";
+
+struct TxTrace {
+    started: Instant,
+    telemetry: std::sync::Arc<Telemetry>,
+    metrics: bool,
+    span: Option<Span>,
+}
+
+fn trace_transaction() -> Option<Box<dyn TransactionTrace>> {
+    let telemetry = crate::telemetry::current()?;
+    let (spans, metrics) = telemetry.artifact_enabled(AT_TRANSACTION);
+    if !spans && !metrics {
+        return None;
+    }
+    let span = (spans && crate::telemetry::capture().is_some())
+        .then(|| telemetry.start_artifact_span(AT_TRANSACTION, "transaction", SpanKind::Internal));
+    Some(Box::new(TxTrace {
+        started: Instant::now(),
+        telemetry,
+        metrics,
+        span,
+    }))
+}
+
+impl TransactionTrace for TxTrace {
+    fn finish(mut self: Box<Self>, committed: bool, attributes: Vec<(&'static str, Value)>) {
+        let outcome = if committed { "commit" } else { "rollback" };
+        if self.metrics {
+            let mut metric = crate::entity::document::Document::new();
+            metric.insert("outcome".into(), Value::string(outcome));
+            if let Some((_, mode)) = attributes.iter().find(|(name, _)| *name == "moqui.transaction.cache") {
+                metric.insert("moqui.transaction.cache".into(), mode.clone());
+            }
+            self.telemetry.record_duration(
+                "moqui.transaction.duration",
+                self.started.elapsed().as_secs_f64(),
+                metric,
+            );
+        }
+        if let Some(mut span) = self.span.take() {
+            if span.is_recording() {
+                span.set_attribute("moqui.transaction.outcome", Value::string(outcome));
+                for (name, value) in attributes {
+                    span.set_attribute(name, value);
+                }
+            }
+            span.finish();
+        }
+    }
 }
 
 fn trace_statement(sql: &str) -> Option<Box<dyn StatementTrace>> {

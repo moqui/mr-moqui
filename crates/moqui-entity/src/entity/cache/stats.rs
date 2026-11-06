@@ -236,11 +236,10 @@ pub(super) fn note_flush_failed(tx: &TransactionManager, error: &Error) {
     }
 }
 
-/// The frame `token` ended (committed or rolled back): its counts go to a debug event and this thread's totals.
-pub(super) fn end_frame(token: u64) {
-    let Some(mut stats) = FRAMES.with(|frames| frames.borrow_mut().remove(&token)) else {
-        return;
-    };
+/// The frame `token` ended (committed or rolled back): its counts go to a debug event and this thread's totals, and
+/// back to the transaction manager for the transaction's span.
+pub(crate) fn end_frame(token: u64) -> Option<TxCacheStats> {
+    let mut stats = FRAMES.with(|frames| frames.borrow_mut().remove(&token))?;
     stats.frames = 1;
     tracing::debug!(
         held = stats.held(),
@@ -253,6 +252,7 @@ pub(super) fn end_frame(token: u64) {
         "transaction cache frame"
     );
     TOTAL.with(|total| total.borrow_mut().add(&stats));
+    Some(stats)
 }
 
 /// Forget the counts of every open frame on this thread (a thread with no frame left).

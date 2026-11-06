@@ -155,7 +155,9 @@ along with this software (see the LICENSE.md file). If not, see
         <xs:sequence><xs:element name="artifact" minOccurs="0" maxOccurs="unbounded"><xs:complexType>
             <xs:annotation><xs:documentation>Per artifact type (AT_SERVICE, AT_XML_SCREEN, AT_ENTITY, ...): whether
                 its frames are spans and whether they record the moqui.artifact.duration metric. Both default to true,
-                except AT_ENTITY (neither) and AT_XML_SCREEN_CONTENT (metrics only).</xs:documentation></xs:annotation>
+                except AT_ENTITY (neither) and AT_XML_SCREEN_CONTENT (metrics only). AT_TRANSACTION is each transaction
+                begun (not joined): a span inside a trace, and the moqui.transaction.duration metric in place of
+                moqui.artifact.duration.</xs:documentation></xs:annotation>
             <xs:attribute name="type" type="xs:string" use="required"/><xs:attribute name="spans" type="boolean"/>
             <xs:attribute name="metrics" type="boolean"/>
             <xs:attribute name="sample-ratio" type="xs:string"><xs:annotation><xs:documentation>The share of traces,

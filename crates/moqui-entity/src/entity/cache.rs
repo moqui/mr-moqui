@@ -52,6 +52,7 @@ mod stats;
 mod tx;
 
 use hold::Held;
+pub(crate) use stats::end_frame as end_frame_stats;
 pub use stats::{tx_cache_stats, FlushCause, TxCacheStats};
 pub(crate) use tx::flush_for_members;
 pub use tx::{flush_and_disable, flush_before_sql, register_cache_flush};

@@ -145,3 +145,76 @@ fn a_held_audited_update_reads_its_stored_row_once() {
         "{audits:?}"
     );
 }
+
+/// A transaction begun inside a trace is a span (`AT_TRANSACTION`) under the trace, with its outcome, cache mode and
+/// the transaction cache's counts; one outside a trace is none.
+#[cfg(feature = "telemetry")]
+#[test]
+fn a_transaction_is_a_span_with_its_cache_counts_inside_a_trace() {
+    use crate::entity::document::Document;
+    use crate::telemetry::{Exporter, SpanKind};
+    #[derive(Default)]
+    struct Memory(Mutex<Vec<Document>>);
+    impl Exporter for Memory {
+        fn export(&self, index: &str, documents: Vec<Document>) -> Result<usize, moqui_lib::error::Error> {
+            let count = documents.len();
+            if index == "otel_spans" {
+                self.0.lock().unwrap().extend(documents);
+            }
+            Ok(count)
+        }
+    }
+    let context = crate::context::ExecutionContextFactory::test_context_with_conf(
+        "<moqui-conf><telemetry sample-ratio=\"1\"/></moqui-conf>",
+    );
+    let facade = crate::testing::open();
+    context.factory().set_entity(facade.clone());
+    let telemetry = crate::telemetry::for_factory(context.factory());
+    let memory = Arc::new(Memory::default());
+    telemetry.set_exporter(memory.clone());
+    let tx = facade.transactions_for(TEST).unwrap();
+    let write = |id: &str| {
+        tx.run(TransactionAttribute::Cache, None, || {
+            let mut row = facade.make_value(TEST)?;
+            row.set("testId", Value::string(id));
+            row.create(&facade)?;
+            Ok(())
+        })
+        .unwrap();
+    };
+    let root_id;
+    {
+        let _entered = context.enter();
+        let _authz = context.disable_authz();
+        write("OUTSIDE");
+        let root = telemetry.start_span("job", SpanKind::Server, None);
+        root_id = root.context().unwrap().span_id;
+        {
+            let _trace = crate::telemetry::attach(root.context());
+            write("INSIDE");
+        }
+        root.finish();
+    }
+    telemetry.flush();
+    let spans = memory.0.lock().unwrap();
+    let transactions: Vec<_> = spans
+        .iter()
+        .filter(|span| span.get("name").and_then(Value::as_str) == Some("transaction"))
+        .collect();
+    assert_eq!(transactions.len(), 1, "{spans:?}");
+    assert_eq!(
+        transactions[0].get("parent_span_id").and_then(Value::as_str),
+        Some(root_id.as_str())
+    );
+    let text = format!("{:?}", transactions[0]);
+    for expected in [
+        "commit",
+        "hold",
+        "moqui.tx_cache.held",
+        "moqui.tx_cache.batch_round_trips",
+    ] {
+        assert!(text.contains(expected), "{expected} in {text}");
+    }
+    drop(spans);
+    telemetry.shutdown();
+}

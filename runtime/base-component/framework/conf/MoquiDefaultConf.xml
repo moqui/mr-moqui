@@ -631,7 +631,9 @@
         </operations>
     </telemetry>
     <!-- Artifact telemetry defaults: screen/service/LLM spans+metrics; content metrics; entity frames off. SQL client
-         spans are written inside a trace, so a scheduler poll or a data load writes none. Override per type using
+         spans are written inside a trace, so a scheduler poll or a data load writes none; so are transaction spans
+         (AT_TRANSACTION: outcome, cache mode, waited round trips and the transaction cache's counts), with the
+         moqui.transaction.duration metric by outcome and cache mode. Override per type using
          telemetry/artifact, whose sample-ratio overrides telemetry_sample_ratio above for that type's spans.
          telemetry/metric name="..." attributes="..." narrows or widens one instrument's attributes. -->
     <!-- Report time rounding: week-start 1 is Monday and 0 Sunday (now/w); the fiscal year (now/fy) starts on this month and day. -->

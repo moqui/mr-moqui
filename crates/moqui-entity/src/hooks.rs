@@ -45,6 +45,14 @@ pub trait StatementTrace {
     fn finish(self: Box<Self>, error: Option<&str>);
 }
 
+/// One transaction's span and duration (the `AT_TRANSACTION` artifact type), from [`trace_transaction`] when a frame
+/// begins until [`TransactionTrace::finish`] when it ends.
+pub trait TransactionTrace {
+    /// The transaction ended: `committed`, or rolled back; `attributes` are what it did (its cache mode, its waited round
+    /// trips, the transaction cache's counts).
+    fn finish(self: Box<Self>, committed: bool, attributes: Vec<(&'static str, Value)>);
+}
+
 /// What a statement runs for, from the artifact stack: the entity of the `AT_ENTITY` frame on top, when the statement
 /// is an entity operation's, and the first artifact below it that is not an entity (a screen, service or REST path),
 /// as Java's query stats take the parent of the top frame.
@@ -130,6 +138,7 @@ pub struct EntityHooks {
     /// Publish a write to the cluster's caches.
     pub cluster_note_write: fn(&EntityFacade, &str, &[String], &FieldMap) -> Result<(), Error>,
     pub trace_statement: fn(&str) -> Option<Box<dyn StatementTrace>>,
+    pub trace_transaction: fn() -> Option<Box<dyn TransactionTrace>>,
     /// The entity and artifact a statement runs for, for the query stats (`entity::query_stats`); only called while
     /// they are on.
     pub artifact_name: fn() -> StatementArtifact,
@@ -200,6 +209,7 @@ impl EntityHooks {
         registration_failures: |_| Vec::new(),
         cluster_note_write: |_, _, _, _| Ok(()),
         trace_statement: |_| None,
+        trace_transaction: || None,
         artifact_name: StatementArtifact::default,
         inline_executor: || false,
     };
@@ -320,6 +330,11 @@ pub fn call(
 /// The entity and artifact the statement about to run is for.
 pub fn artifact_name() -> StatementArtifact {
     (get().artifact_name)()
+}
+
+/// [`TransactionTrace`] of a transaction that begins now.
+pub fn trace_transaction() -> Option<Box<dyn TransactionTrace>> {
+    (get().trace_transaction)()
 }
 
 /// [`StatementTrace`] of one statement, inside a trace.

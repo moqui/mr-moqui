@@ -69,6 +69,10 @@ struct Frame {
     feed_insert: Vec<ConnHook>,
     on_commit: Vec<AfterHook>,
     on_rollback: Vec<AfterHook>,
+    /// The transaction's span and duration (`AT_TRANSACTION`), when telemetry is on.
+    trace: Option<Box<dyn crate::hooks::TransactionTrace>>,
+    /// This thread's waited round trips when the frame began.
+    round_trips_at: u64,
 }
 
 impl Drop for Frame {
@@ -92,6 +96,9 @@ struct Phase {
     feed_insert: Vec<ConnHook>,
     on_commit: Vec<AfterHook>,
     on_rollback: Vec<AfterHook>,
+    trace: Option<Box<dyn crate::hooks::TransactionTrace>>,
+    round_trips_at: u64,
+    cache_mode: CacheMode,
 }
 
 enum Top {
@@ -387,6 +394,8 @@ impl TransactionManager {
                 feed_insert: Vec::new(),
                 on_commit: Vec::new(),
                 on_rollback: Vec::new(),
+                trace: crate::hooks::trace_transaction(),
+                round_trips_at: crate::driver::thread_round_trips(),
             });
             Ok(true)
         })
@@ -940,6 +949,7 @@ impl TransactionManager {
         }
         // The after hooks run with every frame ended, then each manager resumes the frame its `force_new` suspended.
         for (_, mut phase, committed) in ended {
+            end_trace(&mut phase, committed);
             if committed {
                 run_after_hooks("commit", phase.on_commit.drain(..));
             } else {
@@ -984,6 +994,9 @@ impl TransactionManager {
                 feed_insert: std::mem::take(&mut frame.feed_insert),
                 on_commit: std::mem::take(&mut frame.on_commit),
                 on_rollback: std::mem::take(&mut frame.on_rollback),
+                trace: frame.trace.take(),
+                round_trips_at: frame.round_trips_at,
+                cache_mode: frame.cache_mode,
             };
             Ok(Prepared::Ready {
                 rollback_only,
@@ -1569,6 +1582,38 @@ fn try_commit(phase: &mut Phase) -> Result<(), Error> {
         return Err(Error::new("commit failed").with_source(err));
     }
     Ok(())
+}
+
+/// The end of a frame for its transaction cache counts (plans/TX-Cache.md D1) and its span: what it did, as attributes.
+fn end_trace(phase: &mut Phase, committed: bool) {
+    let stats = crate::entity::cache::end_frame_stats(phase.token);
+    let Some(trace) = phase.trace.take() else {
+        return;
+    };
+    let mode = match phase.cache_mode {
+        CacheMode::Off => "off",
+        CacheMode::Hold => "hold",
+        CacheMode::ReadThrough => "read-through",
+    };
+    let count = |value: u64| moqui_lib::object::Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
+    let mut attributes = vec![
+        ("moqui.transaction.cache", moqui_lib::object::Value::string(mode)),
+        (
+            "moqui.transaction.round_trips",
+            count(crate::driver::thread_round_trips().saturating_sub(phase.round_trips_at)),
+        ),
+    ];
+    if let Some(stats) = stats {
+        attributes.extend([
+            ("moqui.tx_cache.held", count(stats.held())),
+            ("moqui.tx_cache.memory_reads", count(stats.memory_reads)),
+            ("moqui.tx_cache.db_reads", count(stats.db_reads)),
+            ("moqui.tx_cache.early_flushes", count(stats.early_flush_count())),
+            ("moqui.tx_cache.batch_statements", count(stats.batch_statements)),
+            ("moqui.tx_cache.batch_round_trips", count(stats.batch_round_trips)),
+        ]);
+    }
+    trace.finish(committed, attributes);
 }
 
 /// Runs the after-commit or after-rollback hooks in order. The transaction has already ended, so a panicking hook is

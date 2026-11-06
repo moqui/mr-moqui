@@ -96,7 +96,11 @@ with an `artifact` override and the receiver limits written out:
   screens dilute the fixed cost. Roots mode dropped nothing in the same burst. Raise the ratio for a development server, or for a while when you need full
   traces.
 - **`artifact`** turns spans and metrics on or off per artifact type. Entity frames are off by default and screen
-  content gets metrics only; the dev conf (`runtime/conf/MoquiDevConf.xml`) adds content spans and entity metrics.
+  content gets metrics only. `AT_TRANSACTION` is each transaction begun (not one joined): a span inside a trace,
+  with its outcome, cache mode (`off`, `hold`, `read-through`), waited round trips and the transaction cache's counts
+  (`moqui.tx_cache.held`, `memory_reads`, `db_reads`, `early_flushes`, `batch_statements`, `batch_round_trips`;
+  [Services](../logic/Services.md#transaction-cache)), and the `moqui.transaction.duration` metric by `outcome` and
+  `moqui.transaction.cache`; the dev conf (`runtime/conf/MoquiDevConf.xml`) adds content spans and entity metrics.
   Its `sample-ratio` (0 to 1) overrides the global ratio for that type's frame spans (and `AT_LLM` provider spans);
   roots and the tail rule are unchanged. A SQL span keeps its frame's decision, so a frame sampled by its type's ratio
   keeps its statements; other child spans follow the global ratio.
