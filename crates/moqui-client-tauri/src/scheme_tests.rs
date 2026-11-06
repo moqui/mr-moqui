@@ -123,7 +123,7 @@ fn the_shell_is_served_from_its_files_under_its_policy_and_never_forwarded() {
     assert_eq!(page.body(), b"<html>shell</html>");
     assert_eq!(
         page.headers().get("Content-Security-Policy").unwrap(),
-        moqui_client::assets::SHELL_CSP
+        &moqui_client::assets::configured_shell_csp()
     );
     // one of the shell's paths with no such file: not found, not the server's
     let missing = super::answer(
