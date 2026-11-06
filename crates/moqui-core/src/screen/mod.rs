@@ -260,17 +260,30 @@ fn handle(
         scripts.fire("requestDestroyed", Value::Null);
     }
     scripts.run_actions_logged("after-request", parameters);
+    // A page a shared cache may keep, for a visitor with no session and nobody signed in, gets no session: no cookie or
+    // token is sent and the session made for the request is not kept (impl-shop F42).
+    let cacheable = presented.is_none()
+        && matches!(&outcome, Ok(response) if is_public(response))
+        && user::session::current_user_id()?.is_none();
+    if cacheable {
+        user::session::discard_bound_session();
+    }
     let response = match end.finish() {
         Err(err) if !web::output_sent() && outcome.is_ok() => web::json_error_of(&err),
         _ => outcome?,
     };
-    let mut response = attach_session(
-        response,
-        &guard,
-        presented.as_deref(),
-        visitor_cookie.as_deref(),
-        token_before.as_deref(),
-    )?;
+    let mut response = if cacheable {
+        response
+    } else {
+        attach_session(
+            response,
+            &guard,
+            presented.as_deref(),
+            visitor_cookie.as_deref(),
+            token_before.as_deref(),
+        )?
+    };
+    not_modified(request, &mut response);
     // the preferences this request set, for the page to apply at once (docs/ui/Qvt-Client.md, Preferences)
     let changed = web::take_changed_preferences();
     if !changed.is_empty() {
@@ -678,6 +691,39 @@ fn error_page(
         body,
         stream,
         http_log: web::HttpLogIdentity::default(),
+    })
+}
+
+/// A 200 that names its version with an `ETag` (a screen or script set it) becomes a 304 with no body when the request's
+/// `If-None-Match` names the same, as a static file's does (`static_files::respond_opened`).
+fn not_modified(request: &WebRequest, response: &mut WebResponse) {
+    if response.status != 200 {
+        return;
+    }
+    let Some(presented) = request.header("if-none-match") else {
+        return;
+    };
+    let matches = response
+        .headers
+        .iter()
+        .any(|(name, tag)| name.eq_ignore_ascii_case("etag") && static_files::matches_tag(presented, tag));
+    if matches {
+        response.status = 304;
+        response.body.clear();
+        response.stream = None;
+        response
+            .headers
+            .retain(|(name, _)| !name.eq_ignore_ascii_case("content-length"));
+    }
+}
+
+/// Whether the response says a shared cache may keep it: a `Cache-Control` with the `public` directive.
+fn is_public(response: &WebResponse) -> bool {
+    response.headers.iter().any(|(name, value)| {
+        name.eq_ignore_ascii_case("cache-control")
+            && value
+                .split(',')
+                .any(|directive| directive.trim().eq_ignore_ascii_case("public"))
     })
 }
 

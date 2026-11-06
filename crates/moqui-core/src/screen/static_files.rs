@@ -179,7 +179,7 @@ fn file_tag(modified: Option<i64>, size: Option<u64>, bytes: Option<&[u8]>) -> S
     }
 }
 
-fn matches_tag(header: &str, tag: &str) -> bool {
+pub(crate) fn matches_tag(header: &str, tag: &str) -> bool {
     let strip = |text: &str| text.trim().trim_start_matches("W/").to_string();
     let ours = strip(tag);
     header

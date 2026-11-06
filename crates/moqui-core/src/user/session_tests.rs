@@ -881,6 +881,23 @@ fn cookieless_requests_keep_the_table_within_its_cap() {
 }
 
 #[test]
+fn a_discarded_session_is_never_written() {
+    let (_lock, ctx, facade, _key) = setup();
+    let _entered = ctx.enter();
+    let factory = Arc::clone(ctx.factory());
+    let guard = bind(&factory, None, None, false).unwrap();
+    save_parameter("color", "blue");
+    let id = guard.session_id();
+    discard_bound_session();
+    drop(guard);
+    assert!(!lock_sessions(&factory).sessions.contains_key(&id));
+    flush_dirty(&factory).unwrap();
+    assert!(read_row(&facade, &id).unwrap().is_none());
+    assert_eq!(count_entity(&facade, HTTP_SESSION), 0);
+    assert_eq!(count_entity(&facade, VISIT), 0);
+}
+
+#[test]
 fn eviction_writes_a_dirty_session_before_dropping_it() {
     let (_lock, ctx, facade, _key) = setup();
     let _entered = ctx.enter();
