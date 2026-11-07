@@ -199,6 +199,52 @@ fn the_whole_runtimes_share_their_globals() {
     });
 }
 
+static RENDER: HostClass = HostClass {
+    name: "host:ProbeRender",
+    // not a leaf: the spec runtime is lent, and the render runs on the thread's main runtime
+    methods: &[crate::script::host::method!("Probe", "render", [Text, Text], None, render_units)],
+    getters: &[],
+    hidden: &[],
+    shim_js: None,
+    shim_members: &[],
+};
+
+/// A render of two units on the main runtime, a value between them, from a host call of the spec runtime.
+fn render_units(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let unit = |id: u64, source: String| crate::screen::generate::Unit {
+        id,
+        source,
+        runtime: std::sync::Arc::from(""),
+        runtime_id: 0,
+    };
+    let (first, second) = (call.text_or_empty(0), call.text_or_empty(1));
+    let value = crate::script::with_screen_runner(|runner| {
+        runner.run(&unit(u64::MAX - 11, first))?;
+        let value = crate::script::eval_value("rendered + 1")?;
+        runner.run(&unit(u64::MAX - 12, second))?;
+        Ok(value)
+    })
+    .map_err(HostError::Context)?;
+    Ok(Ret::Value(value))
+}
+
+/// A render started from a spec run (spec script, host call, `with_screen_runner`, `runner.run(unit)`) runs its units
+/// in the main runtime's run (`Active::main_running`), with the spec runtime innermost before it: its units, and a value
+/// between them, see what each other wrote.
+#[test]
+fn a_render_from_a_spec_run_runs_its_units_in_the_main_runtime() {
+    crate::script::with_script_engine(crate::script::ScriptEngine::Oxide, || {
+        clear_context_stack();
+        install_global("probeRender", &RENDER).expect("install");
+        let between = spec(
+            "probeRender.render('(function ($depth) { rendered = 41 })', \
+             '(function ($depth) { second = rendered + ec.resource.expression(\"rendered * 2\") })')",
+        );
+        assert_eq!(between, Value::I32(42));
+        assert_eq!(crate::script::context_value("second"), Some(Value::I32(123)));
+    });
+}
+
 /// The thread's memory report counts the spec runtime beside the main one.
 #[test]
 fn the_memory_report_counts_the_spec_runtime() {

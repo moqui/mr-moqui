@@ -388,6 +388,16 @@ fn what_the_bindings_do_not_have_yet_falls_back() -> Result<(), Error> {
     assert_eq!(fallback("tools.x"), "a member of a host object the oxide bindings do not have yet");
     assert!(matches!(value("[tools][0]")?, Value::Map(map) if map.contains_key("__wrap")), "passed through");
     assert_eq!(fallback("ObjectUtilities"), "a QuickJS global");
+    // a cut runtime names none of the helper objects: the static check refuses them, so a small script never reads one.
+    // `System` is the globals shim's on every runtime, frozen, and refused by the static check too.
+    assert_eq!(
+        value(
+            "Object.getOwnPropertyNames(globalThis).filter(name => ['ObjectUtilities', 'CollectionUtilities', \
+             'StringUtilities', 'WebUtilities', 'UserSecurityChecks', 'System'].includes(name)).join()"
+        )?,
+        Value::string("System")
+    );
+    assert_eq!(value("Object.isFrozen(System)")?, Value::Bool(true));
     assert_eq!(value("toDecimal('1.50').add(1).toString()")?, Value::string("2.50"));
     assert_eq!(value("toNumber('12.5') + toNumber(null)")?, Value::F64(12.5));
     let condition_object = Value::Object(HostObject::new(String::from("not a binding")));
