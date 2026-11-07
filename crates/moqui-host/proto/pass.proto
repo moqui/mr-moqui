@@ -98,7 +98,8 @@ message DownloadMeta {
   uint64 range_start = 7;
   uint64 range_end = 8;
   uint64 complete_length = 9;
-  // The Cache-Control to answer with; empty is no-store. Only "public, max-age=60" (a public product image) is sent.
+  // The Cache-Control to answer with; empty is no-store. Only "public, max-age=60" (a public product image) and, for
+  // getShopThemeAsset, "public, max-age=31536000, immutable" (a theme asset by digest) are sent.
   string cache_control = 10;
 }
 

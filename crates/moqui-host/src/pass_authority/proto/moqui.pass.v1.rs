@@ -88,7 +88,8 @@ pub struct DownloadMeta {
     pub range_end: u64,
     #[prost(uint64, tag = "9")]
     pub complete_length: u64,
-    /// The Cache-Control to answer with; empty is no-store. Only "public, max-age=60" (a public product image) is sent.
+    /// The Cache-Control to answer with; empty is no-store. Only "public, max-age=60" (a public product image) and, for
+    /// getShopThemeAsset, "public, max-age=31536000, immutable" (a theme asset by digest) are sent.
     #[prost(string, tag = "10")]
     pub cache_control: ::prost::alloc::string::String,
 }

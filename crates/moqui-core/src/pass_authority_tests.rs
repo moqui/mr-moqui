@@ -118,3 +118,38 @@ fn a_download_range_is_checked_against_the_file() {
     }
     assert_eq!((Ranged::Whole.status(), Ranged::Whole.content_range()), (200, None));
 }
+
+/// A download's `Cache-Control` is one of two exact values (Shop F118, F55): a public image's for any download, a theme
+/// asset's immutable one only for the theme asset download; anything else, however close, is none (`no-store`).
+#[test]
+fn a_download_cache_control_is_an_exact_value() {
+    let image = "getShopProductImage";
+    assert_eq!(
+        download_cache_control(image, PUBLIC_IMAGE_CACHE),
+        Some(PUBLIC_IMAGE_CACHE)
+    );
+    assert_eq!(
+        download_cache_control(THEME_ASSET_OPERATION, THEME_ASSET_CACHE),
+        Some(THEME_ASSET_CACHE)
+    );
+    assert_eq!(
+        download_cache_control(THEME_ASSET_OPERATION, PUBLIC_IMAGE_CACHE),
+        Some(PUBLIC_IMAGE_CACHE)
+    );
+    // the immutable value only for a theme asset
+    assert_eq!(download_cache_control(image, THEME_ASSET_CACHE), None);
+    assert_eq!(download_cache_control("getAttachment", THEME_ASSET_CACHE), None);
+    for other in [
+        "",
+        "no-store",
+        "public, max-age=31536000",
+        "public, max-age=31536000, immutable ",
+        "Public, max-age=31536000, immutable",
+        "public, max-age=31536000, immutable, s-maxage=1",
+        "public, max-age=600",
+        "private, max-age=60",
+    ] {
+        assert_eq!(download_cache_control(THEME_ASSET_OPERATION, other), None, "{other}");
+        assert_eq!(download_cache_control(image, other), None, "{other}");
+    }
+}
