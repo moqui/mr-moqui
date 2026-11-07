@@ -122,6 +122,9 @@ pub fn serve(factory: &Arc<ExecutionContextFactory>, request: WebRequest) -> Web
 
 /// Handle one request whose root screen is `root`.
 pub fn serve_at(factory: &Arc<ExecutionContextFactory>, mut request: WebRequest, root: &str) -> WebResponse {
+    // the request owns its spooled uploads: they go when it ends, whatever still holds a copy (a script's object that
+    // waits for a collector, a value kept in the context)
+    let _uploads = web::multipart::ReleaseAtEnd(request.multipart.clone());
     if request.body.len() > web::body_limit(&request) {
         return web::early_error(
             factory,

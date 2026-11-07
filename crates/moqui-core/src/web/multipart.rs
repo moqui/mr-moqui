@@ -16,12 +16,15 @@
 //!
 //! [`MultipartReader`] reads a body as it arrives, a chunk at a time: the host feeds it from the request stream, so an
 //! upload is never all in memory. A file part is kept in memory up to [`Spool::memory_limit`], and past that in a file
-//! of its own in [`Spool::dir`] (removed when the last reference to it goes), its size, SHA-256 and first bytes
-//! (for the program check) taken on the way. A file part is an [`UploadedFile`], the value a form `file` widget's
+//! of its own in [`Spool::dir`], its size, SHA-256 and first bytes (for the program check) taken on the way. The
+//! request owns its spool files: they are removed when it ends ([`Parsed::release`]), or with the last reference to
+//! them if that comes first, never later because a script object over one waits for a garbage collector. A copy that
+//! outlives its request fails cleanly on read. A file part is an [`UploadedFile`], the value a form `file` widget's
 //! field holds in `ec.web.multiPartParameters`. [`parse`] reads a body already in memory.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use moqui_lib::object::{HostObject, Value};
@@ -64,14 +67,49 @@ enum Content {
     Spooled(Arc<SpoolFile>),
 }
 
-/// A file part's content on disk, removed with the last reference to it.
+/// A file part's content on disk, removed when its request ends ([`SpoolFile::release`]) or with the last reference
+/// to it, whichever comes first.
 #[derive(Debug)]
-struct SpoolFile(PathBuf);
+struct SpoolFile {
+    path: PathBuf,
+    released: AtomicBool,
+}
+
+impl SpoolFile {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            released: AtomicBool::new(false),
+        }
+    }
+
+    /// Remove the file now; a later read fails.
+    fn release(&self) {
+        if !self.released.swap(true, Ordering::AcqRel) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    /// The path while the file is there, else the error a read of it gives.
+    fn path(&self, file_name: &str) -> Result<&Path, moqui_lib::error::Error> {
+        if self.released.load(Ordering::Acquire) {
+            return Err(gone(file_name));
+        }
+        Ok(&self.path)
+    }
+}
 
 impl Drop for SpoolFile {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
+        self.release();
     }
+}
+
+/// The error of a read of a spooled upload after its request ended.
+fn gone(file_name: &str) -> moqui_lib::error::Error {
+    moqui_lib::error::Error::new(format!(
+        "the upload {file_name} is no longer available: its request has ended"
+    ))
 }
 
 impl UploadedFile {
@@ -118,7 +156,7 @@ impl UploadedFile {
     pub fn read_bytes(&self) -> Result<Vec<u8>, moqui_lib::error::Error> {
         match &self.content {
             Content::Memory(bytes) => Ok(bytes.to_vec()),
-            Content::Spooled(file) => std::fs::read(&file.0).map_err(|err| {
+            Content::Spooled(file) => std::fs::read(file.path(&self.file_name)?).map_err(|err| {
                 moqui_lib::error::Error::new(format!("cannot read the upload {}: {err}", self.file_name))
             }),
         }
@@ -133,8 +171,9 @@ impl UploadedFile {
         Ok(match &self.content {
             Content::Memory(bytes) => Arc::new(MemorySource::new(bytes.to_vec())),
             Content::Spooled(file) => Arc::new(SpooledSource {
-                file: FileSource::open(&file.0)?,
-                _keep: Arc::clone(file),
+                file: FileSource::open(file.path(&self.file_name)?)?,
+                file_name: self.file_name.clone(),
+                keep: Arc::clone(file),
             }),
         })
     }
@@ -148,10 +187,11 @@ impl UploadedFile {
         Ok(match &self.content {
             Content::Memory(bytes) => Box::new(std::io::Cursor::new(Arc::clone(bytes))),
             Content::Spooled(file) => Box::new(SpooledReader {
-                file: std::fs::File::open(&file.0).map_err(|err| {
+                file: std::fs::File::open(file.path(&self.file_name)?).map_err(|err| {
                     moqui_lib::error::Error::new(format!("cannot read the upload {}: {err}", self.file_name))
                 })?,
-                _keep: Arc::clone(file),
+                file_name: self.file_name.clone(),
+                keep: Arc::clone(file),
             }),
         })
     }
@@ -168,10 +208,11 @@ impl UploadedFile {
     }
 }
 
-/// A spooled file as a source, which keeps the file while it is read.
+/// A spooled file as a source, which keeps the file while it is read, until its request ends.
 struct SpooledSource {
     file: FileSource,
-    _keep: Arc<SpoolFile>,
+    file_name: String,
+    keep: Arc<SpoolFile>,
 }
 
 impl ByteSource for SpooledSource {
@@ -180,18 +221,23 @@ impl ByteSource for SpooledSource {
     }
 
     fn read_at(&self, offset: u64, max: usize) -> Result<Vec<u8>, moqui_lib::error::Error> {
+        self.keep.path(&self.file_name)?;
         self.file.read_at(offset, max)
     }
 }
 
-/// A spooled file as a stream, which keeps the file while it is read.
+/// A spooled file as a stream, which keeps the file while it is read, until its request ends.
 struct SpooledReader {
     file: std::fs::File,
-    _keep: Arc<SpoolFile>,
+    file_name: String,
+    keep: Arc<SpoolFile>,
 }
 
 impl Read for SpooledReader {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.keep
+            .path(&self.file_name)
+            .map_err(|err| std::io::Error::other(err.message().to_string()))?;
         self.file.read(buf)
     }
 }
@@ -207,6 +253,29 @@ pub fn is_executable(bytes: &[u8]) -> bool {
 pub struct Parsed {
     pub fields: Vec<(String, String)>,
     pub files: Vec<UploadedFile>,
+}
+
+impl Parsed {
+    /// Remove the spool files of the files, as their request ends: every copy of an [`UploadedFile`] (a script's
+    /// object, a value in the context) then fails to read. A file in memory is not touched.
+    pub fn release(&self) {
+        for file in &self.files {
+            if let Content::Spooled(spooled) = &file.content {
+                spooled.release();
+            }
+        }
+    }
+}
+
+/// Releases the spool files of a request's body when the request ends ([`Parsed::release`]).
+pub struct ReleaseAtEnd(pub Option<Arc<Parsed>>);
+
+impl Drop for ReleaseAtEnd {
+    fn drop(&mut self) {
+        if let Some(parsed) = &self.0 {
+            parsed.release();
+        }
+    }
 }
 
 /// Why a body could not be read.
@@ -579,8 +648,8 @@ impl MultipartReader {
                     .collect();
                 let content = match part.spooled {
                     Some((mut file, path)) => {
-                        // the file is removed with the last reference, from here on
-                        let spooled = Arc::new(SpoolFile(path));
+                        // the file is removed when its request ends or with the last reference, from here on
+                        let spooled = Arc::new(SpoolFile::new(path));
                         file.flush().map_err(|err| MultipartError::Io(err.to_string()))?;
                         Content::Spooled(spooled)
                     }
