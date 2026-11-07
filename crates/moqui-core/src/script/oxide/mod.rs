@@ -21,23 +21,26 @@
 //! time zone and deadline from [`host`]. `ec` is the host table (`script/host`) through its binder ([`bind`]), with
 //! [`convert`] as its conversions.
 //!
-//! A run that meets what these bindings do not have yet (a list host object, an entity relationship, the stack as
-//! `context`) before it reached any host call reports a fallback, and the router runs the script on QuickJS instead.
+//! A run that meets what these bindings do not have yet (a member of a host object it does not bind, an entity
+//! relationship) before it reached any host call reports a fallback, and the router runs the script on QuickJS instead.
 
 pub(crate) mod bind;
 mod compiled;
+mod context;
 mod convert;
 mod decimal;
 mod engine;
 mod errors;
 mod host;
 mod names;
+mod reads;
 mod tracked;
 
 pub(crate) use engine::{
     engine_memory, eval_condition, eval_map, eval_text, eval_value, is_lent, release_for_quickjs, run_actions, stats,
     thread_heap_peaks, Outcome,
 };
+pub(crate) use reads::reads_are_held;
 
 #[cfg(test)]
 mod tests;

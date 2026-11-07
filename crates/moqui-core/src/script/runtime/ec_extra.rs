@@ -797,7 +797,7 @@ pub(super) fn install_ec_extras<'js>(ctx: &Ctx<'js>, ec: &Object<'js>) -> Result
         Function::new(ctx.clone(), |name: String| crate::build_info::has_feature(&name)),
     )?;
     caught(ctx, "ec.factory.hasFeature", factory.set("hasFeature", has_feature))?;
-    super::native_tools::install(ctx, ec, &factory)?;
+    // getTool and getToolFactory are the host table's (script/host/native_tools.rs)
     caught(ctx, "ec.factory", ec.set("factory", factory))
 }
 

@@ -28,13 +28,16 @@ use crate::script::engine::{EntryKind, Route};
 
 /// Distinct texts the census keeps at most; past it new texts are counted only.
 const MAX_ROWS: usize = 200_000;
-/// The text kept with a row, at most.
-const MAX_TEXT: usize = 400;
+/// The text kept with a row, at most: past it the row keeps the text's first part and the whole text's length, and
+/// the row's hash is the whole text's.
+const MAX_TEXT: usize = 2000;
 
 /// One distinct text of one entry kind.
 #[derive(Default)]
 struct Row {
     text: String,
+    /// The whole text's length in bytes.
+    length: usize,
     runs: u64,
     routes: BTreeMap<&'static str, u64>,
     passes: bool,
@@ -100,6 +103,12 @@ pub(crate) fn host_calls() -> u64 {
     HOST_CALLS.with(Cell::get)
 }
 
+/// Set the count of host calls back to `before`: the calls an engine makes as it starts (a shim's install-time call,
+/// `ec.resource.imageAvailable`) are not the running script's, so a fallback after them may still run on QuickJS.
+pub(crate) fn forget_host_calls_since(before: u64) {
+    HOST_CALLS.with(|calls| calls.set(before));
+}
+
 /// The running script's census entry, from [`begin`] until dropped.
 pub(crate) struct Entry {
     active: bool,
@@ -141,6 +150,7 @@ pub(crate) fn record(
     }
     let row = census.rows.entry((kind, hash)).or_insert_with(|| Row {
         text: clip(text),
+        length: text.len(),
         passes: verdict.passes(),
         reason: verdict.reason(),
         ec_paths: verdict.ec_paths().to_vec(),
@@ -193,6 +203,8 @@ pub fn census_lines() -> Vec<String> {
                 "ec_paths": row.ec_paths,
                 "reached": row.reached,
                 "fallbacks": row.fallbacks,
+                "length": row.length,
+                "clipped": row.length > MAX_TEXT,
                 "text": row.text,
             })
             .to_string()

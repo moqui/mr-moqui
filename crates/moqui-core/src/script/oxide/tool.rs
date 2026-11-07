@@ -67,16 +67,33 @@ impl ToolClass {
         let hooks = Rc::clone(&self.hooks);
         let name = method.clone();
         let function = scope.new_function(FunctionOptions::new(&name), move |scope: &mut Scope<'_>| {
-            let mut args = Vec::with_capacity(scope.argc());
-            for index in 0..scope.argc() {
-                let value = scope.arg(index);
-                args.push(hooks.to_host(scope, &value)?);
+            if crate::script::oxide::engine::fallback_pending() {
+                let conv = crate::script::oxide::convert::Conv::Unsupported(super::FELL_BACK);
+                return Err(crate::script::oxide::engine::host_error(scope, conv));
             }
-            let called = scope.lend(|| crate::script::host::with_ec(|ec| tool.0.call(ec, &method, &args)));
+            // a panic is not in flight when a call starts, so a mark an earlier one left at the top is stale
+            super::UNWOUND.with(|unwound| unwound.set(false));
+            let mut args = Vec::with_capacity(scope.argc());
+            {
+                // a panic in a conversion came through the engine
+                let _engine = super::EngineCall;
+                for index in 0..scope.argc() {
+                    let value = scope.arg(index);
+                    args.push(hooks.to_host(scope, &value)?);
+                }
+            }
+            // a panic in the tool's own code is an error the script catches, as the trampoline's
+            let called = scope.lend(|| {
+                super::caught_panic(|| crate::script::host::with_ec(|ec| tool.0.call(ec, &method, &args)))
+            });
             match called {
-                Ok(Ok(result)) => hooks.to_js(scope, result),
-                Ok(Err(err)) => Err(super::plain_error(scope, err.message())),
-                Err(_) => Err(super::plain_error(scope, "no execution context is entered")),
+                Ok(Ok(Ok(result))) => {
+                    let _engine = super::EngineCall;
+                    hooks.to_js(scope, result)
+                }
+                Ok(Ok(Err(err))) => Err(super::plain_error(scope, err.message())),
+                Ok(Err(_)) => Err(super::plain_error(scope, "no execution context is entered")),
+                Err(message) => Err(super::plain_error(scope, &message)),
             }
         })?;
         Ok(JsValue::Object(function.into_object()))
@@ -112,12 +129,19 @@ impl ExoticClass for ToolClass {
                 return Ok(Hook::Ordinary);
             }
         }
-        let read = scope.lend(|| crate::script::host::with_ec(|ec| tool.0.property(ec, &name)));
+        if crate::script::oxide::engine::fallback_pending() {
+            let conv = crate::script::oxide::convert::Conv::Unsupported(super::FELL_BACK);
+            return Err(crate::script::oxide::engine::host_error(scope, conv));
+        }
+        let read = scope.lend(|| {
+            super::caught_panic(|| crate::script::host::with_ec(|ec| tool.0.property(ec, &name)))
+        });
         match read {
-            Ok(Ok(Some(value))) => self.to_js(scope, value).map(Hook::Handled),
-            Ok(Ok(None)) => Ok(Hook::Handled(JsValue::Undefined)),
-            Ok(Err(err)) => Err(super::plain_error(scope, err.message())),
-            Err(_) => Err(super::plain_error(scope, "no execution context is entered")),
+            Ok(Ok(Ok(Some(value)))) => self.to_js(scope, value).map(Hook::Handled),
+            Ok(Ok(Ok(None))) => Ok(Hook::Handled(JsValue::Undefined)),
+            Ok(Ok(Err(err))) => Err(super::plain_error(scope, err.message())),
+            Ok(Err(_)) => Err(super::plain_error(scope, "no execution context is entered")),
+            Err(message) => Err(super::plain_error(scope, &message)),
         }
     }
 

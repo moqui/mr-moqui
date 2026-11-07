@@ -1508,6 +1508,31 @@ Next:
    kept a binary older than its sources.
 2. Allocation (still the largest: `malloc` and `free`) and `memcmp` in the service calls.
 
+## Round 31: quickjs-oxide for small scripts (Script-Engine-Oxide Phases 1 and 2)
+
+[Script-Engine-Oxide](Script-Engine-Oxide.md) runs conditions, values, `${}` text, maps and the subset of XML actions
+on quickjs-oxide under `script_engine=small-oxide`. Measured on a quiet machine with release builds; the default stays
+`rquickjs` because the speed gate missed.
+
+| Row (µs a call) | QuickJS | oxide |
+|---|---|---|
+| `service_speed` `echo#Data` | 11.5–11.8 | 13.7–14.1 |
+| `js_speed` value `a` | 0.39 | 0.43 |
+| value `a + b * 2` | 0.56 | 0.65 |
+| value `item.name` | 1.23 | 1.37 |
+| value `{x: a, y: item.name}` | 1.98 | 3.12 |
+| value `price.multiply(dqty)` | 1.31 | 1.63 |
+| value `itemList.length` (100 maps) | 57.4 | 76.9 |
+| condition | 0.59 | 0.85 |
+| expand `Item ${...}: ${...}` | 1.34 | 1.81 |
+| value `a + N`, new text each call | 0.55 | 1.23 |
+
+- The bindings allocate on each call where QuickJS's do not (4 allocations for `a`, 53 for a new map, 1,319 for 100
+  maps' length) and a new text costs a check and an oxide compile. Those are the next work (F4 in the fork, and
+  conversions that keep a value's wrapper).
+- Heap: the full `./moq test-apps` run peaked at 138.4 MB of JS heap under `small-oxide` (44.0 MB of it oxide) and
+  139.6 MB under `rquickjs`, against Round 28's 139 MiB.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.

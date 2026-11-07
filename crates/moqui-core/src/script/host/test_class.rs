@@ -91,6 +91,8 @@ pub(crate) const EXPECTED: &[(&str, &str)] = &[
         "not yours Unauthorized 30",
     ),
     ("(() => { try { ec.test.boom() } catch (e) { return e.name + ': ' + e.message } })()", "Error: boom"),
+    // in a body the engine is lent to on oxide (not a leaf): caught there too, not poisoning the runtime
+    ("(() => { try { ec.test.boomLent() } catch (e) { return e.name + ': ' + e.message } })()", "Error: boom"),
     (
         "(() => { try { ec.test.join() } catch (e) { return e.name + ': ' + e.message } })()",
         "TypeError: Error calling function with 0 argument(s) while 1 where expected",

@@ -808,8 +808,9 @@ macro_rules! tools_js {
         // body() as the current user, with authorization on whatever disabled it (a ServiceJob, an async call): the
         // screen at location checked for all actions and pushed under it, as a request to it would be
         runAsUser: (location, body) => {
-            host.runAsUserEnter(String(location), body);
-            try { return body(); } finally { host.runAsUserExit(String(location)); }
+            let result;
+            host.runAsUser(String(location), body, () => { result = body(); });
+            return result;
         },
         // body() with no user and authorization off, sharing the transaction; only from a service's own code
         runAsSystem: (body) => {
@@ -1024,8 +1025,7 @@ static METHODS: &[Method] = &[
     method!("tools", "getComponentInfoList", [], get_component_info_list),
     method!("tools", "getRuntimePath", [], get_runtime_path),
     method!("tools", "getInstanceId", [], get_instance_id),
-    method!("tools", "runAsUserEnter", [Text, Callback], run_as_user_enter),
-    method!("tools", "runAsUserExit", [Text], run_as_user_exit),
+    method!("tools", "runAsUser", [Text, Callback, Callback], None, leaf, run_as_user),
     method!("tools", "runAsSystem", [Callback, Callback], None, leaf, run_as_system),
     method!("tools", "getThreadList", [], get_thread_list),
     method!("tools", "waitWorkerPoolEmpty", [OptNumber], wait_worker_pool_empty),
@@ -2674,60 +2674,73 @@ fn enable_entity_eca(_call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::from(with_ec(crate::context::ExecutionContext::enable_entity_eca)?))
 }
 
-thread_local! {
-    /// What [`run_as_user_enter`] set aside, innermost last, for [`run_as_user_exit`] to put back: the script's own
-    /// disableAuthz state and the requirement of authorization.
-    static RUN_AS_USER: std::cell::RefCell<Vec<(Option<crate::context::AuthzGuard>, crate::context::AuthzRequired)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// The first half of `ec.artifactExecution.runAsUser(location, body)`, which the shim calls before `body()` and
-/// [`run_as_user_exit`] after it, in a `finally`: authorization required again for the rest of `body` (a ServiceJob
-/// or an async call runs with it off), and the screen `location` checked for all actions as the current user and pushed,
-/// so what `body` calls is authorized as from that screen. A user the screen does not authorize is refused, and `body`
-/// does not run. The script's own disableAuthz state is set aside while `body` runs and put back after, whatever `body`
-/// did with `disableAuthz` and `enableAuthz`, so nothing outside the call changes. `body` is an argument so that one
-/// that is not a function is refused before anything changes.
-fn run_as_user_enter(call: &mut Call<'_>) -> Result<Ret, HostError> {
+/// `ec.artifactExecution.runAsUser(location, body)`: `body()` with authorization required again (a ServiceJob or an
+/// async call runs with it off), and the screen `location` checked for all actions as the current user and pushed, so
+/// what `body` calls is authorized as from that screen. A user the screen does not authorize is refused, and `body` does
+/// not run. The script's own disableAuthz state is set aside while `body` runs and put back after, whatever `body` did
+/// with `disableAuthz` and `enableAuthz`, so nothing outside the call changes. All of that is undone here, after the
+/// call back returns, whether `body` returned, threw or was stopped by the deadline (which no `finally` sees). The shim
+/// passes `body` (refused when it is not a function) and a function that calls it and keeps its result, as for
+/// `runAsSystem`.
+fn run_as_user(call: &mut Call<'_>) -> Result<Ret, HostError> {
     let location = call.text_or_empty(0);
     let outer_script_authz = with_ec(crate::context::ExecutionContext::take_script_authz)?;
     let required = with_ec(crate::context::ExecutionContext::require_authz)?;
-    let pushed = with_ec(|ec| {
-        ec.push_checked(
-            "AT_XML_SCREEN",
-            &location,
-            "all",
-            crate::context::Authz::Required,
-            crate::context::Tarpit::Skip,
-            None,
-        )
+    // The check may run nested scripts (an authorization service, the entity ECA rules of a recorded failure), so it
+    // runs with the engine lent; the call back after it is this leaf's own.
+    let mut pushed = None;
+    let lent = call.ops.lend(&mut || {
+        pushed = Some(with_ec(|ec| {
+            ec.push_checked(
+                "AT_XML_SCREEN",
+                &location,
+                "all",
+                crate::context::Authz::Required,
+                crate::context::Tarpit::Skip,
+                None,
+            )
+        }));
     });
-    let refused = match pushed {
-        Ok(Ok(())) => {
-            RUN_AS_USER.with(|held| held.borrow_mut().push((outer_script_authz, required)));
-            return Ok(Ret::Undefined);
-        }
-        Ok(Err(err)) => HostError::message(err.message()),
-        Err(err) => err,
+    let refused = match (lent, pushed) {
+        (Err(err), _) => Some(err),
+        (Ok(()), Some(Ok(Ok(())))) => None,
+        (Ok(()), Some(Ok(Err(err)))) => Some(HostError::message(err.message())),
+        (Ok(()), Some(Err(err))) => Some(err),
+        (Ok(()), None) => Some(HostError::message("the authorization of runAsUser did not run")),
     };
-    restore_run_as_user(outer_script_authz, required);
-    Err(refused)
+    if let Some(refused) = refused {
+        restore_run_as_user(outer_script_authz, required);
+        return Err(refused);
+    }
+    // the frame is popped and the guards put back however the call back ends: a return, a throw, the deadline, or a
+    // panic that unwinds through it
+    let _restore = RunAsUserRestore {
+        location: location.clone(),
+        guards: Some((outer_script_authz, required)),
+    };
+    // the second function argument: the one that calls body and keeps its result
+    call.ops.call_back(1, Vec::new()).map(|_| Ret::Undefined)
 }
 
-/// The second half of `runAsUser`: the frame popped whatever `body` did, and what [`run_as_user_enter`] set aside put
-/// back.
-fn run_as_user_exit(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let location = call.text_or_empty(0);
-    let popped = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::pop);
-    if let Some((outer_script_authz, required)) = RUN_AS_USER.with(|held| held.borrow_mut().pop()) {
-        restore_run_as_user(outer_script_authz, required);
+/// Pops `runAsUser`'s frame and puts back what it set aside, when dropped.
+struct RunAsUserRestore {
+    location: String,
+    guards: Option<(Option<crate::context::AuthzGuard>, crate::context::AuthzRequired)>,
+}
+
+impl Drop for RunAsUserRestore {
+    fn drop(&mut self) {
+        let popped = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::pop);
+        if let Some((outer_script_authz, required)) = self.guards.take() {
+            restore_run_as_user(outer_script_authz, required);
+        }
+        let location = &self.location;
+        match popped {
+            Some(Err(err)) => tracing::warn!("Pop after runAsUser of {location}: {}", err.message()),
+            None => tracing::warn!("No execution context to pop after runAsUser of {location}"),
+            Some(Ok(())) => {}
+        }
     }
-    match popped {
-        Some(Err(err)) => tracing::warn!("Pop after runAsUser of {location}: {}", err.message()),
-        None => tracing::warn!("No execution context to pop after runAsUser of {location}"),
-        Some(Ok(())) => {}
-    }
-    Ok(Ret::Undefined)
 }
 
 /// The guards go in the reverse of their making: what body left of the script's state, then the requirement, and then

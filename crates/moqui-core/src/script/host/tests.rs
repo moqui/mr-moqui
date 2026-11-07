@@ -23,7 +23,9 @@ fn the_allowed_paths_are_the_table_and_its_members() {
     assert!(path_allowed("ec.cache.getCache"));
     assert!(!path_allowed("ec.message.getAvailableLocales"));
     assert!(!path_allowed("ec.messages"));
-    assert!(!path_allowed("ec.entity.find"));
+    assert!(path_allowed("ec.entity.find"), "a function path");
+    assert!(path_allowed("ec.entity.conditionFactory.makeConditionWhere"), "a method of an object path");
+    assert!(!path_allowed("ec.entity.getEntityDefinition"), "what the tools shim adds on QuickJS only");
     assert!(!path_allowed("ec"));
     assert!(path_allowed("ec.user.getPreferences"), "a shim's member");
     assert!(path_allowed("ec.user.context"));
@@ -41,7 +43,9 @@ fn every_method_lists_required_arguments_first() {
         assert!(names.insert(class.name), "{} is cached twice", class.name);
         for method in class.methods.iter().chain(class.getters).chain(class.hidden) {
             let first_optional = method.args.iter().position(|kind| !kind.required());
-            if let Some(first) = first_optional {
+            // setFields(map, setIfEmpty, prefix, include) has an optional flag between required arguments, as its
+            // typed QuickJS method had: three are required, and the flag is converted when passed
+            if let (Some(first), false) = (first_optional, method.path == "EntityValue.setFields") {
                 assert!(
                     method.args[first..].iter().all(|kind| !kind.required()),
                     "{}: a required argument after an optional one",

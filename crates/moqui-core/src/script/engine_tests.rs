@@ -49,7 +49,7 @@ fn small_oxide_routes_covered_kinds_that_pass_the_check() -> Result<(), crate::c
             "a bound ec path"
         );
         assert_eq!(
-            route_of(EntryKind::Condition, "ec.entity.find('X')")?,
+            route_of(EntryKind::Condition, "ec.transaction.isTransactionInPlace()")?,
             Route::QuickJs,
             "an unbound ec path"
         );
@@ -67,14 +67,18 @@ fn a_text_that_falls_back_twice_goes_to_quickjs() -> Result<(), crate::context::
         with_script_engine(ScriptEngine::SmallOxide, || -> Result<(), crate::context::Error> {
             crate::script::clear_context_stack();
             crate::script::push_context_frame();
-            let mut tools = indexmap::IndexMap::new();
-            tools.insert("__wrap".to_string(), moqui_lib::object::Value::string("x"));
-            crate::script::set_context_name("tools", moqui_lib::object::Value::Map(tools))?;
-            let text = "tools !== null";
+            // a Set the stack holds is QuickJS's (`oxide::convert`)
+            let mut set = indexmap::IndexMap::new();
+            set.insert(
+                crate::script::runtime::SET_KEY.to_string(),
+                moqui_lib::object::Value::List(vec![moqui_lib::object::Value::I32(1)]),
+            );
+            crate::script::set_context_name("held", moqui_lib::object::Value::Map(set))?;
+            let text = "held.size !== null";
             assert_eq!(route_of(EntryKind::Condition, text)?, Route::Oxide);
             let fallbacks = super::oxide_fallbacks();
             for _ in 0..3 {
-                // a tools map converts with QuickJS's wrapper, so the oxide run falls back, but the answer is QuickJS's
+                // the oxide run falls back, the answer is QuickJS's
                 assert!(crate::script::eval_condition(text).is_ok());
             }
             assert_eq!(

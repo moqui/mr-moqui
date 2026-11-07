@@ -115,20 +115,6 @@ fn a_panic_through_the_engine_is_not_caught_as_an_error() -> Result<(), RuntimeE
     Ok(())
 }
 
-/// A panic in a body the engine is lent to (a method that is not a leaf) unwinds through the lend's frames, as a panic a
-/// nested trampoline resumes does: it goes on to the embedder and poisons the runtime, as a panic through the engine.
-#[test]
-fn a_panic_out_of_a_lent_body_is_not_caught_as_an_error() -> Result<(), RuntimeError> {
-    let paths: Vec<&'static crate::script::host::Path> = TEST_PATHS.iter().collect();
-    let (_runtime, context) = runtime_with(&paths)?;
-    let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        context.eval("try { ec.test.boomLent() } catch (e) { 'caught' }")
-    }));
-    assert!(first.is_err(), "the panic reaches the embedder");
-    assert!(matches!(context.eval("1"), Err(RuntimeError::Poisoned)));
-    Ok(())
-}
-
 /// Minimal conversions for the binder's tests on a bare runtime, which has no oxide engine for `oxide::convert`:
 /// null, booleans, numbers, text, lists and maps; a decimal and a time stamp as their text.
 struct BasicConvert;
@@ -261,5 +247,42 @@ fn a_tool_is_an_exotic_object_of_its_methods() -> Result<(), RuntimeError> {
     ] {
         assert_eq!(eval_text(&context, script)?, expected, "{script}");
     }
+    Ok(())
+}
+
+/// Every shim of the host table installs on oxide too, over the table's `ec` and empty helper objects: none fails.
+#[test]
+fn every_host_shim_installs_on_oxide() -> Result<(), RuntimeError> {
+    let runtime = Runtime::new();
+    let mut context = runtime.context();
+    let ec = context.new_object()?;
+    let global = context.global_object()?;
+    context.set_property(&global, &key("ec")?, JsValue::Object(ec.clone()))?;
+    install_ec(&mut context, &ec, Rc::new(BasicConvert))?;
+    // what the engine makes outside the table, which the tools shim adds members to
+    for name in ["context", "entity", "resource", "factory"] {
+        if !matches!(context.get_property(&ec, &key(name)?)?, JsValue::Object(_)) {
+            let member = context.new_object()?;
+            context.set_property(&ec, &key(name)?, JsValue::Object(member))?;
+        }
+    }
+    let sri = context.new_object()?;
+    context.set_property(&global, &key("sri")?, JsValue::Object(sri))?;
+    let helpers = context.new_object()?;
+    for name in ["CollectionUtilities", "StringUtilities", "WebUtilities"] {
+        let helper = context.new_object()?;
+        context.set_property(&helpers, &key(name)?, JsValue::Object(helper))?;
+    }
+    if let Err(RuntimeError::Exception(thrown)) = super::install_shims(&mut context, &helpers, Rc::new(BasicConvert)) {
+        let thrown = context.to_js_string(&thrown)?.to_utf8_lossy();
+        panic!("a shim failed: {thrown}");
+    }
+    assert_eq!(
+        eval_text(
+            &context,
+            "[typeof ec.artifactExecution.runAsUser, typeof EdiHandler, typeof sri, typeof SftpClient].join()"
+        )?,
+        "function,function,object,function"
+    );
     Ok(())
 }

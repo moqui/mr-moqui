@@ -70,6 +70,17 @@ pub(crate) struct Analysis {
     /// Whether the text may change a value it read by name (a mutating method), so the oxide run writes its tracked
     /// values back at its end.
     writes: bool,
+    /// The context names the text reads (bare names that are not its own variables), each once.
+    reads: Vec<String>,
+    /// The `name.property` reads of those names, each once: what the router looks up of an entity value.
+    members: Vec<(String, String)>,
+    /// Whether the text reads a value that moves between two runs: the clock or a random number (`Date`, a `now` or
+    /// `random` method, an `ec` getter such as `ec.user.nowTimestamp`).
+    moving: bool,
+    /// Whether the text may read any context value through `context` (`context[name]`, `context.get(name)`,
+    /// `Object.keys(context)`, `context` as a value), not only the names of `context.name` (noted as reads) or the
+    /// whole stack handed to a host call.
+    context_values: bool,
 }
 
 #[cfg(test)]
@@ -84,6 +95,18 @@ impl Analysis {
 
     pub(crate) fn writes(&self) -> bool {
         self.writes
+    }
+
+    pub(crate) fn reads(&self) -> &[String] {
+        &self.reads
+    }
+
+    pub(crate) fn moving(&self) -> bool {
+        self.moving
+    }
+
+    pub(crate) fn context_values(&self) -> bool {
+        self.context_values
     }
 }
 
@@ -117,6 +140,32 @@ impl Verdict {
     /// Whether the text may change a value it read by name.
     pub(crate) fn writes(&self) -> bool {
         self.analysis.writes
+    }
+
+    /// The context names the text reads, and their `name.property` reads.
+    pub(crate) fn reads(&self) -> &[String] {
+        &self.analysis.reads
+    }
+
+    pub(crate) fn members(&self) -> &[(String, String)] {
+        &self.analysis.members
+    }
+
+    /// Whether the text may read any context value through `context`, so the router looks at every one.
+    pub(crate) fn reads_all_context(&self) -> bool {
+        self.analysis.context_values
+    }
+
+    /// Whether the text reads the clock or a random number, so two runs of it may differ.
+    pub(crate) fn reads_moving_values(&self) -> bool {
+        self.analysis.moving
+    }
+
+    /// Whether a run of the text may make a side effect (a host call, a write to the stack or an entity value) and
+    /// then read a context name: what an oxide run must not then fall back on, so the router looks at those names'
+    /// values first.
+    pub(crate) fn may_act_before_a_read(&self) -> bool {
+        !self.analysis.ec_paths.is_empty() || self.analysis.writes
     }
 }
 
@@ -154,7 +203,19 @@ pub(crate) const QUICKJS_ONLY_GLOBALS: &[&str] = &[
     "StringUtilities",
     "WebUtilities",
     "UserSecurityChecks",
-    "context",
+];
+
+/// The objects and functions both engines' global objects have (ECMAScript's, and the host's `toDecimal`, `toNumber`
+/// and `basicConvert`): an assignment to a member of one is refused, since it would outlive the text on the thread's
+/// runtime of one engine only. A test keeps it in step with the oxide runtime's globals.
+pub(crate) const BUILTIN_GLOBALS: &[&str] = &[
+    "AggregateError", "Array", "ArrayBuffer", "Atomics", "BigInt", "BigInt64Array", "BigUint64Array", "Boolean",
+    "DataView", "Date", "Error", "EvalError", "FinalizationRegistry", "Float16Array", "Float32Array", "Float64Array",
+    "Function", "Int16Array", "Int32Array", "Int8Array", "InternalError", "Iterator", "JSON", "Map", "Math", "Number", "Object",
+    "Promise", "Proxy", "RangeError", "ReferenceError", "Reflect", "RegExp", "Set", "SharedArrayBuffer", "String",
+    "Symbol", "SyntaxError", "TypeError", "URIError", "Uint16Array", "Uint32Array", "Uint8Array", "Uint8ClampedArray",
+    "WeakMap", "WeakRef", "WeakSet", "decodeURI", "decodeURIComponent", "encodeURI", "encodeURIComponent", "escape",
+    "eval", "isFinite", "isNaN", "parseFloat", "parseInt", "unescape", "basicConvert", "toDecimal", "toNumber",
 ];
 
 /// The host globals the oxide runtime has too (`oxide::decimal::install_to_decimal`), which a text may name; the test
@@ -314,6 +375,7 @@ pub(crate) fn analyze(text: &str, profile: Profile) -> Analysis {
                 refused: Some(format!("the {profile:?} profile is not written yet")),
                 ec_paths: Vec::new(),
                 writes: true,
+                ..Analysis::default()
             }
         }
     }
@@ -339,12 +401,61 @@ pub(crate) fn analyze(text: &str, profile: Profile) -> Analysis {
                 _ => walk.refuse("not one expression"),
             }
         }
+        let mut reads: Vec<String> = Vec::new();
+        for name in walk.reads {
+            if !reads.iter().any(|kept| kept == name) {
+                reads.push(name.to_string());
+            }
+        }
+        let mut members: Vec<(String, String)> = Vec::new();
+        for (name, property) in walk.members {
+            if !members.iter().any(|(kept, prop)| kept == name && prop == property) {
+                members.push((name.to_string(), property.to_string()));
+            }
+        }
+        let moving = walk.moving || walk.ec_paths.iter().any(|path| moving_path(path));
         Analysis {
             refused: walk.refused,
             ec_paths: walk.ec_paths,
             writes: walk.writes,
+            reads,
+            members,
+            moving,
+            context_values: walk.context_values,
         }
     })
+}
+
+/// Whether an `ec` path reads the clock or a random number: a segment named `now...` (`ec.user.nowTimestamp`) or
+/// naming `random` (`ec.user.randomString`).
+fn moving_path(path: &str) -> bool {
+    path.split('.')
+        .skip(1)
+        .any(|segment| segment.starts_with("now") || segment.to_ascii_lowercase().contains("random"))
+}
+
+/// The names a declaration's pattern binds, into `names`.
+fn pattern_names<'a>(pattern: &'a BindingPattern<'a>, names: &mut Vec<&'a str>) {
+    match pattern {
+        BindingPattern::BindingIdentifier(name) => names.push(name.name.as_str()),
+        BindingPattern::ArrayPattern(array) => {
+            for element in array.elements.iter().flatten() {
+                pattern_names(element, names);
+            }
+            if let Some(rest) = &array.rest {
+                pattern_names(&rest.argument, names);
+            }
+        }
+        BindingPattern::ObjectPattern(object) => {
+            for property in &object.properties {
+                pattern_names(&property.value, names);
+            }
+            if let Some(rest) = &object.rest {
+                pattern_names(&rest.argument, names);
+            }
+        }
+        BindingPattern::AssignmentPattern(assignment) => pattern_names(&assignment.left, names),
+    }
 }
 
 /// The walk of one text: the first refusal, the `ec` paths, and the names arrow functions bind around the node.
@@ -356,6 +467,15 @@ struct Walk<'a> {
     actions: bool,
     ec_paths: Vec<String>,
     locals: Vec<HashSet<&'a str>>,
+    /// The context names read, and their `name.property` reads, in order and repeated.
+    reads: Vec<&'a str>,
+    members: Vec<(&'a str, &'a str)>,
+    /// A read of the clock or a random number outside `ec` (`Date`, `.now()`, `.random()`).
+    moving: bool,
+    /// The functions the text declares (actions only), wherever: a name of one is only ever called.
+    functions: HashSet<&'a str>,
+    /// See [`Analysis::context_values`].
+    context_values: bool,
 }
 
 impl<'a> Walk<'a> {
@@ -436,6 +556,15 @@ impl<'a> Walk<'a> {
             }
             Expression::UnaryExpression(unary) => {
                 if unary.operator == UnaryOperator::Delete {
+                    // `delete context.name` in actions: the name goes from the top frame, a write as `name = null` is
+                    if let Expression::StaticMemberExpression(member) = &unary.argument {
+                        if self.actions
+                            && matches!(&member.object, Expression::Identifier(id) if id.name == "context")
+                            && !self.is_local("context")
+                        {
+                            return;
+                        }
+                    }
                     self.refuse("delete");
                     return;
                 }
@@ -447,21 +576,29 @@ impl<'a> Walk<'a> {
                 }
             }
             Expression::ParenthesizedExpression(inner) => self.expression(&inner.expression),
+            Expression::CallExpression(call) if self.actions && self.is_own_global_test(call) => {
+                // the name, read; `globalThis` itself goes nowhere
+                if let Some(name) = call.arguments.get(1).and_then(Argument::as_expression) {
+                    self.expression(name);
+                }
+            }
             Expression::CallExpression(call) => {
+                let host = self.rooted_at_ec(&call.callee);
                 let arrows = self.callee(&call.callee);
-                self.arguments(&call.arguments, arrows);
+                self.arguments(&call.arguments, arrows, host);
             }
             Expression::NewExpression(new) => {
                 match &new.callee {
                     Expression::Identifier(identifier) => self.name(identifier.name.as_str()),
                     _ => self.refuse("new of anything but a name"),
                 }
-                self.arguments(&new.arguments, false);
+                self.arguments(&new.arguments, false, false);
             }
             Expression::ChainExpression(chain) => match &chain.expression {
                 ChainElement::CallExpression(call) => {
+                    let host = self.rooted_at_ec(&call.callee);
                     let arrows = self.callee(&call.callee);
-                    self.arguments(&call.arguments, arrows);
+                    self.arguments(&call.arguments, arrows, host);
                 }
                 ChainElement::TSNonNullExpression(_) => self.refuse("TypeScript"),
                 other => match other.as_member_expression() {
@@ -497,6 +634,15 @@ impl<'a> Walk<'a> {
                 self.refuse("an arrow function that is not a call's argument");
             }
             Expression::AssignmentExpression(assignment) if self.actions => {
+                if let (
+                    oxc_ast::ast::AssignmentOperator::Assign,
+                    oxc_ast::ast::AssignmentTarget::AssignmentTargetIdentifier(identifier),
+                ) = (assignment.operator, &assignment.left)
+                {
+                    self.written_name(identifier.name.as_str());
+                    self.expression(&assignment.right);
+                    return;
+                }
                 match assignment.left.as_simple_assignment_target() {
                     Some(target) => self.assignment_target(target),
                     None => self.refuse("a destructuring assignment"),
@@ -529,6 +675,11 @@ impl<'a> Walk<'a> {
                 Some(member) => {
                     if self.rooted_at_ec(member.object()) {
                         self.refuse("an assignment to a value reached from ec");
+                        return;
+                    }
+                    if let Some(name) = self.builtin_root(member.object()) {
+                        // it would stay on the thread's runtime for later texts, on one engine and not the other
+                        self.refuse(format!("an assignment to a member of the global {name}"));
                         return;
                     }
                     self.member(member);
@@ -565,39 +716,97 @@ impl<'a> Walk<'a> {
             self.refuse("an actions function with no body");
             return;
         };
-        // the function's variables, wherever declared in it, are its own and not context names
-        self.locals.push(HashSet::new());
-        for statement in &body.statements {
+        self.function_body(HashSet::new(), &body.statements);
+    }
+
+    /// The body of a function (the actions function, a function declared in it, a block-bodied arrow): its variables,
+    /// wherever declared in it, and its functions are its own and not context names. A function is declared only at the
+    /// top of a body, never in a block.
+    fn function_body(&mut self, scope: HashSet<&'a str>, statements: &'a [Statement<'a>]) {
+        self.locals.push(scope);
+        for statement in statements {
             self.declared(statement, true);
         }
-        for statement in &body.statements {
-            self.statement(statement);
+        for statement in statements {
+            if self.refused.is_some() {
+                break;
+            }
+            match statement {
+                Statement::FunctionDeclaration(function) => self.function_declaration(function),
+                other => self.statement(other),
+            }
         }
         self.locals.pop();
     }
 
-    /// Note the names `statement` declares into the current scope: `var` at any depth of blocks, ifs and loops (it is
-    /// the function's), `let` and `const` only when `top` (they belong to the block that holds them).
+    /// A function declaration that never escapes: plain parameters, a body of the actions profile, and its name only ever
+    /// called ([`Self::name`] refuses it as a value), so it runs only while the script runs.
+    fn function_declaration(&mut self, function: &'a oxc_ast::ast::Function<'a>) {
+        if function.r#async || function.generator {
+            self.refuse("an async or generator function");
+            return;
+        }
+        let Some(body) = &function.body else {
+            self.refuse("a function with no body");
+            return;
+        };
+        let Some(names) = self.parameters(&function.params) else {
+            return;
+        };
+        self.function_body(names, &body.statements);
+    }
+
+    /// The names of plain parameters (no default, rest or pattern), checked as declarations; `None` when refused.
+    fn parameters(&mut self, params: &'a oxc_ast::ast::FormalParameters<'a>) -> Option<HashSet<&'a str>> {
+        if params.rest.is_some() {
+            self.refuse("a rest parameter");
+            return None;
+        }
+        let mut names = HashSet::new();
+        for parameter in &params.items {
+            match &parameter.pattern {
+                BindingPattern::BindingIdentifier(name) if parameter.initializer.is_none() => {
+                    self.binding(name.name.as_str());
+                    names.insert(name.name.as_str());
+                }
+                _ => {
+                    self.refuse("a parameter that is not a plain name");
+                    return None;
+                }
+            }
+        }
+        Some(names)
+    }
+
+    /// Note the names `statement` declares into the current scope: `var` at any depth of blocks, ifs, loops and `try`
+    /// (it is the function's), `let`, `const` and functions only when `top` (they belong to the body or block that holds
+    /// them).
     fn declared(&mut self, statement: &'a Statement<'a>, top: bool) {
-        let add = |declaration: &'a oxc_ast::ast::VariableDeclaration<'a>, locals: &mut Vec<HashSet<&'a str>>| {
-            for declarator in &declaration.declarations {
-                if let BindingPattern::BindingIdentifier(name) = &declarator.id {
-                    if let Some(scope) = locals.last_mut() {
-                        scope.insert(name.name.as_str());
+        let var = |declaration: &oxc_ast::ast::VariableDeclaration<'_>| {
+            declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var
+        };
+        match statement {
+            Statement::VariableDeclaration(declaration) if top || var(declaration) => {
+                let mut names = Vec::new();
+                for declarator in &declaration.declarations {
+                    pattern_names(&declarator.id, &mut names);
+                }
+                if let Some(scope) = self.locals.last_mut() {
+                    scope.extend(names);
+                }
+                self.const_arrows(declaration);
+            }
+            Statement::FunctionDeclaration(function) if top => {
+                if let Some(id) = &function.id {
+                    let name = id.name.as_str();
+                    self.binding(name);
+                    self.functions.insert(name);
+                    if let Some(scope) = self.locals.last_mut() {
+                        scope.insert(name);
                     }
                 }
             }
-        };
-        let hoisted = |declaration: &oxc_ast::ast::VariableDeclaration<'_>| {
-            top || declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var
-        };
-        match statement {
-            Statement::VariableDeclaration(declaration) if hoisted(declaration) => add(declaration, &mut self.locals),
-            Statement::BlockStatement(block) => {
-                for inner in &block.body {
-                    self.declared(inner, false);
-                }
-            }
+            Statement::BlockStatement(block) => self.declared_in(&block.body),
             Statement::IfStatement(branch) => {
                 self.declared(&branch.consequent, false);
                 if let Some(alternate) = &branch.alternate {
@@ -606,45 +815,107 @@ impl<'a> Walk<'a> {
             }
             Statement::ForStatement(each) => {
                 if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) = &each.init {
-                    if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var {
-                        add(declaration, &mut self.locals);
+                    if var(declaration) {
+                        self.declared_var(declaration);
+                    }
+                }
+                self.declared(&each.body, false);
+            }
+            Statement::ForOfStatement(each) => {
+                if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &each.left {
+                    if var(declaration) {
+                        self.declared_var(declaration);
+                    }
+                }
+                self.declared(&each.body, false);
+            }
+            Statement::ForInStatement(each) => {
+                if let oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) = &each.left {
+                    if var(declaration) {
+                        self.declared_var(declaration);
                     }
                 }
                 self.declared(&each.body, false);
             }
             Statement::WhileStatement(each) => self.declared(&each.body, false),
+            Statement::DoWhileStatement(each) => self.declared(&each.body, false),
+            Statement::TryStatement(each) => {
+                self.declared_in(&each.block.body);
+                if let Some(handler) = &each.handler {
+                    self.declared_in(&handler.body.body);
+                }
+                if let Some(finalizer) = &each.finalizer {
+                    self.declared_in(&finalizer.body);
+                }
+            }
             _ => {}
+        }
+    }
+
+    fn declared_in(&mut self, statements: &'a [Statement<'a>]) {
+        for inner in statements {
+            self.declared(inner, false);
+        }
+    }
+
+    fn declared_var(&mut self, declaration: &'a oxc_ast::ast::VariableDeclaration<'a>) {
+        let mut names = Vec::new();
+        for declarator in &declaration.declarations {
+            pattern_names(&declarator.id, &mut names);
+        }
+        if let Some(scope) = self.locals.last_mut() {
+            scope.extend(names);
         }
     }
 
     /// The `let` and `const` names `statements` declare directly: a block's own scope.
     fn block_scope(&mut self, statements: &'a [Statement<'a>]) -> HashSet<&'a str> {
-        let mut names = HashSet::new();
+        let mut names = Vec::new();
         for statement in statements {
             if let Statement::VariableDeclaration(declaration) = statement {
                 if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Var {
                     for declarator in &declaration.declarations {
-                        if let BindingPattern::BindingIdentifier(name) = &declarator.id {
-                            names.insert(name.name.as_str());
-                        }
+                        pattern_names(&declarator.id, &mut names);
                     }
+                    self.const_arrows(declaration);
                 }
             }
         }
-        names
+        names.into_iter().collect()
     }
 
-    /// Refuse a declaration (a variable, an arrow's parameter) that would shadow `ec`, a refused name or a QuickJS
-    /// global: a later read of it would not be what the check took it for.
-    fn binding(&mut self, name: &str) {
-        if name == "ec" || REFUSED_NAMES.contains(&name) || QUICKJS_ONLY_GLOBALS.contains(&name) {
-            self.refuse(format!("a declaration of {name}"));
+    /// The `const name = (params) => body` of a declaration (actions only), noted as the text's functions before the
+    /// walk reaches any statement of their scope: a function declared before the arrow that names it then sees it as
+    /// a function, so it cannot return the arrow as a value for it to outlive the run.
+    fn const_arrows(&mut self, declaration: &'a oxc_ast::ast::VariableDeclaration<'a>) {
+        if !self.actions || declaration.kind != oxc_ast::ast::VariableDeclarationKind::Const {
+            return;
+        }
+        for declarator in &declaration.declarations {
+            if let (BindingPattern::BindingIdentifier(name), Some(Expression::ArrowFunctionExpression(_))) =
+                (&declarator.id, &declarator.init)
+            {
+                let name = name.name.as_str();
+                self.binding(name);
+                self.functions.insert(name);
+            }
         }
     }
 
-    /// A statement of an actions function: declarations, expressions (assignments among them), `if`, `for`, `while`,
-    /// blocks, `return` and `throw`. Anything else (a function or class declaration, `try`, `switch`, `for...in` or
-    /// `for...of`, labels, `with`) is refused.
+    /// Refuse a declaration (a variable, a parameter, a function) that would shadow `ec`, a refused name or a QuickJS
+    /// global, or that names a function the text declares: a later read of it would not be what the check took it for.
+    fn binding(&mut self, name: &str) {
+        if name == "ec" || REFUSED_NAMES.contains(&name) || QUICKJS_ONLY_GLOBALS.contains(&name) {
+            self.refuse(format!("a declaration of {name}"));
+        } else if self.functions.contains(name) {
+            self.refuse(format!("a second declaration of the function {name}"));
+        }
+    }
+
+    /// A statement of an actions function: declarations, expressions (assignments among them), `if`, `for`, `for...of`
+    /// and `for...in`, `while` and `do...while`, `try` with `catch` and `finally`, blocks, `break` and `continue`
+    /// without a label, `return` and `throw`. Anything else (a function declared in a block, a class, `switch`, labels,
+    /// `with`) is refused.
     fn statement(&mut self, statement: &'a Statement<'a>) {
         if self.refused.is_some() {
             return;
@@ -652,6 +923,7 @@ impl<'a> Walk<'a> {
         match statement {
             Statement::VariableDeclaration(declaration) => self.declaration(declaration),
             Statement::ExpressionStatement(statement) => self.expression(&statement.expression),
+            Statement::IfStatement(branch) if self.own_global_copy(branch) => {}
             Statement::IfStatement(branch) => {
                 self.expression(&branch.test);
                 self.statement(&branch.consequent);
@@ -661,23 +933,33 @@ impl<'a> Walk<'a> {
             }
             Statement::ForStatement(each) => {
                 // a `let` or `const` of the loop's start is the loop's own
-                let mut scope = HashSet::new();
+                let mut names = Vec::new();
                 if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) = &each.init {
                     if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Var {
                         for declarator in &declaration.declarations {
-                            if let BindingPattern::BindingIdentifier(name) = &declarator.id {
-                                scope.insert(name.name.as_str());
-                            }
+                            pattern_names(&declarator.id, &mut names);
                         }
                     }
                 }
-                self.locals.push(scope);
+                self.locals.push(names.into_iter().collect());
                 self.for_statement(each);
                 self.locals.pop();
             }
+            Statement::ForOfStatement(each) => {
+                if each.r#await {
+                    self.refuse("for await");
+                    return;
+                }
+                self.for_each(&each.left, &each.right, &each.body);
+            }
+            Statement::ForInStatement(each) => self.for_each(&each.left, &each.right, &each.body),
             Statement::WhileStatement(each) => {
                 self.expression(&each.test);
                 self.statement(&each.body);
+            }
+            Statement::DoWhileStatement(each) => {
+                self.statement(&each.body);
+                self.expression(&each.test);
             }
             _ => self.statement_rest(statement),
         }
@@ -701,16 +983,65 @@ impl<'a> Walk<'a> {
         self.statement(&each.body);
     }
 
+    /// `for (left of right) body` or `for (left in right) body`: `right` read outside the loop, a `let` or `const` of
+    /// `left` the loop's own, a bare name of `left` written.
+    fn for_each(
+        &mut self,
+        left: &'a oxc_ast::ast::ForStatementLeft<'a>,
+        right: &'a Expression<'a>,
+        body: &'a Statement<'a>,
+    ) {
+        self.expression(right);
+        let mut names = Vec::new();
+        match left {
+            oxc_ast::ast::ForStatementLeft::VariableDeclaration(declaration) => {
+                let [declarator] = declaration.declarations.as_slice() else {
+                    self.refuse("a for statement's declaration");
+                    return;
+                };
+                if declarator.init.is_some() {
+                    self.refuse("a for statement's declaration");
+                    return;
+                }
+                self.pattern(&declarator.id);
+                if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Var {
+                    pattern_names(&declarator.id, &mut names);
+                }
+            }
+            oxc_ast::ast::ForStatementLeft::AssignmentTargetIdentifier(identifier) => {
+                self.written_name(identifier.name.as_str());
+            }
+            other => match other.as_assignment_target().and_then(|target| target.as_simple_assignment_target()) {
+                Some(target) => self.assignment_target(target),
+                None => self.refuse("a destructuring assignment"),
+            },
+        }
+        self.locals.push(names.into_iter().collect());
+        self.statement(body);
+        self.locals.pop();
+    }
+
     fn statement_rest(&mut self, statement: &'a Statement<'a>) {
         match statement {
-            Statement::BlockStatement(block) => {
-                let scope = self.block_scope(&block.body);
-                self.locals.push(scope);
-                for inner in &block.body {
-                    self.statement(inner);
+            Statement::BlockStatement(block) => self.block(&block.body),
+            Statement::TryStatement(each) => {
+                self.block(&each.block.body);
+                if let Some(handler) = &each.handler {
+                    let mut names = Vec::new();
+                    if let Some(parameter) = &handler.param {
+                        self.pattern(&parameter.pattern);
+                        pattern_names(&parameter.pattern, &mut names);
+                    }
+                    self.locals.push(names.into_iter().collect());
+                    self.block(&handler.body.body);
+                    self.locals.pop();
                 }
-                self.locals.pop();
+                if let Some(finalizer) = &each.finalizer {
+                    self.block(&finalizer.body);
+                }
             }
+            Statement::BreakStatement(each) if each.label.is_none() => {}
+            Statement::ContinueStatement(each) if each.label.is_none() => {}
             Statement::ReturnStatement(statement) => {
                 if let Some(argument) = &statement.argument {
                     self.expression(argument);
@@ -718,24 +1049,188 @@ impl<'a> Walk<'a> {
             }
             Statement::ThrowStatement(statement) => self.expression(&statement.argument),
             Statement::EmptyStatement(_) => {}
+            Statement::FunctionDeclaration(_) => self.refuse("a function declared in a block"),
             _ => self.refuse("a statement outside the actions profile"),
         }
     }
 
+    /// A block: its `let` and `const` names its own.
+    fn block(&mut self, statements: &'a [Statement<'a>]) {
+        let scope = self.block_scope(statements);
+        self.locals.push(scope);
+        for inner in statements {
+            self.statement(inner);
+        }
+        self.locals.pop();
+    }
+
     fn declaration(&mut self, declaration: &'a oxc_ast::ast::VariableDeclaration<'a>) {
         for declarator in &declaration.declarations {
-            let BindingPattern::BindingIdentifier(name) = &declarator.id else {
-                self.refuse("a destructuring declaration");
-                return;
-            };
-            self.binding(name.name.as_str());
+            let noted = matches!(
+                (&declarator.id, &declarator.init),
+                (BindingPattern::BindingIdentifier(name), Some(Expression::ArrowFunctionExpression(_)))
+                    if self.actions
+                        && declaration.kind == oxc_ast::ast::VariableDeclarationKind::Const
+                        && self.functions.contains(name.name.as_str())
+            );
+            if !noted {
+                self.pattern(&declarator.id);
+            }
+            // `const name = (params) => body` in actions: a function as a declared one is, only ever called
+            if let (
+                true,
+                oxc_ast::ast::VariableDeclarationKind::Const,
+                BindingPattern::BindingIdentifier(name),
+                Some(Expression::ArrowFunctionExpression(arrow)),
+            ) = (self.actions, declaration.kind, &declarator.id, &declarator.init)
+            {
+                // noted with its scope ([`Self::const_arrows`]), or here for a scope with no pre-pass
+                if !self.functions.contains(name.name.as_str()) {
+                    self.functions.insert(name.name.as_str());
+                }
+                self.arrow(arrow);
+                continue;
+            }
             if let Some(init) = &declarator.init {
                 self.expression(init);
             }
         }
     }
 
+    /// XmlActions' copy of a service's result by name, walked when `branch` is exactly it:
+    /// `if (!Object.prototype.hasOwnProperty.call(globalThis, k)) globalThis[k] = value` with no `else`, the same bare
+    /// `k` in the test and the key, so only a name the global object does not have (a context name) is written.
+    /// `globalThis[k] = v` anywhere else is refused, since it could replace a builtin (`JSON`) for the thread.
+    fn own_global_copy(&mut self, branch: &'a oxc_ast::ast::IfStatement<'a>) -> bool {
+        if !self.actions || branch.alternate.is_some() {
+            return false;
+        }
+        let Expression::UnaryExpression(not) = &branch.test else {
+            return false;
+        };
+        let Expression::CallExpression(test) = &not.argument else {
+            return false;
+        };
+        if not.operator != oxc_ast::ast::UnaryOperator::LogicalNot || !self.is_own_global_test(test) {
+            return false;
+        }
+        let Some(Expression::Identifier(tested)) = test.arguments[1].as_expression() else {
+            return false;
+        };
+        let Statement::ExpressionStatement(statement) = &branch.consequent else {
+            return false;
+        };
+        let Expression::AssignmentExpression(assignment) = &statement.expression else {
+            return false;
+        };
+        let (oxc_ast::ast::AssignmentOperator::Assign, oxc_ast::ast::AssignmentTarget::ComputedMemberExpression(member)) =
+            (assignment.operator, &assignment.left)
+        else {
+            return false;
+        };
+        let Expression::Identifier(key) = &member.expression else {
+            return false;
+        };
+        if !self.is_global_this(&member.object) || key.name != tested.name {
+            return false;
+        }
+        self.name(key.name.as_str());
+        self.expression(&assignment.right);
+        true
+    }
+
+    /// Whether `expression` is the bare `globalThis`.
+    fn is_global_this(&self, expression: &Expression<'_>) -> bool {
+        matches!(expression, Expression::Identifier(id) if id.name == "globalThis") && !self.is_local("globalThis")
+    }
+
+    /// XmlActions' test before it copies a service's results: exactly
+    /// `Object.prototype.hasOwnProperty.call(globalThis, name)`, which reads no value and keeps nothing.
+    fn is_own_global_test(&self, call: &oxc_ast::ast::CallExpression<'a>) -> bool {
+        let Expression::StaticMemberExpression(call_member) = &call.callee else {
+            return false;
+        };
+        let Expression::StaticMemberExpression(has_own) = &call_member.object else {
+            return false;
+        };
+        let Expression::StaticMemberExpression(prototype) = &has_own.object else {
+            return false;
+        };
+        call_member.property.name == "call"
+            && has_own.property.name == "hasOwnProperty"
+            && prototype.property.name == "prototype"
+            && matches!(&prototype.object, Expression::Identifier(id) if id.name == "Object")
+            && !self.is_local("Object")
+            && call.arguments.len() == 2
+            && call.arguments[0].as_expression().is_some_and(|first| self.is_global_this(first))
+            && call.arguments[1].as_expression().is_some()
+    }
+
+    /// A declaration's pattern: each name checked as a declaration, defaults and computed keys walked as expressions.
+    fn pattern(&mut self, pattern: &'a BindingPattern<'a>) {
+        match pattern {
+            BindingPattern::BindingIdentifier(name) => self.binding(name.name.as_str()),
+            BindingPattern::ArrayPattern(array) => {
+                for element in array.elements.iter().flatten() {
+                    self.pattern(element);
+                }
+                if let Some(rest) = &array.rest {
+                    self.pattern(&rest.argument);
+                }
+            }
+            BindingPattern::ObjectPattern(object) => {
+                for property in &object.properties {
+                    if property.computed {
+                        match property.key.as_expression() {
+                            Some(key) => self.expression(key),
+                            None => self.refuse("a computed key"),
+                        }
+                    } else {
+                        let name = match &property.key {
+                            PropertyKey::StaticIdentifier(name) => Some(name.name.as_str()),
+                            PropertyKey::StringLiteral(name) => name.value.as_str(),
+                            _ => None,
+                        };
+                        if let Some(name) = name.filter(|name| REFUSED_PROPERTIES.contains(name)) {
+                            self.refuse(format!("the property {name}"));
+                        }
+                    }
+                    self.pattern(&property.value);
+                }
+                if let Some(rest) = &object.rest {
+                    self.pattern(&rest.argument);
+                }
+            }
+            BindingPattern::AssignmentPattern(assignment) => {
+                self.pattern(&assignment.left);
+                self.expression(&assignment.right);
+            }
+        }
+    }
+
+    /// A bare name read: refused for what the check refuses, else noted as a context name the text reads.
     fn name(&mut self, name: &'a str) {
+        if self.is_local(name) {
+            if self.functions.contains(name) {
+                // as a value it could be kept past the run
+                self.refuse(format!("the function {name} used as a value"));
+            }
+            return;
+        }
+        self.written_name(name);
+        if name == "Date" {
+            self.moving = true;
+        }
+        if name == "context" {
+            self.context_values = true;
+        }
+        if self.refused.is_none() && name != "ec" {
+            self.reads.push(name);
+        }
+    }
+
+    /// A bare name written and not read (`name = value`): refused for what the check refuses.
+    fn written_name(&mut self, name: &'a str) {
         if self.is_local(name) {
             return;
         }
@@ -767,6 +1262,21 @@ impl<'a> Walk<'a> {
 
     /// Whether `expression` is a value reached from `ec`: a member or call result down a chain from the bare `ec`, a
     /// host object whose methods could keep a function passed to them.
+    /// The global object of the engine (`Math`, `JSON`, `Object`, a builtin function) a member chain starts at, when it
+    /// is not the text's own name.
+    fn builtin_root<'e>(&self, expression: &'e Expression<'_>) -> Option<&'e str> {
+        match expression {
+            Expression::Identifier(identifier) => {
+                let name = identifier.name.as_str();
+                (BUILTIN_GLOBALS.contains(&name) && !self.is_local(name)).then_some(name)
+            }
+            Expression::StaticMemberExpression(member) => self.builtin_root(&member.object),
+            Expression::ComputedMemberExpression(member) => self.builtin_root(&member.object),
+            Expression::ParenthesizedExpression(inner) => self.builtin_root(&inner.expression),
+            _ => None,
+        }
+    }
+
     fn rooted_at_ec(&self, expression: &Expression<'_>) -> bool {
         match expression {
             Expression::Identifier(_) => self.is_ec(expression),
@@ -785,9 +1295,12 @@ impl<'a> Walk<'a> {
     }
 
     /// `object.property`; an `ec` path is recorded whole, from its longest static chain.
-    fn static_member(&mut self, object: &'a Expression<'a>, property: &str) {
+    fn static_member(&mut self, object: &'a Expression<'a>, property: &'a str) {
         if !self.property_allowed(object, property) {
             return;
+        }
+        if property == "now" || property == "random" {
+            self.moving = true;
         }
         if let Some(path) = self.ec_path(object) {
             self.ec_paths.push(format!("{path}.{property}"));
@@ -796,6 +1309,27 @@ impl<'a> Walk<'a> {
         if self.is_ec(object) {
             self.ec_paths.push(format!("ec.{property}"));
             return;
+        }
+        if let Expression::Identifier(identifier) = object {
+            if !self.is_local(identifier.name.as_str()) {
+                if identifier.name == "context" {
+                    match property {
+                        "get" | "getCombinedMap" => self.context_values = true,
+                        // they read the old value and write the stack
+                        "put" | "remove" => {
+                            self.context_values = true;
+                            self.writes = true;
+                        }
+                        // writes the stack, reading no value of it
+                        "putAll" => self.writes = true,
+                        // read only names (`in` and the stack's own keys), which convert no value
+                        "containsKey" | "keySet" => {}
+                        name => self.reads.push(name),
+                    }
+                    return;
+                }
+                self.members.push((identifier.name.as_str(), property));
+            }
         }
         self.expression(object);
     }
@@ -865,6 +1399,12 @@ impl<'a> Walk<'a> {
                 self.refuse("ec called");
                 false
             }
+            // a function the text declares, called
+            Expression::Identifier(identifier)
+                if self.functions.contains(identifier.name.as_str()) && self.is_local(identifier.name.as_str()) =>
+            {
+                false
+            }
             other => {
                 // a method named by a key the check cannot read (`list[op](x)`) may be a mutator
                 if let Expression::ComputedMemberExpression(member) = other {
@@ -881,9 +1421,13 @@ impl<'a> Walk<'a> {
         }
     }
 
-    fn arguments(&mut self, arguments: &'a [Argument<'a>], arrows: bool) {
+    /// A call's arguments; `host` when the callee is reached from `ec`: `context` handed to it is the stack as a host
+    /// map, which converts none of its values to script values.
+    fn arguments(&mut self, arguments: &'a [Argument<'a>], arrows: bool, host: bool) {
         for argument in arguments {
             match argument {
+                Argument::Identifier(identifier)
+                    if host && identifier.name == "context" && !self.is_local("context") => {}
                 Argument::SpreadElement(spread) => self.expression(&spread.argument),
                 Argument::ArrowFunctionExpression(arrow) => {
                     if !arrows {
@@ -900,39 +1444,28 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// An arrow function passed as an argument: plain parameters, an expression body.
+    /// An arrow function passed as an argument: plain parameters, an expression body (or, in an actions script, a
+    /// body of the actions profile: the array method calls it during the call and keeps nothing).
     fn arrow(&mut self, arrow: &'a oxc_ast::ast::ArrowFunctionExpression<'a>) {
         if arrow.r#async {
             self.refuse("an async arrow function");
             return;
         }
-        if arrow.params.rest.is_some() {
-            self.refuse("a rest parameter");
-            return;
-        }
-        let mut names = HashSet::new();
-        for parameter in &arrow.params.items {
-            match &parameter.pattern {
-                BindingPattern::BindingIdentifier(name) if parameter.initializer.is_none() => {
-                    self.binding(name.name.as_str());
-                    names.insert(name.name.as_str());
-                }
-                _ => {
-                    self.refuse("an arrow parameter that is not a plain name");
-                    return;
-                }
-            }
-        }
-        let ArrowFunctionBody::FunctionBody(_) = &arrow.body else {
-            self.locals.push(names);
-            match arrow.body.as_expression() {
-                Some(body) => self.expression(body),
-                None => self.refuse("an arrow body"),
-            }
-            self.locals.pop();
+        let Some(names) = self.parameters(&arrow.params) else {
             return;
         };
-        self.refuse("an arrow function with a block body");
+        match &arrow.body {
+            ArrowFunctionBody::FunctionBody(body) if self.actions => self.function_body(names, &body.statements),
+            ArrowFunctionBody::FunctionBody(_) => self.refuse("an arrow function with a block body"),
+            body => {
+                self.locals.push(names);
+                match body.as_expression() {
+                    Some(body) => self.expression(body),
+                    None => self.refuse("an arrow body"),
+                }
+                self.locals.pop();
+            }
+        }
     }
 }
 

@@ -1,8 +1,9 @@
 # Script engine: quickjs-oxide beside rquickjs
 
-Status 2026-11-07: Phases 0 and 1 built. quickjs-oxide is a dependency at the fork's revision with F2 and F3a
-(§6); `script_engine` routes conditions and values (§3) in `small-oxide`; the default is still `rquickjs`. The
-expression rows miss Phase 1's speed gate (§7, Phase 1 result).
+Status 2026-11-07: Phases 0 to 2 built. quickjs-oxide is a dependency at the fork's revision with F2, F3a and F1
+steps 1 and 2 (§6); `script_engine` routes conditions, values, `${}` text, maps and the actions subset (§3) in
+`small-oxide`. Phase 2's suites and heap pass but its speed rows miss (§7, Phase 2 result), so the default is still
+`rquickjs`.
 This plan adds [quickjs-oxide](https://github.com/pocket-nexus/quickjs-oxide), a QuickJS-compatible engine in safe Rust,
 first for expressions and other small scripts, then for everything, and then removes rquickjs. It also changes our fork
 of quickjs-oxide so compiled code is shared by all threads of the process, as compiled Groovy was in Java. The
@@ -338,6 +339,27 @@ proceed in parallel and land in the order the phases need them.
   scripts only; `oxide` mode needs a runtime without it.
 - **Differences found:** oxide's error wording (`'x' is not defined`) and columns differ from QuickJS's; its
   default host is UTC, so `MoquiHost` gives local time.
+
+### Phase 2 result (2026-11-07)
+
+- **Built:** `expand`, `eval_map` and the actions subset on oxide in `small-oxide`; tracked values written back
+  (`Keep`, `Release`, `End`) and the cross-engine flush both ways; the global names and entity values as F2 exotic
+  objects; F1's code images and shared unit bodies; the difference check (Expression profile only). Every facade is on
+  the host table (`script/host/`), so both engines bind the same methods.
+- **Suites:** `./moq test-apps` (3306 features, 17 client walks) and `./moq test-framework` pass under `small-oxide`
+  and `rquickjs`, apart from two Rust tests that fail on `master` before this work:
+  `serve::a_server_that_does_not_start_fails_its_suite_only` and
+  `the_wrapped_ec_takes_probes_and_leaves_the_framework_the_real_one`.
+- **Census** (`small-oxide`, `./moq test-apps`): oxide ran 100% of `eval_condition`, 99.9% of `expand`, 99.8% of
+  `eval_map`, 99.6% of field values, 87.2% of `eval_value` and 41% of `run_actions`; no fallbacks, no differences.
+- **Heap gate passed.** Peak JS heap of all engines in the `./moq test-apps` run: 138.4 MB under `small-oxide` (44.0
+  MB of it oxide), 139.6 MB under `rquickjs`; Round 28's peak was 139 MiB (145.8 MB).
+- **Speed gate missed.** `service_speed` `echo#Data`, µs a call: 11.5 to 11.8 on QuickJS, 13.7 to 14.1 under
+  `small-oxide`. `js_speed` expression rows, QuickJS → oxide: `a` 0.39 → 0.43, `a + b * 2` 0.56 → 0.65, `item.name`
+  1.23 → 1.37, a new map 1.98 → 3.12, decimals 1.31 → 1.63, `itemList.length` 57 → 77, condition 0.59 → 0.85, `${}`
+  1.34 → 1.81, new text each call 0.55 → 1.23. The actions rows run on QuickJS in `js_speed` either way. The rest is
+  the bindings' per-call cost (allocations: 0 → 4 for `a`, 11 → 53 for a new map) and compile time for new text, F4's
+  work and Phase 3's.
 
 ## 8. Testing
 

@@ -83,7 +83,7 @@ fn writes_functions_and_ways_round_the_check_are_refused() {
         ("Function('return 1')()", "the name Function"),
         ("globalThis.x", "the name globalThis"),
         ("compare(a, b)", "the QuickJS global compare"),
-        ("context.x", "the QuickJS global context"),
+        ("UserSecurityChecks.x", "the QuickJS global UserSecurityChecks"),
         ("StringUtilities.x", "the QuickJS global StringUtilities"),
         ("atob('eA==')", "the QuickJS global atob"),
         ("a; b", "not one expression"),
@@ -145,8 +145,8 @@ fn block_scopes_shadowing_and_more_writes() {
         ("(function() { let ec = 0; })()", "a declaration of ec"),
         ("(function() { var eval = 1; })()", "a declaration of eval"),
         (
-            "(function() { for (let context = 0; ; ) {} })()",
-            "a declaration of context",
+            "(function() { for (let sri = 0; ; ) {} })()",
+            "a declaration of sri",
         ),
         ("(function() { { const sri = 1 } })()", "a declaration of sri"),
     ] {
@@ -289,18 +289,18 @@ fn the_actions_profile_takes_generated_set_if_and_iterate() {
     assert_eq!(analysis.refused(), None, "{generated}");
     assert!(analysis.writes());
     for (text, why) in [
-        (
-            "(function() { function f() {} })()",
-            "a statement outside the actions profile",
-        ),
-        (
-            "(function() { try { x = 1 } catch (e) {} })()",
-            "a statement outside the actions profile",
-        ),
-        (
-            "(function() { for (const k of list) x = k; })()",
-            "a statement outside the actions profile",
-        ),
+        ("(function() { if (a) { function f() {} } })()", "a function declared in a block"),
+        ("(function() { function f() {} x = f; })()", "the function f used as a value"),
+        ("(function() { function f() {} list.map(f) })()", "the function f used as a value"),
+        ("(function() { function f() {} return f })()", "the function f used as a value"),
+        ("(function() { function* g() {} })()", "an async or generator function"),
+        ("(function() { function f(...rest) {} })()", "a rest parameter"),
+        ("(function() { function f() {} var f = 1 })()", "a second declaration of the function f"),
+        ("(function() { for (const ec of list) x = 1; })()", "a declaration of ec"),
+        ("(function() { try {} catch (CollectionUtilities) {} })()", "a declaration of CollectionUtilities"),
+        ("(function() { for (const {constructor} of list) x = 1; })()", "the property constructor"),
+        ("(function() { a: for (;;) { break a } })()", "a statement outside the actions profile"),
+        ("(function() { switch (a) {} })()", "a statement outside the actions profile"),
         (
             "(function() { ec.user.x = 1; })()",
             "an assignment to a value reached from ec",
@@ -363,9 +363,175 @@ fn the_quickjs_only_globals_are_what_quickjs_has_and_oxide_does_not() {
                     | "StringUtilities"
                     | "WebUtilities"
                     | "UserSecurityChecks"
-                    | "context"
             )
         })
         .collect();
     assert_eq!(only, listed, "QuickJS-only globals");
+}
+
+/// The context names a text reads, for the router's look at their values: not its own variables, not a name it only
+/// assigns, and `ec` never.
+#[test]
+fn the_names_a_text_reads_are_noted() {
+    let analysis = analyze(
+        "(function() { var own = a; x = own + b.c; y += 1; if (ec.user.userId) z = b; })()",
+        Profile::Actions,
+    );
+    assert_eq!(analysis.refused(), None);
+    assert_eq!(analysis.reads(), ["a", "b", "y"]);
+    let analysis = analyze("row.amount + toNumber(limit)", Profile::Expression);
+    assert_eq!(analysis.reads(), ["row", "toNumber", "limit"]);
+}
+
+/// What reads the clock or a random number, which the difference check does not run twice: by the syntax, not by
+/// words in the text (a name such as `knownDate` or a string 'random' moves nothing).
+#[test]
+fn reads_of_the_clock_and_random_numbers_are_known() {
+    for text in [
+        "Date.now() - start",
+        "new Date(stamp).getTime()",
+        "Math.random() > 0.5",
+        "ec.user.nowTimestamp",
+        "ec.l10n.format(ec.user.nowTimestamp, 'yyyy')",
+        "ec.user.randomString(8)",
+    ] {
+        assert!(analyze(text, Profile::Expression).moving(), "{text}");
+    }
+    for text in ["knownDate + 1", "'random now'", "item.nowhere", "ec.user.userId"] {
+        assert!(!analyze(text, Profile::Expression).moving(), "{text}");
+    }
+}
+
+/// The wider Actions profile: `for...of` and `for...in` over values, `try` with `catch` and `finally`, functions that
+/// are only called, block-bodied arrows passed to an array method, destructuring declarations; their names are the
+/// script's own, in their scopes, and a context name read inside is still noted.
+#[test]
+fn the_actions_profile_takes_loops_over_values_try_and_functions_that_stay() {
+    let text = "(function() {
+        function label(row) { const {name, qty = 0} = row; return name + ':' + qty }
+        for (const row of rows) { out.push(label(row)) }
+        for (const key in totals) { if (!key) continue; seen = key }
+        for (k of list) { if (k > 2) break }
+        do { n = n - 1 } while (n > 0)
+        try { risky = ec.user.userId } catch (e) { failure = String(e) } finally { done = true }
+        const sums = rows.map((row) => { let total = 0; for (const [, v] of Object.entries(row)) total += v; return total })
+    })()";
+    let analysis = analyze(text, Profile::Actions);
+    assert_eq!(analysis.refused(), None, "{text}");
+    assert!(analysis.writes());
+    // the loop's, the function's, the catch's and the arrow's names are local; the context names are read
+    let reads: Vec<&str> = analysis.reads().iter().map(String::as_str).collect();
+    assert_eq!(reads, ["rows", "out", "totals", "list", "k", "n", "String", "Object"]);
+    // a `let` of a loop or a block is not seen after it
+    let after = analyze(
+        "(function() { for (const k of list) {} x = k; try { let t = 1 } catch (e) {} y = t; z = e })()",
+        Profile::Actions,
+    );
+    let reads: Vec<&str> = after.reads().iter().map(String::as_str).collect();
+    assert_eq!(reads, ["list", "k", "t", "e"]);
+    // the expression profile is unchanged: no block-bodied arrows
+    assert!(analyze("rows.map((row) => { return row })", Profile::Expression)
+        .refused()
+        .is_some());
+}
+
+/// `context` (the stack) on oxide: `context.name` is a read of `name`, and the stack handed to a host call reads no
+/// value; any other use may read any name, so the router looks at every visible value.
+#[test]
+fn reads_through_context_are_noted() {
+    let analysis = analyze(
+        "(function() { x = context.base; ec.service.sync().parameters(context).call(); context.putAll(m) })()",
+        Profile::Actions,
+    );
+    assert_eq!(analysis.refused(), None);
+    assert!(!analysis.context_values());
+    assert!(analysis.reads().iter().any(|name| name == "base"));
+    for text in [
+        "(function() { x = context[name] })()",
+        "(function() { x = Object.keys(context) })()",
+        "(function() { x = context.get('a') })()",
+        "(function() { other(context) })()",
+    ] {
+        let analysis = analyze(text, Profile::Actions);
+        assert_eq!(analysis.refused(), None, "{text}");
+        assert!(analysis.context_values(), "{text}");
+    }
+}
+
+/// Two generated shapes the Actions profile takes: XmlActions' copy of a service's results (exactly
+/// `Object.prototype.hasOwnProperty.call(globalThis, name)` and `globalThis[name] = value`), and a `const` arrow that
+/// is only called. `prototype` and `globalThis` stay refused anywhere else, and such an arrow as a value too.
+#[test]
+fn generated_result_copies_and_const_arrows_pass() {
+    let copy = crate::script::generated_source(
+        r#"<actions><service-call name="a.b.c#D" in-map="{x: x}" out-map="context"/></actions>"#,
+        false,
+    )
+    .unwrap();
+    assert!(copy.contains("hasOwnProperty.call(globalThis"), "{copy}");
+    let analysis = analyze(&copy, Profile::Actions);
+    assert_eq!(analysis.refused(), None, "{copy}");
+    let arrows = "(function() { const L = (text) => ec.l10n.localize(text); const plain = (v) => v == null || v === '';
+        ok = fields.some((field) => plain(row[field])) ? L('no') : L('yes') })()";
+    assert_eq!(analyze(arrows, Profile::Actions).refused(), None);
+    for (text, why) in [
+        ("(function() { x = Object.prototype.toString.call(globalThis) })()", "the property prototype"),
+        ("(function() { x = Object.prototype.hasOwnProperty.call(other, k) })()", "the property prototype"),
+        ("(function() { x = globalThis[k] })()", "the name globalThis"),
+        ("(function() { globalThis.x = 1 })()", "the name globalThis"),
+        ("(function() { const L = (t) => t; keep = L })()", "the function L used as a value"),
+        ("(function() { const L = (t) => t; list.map(L) })()", "the function L used as a value"),
+        // an arrow named before the walk reaches it is still a function, so it does not escape the run
+        ("(function() { function g() { return f } const f = () => 1; keep = g() })()", "the function f used as a value"),
+        ("(function() { if (a) { const f = () => 1; const g = () => f; keep = g() } })()", "the function f used as a value"),
+        // a member of a builtin would stay on the thread's runtime of one engine
+        ("(function() { Math.keep = 1 })()", "an assignment to a member of the global Math"),
+        ("(function() { JSON.parse.x = 1 })()", "an assignment to a member of the global JSON"),
+        ("(function() { Object['x'] = 1 })()", "an assignment to a member of the global Object"),
+        // `globalThis[k] =` only as XmlActions' guarded copy
+        ("(function() { for (const k in row) globalThis[k] = row[k] })()", "the name globalThis"),
+        (
+            "(function() { if (!Object.prototype.hasOwnProperty.call(globalThis, k)) globalThis[j] = 1 })()",
+            "the name globalThis",
+        ),
+        (
+            "(function() { if (!Object.prototype.hasOwnProperty.call(globalThis, k)) globalThis[k] = 1; else x = 1 })()",
+            "the name globalThis",
+        ),
+    ] {
+        let reason = analyze(text, Profile::Actions).refused().unwrap_or_default().to_string();
+        assert!(reason.starts_with(why), "{text}: {reason}");
+    }
+}
+
+/// `context.put`, `remove` and `putAll` write the stack: the text writes, as a mutating method makes it.
+#[test]
+fn the_context_methods_that_write_mark_the_text_as_writing() {
+    for text in ["context.putAll({a: 1})", "context.put('a', 1)", "context.remove('a')"] {
+        let analysis = analyze(text, Profile::Expression);
+        assert_eq!(analysis.refused(), None, "{text}");
+        assert!(analysis.writes(), "{text}");
+    }
+    assert!(!analyze("context.containsKey('a') && context.keySet().length > 0", Profile::Expression).writes());
+}
+
+/// The builtins whose members an assignment may not change are the oxide runtime's global objects and functions.
+#[test]
+fn the_builtin_globals_are_the_oxide_runtimes() {
+    let runtime = quickjs_oxide::engine::api::core::Runtime::new();
+    let context = runtime.context();
+    let names = context
+        .eval(
+            "Object.getOwnPropertyNames(globalThis).filter((name) => { const value = globalThis[name]; \
+             return value !== globalThis && (typeof value === 'object' && value !== null || typeof value === 'function') }).join(',')",
+        )
+        .unwrap();
+    let names = context.to_js_string(&names).unwrap().to_utf8_lossy();
+    let oxide: std::collections::BTreeSet<&str> = names.split(',').collect();
+    let listed: std::collections::BTreeSet<&str> = super::BUILTIN_GLOBALS
+        .iter()
+        .copied()
+        .filter(|name| !super::OXIDE_HOST_GLOBALS.contains(name))
+        .collect();
+    assert_eq!(oxide, listed, "builtin globals");
 }

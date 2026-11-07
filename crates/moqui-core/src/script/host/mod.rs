@@ -29,12 +29,16 @@ use moqui_lib::object::{HostObject, Value};
 
 mod archive;
 mod cache;
+pub(crate) mod conditions;
 mod ec_web;
 mod edi;
+pub(crate) mod error_info;
+pub(crate) mod entities;
 mod files;
 mod l10n;
 mod logger;
 mod message;
+mod native_tools;
 mod notification;
 mod pass;
 mod screen;
@@ -43,6 +47,7 @@ mod service;
 mod sftp;
 mod theme;
 mod tools;
+pub(crate) mod upload;
 mod urls;
 mod user;
 mod web;
@@ -374,6 +379,12 @@ pub trait EngineOps {
     /// Evaluate `source` (a script whose completion value is the result, `name` its file name in errors) in the running
     /// engine; its value as a host value. A script that throws is [`HostError::Message`] of the error's text.
     fn evaluate(&mut self, source: &str, name: &str) -> Result<Value, HostError>;
+    /// Run `body` with the engine lent to it, so a nested script it runs (a service, an entity ECA rule) runs on this
+    /// engine: for a leaf method that calls back but has one step that may nest. A panic in `body` is an error.
+    fn lend(&mut self, body: &mut dyn FnMut()) -> Result<(), HostError> {
+        body();
+        Ok(())
+    }
     /// Run the engine's pending jobs until a promise settles (the spec engine's `settle_promise`, Phase 3).
     fn settle(&mut self) -> Result<(), HostError> {
         Err(HostError::message("settling a promise is not supported here"))
@@ -751,6 +762,14 @@ static RETURNED: &[&HostClass] = &[
     &edi::EDI_HANDLER,
     &urls::URL,
     &sftp::SFTP_CLIENT,
+    &entities::FIND,
+    &entities::LIST,
+    &entities::ENTITY_VALUE,
+    &upload::UPLOAD,
+    &upload::STREAM,
+    &conditions::CONDITION,
+    &error_info::ERROR_INFO,
+    &native_tools::TOOL_FACTORY,
 ];
 
 /// Paths other crates contribute (moqui-llm's `ec.llm`), through [`register`], before the table is frozen.
@@ -769,7 +788,7 @@ static TABLE: OnceLock<Table> = OnceLock::new();
 
 fn table() -> &'static Table {
     TABLE.get_or_init(|| {
-        let mut paths: Vec<&'static Path> = PATHS.iter().collect();
+        let mut paths: Vec<&'static Path> = PATHS.iter().chain(entities::PATHS).chain(native_tools::PATHS).collect();
         // ec.llm, when the binary links the agent runtime
         if let Some(hooks) = crate::llm_hooks::get() {
             paths.extend(hooks.script_paths.iter());

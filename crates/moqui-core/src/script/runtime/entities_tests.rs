@@ -635,3 +635,50 @@ fn another_threads_engine_reads_a_compiled_script_s_bytecode() {
         "the second engine read the bytecode"
     );
 }
+
+/// The members of `ec.entity`, a find, a list and a value keep the names and lengths they had as QuickJS classes, and
+/// so do their prototypes' own names.
+#[test]
+fn the_entity_members_keep_their_names_and_lengths() {
+    let context = enumerations();
+    let _entered = context.enter();
+    seed();
+    let probe = r#"(() => {
+        const members = (object) => Object.getOwnPropertyNames(object).filter((name) => typeof object[name] === "function")
+            .sort().map((name) => name + "/" + object[name].length).join(" ");
+        const find = ec.entity.find("moqui.basic.Enumeration");
+        const list = ec.entity.find("moqui.basic.Enumeration").list();
+        const value = list[0];
+        return [members(ec.entity), members(Object.getPrototypeOf(find)), members(Object.getPrototypeOf(list)),
+            members(Object.getPrototypeOf(value))].join(" | ");
+    })()"#;
+    let got = crate::script::eval_value(probe).unwrap();
+    let expected = [
+        "checkTables/1 clearEntityDefinitionFromCache/0 clearQueryStats/0 \
+         createAllAutoReverseManyRelationships/0 find/1 formatFieldString/3 getAllEntitiesInfo/0 \
+         getAllEntityInfo/0 getAllEntityNames/0 getAllEntityNamesWithMaster/0 getAllEntityRelatedFields/3 \
+         getDataDocuments/1 getDatabaseConfName/1 getDatasourceGroupNames/0 getEecaRuleCount/0 \
+         getEntityDataDocument/0 getEntityDefinition/1 getQueryStatsList/0 getValueListFromPlainMap/2 \
+         isEntityDefined/0 isTxCacheActive/0 makeDataLoader/0 makeDataWriter/0 makeValue/1 \
+         runSqlCountConf/3 runSqlStatement/2 runSqlUpdateConf/2 sequencedIdPrimary/1 startTxCacheDb/1 \
+         stopTxCache/0 tempResetSequencedIdPrimary/1 tempSetSequencedIdPrimary/3 testConfConnection/1",
+        "condition/1 conditionDate/2 copy/0 count/0 deleteAll/0 disableAuthz/0 distinct/1 forUpdate/1 \
+         getLimit/0 getOffset/0 getPageIndex/0 getPageSize/0 getQueryTextList/0 havingCondition/1 \
+         iterator/0 limit/1 list/0 offset/1 one/0 oneMaster/0 orderBy/1 purge/0 \
+         requireSearchFormParameters/0 searchFormMap/0 selectField/1 selectFormFields/1 updateAll/1 \
+         useCache/1 useClone/1",
+        "absolute/1 afterLast/0 at/0 beforeFirst/0 close/0 concat/0 currentIndex/0 entries/0 every/0 \
+         filter/2 filterByDate/3 find/0 findIndex/0 findLast/0 findLastIndex/0 first/0 flat/0 flatMap/0 \
+         forEach/2 get/1 getCompleteList/0 getPartialList/2 hasNext/0 hasPrevious/0 includes/0 indexOf/0 \
+         isEmpty/0 join/0 keys/0 last/0 lastIndexOf/0 map/2 next/0 previous/0 reduce/0 reduceRight/0 \
+         relative/1 reverse/0 setFetchSize/1 size/0 slice/0 some/0 sort/0 toJSON/0 toReversed/0 \
+         toSorted/0 values/0",
+        "cloneValue/0 create/0 createOrUpdate/0 delete/0 deleteRelated/1 deleteWithRelated/0 entrySet/0 \
+         equals/1 findRelated/1 findRelatedFk/0 findRelatedOne/1 get/1 getEntityName/0 \
+         getEntityNamePretty/0 getMap/0 getPlainValueMap/1 getPrimaryKeys/0 refresh/0 resolveEntityName/0 \
+         resolveEntityNamePretty/0 set/2 setFields/3 setSequencedIdPrimary/0 setSequencedIdSecondary/0 \
+         update/0",
+    ]
+    .join(" | ");
+    assert_eq!(moqui_lib::object::to_plain_string(&got), expected);
+}

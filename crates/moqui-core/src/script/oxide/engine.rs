@@ -45,8 +45,11 @@ const HEAP_CAP: usize = 64 * 1024 * 1024;
 /// The collection floor: below it the runtime does not collect. Lower than the fork's 1 MiB default, since every
 /// thread that runs a small script holds a runtime (plans/Script-Engine-Oxide.md section 4).
 const MIN_HEAP: usize = 512 * 1024;
-/// Runs between samples of the runtime's reserved bytes for the stats.
+/// Runs between looks at the clock for a sample of the runtime's reserved bytes, and the least time between two
+/// samples: a memory report walks the runtime's code store, so its cost grows with the texts compiled (4000 texts made
+/// a sample every 32 runs cost an expression about twice its time).
 const HEAP_SAMPLE_RUNS: u64 = 32;
+const HEAP_SAMPLE_EVERY: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// What the runtime cuts when it starts, behind the static check (`script::check`): a computed key it cannot read
 /// (`row[name]`) may still name `constructor` at run time, so no function's `constructor` reaches `Function` (or its
@@ -75,6 +78,19 @@ const TO_NUMBER_JS: &str = r#"Object.defineProperty(globalThis, "toNumber", {
     writable: false, enumerable: true, configurable: false
 })"#;
 
+/// What QuickJS's engine puts under `ec` and on the global object outside the host table, which the host table's shims
+/// extend (`runtime.rs`, `install_ec` and `install_context`): `ec.context`, the context stack's `get` and the two names
+/// a form reads, and the global `sri`, to which the URL shim adds its functions. A text that names either goes to
+/// QuickJS (the static check allows neither), so they are what the shims need, not the whole QuickJS objects.
+const EC_EXTRAS_JS: &str = r#"(function (ec, context) {
+    const made = { get: (name) => context.get(String(name)) };
+    for (const name of ["formListFindId", "orderByField"]) {
+        Object.defineProperty(made, name, { get: () => context[name], enumerable: true });
+    }
+    ec.context = made;
+    Object.defineProperty(globalThis, "sri", { value: {}, writable: false, enumerable: true, configurable: false });
+})"#;
+
 /// Why an oxide run gave no result.
 pub(crate) enum Outcome {
     /// The script's own error, as the QuickJS path would give it.
@@ -88,8 +104,13 @@ pub(crate) enum Outcome {
 pub(super) struct Protos {
     pub(super) decimal: ObjectRef,
     pub(super) entities: HostClass<super::names::EntityValues>,
+    /// Entity lists (`bind::entities`).
+    pub(super) lists: HostClass<super::bind::entities::ListValues>,
     /// Native tools (`ec.getTool`), the host table's exotic class (`bind::tool`).
     pub(super) tools: HostClass<super::bind::tool::ToolClass>,
+    /// The bare name `context`, the stack itself ([`super::context`]), and its `Map` methods.
+    pub(super) context: ObjectRef,
+    pub(super) context_methods: ObjectRef,
     /// Host objects the bindings pass through but do not bind yet (an upload, a stream).
     pub(super) opaque: HostClass<super::names::OpaqueValues>,
     pub(super) set_prototype: ObjectRef,
@@ -98,6 +119,9 @@ pub(super) struct Protos {
     pub(super) date_get_time: CallableRef,
     pub(super) array_from: CallableRef,
     pub(super) error: CallableRef,
+    /// The helper objects the shims extend, as QuickJS's `install_context` makes them: `CollectionUtilities`,
+    /// `StringUtilities` and `WebUtilities` by name.
+    pub(super) helpers: ObjectRef,
 }
 
 pub(super) struct OxideEngine {
@@ -113,7 +137,20 @@ pub(super) struct OxideEngine {
     heap: Cell<usize>,
     heap_peak: Cell<usize>,
     runs: Cell<u64>,
+    /// The tools shim's `__moquiWrap(name, data)`, which gives a tools map its methods back as on QuickJS
+    /// ([`super::convert`]); set once the shims installed.
+    tools_wrap: std::cell::OnceCell<CallableRef>,
+    /// When the reserved bytes were last sampled.
+    sampled: Cell<Option<std::time::Instant>>,
+    /// Property keys of the map keys converted ([`OxideEngine::key`]): a key made once interns once.
+    keys: RefCell<std::collections::HashMap<Box<str>, quickjs_oxide::engine::api::core::PropertyKey>>,
 }
+
+/// Map keys kept as property keys, at most; past it the cache starts again. Only a key of at most [`MAX_KEY_BYTES`] is
+/// kept, so the cache holds at most about 8192 * 64 bytes of text: a map key is a field name, and a long one (a text
+/// used as a key) is made each time.
+const MAX_KEYS: usize = 8192;
+const MAX_KEY_BYTES: usize = 64;
 
 /// Process-wide counts of the oxide runtimes, for [`stats`].
 mod counts {
@@ -165,6 +202,8 @@ pub(crate) struct OxideStats {
     pub(crate) compiled: u64,
     /// Runtimes dropped after a host function panicked.
     pub(crate) poisoned: u64,
+    /// The process's code images ([`super::compiled`]).
+    pub(crate) images: super::compiled::ImageStats,
 }
 
 pub(crate) fn stats() -> OxideStats {
@@ -176,6 +215,7 @@ pub(crate) fn stats() -> OxideStats {
         heap_bytes_max: counts::HEAP_MAX.load(Relaxed),
         compiled: counts::COMPILED.load(Relaxed),
         poisoned: counts::POISONED.load(Relaxed),
+        images: super::compiled::image_stats(),
     }
 }
 
@@ -227,6 +267,13 @@ thread_local! {
     static FALLBACK: Cell<Option<&'static str>> = const { Cell::new(None) };
 }
 
+/// Whether the running oxide script met what the bindings do not have: a `catch` of the throw must not make side
+/// effects, so a bare-name read or write and an entity field write then throw again, and the deadline hook stops the
+/// script at its next poll ([`super::host::MoquiHost`]). The run then falls back.
+pub(super) fn fallback_pending() -> bool {
+    FALLBACK.with(|fallback| fallback.get().is_some())
+}
+
 /// This thread's oxide runtime, when it has started.
 pub(super) fn current() -> Option<Rc<OxideEngine>> {
     ENGINE.with(|engine| engine.borrow().clone())
@@ -236,10 +283,17 @@ fn engine() -> Result<Rc<OxideEngine>, Error> {
     if let Some(engine) = current() {
         return Ok(engine);
     }
-    let started = Rc::new(
-        OxideEngine::start().map_err(|err| Error::new(format!("the quickjs-oxide runtime did not start: {err}")))?,
-    );
+    let did_not_start = |err: RuntimeError| Error::new(format!("the quickjs-oxide runtime did not start: {err}"));
+    let started = Rc::new(OxideEngine::start().map_err(did_not_start)?);
+    // the shims call host functions as they install, whose conversions read the thread's engine
     ENGINE.with(|engine| *engine.borrow_mut() = Some(Rc::clone(&started)));
+    let calls = crate::script::census::host_calls();
+    let finished = started.finish_start();
+    crate::script::census::forget_host_calls_since(calls);
+    if let Err(err) = finished {
+        ENGINE.with(|engine| *engine.borrow_mut() = None);
+        return Err(did_not_start(err));
+    }
     Ok(started)
 }
 
@@ -270,9 +324,19 @@ impl OxideEngine {
                 .as_callable(&object(name)?)?
                 .ok_or(RuntimeError::Invariant("a helper function"))
         };
+        let (stack_object, context_methods) = super::context::make(&context)?;
+        let helpers = context.new_object()?;
+        for name in ["CollectionUtilities", "StringUtilities", "WebUtilities"] {
+            let helper = context.new_object()?;
+            context.set_property(&helpers, &key(name).map_err(conv_runtime)?, Value::Object(helper))?;
+        }
         let protos = Protos {
+            helpers,
+            context: stack_object.clone(),
+            context_methods,
             decimal: super::decimal::make_prototype(&context)?,
             entities: super::names::register_entities(&context)?,
+            lists: context.register_exotic_class(super::bind::entities::ListValues)?,
             tools: super::bind::tool::register(&mut context.clone(), std::rc::Rc::new(EngineHooks))?,
             opaque: context.register_exotic_class(super::names::OpaqueValues)?,
             set_prototype: object("setPrototype")?,
@@ -290,10 +354,15 @@ impl OxideEngine {
             &OrdinaryPropertyDescriptor::data(Value::Object(ec.clone()), false, false, true),
         )?;
         super::bind::install_ec(&mut context.clone(), &ec, std::rc::Rc::new(EngineHooks))?;
+        let extras = context.eval(EC_EXTRAS_JS)?;
+        let extras = match &extras {
+            Value::Object(object) => context.as_callable(object)?,
+            _ => None,
+        }
+        .ok_or(RuntimeError::Invariant("the ec extras"))?;
+        context.call(&extras, Value::Undefined, &[Value::Object(ec), Value::Object(stack_object)])?;
         super::decimal::install_to_decimal(&context)?;
         context.eval(TO_NUMBER_JS)?;
-        context.eval(HARDEN_JS)?;
-        super::names::install_names(&context)?;
         counts::STARTED.fetch_add(1, Relaxed);
         let live = counts::LIVE.fetch_add(1, Relaxed) + 1;
         counts::LIVE_MAX.fetch_max(live, Relaxed);
@@ -307,7 +376,53 @@ impl OxideEngine {
             heap: Cell::new(0),
             heap_peak: Cell::new(0),
             runs: Cell::new(0),
+            sampled: Cell::new(None),
+            tools_wrap: std::cell::OnceCell::new(),
+            keys: RefCell::default(),
         })
+    }
+
+    /// The rest of the start, once the runtime is the thread's, in QuickJS's order (`runtime.rs`, `install_context`): the
+    /// host table's shims over `ec`, `sri` and the helper objects (each tried; any failure fails the start), then the
+    /// lockdown, which no shim's code needs, then the bare names last, so a global a shim makes (`EdiHandler`,
+    /// `__moquiWrap`) is the global object's own rather than a write to the context stack.
+    fn finish_start(&self) -> Result<(), RuntimeError> {
+        let mut context = self.context.clone();
+        super::bind::install_shims(&mut context, &self.protos.helpers, std::rc::Rc::new(EngineHooks))?;
+        let global = context.global_object()?;
+        match context.get_property(&global, &key("__moquiWrap").map_err(conv_runtime)?)? {
+            Value::Object(object) => {
+                let wrap = context
+                    .as_callable(&object)?
+                    .ok_or(RuntimeError::Invariant("__moquiWrap is not a function"))?;
+                let _ = self.tools_wrap.set(wrap);
+            }
+            _ => return Err(RuntimeError::Invariant("the tools shim made no __moquiWrap")),
+        }
+        context.eval(HARDEN_JS)?;
+        super::names::install_names(&context)
+    }
+
+    /// The tools shim's wrapper, which gives a tools map (a map with `__wrap`) its methods back.
+    pub(super) fn tools_wrap(&self) -> Option<&CallableRef> {
+        self.tools_wrap.get()
+    }
+
+    /// The property key of a map key, kept for the runtime.
+    pub(super) fn key(&self, name: &str) -> Result<quickjs_oxide::engine::api::core::PropertyKey, Conv> {
+        if name.len() > MAX_KEY_BYTES {
+            return super::convert::key(name);
+        }
+        if let Some(found) = self.keys.borrow().get(name) {
+            return Ok(found.clone());
+        }
+        let made = super::convert::key(name)?;
+        let mut keys = self.keys.borrow_mut();
+        if keys.len() >= MAX_KEYS {
+            keys.clear();
+        }
+        keys.insert(Box::from(name), made.clone());
+        Ok(made)
     }
 
     /// The values of the running script, by name.
@@ -328,13 +443,23 @@ impl OxideEngine {
         self.entities.borrow_mut().push((proxy, cell));
     }
 
-    /// Sample the reserved bytes every [`HEAP_SAMPLE_RUNS`] runs, for the stats.
+    /// Sample the reserved bytes for the stats: at the first run, then at most every [`HEAP_SAMPLE_EVERY`], looked at
+    /// every [`HEAP_SAMPLE_RUNS`] runs.
     fn sample_heap(&self) {
         let runs = self.runs.get() + 1;
         self.runs.set(runs);
         if runs % HEAP_SAMPLE_RUNS != 1 {
             return;
         }
+        let now = std::time::Instant::now();
+        if self
+            .sampled
+            .get()
+            .is_some_and(|last| now.duration_since(last) < HEAP_SAMPLE_EVERY)
+        {
+            return;
+        }
+        self.sampled.set(Some(now));
         if let Ok(report) = self.runtime.memory_report() {
             let now = report.reserved_bytes();
             let before = self.heap.replace(now);

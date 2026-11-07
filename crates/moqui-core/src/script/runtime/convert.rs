@@ -71,12 +71,15 @@ pub(crate) fn temporal_text(value: &Value) -> String {
 /// the large find builder stays out of the recursive conversion frames.
 #[inline(never)]
 fn find_to_js<'js>(ctx: &Ctx<'js>, find: &EntityFind) -> rquickjs::Result<JsValue<'js>> {
-    wrap_find(ctx, find.clone()).and_then(|class| class.into_js(ctx))
+    wrap_find(ctx, find.clone())
 }
 
 pub(super) fn object_to_js<'js>(ctx: &Ctx<'js>, object: &HostObject) -> rquickjs::Result<JsValue<'js>> {
     if let Some(find) = object.downcast::<EntityFind>() {
         return find_to_js(ctx, &find);
+    }
+    if let Some(row) = object.downcast::<crate::script::host::entities::ListRow>() {
+        return entity_to_js(ctx, HostEntity::of(Arc::clone(&row.0)));
     }
     if let Some(inner) = object.downcast::<EntityCell>() {
         return entity_to_js(ctx, HostEntity::of(inner));
@@ -89,19 +92,21 @@ pub(super) fn object_to_js<'js>(ctx: &Ctx<'js>, object: &HostObject) -> rquickjs
             .and_then(|class| class.into_js(ctx));
     }
     if let Some(inner) = object.downcast::<crate::web::error_info::ErrorInfo>() {
-        return Class::instance(ctx.clone(), HostErrorInfo { inner }).and_then(|class| class.into_js(ctx));
+        return bind::running_instance(ctx, HostObject(inner as _), &crate::script::host::error_info::ERROR_INFO)
+            .map(Object::into_value);
     }
     if let Some(inner) = object.downcast::<crate::web::multipart::UploadedFile>() {
-        return Class::instance(ctx.clone(), HostUpload { inner }).and_then(|class| class.into_js(ctx));
+        return super::upload::upload_to_js(ctx, inner);
     }
     if let Some(inner) = object.downcast::<StreamBytes>() {
-        return Class::instance(ctx.clone(), HostStream { inner }).and_then(|class| class.into_js(ctx));
+        return super::upload::stream_to_js(ctx, inner);
     }
     if let Some(inner) = object.downcast::<crate::native::ToolHandle>() {
         return tool_to_js(ctx, inner);
     }
     if let Some(inner) = object.downcast::<Condition>() {
-        return condition_js(ctx, Some(Condition::clone(&inner)));
+        return bind::running_instance(ctx, HostObject(inner as _), &crate::script::host::conditions::CONDITION)
+            .map(Object::into_value);
     }
     Err(Exception::throw_message(ctx, "cannot convert this object"))
 }
@@ -157,10 +162,6 @@ pub(super) fn js_truthy(value: &JsValue<'_>) -> bool {
         return text.to_string().ok().is_some_and(|text| !text.is_empty());
     }
     true
-}
-
-pub(super) fn value_to_js<'js>(ctx: &Ctx<'js>, value: &Value) -> rquickjs::Result<JsValue<'js>> {
-    host_to_js_at(ctx, value, 0)
 }
 
 pub(super) fn js_string(ctx: &Ctx<'_>, value: &JsValue<'_>) -> rquickjs::Result<String> {
@@ -376,22 +377,22 @@ fn js_class_to_host(object: &Object<'_>) -> Option<Value> {
         return Some(Value::Object(HostObject(class.borrow().inner.clone())));
     }
     // A find stays the find, so a later screen section can read the SQL it ran (`getQueryTextList()`, Show SQL).
-    if let Some(class) = object.as_class::<HostFind>() {
-        if let Some(find) = class.borrow().inner.borrow().as_ref() {
-            return Some(Value::Object(HostObject::new(find.clone())));
+    if let Some(class) = object.as_class::<bind::HostNeutral>() {
+        if let Some(value) = super::upload::upload_or_stream(&class.borrow().obj) {
+            return Some(value);
+        }
+        // An entity condition stays the condition, as the Java EntityCondition in the context does, so a later
+        // `<entity-find>` applies it through `<econdition-object>`; it has no own properties and would be an empty map.
+        if class.borrow().obj.downcast::<Condition>().is_some() {
+            return Some(Value::Object(class.borrow().obj.clone()));
+        }
+        let state = class.borrow().obj.downcast::<crate::script::host::entities::FindState>();
+        if let Some(find) = state.and_then(|state| state.peek()) {
+            return Some(Value::Object(HostObject::new(find)));
         }
     }
     if let Some(class) = object.as_class::<HostList>() {
-        return Some(Value::Object(HostObject(class.borrow().inner.clone())));
-    }
-    // An uploaded file passed to a service stays the file, as the Java FileItem in `ec.web.parameters` does.
-    if let Some(class) = object.as_class::<HostUpload>() {
-        return Some(Value::Object(HostObject(class.borrow().inner.clone())));
-    }
-    // A stream (`openStream()`, `getInputStream()`) stays the stream too: it has no own properties, so it would be an
-    // empty map, which a write would store as the text `{}`.
-    if let Some(class) = object.as_class::<HostStream>() {
-        return Some(Value::Object(HostObject(class.borrow().inner.clone())));
+        return Some(Value::Object(class.borrow().rows()));
     }
     // A tool stays the tool, so its methods are there again when the value is read back.
     if let Some(class) = object.as_class::<HostTool>() {
@@ -399,9 +400,6 @@ fn js_class_to_host(object: &Object<'_>) -> Option<Value> {
     }
     // An entity condition stays the condition, as the Java EntityCondition in the context does, so a later
     // `<entity-find>` applies it through `<econdition-object>`; it has no own properties and would be an empty map.
-    if let Some(class) = object.as_class::<HostCondition>() {
-        return Some(Value::Object(HostObject::new(class.borrow().inner.clone())));
-    }
     // A `Date` has no own properties; it is a time stamp, as a Java `Date` passed to a service is.
     if let Some(millis) = js_date_millis(object) {
         return Some(moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value);
@@ -540,12 +538,3 @@ pub(super) fn js_caught(ctx: &Ctx<'_>, err: JsError) -> Error {
     Error::new(rquickjs::CaughtError::from_error(ctx, err).to_string())
 }
 
-/// The texts of an array or a `Set` as the host holds it, or of one value.
-pub(super) fn host_texts(value: Value) -> Vec<String> {
-    match value {
-        Value::List(items) => items.iter().map(moqui_lib::object::to_plain_string).collect(),
-        Value::Map(mut map) if map.contains_key(SET_KEY) => host_texts(map.swap_remove(SET_KEY).unwrap_or(Value::Null)),
-        Value::Null => Vec::new(),
-        other => vec![moqui_lib::object::to_plain_string(&other)],
-    }
-}

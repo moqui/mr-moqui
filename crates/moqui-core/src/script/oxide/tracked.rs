@@ -82,8 +82,11 @@ fn values(engine: &OxideEngine) -> &RefCell<RunValues> {
 }
 
 /// A bare `name` read: the run's own object for it, else the stack's value converted (a list or map tracked, a decimal
-/// or entity value kept). `context` and the helper objects QuickJS answers by name fall back.
+/// or entity value kept). `context` is the stack object; the helper objects QuickJS answers by name fall back.
 pub(super) fn read_name<J: Js>(js: &mut J, name: &str) -> Result<Value, Conv> {
+    if super::engine::fallback_pending() {
+        return Err(Conv::Unsupported("a run that fell back"));
+    }
     let engine = current().ok_or(Conv::Unsupported("no oxide engine"))?;
     {
         let values = values(&engine).borrow();
@@ -125,9 +128,25 @@ pub(super) fn read_name<J: Js>(js: &mut J, name: &str) -> Result<Value, Conv> {
     }
 }
 
+/// Forget the run's object of `name`, for `delete context.name`.
+pub(super) fn forget(name: &str) -> Result<(), Conv> {
+    if super::engine::fallback_pending() {
+        return Err(Conv::Unsupported("a run that fell back"));
+    }
+    let engine = current().ok_or(Conv::Unsupported("no oxide engine"))?;
+    let mut values = values(&engine).borrow_mut();
+    values.tracked.remove(name);
+    values.released.remove(name);
+    values.kept.remove(name);
+    Ok(())
+}
+
 /// A bare `name = value`: the value goes on the stack's top frame, and a plain array or object stays the script's
 /// object, tracked, so `entry = list[i]; entry.field = x` changes the element as on QuickJS.
 pub(super) fn write_name<J: Js>(js: &mut J, name: &str, value: &Value) -> Result<(), Conv> {
+    if super::engine::fallback_pending() {
+        return Err(Conv::Unsupported("a run that fell back"));
+    }
     let engine = current().ok_or(Conv::Unsupported("no oxide engine"))?;
     {
         let mut values = values(&engine).borrow_mut();
@@ -179,6 +198,11 @@ fn readopt(engine: &OxideEngine, name: &str) -> Option<Value> {
 
 /// Write the tracked lists and maps that changed back to the stack (see the module doc for the modes).
 pub(super) fn flush<J: Js>(js: &mut J, mode: Flush) -> Result<(), Conv> {
+    // a run that fell back writes nothing back: QuickJS runs it again from the start (the end of the run skips its
+    // flush too); a host call's flush fails the call
+    if super::engine::fallback_pending() {
+        return Err(Conv::Unsupported("a run that fell back"));
+    }
     let Some(engine) = current() else {
         return Ok(());
     };

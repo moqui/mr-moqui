@@ -308,6 +308,21 @@ thread_local! {
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
+/// Why a text whose check passed runs on QuickJS: a name it reads holds a value the oxide bindings do not have yet,
+/// and its run may make a side effect before it reads it ([`crate::script::oxide::reads_are_held`]).
+const STACK_VALUE: &str = "stack value";
+
+/// Send the text of `kind` and `hash` to QuickJS for the rest of the thread's life, as [`MAX_FALLBACKS`] fallbacks do.
+fn remember_quickjs(kind: EntryKind, hash: u64) {
+    FALLEN_BACK.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.len() >= MAX_FALLBACK_TEXTS {
+            memo.clear();
+        }
+        memo.insert((kind, hash), MAX_FALLBACKS);
+    });
+}
+
 /// Whether the text of `kind` and `hash` fell back [`MAX_FALLBACKS`] times on this thread.
 fn fell_back_often(kind: EntryKind, hash: u64) -> bool {
     FALLEN_BACK.with(|memo| {
@@ -328,11 +343,17 @@ pub(crate) fn ec_path_allowed(path: &str) -> bool {
 /// and no oxide script is running on the thread already (a nested run would re-enter the runtime, which the fork's
 /// re-entry handle F3a will allow); in `oxide` a kind the bindings do not cover is an error naming it. The census
 /// ([`crate::script::census`]) records the route and the check's verdict of each small text when it is on.
+#[cfg(test)]
 pub(crate) fn route(kind: EntryKind, text: &str, hash: u64) -> Result<Route, Error> {
+    route_checked(kind, text, hash).map(|(route, _)| route)
+}
+
+/// [`route`], with the check's verdict when it was made.
+fn route_checked(kind: EntryKind, text: &str, hash: u64) -> Result<(Route, Option<check::Verdict>), Error> {
     let setting = script_engine();
     let census = crate::script::census::enabled() && kind.is_small();
     if setting == ScriptEngine::Rquickjs && !census {
-        return Ok(Route::QuickJs);
+        return Ok((Route::QuickJs, None));
     }
     let verdict = (census || (kind.oxide_covers() && setting == ScriptEngine::SmallOxide))
         .then(|| check::verdict(text, hash, kind.profile(), &ec_path_allowed));
@@ -341,12 +362,16 @@ pub(crate) fn route(kind: EntryKind, text: &str, hash: u64) -> Result<Route, Err
     if memo {
         counts::bump(|counts| &counts.memo);
     }
+    if why == Some(STACK_VALUE) {
+        // the next runs of the text on this thread go to QuickJS without looking at the stack again
+        remember_quickjs(kind, hash);
+    }
     if census {
         if let Some(verdict) = &verdict {
             crate::script::census::record(kind, text, hash, route, verdict, why);
         }
     }
-    Ok(route)
+    Ok((route, verdict))
 }
 
 /// The route for `setting` and `kind`, and when it is QuickJS for a kind oxide covers, why.
@@ -375,6 +400,18 @@ fn choose(
                 return Ok((Route::QuickJs, Some("fell back before")));
             }
             match verdict {
+                // a run that may act and then read a name whose value oxide does not hold could not fall back
+                Some(verdict)
+                    if verdict.passes()
+                        && verdict.may_act_before_a_read()
+                        && !crate::script::oxide::reads_are_held(
+                            verdict.reads(),
+                            verdict.members(),
+                            verdict.reads_all_context(),
+                        ) =>
+                {
+                    Ok((Route::QuickJs, Some(STACK_VALUE)))
+                }
                 Some(verdict) if verdict.passes() => Ok((Route::Oxide, None)),
                 _ => Ok((Route::QuickJs, Some("check"))),
             }
@@ -453,12 +490,12 @@ pub(crate) fn try_oxide<T>(
         return Ok(None);
     }
     let hash = crate::script::text::hash_text(source);
-    if route(kind, source, hash)? != Route::Oxide {
+    let (route, verdict) = route_checked(kind, source, hash)?;
+    if route != Route::Oxide {
         return Ok(None);
     }
     // whether the run writes back what it read by name: the check's answer, or any script under `oxide`
-    let writes = script_engine() == ScriptEngine::Oxide
-        || check::verdict(source, hash, kind.profile(), &ec_path_allowed).writes();
+    let writes = script_engine() == ScriptEngine::Oxide || verdict.is_none_or(|verdict| verdict.writes());
     let _census = crate::script::census::begin(kind, hash);
     let calls = crate::script::census::host_calls();
     match cross_into_oxide(writes, || run(source, hash, writes))? {
@@ -532,27 +569,20 @@ pub(crate) fn small_script<T: PartialEq + std::fmt::Debug>(
         Ok(Some(value)) => Ok(value),
         Err(err) => Err(err),
     };
-    // Run again only what had no effect: no host call, no write, nothing that reads the clock or a random number.
+    // Run again only what had no effect: no host call, no write, nothing that reads the clock or a random number (the
+    // static check's answers).
     if difference_check()
         && script_engine() == ScriptEngine::SmallOxide
         && kind.profile() == Profile::Expression
         && crate::script::census::host_calls() == calls
-        && !reads_moving_values(source)
     {
         let hash = crate::script::text::hash_text(source);
-        if !check::verdict(source, hash, Profile::Expression, &ec_path_allowed).writes() {
+        let verdict = check::verdict(source, hash, Profile::Expression, &ec_path_allowed);
+        if !verdict.writes() && !verdict.reads_moving_values() {
             compare(kind, source, &ran, &quickjs());
         }
     }
     ran
-}
-
-/// Whether a text reads a value that moves between two runs (the clock, a random number), which the difference check
-/// would report as a difference: `nowTimestamp`, `Date`, `Math.random`.
-fn reads_moving_values(source: &str) -> bool {
-    ["now", "Now", "Date", "random"]
-        .iter()
-        .any(|word| source.contains(word))
 }
 
 /// Log a difference between the oxide answer and the QuickJS one.

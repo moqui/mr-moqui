@@ -26,7 +26,7 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use moqui_lib::context_stack::{ContextStack, Lookup};
@@ -43,12 +43,10 @@ use rquickjs::{
 
 mod bind;
 mod compiled;
-mod conditions;
 mod convert;
 mod decimal;
 mod ec_extra;
 mod entities;
-mod error_info;
 mod facades;
 #[cfg(test)]
 mod framework_gaps_tests;
@@ -59,46 +57,38 @@ mod native_tools;
 #[cfg(test)]
 mod realm_tests;
 mod screen_host;
-mod search;
 mod upload;
 mod values;
 mod web_host;
 
 pub(crate) use crate::script::text::ScriptText;
 use compiled::{eval_compiled, eval_compiled_text, MAX_COMPILED_SCRIPTS, MAX_COMPILED_SCRIPT_BYTES};
-use conditions::{
-    comparison, condition_js, condition_of, date_range_condition, join, make_action_condition, make_condition,
-    make_condition_date, make_condition_where, HostCondition,
-};
 use convert::{
-    collection_to_js, converts_with_script, enter_nested, host_ref_to_js, host_texts, i64_to_js, js_bytes, js_caught,
+    collection_to_js, converts_with_script, enter_nested, host_ref_to_js, js_bytes, js_caught,
     js_i64, js_matches_host, js_string, js_truthy, js_value_to_host, object_map, optional_text, text_or_empty,
-    value_to_js,
 };
 pub use convert::{host_to_js, js_to_host};
 use decimal::HostDecimal;
 pub use ec_extra::expand_localized;
 use entities::{
-    atom_name, entity_find, entity_make_value, entity_to_js, install_entity_prototypes, keep_assigned, prototype_has,
-    prototype_member, wrap_find, HostEntity, HostFind, HostList, ScriptList,
+    atom_name, entity_to_js, install_entity_prototypes, keep_assigned, prototype_has, prototype_member, wrap_find,
+    HostEntity, HostList, ScriptList,
 };
 pub(crate) use convert::{temporal_text, MAX_NESTING, SAFE_INTEGER, SET_KEY, TOO_DEEP, WRAP_KEY};
 pub(crate) use crate::script::host::rounding_strategy_named as rounding_named;
 pub(crate) use decimal::{arith, decimal_of, decimals_compare, decimals_equal, Arith};
 pub(crate) use entities::{
-    entity_field, entity_field_names, entity_is_field, entity_set_field, EntityCell, EntityField,
+    entity_field_names, entity_is_field, entity_set_field, EntityCell, EntityField,
 };
-use error_info::HostErrorInfo;
 pub use facades::forget_scripts;
 pub use facades::run_script_location;
 use facades::{
     resource_expand, resource_script, sri_send_redirect_and_stop_render, system_get_property,
 };
-use helpers::{install_helpers, now_timestamp, timestamp_of};
+use helpers::install_helpers;
 use native_tools::{tool_to_js, HostTool};
 pub(crate) use screen_host::with_screen_runner;
-use search::entity_get_data_documents;
-use upload::{HostStream, HostUpload, StreamBytes};
+use upload::StreamBytes;
 pub use values::script_list_values;
 pub(crate) use values::{context_combined, pop_context_frame, put_context_all, value_entity_name, value_field};
 pub use values::{value_items, value_map};
@@ -112,7 +102,7 @@ pub use crate::script::run::DeadlineGuard;
 use crate::script::run::{script_limit_for, NESTED_STACK, REQUEST_SCRIPT_STACK, SCRIPT_LIMIT};
 pub(crate) use crate::script::run::STACK;
 use crate::script::run::{stack_budget, EngineTag, ScriptLimit, DEADLINE, DEPTH, MAX_SCRIPT_DEPTH};
-use moqui_db::sql::{CompareOp, Condition};
+use moqui_db::sql::Condition;
 
 use crate::entity::{EntityFacade, EntityFind, EntityList, EntityValue};
 
@@ -355,6 +345,12 @@ pub struct EngineStats {
     pub oxide_compiled: u64,
     /// Oxide runtimes dropped after a host function panicked.
     pub oxide_poisoned: u64,
+    /// The process's oxide code images: made, loaded by a runtime instead of compiled (each a parse avoided), failed,
+    /// and the bytes kept.
+    pub oxide_images_made: u64,
+    pub oxide_image_loads: u64,
+    pub oxide_image_failures: u64,
+    pub oxide_image_bytes: usize,
     /// Oxide runs that met something the bindings do not have before any host call, and ran on QuickJS instead.
     pub oxide_fallbacks: u64,
     /// Differences between the engines the difference check (`script_engine_check`) found.
@@ -387,6 +383,10 @@ pub fn engine_stats() -> EngineStats {
         oxide_heap_peaks: crate::script::oxide::thread_heap_peaks(),
         oxide_compiled: oxide.compiled,
         oxide_poisoned: oxide.poisoned,
+        oxide_images_made: oxide.images.made,
+        oxide_image_loads: oxide.images.loads,
+        oxide_image_failures: oxide.images.failed,
+        oxide_image_bytes: oxide.images.bytes,
         oxide_fallbacks: crate::script::engine::oxide_fallbacks(),
         oxide_differences: crate::script::engine::oxide_differences(),
         check_parses: crate::script::check::parses(),
@@ -1657,22 +1657,6 @@ pub(super) fn context_combined_map(ctx: &Ctx<'_>) -> Result<Value, Error> {
     Ok(Value::Map(STACK.with(|stack| stack.borrow().combined_map())))
 }
 
-/// Set a name on the stack from host code, forgetting any list or map the script already read
-/// under that name so its next read sees the new value.
-fn put_name(ctx: &Ctx<'_>, name: &str, value: Value) -> rquickjs::Result<()> {
-    if let Some(engine) = current_engine() {
-        engine.tracked.borrow_mut().remove(name);
-        engine.released.borrow_mut().remove(name);
-    }
-    STACK.with(|stack| {
-        stack
-            .borrow_mut()
-            .put(name, value)
-            .map(|_| ())
-            .map_err(|err| Exception::throw_message(ctx, err.message()))
-    })
-}
-
 fn stack_get(name: &str) -> Lookup {
     STACK.with(|stack| stack.borrow().get(name))
 }
@@ -1996,73 +1980,9 @@ fn default_transactions(ctx: &Ctx<'_>) -> rquickjs::Result<crate::transaction::T
 
 fn entity_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     let entity = Object::new(ctx.clone()).map_err(js_error)?;
-    let find = caught(ctx, "entity.find", Function::new(ctx.clone(), entity_find))?;
-    entity.set("find", find).map_err(js_error)?;
-    let make = caught(ctx, "entity.makeValue", Function::new(ctx.clone(), entity_make_value))?;
-    entity.set("makeValue", make).map_err(js_error)?;
-    let start_sim = caught(
-        ctx,
-        "entity.startTxCacheDb",
-        Function::new(ctx.clone(), entities::entity_start_tx_cache_db),
-    )?;
-    entity.set("startTxCacheDb", start_sim).map_err(js_error)?;
-    let stop_sim = caught(
-        ctx,
-        "entity.stopTxCache",
-        Function::new(ctx.clone(), entities::entity_stop_tx_cache),
-    )?;
-    entity.set("stopTxCache", stop_sim).map_err(js_error)?;
-    let sim_active = caught(
-        ctx,
-        "entity.isTxCacheActive",
-        Function::new(ctx.clone(), entities::entity_is_tx_cache_active),
-    )?;
-    entity.set("isTxCacheActive", sim_active).map_err(js_error)?;
-    let documents = caught(
-        ctx,
-        "entity.getDataDocuments",
-        Function::new(ctx.clone(), entity_get_data_documents),
-    )?;
-    entity.set("getDataDocuments", documents).map_err(js_error)?;
-    let sequenced = caught(
-        ctx,
-        "entity.sequencedIdPrimary",
-        Function::new(ctx.clone(), entities::entity_sequenced_id_primary),
-    )?;
-    entity.set("sequencedIdPrimary", sequenced).map_err(js_error)?;
-    let conf_name = caught(
-        ctx,
-        "entity.getDatabaseConfName",
-        Function::new(ctx.clone(), entities::entity_get_database_conf_name),
-    )?;
-    entity.set("getDatabaseConfName", conf_name).map_err(js_error)?;
-    let temp_set = caught(
-        ctx,
-        "entity.tempSetSequencedIdPrimary",
-        Function::new(ctx.clone(), entities::entity_temp_set_sequenced_id_primary),
-    )?;
-    entity.set("tempSetSequencedIdPrimary", temp_set).map_err(js_error)?;
-    let temp_reset = caught(
-        ctx,
-        "entity.tempResetSequencedIdPrimary",
-        Function::new(ctx.clone(), entities::entity_temp_reset_sequenced_id_primary),
-    )?;
-    entity
-        .set("tempResetSequencedIdPrimary", temp_reset)
-        .map_err(js_error)?;
-    let factory = Object::new(ctx.clone()).map_err(js_error)?;
-    let make_condition = Function::new(ctx.clone(), make_condition).map_err(js_error)?;
-    factory.set("makeCondition", make_condition).map_err(js_error)?;
-    let make_where = Function::new(ctx.clone(), make_condition_where).map_err(js_error)?;
-    factory.set("makeConditionWhere", make_where).map_err(js_error)?;
+    // find, makeValue and the sequence and transaction cache functions are the host table's (script/host/entities.rs)
     entity.set("databaseTimeZone", "UTC").map_err(js_error)?;
-    let make_date = Function::new(ctx.clone(), make_condition_date).map_err(js_error)?;
-    factory.set("makeConditionDate", make_date).map_err(js_error)?;
-    let make_direct = Function::new(ctx.clone(), make_action_condition).map_err(js_error)?;
-    factory
-        .set("makeActionConditionDirect", make_direct)
-        .map_err(js_error)?;
-    entity.set("conditionFactory", factory).map_err(js_error)?;
+    // getDataDocuments and conditionFactory are the host table's too (script/host/conditions.rs)
     Ok(entity)
 }
 

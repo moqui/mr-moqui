@@ -30,7 +30,32 @@ use crate::script::host::{
 #[rquickjs::class]
 pub(super) struct HostNeutral {
     #[qjs(skip_trace)]
+    pub(super) obj: HostObject,
+}
+
+/// A new object of `class` over `obj`, its prototype the running engine's.
+pub(super) fn running_instance<'js>(
+    ctx: &Ctx<'js>,
     obj: HostObject,
+    class: &'static HostClass,
+) -> rquickjs::Result<Object<'js>> {
+    instance(ctx, obj, class, Prototypes::Running)
+}
+
+/// The state a method of the host table reads from its receiver: an object of a host class, or an entity list or value
+/// (exotic classes whose prototypes are the table's, `runtime/entities.rs`).
+fn receiver_state<'js>(ctx: &Ctx<'js>, this: &JsValue<'js>) -> Option<HostObject> {
+    if let Ok(class) = Class::<HostNeutral>::from_js(ctx, this.clone()) {
+        return class.try_borrow().ok().map(|held| held.obj.clone());
+    }
+    let object = this.as_object()?;
+    if let Some(class) = object.as_class::<super::HostEntity>() {
+        return class.try_borrow().ok().map(|held| HostObject(held.inner.clone()));
+    }
+    if let Some(class) = object.as_class::<super::HostList>() {
+        return class.try_borrow().ok().map(|held| held.host_state());
+    }
+    None
 }
 
 /// Install every path of the host table under `ec`, as the oxide binder's `install_ec` does, so a registered path is
@@ -90,7 +115,8 @@ fn install_paths<'js, 'p>(
 }
 
 /// Run every shim of the host table ([`host::Shim`]), once `ec` is a global and the helper objects are filled: each is
-/// given the global object, its hidden functions and the helper objects. A shim that fails is logged and the rest run.
+/// given the global object, its hidden functions and the helper objects. The shims are fixed framework scripts, so one
+/// that fails fails the engine's start, naming it.
 pub(super) fn install_shims<'js>(
     ctx: &Ctx<'js>,
     string_utilities: &Object<'js>,
@@ -118,7 +144,11 @@ pub(super) fn install_shims<'js>(
             )
         })();
         if let Err(err) = installed {
-            tracing::error!("The host shim {} was not installed: {}", entry.path, err.message());
+            return Err(Error::new(format!(
+                "The host shim {} was not installed: {}",
+                entry.path,
+                err.message()
+            )));
         }
     }
     Ok(())
@@ -167,8 +197,17 @@ fn prototype<'js>(
 
 fn make_prototype<'js>(ctx: &Ctx<'js>, class: &'static HostClass) -> Result<Object<'js>, Error> {
     let proto = caught(ctx, class.name, Object::new(ctx.clone()))?;
+    fill_prototype(ctx, &proto, class)?;
+    Ok(proto)
+}
+
+/// Put `class`'s methods, getters and what its shim adds on `proto`: a new prototype, or the prototype of an exotic
+/// QuickJS class whose methods are the table's (an entity list or value).
+pub(super) fn fill_prototype<'js>(ctx: &Ctx<'js>, proto: &Object<'js>, class: &'static HostClass) -> Result<(), Error> {
     for method in class.methods {
-        caught(ctx, method.path, proto.set(method.name, function(ctx, method)?))?;
+        // not enumerable, as a class's methods are, so `for...in` over an entity value sees only its fields
+        let made = rquickjs::object::Property::from(function(ctx, method)?).writable().configurable();
+        caught(ctx, method.path, proto.prop(method.name, made))?;
     }
     for getter in class.getters {
         let get = move |ctx: Ctx<'js>, this: This<JsValue<'js>>| trampoline(&ctx, getter, this.0, 0, |_| None);
@@ -186,7 +225,7 @@ fn make_prototype<'js>(ctx: &Ctx<'js>, class: &'static HostClass) -> Result<Obje
         let install: Function = eval_js(ctx, shim)?;
         caught(ctx, class.name, install.call::<_, ()>((proto.clone(), hidden)))?;
     }
-    Ok(proto)
+    Ok(())
 }
 
 /// The function of a method, with the `name` and `length` a typed function of its arguments had. It reads its
@@ -228,9 +267,7 @@ fn trampoline<'js>(
             thrown: None,
         };
         let converted = convert_args(ctx, method.args, arg, &mut ops.callbacks)?;
-        let state = Class::<HostNeutral>::from_js(ctx, this.clone())
-            .ok()
-            .and_then(|class| class.try_borrow().ok().map(|held| held.obj.clone()));
+        let state = receiver_state(ctx, &this);
         let flushed = match method.flush {
             FlushBefore::None => Ok(()),
             mode => ops.flush(mode),

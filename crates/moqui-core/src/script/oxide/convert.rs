@@ -16,16 +16,16 @@
 //! (`script/runtime/convert.rs`): null, booleans, numbers (an `I64` an integer where it fits, an error past the safe
 //! range), text, timestamps and dates as their text, lists and maps converted on read, a Set as the stack holds one,
 //! bytes as a `Uint8Array`, decimals and entity values as host objects. A host object the oxide bindings do not have
-//! yet (a find, an entity list, a tool, a tools map) is [`Conv::Unsupported`]: the run falls back to QuickJS.
+//! yet (a find, an entity list, an upload) and a tools map pass through as opaque objects whose members fall back; a
+//! Set from the stack is [`Conv::Unsupported`]: the run falls back to QuickJS.
 
-use std::sync::Arc;
 
 use moqui_lib::object::{HostObject, Value as HostValue};
 use quickjs_oxide::engine::api::core::{Js, JsString, ObjectRef, PropertyKey, RuntimeError, TypedArrayKind, Value};
 
 use super::decimal::OxDecimal;
 use super::engine::OxideEngine;
-use crate::script::runtime::{EntityCell, SAFE_INTEGER, SET_KEY, TOO_DEEP, WRAP_KEY};
+use crate::script::runtime::{SAFE_INTEGER, SET_KEY, TOO_DEEP, WRAP_KEY};
 
 /// How deep a host value may nest when it becomes a script value, and a script value when it becomes a host value
 /// (the QuickJS bindings' limits).
@@ -57,6 +57,51 @@ impl From<quickjs_oxide::engine::api::core::JsStringError> for Conv {
 /// A property key for `name`.
 pub(super) fn key(name: &str) -> Result<PropertyKey, Conv> {
     Ok(PropertyKey::from_js_string(JsString::try_from_utf8(name)?))
+}
+
+/// The text of a string, for a bare name or a field name an exotic hook reads: a short one without an allocation.
+pub(super) struct KeyText {
+    inline: [u8; 64],
+    len: usize,
+    heap: Option<String>,
+}
+
+impl std::ops::Deref for KeyText {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        match &self.heap {
+            Some(text) => text,
+            None => std::str::from_utf8(&self.inline[..self.len]).unwrap_or_default(),
+        }
+    }
+}
+
+/// [`KeyText`] of `text`, as `to_utf8_lossy` gives it.
+pub(super) fn text_of(text: &JsString) -> KeyText {
+    let mut out = KeyText {
+        inline: [0; 64],
+        len: 0,
+        heap: None,
+    };
+    for decoded in char::decode_utf16(text.utf16_units()) {
+        let ch = decoded.unwrap_or(char::REPLACEMENT_CHARACTER);
+        if let Some(heap) = &mut out.heap {
+            heap.push(ch);
+            continue;
+        }
+        let width = ch.len_utf8();
+        if out.len + width <= out.inline.len() {
+            ch.encode_utf8(&mut out.inline[out.len..]);
+            out.len += width;
+        } else {
+            let mut heap = String::with_capacity(out.len * 2 + width);
+            heap.push_str(std::str::from_utf8(&out.inline[..out.len]).unwrap_or_default());
+            heap.push(ch);
+            out.heap = Some(heap);
+        }
+    }
+    out
 }
 
 pub(super) fn text(value: &str) -> Result<Value, Conv> {
@@ -105,8 +150,24 @@ fn to_js_at<J: Js>(js: &mut J, engine: &OxideEngine, value: &HostValue, depth: u
             if depth >= MAX_HOST_NESTING {
                 return Err(Conv::Error(TOO_DEEP.to_string()));
             }
+            // A tools object keeps its data on the stack and gets its methods back from the tools shim's wrapper, as on
+            // QuickJS (`runtime/convert.rs`): its entries converted, then `__moquiWrap(name, object)`.
+            if let (Some(HostValue::String(name)), Some(wrap)) = (entries.get(WRAP_KEY), engine.tools_wrap()) {
+                let object = js.new_object()?;
+                for (key, item) in entries {
+                    let item = to_js_at(js, engine, item, depth + 1)?;
+                    js.set_property(&object, &engine.key(key)?, item)?;
+                }
+                return Ok(js.call(wrap, Value::Undefined, &[text(name)?, Value::Object(object)])?);
+            }
+            // a `__wrap` that is not a name, or a runtime still starting: it passes through as itself, and a read of
+            // its members falls back
             if entries.contains_key(WRAP_KEY) {
-                return Err(Conv::Unsupported("a tools object"));
+                return Ok(Value::Object(js.new_host_exotic(
+                    super::names::OpaqueTarget(HostObject::new(value.clone())),
+                    &engine.protos.opaque,
+                    Some(&engine.protos.object_prototype),
+                )?));
             }
             // A Set the stack holds stays QuickJS's for now: its `add` and `delete` change it in place, and an oxide
             // copy would not be written back (the static check lets `add` through, for decimals).
@@ -116,7 +177,7 @@ fn to_js_at<J: Js>(js: &mut J, engine: &OxideEngine, value: &HostValue, depth: u
             let object = js.new_object()?;
             for (name, item) in entries {
                 let item = to_js_at(js, engine, item, depth + 1)?;
-                js.set_property(&object, &key(name)?, item)?;
+                js.set_property(&object, &engine.key(name)?, item)?;
             }
             Value::Object(object)
         }
@@ -129,8 +190,8 @@ fn to_js_at<J: Js>(js: &mut J, engine: &OxideEngine, value: &HostValue, depth: u
 }
 
 fn object_to_js<J: Js>(js: &mut J, engine: &OxideEngine, object: &HostObject) -> Result<Value, Conv> {
-    if let Some(cell) = object.downcast::<EntityCell>() {
-        return entity_to_js(js, engine, cell);
+    if let Some(value) = super::bind::entities::object_to_js(js, engine, object)? {
+        return Ok(value);
     }
     if let Some(tool) = object.downcast::<crate::native::ToolHandle>() {
         let prototype = engine.protos.object_prototype.clone();
@@ -141,32 +202,14 @@ fn object_to_js<J: Js>(js: &mut J, engine: &OxideEngine, object: &HostObject) ->
             Some(&prototype),
         )?));
     }
-    // An upload or a stream passes through a script to a service as itself, as on QuickJS; its methods fall back.
-    if object.downcast::<crate::web::multipart::UploadedFile>().is_some()
-        || object.downcast::<crate::script::host::StreamBytes>().is_some()
-    {
-        return Ok(Value::Object(js.new_host_exotic(
-            super::names::OpaqueTarget(object.clone()),
-            &engine.protos.opaque,
-            Some(&engine.protos.object_prototype),
-        )?));
-    }
-    Err(Conv::Unsupported("a host object the oxide bindings do not have yet"))
-}
-
-/// An entity value: an exotic object over its cell ([`super::names::EntityValues`]), one per cell in a run, so a value
-/// read twice is the same object.
-fn entity_to_js<J: Js>(js: &mut J, engine: &OxideEngine, cell: Arc<EntityCell>) -> Result<Value, Conv> {
-    if let Some(proxy) = engine.entity_proxy(&cell) {
-        return Ok(Value::Object(proxy));
-    }
-    let object = js.new_host_exotic(
-        super::names::EntityTarget(Arc::clone(&cell)),
-        &engine.protos.entities,
+    // Any other host object (an upload, a stream, an entity list, a find) passes through a script as itself, as on
+    // QuickJS: a host call's result that holds one converts, and goes back to the host as it came. Only a read of its
+    // members falls back (`names::OpaqueValues`), so a run fails only when it uses one.
+    Ok(Value::Object(js.new_host_exotic(
+        super::names::OpaqueTarget(object.clone()),
+        &engine.protos.opaque,
         Some(&engine.protos.object_prototype),
-    )?;
-    engine.keep_entity(object.clone(), cell);
-    Ok(Value::Object(object))
+    )?))
 }
 
 /// An oxide value as a host value; an error for one that cannot be held (a function, a symbol, a cyclic value).
@@ -201,14 +244,21 @@ fn to_host_in<J: Js>(
     if let Some(decimal) = js.host_data::<OxDecimal>(object)? {
         return Ok(decimal.inner.clone());
     }
+    if super::context::is_stack(js, object)? {
+        return super::context::combined_map(js);
+    }
     if let Some(tool) = js.host_data::<std::sync::Arc<crate::native::ToolHandle>>(object)? {
         return Ok(HostValue::Object(HostObject(std::sync::Arc::clone(&tool) as _)));
     }
     if let Some(opaque) = js.host_data::<super::names::OpaqueTarget>(object)? {
+        // a tools object passed through is the stack's value it was made from
+        if let Some(held) = opaque.0.downcast::<HostValue>() {
+            return Ok((*held).clone());
+        }
         return Ok(HostValue::Object(opaque.0.clone()));
     }
-    if let Some(cell) = super::names::entity_cell(js, object)? {
-        return Ok(HostValue::Object(HostObject(cell)));
+    if let Some(host) = super::bind::entities::object_to_host(js, object)? {
+        return Ok(host);
     }
     if js.is_array_object(object)? {
         enter(path, object)?;

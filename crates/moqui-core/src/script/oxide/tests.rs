@@ -142,24 +142,27 @@ fn a_script_nested_under_a_lend_runs_on_oxide() -> Result<(), Error> {
     })
 }
 
-/// A run that wrote to the stack and then met what the bindings lack is an error, not a second run on QuickJS that
-/// would write again.
+/// A run that may write to the stack and then read a name whose value the bindings lack goes to QuickJS from the
+/// start (`oxide::reads`), so it neither fails after the write nor writes twice; and its next runs on the thread go
+/// there without looking at the stack.
 #[test]
-fn a_fallback_after_a_write_is_an_error() -> Result<(), Error> {
+fn a_run_that_would_fall_back_after_a_write_runs_on_quickjs() -> Result<(), Error> {
     use crate::script::{with_script_engine, ScriptEngine};
     clear_context_stack();
     push_context_frame();
     set_context_name("total", Value::I32(1))?;
-    let mut tools = indexmap::IndexMap::new();
-    tools.insert("__wrap".to_string(), Value::string("x"));
-    set_context_name("tools", Value::Map(tools))?;
+    // a Set the stack holds is QuickJS's (`oxide::convert`)
+    let mut set = indexmap::IndexMap::new();
+    set.insert(crate::script::runtime::SET_KEY.to_string(), Value::List(vec![Value::I32(1)]));
+    set_context_name("held", Value::Map(set))?;
     with_script_engine(ScriptEngine::SmallOxide, || -> Result<(), Error> {
-        let err = crate::script::run_actions(
-            r#"<actions><set field="total" from="total + 1"/><set field="copy" from="tools"/></actions>"#,
-        )
-        .unwrap_err();
-        assert!(err.message().contains("after a host call"), "{}", err.message());
+        let actions = r#"<actions><set field="total" from="total + 1"/><set field="copy" from="held"/></actions>"#;
+        let before = crate::script::engine::oxide_runs_here(crate::script::engine::EntryKind::Actions);
+        crate::script::run_actions(actions)?;
         assert_eq!(crate::script::context_value("total"), Some(Value::I32(2)), "added once");
+        crate::script::run_actions(actions)?;
+        assert_eq!(crate::script::context_value("total"), Some(Value::I32(3)));
+        assert_eq!(crate::script::engine::oxide_runs_here(crate::script::engine::EntryKind::Actions), before);
         Ok(())
     })
 }
@@ -352,19 +355,101 @@ fn local_time_is_the_process_zone_as_on_quickjs() -> Result<(), Error> {
 fn what_the_bindings_do_not_have_yet_falls_back() -> Result<(), Error> {
     clear_context_stack();
     push_context_frame();
+    let mut set = indexmap::IndexMap::new();
+    set.insert(crate::script::runtime::SET_KEY.to_string(), Value::List(vec![Value::I32(1)]));
+    set_context_name("held", Value::Map(set))?;
+    assert_eq!(fallback("held.size"), "a Set from the stack");
+    // a tools map whose `__wrap` is not a name passes through as itself
     let mut tools = indexmap::IndexMap::new();
-    tools.insert("__wrap".to_string(), Value::string("x"));
+    tools.insert("__wrap".to_string(), Value::I32(1));
     set_context_name("tools", Value::Map(tools))?;
-    assert_eq!(fallback("tools"), "a tools object");
-    assert_eq!(fallback("context"), "the stack as context");
+    assert_eq!(fallback("tools.x"), "a member of a host object the oxide bindings do not have yet");
+    assert!(matches!(value("[tools][0]")?, Value::Map(map) if map.contains_key("__wrap")), "passed through");
     assert_eq!(fallback("compare"), "a QuickJS global");
     assert_eq!(value("toDecimal('1.50').add(1).toString()")?, Value::string("2.50"));
     assert_eq!(value("toNumber('12.5') + toNumber(null)")?, Value::F64(12.5));
     let condition_object = Value::Object(HostObject::new(String::from("not a binding")));
     set_context_name("cond", condition_object)?;
-    assert_eq!(fallback("cond"), "a host object the oxide bindings do not have yet");
+    // such a host object passes through as itself; a read of its members falls back
+    assert!(matches!(value("cond")?, Value::Object(_)));
+    assert_eq!(fallback("cond.x"), "a member of a host object the oxide bindings do not have yet");
     // the engine runs again after a fallback
     assert_eq!(value("1 + 1")?, Value::I32(2));
+    Ok(())
+}
+
+/// After a fallback a `catch` or `finally` makes no host call: QuickJS runs the script again from the start, so a call
+/// there would be made twice (or once where QuickJS never makes it).
+#[test]
+fn no_host_call_after_a_fallback() -> Result<(), Error> {
+    clear_context_stack();
+    push_context_frame();
+    let mut set = indexmap::IndexMap::new();
+    set.insert(crate::script::runtime::SET_KEY.to_string(), Value::List(vec![Value::I32(1)]));
+    set_context_name("held", Value::Map(set))?;
+    let before = crate::script::census::host_calls();
+    let text = "(() => { try { return held.size } catch (e) { ec.message.addError('x'); return 1 } \
+                finally { ec.logger.info('y') } })()";
+    assert_eq!(fallback(text), "a Set from the stack");
+    assert_eq!(crate::script::census::host_calls(), before, "no host call was made");
+    Ok(())
+}
+
+/// The runtime starts with every host shim installed, as QuickJS's does (`runtime.rs`, `install_context`): the tools
+/// wrappers, `EdiHandler`, `SftpClient`, `sri`'s URL functions and what the tools shim adds under `ec`; a shim's global
+/// is the global object's own, not a context name.
+#[test]
+fn every_host_shim_is_installed_on_the_oxide_runtime() -> Result<(), Error> {
+    clear_context_stack();
+    push_context_frame();
+    let kinds = value(
+        "[typeof __moquiWrap, typeof EdiHandler, typeof SftpClient, typeof sri.buildUrl, \
+         typeof ResourceReference.isTextFilename, typeof ec.context.putAll, typeof ec.cache.cacheExists, \
+         typeof ec.entity.isEntityDefined].join()",
+    )?;
+    assert_eq!(kinds, Value::string(["function"; 8].join(",")));
+    assert_eq!(crate::script::context_value("EdiHandler"), None, "not a context name");
+    Ok(())
+}
+
+/// A tools map (a map with `__wrap`) a host call returns, or the stack holds, reads its members on oxide as on QuickJS:
+/// the tools shim's wrapper gives it its methods, and it goes back to the host as its data.
+#[test]
+fn a_tools_map_from_a_host_call_reads_its_members() -> Result<(), Error> {
+    use quickjs_oxide::engine::api::core::{Scope, Value as JsValue};
+    clear_context_stack();
+    push_context_frame();
+    let mut text = indexmap::IndexMap::new();
+    text.insert("__wrap".to_string(), Value::string("Text"));
+    text.insert("text".to_string(), Value::string("a rule"));
+    set_context_name("rule", Value::Map(text))?;
+    let context = super::engine::context_for_tests();
+    let global = context.global_object().unwrap();
+    context
+        .define_function(&global, "resourceRef", 0, |scope: &mut Scope<'_>| -> Result<JsValue, _> {
+            let mut reference = indexmap::IndexMap::new();
+            reference.insert("__wrap".to_string(), Value::string("Resource"));
+            reference.insert("location".to_string(), Value::string("component://x/page.md"));
+            reference.insert("fileName".to_string(), Value::string("page.md"));
+            reference.insert("exists".to_string(), Value::Bool(false));
+            reference.insert("file".to_string(), Value::Bool(true));
+            let engine = super::engine::current().expect("the engine");
+            super::convert::to_js(scope, &engine, &Value::Map(reference)).map_err(|conv| match conv {
+                super::convert::Conv::Js(err) => err,
+                _ => scope.throw_error(quickjs_oxide::engine::api::core::NativeErrorKind::Type, "not converted"),
+            })
+        })
+        .unwrap();
+    assert_eq!(
+        value("(() => { const ref = resourceRef(); return [ref.getFileName(), ref.getLocation(), ref.exists, ref.isFile()].join() })()")?,
+        Value::string("page.md,component://x/page.md,false,true")
+    );
+    assert_eq!(value("rule.toString()")?, Value::string("a rule"));
+    let Value::Map(back) = value("resourceRef()")? else {
+        panic!("not a map");
+    };
+    assert_eq!(back.get("__wrap"), Some(&Value::string("Resource")));
+    assert_eq!(back.get("fileName"), Some(&Value::string("page.md")));
     Ok(())
 }
 
@@ -426,7 +511,13 @@ fn an_entity_value_reads_its_fields() -> Result<(), Error> {
     assert!(back
         .downcast::<crate::script::runtime::EntityCell>()
         .is_some_and(|back| Arc::ptr_eq(&back, &cell)));
-    assert_eq!(fallback("order.getEntityName()"), "an entity value method");
+    // the methods are the host table's, on the prototype, as on QuickJS
+    assert_eq!(value("order.getEntityName()")?, Value::string("mantle.order.OrderHeader"));
+    assert_eq!(value("order.getMap().statusId")?, Value::string("OrderPlaced"));
+    assert!(condition(
+        "typeof order.entrySet === 'function' && order.entrySet()[0].getKey() === 'grandTotal' \
+         && order.set.length === 2 && !Object.keys(order).includes('set')"
+    ));
     // the exotic hooks: keys, `in`, own property reads and JSON see the fields; other names are Object.prototype's
     assert_eq!(
         value("Object.keys(order).join()")?,
@@ -476,5 +567,147 @@ fn the_entity_method_list_is_the_quickjs_prototypes() -> Result<(), Error> {
     let mut listed: Vec<&str> = super::names::ENTITY_METHODS.to_vec();
     listed.sort_unstable();
     assert_eq!(quickjs, listed);
+    Ok(())
+}
+
+/// A text run twice on one thread leaves its code image for the process (plans/Script-Engine-Oxide.md section 6, F1):
+/// another thread's first run of it loads the image and parses nothing.
+#[test]
+fn a_second_threads_first_run_of_a_text_does_no_parse() -> Result<(), Error> {
+    use quickjs_oxide::engine::api::core::front_end_parses;
+    let source = "[1, 2, 3].map(n => n * 2).join('-') + ' images ' + 7";
+    let expected = Value::String("2-4-6 images 7".to_string());
+    assert_eq!(value(source)?, expected);
+    let before = super::compiled::image_stats();
+    assert_eq!(value(source)?, expected);
+    assert!(super::compiled::image_stats().made > before.made, "the second run makes the image");
+    let other = std::thread::spawn(move || {
+        // the runtime's start parses its own scripts; the text's first run here parses nothing
+        super::engine::context_for_tests();
+        let parses = front_end_parses();
+        let result = value(source).map_err(|err| err.message().to_string());
+        (front_end_parses() - parses, result)
+    })
+    .join()
+    .expect("the thread runs");
+    assert_eq!(other, (0, Ok(expected)));
+    assert!(super::compiled::image_stats().loads > before.loads);
+    Ok(())
+}
+
+/// What the bindings lack is no exception a script can act on: a `catch` of it reads and writes no context name, and
+/// the run falls back with nothing written (the Actions profile allows `try`) and stops at its next poll.
+#[test]
+fn a_fallback_is_not_caught_by_the_script() -> Result<(), Error> {
+    clear_context_stack();
+    push_context_frame();
+    set_context_name("cond", Value::Object(HostObject::new(String::from("not a binding"))))?;
+    let source = "(function() { try { r = cond.x } catch (e) { r = 'caught' } finally { f = 'ran' } after = 1 })()";
+    let outcome = super::run_actions(source, hash_text(source), "catch.js");
+    assert!(matches!(outcome, Err(Outcome::Fallback(_))), "falls back");
+    assert_eq!(crate::script::context_value("r"), None);
+    assert_eq!(crate::script::context_value("after"), None);
+    Ok(())
+}
+
+/// An actions script of the wider profile (`for...of`, `for...in`, `try`, a function only called, a block-bodied
+/// arrow) runs on oxide and gives what it gives on QuickJS.
+#[test]
+fn loops_over_values_try_and_local_functions_run_alike() -> Result<(), Error> {
+    use crate::script::engine::{on_both_engines, oxide_runs_here, EntryKind, ScriptEngine};
+    let actions = r#"<actions><script><![CDATA[
+        function label(row) { const {name, qty = 0} = row; return name + ':' + qty }
+        labels = []
+        for (const row of rows) labels.push(label(row))
+        keys = ''
+        for (const key in totals) { if (key === 'skip') continue; keys += key }
+        try { missing.field = 1 } catch (e) { failed = e instanceof TypeError } finally { done = true }
+        sums = rows.map((row) => { let total = 0; for (const [, v] of Object.entries(row)) if (typeof v === 'number') total += v; return total })
+    ]]></script></actions>"#;
+    on_both_engines(|engine| {
+        clear_context_stack();
+        push_context_frame();
+        let row = |name: &str, qty: Option<i32>| {
+            let mut map = indexmap::IndexMap::new();
+            map.insert("name".to_string(), Value::string(name));
+            if let Some(qty) = qty {
+                map.insert("qty".to_string(), Value::I32(qty));
+            }
+            Value::Map(map)
+        };
+        set_context_name("rows", Value::List(vec![row("a", Some(2)), row("b", None)]))?;
+        let mut totals = indexmap::IndexMap::new();
+        for key in ["x", "skip", "y"] {
+            totals.insert(key.to_string(), Value::I32(1));
+        }
+        set_context_name("totals", Value::Map(totals))?;
+        let before = oxide_runs_here(EntryKind::Actions);
+        crate::script::run_actions(actions)?;
+        if engine == ScriptEngine::SmallOxide {
+            assert_eq!(oxide_runs_here(EntryKind::Actions), before + 1, "ran on oxide");
+        }
+        assert_eq!(
+            crate::script::context_value("labels"),
+            Some(Value::List(vec![Value::string("a:2"), Value::string("b:0")]))
+        );
+        assert_eq!(crate::script::context_value("keys"), Some(Value::string("xy")));
+        assert_eq!(crate::script::context_value("failed"), Some(Value::Bool(true)));
+        assert_eq!(crate::script::context_value("done"), Some(Value::Bool(true)));
+        assert_eq!(
+            crate::script::context_value("sums"),
+            Some(Value::List(vec![Value::I32(2), Value::I32(0)]))
+        );
+        Ok(())
+    })
+}
+
+/// `context` is the stack on oxide as on QuickJS: a name read and written through it, `in`, its keys, the `Map`
+/// methods for a name no frame holds, `delete` from the top frame, and the whole stack as a map handed to a host call.
+#[test]
+fn context_is_the_stack_as_on_quickjs() -> Result<(), Error> {
+    use crate::script::engine::{on_both_engines, oxide_runs_here, EntryKind, ScriptEngine};
+    let actions = r#"<actions><script><![CDATA[
+        context.made = context.base + 1
+        has = ['base' in context, 'context' in context, 'nothing' in context, context.containsKey('base')]
+        keys = Object.keys(context).filter((key) => key === 'base' || key === 'made').sort()
+        old = context.put('put', 'a name')
+        got = [context.get('put'), context.get('missing')]
+        context.putAll({fromMap: 2})
+        delete context.made
+        gone = context.made === null
+    ]]></script></actions>"#;
+    on_both_engines(|engine| {
+        clear_context_stack();
+        push_context_frame();
+        set_context_name("base", Value::I32(41))?;
+        let before = oxide_runs_here(EntryKind::Actions);
+        crate::script::run_actions(actions)?;
+        if engine == ScriptEngine::SmallOxide {
+            assert_eq!(oxide_runs_here(EntryKind::Actions), before + 1, "ran on oxide");
+        }
+        let value = |name: &str| crate::script::context_value(name);
+        assert_eq!(
+            value("has"),
+            Some(Value::List(vec![Value::Bool(true), Value::Bool(true), Value::Bool(false), Value::Bool(true)]))
+        );
+        assert_eq!(
+            value("keys"),
+            Some(Value::List(vec![Value::string("base"), Value::string("made")]))
+        );
+        assert_eq!(value("old"), Some(Value::Null));
+        assert_eq!(value("got"), Some(Value::List(vec![Value::string("a name"), Value::Null])));
+        assert_eq!(value("fromMap"), Some(Value::I32(2)));
+        assert_eq!(value("gone"), Some(Value::Bool(true)));
+        Ok::<(), Error>(())
+    })?;
+    // passed on as a value, the stack is the map of the visible names
+    clear_context_stack();
+    push_context_frame();
+    set_context_name("base", Value::I32(41))?;
+    let whole = value("context")?;
+    assert!(
+        matches!(&whole, Value::Map(map) if map.get("base") == Some(&Value::I32(41))),
+        "{whole:?}"
+    );
     Ok(())
 }

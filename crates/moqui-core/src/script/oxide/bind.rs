@@ -101,15 +101,18 @@ pub(crate) fn install_paths(
             "the host table is already installed in this runtime",
         ));
     }
-    js.define_own_property(
-        &global,
-        &marker,
-        &OrdinaryPropertyDescriptor::data(JsValue::Bool(true), false, false, false),
-    )?;
     let binder = Rc::new(Binder {
         hooks,
         prototypes: RefCell::new(HashMap::new()),
     });
+    // the marker holds the binder, so a conversion can make an object of a class the table returns (an entity value
+    // or list's prototype, a find kept in the context) with this runtime's prototypes
+    let handle = js.new_host_object(Installed(Rc::clone(&binder)), None)?;
+    js.define_own_property(
+        &global,
+        &marker,
+        &OrdinaryPropertyDescriptor::data(JsValue::Object(handle), false, false, false),
+    )?;
     for entry in paths.iter() {
         if let Bound::Shim(_) = entry.bound {
             continue;
@@ -149,23 +152,39 @@ pub(crate) fn install_paths(
 
 /// Run every shim of the host table ([`host::Shim`]) once `ec` and the helper objects are made: each is called with the
 /// global object, its hidden functions by name and `helpers` (an object of `CollectionUtilities`, `StringUtilities` and
-/// `WebUtilities`). A shim that fails is logged and the rest run. Its prototypes are kept apart from [`install_ec`]'s.
-#[allow(dead_code)] // the engine calls it once its runtime has the helper objects (`oxide` mode)
+/// `WebUtilities`). The shims are fixed framework scripts, so one that fails fails the runtime's start; every shim is
+/// tried, each failure logged naming its shim, and the error returned names them all. Its prototypes are kept apart
+/// from [`install_ec`]'s.
 pub(crate) fn install_shims(js: &mut impl Js, helpers: &ObjectRef, hooks: Rc<dyn OxideHooks>) -> JsResult<()> {
     let binder = Rc::new(Binder {
         hooks,
         prototypes: RefCell::new(HashMap::new()),
     });
     let global = js.global_object()?;
+    let mut failed = Vec::new();
     for entry in host::all_paths() {
         let Bound::Shim(shim) = entry.bound else {
             continue;
         };
         if let Err(err) = install_shim(js, &binder, &global, helpers, shim) {
-            tracing::error!("The host shim {} was not installed: {err}", entry.path);
+            let detail = match err {
+                RuntimeError::Exception(thrown) => match thrown_text(js, &thrown) {
+                    Ok(Some(text)) => text,
+                    _ => String::from("(exception)"),
+                },
+                other => other.to_string(),
+            };
+            tracing::error!("The host shim {} was not installed: {detail}", entry.path);
+            failed.push(format!("{}: {detail}", entry.path));
         }
     }
-    Ok(())
+    if failed.is_empty() {
+        return Ok(());
+    }
+    Err(RuntimeError::Internal(format!(
+        "host shims not installed: {}",
+        failed.join("; ")
+    )))
 }
 
 fn install_shim(
@@ -200,6 +219,36 @@ fn install_shim(
     Ok(())
 }
 
+/// The fallback reason of a host call made after the run fell back (the first reason is the one reported).
+pub(super) const FELL_BACK: &str = "a run that fell back";
+
+/// The binder [`install_ec`] installed, held by the runtime's marker.
+struct Installed(Rc<Binder>);
+
+/// The binder of the runtime `js` is in; an error before [`install_ec`] ran.
+fn installed(js: &mut impl Js) -> JsResult<Rc<Binder>> {
+    let global = js.global_object()?;
+    if let JsValue::Object(marker) = js.get_property(&global, &key(INSTALLED)?)? {
+        if let Some(held) = js.host_data::<Installed>(&marker)? {
+            return Ok(Rc::clone(&held.0));
+        }
+    }
+    Err(js.throw_error(NativeErrorKind::Type, "the host table is not installed in this runtime"))
+}
+
+/// The prototype of `class` in the runtime `js` is in, made on first use: for an exotic object whose methods are the
+/// table's (an entity value or list).
+pub(crate) fn class_prototype(js: &mut impl Js, class: &'static HostClass) -> JsResult<ObjectRef> {
+    let binder = installed(js)?;
+    prototype(js, &binder, class)
+}
+
+/// A new object of `class` over `obj` in the runtime `js` is in (a find kept in the context, read back).
+pub(crate) fn class_instance(js: &mut impl Js, obj: HostObject, class: &'static HostClass) -> JsResult<ObjectRef> {
+    let binder = installed(js)?;
+    instance(js, &binder, obj, class)
+}
+
 fn key(name: &str) -> JsResult<PropertyKey> {
     Ok(PropertyKey::from_js_string(JsString::try_from_utf8(name)?))
 }
@@ -221,7 +270,12 @@ fn prototype(js: &mut impl Js, binder: &Rc<Binder>, class: &'static HostClass) -
     let proto = js.new_object()?;
     for method in class.methods {
         let made = function(js, binder, method)?;
-        js.set_property(&proto, &key(method.name)?, JsValue::Object(made.into_object()))?;
+        // not enumerable, as a class's methods are, so `for...in` over an entity value sees only its fields
+        js.define_own_property(
+            &proto,
+            &key(method.name)?,
+            &OrdinaryPropertyDescriptor::data(JsValue::Object(made.into_object()), true, false, true),
+        )?;
     }
     for getter in class.getters {
         let made = function(js, binder, getter)?;
@@ -270,6 +324,10 @@ fn function(js: &mut impl Js, binder: &Rc<Binder>, method: &'static Method) -> J
 
 /// One call: the arguments by kind, the flush, the body, with a panic caught and a failure thrown as on QuickJS.
 fn trampoline(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'_>) -> JsResult<JsValue> {
+    // a run that fell back makes no more side effects: a `catch` or `finally` of the throw does not reach the host
+    if super::engine::fallback_pending() {
+        return Err(super::engine::host_error(scope, super::convert::Conv::Unsupported(FELL_BACK)));
+    }
     host::note_path(method.path);
     let required = method.required();
     let given = scope.argc();
@@ -277,14 +335,27 @@ fn trampoline(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'_
         let message = format!("Error calling function with {given} argument(s) while {required} where expected");
         return Err(scope.throw_error(NativeErrorKind::Type, &message));
     }
-    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| call_method(binder, method, scope)));
-    match outcome {
+    // a panic is not in flight when a call starts, so a mark an earlier one left at the top is stale
+    UNWOUND.with(|unwound| unwound.set(false));
+    match caught_panic(|| call_method(binder, method, scope)) {
         Ok(result) => result,
-        // A panic that unwound through the engine (a nested call, a conversion) left it inconsistent and poisoned: it
-        // goes on to the embedder's call, as quickjs-oxide passes a host function's panic, rather than becoming an
-        // error the script could catch and go on from.
-        Err(payload) if UNWOUND.with(|unwound| unwound.replace(false)) => std::panic::resume_unwind(payload),
-        Err(payload) => Err(plain_error(scope, &host::panic_message(payload.as_ref()))),
+        Err(message) => Err(plain_error(scope, &message)),
+    }
+}
+
+/// `body`, with a panic in its own code caught as its message, as `host_guard` catches one on QuickJS. A panic that
+/// unwound through the engine (a nested call, a conversion, a nested script in a lent body) left it inconsistent and
+/// poisoned: it goes on to the embedder's call, as quickjs-oxide passes a host function's panic, rather than becoming
+/// an error the script could catch and go on from. It goes on marked, so each trampoline and lend it passes on the way
+/// up passes it on too.
+pub(super) fn caught_panic<R>(body: impl FnOnce() -> R) -> Result<R, String> {
+    match std::panic::catch_unwind(AssertUnwindSafe(body)) {
+        Ok(result) => Ok(result),
+        Err(payload) if UNWOUND.with(|unwound| unwound.replace(false)) => {
+            let _engine = EngineCall;
+            std::panic::resume_unwind(payload)
+        }
+        Err(payload) => Err(host::panic_message(payload.as_ref())),
     }
 }
 
@@ -293,8 +364,9 @@ thread_local! {
     static UNWOUND: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Marks an engine operation a trampoline makes outside the body: a panic that unwinds through it came through the
-/// engine, so the runtime cannot go on. A panic in the body's own code does not pass one.
+/// Marks an engine operation a trampoline makes outside the body, and a lend: a panic that unwinds through it came
+/// through the engine, so the runtime cannot go on. A panic in the body's own code does not pass one; one in a lent
+/// body's own code is caught inside the lend ([`caught_panic`]), so it does not pass the lend's either.
 struct EngineCall;
 
 impl Drop for EngineCall {
@@ -316,7 +388,11 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
     let engine = EngineCall;
     let args = convert_args(binder, scope, method.args, &mut callbacks)?;
     let this = scope.this();
-    let state = scope.this_host_data::<OxideHost>()?;
+    let state = match scope.this_host_data::<OxideHost>()? {
+        Some(held) => Some(held.obj.clone()),
+        // an entity value or list, whose prototype is the table's
+        None => entities::receiver_state(scope, &this)?,
+    };
     drop(engine);
     let outcome = {
         let mut ops = OxideOps {
@@ -329,7 +405,7 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
             FlushBefore::None => Ok(()),
             mode => ops.flush(mode),
         };
-        let this_state = state.as_ref().map(|held| &held.obj);
+        let this_state = state.as_ref();
         let result = flushed.and_then(|()| {
             if !method.leaf {
                 // The body may run a nested script: the engine is lent to it, so the script runs on this runtime.
@@ -339,8 +415,9 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
                     (0..method.args.len()).any(|index| matches!(args.get(index), Some(Arg::WholeContext)));
                 let whole = if passes_context { Some(ops.whole_context()?) } else { None };
                 let mut lent = LentOps { whole };
-                // A panic that unwinds out of the lend came through the engine's frames (a nested trampoline resumes
-                // one that way): the runtime is poisoned, so it goes on to the embedder ([`EngineCall`]).
+                // A panic in the body's own code is caught inside the lend and thrown as an error. One that unwinds
+                // out of the lend came through the engine's frames (a nested script, whose trampoline resumed it
+                // marked): the runtime is poisoned, so it goes on to the embedder ([`EngineCall`]).
                 let _engine = EngineCall;
                 return ops.scope.lend(|| {
                     let mut call = Call {
@@ -348,7 +425,7 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
                         args,
                         ops: &mut lent,
                     };
-                    (method.f)(&mut call)
+                    caught_panic(|| (method.f)(&mut call)).unwrap_or_else(|message| Err(HostError::Message(message)))
                 });
             }
             let mut call = Call {
@@ -519,7 +596,7 @@ fn is_ec_context(scope: &mut Scope<'_>, value: &JsValue) -> JsResult<bool> {
 }
 
 /// The text a log call gives its exception: `name: message` of an error object, its `message` alone, or a string.
-fn thrown_text(scope: &mut Scope<'_>, value: &JsValue) -> JsResult<Option<String>> {
+fn thrown_text(scope: &mut impl Js, value: &JsValue) -> JsResult<Option<String>> {
     Ok(match value {
         JsValue::Undefined | JsValue::Null => None,
         JsValue::Object(object) => {
@@ -576,7 +653,7 @@ fn new_error(scope: &mut impl Js, message: &str) -> JsResult<ObjectRef> {
 }
 
 /// Throw `err` as the QuickJS binder throws it.
-fn throw(scope: &mut Scope<'_>, err: HostError, thrown: Option<RuntimeError>) -> RuntimeError {
+pub(super) fn throw(scope: &mut impl Js, err: HostError, thrown: Option<RuntimeError>) -> RuntimeError {
     if let Some(marked) = err.marked() {
         return match marked_error(scope, &marked) {
             Ok(error) => RuntimeError::Exception(JsValue::Object(error)),
@@ -593,7 +670,7 @@ fn throw(scope: &mut Scope<'_>, err: HostError, thrown: Option<RuntimeError>) ->
 
 /// An `Error` of the message with the diagnostic after its stack and the kind and retry seconds marked, as runtime.rs's
 /// `throw_diagnostic`.
-fn marked_error(scope: &mut Scope<'_>, marked: &host::Thrown<'_>) -> JsResult<ObjectRef> {
+fn marked_error(scope: &mut impl Js, marked: &host::Thrown<'_>) -> JsResult<ObjectRef> {
     let error = new_error(scope, marked.message)?;
     let detail = marked
         .diagnostic
@@ -664,6 +741,12 @@ impl OxideOps<'_, '_> {
 }
 
 impl EngineOps for OxideOps<'_, '_> {
+    fn lend(&mut self, body: &mut dyn FnMut()) -> Result<(), HostError> {
+        // a panic in the body's own code is an error; one through the engine goes on ([`caught_panic`])
+        let _engine = EngineCall;
+        self.scope.lend(|| caught_panic(body)).map_err(HostError::Message)
+    }
+
     fn evaluate(&mut self, source: &str, name: &str) -> Result<Value, HostError> {
         let hooks = Rc::clone(&self.binder.hooks);
         let _engine = EngineCall;
@@ -706,6 +789,10 @@ impl EngineOps for OxideOps<'_, '_> {
         hooks.flush(self.scope, mode).map_err(|err| self.failed(err))
     }
 }
+
+/// Entity values and lists as host exotic objects whose methods are the table's.
+#[path = "entities.rs"]
+pub(crate) mod entities;
 
 /// Native tools as host exotic objects.
 #[allow(dead_code)] // the engine makes tool objects once its conversion of host values reaches them

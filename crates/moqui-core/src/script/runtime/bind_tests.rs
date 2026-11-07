@@ -51,3 +51,17 @@ fn the_web_shim_methods_keep_their_names_and_lengths() -> Result<(), Error> {
         Ok(())
     })
 }
+
+/// Every shim of the host table installs when the engine starts (a shim that fails fails the start), and makes what it
+/// is for: `tools`' members of `ec`, `EdiHandler`, `sri`'s URL functions and `SftpClient`.
+#[test]
+fn every_host_shim_installs() -> Result<(), Error> {
+    with_ctx(|ctx| {
+        let got: String = ctx
+            .eval("[typeof ec.artifactExecution.runAsUser, typeof EdiHandler, typeof sri, typeof SftpClient].join()")
+            .catch(ctx)
+            .map_err(|err| Error::new(err.to_string()))?;
+        assert_eq!(got, "function,function,object,function");
+        Ok(())
+    })
+}
