@@ -30,7 +30,7 @@
 //! start of each screen's output, and `JS_SPEED_DUMP` (a directory) writes each screen's output there, to compare two
 //! builds' output. `JS_SPEED_ENGINE` (`rquickjs`, the default, or `oxide`) picks the engine: `oxide` runs the
 //! expressions section under `script_engine=small-oxide` (conditions and values on quickjs-oxide, `${}` strings still on
-//! QuickJS), and the other sections stay on QuickJS until the later phases of plans/Script-Engine-Oxide.md bind them,
+//! QuickJS), the templates section under `script_engine=oxide`, and the other sections stay on QuickJS until the later phases of plans/Script-Engine-Oxide.md bind them,
 //! which their headings say. See `speed/mod.rs` for the columns; `js kept` is the QuickJS heap, which the
 //! allocation columns do not see. The database is embedded Postgres (or `SPEED_PG_HOST`), for the services and the cached finds; nothing
 //! here writes.
@@ -180,14 +180,18 @@ fn script_speed() {
             );
         }
         if wanted("template") {
-            section(
-                &format!("templates: the fancy dialect over 20 items{quickjs}"),
-                &sizes,
-                sizes.calls,
-                |rows, calls| {
+            // templates run on quickjs-oxide under `script_engine=oxide` only (`script/oxide/templates.rs`)
+            let setting = if oxide { script::ScriptEngine::Oxide } else { script::ScriptEngine::Rquickjs };
+            let heading = if oxide {
+                "templates on quickjs-oxide (oxide: both forms; the locked one in its sandbox runtime) over 20 items"
+            } else {
+                "templates: the fancy dialect over 20 items"
+            };
+            script::with_script_engine(setting, || {
+                section(heading, &sizes, sizes.calls, |rows, calls| {
                     templates(rows, calls, &items_template);
-                },
-            );
+                });
+            });
         }
         if wanted("screen") {
             section(
