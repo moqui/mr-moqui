@@ -432,7 +432,7 @@ fn every_base_component_screen_generates_in_all_three_modes() {
                         mode,
                         macro_location: &macro_location,
                     };
-                    match crate::script::walker_context(|ctx| unit_for(ctx, &request)) {
+                    match crate::script::walker_context(|ctx| unit_for(Some(ctx), &request)) {
                         Ok(Some(_)) => units += 1,
                         Ok(None) => {}
                         Err(err) => failures.push(format!(

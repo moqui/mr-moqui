@@ -305,6 +305,12 @@ pub(super) fn missing(name: &str) -> Result<Value, Conv> {
         )),
         Lookup::Value(_) => Err(Conv::Unsupported("a stack value read twice")),
         Lookup::Missing => {
+            // the helper objects QuickJS's bare-name object answers itself, as it answers them
+            if let Some(engine) = current() {
+                if let Some((_, helper)) = engine.protos.helper_objects.iter().find(|(helper, _)| *helper == name) {
+                    return Ok(Value::Object(helper.clone()));
+                }
+            }
             if crate::script::check::QUICKJS_ONLY_GLOBALS.contains(&name) {
                 return Err(Conv::Unsupported("a QuickJS global"));
             }

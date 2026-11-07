@@ -44,6 +44,7 @@ mod pass;
 mod screen;
 mod search;
 mod service;
+pub(crate) mod globals;
 mod sftp;
 mod sri;
 mod theme;

@@ -24,6 +24,19 @@ use crate::script::text::hash_text;
 use crate::script::{clear_context_stack, push_context_frame, set_context_name};
 
 /// The value of `source` on the oxide engine, an error for an error or a fallback.
+/// This thread's setting at `small-oxide` until dropped, then back to what it was.
+fn small_oxide() -> impl Drop {
+    struct Restore(Option<crate::script::engine::ScriptEngine>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            crate::script::engine::set_thread_script_engine(self.0);
+        }
+    }
+    Restore(crate::script::engine::set_thread_script_engine(Some(
+        crate::script::engine::ScriptEngine::SmallOxide,
+    )))
+}
+
 fn value(source: &str) -> Result<Value, Error> {
     match eval_value(source, hash_text(source), false) {
         Ok(value) => Ok(value),
@@ -113,7 +126,8 @@ fn a_script_nested_under_a_lend_runs_on_oxide() -> Result<(), Error> {
     push_context_frame();
     set_context_name("n", Value::I32(1))?;
     set_context_name("items", Value::List(vec![Value::I32(1)]))?;
-    let context = super::engine::context_for_tests();
+    // the runtime small-oxide runs on, which a change of the setting would start again
+    let context = with_script_engine(ScriptEngine::SmallOxide, super::engine::context_for_tests);
     let global = context.global_object().unwrap();
     let oxide_values = || crate::script::engine::oxide_runs_here(crate::script::engine::EntryKind::Value);
     for (name, lend) in [("lent", true), ("unlent", false)] {
@@ -353,6 +367,8 @@ fn local_time_is_the_process_zone_as_on_quickjs() -> Result<(), Error> {
 
 #[test]
 fn what_the_bindings_do_not_have_yet_falls_back() -> Result<(), Error> {
+    // a test thread is not run again, so the setting stays: a fallback is small-oxide's, oxide has none
+    let _small = small_oxide();
     clear_context_stack();
     push_context_frame();
     let mut set = indexmap::IndexMap::new();
@@ -365,7 +381,7 @@ fn what_the_bindings_do_not_have_yet_falls_back() -> Result<(), Error> {
     set_context_name("tools", Value::Map(tools))?;
     assert_eq!(fallback("tools.x"), "a member of a host object the oxide bindings do not have yet");
     assert!(matches!(value("[tools][0]")?, Value::Map(map) if map.contains_key("__wrap")), "passed through");
-    assert_eq!(fallback("compare"), "a QuickJS global");
+    assert_eq!(fallback("ObjectUtilities"), "a QuickJS global");
     assert_eq!(value("toDecimal('1.50').add(1).toString()")?, Value::string("2.50"));
     assert_eq!(value("toNumber('12.5') + toNumber(null)")?, Value::F64(12.5));
     let condition_object = Value::Object(HostObject::new(String::from("not a binding")));
@@ -382,6 +398,8 @@ fn what_the_bindings_do_not_have_yet_falls_back() -> Result<(), Error> {
 /// there would be made twice (or once where QuickJS never makes it).
 #[test]
 fn no_host_call_after_a_fallback() -> Result<(), Error> {
+    // a test thread is not run again, so the setting stays: a fallback is small-oxide's, oxide has none
+    let _small = small_oxide();
     clear_context_stack();
     push_context_frame();
     let mut set = indexmap::IndexMap::new();
@@ -456,6 +474,11 @@ fn a_tools_map_from_a_host_call_reads_its_members() -> Result<(), Error> {
 /// Behind the static check: no function reaches `Function` by a computed key, and the legacy accessor definers are gone.
 #[test]
 fn the_runtime_cuts_the_ways_to_function_and_shared_accessors() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    with_script_engine(ScriptEngine::SmallOxide, cut_runtime)
+}
+
+fn cut_runtime() -> Result<(), Error> {
     clear_context_stack();
     push_context_frame();
     set_context_name("key", Value::string("constructor"))?;
@@ -475,9 +498,44 @@ fn the_runtime_cuts_the_ways_to_function_and_shared_accessors() -> Result<(), Er
     Ok(())
 }
 
+/// Under `script_engine=oxide` the runtime runs whole scripts, as QuickJS's main context does: `Function` and the rest
+/// are whole, and the thread's runtime is started again when its setting changes between scripts.
+#[test]
+fn the_oxide_setting_runs_a_whole_runtime() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    clear_context_stack();
+    push_context_frame();
+    with_script_engine(ScriptEngine::Oxide, || {
+        assert_eq!(value("Function('return 6 * 7')()")?, Value::I32(42));
+        assert_eq!(
+            value("[typeof Promise, typeof Symbol(), typeof Reflect.ownKeys, typeof new Proxy({}, {})].join()")?,
+            Value::string("function,symbol,function,object")
+        );
+        assert_eq!(value("typeof sri.encodeHtml")?, Value::string("function"));
+        assert_eq!(value("(sri = 1, typeof sri)")?, Value::string("object"), "sri is read-only");
+        // a Set the stack holds is a Set, tracked and written back
+        let set = |items: Vec<Value>| {
+            Value::Map(indexmap::IndexMap::from([(
+                crate::script::runtime::SET_KEY.to_string(),
+                Value::List(items),
+            )]))
+        };
+        set_context_name("seen", set(vec![Value::I32(1)]))?;
+        crate::script::run_script("if (!(seen instanceof Set)) throw new Error('not a Set'); seen.add(2)")?;
+        assert_eq!(crate::script::context_value("seen"), Some(set(vec![Value::I32(1), Value::I32(2)])));
+        Ok::<_, Error>(())
+    })?;
+    with_script_engine(ScriptEngine::SmallOxide, || {
+        assert!(value("(() => 1)['constructor']('return 1')()").is_err());
+        Ok(())
+    })
+}
+
 /// The debug safety net: a list an oxide run changed in place (here past the check, run directly) is logged.
 #[test]
 fn a_changed_copy_of_a_context_value_is_noticed() -> Result<(), Error> {
+    // the unflushed expressions and the fallback are small-oxide's
+    let _small = small_oxide();
     clear_context_stack();
     push_context_frame();
     set_context_name("items", Value::List(vec![Value::I32(2), Value::I32(1)]))?;
@@ -836,4 +894,194 @@ fn the_runtimes_start_notes_nothing_in_the_running_scripts_row() {
     assert_eq!(census::host_calls(), calls, "the start's host calls are not the script's");
     assert_eq!(census::noted_for_tests(), noted, "no note in the script's row");
     drop(entry);
+}
+
+/// A panic that unwinds through a nested run in `ec.resource`'s lend goes on to the embedder, as through a table
+/// method's lend: the script's `catch` does not see it.
+#[test]
+fn a_panic_through_a_resource_lend_is_not_the_scripts_to_catch() {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    use quickjs_oxide::engine::api::core::{Scope, Value as JsValue};
+    clear_context_stack();
+    push_context_frame();
+    with_script_engine(ScriptEngine::Oxide, || {
+        let context = super::engine::context_for_tests();
+        let global = context.global_object().unwrap();
+        context
+            .define_function(&global, "boom", 0, |_: &mut Scope<'_>| -> Result<JsValue, _> {
+                panic!("boom in a nested run")
+            })
+            .unwrap();
+        let ran = std::panic::catch_unwind(|| {
+            value("(() => { try { return ec.resource.expression('boom()') } catch (e) { return 'caught' } })()")
+        });
+        assert!(ran.is_err(), "the script caught a panic: {ran:?}");
+        super::engine::restart_for_tests(false);
+    });
+}
+
+/// Script web handlers on oxide: the invoker is made once per runtime, a listener is called by its event, and what a
+/// handler throws, or a file that is no handler, is the request's error.
+#[test]
+fn web_handlers_run_on_oxide() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    let dir = std::env::temp_dir().join(format!("moqui-oxide-web-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = dir.join("Listener.js");
+    std::fs::write(&listener, "({ started(event, config) { throw new Error('heard ' + event.type + ' ' + config.name) } })")
+        .unwrap();
+    let not_handler = dir.join("Number.js");
+    std::fs::write(&not_handler, "42").unwrap();
+    let data = |location: &std::path::Path| {
+        Value::Map(indexmap::IndexMap::from([
+            ("name".to_string(), Value::string("probe")),
+            ("location".to_string(), Value::string(location.to_string_lossy())),
+            ("event".to_string(), Value::string("started")),
+        ]))
+    };
+    with_script_engine(ScriptEngine::Oxide, || {
+        clear_context_stack();
+        for _ in 0..2 {
+            let location = listener.to_string_lossy();
+            let err = super::web::invoke(&location, "listener", data(&listener)).unwrap_err();
+            assert!(err.message().contains("heard started probe"), "{}", err.message());
+        }
+        assert!(super::engine::start_for_tests()?.web_invoker().get().is_some(), "the invoker is kept");
+        let err = super::web::invoke(&not_handler.to_string_lossy(), "servlet", data(&not_handler)).unwrap_err();
+        assert!(err.message().contains("must evaluate to a handler object"), "{}", err.message());
+        Ok::<_, Error>(())
+    })?;
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// A setting changed under a live run does not run the nested script on the live runtime, which is the other
+/// setting's (here a small-oxide runtime, cut for small scripts, for a nested script under `oxide`).
+#[test]
+fn a_setting_changed_under_a_live_run_does_not_use_its_runtime() {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    use quickjs_oxide::engine::api::core::{Scope, Value as JsValue};
+    clear_context_stack();
+    push_context_frame();
+    let _small = small_oxide();
+    let context = super::engine::context_for_tests();
+    let global = context.global_object().unwrap();
+    context
+        .define_function(&global, "underOxide", 0, |scope: &mut Scope<'_>| -> Result<JsValue, _> {
+            let nested = scope.lend(|| with_script_engine(ScriptEngine::Oxide, || crate::script::eval_value("1")));
+            Ok(JsValue::Bool(nested.is_err()))
+        })
+        .unwrap();
+    assert_eq!(value("underOxide()").unwrap(), Value::Bool(true));
+}
+
+/// `ec.resource` on oxide: an additional-context map is a frame of its own for the text and gone after it; an inert
+/// module's value is the same within a run and made again in the next.
+#[test]
+fn resource_texts_and_modules_on_oxide() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    let ctx = crate::context::ExecutionContextFactory::test_context();
+    let _entered = ctx.enter();
+    let dir = std::env::temp_dir().join(format!("moqui-oxide-modules-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let inert = dir.join("Inert.js");
+    std::fs::write(&inert, "function twice(n) { return n * 2 }\n({twice})\n").unwrap();
+    clear_context_stack();
+    push_context_frame();
+    set_context_name("b", Value::I32(2))?;
+    set_context_name("where", Value::string(inert.to_string_lossy()))?;
+    with_script_engine(ScriptEngine::Oxide, || {
+        crate::script::run_script(
+            "expanded = ec.resource.expand('${a}-${b}', null, {a: 1}); \
+             plain = ec.resource.expandNoL10n('${b}'); \
+             held = ec.resource.condition('a === 1 && b === 2', null, {a: 1}); \
+             valued = ec.resource.expression('a + b', null, {a: 40}); \
+             const one = ec.resource.script(where); \
+             same = one === ec.resource.script(where) && one.twice(2) === 4; \
+             globalThis.keptModule = one",
+        )?;
+        crate::script::run_script("again = ec.resource.script(where) === globalThis.keptModule")?;
+        Ok::<_, Error>(())
+    })?;
+    let read = |name: &str| crate::script::context_value(name);
+    assert_eq!(read("expanded"), Some(Value::string("1-2")));
+    assert_eq!(read("plain"), Some(Value::string("2")));
+    assert_eq!(read("held"), Some(Value::Bool(true)));
+    assert_eq!(read("valued"), Some(Value::I32(42)));
+    assert_eq!(read("a"), None, "the map's frame is gone");
+    assert_eq!(read("same"), Some(Value::Bool(true)), "kept within the run");
+    assert_eq!(read("again"), Some(Value::Bool(false)), "made again in the next run");
+    clear_context_stack();
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
+/// A top-level render is one run with one deadline: its units run with the depth they are given (back after a unit
+/// that throws), a script between them runs nested in the render, and what a unit wrote by name is on the stack.
+#[test]
+fn a_top_level_render_is_one_run() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    let unit = |id: u64, source: &str| crate::screen::generate::Unit {
+        id,
+        source: source.to_string(),
+        runtime: Arc::from(""),
+        runtime_id: 0,
+    };
+    clear_context_stack();
+    push_context_frame();
+    with_script_engine(ScriptEngine::Oxide, || {
+        crate::script::with_screen_runner(|runner| {
+            // the render is the run: one depth, one limit armed at its start
+            assert!(crate::script::run::is_running(crate::script::run::EngineTag::Oxide), "the render's run");
+            assert_eq!(crate::script::run::depth(), 1);
+            runner.run(&unit(u64::MAX - 1, "(function ($depth) { firstDepth = $depth })"))?;
+            let thrown = runner.run(&unit(u64::MAX - 2, "(function ($depth) { sri.pushContext(); throw new Error('unit failed') })"));
+            assert!(thrown.unwrap_err().message().contains("unit failed"));
+            assert_eq!(crate::script::eval_value("firstDepth + 1")?, Value::I32(1), "a script nested in the render");
+            runner.run(&unit(u64::MAX - 3, "(function ($depth) { secondDepth = $depth })"))
+        })?;
+        assert_eq!(crate::script::context_value("firstDepth"), Some(Value::I32(0)));
+        assert_eq!(crate::script::context_value("secondDepth"), Some(Value::I32(0)), "the depth is back after a throw");
+        Ok(())
+    })
+}
+
+/// Review fixes: a Proxy in a tracked value is compared with the stack free; `ec.resource.expression` and `condition`
+/// run strict, as on QuickJS; under the server-static widget check the `ec.resource` texts and screen units are
+/// refused, not run unchecked.
+#[test]
+fn oxide_proxies_strict_expressions_and_the_widget_check() -> Result<(), Error> {
+    use crate::screen::sri::Runner;
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    clear_context_stack();
+    push_context_frame();
+    with_script_engine(ScriptEngine::Oxide, || {
+        // a trap that writes a bare name while the run's end compares the object with the stack
+        crate::script::run_script(
+            "m = new Proxy({}, {getPrototypeOf() { other2 = 2; return Object.prototype }}); m.a = 1",
+        )?;
+        assert_eq!(crate::script::context_value("other2"), Some(Value::I32(2)));
+        assert_eq!(
+            value("ec.resource.expression('(function () { return typeof this })()')")?,
+            Value::string("undefined")
+        );
+        assert_eq!(
+            value("ec.resource.condition('(function () { return this === undefined })()')")?,
+            Value::Bool(true)
+        );
+        let _wrap = crate::script::WidgetWrap::set(true);
+        for call in ["ec.resource.condition('true')", "ec.resource.expand('${1}')", "ec.resource.expression('1')"] {
+            let text = value(&format!("(() => {{ try {{ {call}; return 'ran' }} catch (e) {{ return String(e) }} }})()"))?;
+            assert!(moqui_lib::object::to_plain_string(&text).contains("widget check"), "{call}: {text:?}");
+        }
+        let unit = crate::screen::generate::Unit {
+            id: u64::MAX,
+            source: "(function ($depth) {})".to_string(),
+            runtime: Arc::from(""),
+            runtime_id: 0,
+        };
+        let err = super::units::RUNNER.run(&unit).unwrap_err();
+        assert!(err.message().contains("widget check"), "{}", err.message());
+        Ok(())
+    })
 }

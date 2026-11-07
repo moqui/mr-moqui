@@ -34,14 +34,17 @@ mod errors;
 mod host;
 mod names;
 mod reads;
+mod resource;
 pub(crate) mod spec;
 pub(crate) mod templates;
 mod tracked;
+pub(crate) mod units;
+pub(crate) mod web;
 pub(crate) mod walker;
 
 pub(crate) use engine::{
     start_failed_recently, DID_NOT_START,
-    engine_memory, eval_condition, eval_map, eval_text, eval_value, is_lent, release_for_quickjs, run_actions, stats,
+    engine_memory, eval_condition, eval_map, eval_text, eval_value, is_lent, release_for_quickjs, run_actions, run_script, stats,
     thread_heap_peaks, Outcome,
 };
 pub(crate) use reads::reads_are_held;

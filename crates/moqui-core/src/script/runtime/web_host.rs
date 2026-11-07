@@ -19,7 +19,7 @@ use super::*;
 
 /// Calls a handler object's method for its kind: a servlet's `service`, else its `doGet` (`doPost`, ...) by method, a
 /// filter's `doFilter` with the chain, a listener's method named for the event. The handler's `config` is set first.
-const INVOKE_JS: &str = r#"(function (ec, chainNext) {
+pub(crate) const INVOKE_JS: &str = r#"(function (ec, chainNext) {
     const methods = { GET: "doGet", POST: "doPost", PUT: "doPut", DELETE: "doDelete", PATCH: "doPatch", HEAD: "doHead",
         OPTIONS: "doOptions" };
     function configOf(data) {
@@ -60,6 +60,9 @@ const INVOKE_JS: &str = r#"(function (ec, chainNext) {
 ///
 /// Returns an error when the file cannot be read, does not evaluate to an object, or the handler throws.
 pub(crate) fn invoke(location: &str, kind: &str, data: Value) -> Result<(), Error> {
+    if crate::script::engine::script_engine() == crate::script::engine::ScriptEngine::Oxide {
+        return crate::script::oxide::web::invoke(location, kind, data);
+    }
     let source = super::facades::read_script(location)?;
     let _frame = crate::script::ContextFrame::push();
     with_context(|ctx| {

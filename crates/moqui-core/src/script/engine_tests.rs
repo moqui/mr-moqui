@@ -130,8 +130,11 @@ fn oxide_fails_a_kind_it_does_not_cover_with_its_name() {
         assert_eq!(route_of(EntryKind::Condition, "a = 1").ok(), Some(Route::Oxide));
         let err = route_of(EntryKind::Template, "a").unwrap_err();
         assert!(err.message().contains("template"), "{}", err.message());
-        let err = crate::script::run_script("1").unwrap_err();
-        assert!(err.message().contains("run_script"), "{}", err.message());
+        let err = crate::script::with_ctx(|_| Ok(())).unwrap_err();
+        assert!(err.message().contains("host"), "{}", err.message());
+        // whole scripts run on quickjs-oxide under oxide
+        crate::script::run_script("1").unwrap();
+        assert_eq!(route_of(EntryKind::Script, "1").ok(), Some(Route::Oxide));
     });
 }
 

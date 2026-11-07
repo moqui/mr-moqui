@@ -51,10 +51,13 @@ const MIN_HEAP: usize = 512 * 1024;
 const HEAP_SAMPLE_RUNS: u64 = 32;
 const HEAP_SAMPLE_EVERY: std::time::Duration = std::time::Duration::from_millis(250);
 
-/// What the runtime cuts when it starts, behind the static check (`script::check`): a computed key it cannot read
+/// What the runtime cuts when it starts for small scripts (`rquickjs` and `small-oxide`), behind the static check
+/// (`script::check`): a computed key it cannot read
 /// (`row[name]`) may still name `constructor` at run time, so no function's `constructor` reaches `Function` (or its
 /// generator and async kinds), and the legacy accessor definers, which would leave a function on a shared prototype,
-/// are gone. Expressions use neither.
+/// are gone. Expressions use neither. Under `script_engine=oxide` the runtime runs every script, as QuickJS's main
+/// context does, with `Function`, `Promise`, `Symbol`, `Reflect` and `Proxy` whole, so it is not cut there
+/// ([`hardened_for_setting`]).
 const HARDEN_JS: &str = r#"(function () {
     const refuse = function () { throw new TypeError("Function is not available to an expression"); };
     const kinds = [function () {}];
@@ -75,19 +78,24 @@ const TO_NUMBER_JS: &str = r#"Object.defineProperty(globalThis, "toNumber", {
         if (typeof value === "number") return value;
         return toDecimal(value).toNumber();
     },
-    writable: false, enumerable: true, configurable: false
+    writable: true, enumerable: true, configurable: true
 })"#;
 
 /// The host globals made read-only once the shims have run, as QuickJS's `FREEZE_HOST_GLOBALS` (`runtime.rs`) makes
 /// them: every global the runtime did not have at its start (`builtins`) becomes a getter of its value with a setter
 /// that throws, in sloppy code too, so one script's assignment does not change it for the later scripts on the thread.
-/// A global defined read-only already (`ec`, `sri`, `toNumber`) is left as it is.
+/// A global defined read-only already (`ec`, `toNumber`) is left as it is, and `sri` (the `sri` shim's, read on every
+/// statement of a screen unit) is a plain read-only value, as on QuickJS.
 const FREEZE_HOST_GLOBALS_JS: &str = r#"(function (builtins) {
     const known = new Set(builtins);
     for (const name of Object.getOwnPropertyNames(globalThis)) {
         if (known.has(name) || name === "ec") continue;
         const held = Object.getOwnPropertyDescriptor(globalThis, name);
         if (!held.configurable) continue;
+        if (name === "sri") {
+            Object.defineProperty(globalThis, name, { writable: false, configurable: false });
+            continue;
+        }
         const value = globalThis[name];
         Object.defineProperty(globalThis, name, {
             get() { return value; },
@@ -98,17 +106,16 @@ const FREEZE_HOST_GLOBALS_JS: &str = r#"(function (builtins) {
     }
 })"#;
 
-/// What QuickJS's engine puts under `ec` and on the global object outside the host table, which the host table's shims
-/// extend (`runtime.rs`, `install_ec` and `install_context`): `ec.context`, the context stack's `get` and the two names
-/// a form reads, and the global `sri`, to which the URL shim adds its functions. A text that names either goes to
-/// QuickJS (the static check allows neither), so they are what the shims need, not the whole QuickJS objects.
+/// What QuickJS's engine puts under `ec` outside the host table, which the host table's shims extend (`runtime.rs`,
+/// `install_ec`): `ec.context`, the context stack's `get` and the two names a form reads. A small text that names it
+/// goes to QuickJS (the static check does not allow it), so it is what the shims need, not the whole QuickJS object.
+/// The global `sri` is the `sri` shim's own.
 const EC_EXTRAS_JS: &str = r#"(function (ec, context) {
     const made = { get: (name) => context.get(String(name)) };
     for (const name of ["formListFindId", "orderByField"]) {
         Object.defineProperty(made, name, { get: () => context[name], enumerable: true });
     }
     ec.context = made;
-    Object.defineProperty(globalThis, "sri", { value: {}, writable: false, enumerable: true, configurable: false });
 })"#;
 
 /// Why an oxide run gave no result.
@@ -134,6 +141,8 @@ pub(super) struct Protos {
     /// Host objects the bindings pass through but do not bind yet (an upload, a stream).
     pub(super) opaque: HostClass<super::names::OpaqueValues>,
     pub(super) set_prototype: ObjectRef,
+    /// `Set`, for a Set the stack holds under `oxide` ([`OxideEngine::whole`]).
+    pub(super) set: CallableRef,
     pub(super) object_prototype: ObjectRef,
     pub(super) date_prototype: ObjectRef,
     pub(super) date_get_time: CallableRef,
@@ -142,10 +151,14 @@ pub(super) struct Protos {
     /// The helper objects the shims extend, as QuickJS's `install_context` makes them: `CollectionUtilities`,
     /// `StringUtilities` and `WebUtilities` by name.
     pub(super) helpers: ObjectRef,
+    /// The same helper objects by name, which a bare name reads when the stack does not hold it.
+    pub(super) helper_objects: Vec<(&'static str, ObjectRef)>,
 }
 
 pub(super) struct OxideEngine {
     runtime: quickjs_oxide::engine::api::core::Runtime,
+    /// Whether the start cut the ways to `Function` ([`HARDEN_JS`]): for small scripts, not under `oxide`.
+    hardened: bool,
     context: Context,
     pub(super) protos: Protos,
     compiled: RefCell<Compiled>,
@@ -160,8 +173,18 @@ pub(super) struct OxideEngine {
     /// The tools shim's `__moquiWrap(name, data)`, which gives a tools map its methods back as on QuickJS
     /// ([`super::convert`]); set once the shims installed.
     tools_wrap: std::cell::OnceCell<CallableRef>,
+    /// The script servlets' invoker, made at the first request ([`super::web`]).
+    web_invoker: std::cell::OnceCell<CallableRef>,
     /// When the reserved bytes were last sampled.
     sampled: Cell<Option<std::time::Instant>>,
+    /// The screen units' compiled functions by unit id, the mode runtimes run so far by id, and the depth of the unit
+    /// running now ([`super::units`]).
+    pub(super) units: RefCell<crate::script::BoundedMap<u64, CallableRef>>,
+    pub(super) unit_runtimes: RefCell<std::collections::HashSet<u64>>,
+    pub(super) unit_depth: Cell<u32>,
+    /// The values inert modules gave in the outermost run, by location, with the text each was made from
+    /// (`ec.resource.script`, [`super::resource`]); emptied when the outermost run ends.
+    modules: RefCell<std::collections::HashMap<String, (Arc<str>, Value)>>,
     /// Property keys of the map keys converted ([`OxideEngine::key`]): a key made once interns once.
     keys: RefCell<std::collections::HashMap<Box<str>, quickjs_oxide::engine::api::core::PropertyKey>>,
 }
@@ -421,6 +444,13 @@ impl Active {
         Active(Rc::clone(engine))
     }
 
+    /// The thread's main runtime when it has a run in progress (a screen unit nested in it runs in that run).
+    pub(super) fn main_running() -> Option<Rc<OxideEngine>> {
+        ENGINE
+            .with(|engine| engine.borrow().clone())
+            .filter(|engine| Self::holds(engine))
+    }
+
     /// Whether a runtime other than `engine` has a run in progress on this thread.
     fn other_run(engine: &OxideEngine) -> bool {
         ACTIVE.with(|active| {
@@ -465,7 +495,17 @@ pub(super) fn active_depth() -> usize {
 fn engine() -> Result<Rc<OxideEngine>, Error> {
     // the main one, whichever runtime has the innermost run
     if let Some(engine) = ENGINE.with(|engine| engine.borrow().clone()) {
-        return Ok(engine);
+        // a thread whose setting changed (a test, `js_speed`) starts the runtime its setting needs, between scripts
+        if engine.hardened == hardened_for_setting() {
+            return Ok(engine);
+        }
+        // a setting changed under a live run: its runtime is the wrong one for this script, and cannot be restarted
+        if Active::holds(&engine) {
+            return Err(Error::new(
+                "the script_engine setting changed while a quickjs-oxide run is live; the nested script does not run on it",
+            ));
+        }
+        ENGINE.with(|current| *current.borrow_mut() = None);
     }
     if start_failed_recently() {
         return Err(Error::new(DID_NOT_START));
@@ -504,12 +544,18 @@ fn engine() -> Result<Rc<OxideEngine>, Error> {
     }
 }
 
+/// Whether the runtime this thread's setting needs is cut for small scripts ([`HARDEN_JS`]): under every setting but
+/// `oxide`, where it runs whole scripts as QuickJS's main context does.
+fn hardened_for_setting() -> bool {
+    crate::script::engine::script_engine() != crate::script::engine::ScriptEngine::Oxide
+}
+
 fn start_engine() -> Result<Rc<OxideEngine>, RuntimeError> {
     #[cfg(test)]
     if FAIL_START.with(Cell::get) {
         return Err(RuntimeError::Invariant("a start the test fails"));
     }
-    let (started, builtins) = OxideEngine::start()?;
+    let (started, builtins) = OxideEngine::start(hardened_for_setting())?;
     let started = Rc::new(started);
     // the shims call host functions as they install, whose conversions read the thread's engine
     ENGINE.with(|engine| *engine.borrow_mut() = Some(Rc::clone(&started)));
@@ -530,11 +576,11 @@ pub(super) fn start_whole() -> Result<Rc<OxideEngine>, RuntimeError> {
     let _starting = Starting::enter();
     let calls = crate::script::census::host_calls();
     let started = (|| {
-        let (started, builtins) = OxideEngine::start()?;
+        let (started, builtins) = OxideEngine::start(false)?;
         let started = Rc::new(started);
         // the shims call host functions as they install, whose conversions read the innermost runtime
         let _active = Active::starting(&started);
-        started.finish_start_with(&builtins, false)?;
+        started.finish_start(&builtins)?;
         Ok(started)
     })();
     crate::script::census::forget_host_calls_since(calls);
@@ -564,7 +610,7 @@ pub(super) fn start_for_tests() -> Result<Rc<OxideEngine>, Error> {
 impl OxideEngine {
     /// The runtime with `ec` and the helper objects, and the names of its own globals read before the host added any
     /// (for [`Self::finish_start`]'s freeze of the host's).
-    fn start() -> Result<(Self, ObjectRef), RuntimeError> {
+    fn start(hardened: bool) -> Result<(Self, ObjectRef), RuntimeError> {
         let options = RuntimeOptions {
             heap: HeapLimits { max_bytes: HEAP_CAP },
             min_heap: MIN_HEAP,
@@ -578,7 +624,7 @@ impl OxideEngine {
             _ => return Err(RuntimeError::Invariant("the builtin names")),
         };
         let helpers = context.eval(
-            "({setPrototype: Set.prototype, objectPrototype: Object.prototype, \
+            "({set: Set, setPrototype: Set.prototype, objectPrototype: Object.prototype, \
              datePrototype: Date.prototype, getTime: Date.prototype.getTime, arrayFrom: Array.from, error: Error})",
         )?;
         let Value::Object(helpers) = helpers else {
@@ -597,12 +643,15 @@ impl OxideEngine {
         };
         let (stack_object, context_methods) = super::context::make(&context)?;
         let helpers = context.new_object()?;
+        let mut helper_objects = Vec::new();
         for name in ["CollectionUtilities", "StringUtilities", "WebUtilities"] {
             let helper = context.new_object()?;
-            context.set_property(&helpers, &key(name).map_err(conv_runtime)?, Value::Object(helper))?;
+            context.set_property(&helpers, &key(name).map_err(conv_runtime)?, Value::Object(helper.clone()))?;
+            helper_objects.push((name, helper));
         }
         let protos = Protos {
             helpers,
+            helper_objects,
             context: stack_object.clone(),
             context_methods,
             decimal: super::decimal::make_prototype(&context)?,
@@ -611,6 +660,7 @@ impl OxideEngine {
             tools: super::bind::tool::register(&mut context.clone(), std::rc::Rc::new(EngineHooks))?,
             opaque: context.register_exotic_class(super::names::OpaqueValues)?,
             set_prototype: object("setPrototype")?,
+            set: function("set")?,
             object_prototype: object("objectPrototype")?,
             date_prototype: object("datePrototype")?,
             date_get_time: function("getTime")?,
@@ -625,6 +675,7 @@ impl OxideEngine {
             &OrdinaryPropertyDescriptor::data(Value::Object(ec.clone()), false, false, true),
         )?;
         super::bind::install_ec(&mut context.clone(), &ec, std::rc::Rc::new(EngineHooks))?;
+        super::resource::install(&context, &ec)?;
         let extras = context.eval(EC_EXTRAS_JS)?;
         let extras = match &extras {
             Value::Object(object) => context.as_callable(object)?,
@@ -639,6 +690,7 @@ impl OxideEngine {
         counts::LIVE_MAX.fetch_max(live, Relaxed);
         Ok((Self {
             runtime,
+            hardened,
             context,
             protos,
             compiled: RefCell::new(Compiled::new()),
@@ -649,23 +701,34 @@ impl OxideEngine {
             runs: Cell::new(0),
             sampled: Cell::new(None),
             tools_wrap: std::cell::OnceCell::new(),
+            web_invoker: std::cell::OnceCell::new(),
+            modules: RefCell::default(),
+            units: RefCell::new(crate::script::BoundedMap::with_bytes(
+                super::units::MAX_UNITS,
+                super::units::MAX_UNIT_BYTES,
+            )),
+            unit_runtimes: RefCell::default(),
+            unit_depth: Cell::new(0),
             keys: RefCell::default(),
         }, builtins))
     }
 
-    /// The rest of the start, once the runtime is the thread's, in QuickJS's order (`runtime.rs`, `install_context`): the
-    /// host table's shims over `ec`, `sri` and the helper objects (each tried; any failure fails the start), then the
-    /// lockdown, which no shim's code needs, then the bare names last, so a global a shim makes (`EdiHandler`,
-    /// `__moquiWrap`) is the global object's own rather than a write to the context stack.
+    /// The rest of the start, once the runtime is the thread's, in QuickJS's order (`runtime.rs`,
+    /// `install_context`): the host table's shims over `ec`, `sri` and the helper objects (each tried; any failure
+    /// fails the start), then the lockdown for small scripts, which no shim's code needs, then the bare names last, so
+    /// a global a shim makes (`EdiHandler`, `__moquiWrap`) is the global object's own rather than a write to the
+    /// context stack.
     fn finish_start(&self, builtins: &ObjectRef) -> Result<(), RuntimeError> {
-        self.finish_start_with(builtins, true)
-    }
-
-    /// [`Self::finish_start`], with the small scripts' lockdown ([`HARDEN_JS`]) only when `harden`: a runtime for
-    /// whole scripts (the spec runtime) keeps the function constructors, as QuickJS's main context does.
-    fn finish_start_with(&self, builtins: &ObjectRef, harden: bool) -> Result<(), RuntimeError> {
         let mut context = self.context.clone();
         super::bind::install_shims(&mut context, &self.protos.helpers, std::rc::Rc::new(EngineHooks))?;
+        // the host's globals and helper functions QuickJS installs outside the table, then its helper script over them
+        super::bind::install_one_shim(
+            &mut context,
+            &self.protos.helpers,
+            &crate::script::host::globals::SHIM,
+            std::rc::Rc::new(EngineHooks),
+        )?;
+        context.eval(crate::script::runtime::HELPERS_JS)?;
         let global = context.global_object()?;
         match context.get_property(&global, &key("__moquiWrap").map_err(conv_runtime)?)? {
             Value::Object(object) => {
@@ -682,19 +745,57 @@ impl OxideEngine {
         }
         .ok_or(RuntimeError::Invariant("the host globals' freeze"))?;
         context.call(&freeze, Value::Undefined, &[Value::Object(builtins.clone())])?;
-        if harden {
+        if self.hardened {
             context.eval(HARDEN_JS)?;
         }
         super::names::install_names(&context)
     }
 
-    /// The runtime's realm and the runtime, for a runner outside this file ([`super::spec`]).
+    /// Whether the runtime runs whole scripts (`script_engine=oxide`, or the spec runtime), with no static check in
+    /// front and no QuickJS to fall back on.
+    pub(super) fn whole(&self) -> bool {
+        !self.hardened
+    }
+
+    /// The runtime's realm, for a host function that lent the engine and a runner outside this file
+    /// ([`super::spec`]).
     pub(super) fn context(&self) -> &Context {
         &self.context
     }
 
     pub(super) fn runtime(&self) -> &quickjs_oxide::engine::api::core::Runtime {
         &self.runtime
+    }
+
+    /// The compiled form of `source`, named `file_name` and kept by `hash`, through the runtime's cache.
+    pub(super) fn compile(
+        &self,
+        source: &str,
+        hash: u64,
+        file_name: &str,
+    ) -> Result<quickjs_oxide::engine::api::core::FunctionBytecodeRef, RuntimeError> {
+        let mut cache = self.compiled.borrow_mut();
+        let before = cache.compiles();
+        let compiled = cache.get_or_compile(&self.context, source, hash, file_name);
+        counts::COMPILED.fetch_add(cache.compiles() - before, Relaxed);
+        compiled
+    }
+
+    /// The value the inert module at `location` gave earlier in this outermost run, when made from the same text.
+    pub(super) fn kept_module(&self, location: &str, text: &Arc<str>) -> Option<Value> {
+        let modules = self.modules.borrow();
+        let (kept, value) = modules.get(location)?;
+        (Arc::ptr_eq(kept, text) || **kept == **text).then(|| value.clone())
+    }
+
+    /// Keep an inert module's value for the rest of the outermost run.
+    pub(super) fn keep_module(&self, location: &str, text: Arc<str>, value: Value) {
+        self.modules.borrow_mut().insert(location.to_string(), (text, value));
+    }
+
+    /// The script servlets' invoker, once made.
+    pub(super) fn web_invoker(&self) -> &std::cell::OnceCell<CallableRef> {
+        &self.web_invoker
     }
 
     /// The tools shim's wrapper, which gives a tools map (a map with `__wrap`) its methods back.
@@ -872,6 +973,8 @@ pub(super) struct RunState<'a> {
 /// What a nested run set aside of the run around it.
 struct Outer {
     values: super::tracked::RunValues,
+    /// The screen unit depth of the outer run: a render the nested run makes starts afresh, as on QuickJS.
+    unit_depth: u32,
     entities: Vec<(ObjectRef, Arc<EntityCell>)>,
     fallback: Option<&'static str>,
 }
@@ -882,6 +985,7 @@ impl<'a> RunState<'a> {
         // is the thread's
         let outer = (nested || Active::other_run(engine)).then(|| Outer {
             values: engine.run.take(),
+            unit_depth: engine.unit_depth.replace(0),
             entities: engine.entities.take(),
             fallback: FALLBACK.with(Cell::take),
         });
@@ -900,11 +1004,16 @@ impl Drop for RunState<'_> {
                 if let Ok(mut entities) = self.engine.entities.try_borrow_mut() {
                     *entities = outer.entities;
                 }
+                self.engine.unit_depth.set(outer.unit_depth);
                 FALLBACK.with(|fallback| fallback.set(outer.fallback));
             }
             None => {
                 if let Ok(mut values) = self.engine.run.try_borrow_mut() {
                     values.clear();
+                }
+                // the modules kept for this run go with it: the next run makes them again
+                if let Ok(mut modules) = self.engine.modules.try_borrow_mut() {
+                    modules.clear();
                 }
                 if let Ok(mut entities) = self.engine.entities.try_borrow_mut() {
                     entities.clear();
@@ -942,7 +1051,7 @@ pub(super) fn context_for_tests() -> Context {
 /// Whether this thread's oxide runtime is lent by a running host function (`Scope::lend`, the fork's F3a): a script
 /// may then run on it, nested in the running one.
 pub(crate) fn is_lent() -> bool {
-    current().is_some_and(|engine| engine.runtime.is_lent())
+    super::units::in_render_body() || current().is_some_and(|engine| engine.runtime.is_lent())
 }
 
 /// Run `source` on the thread's oxide runtime and give its completion value to `finish`. When the text `writes` (the
@@ -954,14 +1063,42 @@ fn run<T>(
     file_name: &str,
     finish: impl FnOnce(&mut Context, &OxideEngine, Value) -> Result<T, Conv>,
 ) -> Result<T, Outcome> {
+    with_run(writes, source, |engine, context, note| {
+        match engine.compile(source, hash, file_name).and_then(|compiled| context.execute(&compiled)) {
+            Ok(value) => finish(context, engine, value).map_err(|conv| {
+                if let Conv::Js(err) = &conv {
+                    note(err);
+                }
+                conv_outcome(context, conv)
+            }),
+            Err(err) => {
+                note(&err);
+                Err(Outcome::Error(runtime_error(context, err)))
+            }
+        }
+    })
+}
+
+/// One run on the thread's oxide runtime, from `body`: counted in the thread's depth, deadline and default limit, its
+/// run state its own (a nested run, inside a host function that lent the engine, sets the outer run's aside and gives
+/// it back, its screen unit depth too). When the run `writes`, its tracked values are written back at its end. `body`
+/// notes each engine error it met, so a poisoned runtime is dropped when the outermost run ends and one short of memory
+/// lets its transient code go. `what` names the run in the log.
+pub(super) fn with_run<T>(
+    writes: bool,
+    what: &str,
+    body: impl FnOnce(&OxideEngine, &mut Context, &mut dyn FnMut(&RuntimeError)) -> Result<T, Outcome>,
+) -> Result<T, Outcome> {
     let depth = run::depth();
     if depth >= MAX_SCRIPT_DEPTH {
         return Err(Outcome::Error(Error::new("scripts are nested too deeply")));
     }
     // nothing of the script has run: it runs on QuickJS
     let engine = engine().map_err(|_| Outcome::Fallback(DID_NOT_START))?;
+    // nested in a run of this runtime (per runtime: a run of the spec runtime is another's), which lent it or is a
+    // render's Rust body with the runtime free ([`super::units::in_render_body`])
     let nested = Active::holds(&engine);
-    if nested && !engine.runtime.is_lent() {
+    if nested && !engine.runtime.is_lent() && !super::units::in_render_body() {
         return Err(Outcome::Fallback(
             "a run nested in a running oxide script that did not lend its engine",
         ));
@@ -972,34 +1109,21 @@ fn run<T>(
     let _not_starting = StartSetAside::enter();
     let _limit = (depth == 0).then(ScriptLimit::arm);
     let _depth = run::enter_depth(depth);
-    let state = RunState::enter(&engine, nested);
-    let compiled = {
-        let mut cache = engine.compiled.borrow_mut();
-        let before = cache.compiles();
-        let compiled = cache.get_or_compile(&engine.context, source, hash, file_name);
-        counts::COMPILED.fetch_add(cache.compiles() - before, Relaxed);
-        compiled
-    };
     let mut context = engine.context.clone();
+    if nested {
+        // the outer run's tracked values written back and released first, as a QuickJS script nested here has them
+        // (`release_for_quickjs`): a host function that lends need not be the binder's, which flushed already
+        super::tracked::flush(&mut context, Flush::Release).map_err(|conv| conv_outcome(&mut context, conv))?;
+    }
+    let state = RunState::enter(&engine, nested);
+    let _render = super::units::set_aside_render_body();
     let mut poisoned = false;
     let mut out_of_memory = false;
     let mut note = |err: &RuntimeError| {
         poisoned |= matches!(err, RuntimeError::Poisoned);
         out_of_memory |= matches!(err, RuntimeError::OutOfMemory);
     };
-    let outcome = match compiled.and_then(|compiled| context.execute(&compiled)) {
-        Ok(value) => finish(&mut context, &engine, value).map_err(|conv| {
-            if let Conv::Js(err) = &conv {
-                note(err);
-            }
-            conv_outcome(&mut context, conv)
-        }),
-        Err(err) => {
-            note(&err);
-            Err(Outcome::Error(runtime_error(&mut context, err)))
-        }
-    };
-    let mut outcome = outcome;
+    let mut outcome = body(&engine, &mut context, &mut note);
     if FALLBACK.with(Cell::get).is_none() && !poisoned {
         if writes {
             // as QuickJS does at a script's end, whether it ended well or not
@@ -1008,7 +1132,7 @@ fn run<T>(
                 outcome = Err(conv_outcome(&mut context, conv));
             }
         } else if cfg!(debug_assertions) {
-            check_kept_names(&mut context, &engine, source);
+            check_kept_names(&mut context, &engine, what);
         }
     }
     let fallback = FALLBACK.with(Cell::take);
@@ -1016,7 +1140,7 @@ fn run<T>(
     // a poisoned runtime goes when the outermost oxide run ends, which sees the poison too
     if poisoned && !nested {
         counts::POISONED.fetch_add(1, Relaxed);
-        tracing::error!(script = %source, "a host function panicked in quickjs-oxide; the runtime is dropped and restarts on the next script");
+        tracing::error!(script = %what, "a host function panicked in quickjs-oxide; the runtime is dropped and restarts on the next script");
         ENGINE.with(|current| *current.borrow_mut() = None);
     } else if !poisoned {
         if out_of_memory {
@@ -1123,6 +1247,12 @@ pub(crate) fn eval_map(
 pub(crate) fn run_actions(source: &str, hash: u64, file_name: &str) -> Result<(), Outcome> {
     let key = crate::script::text::hash_of(hash, file_name);
     run(source, key, true, file_name, |_, _, _| Ok(()))
+}
+
+/// [`crate::script::run_script`] on quickjs-oxide, under `script_engine=oxide`: one script, not strict, named
+/// `eval_script` in stack traces as on QuickJS; what it wrote by name is written back at its end.
+pub(crate) fn run_script(source: &str, hash: u64) -> Result<(), Outcome> {
+    run(source, hash, true, super::compiled::FILE_NAME, |_, _, _| Ok(()))
 }
 
 /// [`crate::script::eval_value`] on quickjs-oxide: the value of `source` as a host value.

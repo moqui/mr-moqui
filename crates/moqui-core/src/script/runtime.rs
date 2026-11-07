@@ -70,6 +70,9 @@ use convert::{
 pub use convert::{host_to_js, js_to_host};
 use decimal::HostDecimal;
 pub use ec_extra::expand_localized;
+pub(crate) use ec_extra::{code128_options, encode_html_js_safe, flatten_nested_map, js_safe_map, localized, url_safe_chars};
+pub(crate) use helpers::{java_type_of, now_timestamp, timestamp_of, HELPERS_JS};
+pub(crate) use facades::{module_cache_on, read_module};
 use entities::{
     atom_name, entity_to_js, install_entity_prototypes, keep_assigned, prototype_has, prototype_member, wrap_find,
     HostEntity, HostList, ScriptList,
@@ -91,6 +94,7 @@ pub use values::script_list_values;
 pub(crate) use values::{context_combined, pop_context_frame, put_context_all, value_entity_name, value_field};
 pub use values::{value_items, value_map};
 pub(crate) use web_host::invoke as invoke_web_handler;
+pub(crate) use web_host::INVOKE_JS as WEB_INVOKE_JS;
 
 use crate::context::{Error, ErrorKind, ExecutionContext};
 use crate::script::engine::EntryKind;
@@ -596,19 +600,19 @@ impl Drop for ContextFrame {
 
 /// The context stack's depth when made. Dropped without [`StackMark::keep`], it pops the frames pushed since: a script
 /// that threw between its `sri.pushContext()` and `sri.popContext()` leaves the stack as it found it.
-struct StackMark {
+pub(crate) struct StackMark {
     depth: Option<(usize, usize)>,
 }
 
 impl StackMark {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             depth: Some(STACK.with(|stack| stack.borrow().depth())),
         }
     }
 
     /// Leave the frames pushed since as they are.
-    fn keep(mut self) {
+    pub(crate) fn keep(mut self) {
         self.depth = None;
     }
 }
@@ -739,11 +743,19 @@ pub fn run_script(source: &str) -> Result<(), Error> {
     if source.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
+    if crate::script::engine::script_engine() == crate::script::engine::ScriptEngine::Oxide {
+        let ran = crate::script::engine::try_oxide(EntryKind::Script, source, |source, hash, _| {
+            crate::script::oxide::run_script(source, hash)
+        })?;
+        if ran.is_some() {
+            return Ok(());
+        }
+    }
     with_kind(EntryKind::Script, |ctx| eval_compiled::<JsValue>(ctx, source, false).map(|_| ()))
 }
 
 /// A source that starts with `{` is an object literal in an expression, not a block.
-fn as_expression(source: &str) -> std::borrow::Cow<'_, str> {
+pub(crate) fn as_expression(source: &str) -> std::borrow::Cow<'_, str> {
     if source.trim_start().starts_with('{') {
         std::borrow::Cow::Owned(format!("({source}\n)"))
     } else {
@@ -1753,7 +1765,7 @@ fn template_source(template: &str) -> String {
 
 /// A `${}` template as a JavaScript template literal: a backslash before `${` keeps it literal, any other backslash is
 /// itself, and a backtick is escaped.
-fn template_literal(template: &str) -> String {
+pub(crate) fn template_literal(template: &str) -> String {
     let mut source = String::with_capacity(template.len() + 2);
     source.push('`');
     let bytes = template.as_bytes();
@@ -1925,7 +1937,6 @@ fn install_ec(ctx: &Ctx<'_>) -> Result<(), Error> {
     // made above (ec.resource.x) is added to it
     bind::install_ec(ctx, &ec)?;
     caught(ctx, "globals", ctx.globals().set("ec", ec))?;
-    caught(ctx, "globals", ctx.globals().set("sri", screen_host::sri_object(ctx)?))?;
     let system = Object::new(ctx.clone()).map_err(js_error)?;
     let property = Function::new(ctx.clone(), system_get_property).map_err(js_error)?;
     system.set("getProperty", property).map_err(js_error)?;

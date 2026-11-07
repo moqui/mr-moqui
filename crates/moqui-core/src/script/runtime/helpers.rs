@@ -16,7 +16,7 @@
 
 use super::*;
 
-pub(super) const HELPERS_JS: &str = r#"
+pub(crate) const HELPERS_JS: &str = r#"
 (function () {
     function field(item, name) {
         if (item == null) return null;
@@ -106,7 +106,7 @@ pub(super) fn install_helpers(ctx: &Ctx<'_>) -> Result<(), Error> {
 }
 
 /// Java type name of a value, so a string on the other side of a compare converts to it.
-pub(super) fn java_type_of(value: &Value) -> &'static str {
+pub(crate) fn java_type_of(value: &Value) -> &'static str {
     match value {
         Value::String(_) => "String",
         Value::Bool(_) => "Boolean",
@@ -231,12 +231,12 @@ pub(super) fn js_compare_order<'js>(ctx: Ctx<'js>, left: JsValue<'js>, right: Js
 
 /// A time stamp from a script's value: epoch millis, a time stamp, or text, which is in the session time zone unless it
 /// has an offset.
-pub(super) fn timestamp_of(value: &Value) -> Value {
+pub(crate) fn timestamp_of(value: &Value) -> Value {
     crate::l10n::basic_convert(value, "java.sql.Timestamp").value
 }
 
 /// `ec.user.nowTimestamp`: the context's effective time, or the clock.
-pub(super) fn now_timestamp() -> Value {
+pub(crate) fn now_timestamp() -> Value {
     timestamp_of(&Value::I64(crate::user::now_effective_millis()))
 }
 

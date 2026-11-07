@@ -172,7 +172,20 @@ fn to_js_at<J: Js>(js: &mut J, engine: &OxideEngine, value: &HostValue, depth: u
             // A Set the stack holds stays QuickJS's for now: its `add` and `delete` change it in place, and an oxide
             // copy would not be written back (the static check lets `add` through, for decimals).
             if entries.len() == 1 && entries.contains_key(SET_KEY) {
-                return Err(Conv::Unsupported("a Set from the stack"));
+                // under `oxide` a Set read by name is tracked as a list or map is, and written back at a flush
+                if !engine.whole() {
+                    return Err(Conv::Unsupported("a Set from the stack"));
+                }
+                let items = match entries.get(SET_KEY) {
+                    Some(HostValue::List(items)) => items.as_slice(),
+                    _ => &[],
+                };
+                let mut values = Vec::with_capacity(items.len());
+                for item in items {
+                    values.push(to_js_at(js, engine, item, depth + 1)?);
+                }
+                let array = js.new_array_from_values(values)?;
+                return Ok(js.construct(&engine.protos.set, &[Value::Object(array)])?);
             }
             let object = js.new_object()?;
             for (name, item) in entries {

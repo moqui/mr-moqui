@@ -173,6 +173,12 @@ impl EntryKind {
         )
     }
 
+    /// Whether the oxide bindings run this kind under `script_engine=oxide`: the small kinds and whole scripts
+    /// (`run_script`; script files run as actions). Templates and screen units are routed by their own code.
+    pub(crate) fn oxide_runs(self) -> bool {
+        self.oxide_covers() || self == Self::Script
+    }
+
     /// The static check's profile for a text of this kind.
     pub(crate) fn profile(self) -> Profile {
         match self {
@@ -417,7 +423,7 @@ fn choose(
             }
         }
         ScriptEngine::Oxide => {
-            if !kind.oxide_covers() {
+            if !kind.oxide_runs() {
                 return Err(Error::new(format!(
                     "script_engine=oxide: {} scripts do not run on quickjs-oxide yet",
                     kind.name()

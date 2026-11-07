@@ -30,8 +30,8 @@
 //! start of each screen's output, and `JS_SPEED_DUMP` (a directory) writes each screen's output there, to compare two
 //! builds' output. `JS_SPEED_ENGINE` (`rquickjs`, the default, or `oxide`) picks the engine: `oxide` runs the
 //! expressions section under `script_engine=small-oxide` (conditions and values on quickjs-oxide, `${}` strings still on
-//! QuickJS), the templates section under `script_engine=oxide`, and the other sections stay on QuickJS until the later phases of plans/Script-Engine-Oxide.md bind them,
-//! which their headings say. See `speed/mod.rs` for the columns; `js kept` is the QuickJS heap, which the
+//! QuickJS), the scripts, templates and screens sections under `script_engine=oxide`, and the other sections stay on
+//! QuickJS until the later phases of plans/Script-Engine-Oxide.md bind them, which their headings say. See `speed/mod.rs` for the columns; `js kept` is the QuickJS heap, which the
 //! allocation columns do not see. The database is embedded Postgres (or `SPEED_PG_HOST`), for the services and the cached finds; nothing
 //! here writes.
 //!
@@ -160,13 +160,15 @@ fn script_speed() {
                 section("expressions: one engine entry each", &sizes, sizes.calls, expressions);
             }
         }
+        // whole scripts and screens run on quickjs-oxide under `script_engine=oxide`
+        let whole = if oxide { script::ScriptEngine::Oxide } else { script::ScriptEngine::Rquickjs };
         if wanted("script") {
-            section(
-                &format!("scripts: one entry, the work inside{quickjs}"),
-                &sizes,
-                sizes.calls,
-                scripts,
-            );
+            let heading = if oxide {
+                "scripts on quickjs-oxide (oxide): one entry, the work inside"
+            } else {
+                "scripts: one entry, the work inside"
+            };
+            script::with_script_engine(whole, || section(heading, &sizes, sizes.calls, scripts));
         }
         if wanted("actions") {
             section(&format!("XML actions, run directly{quickjs}"), &sizes, sizes.calls, actions);
@@ -194,14 +196,16 @@ fn script_speed() {
             });
         }
         if wanted("screen") {
-            section(
-                &format!("screens: the js-speed fixture screens{quickjs}"),
-                &sizes,
-                sizes.screens,
-                |rows, calls| {
+            let heading = if oxide {
+                "screens on quickjs-oxide (oxide: generation, units and their scripts): the js-speed fixture screens"
+            } else {
+                "screens: the js-speed fixture screens"
+            };
+            script::with_script_engine(whole, || {
+                section(heading, &sizes, sizes.screens, |rows, calls| {
                     screens(rows, calls, &factory, &root);
-                },
-            );
+                });
+            });
         }
         print_memory("this thread's engine, after the rows", script::engine_memory(true));
         print_engine_stats();

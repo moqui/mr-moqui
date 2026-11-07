@@ -187,6 +187,21 @@ pub(crate) fn install_shims(js: &mut impl Js, helpers: &ObjectRef, hooks: Rc<dyn
     )))
 }
 
+/// One shim outside the table's paths ([`host::globals::SHIM`]), with prototypes of its own.
+pub(crate) fn install_one_shim(
+    js: &mut impl Js,
+    helpers: &ObjectRef,
+    shim: &'static host::Shim,
+    hooks: Rc<dyn OxideHooks>,
+) -> JsResult<()> {
+    let binder = Rc::new(Binder {
+        hooks,
+        prototypes: RefCell::new(HashMap::new()),
+    });
+    let global = js.global_object()?;
+    install_shim(js, &binder, &global, helpers, shim)
+}
+
 fn install_shim(
     js: &mut impl Js,
     binder: &Rc<Binder>,
@@ -341,6 +356,40 @@ fn trampoline(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'_
         Ok(result) => result,
         Err(message) => Err(plain_error(scope, &message)),
     }
+}
+
+/// A host function of the engine's own outside the table (`oxide::resource`, `oxide::web`), through the table's
+/// trampoline: a panic in its own code is thrown as an `Error`, one that unwound through the engine (a nested run in
+/// a lend) goes on and poisons the runtime, as for a table method; a [`Conv`](super::convert::Conv) failure throws as
+/// [`super::engine::host_error`] makes it.
+pub(super) fn host_body<T>(
+    scope: &mut Scope<'_>,
+    body: impl FnOnce(&mut Scope<'_>) -> Result<T, super::convert::Conv>,
+) -> JsResult<T> {
+    UNWOUND.with(|unwound| unwound.set(false));
+    match caught_panic(|| body(&mut *scope).map_err(|conv| super::engine::host_error(&mut *scope, conv))) {
+        Ok(result) => result,
+        Err(message) => Err(plain_error(scope, &message)),
+    }
+}
+
+/// Lend the engine to `body`, as a non-leaf table method's lend does ([`OxideOps::lend`]): a panic in the body's own
+/// code is thrown as an `Error`, one through a nested run goes on.
+pub(super) fn lend<R>(scope: &mut Scope<'_>, body: impl FnOnce() -> JsResult<R>) -> JsResult<R> {
+    let lent = {
+        let _engine = EngineCall;
+        scope.lend(|| caught_panic(body))
+    };
+    match lent {
+        Ok(result) => result,
+        Err(message) => Err(plain_error(scope, &message)),
+    }
+}
+
+/// A mark over an engine operation a body makes itself (an `execute` in a lend): a panic that unwinds through it came
+/// through the engine, so [`caught_panic`] passes it on rather than making it an error.
+pub(super) fn engine_call() -> impl Drop {
+    EngineCall
 }
 
 /// `body`, with a panic in its own code caught as its message, as `host_guard` catches one on QuickJS. A panic that
@@ -721,6 +770,11 @@ impl EngineOps for LentOps {
     fn whole_context(&mut self) -> Result<indexmap::IndexMap<String, Value>, HostError> {
         self.whole.take().ok_or_else(Self::refused)
     }
+
+    /// The units a render runs from the lent body run on this runtime, in the script that made the call.
+    fn screen_runner(&mut self) -> Result<&dyn crate::screen::sri::Runner, HostError> {
+        Ok(&super::units::RUNNER)
+    }
 }
 
 /// [`EngineOps`] of one call on quickjs-oxide.
@@ -745,6 +799,10 @@ impl EngineOps for OxideOps<'_, '_> {
         // a panic in the body's own code is an error; one through the engine goes on ([`caught_panic`])
         let _engine = EngineCall;
         self.scope.lend(|| caught_panic(body)).map_err(HostError::Message)
+    }
+
+    fn screen_runner(&mut self) -> Result<&dyn crate::screen::sri::Runner, HostError> {
+        Ok(&super::units::RUNNER)
     }
 
     fn evaluate(&mut self, source: &str, name: &str) -> Result<Value, HostError> {

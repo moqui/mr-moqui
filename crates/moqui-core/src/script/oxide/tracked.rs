@@ -46,6 +46,10 @@ pub(crate) enum Flush {
     End,
 }
 
+/// What a screen unit sets aside of the run around it ([`RunValues::take_outer`]): its released values and the values
+/// it kept by name.
+pub(super) type OuterValues = (HashMap<String, (Value, HostValue)>, HashMap<String, Value>);
+
 /// The values of one run, by name.
 #[derive(Default)]
 pub(super) struct RunValues {
@@ -66,6 +70,18 @@ impl RunValues {
         self.released.clear();
         self.kept.clear();
         self.flushing = false;
+    }
+
+    /// Set aside what a screen unit must not see of the run around it (its released values, and the decimals and
+    /// entity values kept by name, which the unit's context frame may name differently), for [`Self::restore_outer`].
+    pub(super) fn take_outer(&mut self) -> OuterValues {
+        (std::mem::take(&mut self.released), std::mem::take(&mut self.kept))
+    }
+
+    /// After a screen unit: what it tracked forgotten, and the run around it given back what [`Self::take_outer`] took.
+    pub(super) fn restore_outer(&mut self, outer: OuterValues) {
+        self.tracked.clear();
+        (self.released, self.kept) = outer;
     }
 
     /// The lists and maps tracked now, for the debug check of an unflushed run.
@@ -247,12 +263,12 @@ fn flush_values<J: Js>(js: &mut J, engine: &OxideEngine, mode: Flush) -> Result<
     for (name, value) in entries {
         // What the script did not change is on the stack already: no conversion, no write. A release still notes
         // what the stack holds, for `readopt`.
-        let unchanged = STACK.with(|stack| {
-            let stack = stack.borrow();
-            stack.with_value(&name, |held| {
-                matches_host(js, engine, &value, held, 0)
-                    .map(|same| same.then(|| (mode == Flush::Release).then(|| held.clone())))
-            })
+        // The comparison reads the script's object, which may run script code (a Proxy's traps, a getter) that writes
+        // the stack: it compares a copy, with the stack free.
+        let held = STACK.with(|stack| stack.borrow().with_value(&name, HostValue::clone));
+        let unchanged = held.map(|held| {
+            matches_host(js, engine, &value, &held, 0)
+                .map(|same| same.then(|| (mode == Flush::Release).then_some(held)))
         });
         match unchanged {
             Some(Ok(Some(written))) => {
@@ -420,13 +436,18 @@ fn matches_host<J: Js>(
                 let Some(name) = property.to_js_string() else {
                     continue;
                 };
-                let enumerable = js
-                    .get_own_property(object, &property)?
-                    .is_some_and(|descriptor| descriptor.enumerable());
-                if !enumerable {
+                let Some(descriptor) = js.get_own_property(object, &property)? else {
+                    continue;
+                };
+                if !descriptor.enumerable() {
                     continue;
                 }
-                let item = js.get_property(object, &property)?;
+                // a getter runs script code, which may write the stack this check holds: converted as before
+                let quickjs_oxide::engine::api::core::CompleteOrdinaryPropertyDescriptor::Data { value: item, .. } =
+                    descriptor
+                else {
+                    return Ok(false);
+                };
                 if let Value::Object(inner) = &item {
                     if js.as_callable(inner)?.is_some() {
                         continue;
