@@ -354,6 +354,8 @@ fn local_time_is_the_process_zone_as_on_quickjs() -> Result<(), Error> {
 
 #[test]
 fn what_the_bindings_do_not_have_yet_falls_back() -> Result<(), Error> {
+    // a test thread is not run again, so the setting stays: a fallback is small-oxide's, oxide has none
+    crate::script::engine::set_thread_script_engine(Some(crate::script::engine::ScriptEngine::SmallOxide));
     clear_context_stack();
     push_context_frame();
     let mut set = indexmap::IndexMap::new();
@@ -383,6 +385,8 @@ fn what_the_bindings_do_not_have_yet_falls_back() -> Result<(), Error> {
 /// there would be made twice (or once where QuickJS never makes it).
 #[test]
 fn no_host_call_after_a_fallback() -> Result<(), Error> {
+    // a test thread is not run again, so the setting stays: a fallback is small-oxide's, oxide has none
+    crate::script::engine::set_thread_script_engine(Some(crate::script::engine::ScriptEngine::SmallOxide));
     clear_context_stack();
     push_context_frame();
     let mut set = indexmap::IndexMap::new();
@@ -496,6 +500,16 @@ fn the_oxide_setting_runs_a_whole_runtime() -> Result<(), Error> {
         );
         assert_eq!(value("typeof sri.encodeHtml")?, Value::string("function"));
         assert_eq!(value("(sri = 1, typeof sri)")?, Value::string("object"), "sri is read-only");
+        // a Set the stack holds is a Set, tracked and written back
+        let set = |items: Vec<Value>| {
+            Value::Map(indexmap::IndexMap::from([(
+                crate::script::runtime::SET_KEY.to_string(),
+                Value::List(items),
+            )]))
+        };
+        set_context_name("seen", set(vec![Value::I32(1)]))?;
+        crate::script::run_script("if (!(seen instanceof Set)) throw new Error('not a Set'); seen.add(2)")?;
+        assert_eq!(crate::script::context_value("seen"), Some(set(vec![Value::I32(1), Value::I32(2)])));
         Ok::<_, Error>(())
     })?;
     with_script_engine(ScriptEngine::SmallOxide, || {
@@ -507,6 +521,8 @@ fn the_oxide_setting_runs_a_whole_runtime() -> Result<(), Error> {
 /// The debug safety net: a list an oxide run changed in place (here past the check, run directly) is logged.
 #[test]
 fn a_changed_copy_of_a_context_value_is_noticed() -> Result<(), Error> {
+    // the unflushed expressions and the fallback are small-oxide's
+    crate::script::engine::set_thread_script_engine(Some(crate::script::engine::ScriptEngine::SmallOxide));
     clear_context_stack();
     push_context_frame();
     set_context_name("items", Value::List(vec![Value::I32(2), Value::I32(1)]))?;

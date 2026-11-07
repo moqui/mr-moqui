@@ -141,6 +141,8 @@ pub(super) struct Protos {
     /// Host objects the bindings pass through but do not bind yet (an upload, a stream).
     pub(super) opaque: HostClass<super::names::OpaqueValues>,
     pub(super) set_prototype: ObjectRef,
+    /// `Set`, for a Set the stack holds under `oxide` ([`OxideEngine::whole`]).
+    pub(super) set: CallableRef,
     pub(super) object_prototype: ObjectRef,
     pub(super) date_prototype: ObjectRef,
     pub(super) date_get_time: CallableRef,
@@ -501,7 +503,7 @@ impl OxideEngine {
             _ => return Err(RuntimeError::Invariant("the builtin names")),
         };
         let helpers = context.eval(
-            "({setPrototype: Set.prototype, objectPrototype: Object.prototype, \
+            "({set: Set, setPrototype: Set.prototype, objectPrototype: Object.prototype, \
              datePrototype: Date.prototype, getTime: Date.prototype.getTime, arrayFrom: Array.from, error: Error})",
         )?;
         let Value::Object(helpers) = helpers else {
@@ -537,6 +539,7 @@ impl OxideEngine {
             tools: super::bind::tool::register(&mut context.clone(), std::rc::Rc::new(EngineHooks))?,
             opaque: context.register_exotic_class(super::names::OpaqueValues)?,
             set_prototype: object("setPrototype")?,
+            set: function("set")?,
             object_prototype: object("objectPrototype")?,
             date_prototype: object("datePrototype")?,
             date_get_time: function("getTime")?,
@@ -623,6 +626,12 @@ impl OxideEngine {
             context.eval(HARDEN_JS)?;
         }
         super::names::install_names(&context)
+    }
+
+    /// Whether the runtime runs whole scripts (`script_engine=oxide`), with no static check in front and no QuickJS to
+    /// fall back on.
+    pub(super) fn whole(&self) -> bool {
+        !self.hardened
     }
 
     /// The runtime's realm, for a host function that lent the engine.
