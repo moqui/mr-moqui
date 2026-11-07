@@ -760,21 +760,40 @@ fn a_unit_that_throws_after_a_push_leaves_the_stack_as_it_found_it() -> Result<(
 
 #[test]
 fn a_loop_outside_a_transaction_stops_at_the_default_limit() -> Result<(), Error> {
-    let _quickjs = crate::script::engine::quickjs_for_test();
+    use crate::script::engine::{with_script_engine, ScriptEngine};
     use std::time::{Duration, Instant};
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+        with_script_engine(engine, || -> Result<(), Error> {
+            clear_context_stack();
+            // As a `resource-facade` `script-timeout` of 200 ms would set it.
+            super::SCRIPT_LIMIT.with(|limit| limit.set(Some(Some(Duration::from_millis(200)))));
+            let started = Instant::now();
+            let err = run_script("while (true) {}").expect_err("interrupted");
+            assert!(err.message().contains("interrupted"), "under {}: {}", engine.name(), err.message());
+            assert!(started.elapsed() < Duration::from_secs(10), "under {}", engine.name());
+            assert_eq!(
+                super::script_time_remaining(),
+                None,
+                "under {}: the default goes when the script ends",
+                engine.name()
+            );
+            super::SCRIPT_LIMIT.with(|limit| limit.set(Some(None)));
+            assert!(eval_condition("true")?);
+            assert_eq!(super::script_time_remaining(), None);
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// A transaction's own limit replaces the default inside a running script, and the time inside does not count
+/// against it (`with_ctx`, QuickJS's).
+#[test]
+fn a_transaction_limit_replaces_the_default_inside_a_script() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
+    use std::time::Duration;
     clear_context_stack();
-    // As a `resource-facade` `script-timeout` of 200 ms would set it.
     super::SCRIPT_LIMIT.with(|limit| limit.set(Some(Some(Duration::from_millis(200)))));
-    let started = Instant::now();
-    let err = run_script("while (true) {}").expect_err("interrupted");
-    assert!(err.message().contains("interrupted"), "{}", err.message());
-    assert!(started.elapsed() < Duration::from_secs(10));
-    assert_eq!(
-        super::script_time_remaining(),
-        None,
-        "the default goes when the script ends"
-    );
-    // A transaction's own limit replaces the default inside it, and the time inside does not count against it.
     with_ctx(|_| {
         assert!(super::script_time_remaining().is_some_and(|left| left <= Duration::from_millis(200)));
         {
@@ -946,6 +965,12 @@ fn the_wrapped_ec_takes_probes_and_leaves_the_framework_the_real_one() -> Result
     assert!(super::with_real_ec(|| eval_condition(
         "typeof ec.user.context === 'object'"
     ))?);
+    // the value converts inside the wrapper: a getter the conversion runs is checked too
+    let err = super::eval_map("({ get area() { return typeof ec.entity } })").unwrap_err().to_string();
+    assert!(err.contains("ec.entity is not available"), "{err}");
+    // a script run is not a widget expression
+    run_script("scriptSaw = typeof ec.entity")?;
+    assert_eq!(context_value("scriptSaw"), Some(Value::string("object")));
     assert_eq!(
         eval_value(
             "__nestedRead() + '|' + (() => { try { ec.entity; return 'real' } catch (e) { return 'wrapped' } })()"

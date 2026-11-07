@@ -20,6 +20,7 @@
 //! script) gets the real `ec` for its run ([`RealEcForNested`]), as on QuickJS.
 
 use std::cell::RefCell;
+use std::rc::Rc;
 
 use quickjs_oxide::engine::api::core::{
     Context, FunctionOptions, Js, JsResult, ObjectRef, OrdinaryPropertyDescriptor, RuntimeError, Scope, Value,
@@ -32,8 +33,8 @@ use super::engine::OxideEngine;
 const FILE_NAME: &str = "wrapped_ec";
 
 thread_local! {
-    /// The real `ec` while a widget expression runs with the wrapper in its place.
-    static WRAPPED_REAL: RefCell<Option<Value>> = const { RefCell::new(None) };
+    /// The real `ec` while a widget expression runs with the wrapper in its place, with the runtime it is of.
+    static WRAPPED_REAL: RefCell<Option<(*const OxideEngine, Value)>> = const { RefCell::new(None) };
 }
 
 /// Run `body`, a widget expression, with the wrapped `ec` when the widget check is on. `expression`, when given, is
@@ -56,8 +57,9 @@ pub(super) fn with_widget_ec<T>(
     let real = context.get_property(&global, &ec)?;
     let wrapper = make_wrapper(engine, &mut context, real.clone())?;
     define_ec(&mut context, &global, wrapper)?;
-    let previous = WRAPPED_REAL.with(|held| held.replace(Some(real.clone())));
+    let previous = WRAPPED_REAL.with(|held| held.replace(Some((std::ptr::from_ref(engine), real.clone()))));
     let _real = RealEc {
+        engine,
         context,
         global,
         real,
@@ -102,20 +104,23 @@ fn define_ec(context: &mut Context, global: &ObjectRef, value: Value) -> Result<
     Ok(())
 }
 
-/// The real `ec` put back on the global object when dropped.
-struct RealEc {
+/// The real `ec` put back on the global object when dropped. Should that fail, the wrapper would stay in front of
+/// `ec` for every later script on the thread, so the runtime is dropped and the next script starts a new one.
+struct RealEc<'a> {
+    engine: &'a OxideEngine,
     context: Context,
     global: ObjectRef,
     real: Value,
     /// What [`WRAPPED_REAL`] held before.
-    previous: Option<Value>,
+    previous: Option<(*const OxideEngine, Value)>,
 }
 
-impl Drop for RealEc {
+impl Drop for RealEc<'_> {
     fn drop(&mut self) {
         let real = std::mem::replace(&mut self.real, Value::Undefined);
         if let Err(err) = define_ec(&mut self.context, &self.global, real) {
-            tracing::error!(error = ?err, "the real ec could not be put back after a widget expression");
+            tracing::error!(error = ?err, "the real ec could not be put back after a widget expression; the quickjs-oxide runtime is dropped and restarts on the next script");
+            super::engine::discard(self.engine);
         }
         let previous = self.previous.take();
         WRAPPED_REAL.with(|held| *held.borrow_mut() = previous);
@@ -123,15 +128,22 @@ impl Drop for RealEc {
 }
 
 /// A run nested in a widget expression's (a host function it calls runs a script) has the real `ec` while it runs,
-/// and the global it found is put back when it ends: it is not the screen's widget expression.
+/// and the global it found is put back when it ends: it is not the screen's widget expression. Only in the runtime
+/// the wrapped expression runs in: a run of another (the spec runtime's) has its own `ec`. A put-back that fails
+/// drops the runtime, as [`RealEc`]'s does.
 pub(super) struct RealEcForNested {
+    engine: Rc<OxideEngine>,
     outer: Option<(Context, ObjectRef, Value)>,
 }
 
 impl RealEcForNested {
-    pub(super) fn enter(engine: &OxideEngine) -> Self {
-        let Some(real) = WRAPPED_REAL.with(|held| held.borrow().clone()) else {
-            return Self { outer: None };
+    pub(super) fn enter(engine: &Rc<OxideEngine>) -> Self {
+        let held = WRAPPED_REAL.with(|held| held.borrow().clone());
+        let Some(real) = held.and_then(|(of, real)| std::ptr::eq(of, Rc::as_ptr(engine)).then_some(real)) else {
+            return Self {
+                engine: Rc::clone(engine),
+                outer: None,
+            };
         };
         let mut context = engine.context().clone();
         let swapped = (|| -> Result<(ObjectRef, Value), RuntimeError> {
@@ -143,11 +155,15 @@ impl RealEcForNested {
         })();
         match swapped {
             Ok((global, outer)) => Self {
+                engine: Rc::clone(engine),
                 outer: Some((context, global, outer)),
             },
             Err(err) => {
                 tracing::error!(error = ?err, "a run nested in a widget expression could not have the real ec");
-                Self { outer: None }
+                Self {
+                    engine: Rc::clone(engine),
+                    outer: None,
+                }
             }
         }
     }
@@ -157,7 +173,8 @@ impl Drop for RealEcForNested {
     fn drop(&mut self) {
         if let Some((mut context, global, outer)) = self.outer.take() {
             if let Err(err) = define_ec(&mut context, &global, outer) {
-                tracing::error!(error = ?err, "the widget check's ec could not be put back after a nested run");
+                tracing::error!(error = ?err, "the widget check's ec could not be put back after a nested run; the quickjs-oxide runtime is dropped and restarts on the next script");
+                super::engine::discard(&self.engine);
             }
         }
     }

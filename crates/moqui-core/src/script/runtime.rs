@@ -208,7 +208,10 @@ impl<'js> RealEc<'js> {
 
 impl Drop for RealEc<'_> {
     fn drop(&mut self) {
-        let _ = set_ec(&self.ctx, self.real.clone());
+        if let Err(err) = set_ec(&self.ctx, self.real.clone()) {
+            tracing::error!(error = %err, "the real ec could not be put back after a widget expression; the script engine is dropped and starts again on the next script");
+            discard_engine_of(&self.ctx);
+        }
         let previous = self.previous.take();
         WRAPPED_REAL.with(|held| *held.borrow_mut() = previous);
     }
@@ -237,9 +240,24 @@ impl<'js> RealEcForNested<'js> {
 impl Drop for RealEcForNested<'_> {
     fn drop(&mut self) {
         if let Some(outer) = self.outer.take() {
-            let _ = set_ec(&self.ctx, outer);
+            if let Err(err) = set_ec(&self.ctx, outer) {
+                tracing::error!(error = %err, "the widget check's ec could not be put back after a nested run; the script engine is dropped and starts again on the next script");
+                discard_engine_of(&self.ctx);
+            }
         }
     }
+}
+
+/// Drop the thread's engine of `ctx` from [`ENGINES`], so the next script starts a new one: a run left it in a state
+/// the later scripts must not see (the widget check's wrapper of `ec` that could not be taken off). The running
+/// scripts hold it until they end.
+fn discard_engine_of(ctx: &Ctx<'_>) {
+    let raw = ctx.as_raw();
+    ENGINES.with(|engines| {
+        if let Ok(mut engines) = engines.try_borrow_mut() {
+            engines.retain(|(_, engine)| engine.context.as_raw() != raw);
+        }
+    });
 }
 
 /// Replace the global `ec`. It is read-only to scripts (see [`freeze_host_globals`]), so it is defined again.

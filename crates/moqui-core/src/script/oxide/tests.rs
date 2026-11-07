@@ -1088,6 +1088,25 @@ fn oxide_proxies_strict_expressions_and_the_widget_check() -> Result<(), Error> 
             Value::Bool(true)
         );
         let wrap = crate::script::WidgetWrap::set(true);
+        // a coercion, JSON and a promise's probe read an area as a plain object, not as violations
+        assert_eq!(
+            crate::script::expand(
+                "${ec.user}|${JSON.stringify(ec.l10n)}|${typeof ec.user.then}|${ec.l10n.valueOf() === ec.l10n}"
+            )?,
+            "[object Object]|{}|undefined|true"
+        );
+        let err = value("ec.user.context").unwrap_err().to_string();
+        assert!(err.contains("ec.user.context is not available"), "{err}");
+        // an expression the framework evaluates for itself reads the real `ec`
+        assert!(crate::script::with_real_ec(|| crate::script::eval_condition(
+            "typeof ec.user.context === 'object'"
+        ))?);
+        // the value converts inside the wrapper, as on QuickJS: a getter the conversion runs is checked too
+        let err = crate::script::eval_map("({ get area() { return typeof ec.entity } })").unwrap_err().to_string();
+        assert!(err.contains("ec.entity is not available"), "{err}");
+        // a script or actions run is not a widget expression, on either engine
+        crate::script::run_script("scriptSaw = typeof ec.entity")?;
+        assert_eq!(crate::script::context_value("scriptSaw"), Some(Value::string("object")));
         let tried = |call: &str| {
             value(&format!("(() => {{ try {{ return String({call}) }} catch (e) {{ return String(e) }} }})()"))
                 .map(|text| moqui_lib::object::to_plain_string(&text))

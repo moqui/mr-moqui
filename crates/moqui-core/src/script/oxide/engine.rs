@@ -1190,6 +1190,7 @@ fn run<T>(
     hash: u64,
     writes: bool,
     file_name: &str,
+    widget: bool,
     finish: impl FnOnce(&mut Context, &OxideEngine, Value) -> Result<T, Conv>,
 ) -> Result<T, Outcome> {
     with_run(writes, source, |engine, context, note| {
@@ -1201,11 +1202,18 @@ fn run<T>(
             }
             compiled => compiled,
         };
-        // the widget check's wrapper of `ec` around the expression ([`super::widget`])
-        let ran = compiled
-            .and_then(|compiled| super::widget::with_widget_ec(engine, None, || context.execute(&compiled)));
+        // a small kind's expression runs, and its value converts, inside the widget check's wrapper of `ec`, as on
+        // QuickJS ([`super::widget`]); a script or actions run does not
+        let ran = compiled.and_then(|compiled| {
+            let execute = || context.execute(&compiled).map(|value| finish(context, engine, value));
+            if widget {
+                super::widget::with_widget_ec(engine, None, execute)
+            } else {
+                execute()
+            }
+        });
         match ran {
-            Ok(value) => finish(context, engine, value).map_err(|conv| {
+            Ok(finished) => finished.map_err(|conv| {
                 if let Conv::Js(err) = &conv {
                     note(err);
                 }
@@ -1217,6 +1225,19 @@ fn run<T>(
             }
         }
     })
+}
+
+/// Drop the thread's runtime when it is `engine`, so the next script starts a new one: a run left it in a state the
+/// later scripts must not see (the widget check's wrapper of `ec` that could not be taken off, [`super::widget`]).
+/// Counted as a poisoned runtime.
+pub(super) fn discard(engine: &OxideEngine) {
+    counts::POISONED.fetch_add(1, Relaxed);
+    ENGINE.with(|current| {
+        let mut current = current.borrow_mut();
+        if current.as_ref().is_some_and(|held| std::ptr::eq(Rc::as_ptr(held), engine)) {
+            *current = None;
+        }
+    });
 }
 
 /// One run on the thread's oxide runtime, from `body`: counted in the thread's depth, deadline and default limit, its
@@ -1358,7 +1379,7 @@ fn conv_outcome(context: &mut Context, conv: Conv) -> Outcome {
 /// [`crate::script::eval_condition`] on quickjs-oxide: `source` (as it runs, after `as_expression`) is true by
 /// JavaScript's truth.
 pub(crate) fn eval_condition(source: &str, hash: u64, writes: bool) -> Result<bool, Outcome> {
-    run(source, hash, writes, super::compiled::FILE_NAME, |_, _, value| {
+    run(source, hash, writes, super::compiled::FILE_NAME, true, |_, _, value| {
         Ok(truthy(&value))
     })
 }
@@ -1370,6 +1391,7 @@ pub(crate) fn eval_text(source: &str, hash: u64, writes: bool) -> Result<String,
         hash,
         writes,
         super::compiled::FILE_NAME,
+        true,
         |context, _, value| match value {
             Value::String(text) => Ok(text.to_utf8_lossy()),
             other => Ok(context.to_js_string(&other)?.to_utf8_lossy()),
@@ -1389,6 +1411,7 @@ pub(crate) fn eval_map(
         hash,
         writes,
         super::compiled::FILE_NAME,
+        true,
         |context, engine, value| {
             let not_an_object = || Conv::Error("script value is not an object".to_string());
             let Value::Object(object) = &value else {
@@ -1409,13 +1432,13 @@ pub(crate) fn eval_map(
 /// a bare assignment is how a value reaches the context stack. Kept by the hash of its text and name.
 pub(crate) fn run_actions(source: &str, hash: u64, file_name: &str) -> Result<(), Outcome> {
     let key = crate::script::text::hash_of(hash, file_name);
-    run(source, key, true, file_name, |_, _, _| Ok(()))
+    run(source, key, true, file_name, false, |_, _, _| Ok(()))
 }
 
 /// [`crate::script::run_script`] on quickjs-oxide, under `script_engine=oxide`: one script, not strict, named
 /// `eval_script` in stack traces as on QuickJS; what it wrote by name is written back at its end.
 pub(crate) fn run_script(source: &str, hash: u64) -> Result<(), Outcome> {
-    run(source, hash, true, super::compiled::FILE_NAME, |_, _, _| Ok(()))
+    run(source, hash, true, super::compiled::FILE_NAME, false, |_, _, _| Ok(()))
 }
 
 /// [`crate::script::eval_value`] on quickjs-oxide: the value of `source` as a host value.
@@ -1425,6 +1448,7 @@ pub(crate) fn eval_value(source: &str, hash: u64, writes: bool) -> Result<HostVa
         hash,
         writes,
         super::compiled::FILE_NAME,
+        true,
         |context, engine, value| to_host(context, engine, &value),
     )
 }
