@@ -1119,11 +1119,19 @@ mod tests {
         assert!(quickjs.unwrap_err().message().contains("interrupted"));
         let oxide = oxide.unwrap_err();
         assert!(oxide.message().contains("interrupted"), "{}", oxide.message());
-        let (_, oxide) = on_both(MODULE, "<widgets><hungry/></widgets>");
+        let (quickjs, oxide) = on_both(MODULE, "<widgets><hungry/></widgets>");
+        assert!(quickjs.unwrap_err().message().starts_with("Error: out of memory"));
         let oxide = oxide.unwrap_err();
-        assert!(oxide.message().contains("out of memory"), "{}", oxide.message());
+        assert!(oxide.message().starts_with("Error: out of memory"), "{}", oxide.message());
+        // the oxide generator that ran out is replaced: the next generation starts a new runtime
+        let starts = crate::script::oxide::walker::generator_starts();
         let (quickjs, oxide) = on_both(MODULE, "<widgets><fine/></widgets>");
+        assert_eq!(crate::script::oxide::walker::generator_starts(), starts + 1);
         assert_eq!(quickjs.unwrap(), "sri.write('fine');\n");
+        assert_eq!(oxide.unwrap(), "sri.write('fine');\n");
+        let starts = crate::script::oxide::walker::generator_starts();
+        let (_, oxide) = on_both(MODULE, "<widgets><fine/></widgets>");
+        assert_eq!(crate::script::oxide::walker::generator_starts(), starts, "a runtime that did not run out is kept");
         assert_eq!(oxide.unwrap(), "sri.write('fine');\n");
     }
 

@@ -189,6 +189,8 @@ type Compiled = (Rc<str>, FunctionBytecodeRef);
 
 thread_local! {
     static GENERATOR: RefCell<Option<Rc<Generator>>> = const { RefCell::new(None) };
+    /// The generator runtimes started on the thread.
+    static STARTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 fn callable(context: &Context, source: &str) -> Result<CallableRef, RuntimeError> {
@@ -240,6 +242,7 @@ fn generator() -> Result<Rc<Generator>, Error> {
     })()
     .map_err(|err| Error::new(format!("the quickjs-oxide generator did not start: {err}")))?;
     let started = Rc::new(started);
+    STARTS.with(|starts| starts.set(starts.get() + 1));
     GENERATOR.with(|cell| *cell.borrow_mut() = Some(Rc::clone(&started)));
     Ok(started)
 }
@@ -252,12 +255,31 @@ fn limited<R>(body: impl FnOnce() -> Result<R, Error>) -> Result<R, Error> {
 }
 
 fn failed(context: &Context, err: RuntimeError) -> Error {
-    if matches!(err, RuntimeError::OutOfMemory) {
+    if out_of_memory(context, &err) {
         // a runtime that ran out of heap is not used again: the next generation on the thread starts a new one
         GENERATOR.with(|cell| cell.borrow_mut().take());
     }
     let mut context = context.clone();
     runtime_error(&mut context, err)
+}
+
+/// Whether `err` is the runtime running out of heap: the engine's own error, or its `InternalError: out of memory`,
+/// which a script can catch (the walker passes it on as what the macro threw).
+fn out_of_memory(context: &Context, err: &RuntimeError) -> bool {
+    let thrown = match err {
+        RuntimeError::OutOfMemory => return true,
+        RuntimeError::Exception(Value::Object(thrown)) => thrown,
+        _ => return false,
+    };
+    let mut context = context.clone();
+    if !context.is_error_object(thrown).unwrap_or(false) {
+        return false;
+    }
+    let text = |context: &mut Context, name: &str| match key(name).map(|key| context.get_property(thrown, &key)) {
+        Ok(Ok(Value::String(text))) => text.to_utf8_lossy(),
+        _ => String::new(),
+    };
+    text(&mut context, "name") == "InternalError" && text(&mut context, "message") == "out of memory"
 }
 
 fn js_text(text: &str) -> Result<Value, Error> {
@@ -461,6 +483,12 @@ fn actions_on_generator(
     #[cfg(test)]
     moqui_lib::sync::lock(&GENERATED_ACTIONS).push(tree.clone());
     walk(&generator, macros, &tree, "XML action macro", None)
+}
+
+/// The generator runtimes started on this thread. For tests.
+#[cfg(test)]
+pub(crate) fn generator_starts() -> u64 {
+    STARTS.with(std::cell::Cell::get)
 }
 
 /// The macro sources kept compiled on this thread's generator. For tests.
