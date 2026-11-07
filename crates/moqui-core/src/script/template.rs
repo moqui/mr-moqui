@@ -645,14 +645,18 @@ impl Token {
     }
 }
 
-const PRELUDE: &str = r#"const $esc = (v) => String(v).replace(/[&<>"']/g, (c) => c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === '"' ? "&quot;" : "&#39;");
+/// The globals the prelude calls, taken before the template function is made, so a template that assigns one of their
+/// names (`<#assign String = ...>`, a `var` of the function) does not change its escaping or its lists.
+const INTRINSICS: &str = "const $String = String, $Array = Array, $Object = Object, $Symbol = Symbol;\n";
+
+const PRELUDE: &str = r#"const $esc = (v) => $String(v).replace(/[&<>"']/g, (c) => c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === '"' ? "&quot;" : "&#39;");
 class $Raw { constructor(s) { this.s = s; } }
-const $s = (v) => v instanceof $Raw ? v.s : v == null ? "" : String(v);
+const $s = (v) => v instanceof $Raw ? v.s : v == null ? "" : $String(v);
 const $h = (v) => v instanceof $Raw ? v.s : v == null ? "" : $esc(v);
 const html = (v) => new $Raw($h(v));
 const raw = (v) => new $Raw($s(v));
 const cssString = (v) => new $Raw('"' + $s(v).replace(/[\\"<>\r\n]/g, (c) => c === "\n" ? "\\A " : "\\" + c.charCodeAt(0).toString(16).toUpperCase() + " ") + '"');
-const $list = (v) => v == null ? [] : Array.isArray(v) ? v : typeof v === "string" ? [v] : typeof v[Symbol.iterator] === "function" ? Array.from(v) : typeof v.length === "number" ? Array.from({length: v.length}, (_, i) => v[i]) : Object.values(v);
+const $list = (v) => v == null ? [] : $Array.isArray(v) ? v : typeof v === "string" ? [v] : typeof v[$Symbol.iterator] === "function" ? $Array.from(v) : typeof v.length === "number" ? $Array.from({length: v.length}, (_, i) => v[i]) : $Object.values(v);
 const $o = [];
 "#;
 
@@ -675,7 +679,9 @@ fn compile(source: &str, escape: Escape, scope: Scope) -> Result<String, Error> 
         }
     }
     let text = match scope {
-        Scope::Live => format!("(function(){{\n{PRELUDE}{declared}{body}return $o.join(\"\");\n}})"),
+        Scope::Live => format!(
+            "(function(){{\n{INTRINSICS}return function(){{\n{PRELUDE}{declared}{body}return $o.join(\"\");\n}};\n}})()"
+        ),
         // The live form's shape over the snapshot: each name the body reads or writes is a variable of the function's
         // own frame, read once from the snapshot by `$scope`'s reader (plans/Script-Engine-Oxide.md section 5.4). A
         // name the body does not name is not reached: code a template makes at run time (`Function`, indirect `eval`)
@@ -690,8 +696,8 @@ fn compile(source: &str, escape: Escape, scope: Scope) -> Result<String, Error> 
                 names.push_str(&format!("var {name} = $n({});\n", js_string(&name)));
             }
             format!(
-                "(function(){{\n\"use strict\";\nconst $t = function($data){{\nconst $n = $scope($data);\n{PRELUDE}\
-                 {names}{body}return $o.join(\"\");\n}};\nObject.freeze($t.prototype);\nreturn Object.freeze($t);\n}})()"
+                "(function(){{\n\"use strict\";\n{INTRINSICS}const $t = function($data){{\nconst $n = $scope($data);\n\
+                 {PRELUDE}{names}{body}return $o.join(\"\");\n}};\n$Object.freeze($t.prototype);\nreturn $Object.freeze($t);\n}})()"
             )
         }
     };

@@ -211,6 +211,21 @@ fn a_locked_down_render_leaves_nothing_on_the_template_function_on() {
     );
 }
 
+/// A template that assigns the name of a global the prelude calls keeps its escaping and its lists.
+#[test]
+fn assigning_a_global_name_leaves_the_prelude_as_it_was() {
+    on_template_engines(assigning_a_global_name_leaves_the_prelude_as_it_was_on);
+}
+
+fn assigning_a_global_name_leaves_the_prelude_as_it_was_on() {
+    let source = "<#assign String = null><#assign Array = null><#assign Object = null><#assign Symbol = null>\
+                  ${'<'}|<#list ['a', 'b'] as x>${x}</#list>|${html('&')}|${cssString('a')}|${String}";
+    let expected = "&lt;|ab|&amp;|\"a\"|";
+    assert_eq!(render_trusted(source, Escape::Html).unwrap(), expected);
+    let locked = render_locked_with(source, Escape::Html, &Value::Map(Default::default())).unwrap();
+    assert_eq!(locked, expected);
+}
+
 #[test]
 fn locked_down_sees_plain_values_and_decimals_as_strings() {
     on_template_engines(locked_down_sees_plain_values_and_decimals_as_strings_on);
