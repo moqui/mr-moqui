@@ -122,6 +122,27 @@ along with this software (see the LICENSE.md file). If not, see
             artifactName="org\.moqui\.admin\.(AccessServices\.(find#Groups|get#Group|create#Group|store#Group|store#Membership|end#Membership|preview#Grants|apply#Grants|store#GroupPreference|check#GrantProposal|apply#GrantProposal)|IdentityServices\.(check#AdministrationPath|find#Sessions|revoke#Sessions|get#AccountCredentials|revoke#AccountAccess))"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="AdminAccessServicesALL" userGroupId="ALL_USERS" artifactGroupId="AdminAccessServices"
             authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- Admin P6 (mr-boss plan/impl-admin.md P6, F31): the owner change of a shared drive and of a shared mail account, which an
+        account's lifecycle uses when the owner leaves (the owned-resource contract of org.moqui.admin.IdentityServices). Their
+        owner may hand them over; another user's need these permissions, granted to ADMIN (an app grants them to its identity
+        operators). The services check the permission and the new owner themselves, so ALL_USERS may call them. -->
+    <moqui.security.UserPermission userPermissionId="DRIVE_OWNER_CHANGE" description="Drives: change the owner of another user's shared drive"/>
+    <moqui.security.UserPermission userPermissionId="EMAIL_ACCOUNT_OWNER_CHANGE" description="Mail: change the owner of another user's shared mail account"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="DRIVE_OWNER_CHANGE" fromDate="0"/>
+    <moqui.security.UserGroupPermission userGroupId="ADMIN" userPermissionId="EMAIL_ACCOUNT_OWNER_CHANGE" fromDate="0"/>
+    <moqui.security.ArtifactGroup artifactGroupId="ResourceOwnerServices" description="Owned resource lookup and owner change"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="ResourceOwnerServices" artifactTypeEnumId="AT_SERVICE" inheritAuthz="Y" nameIsPattern="Y"
+            artifactName="org\.moqui\.impl\.(FileServices\.(find#OwnedDrives|transfer#DriveOwner)|EmailClientServices\.(find#OwnedEmailAccounts|transfer#EmailAccountOwner))"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="ResourceOwnerServicesALL" userGroupId="ALL_USERS" artifactGroupId="ResourceOwnerServices"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- A coordinator's call of a stored step's owner service (IdentityServices.call#OwnedResourceService; impl-admin P6 review,
+        F-P6-1): not inheritable, so the coordinator's own inheritable ALLOW (Mantle's identity services') stops here and the owner
+        service is authorized on its own records, as a direct call would be -->
+    <moqui.security.ArtifactGroup artifactGroupId="OwnedResourceCall" description="Owned resource step call"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="OwnedResourceCall" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N" nameIsPattern="N"
+            artifactName="org.moqui.admin.IdentityServices.call#OwnedResourceService"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="OwnedResourceCallALL" userGroupId="ALL_USERS" artifactGroupId="OwnedResourceCall"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
     <!-- The registered purposes of a custom group (optionIndicator Y): CreateGroup offers them, and a group of one of them is a
         custom group an access administrator created, never privileged. A component adds its own. -->
     <moqui.basic.Enumeration description="Team" enumId="UgtCustomTeam" enumTypeId="UserGroupType" optionIndicator="Y" sequenceNum="10"/>

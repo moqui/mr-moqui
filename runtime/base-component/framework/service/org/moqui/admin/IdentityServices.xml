@@ -123,4 +123,62 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').execute('revokeAccountAccess', context))</script></actions>
     </service>
+    <!-- The owned-resource contract of an account's lifecycle (mr-boss plan/impl-admin.md P6, design-admin §14 Lifecycle participant):
+        an owner of a kind of resource a user can own (a shared drive, a shared mail account, a calendar, a contact book, the
+        assignments of a work app, a report schedule) answers what a user owns and moves one to a new owner through its own
+        services, which check their own permission and the new owner's eligibility. A coordinator (Mantle's lifecycle operation)
+        calls only a service that carries one of these contracts' parameters (an implementing service gets them from the
+        interface), so a stored step can name no service written for something else. Interfaces only: they declare parameters
+        and are never called. -->
+    <service verb="define" noun="OwnedResourceLookup" type="interface">
+        <description>What userId owns of the owner's kind, for an offboarding preview: resourceList, each {resourceId,
+            resourceName, resourceKind, transferable, note}; names only, never contents. The caller's own, or another user's with
+            the owner's own permission.</description>
+        <in-parameters><parameter name="userId" required="true"/></in-parameters>
+        <out-parameters><parameter name="resourceList" type="List"/></out-parameters>
+    </service>
+    <service verb="define" noun="OwnedResourceTransfer" type="interface">
+        <description>Move one resource (the owner's own id parameter) from fromUserId to toUserId: refused (an error) without the
+            owner's permission or when toUserId may not own it; the result names what changed (transferred).</description>
+        <in-parameters>
+            <parameter name="fromUserId" required="true"/>
+            <parameter name="toUserId" required="true"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="transferred" type="Boolean"/></out-parameters>
+    </service>
+    <service verb="define" noun="OwnedResourcePause" type="interface">
+        <description>Pause what runs as or for userId of the owner's kind (an owner's schedules) until a new owner takes it;
+            pausedCount says how many.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters><parameter name="pausedCount" type="Integer"/></out-parameters>
+    </service>
+    <service verb="call" noun="OwnedResourceService" allow-remote="false">
+        <description>A coordinator's call of a stored step's owner service (Mantle's account lifecycle): serviceName must carry the
+            contract's parameters (contract lookup, transfer or pause; else an error and nothing is called), and it runs under its
+            own authorization, as if the caller called it directly. This service's ALL_USERS ALLOW (OwnedResourceCall) is not
+            inheritable, so an inheritable ALLOW of the coordinator (Mantle's identity services' ALL_USERS grant) does not carry
+            into the owner service: one the caller is not authorized for on its own records is refused. An app screen's inheritable
+            ALWAYS grant, which already covers everything below it, still does. result is the owner service's out-parameters.</description>
+        <in-parameters>
+            <parameter name="serviceName" required="true"/>
+            <parameter name="contract" required="true"><description>lookup, transfer or pause</description></parameter>
+            <parameter name="stepParameters" type="Map"/>
+        </in-parameters>
+        <out-parameters><parameter name="result" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            const contracts = {lookup: [['userId'], ['resourceList']], transfer: [['fromUserId', 'toUserId'], ['transferred']],
+                pause: [['userId'], ['pausedCount']]}
+            const terms = contracts[contract]
+            const definition = terms ? ec.service.getServiceDefinition(serviceName) : null
+            const inNames = definition ? Array.from(definition.inParameterNames || []) : []
+            if (!definition || !terms[0].every((name) => inNames.includes(name)) ||
+                    !terms[1].every((name) => Object.hasOwn(definition.outParameterInfoMap || {}, name))) {
+                ec.message.addError(`${serviceName} does not carry the owned-resource ${contract} contract`); return }
+            result = ec.service.sync().name(serviceName).parameters(stepParameters || {}).call() || {}
+        ]]></script></actions>
+    </service>
 </services>
