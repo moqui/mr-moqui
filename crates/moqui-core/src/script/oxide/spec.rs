@@ -38,6 +38,11 @@ thread_local! {
     static SPEC: RefCell<Option<Rc<OxideEngine>>> = const { RefCell::new(None) };
 }
 
+/// This thread's spec runtime, when it has started.
+pub(super) fn current() -> Option<Rc<OxideEngine>> {
+    SPEC.with(|spec| spec.borrow().clone())
+}
+
 /// This thread's spec runtime, started the first time.
 fn spec_engine() -> Result<Rc<OxideEngine>, Error> {
     if let Some(engine) = SPEC.with(|spec| spec.borrow().clone()) {
@@ -125,11 +130,13 @@ pub(crate) fn eval_named_value(source: &str, file_name: &str) -> Result<HostValu
     let state = RunState::enter(&engine, nested);
     let mut context = engine.context().clone();
     let mut poisoned = false;
+    let mut out_of_memory = false;
     let options = EvalOptions::new(file_name).transient();
     let mut outcome = match context.eval_with_options(source, &options) {
         Ok(value) => to_host(&mut context, &engine, &value).map_err(|conv| conv_error(&mut context, conv)),
         Err(err) => {
             poisoned = matches!(err, RuntimeError::Poisoned);
+            out_of_memory = matches!(err, RuntimeError::OutOfMemory);
             Err(runtime_error(&mut context, err))
         }
     };
@@ -149,6 +156,12 @@ pub(crate) fn eval_named_value(source: &str, file_name: &str) -> Result<HostValu
     if poisoned && !nested {
         tracing::error!(file = %file_name, "a host function panicked in the quickjs-oxide spec runtime; it restarts on the next spec script");
         SPEC.with(|spec| *spec.borrow_mut() = None);
+    } else if !poisoned && !nested {
+        // the run's garbage goes before the next spec script, as the main runtime's does after one that ran out
+        if out_of_memory {
+            let _ = engine.runtime().run_gc();
+        }
+        engine.sample_heap();
     }
     outcome
 }

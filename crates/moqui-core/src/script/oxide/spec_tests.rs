@@ -179,3 +179,19 @@ fn a_main_run_under_a_spec_keeps_the_spec_runs_fallback() {
         assert_eq!(spec("probeNested.main('2')"), Value::I32(2));
     }
 }
+
+/// The thread's memory report counts the spec runtime beside the main one.
+#[test]
+fn the_memory_report_counts_the_spec_runtime() {
+    clear_context_stack();
+    assert_eq!(super::super::engine_memory(false).engines, 0);
+    spec("1");
+    let spec_only = super::super::engine_memory(true);
+    assert_eq!(spec_only.engines, 1);
+    assert!(spec_only.reserved_bytes > 0);
+    install_global("probeNested", &NESTED).expect("install");
+    assert_eq!(spec("probeNested.main('1')"), Value::I32(1));
+    let both = super::super::engine_memory(false);
+    assert_eq!(both.engines, 2);
+    assert!(both.reserved_bytes > spec_only.reserved_bytes);
+}

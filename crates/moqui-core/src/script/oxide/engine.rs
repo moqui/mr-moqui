@@ -256,28 +256,28 @@ pub(crate) struct OxideMemory {
 
 /// [`OxideMemory`] of this thread's runtime, after a collection when `collect`. Not while a script runs on it.
 pub(crate) fn engine_memory(collect: bool) -> OxideMemory {
-    let Some(engine) = current() else {
-        return OxideMemory::default();
-    };
     if run::is_running(EngineTag::Oxide) {
         return OxideMemory::default();
     }
-    if collect {
-        let _ = engine.runtime.run_gc();
+    // the main runtime's and the spec runtime's ([`super::spec`]), summed
+    let engines = [ENGINE.with(|engine| engine.borrow().clone()), super::spec::current()];
+    let mut memory = OxideMemory::default();
+    for engine in engines.into_iter().flatten() {
+        if collect {
+            let _ = engine.runtime.run_gc();
+        }
+        memory.engines += 1;
+        if let Ok(report) = engine.runtime.memory_report() {
+            memory.reserved_bytes += report.reserved_bytes();
+            memory.live_bytes += report.gc.live_bytes;
+            memory.code_units += report.code.units;
+            memory.code_bytes +=
+                report.code.instruction_bytes + report.code.position_bytes + report.code.source_bytes;
+        }
+        let compiled = engine.compiled.borrow();
+        memory.compiled_scripts += compiled.len();
+        memory.compiled_script_bytes += compiled.bytes();
     }
-    let mut memory = OxideMemory {
-        engines: 1,
-        ..OxideMemory::default()
-    };
-    if let Ok(report) = engine.runtime.memory_report() {
-        memory.reserved_bytes = report.reserved_bytes();
-        memory.live_bytes = report.gc.live_bytes;
-        memory.code_units = report.code.units;
-        memory.code_bytes = report.code.instruction_bytes + report.code.position_bytes + report.code.source_bytes;
-    }
-    let compiled = engine.compiled.borrow();
-    memory.compiled_scripts = compiled.len();
-    memory.compiled_script_bytes = compiled.bytes();
     memory
 }
 
@@ -739,7 +739,7 @@ impl OxideEngine {
 
     /// Sample the reserved bytes for the stats: at the first run, then at most every [`HEAP_SAMPLE_EVERY`], looked at
     /// every [`HEAP_SAMPLE_RUNS`] runs.
-    fn sample_heap(&self) {
+    pub(super) fn sample_heap(&self) {
         let runs = self.runs.get() + 1;
         self.runs.set(runs);
         if runs % HEAP_SAMPLE_RUNS != 1 {
