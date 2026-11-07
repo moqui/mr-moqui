@@ -391,6 +391,43 @@ an area with `inheritAuthz="N"` on the screen and on its transitions by name (`A
 as BOSS Insights' editors): a transition not named is refused, and each engine operation is checked by its own grant. The regression
 spec is `tools/test/ReportMounts.spec.js`, over the test mount `tools/test/screen/ReportMount.xml`.
 
+### Business datasets
+
+A dataset definition whose body says `"signal": "business"` (over a DataDocument, `documentType`) is a business dataset, kept
+by `crates/moqui-report/src/business.rs` (BOSS impl-insights P3, INS-03):
+
+- **Admission.** It is read only once admitted (a `moqui.report.BusinessDataset` row with `admittedDate` and no `retiredDate`),
+  except by its steward, who holds the dataset's update artifact (`org.moqui.report.dataset.<id>`, action update; `ADMIN` holds
+  all through `REPORT_DATASETS_ADMIN`). Until then a reader's query is refused "dataset … is not admitted", so a panel over it says
+  "Not available", never "No data". `store#BusinessDataset` with `admit` admits it only when three checks pass: its document is in
+  a registered DataFeed (a `DataFeedDocument` row), the document's index is built (and not older than its last field or condition
+  change), and its `rowFilterService` is a registered scope policy. An admitted dataset whose definition no longer binds a
+  registered policy is read only by its steward again, and so is one whose body names an `indexName` or a `serviceName` (a
+  business dataset reads its one document). `find#BusinessDatasets` reports each dataset's state
+  (admitted, review, retired, unavailable) and checks live; `validate#BusinessDataset` gives one dataset's checks to its steward.
+- **Scope policies** are services registered as `ReportScopePolicy` enumerations (`enumCode` the service): the framework's
+  `ReportUserGroups` (`get#UserGroupRowFilter`, rows whose field is one of the viewer's groups) and Mantle's `MantleOrganization`
+  (`mantle.party.PartyServices.get#OrganizationRowFilter`, the viewer's organizations). A `rowFilterService` is called with
+  `userId`, the dataset's id and the dataset's `rowFilterParameters` (such as `{"organizationField": "vendorPartyId"}`), so one
+  policy serves every dataset by naming its field; a registered policy runs without a grant of its own (it is the engine's,
+  reviewed code), any other with the viewer's. Its filter is added before documents, suggestions, value counts, aggregations,
+  panel exports and playlists alike, so a dashboard's variables or a query's `ignoreVariables` cannot widen it.
+- **Stewardship.** `create#BusinessDataset` (a dataset over a registered feed's document with a registered policy, owned by the
+  steward, waiting for review; a saved dataset's body changed any other way, by `save#Definition`, a copy, a restore, an import or
+  a git pull, returns it to review, and deleting the definition deletes its admission), `store#BusinessDataset` (title, time field, policy and parameters of a saved dataset, which return
+  it to review; a shipped dataset's definition is its component's; steward; admit; retire; `expectedVersion`),
+  `store#BusinessDatasetFields` (plain field paths only, no expression, secret or encrypted entity field; unique names; removing or renaming a field
+  any definition over the dataset names is refused with those definitions' names) and `store#BusinessDatasetConditions` (a field of
+  the document and an operator of the list, never a post-query expression). `index#BusinessDataset` rebuilds the dataset's
+  document of its feed only (`index#DataFeedDocuments` with the document), for its steward, recording the time and count. An
+  application grants its readers each dataset's artifact (view) and its documents' `DataDocumentUserGroup` rows; admission does
+  not grant.
+- **The document is read through its dataset.** A dataset that is not a business one (a DataDocument by its id, an `index:`
+  alias, a definition without the signal) over a document some business dataset reads is opened only to a holder of that
+  dataset's update artifact (the steward of a saved one, `ADMIN`), so a view grant on such an artifact, by pattern or by mistake,
+  reaches no unfiltered rows.
+- The regression spec is `framework/test/BusinessDatasets.spec.js`.
+
 ## Regressions and incidents
 
 The `detect_Regressions_5min` job (`detect#Regressions`) compares each service version that served requests in the
@@ -543,6 +580,8 @@ ends. The services are `org.moqui.monitor.MonitorServices.list#RuntimeSettings`,
 - Every query runs as the viewer. A dataset is authorized as the artifact `org.moqui.report.dataset.<id>`
   (`MONITOR_APP` holds the `otel_*` ones; `REPORT_DATASETS_ADMIN` holds all), plus `DataDocumentUserGroup` for a
   DataDocument. A saved panel never widens access.
+- A business dataset is read only once admitted, and its row filter is a registered scope policy
+  ([Business datasets](#business-datasets)).
 - Row filters (`rowFilter`, `contextFilters` from the signed-in identity, or a `rowFilterService`) are added by the
   server before documents, ranking, totals, aggregations and exports; a client never supplies them. Existing entity
   filters are not translated automatically: write the dataset filters an organization needs, and grant business roles
@@ -588,6 +627,10 @@ take the index refresh interval to appear.
   ```
 
   Then set the report email template's SMTP server.
+- **Business datasets** (Insights P3): the entity check creates `moqui.report.BusinessDataset`; load `ReportSetupData.xml` again
+  for the `ReportScopePolicy` type and mr-mantle's `MonitoringSalesSecurityData.xml` for its policy. From then on a dataset with `signal`
+  business is read only once admitted or by a holder of its update artifact (`ADMIN` holds them all), so a non-`ADMIN` reader of
+  one sees it as not admitted until a steward admits it ([Business datasets](#business-datasets)).
 - **Retired:** the ArtifactHit and ArtifactHitBin entities and their report view, the System Artifact Summary,
   Artifact Bins, Log Viewer and DataDocument Search screens, the hit REST resources, and the shipping of logs to
   `moqui_logs` and `moqui_http_log`. Startup pauses the old `clean_ArtifactData_daily`,

@@ -68,6 +68,83 @@
         <description>Records an export of report data done outside the report services, such as the Explore document download.</description>
         <in-parameters><parameter name="kind"/><parameter name="format"/><parameter name="definitionId"/><parameter name="rowCount" type="Long"/></in-parameters>
     </service>
+    <!-- Business datasets (crates/moqui-report/src/business.rs; BOSS impl-insights P3, INS-03): admission, scope policy, fields,
+        conditions and the one-feed index, each guarded by the dataset's own artifact org.moqui.report.dataset.<id> (update) -->
+    <service verb="find" noun="BusinessDatasets" type="rust" location="moqui_core::report::find_business_datasets">
+        <description>The business datasets (signal business) the viewer may read, each with its source, scope policy, admission
+            checks and state (admitted, review, retired, unavailable); a steward (org.moqui.report.dataset update) also sees
+            those of theirs waiting for review.</description>
+        <in-parameters><parameter name="datasetId"/><parameter name="status"/></in-parameters>
+        <out-parameters><parameter name="datasets" type="List"/></out-parameters>
+    </service>
+    <service verb="validate" noun="BusinessDataset" type="rust" location="moqui_core::report::validate_business_dataset">
+        <description>The admission checks of one business dataset for its steward: its document in a registered DataFeed, its
+            index built (and not older than its last field change), its rowFilterService a registered scope policy.</description>
+        <in-parameters><parameter name="datasetId" required="true"/></in-parameters>
+        <out-parameters><parameter name="checks" type="List"/><parameter name="admissible" type="Boolean"/><parameter name="status"/><parameter name="dataset" type="Map"/></out-parameters>
+    </service>
+    <service verb="create" noun="BusinessDataset" type="rust" location="moqui_core::report::create_business_dataset">
+        <description>A steward's business dataset over a DataDocument a registered DataFeed indexes, with a registered scope policy
+            and its parameters, saved as a dataset definition they own and waiting for review. Refuses a document of no feed, a
+            telemetry index, an unregistered policy and a group the steward is not in.</description>
+        <in-parameters>
+            <parameter name="datasetId" required="true"/><parameter name="title"/><parameter name="dataDocumentId" required="true"/>
+            <parameter name="timeField"/><parameter name="scopePolicyId" required="true"/><parameter name="rowFilterParameters" type="Map"/>
+            <parameter name="userGroupId"/>
+        </in-parameters>
+        <out-parameters><parameter name="dataset" type="Map"/></out-parameters>
+    </service>
+    <service verb="store" noun="BusinessDataset" type="rust" location="moqui_core::report::store_business_dataset">
+        <description>A steward's changes to a business dataset: title, time field, scope policy and parameters (a saved dataset;
+            a shipped one's definition is its component's), its steward, and admit or retire. A time field or scope change returns
+            it to review; admission is refused while a check fails; a stale expectedVersion is refused.</description>
+        <in-parameters>
+            <parameter name="datasetId" required="true"/><parameter name="title"/><parameter name="timeField"/>
+            <parameter name="scopePolicyId"/><parameter name="rowFilterParameters" type="Map"/><parameter name="stewardUserId"/>
+            <parameter name="admit" type="Boolean"/><parameter name="retire" type="Boolean"/><parameter name="expectedVersion" type="Long"/>
+        </in-parameters>
+        <out-parameters><parameter name="dataset" type="Map"/></out-parameters>
+    </service>
+    <service verb="index" noun="BusinessDataset" type="rust" transaction-timeout="3600" location="moqui_core::report::index_business_dataset">
+        <description>Rebuild one business dataset's index: org.moqui.search.SearchServices.index#DataFeedDocuments for its feed
+            and its document only, for its steward (the dataset's update artifact), recording when and how many.</description>
+        <in-parameters><parameter name="datasetId" required="true"/></in-parameters>
+        <out-parameters><parameter name="documentsIndexed" type="Long"/><parameter name="dataFeedId"/><parameter name="dataDocumentId"/></out-parameters>
+    </service>
+    <service verb="store" noun="BusinessDatasetFields" type="rust" location="moqui_core::report::store_business_dataset_fields">
+        <description>A steward adds, revises and removes a business dataset's document fields (fields: fieldSeqId, fieldPath,
+            fieldNameAlias, functionName, sequenceNum, remove). A new path is plain (no expression or secret field); names stay
+            unique; removing or renaming a field a definition over the dataset names is refused until it is revised, as is a
+            stale expectedVersion. The index is stale until rebuilt.</description>
+        <in-parameters><parameter name="datasetId" required="true"/><parameter name="fields" type="List"/><parameter name="expectedVersion" type="Long"/></in-parameters>
+        <out-parameters><parameter name="dataset" type="Map"/></out-parameters>
+    </service>
+    <service verb="store" noun="BusinessDatasetConditions" type="rust" location="moqui_core::report::store_business_dataset_conditions">
+        <description>A steward adds, revises and removes the conditions that narrow a business dataset's document (conditions:
+            conditionSeqId, fieldNameAlias, operator, fieldValue, toFieldNameAlias, remove), each on a field of the document with
+            an operator of the list; never a post-query expression, and never in place of the row filter.</description>
+        <in-parameters><parameter name="datasetId" required="true"/><parameter name="conditions" type="List"/><parameter name="expectedVersion" type="Long"/></in-parameters>
+        <out-parameters><parameter name="dataset" type="Map"/></out-parameters>
+    </service>
+    <service verb="get" noun="UserGroupRowFilter" allow-remote="false">
+        <description>The framework's scope policy ReportUserGroups (ReportSetupData.xml), a business dataset's rowFilterService: the
+            rows whose field named in rowFilterParameters (groupField, userGroupId by default) is one of the signed-in viewer's
+            user groups; nothing for a viewer of none. A userId of another user is refused. A domain registers its own policies
+            (an organization's, a confidential class's) the same way.</description>
+        <in-parameters>
+            <parameter name="userId"/><parameter name="datasetId"/><parameter name="rowFilterParameters" type="Map"/>
+        </in-parameters>
+        <out-parameters><parameter name="filter" type="Map"/></out-parameters>
+        <actions>
+            <if condition="userId &amp;&amp; userId != ec.user.userId">
+                <return error="true" message="The user group row filter is computed for the signed-in user only"/></if>
+            <set field="groupField" from="rowFilterParameters?.groupField || 'userGroupId'"/>
+            <if condition="!/^[A-Za-z][A-Za-z0-9_.]{0,63}$/.test(groupField)">
+                <return error="true" message="Group field ${groupField} is not a field name"/></if>
+            <set field="groupIds" from="ec.user.userId ? Array.from(ec.user.getUserGroupIdSet() || []).filter(id => id !== 'ALL_USERS') : []"/>
+            <set field="filter" from="groupIds.length ? {field: {name: groupField, op: 'in', values: groupIds}} : {bool: {none: [{match_all: {}}]}}"/>
+        </actions>
+    </service>
     <service verb="create" noun="Schedule" type="rust" location="moqui_core::report_schedule::create_schedule">
         <in-parameters><parameter name="definitionId" required="true"/><parameter name="cronExpression" required="true"/><parameter name="renderMode"/><parameter name="emailTemplateId"/><parameter name="userId"/><parameter name="userGroupId"/><parameter name="saveToLocation"/><parameter name="emailSubject"/></in-parameters><out-parameters><parameter name="screenScheduledId"/></out-parameters>
     </service>
