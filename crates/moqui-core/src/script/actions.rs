@@ -22,6 +22,7 @@ use moqui_lib::sync::lock;
 use rquickjs::{Ctx, Object};
 
 use super::runtime::ScriptText;
+use super::engine::{script_engine, with_script_engine, ScriptEngine};
 use super::walker::{self, Walk};
 use crate::context::Error;
 
@@ -211,11 +212,14 @@ fn generate_with(xml: &str, debug: bool) -> Result<String, Error> {
 /// The stack of the thread that generates for a running script, as much as the outermost script on a worker has.
 const GENERATOR_STACK: usize = 2 * 1024 * 1024;
 
-type Job = (String, bool, mpsc::Sender<Result<String, Error>>);
+/// The text, `debug`, the engine the caller generates on (its `with_script_engine` choice too), and where the result
+/// goes.
+type Job = (String, bool, ScriptEngine, mpsc::Sender<Result<String, Error>>);
 
 /// Generate on a thread of its own. Text first generated inside a script, as the actions of a screen whose definition
 /// loads while a template renders a link to it, would otherwise get only what is left of that script's stack, and the
-/// macros recurse over the XML. Generation is a function of the text alone, so where it runs does not matter.
+/// macros recurse over the XML. Generation is a function of the text alone, so where it runs does not matter; it runs
+/// on the engine the caller's thread would have used.
 fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
     static GENERATOR: OnceLock<Mutex<mpsc::Sender<Job>>> = OnceLock::new();
     let sender = GENERATOR.get_or_init(|| {
@@ -224,8 +228,8 @@ fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
             .name("xml-actions-generator".into())
             .stack_size(GENERATOR_STACK)
             .spawn(move || {
-                for (xml, debug, reply) in jobs {
-                    let _ = reply.send(generate_with(&xml, debug));
+                for (xml, debug, engine, reply) in jobs {
+                    let _ = reply.send(with_script_engine(engine, || generate_with(&xml, debug)));
                 }
             });
         if let Err(err) = started {
@@ -234,7 +238,7 @@ fn generate_apart(xml: &str, debug: bool) -> Result<String, Error> {
         Mutex::new(sender)
     });
     let (reply, result) = mpsc::channel();
-    let sent = lock(sender).send((xml.to_string(), debug, reply));
+    let sent = lock(sender).send((xml.to_string(), debug, script_engine(), reply));
     match sent {
         Ok(()) => result
             .recv()

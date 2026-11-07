@@ -402,7 +402,21 @@ pub(crate) fn generate_actions(
     let loaded = chain(&generator, Some(name), support, &[actions], debug, "")?;
     let macros = loaded.last().ok_or_else(|| Error::new("no XML actions macros"))?;
     let tree = crate::script::walker::tree_json(root, &HashSet::new(), None)?;
+    #[cfg(test)]
+    moqui_lib::sync::lock(&GENERATED_ACTIONS).push(tree.clone());
     walk(&generator, macros, &tree, "XML action macro", None)
+}
+
+/// The trees of the XML actions generated here, for a test that asks which engine generated a text.
+#[cfg(test)]
+pub(crate) static GENERATED_ACTIONS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Whether XML actions whose tree contains `marker` were generated on quickjs-oxide. For tests.
+#[cfg(test)]
+pub(crate) fn generated_actions_with(marker: &str) -> bool {
+    moqui_lib::sync::lock(&GENERATED_ACTIONS)
+        .iter()
+        .any(|tree| tree.contains(marker))
 }
 
 /// A screen macro module loaded on the thread's generator: `screen::generate`'s `ModeModule` on quickjs-oxide.

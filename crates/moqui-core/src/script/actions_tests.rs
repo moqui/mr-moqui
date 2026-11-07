@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-use super::{generate, generate_with, load_macros, run_actions};
+use super::{generate, generate_apart, generate_with, load_macros, run_actions};
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
 use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
@@ -804,4 +804,20 @@ fn service_actions_generate_the_same_on_both_engines() {
         }
     }
     assert!(compared > 100, "{compared}");
+}
+
+/// Text generated apart from a running script, on the generator thread, is generated on the engine the caller chose
+/// (`with_script_engine`), not on the generator thread's own setting.
+#[test]
+fn actions_generated_apart_keep_the_callers_engine() {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    use crate::script::oxide::walker::generated_actions_with;
+    let xml = |marker: &str| format!("<actions><set field=\"{marker}\" value=\"1\"/></actions>");
+    let on_oxide = with_script_engine(ScriptEngine::Oxide, || generate_apart(&xml("apartOnOxide"), false)).unwrap();
+    let on_quickjs =
+        with_script_engine(ScriptEngine::Rquickjs, || generate_apart(&xml("apartOnQuickJs"), false)).unwrap();
+    assert!(on_oxide.contains("apartOnOxide"), "{on_oxide}");
+    assert!(on_quickjs.contains("apartOnQuickJs"), "{on_quickjs}");
+    assert!(generated_actions_with("apartOnOxide"));
+    assert!(!generated_actions_with("apartOnQuickJs"));
 }
