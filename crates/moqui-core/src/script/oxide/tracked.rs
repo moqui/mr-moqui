@@ -263,12 +263,12 @@ fn flush_values<J: Js>(js: &mut J, engine: &OxideEngine, mode: Flush) -> Result<
     for (name, value) in entries {
         // What the script did not change is on the stack already: no conversion, no write. A release still notes
         // what the stack holds, for `readopt`.
-        let unchanged = STACK.with(|stack| {
-            let stack = stack.borrow();
-            stack.with_value(&name, |held| {
-                matches_host(js, engine, &value, held, 0)
-                    .map(|same| same.then(|| (mode == Flush::Release).then(|| held.clone())))
-            })
+        // The comparison reads the script's object, which may run script code (a Proxy's traps, a getter) that writes
+        // the stack: it compares a copy, with the stack free.
+        let held = STACK.with(|stack| stack.borrow().with_value(&name, HostValue::clone));
+        let unchanged = held.map(|held| {
+            matches_host(js, engine, &value, &held, 0)
+                .map(|same| same.then(|| (mode == Flush::Release).then_some(held)))
         });
         match unchanged {
             Some(Ok(Some(written))) => {

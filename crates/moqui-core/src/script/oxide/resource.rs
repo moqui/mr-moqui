@@ -88,6 +88,7 @@ fn thrown_on(scope: &mut Scope<'_>, err: RuntimeError) -> Conv {
 /// caller's names. A file whose top level only declares gives the same value each time, so the value it gave earlier
 /// in this outermost run is given again (`parse::module_is_inert`).
 fn script(scope: &mut Scope<'_>) -> Result<Value, Conv> {
+    refuse_widget_check("ec.resource.script")?;
     let location = match scope.arg(0) {
         Value::String(text) => text.to_utf8_lossy(),
         other => scope.to_js_string(&other)?.to_utf8_lossy(),
@@ -168,6 +169,18 @@ fn with_additional<T>(
     result
 }
 
+/// The server-static widget check (`runtime::WidgetWrap`) puts a wrapper in front of `ec` that records what a text
+/// reaches (QuickJS's `with_widget_ec`); quickjs-oxide has no such wrapper yet, so a text it would check is refused, as
+/// the router refuses the small kinds under the check, rather than run unchecked (and its violation swallowed).
+fn refuse_widget_check(what: &str) -> Result<(), Conv> {
+    if crate::script::runtime::widget_wrap_on() {
+        return Err(Conv::Js(RuntimeError::Internal(format!(
+            "script_engine=oxide: {what} under the server-static widget check does not run on quickjs-oxide yet"
+        ))));
+    }
+    Ok(())
+}
+
 /// On QuickJS a widget check goes on after a violation, with `none` for the value.
 fn or_in_widget_check<T>(result: Result<T, Conv>, none: impl FnOnce() -> T) -> Result<T, Conv> {
     match result {
@@ -178,6 +191,7 @@ fn or_in_widget_check<T>(result: Result<T, Conv>, none: impl FnOnce() -> T) -> R
 
 /// `ec.resource.expand(template, location, map)`, localized first when `localize`, and `expandNoL10n`.
 fn expand(scope: &mut Scope<'_>, localize: bool) -> Result<Value, Conv> {
+    refuse_widget_check("ec.resource.expand")?;
     let template = text_arg(scope, 0)?;
     if template.is_empty() {
         return Ok(text_value(""));
@@ -204,6 +218,7 @@ fn expand(scope: &mut Scope<'_>, localize: bool) -> Result<Value, Conv> {
 
 /// `ec.resource.expression(expression, location, map)`: its value in the caller's names; null for an empty one.
 fn expression(scope: &mut Scope<'_>) -> Result<Value, Conv> {
+    refuse_widget_check("ec.resource.expression")?;
     let expression = text_arg(scope, 0)?;
     if expression.trim().is_empty() {
         return Ok(Value::Null);
@@ -214,6 +229,7 @@ fn expression(scope: &mut Scope<'_>) -> Result<Value, Conv> {
 
 /// `ec.resource.condition(expression, location, map)`: whether it holds, by JavaScript's truth; false for an empty one.
 fn condition(scope: &mut Scope<'_>) -> Result<Value, Conv> {
+    refuse_widget_check("ec.resource.condition")?;
     let expression = text_arg(scope, 0)?;
     if expression.trim().is_empty() {
         return Ok(Value::Bool(false));
@@ -224,8 +240,10 @@ fn condition(scope: &mut Scope<'_>) -> Result<Value, Conv> {
     or_in_widget_check(holds, || false).map(Value::Bool)
 }
 
+/// The expression strict, as QuickJS's `resource_expression` compiles it (`eval_compiled(.., true)`): the directive
+/// on the same line, so its lines are the text's, and a strict text is kept apart from the same text run sloppy.
 fn evaluate(scope: &mut Scope<'_>, expression: &str) -> Result<Value, Conv> {
-    let source = crate::script::runtime::as_expression(expression);
+    let source = format!("\"use strict\"; {}", crate::script::runtime::as_expression(expression));
     let hash = crate::script::text::hash_text(&source);
     run_here(scope, &source, hash, super::compiled::FILE_NAME).map_err(|err| thrown_on(scope, err))
 }

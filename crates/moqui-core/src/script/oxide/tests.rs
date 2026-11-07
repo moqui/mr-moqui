@@ -882,3 +882,43 @@ fn the_runtimes_start_notes_nothing_in_the_running_scripts_row() {
     assert_eq!(census::noted_for_tests(), noted, "no note in the script's row");
     drop(entry);
 }
+
+/// Review fixes: a Proxy in a tracked value is compared with the stack free; `ec.resource.expression` and `condition`
+/// run strict, as on QuickJS; under the server-static widget check the `ec.resource` texts and screen units are
+/// refused, not run unchecked.
+#[test]
+fn oxide_proxies_strict_expressions_and_the_widget_check() -> Result<(), Error> {
+    use crate::screen::sri::Runner;
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    clear_context_stack();
+    push_context_frame();
+    with_script_engine(ScriptEngine::Oxide, || {
+        // a trap that writes a bare name while the run's end compares the object with the stack
+        crate::script::run_script(
+            "m = new Proxy({}, {getPrototypeOf() { other2 = 2; return Object.prototype }}); m.a = 1",
+        )?;
+        assert_eq!(crate::script::context_value("other2"), Some(Value::I32(2)));
+        assert_eq!(
+            value("ec.resource.expression('(function () { return typeof this })()')")?,
+            Value::string("undefined")
+        );
+        assert_eq!(
+            value("ec.resource.condition('(function () { return this === undefined })()')")?,
+            Value::Bool(true)
+        );
+        let _wrap = crate::script::WidgetWrap::set(true);
+        for call in ["ec.resource.condition('true')", "ec.resource.expand('${1}')", "ec.resource.expression('1')"] {
+            let text = value(&format!("(() => {{ try {{ {call}; return 'ran' }} catch (e) {{ return String(e) }} }})()"))?;
+            assert!(moqui_lib::object::to_plain_string(&text).contains("widget check"), "{call}: {text:?}");
+        }
+        let unit = crate::screen::generate::Unit {
+            id: u64::MAX,
+            source: "(function ($depth) {})".to_string(),
+            runtime: Arc::from(""),
+            runtime_id: 0,
+        };
+        let err = super::units::RUNNER.run(&unit).unwrap_err();
+        assert!(err.message().contains("widget check"), "{}", err.message());
+        Ok(())
+    })
+}
