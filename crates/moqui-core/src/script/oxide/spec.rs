@@ -15,7 +15,8 @@
 //! The test harness's spec runtime on quickjs-oxide (`script_engine=oxide`), the counterpart of QuickJS's spec engine
 //! (`runtime.rs`, `EngineKind::Spec`): one per thread and of its own, so the globals the harness defines (`call`,
 //! `login`, ...) are not in front of the context stack for the scripts of the services a spec calls, which run on the
-//! thread's main runtime. It runs whole scripts, so it has no small-script lockdown. A host call of a spec that may run
+//! thread's main runtime. It runs whole scripts, so it has no small-script lockdown, and has the globals a whole
+//! runtime has (`host::globals`, the helper objects). A host call of a spec that may run
 //! a script lends the runtime (the fork's F3a); the script runs on the main runtime as a run of its own, and the
 //! conversions follow the innermost runtime ([`super::engine::Active`]).
 
@@ -31,7 +32,7 @@ use super::errors::runtime_error;
 use super::tracked::Flush;
 use crate::context::Error;
 use crate::script::engine::{count, EntryKind, Route};
-use crate::script::host::{Call, HostClass, HostError, Ret};
+use crate::script::host::HostClass;
 use crate::script::run::{self, EngineTag, ScriptLimit, MAX_SCRIPT_DEPTH};
 
 thread_local! {
@@ -50,60 +51,8 @@ fn spec_engine() -> Result<Rc<OxideEngine>, Error> {
     }
     let started =
         start_whole().map_err(|err| Error::new(format!("the quickjs-oxide spec runtime did not start: {err}")))?;
-    whole_globals(&started).map_err(|conv| {
-        let why = match conv {
-            Conv::Js(err) => err.to_string(),
-            Conv::Error(message) => message,
-            Conv::Unsupported(reason) => reason.to_string(),
-        };
-        Error::new(format!("the quickjs-oxide spec runtime did not start: {why}"))
-    })?;
     SPEC.with(|spec| *spec.borrow_mut() = Some(Rc::clone(&started)));
     Ok(started)
-}
-
-/// `System.getProperty(name)`: the property or environment variable, null when empty, as QuickJS's `System`.
-static SYSTEM: HostClass = HostClass {
-    name: "host:System",
-    methods: &[crate::script::host::method!(
-        "System",
-        "getProperty",
-        [Text],
-        None,
-        leaf,
-        system_property
-    )],
-    getters: &[],
-    hidden: &[],
-    shim_js: None,
-    shim_members: &[],
-};
-
-fn system_property(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    let value = moqui_lib::env::get_prop_or_env(call.text(0).unwrap_or_default());
-    Ok(Some(value).filter(|value| !value.is_empty()).into())
-}
-
-/// The globals QuickJS's main context has that a whole script names and the small scripts' runtime leaves to its
-/// bare names (`check::QUICKJS_ONLY_GLOBALS`): `System`, and the helper objects the shims filled
-/// (`CollectionUtilities`, `StringUtilities`, `WebUtilities`). Read-only, as the host's other globals.
-fn whole_globals(engine: &Rc<OxideEngine>) -> Result<(), Conv> {
-    let _active = Active::starting(engine);
-    let mut context = engine.context().clone();
-    let global = context.global_object()?;
-    let system = super::bind::class_instance(&mut context, HostObject::new(()), &SYSTEM)?;
-    let mut globals = vec![("System", Value::Object(system))];
-    for name in ["CollectionUtilities", "StringUtilities", "WebUtilities"] {
-        globals.push((name, context.get_property(&engine.protos.helpers, &key(name)?)?));
-    }
-    for (name, value) in globals {
-        context.define_own_property(
-            &global,
-            &key(name)?,
-            &OrdinaryPropertyDescriptor::data(value, false, true, false),
-        )?;
-    }
-    Ok(())
 }
 
 /// Run `source` once in the thread's spec runtime, not kept, named `file_name` in stack traces, and give its completion

@@ -730,6 +730,15 @@ impl OxideEngine {
         )?;
         context.eval(crate::script::runtime::HELPERS_JS)?;
         let global = context.global_object()?;
+        if !self.hardened {
+            // a whole script names the helper objects as QuickJS's bare names answer them; the small scripts' static
+            // check refuses them (`check::QUICKJS_ONLY_GLOBALS`), so a cut runtime leaves them out. Frozen below.
+            for name in ["CollectionUtilities", "StringUtilities", "WebUtilities"] {
+                let name = key(name).map_err(conv_runtime)?;
+                let helper = context.get_property(&self.protos.helpers, &name)?;
+                context.set_property(&global, &name, helper)?;
+            }
+        }
         match context.get_property(&global, &key("__moquiWrap").map_err(conv_runtime)?)? {
             Value::Object(object) => {
                 let wrap = context

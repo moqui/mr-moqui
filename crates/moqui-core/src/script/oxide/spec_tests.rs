@@ -180,6 +180,24 @@ fn a_main_run_under_a_spec_keeps_the_spec_runs_fallback() {
     }
 }
 
+/// The spec runtime and a whole main runtime (`script_engine=oxide`) have the same host globals, from one definition
+/// (`host::globals` and the helper objects).
+#[test]
+fn the_whole_runtimes_share_their_globals() {
+    crate::script::with_script_engine(crate::script::ScriptEngine::Oxide, || {
+        clear_context_stack();
+        install_global("probeNested", &NESTED).expect("install");
+        let names = "[typeof System.getProperty, typeof StringUtilities.base64Encode, typeof \
+                     CollectionUtilities.flattenNestedMap, typeof WebUtilities.encodeHtml, typeof compare].join()";
+        let main = spec(&format!("probeNested.main({names:?})"));
+        assert_eq!(
+            main,
+            Value::String("function,function,function,function,function".to_string())
+        );
+        assert_eq!(spec(names), main);
+    });
+}
+
 /// The thread's memory report counts the spec runtime beside the main one.
 #[test]
 fn the_memory_report_counts_the_spec_runtime() {
