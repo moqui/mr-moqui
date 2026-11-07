@@ -446,6 +446,10 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
 - Error columns: oxide places a call at its `(`, QuickJS at the callee's name.
 - An assignment through a list on the prototype chain (`Object.create(list).x = 1`) defines on the receiver on both
   engines now; oxide's list ignored it, as it ignores one to the list itself.
+- QuickJS builtins quickjs-oxide lacks (`queueMicrotask`, `atob`, `btoa`, `performance`, `DOMException`,
+  `DisposableStack`, `AsyncDisposableStack`, `SuppressedError`; `check::QUICKJS_ONLY_GLOBALS`): a whole script that
+  reads one by bare name (`typeof queueMicrotask` included) fails under `oxide` with "needs a QuickJS global", where
+  QuickJS gives the builtin. `Object.getOwnPropertyNames(globalThis)` shows which engine runs.
 
 ### Memory under `oxide` (Phase 3)
 
