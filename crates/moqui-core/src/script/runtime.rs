@@ -195,26 +195,29 @@ fn set_ec<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> rquickjs::Result<()> {
 }
 
 /// The `ec` of the browser host as a wrapper over the real one: the members `plans/archive/QvtServerStatic.md` lists are the real members,
-/// and any other area is reported through `deny` and throws.
+/// and any other area, or any other member of an allowed area (`ec.l10n.getAvailableLocales`), is reported through `deny` and
+/// throws, so the check records it rather than the expression failing on an undefined member. Symbol keys (a coercion's
+/// `Symbol.toPrimitive`) are undefined, as on a plain object.
 const WRAPPED_EC: &str = r#"(function (real, deny) {
-    const pick = (source, names) => {
-        const out = {};
-        names.forEach((name) => { const value = source[name]; out[name] = typeof value === "function" ? value.bind(source) : value; });
-        return out;
-    };
-    const allowed = {
-        l10n: pick(real.l10n, ["localize", "format", "formatCurrency", "formatCurrencyNoSymbol"]),
-        user: pick(real.user, ["userId", "username", "locale", "timeZone", "userAccount", "getPreference"]),
-        resource: pick(real.resource, ["expand", "expandNoL10n"])
-    };
-    return new Proxy(allowed, {
+    const has = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
+    const guard = (target, prefix) => new Proxy(target, {
         get(target, key) {
             if (typeof key === "symbol") return undefined;
-            if (Object.prototype.hasOwnProperty.call(target, key)) return target[key];
-            deny(String(key));
-            throw new Error("ec." + String(key) + " is not available in a server-static qvt screen");
+            if (has(target, key)) return target[key];
+            deny(prefix + String(key));
+            throw new Error("ec." + prefix + String(key) + " is not available in a server-static qvt screen");
         }
     });
+    const area = (name, names) => {
+        const source = real[name], out = {};
+        names.forEach((member) => { const value = source[member]; out[member] = typeof value === "function" ? value.bind(source) : value; });
+        return guard(out, name + ".");
+    };
+    return guard({
+        l10n: area("l10n", ["localize", "format", "formatCurrency", "formatCurrencyNoSymbol"]),
+        user: area("user", ["userId", "username", "locale", "timeZone", "userAccount", "getPreference"]),
+        resource: area("resource", ["expand", "expandNoL10n"])
+    }, "");
 })"#;
 
 /// Run `body`, a widget expression, with the wrapped `ec` when a widget check is on. A violation is recorded when the expression
