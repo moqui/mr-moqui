@@ -12,9 +12,14 @@ You should have received a copy of the CC0 Public Domain Dedication
 along with this software (see the LICENSE.md file). If not, see
 <http://creativecommons.org/publicdomain/zero/1.0/>.
 -->
-<!-- The generic identity guards (mr-boss plan/design-admin.md §17.2; impl-admin P3, F41): no dependency on Mantle or an app.
-    check#AdministrationPath is called by every grant, membership and group-flag change (AccessServices) and, from later phases,
-    by every provider, factor and lifecycle change. The bodies are Identity.js. -->
+<!-- The generic identity guards (mr-boss plan/design-admin.md §17.2; impl-admin P3, F41; P4, F3, F4, F42): no dependency on
+    Mantle or an app. check#AdministrationPath is called by every grant, membership and group-flag change (AccessServices) and
+    by every factor change (Mantle's reset#Authentication) and, from later phases, every provider and lifecycle change. The
+    sessions (find#Sessions, revoke#Sessions: one definition for Admin's Sessions and Commons Account, self-scoped or for a
+    target under identity authority) and an account's credentials (get#AccountCredentials, revoke#AccountAccess) know no
+    organization: a caller that scopes identities checks the target first and asks for ADMIN_IDENTITY_GLOBAL where the
+    identity is shared beyond its scope. ALL_USERS may call them (data/SecurityTypeData.xml AdminAccessServices): each refuses
+    without its permission. The bodies are Identity.js. -->
 <services xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/service-definition-3.xsd">
 
     <service verb="check" noun="AdministrationPath" allow-remote="false">
@@ -28,7 +33,7 @@ along with this software (see the LICENSE.md file). If not, see
         <in-parameters>
             <parameter name="proposed" type="Map"><description>memberships: a List of {userGroupId, userId, fromDate, thruDate} rows replacing the stored row of the
                 same key or added; groups: {userGroupId: {requireAuthcFactor, ipAllowed}}; accounts: {userId: {disabled,
-                disabledDateTime, terminateDate}}</description></parameter>
+                disabledDateTime, terminateDate, ipAllowed}}; endedFactorIds: the factors a reset ends</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="allowed" type="Boolean"/>
@@ -38,5 +43,84 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="pathsAfter" type="Integer"/>
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').execute('checkPath', context))</script></actions>
+    </service>
+    <service verb="find" noun="Sessions" allow-remote="false">
+        <description>The sessions of an account, newest first: each visit since sinceDays (30 by default) or, with activeOnly, those
+            with a live web session; each named by its visit (sessionKey), never its cookie, token or contents, with when it
+            started and was last seen, a client summary (browser and system, never the user agent), the address and place, its
+            state (active, ended, expired) and whether it is the caller's current one. The caller's own (no userId), or with
+            ADMIN_IDENTITY_VIEW another user's (userId), the users of userIdList, or every user's (allUsers).</description>
+        <in-parameters>
+            <parameter name="userId"/>
+            <parameter name="userIdList" type="List"/>
+            <parameter name="allUsers" type="Boolean" default="false"/>
+            <parameter name="activeOnly" type="Boolean" default="false"/>
+            <parameter name="sinceDays" type="Integer"/>
+            <parameter name="limit" type="Integer"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sessionList" type="List"/>
+            <parameter name="activeCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').execute('findSessions', context))</script></actions>
+    </service>
+    <service verb="revoke" noun="Sessions" allow-remote="false">
+        <description>Ends sessions at once on every server (impl-admin F4): those named by sessionKey (a visit), or with allOthers
+            every other session of the account (userId, else the caller's). The caller's own sessions but the current one, or
+            with ADMIN_IDENTITY_MANAGE another user's; a session of another account than userId, or another user's without the
+            permission, or of an account in a privileged group the caller is not in or holding a sealed permission the caller
+            lacks (bounded delegation), is refused and counted. Its next request starts over signed out and its notification socket closes at
+            its next check. Credentials (keys, app passwords) are left: revoke#AccountAccess ends them.</description>
+        <in-parameters>
+            <parameter name="sessionKeyList" type="List"/>
+            <parameter name="userId"/>
+            <parameter name="allOthers" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="sessionCount" type="Integer"><description>The web sessions ended</description></parameter>
+            <parameter name="visitCount" type="Integer"/>
+            <parameter name="refusedCount" type="Integer"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').execute('revokeSessions', context))</script></actions>
+    </service>
+    <service verb="get" noun="AccountCredentials" allow-remote="false">
+        <description>An account's sign-in factors (kind, verified, dates; the count of unused single use codes) and credentials
+            (access tokens, device and sign-in keys, app passwords, SSH keys with their fingerprints, phones: kind, id, name,
+            dates, last use), metadata only: never a secret, hash, verifier, factor option or recovery code. Current ones, with
+            includeEnded the ended too. The caller's own, or another user's with ADMIN_IDENTITY_VIEW.</description>
+        <in-parameters>
+            <parameter name="userId"/>
+            <parameter name="includeEnded" type="Boolean" default="false"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="factorList" type="List"/>
+            <parameter name="singleUseCodeCount" type="Integer"/>
+            <parameter name="credentialList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').execute('accountCredentials', context))</script></actions>
+    </service>
+    <service verb="revoke" noun="AccountAccess" allow-remote="false">
+        <description>Another user's access ended at once (impl-admin F3, F42), each kind on its own (one that fails is named in
+            failedKinds and the others still end): sessions (every server; the account's hasLoggedOut set, so a session no row
+            names yet signs out at its next request), loginKeys (access tokens, device and sign-in keys), appPasswords (XMPP's
+            sign-in too), sshKeys, sipDevices (each live SIP engine drops the phone) and agents (the triggers that run as the
+            user paused with their cron jobs, the user's open agent runs asked to cancel); kindList narrows them, or one
+            credential by credentialKind (accessToken, deviceKey, loginKey, appPassword, sshKey, sipDevice) and credentialId.
+            The account is not disabled (the lifecycle's, P6). Needs ADMIN_IDENTITY_MANAGE, and is refused for an account in a
+            privileged group the caller is not in or holding a sealed permission the caller lacks; the caller scopes the target and
+            asks for ADMIN_IDENTITY_GLOBAL where the identity is shared. The caller's own credentials are refused here (the
+            account's self-service ends them).</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="kindList" type="List"/>
+            <parameter name="credentialKind"/>
+            <parameter name="credentialId"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="revokedCounts" type="Map"/>
+            <parameter name="failedKinds" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Identity.js').execute('revokeAccountAccess', context))</script></actions>
     </service>
 </services>

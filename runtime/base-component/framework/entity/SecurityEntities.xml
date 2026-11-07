@@ -269,14 +269,14 @@ along with this software (see the LICENSE.md file). If not, see
         <field name="terminateDate" type="date-time" enable-audit-log="true">
             <description>If set then user may not login after this date, and no notifications will be sent after this date.</description></field>
         <field name="successiveFailedLogins" type="number-integer"/>
-        <field name="requirePasswordChange" type="text-indicator"/>
+        <field name="requirePasswordChange" type="text-indicator" enable-audit-log="true"/>
         <field name="currencyUomId" type="id"/>
         <field name="locale" type="text-short"/>
         <field name="timeZone" type="text-short"/>
         <field name="externalUserId" type="text-medium"/>
         <field name="emailAddress" type="text-medium" enable-audit-log="update">
             <description>The email address to use for forgot password emails and other system messages.</description></field>
-        <field name="ipAllowed" type="text-medium">
+        <field name="ipAllowed" type="text-medium" enable-audit-log="true">
             <description>If specified only allow login from matching client IP. Comma separated patterns: IPv4 has 4
                 dot separated segments each segment may be number, '*' for wildcard, or '-' separate number range (like '0-31');
                 IPv6 is an exact match after canonicalization.</description>

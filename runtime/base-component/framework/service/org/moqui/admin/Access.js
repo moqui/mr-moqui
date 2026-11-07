@@ -881,7 +881,104 @@ function storeGroupPreference(p) {
     return {applied: true, revision: stamp(one(PREFERENCE, fields))}
 }
 
+// ===== grant proposals (P4) =====
+// A grant proposal (impl-admin §4, F11): the registered bundles an app supplies for an account it provisions (a staff account,
+// later an accepted invitation or an SSO role map), checked here so the layer that provisions (Mantle) names no app group. Each
+// bundle by the delegation rules of store#Membership, for the actor: registered (never a custom or unregistered group), its
+// delegable permission held, a privileged group only by a member, no sealed grant carried to a non-holder. An identity
+// operator (ADMIN_IDENTITY_MANAGE) proposes as an access administrator does; neither widens what the actor could assign.
+function requireProposalView() {
+    signedIn()
+    if (![VIEW, MANAGE, "ADMIN_IDENTITY_VIEW", "ADMIN_IDENTITY_MANAGE"].some(permission => ec.user.hasPermission(permission)))
+        throw new Error(VIEW + " or ADMIN_IDENTITY_VIEW is required")
+}
+function proposalBundles(p) {
+    const ids = Array.from(
+        new Set(
+            Array.from(p.bundleGroupIdList || [])
+                .map(text)
+                .filter(Boolean)
+        )
+    )
+    if (!ids.length) throw new Error("Name the bundles to propose")
+    const registry = bundles()
+    const privileged = privilegedIds()
+    const sealed = sealedIds()
+    return ids.map(groupId => {
+        const group = one(GROUP, {userGroupId: groupId})
+        const bundle = registry.get(groupId)
+        const out = {
+            bundleGroupId: groupId,
+            appName: bundle?.appName || "",
+            description: bundle?.description || group?.description || ""
+        }
+        if (!group || !bundle)
+            return Object.assign(out, {
+                allowed: false,
+                reasonCode: "UNREGISTERED_BUNDLE",
+                reason: groupId + " is not a registered bundle; a proposal names registered bundles only"
+            })
+        const refusal = groupRefusal(group, registry, privileged)
+        if (refusal) return Object.assign(out, {allowed: false}, refusal)
+        const carried = Array.from(
+            new Set(
+                rows(GRANT, {userGroupId: groupId})
+                    .filter(
+                        row => current(row) && sealed.has(row.userPermissionId) && !ec.user.hasPermission(row.userPermissionId)
+                    )
+                    .map(row => row.userPermissionId)
+            )
+        )
+        if (carried.length)
+            return Object.assign(out, {
+                allowed: false,
+                reasonCode: "SEALED_PERMISSION",
+                reason: groupId + " grants " + carried.join(", ") + ", sealed: only a holder may give its membership"
+            })
+        return Object.assign(out, {allowed: true, reasonCode: null, reason: null})
+    })
+}
+// check#GrantProposal: each bundle of a proposal, allowed or refused with its reason; nothing written.
+function checkGrantProposal(p) {
+    requireProposalView()
+    const bundleList = proposalBundles(p)
+    const first = bundleList.find(row => !row.allowed)
+    return {allowed: !first, reasonCode: first?.reasonCode || null, reason: first?.reason || null, bundleList}
+}
+// apply#GrantProposal: the memberships of a checked proposal for one account, from fromDate (now when empty), each a dated
+// row written with authorization on (the EECAs decide each); refused whole when any bundle is refused, and a bundle the
+// account is already a member of now is left as it is.
+function applyGrantProposal(p) {
+    signedIn()
+    if (!ec.user.hasPermission(MANAGE) && !ec.user.hasPermission("ADMIN_IDENTITY_MANAGE"))
+        throw new Error(MANAGE + " or ADMIN_IDENTITY_MANAGE is required")
+    const reason = reasonText(p)
+    const account = text(p.userId) ? one("moqui.security.UserAccount", {userId: text(p.userId)}) : null
+    if (!account) return refused("USER_UNAVAILABLE", "User " + text(p.userId) + " is not available")
+    const bundleList = proposalBundles(p)
+    const first = bundleList.find(row => !row.allowed)
+    if (first) return refused(first.reasonCode, first.reason, {bundleList})
+    const now = nowMs()
+    const fromDate = p.fromDate != null && p.fromDate !== "" ? ms(p.fromDate) : now
+    if (!Number.isFinite(fromDate) || fromDate < now - 60000) throw new Error("A proposal's memberships start now or later")
+    const added = []
+    auditReason(reason, ["fromDate", "thruDate"])
+    for (const row of bundleList) {
+        const existing = rows(MEMBER, {userGroupId: row.bundleGroupId, userId: account.userId}).some(
+            member => (ms(member.thruDate) ?? Infinity) > fromDate
+        )
+        if (existing) continue
+        const value = ec.entity.makeValue(MEMBER)
+        value.setFields({userGroupId: row.bundleGroupId, userId: account.userId, fromDate: iso(fromDate)}, true, null, null)
+        value.create()
+        added.push(row.bundleGroupId)
+    }
+    return {applied: true, reasonCode: null, reason: null, addedGroupIds: added, bundleList}
+}
+
 const operations = {
+    checkGrantProposal,
+    applyGrantProposal,
     findGroups,
     getGroup,
     createGroup,

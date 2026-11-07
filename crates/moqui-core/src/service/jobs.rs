@@ -793,9 +793,19 @@ pub(crate) fn run_job(job: JobRun) {
     let context = factory.new_context();
     let _entered = context.enter();
     let _authz = context.disable_authz();
+    // a run-as user whose account is disabled for good, past its end date or gone does not run (impl-admin F42): the run
+    // is recorded with the refusal instead of running with no user
+    let mut refused_user = None;
     if let Some(user) = &job.user_name {
-        if let Err(err) = crate::user::internal_login_user(user) {
-            tracing::warn!(job = %job.job_name, error = %err, "could not log in the job's user");
+        match crate::user::username_account_closed(user) {
+            Ok(true) => refused_user = Some(format!("the job's user {user} cannot sign in; the job did not run")),
+            Ok(false) => {}
+            Err(err) => tracing::warn!(job = %job.job_name, error = %err, "could not check the job's user"),
+        }
+        if refused_user.is_none() {
+            if let Err(err) = crate::user::internal_login_user(user) {
+                tracing::warn!(job = %job.job_name, error = %err, "could not log in the job's user");
+            }
         }
     }
     context.set_agent_origin(job.origin.clone());
@@ -850,6 +860,7 @@ pub(crate) fn run_job(job: JobRun) {
     let _deadline = crate::script::DeadlineGuard::new(job.script_limit);
     let _job_run = JobRunScope::enter(&job.job_run_id, &job.job_name);
     let called = match &job.rules {
+        _ if refused_user.is_some() => Err(Error::new(refused_user.clone().unwrap_or_default())),
         Some(rules) => {
             let mut rules = super::pool::TxRules {
                 service: job.service_name.clone(),

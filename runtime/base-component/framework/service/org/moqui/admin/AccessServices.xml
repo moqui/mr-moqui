@@ -231,4 +231,39 @@ along with this software (see the LICENSE.md file). If not, see
         </out-parameters>
         <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('storeGroupPreference', context))</script></actions>
     </service>
+    <service verb="check" noun="GrantProposal" allow-remote="false">
+        <description>A grant proposal (impl-admin §4, F11): the registered bundles an app supplies for an account it provisions,
+            each allowed or refused with its reason by the delegation rules of store#Membership for the actor (registered only,
+            its delegable permission, a privileged group only by a member, no sealed grant carried to a non-holder); nothing
+            written. Needs ADMIN_ACCESS_VIEW or ADMIN_IDENTITY_VIEW.</description>
+        <in-parameters><parameter name="bundleGroupIdList" type="List" required="true"/></in-parameters>
+        <out-parameters>
+            <parameter name="allowed" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="bundleList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('checkGrantProposal', context))</script></actions>
+    </service>
+    <service verb="apply" noun="GrantProposal" allow-remote="false">
+        <description>The memberships of a grant proposal for one account (a staff account Mantle creates, later an accepted
+            invitation), each a dated row from fromDate (now when empty) written with authorization on, so the sealed and
+            privileged EECAs decide it; refused whole, nothing written, when any bundle is refused (check#GrantProposal); a bundle
+            the account is already in is left. The dates are audit-logged with the reason. The framework knows no
+            organization: the caller scopes the account. Needs ADMIN_ACCESS_MANAGE or ADMIN_IDENTITY_MANAGE.</description>
+        <in-parameters>
+            <parameter name="userId" required="true"/>
+            <parameter name="bundleGroupIdList" type="List" required="true"/>
+            <parameter name="fromDate" type="Timestamp"/>
+            <parameter name="reason"/>
+        </in-parameters>
+        <out-parameters>
+            <parameter name="applied" type="Boolean"/>
+            <parameter name="reasonCode"/>
+            <parameter name="reason"/>
+            <parameter name="addedGroupIds" type="List"/>
+            <parameter name="bundleList" type="List"/>
+        </out-parameters>
+        <actions><script>ec.context.putAll(ec.resource.script('component://framework/service/org/moqui/admin/Access.js').execute('applyGrantProposal', context))</script></actions>
+    </service>
 </services>
