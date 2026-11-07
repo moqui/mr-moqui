@@ -835,8 +835,21 @@ along with this software (see the LICENSE.md file). If not, see
         </xs:complexType>
     </xs:element>
     <xs:element name="authz">
-        <xs:annotation><xs:documentation>Grants that only a holder may make. No Java counterpart.</xs:documentation></xs:annotation>
+        <xs:annotation><xs:documentation>Grants that only a holder may make. No Java counterpart. The attributes hold the
+            framework's lists; a component adds to them with privileged-group and sealed-permission elements, which the
+            conf merge adds to the others by name and never replaces. Setting an attribute replaces its list.
+        </xs:documentation></xs:annotation>
         <xs:complexType>
+            <xs:choice minOccurs="0" maxOccurs="unbounded">
+                <xs:element name="privileged-group">
+                    <xs:annotation><xs:documentation>A UserGroup added to privileged-groups.</xs:documentation></xs:annotation>
+                    <xs:complexType><xs:attribute name="name" type="xs:string" use="required"/></xs:complexType>
+                </xs:element>
+                <xs:element name="sealed-permission">
+                    <xs:annotation><xs:documentation>A UserPermission added to sealed-permissions.</xs:documentation></xs:annotation>
+                    <xs:complexType><xs:attribute name="name" type="xs:string" use="required"/></xs:complexType>
+                </xs:element>
+            </xs:choice>
             <xs:attribute name="privileged-groups" type="xs:string" default="ADMIN,ADMIN_ADV,SYSMSG_RECEIVE"><xs:annotation><xs:documentation>
                 Comma separated UserGroup IDs. UserGroupMember create, update and delete for these groups is allowed
                 only if the caller is already a member (seed/install and disableAuthz skip the check). An administrator

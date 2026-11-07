@@ -15,7 +15,7 @@ along with this software (see the LICENSE.md file). If not, see
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         default-menu-title="Active Users" default-menu-index="5">
 
-    <transition name="userAccountDetail"><default-response url="//system/Security/UserAccountDetail"/></transition>
+    <transition name="userAccountDetail"><default-response url="../UserAccount/UserAccountDetail"/></transition>
 
     <actions>
         <entity-find entity-name="moqui.server.VisitUserSummary" list="visitUserList">
