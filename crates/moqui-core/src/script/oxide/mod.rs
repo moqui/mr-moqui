@@ -25,6 +25,7 @@
 //! relationship) before it reached any host call reports a fallback, and the router runs the script on QuickJS instead.
 
 pub(crate) mod bind;
+mod builtins;
 mod compiled;
 mod context;
 mod convert;

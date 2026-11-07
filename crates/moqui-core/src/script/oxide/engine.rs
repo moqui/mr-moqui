@@ -691,6 +691,10 @@ impl OxideEngine {
         };
         let runtime = quickjs_oxide::engine::api::core::Runtime::with_host(MoquiHost, options);
         let context = runtime.context();
+        // QuickJS's builtins quickjs-oxide lacks, for a whole runtime: builtins here too, not frozen host globals
+        if !hardened {
+            super::builtins::install(&context)?;
+        }
         // the runtime's own globals, before the host adds its own ([`FREEZE_HOST_GLOBALS_JS`])
         let builtins = match context.eval("Object.getOwnPropertyNames(globalThis)")? {
             Value::Object(names) => names,

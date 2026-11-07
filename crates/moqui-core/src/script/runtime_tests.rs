@@ -1042,3 +1042,69 @@ fn resource_reference_is_a_global_of_each_whole_runtime() -> Result<(), Error> {
     }
     Ok(())
 }
+
+
+/// The builtins QuickJS's main context has that quickjs-oxide lacks (`queueMicrotask`, `atob`, `btoa`, `performance`,
+/// `DOMException`, `SuppressedError`, `DisposableStack`, `AsyncDisposableStack`, `Symbol.dispose` and
+/// `Symbol.asyncDispose`) are on a whole oxide runtime (`oxide/builtins.rs`), and each answers as QuickJS's does: its
+/// descriptor, length, members, errors and results. A prototype's key order and an error's own `stack` are left out of
+/// the comparison (plans/Script-Engine-Oxide.md, Engine differences).
+#[test]
+fn the_quickjs_builtins_are_on_each_whole_runtime() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    const PROBE: &str = r#"(() => { const out = []; const d = (n) => { try { return n + ': ' + (0, eval)(n) } catch (e) { return n + ' threw ' + e + ' [' + (e && e.name) + ']' } };
+  for (const n of ["queueMicrotask","atob","btoa","performance","DOMException","DisposableStack","AsyncDisposableStack","SuppressedError"]) {
+    const v = globalThis[n]; const desc = Object.getOwnPropertyDescriptor(globalThis, n);
+    if (!desc) { out.push(n + ' MISSING'); continue; }
+    out.push(n + ' ' + typeof v + ' len=' + (v && v.length) + ' w' + desc.writable + 'e' + desc.enumerable + 'c' + desc.configurable + ' own=' + Object.getOwnPropertyNames(v).join() + ' proto=' + (v.prototype ? Object.getOwnPropertyNames(v.prototype).sort().join() + '/' + Object.getOwnPropertySymbols(v.prototype).map(String).join() : '-') + ' tag=' + Object.prototype.toString.call(v));
+  }
+  out.push(d("typeof Symbol.dispose"), d("typeof Symbol.asyncDispose"), d("btoa('hiÿ')"), d("atob('aGk=')"), d("atob('!')"), d("btoa('Ā')"), d("atob(' aG k ')"), d("atob('aGk')"), d("atob('a')"), d("atob(null)"), d("btoa(null)"), d("btoa()"));
+  out.push(d("JSON.stringify(Object.getOwnPropertyNames(performance))"), d("typeof performance.now()"), d("performance.now() < 1e7"), d("Object.prototype.toString.call(performance)"), d("Object.getOwnPropertyNames(Object.getPrototypeOf(performance)).join()"));
+  out.push(d("(() => { const e = new DOMException('m', 'NotFoundError'); return [e.name, e.message, e.code, e instanceof Error, String(e), Object.keys(e).join(), typeof e.stack, Object.getOwnPropertyNames(e).join()].join('|') })()"));
+  out.push(d("(() => { const e = new DOMException(); return [e.name, e.message, e.code].join('|') })()"));
+  out.push(d("(() => { const e = new DOMException('x', 'Bogus'); return [e.name, e.message, e.code, DOMException.NOT_FOUND_ERR, DOMException.prototype.NOT_FOUND_ERR].join('|') })()"));
+  out.push(d("Object.getOwnPropertyNames(DOMException).join()"));
+  out.push(d("(() => { const e = new SuppressedError(1, 2, 'm'); return [e.name, e.message, e.error, e.suppressed, e instanceof Error, Object.getOwnPropertyNames(e).filter(n => n !== 'stack').join(), String(e)].join('|') })()"));
+  out.push(d("(() => { const log = []; const s = new DisposableStack(); s.defer(() => log.push('a')); s.use({[Symbol.dispose]() { log.push('b') }}); s.adopt(1, (v) => log.push('c' + v)); s.dispose(); return log.join() + '|' + s.disposed })()"));
+  out.push(d("(() => { const s = new DisposableStack(); s.defer(() => { throw new Error('one') }); s.defer(() => { throw new Error('two') }); try { s.dispose() } catch (e) { return [e.name, e.error && e.error.message, e.suppressed && e.suppressed.message].join('|') } })()"));
+  out.push(d("(() => { const s = new DisposableStack(); const m = s.move(); return [s.disposed, m.disposed, typeof s[Symbol.dispose], s[Symbol.toStringTag]].join('|') })()"));
+  out.push(d("(() => { const s = new AsyncDisposableStack(); return [typeof s.disposeAsync, typeof s[Symbol.asyncDispose], s[Symbol.toStringTag], String(s.disposeAsync())].join('|') })()"));
+  out.push(d("(() => { let r; queueMicrotask(() => { r = 1 }); return typeof r })()"));
+  out.push(d("(() => { try { queueMicrotask(1) } catch (e) { return String(e) } })()"));
+  out.push(d("(() => { try { new DisposableStack().use(1) } catch (e) { return String(e) } })()"));
+  out.push(d("(() => { try { DisposableStack() } catch (e) { return e.name } })()"));
+  out.push(d("Object.getPrototypeOf(DOMException) === Error"), d("Object.getPrototypeOf(DOMException.prototype) === Error.prototype"),
+    d("['IndexSizeError','DOMStringSizeError','HierarchyRequestError','WrongDocumentError','InvalidCharacterError','NoDataAllowedError','NoModificationAllowedError','NotFoundError','NotSupportedError','InUseAttributeError','InvalidStateError','SyntaxError','InvalidModificationError','NamespaceError','InvalidAccessError','ValidationError','TypeMismatchError','SecurityError','NetworkError','AbortError','URLMismatchError','QuotaExceededError','TimeoutError','InvalidNodeTypeError','DataCloneError','EncodingError','NotReadableError'].map(n => new DOMException('', n).code).join()"),
+    d("JSON.stringify(Object.getOwnPropertyDescriptor(DOMException, 'NOT_FOUND_ERR'))"), d("JSON.stringify(Object.getOwnPropertyDescriptor(DOMException.prototype, 'NOT_FOUND_ERR'))"),
+    d("typeof Object.getOwnPropertyDescriptor(DOMException.prototype, 'name').get"),
+    d("(() => { try { atob('!') } catch (e) { return [e instanceof DOMException, e.code, e.name].join() } })()"),
+    d("(() => { try { DOMException() } catch (e) { return e.name } })()"),
+    d("(() => { const e = SuppressedError(1, 2); return [e instanceof SuppressedError, Object.getOwnPropertyNames(e).filter(n => n !== 'stack').join(), e.message === '', Object.getPrototypeOf(SuppressedError) === Error].join() })()"),
+    d("(() => { const e = new DOMException('m', 'NotFoundError'); const s = Object.getOwnPropertyDescriptor(e, 'stack'); return [typeof s.value, s.writable, s.enumerable, s.configurable].join() })()"),
+    d("JSON.stringify(Object.getOwnPropertyDescriptor(DisposableStack.prototype, 'disposed').get !== undefined)"),
+    d("DisposableStack.prototype[Symbol.dispose] === DisposableStack.prototype.dispose"),
+    d("AsyncDisposableStack.prototype[Symbol.asyncDispose] === AsyncDisposableStack.prototype.disposeAsync"),
+    d("(() => { const s = new DisposableStack(); s.dispose(); try { s.defer(() => 1) } catch (e) { return String(e) } })()"),
+    d("(() => { const s = new DisposableStack(); s.defer(() => { throw new Error('one') }); try { s.dispose() } catch (e) { return String(e) } })()"),
+    d("(() => { const e = new SuppressedError(1, 2); return JSON.stringify(Object.getOwnPropertyDescriptor(e, 'error')) })()"),
+    d("queueMicrotask.name + queueMicrotask.length + atob.name + btoa.name + (typeof queueMicrotask.prototype)"),
+    d("Object.getOwnPropertyNames(Symbol).filter(n => n.includes('ispose')).join()"),
+    d("JSON.stringify(Object.getOwnPropertyDescriptor(Symbol, 'dispose'))"),
+    d("btoa(String.fromCharCode(0,1,2,255))"), d("atob('AAEC/w==').split('').map(c => c.charCodeAt(0)).join()"), d("atob('AAEC/w=')"), d("atob('AA==A')"), d("atob('A===')"),
+    d("[DisposableStack.prototype.dispose.name, DisposableStack.prototype.use.length, DisposableStack.prototype.adopt.length, AsyncDisposableStack.prototype.disposeAsync.name, SuppressedError.prototype.name, DOMException.name, DOMException.length].join()"));
+  return out.join('\n') })()"#;
+    let answer = |engine: ScriptEngine| {
+        with_script_engine(engine, || -> Result<String, Error> {
+            clear_context_stack();
+            Ok(moqui_lib::object::to_plain_string(&eval_value(PROBE)?))
+        })
+    };
+    let quickjs = answer(ScriptEngine::Rquickjs)?;
+    let oxide = answer(ScriptEngine::Oxide)?;
+    assert!(!quickjs.contains("MISSING") && !quickjs.contains("ReferenceError]"), "{quickjs}");
+    for (quickjs, oxide) in quickjs.lines().zip(oxide.lines()) {
+        assert_eq!(oxide, quickjs);
+    }
+    assert_eq!(quickjs.lines().count(), oxide.lines().count());
+    Ok(())
+}

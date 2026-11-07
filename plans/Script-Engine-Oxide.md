@@ -448,10 +448,18 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
 - Error columns: oxide places a call at its `(`, QuickJS at the callee's name.
 - An assignment through a list on the prototype chain (`Object.create(list).x = 1`) defines on the receiver on both
   engines now; oxide's list ignored it, as it ignores one to the list itself.
-- QuickJS builtins quickjs-oxide lacks (`queueMicrotask`, `atob`, `btoa`, `performance`, `DOMException`,
-  `DisposableStack`, `AsyncDisposableStack`, `SuppressedError`; `check::QUICKJS_ONLY_GLOBALS`): a whole script that
-  reads one by bare name (`typeof queueMicrotask` included) fails under `oxide` with "needs a QuickJS global", where
-  QuickJS gives the builtin. `Object.getOwnPropertyNames(globalThis)` shows which engine runs.
+- The builtins QuickJS has and quickjs-oxide lacks (`queueMicrotask`, `atob`, `btoa`, `performance`, `DOMException`,
+  `SuppressedError`, `DisposableStack`, `AsyncDisposableStack`, and `Symbol.dispose` and `Symbol.asyncDispose`) are
+  made in JavaScript on a whole oxide runtime (`oxide/builtins.rs`), as builtins (writable, configurable, not frozen),
+  and answer as QuickJS's do (`the_quickjs_builtins_are_on_each_whole_runtime`). What still differs:
+  - `using` and `await using` declarations are syntax quickjs-oxide's parser does not have (`SyntaxError: expecting
+    ';'`); QuickJS runs them. Fork.
+  - `performance.timeOrigin` is the runtime's start in epoch milliseconds on oxide, a monotonic clock reading on
+    QuickJS; `performance.now()` counts whole milliseconds on oxide, fractions on QuickJS.
+  - The prototypes' own keys come in another order (`constructor` first, as a class makes them), and a
+    `SuppressedError` has an own `stack`, as every oxide error does.
+  - `Error.captureStackTrace` and `Error.prototype.stack` are QuickJS's only.
+  - The small-script runtime (`small-oxide`) does not have them; the static check sends a text naming one to QuickJS.
 
 ### Memory under `oxide` (Phase 3)
 

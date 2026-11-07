@@ -206,8 +206,8 @@ fn a_filter_chain_runs_around_its_servlet_on_each_engine() {
         r#"({ doGet(request, response) {
             if (request.pathInfo === "/fail") throw new Error("servlet failed")
             response.setStatus(202)
-            // QuickJS has queueMicrotask and quickjs-oxide does not (`check::QUICKJS_ONLY_GLOBALS`)
-            response.setHeader("X-Engine", Object.getOwnPropertyNames(globalThis).includes("queueMicrotask") ? "rquickjs" : "oxide")
+            // QuickJS has Error.captureStackTrace and quickjs-oxide does not (plans/Script-Engine-Oxide.md)
+            response.setHeader("X-Engine", typeof Error.captureStackTrace === "function" ? "rquickjs" : "oxide")
             response.write(request.getAttribute("order") + ",servlet")
         } })"#,
     );
