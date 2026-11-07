@@ -69,7 +69,8 @@ impl Runner for OxideRunner {
         }
         // nested in a run of the main runtime; a run of the spec runtime alone is another runtime's
         if let Some(engine) = super::engine::Active::main_running() {
-            if !super::is_lent() {
+            // the main runtime's own lend, as `with_run` checks it: the innermost runtime may be the spec runtime's
+            if !engine.runtime().is_lent() && !in_render_body() {
                 return Err(Error::new(
                     "a screen unit nested in a running quickjs-oxide script needs the engine lent",
                 ));
