@@ -167,14 +167,26 @@ impl EntryKind {
 
     /// Whether the oxide bindings run this kind yet (Phase 1: conditions and values).
     pub(crate) fn oxide_covers(self) -> bool {
-        matches!(self, Self::Condition | Self::Value | Self::FieldValue)
+        matches!(
+            self,
+            Self::Condition | Self::Value | Self::FieldValue | Self::Expand | Self::Map | Self::Actions
+        )
+    }
+
+    /// The static check's profile for a text of this kind.
+    pub(crate) fn profile(self) -> Profile {
+        match self {
+            Self::Actions => Profile::Actions,
+            Self::Script | Self::Template | Self::Spec | Self::Host => Profile::Full,
+            _ => Profile::Expression,
+        }
     }
 
     /// The small kinds the census records (plans/Script-Engine-Oxide.md section 5.3).
     pub(crate) fn is_small(self) -> bool {
         matches!(
             self,
-            Self::Condition | Self::Value | Self::FieldValue | Self::Expand | Self::Map
+            Self::Condition | Self::Value | Self::FieldValue | Self::Expand | Self::Map | Self::Actions
         )
     }
 }
@@ -229,6 +241,12 @@ mod counts {
         });
     }
 
+    /// This thread's counter `pick` gives, for a test that other tests' threads must not disturb.
+    #[cfg(test)]
+    pub(super) fn mine(pick: impl FnOnce(&Counts) -> &AtomicU64) -> u64 {
+        MINE.with(|mine| pick(mine).load(Relaxed))
+    }
+
     /// The sum over every thread's table of the counter `pick` gives.
     pub(super) fn sum(pick: impl Fn(&Counts) -> &AtomicU64) -> u64 {
         moqui_lib::sync::lock(&ALL)
@@ -251,6 +269,13 @@ pub fn scripts_by_kind() -> Vec<(&'static str, u64, u64)> {
             )
         })
         .collect()
+}
+
+/// Scripts of `kind` this thread ran on quickjs-oxide, for the tests.
+#[cfg(test)]
+pub(crate) fn oxide_runs_here(kind: EntryKind) -> u64 {
+    let index = kind.index();
+    counts::mine(|counts| &counts.oxide[index])
 }
 
 /// Oxide runs that went to QuickJS before any host call, since the process started.
@@ -310,7 +335,7 @@ pub(crate) fn route(kind: EntryKind, text: &str, hash: u64) -> Result<Route, Err
         return Ok(Route::QuickJs);
     }
     let verdict = (census || (kind.oxide_covers() && setting == ScriptEngine::SmallOxide))
-        .then(|| check::verdict(text, hash, Profile::Expression, &ec_path_allowed));
+        .then(|| check::verdict(text, hash, kind.profile(), &ec_path_allowed));
     let memo = kind.oxide_covers() && setting == ScriptEngine::SmallOxide && fell_back_often(kind, hash);
     let (route, why) = choose(setting, kind, verdict.as_ref(), memo)?;
     if memo {
@@ -331,7 +356,8 @@ fn choose(
     verdict: Option<&check::Verdict>,
     memo: bool,
 ) -> Result<(Route, Option<&'static str>), Error> {
-    let nested = run::is_running(EngineTag::Oxide);
+    // a script nested in a running oxide one runs there only while the runtime is lent (the fork's F3a)
+    let nested = run::is_running(EngineTag::Oxide) && !crate::script::oxide::is_lent();
     let widget = crate::script::runtime::widget_wrap_on();
     match setting {
         ScriptEngine::Rquickjs => Ok((Route::QuickJs, Some("setting"))),
@@ -393,11 +419,23 @@ pub(crate) fn require_quickjs(kind: EntryKind) -> Result<(), Error> {
 /// Run a script on quickjs-oxide from inside or outside a running QuickJS script: QuickJS's tracked values are written
 /// back first, kept tracked (`Flush::Keep`, for a read-only small script), so the oxide script reads by bare name what
 /// the QuickJS script changed in place (plans/Script-Engine-Oxide.md section 4).
-pub(crate) fn cross_into_oxide<T>(body: impl FnOnce() -> T) -> Result<T, Error> {
+pub(crate) fn cross_into_oxide<T>(writes: bool, body: impl FnOnce() -> T) -> Result<T, Error> {
     if run::innermost() == Some(EngineTag::QuickJs) {
-        crate::script::runtime::flush_innermost_keep()?;
+        crate::script::runtime::flush_innermost(writes)?;
     }
     Ok(body())
+}
+
+/// Run a QuickJS script from inside a running oxide script (a lent host function runs a script routed to QuickJS, or a
+/// kind oxide does not run): oxide's tracked values are written back and released first, so the QuickJS script reads
+/// what the oxide script changed in place, and the oxide script reads by name what the QuickJS one wrote (a released
+/// value is tracked again at its next read only while the stack still holds what was written). The direction of
+/// [`cross_into_oxide`] reversed.
+pub(crate) fn cross_into_quickjs() -> Result<(), Error> {
+    if run::innermost() == Some(EngineTag::Oxide) {
+        crate::script::oxide::release_for_quickjs()?;
+    }
+    Ok(())
 }
 
 /// A small script of `kind` with `source` on quickjs-oxide when [`route`] sends it there: `Some` of its result, or
@@ -407,20 +445,23 @@ pub(crate) fn cross_into_oxide<T>(body: impl FnOnce() -> T) -> Result<T, Error> 
 pub(crate) fn try_oxide<T>(
     kind: EntryKind,
     source: &str,
-    run: impl FnOnce(&str, u64) -> Result<T, crate::script::oxide::Outcome>,
+    run: impl FnOnce(&str, u64, bool) -> Result<T, crate::script::oxide::Outcome>,
 ) -> Result<Option<T>, Error> {
     use crate::script::oxide::Outcome;
     // the default: no hash, no check, no census
-    if script_engine() == ScriptEngine::Rquickjs && !crate::script::census::enabled() {
+    if !may_route() {
         return Ok(None);
     }
     let hash = crate::script::text::hash_text(source);
     if route(kind, source, hash)? != Route::Oxide {
         return Ok(None);
     }
+    // whether the run writes back what it read by name: the check's answer, or any script under `oxide`
+    let writes = script_engine() == ScriptEngine::Oxide
+        || check::verdict(source, hash, kind.profile(), &ec_path_allowed).writes();
     let _census = crate::script::census::begin(kind, hash);
     let calls = crate::script::census::host_calls();
-    match cross_into_oxide(|| run(source, hash))? {
+    match cross_into_oxide(writes, || run(source, hash, writes))? {
         Ok(value) => {
             count(kind, Route::Oxide);
             Ok(Some(value))
@@ -446,6 +487,108 @@ pub(crate) fn try_oxide<T>(
             Ok(None)
         }
     }
+}
+
+/// Whether the difference check is on (`script_engine_check=true`, read once; plans/Script-Engine-Oxide.md section 8):
+/// for development and test runs only.
+fn difference_check() -> bool {
+    static CHECK: OnceLock<bool> = OnceLock::new();
+    CHECK_ON.with(Cell::get).unwrap_or_else(|| {
+        *CHECK.get_or_init(|| moqui_lib::env::get_prop_or_env("script_engine_check").trim() == "true")
+    })
+}
+
+thread_local! {
+    /// The difference check for this thread when a test set it ([`set_thread_difference_check`]).
+    static CHECK_ON: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+/// Turn the difference check on or off for this thread only (`None` goes back to the process's setting).
+#[cfg(test)]
+pub(crate) fn set_thread_difference_check(on: Option<bool>) {
+    CHECK_ON.with(|cell| cell.set(on));
+}
+
+/// Differences the check found since the process started.
+static DIFFERENCES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Differences between the engines the difference check logged.
+pub fn oxide_differences() -> u64 {
+    DIFFERENCES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A small script of the Expression profile: on quickjs-oxide when [`route`] sends it there (see [`try_oxide`]), else
+/// `quickjs`. With the difference check on, a read-only text that ran on oxide runs on QuickJS too, and a different
+/// result or error is logged with the script; the caller gets the oxide answer. Never for actions, which write.
+pub(crate) fn small_script<T: PartialEq + std::fmt::Debug>(
+    kind: EntryKind,
+    source: &str,
+    oxide: impl FnOnce(&str, u64, bool) -> Result<T, crate::script::oxide::Outcome>,
+    quickjs: impl FnOnce() -> Result<T, Error>,
+) -> Result<T, Error> {
+    let calls = crate::script::census::host_calls();
+    let ran = match try_oxide(kind, source, oxide) {
+        Ok(None) => return quickjs(),
+        Ok(Some(value)) => Ok(value),
+        Err(err) => Err(err),
+    };
+    // Run again only what had no effect: no host call, no write, nothing that reads the clock or a random number.
+    if difference_check()
+        && script_engine() == ScriptEngine::SmallOxide
+        && kind.profile() == Profile::Expression
+        && crate::script::census::host_calls() == calls
+        && !reads_moving_values(source)
+    {
+        let hash = crate::script::text::hash_text(source);
+        if !check::verdict(source, hash, Profile::Expression, &ec_path_allowed).writes() {
+            compare(kind, source, &ran, &quickjs());
+        }
+    }
+    ran
+}
+
+/// Whether a text reads a value that moves between two runs (the clock, a random number), which the difference check
+/// would report as a difference: `nowTimestamp`, `Date`, `Math.random`.
+fn reads_moving_values(source: &str) -> bool {
+    ["now", "Now", "Date", "random"]
+        .iter()
+        .any(|word| source.contains(word))
+}
+
+/// Log a difference between the oxide answer and the QuickJS one.
+fn compare<T: PartialEq + std::fmt::Debug>(
+    kind: EntryKind,
+    source: &str,
+    oxide: &Result<T, Error>,
+    quickjs: &Result<T, Error>,
+) {
+    let same = match (oxide, quickjs) {
+        (Ok(oxide), Ok(quickjs)) => oxide == quickjs,
+        (Err(_), Err(_)) => true,
+        _ => false,
+    };
+    if same {
+        return;
+    }
+    DIFFERENCES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let shown = |result: &Result<T, Error>| match result {
+        Ok(value) => format!("{value:?}"),
+        Err(err) => format!("error: {}", err.message()),
+    };
+    tracing::warn!(
+        target: "script_engine_check",
+        kind = kind.name(),
+        script = %source,
+        oxide = %shown(oxide),
+        quickjs = %shown(quickjs),
+        "quickjs-oxide and QuickJS differ"
+    );
+}
+
+/// Whether a script may go anywhere but QuickJS, or the census records it: not under the default `rquickjs` with the
+/// census off, where an entry skips the router and what it would build for it.
+pub(crate) fn may_route() -> bool {
+    script_engine() != ScriptEngine::Rquickjs || crate::script::census::enabled()
 }
 
 /// Note an oxide run that went to QuickJS before any host call (`reason`, for the census).

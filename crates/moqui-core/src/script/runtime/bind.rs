@@ -21,7 +21,9 @@ use rquickjs::function::{Params, RustFunction};
 use rquickjs::object::Accessor;
 
 use super::*;
-use crate::script::host::{self, Arg, ArgKind, Args, Call, EngineOps, FlushBefore, HostClass, HostError, Method, Ret};
+use crate::script::host::{
+    self, Arg, ArgKind, Args, Bound, Call, EngineOps, FlushBefore, HostClass, HostError, Method, Ret,
+};
 
 /// An object of a host class: the state its methods read. Its prototype is its class.
 #[derive(Trace, JsLifetime)]
@@ -35,8 +37,20 @@ pub(super) struct HostNeutral {
 /// bound on both engines. Runs while the engine starts: the prototypes made here are kept for this install only, not
 /// in an engine's cache, since the engine being started is not the running one.
 pub(super) fn install_ec<'js>(ctx: &Ctx<'js>, ec: &Object<'js>) -> Result<(), Error> {
+    install_paths(ctx, ec, host::all_paths().iter().copied())
+}
+
+/// [`install_ec`] of the given paths.
+fn install_paths<'js, 'p>(
+    ctx: &Ctx<'js>,
+    ec: &Object<'js>,
+    paths: impl IntoIterator<Item = &'p host::Path>,
+) -> Result<(), Error> {
     let made = RefCell::new(HashMap::new());
-    for entry in host::all_paths() {
+    for entry in paths {
+        if let Bound::Shim(_) = entry.bound {
+            continue;
+        }
         let Some(rest) = entry.path.strip_prefix("ec.") else {
             tracing::error!(
                 "The host table path {} is not under ec; it is not installed",
@@ -59,12 +73,53 @@ pub(super) fn install_ec<'js>(ctx: &Ctx<'js>, ec: &Object<'js>) -> Result<(), Er
                 }
             };
         }
-        let object = caught(
-            ctx,
-            entry.path,
-            instance(ctx, HostObject::new(()), entry.class, Prototypes::Install(&made)),
-        )?;
-        caught(ctx, entry.path, target.set(last, object))?;
+        match entry.bound {
+            Bound::Object(class) => {
+                let object = caught(
+                    ctx,
+                    entry.path,
+                    instance(ctx, HostObject::new(()), class, Prototypes::Install(&made)),
+                )?;
+                caught(ctx, entry.path, target.set(last, object))?;
+            }
+            Bound::Function(method) => caught(ctx, entry.path, target.set(last, function(ctx, method)?))?,
+            Bound::Shim(_) => {}
+        }
+    }
+    Ok(())
+}
+
+/// Run every shim of the host table ([`host::Shim`]), once `ec` is a global and the helper objects are filled: each is
+/// given the global object, its hidden functions and the helper objects. A shim that fails is logged and the rest run.
+pub(super) fn install_shims<'js>(
+    ctx: &Ctx<'js>,
+    string_utilities: &Object<'js>,
+    collection_utilities: &Object<'js>,
+    web_utilities: &Object<'js>,
+) -> Result<(), Error> {
+    let helpers = caught(ctx, "helpers", Object::new(ctx.clone()))?;
+    caught(ctx, "helpers", helpers.set("CollectionUtilities", collection_utilities.clone()))?;
+    caught(ctx, "helpers", helpers.set("StringUtilities", string_utilities.clone()))?;
+    caught(ctx, "helpers", helpers.set("WebUtilities", web_utilities.clone()))?;
+    for entry in host::all_paths() {
+        let Bound::Shim(shim) = entry.bound else {
+            continue;
+        };
+        let installed = (|| {
+            let hidden = caught(ctx, entry.path, Object::new(ctx.clone()))?;
+            for method in shim.hidden.iter().flat_map(|group| group.iter()) {
+                caught(ctx, method.path, hidden.set(method.name, function(ctx, method)?))?;
+            }
+            let install: Function = eval_js(ctx, shim.js)?;
+            caught(
+                ctx,
+                entry.path,
+                install.call::<_, ()>((ctx.globals(), hidden, helpers.clone())),
+            )
+        })();
+        if let Err(err) = installed {
+            tracing::error!("The host shim {} was not installed: {}", entry.path, err.message());
+        }
     }
     Ok(())
 }
@@ -218,7 +273,8 @@ fn convert_args<'js>(
             ArgKind::NullableText | ArgKind::OptNullableText => Arg::Text(String::from_js(ctx, value)?),
             ArgKind::Bool | ArgKind::OptBool => Arg::Bool(bool::from_js(ctx, value)?),
             ArgKind::Int | ArgKind::OptInt => Arg::Int(i32::from_js(ctx, value)?),
-            ArgKind::OptNumber => Arg::Number(f64::from_js(ctx, value)?),
+            ArgKind::OptNumber | ArgKind::Number => Arg::Number(f64::from_js(ctx, value)?),
+            ArgKind::Texts | ArgKind::OptTexts => Arg::Texts(Vec::<String>::from_js(ctx, value)?),
             ArgKind::Callback => {
                 callbacks.push(Function::from_js(ctx, value)?);
                 Arg::Callback(callbacks.len() - 1)
@@ -226,9 +282,40 @@ fn convert_args<'js>(
             ArgKind::Context if value.is_object() => Arg::Context(value_map(&js_to_host(ctx, &value)?)),
             ArgKind::Context => Arg::Context(None),
             ArgKind::Thrown => thrown_text(&value).map_or(Arg::Missing, Arg::Text),
+            ArgKind::OptWhole if void => Arg::Undefined,
+            ArgKind::Whole | ArgKind::OptWhole => Arg::Int(whole(ctx, &value)?),
+            ArgKind::Parameters if is_ec_context(ctx, &value)? => Arg::WholeContext,
+            ArgKind::Parameters => Arg::Value(js_to_host(ctx, &value)?),
+            ArgKind::Host => Arg::Host(Class::<HostNeutral>::from_js(ctx, value)?.try_borrow()?.obj.clone()),
+            ArgKind::OptNode if value.is_object() => Arg::Node(super::screen_host::lit_of(ctx, &value)?),
+            ArgKind::OptNode => Arg::Undefined,
         });
     }
     Ok(converted)
+}
+
+/// An integer argument as runtime/convert.rs's `js_i64` reads it, with its errors.
+fn whole(ctx: &Ctx<'_>, value: &JsValue<'_>) -> rquickjs::Result<i32> {
+    if let Some(number) = value.as_int() {
+        return Ok(number);
+    }
+    if value.as_float().is_some() {
+        return Err(Exception::throw_message(ctx, "limit is not an integer"));
+    }
+    Err(Exception::throw_message(ctx, "limit is not a number"))
+}
+
+/// Whether `value` is `ec.context`, the whole context: `in-map="context"` passes it.
+fn is_ec_context<'js>(ctx: &Ctx<'js>, value: &JsValue<'js>) -> rquickjs::Result<bool> {
+    if !value.is_object() {
+        return Ok(false);
+    }
+    let ec: JsValue = ctx.globals().get("ec")?;
+    let Some(ec) = ec.as_object() else {
+        return Ok(false);
+    };
+    let context: JsValue = ec.get("context")?;
+    Ok(context == *value)
 }
 
 /// The text a log call gives its exception: `name: message` of an error object, its `message` alone, or a string.
@@ -300,6 +387,23 @@ impl EngineOps for QuickOps<'_, '_> {
             self.thrown = Some(err);
             HostError::Thrown
         })
+    }
+
+    fn evaluate(&mut self, source: &str, _name: &str) -> Result<Value, HostError> {
+        let ctx = self.ctx;
+        let evaluated: JsValue = eval_source(ctx, source).map_err(|err| HostError::message(err.message()))?;
+        js_to_host(ctx, &evaluated).map_err(|err| {
+            self.thrown = Some(err);
+            HostError::Thrown
+        })
+    }
+
+    fn whole_context(&mut self) -> Result<indexmap::IndexMap<String, Value>, HostError> {
+        if let Some(engine) = current_engine() {
+            readopt_all(&engine);
+        }
+        self.flush(FlushBefore::Keep)?;
+        Ok(context_combined())
     }
 
     fn flush(&mut self, mode: FlushBefore) -> Result<(), HostError> {

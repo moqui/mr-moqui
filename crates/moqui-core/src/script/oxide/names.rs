@@ -12,52 +12,34 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! Bare names and entity fields on quickjs-oxide, through Proxies with host-function traps until the fork's exotic
-//! objects (F2) land (plans/Script-Engine-Oxide.md section 5.2).
+//! Bare names and entity fields on quickjs-oxide, as host exotic objects (the fork's F2;
+//! plans/Script-Engine-Oxide.md section 5.2), the same hooks the QuickJS bindings' `HostGlobalNames` and `HostEntity`
+//! are.
 //!
-//! The global object's prototype is a Proxy: a name the global object does not have reaches its `has` (every string
-//! name is there, as on QuickJS, so an unset name reads as null) and its `get`, which reads the context stack as
-//! QuickJS's `read_name` does. A list, map, decimal or entity value read once in a run is kept for the run, so two reads
-//! of a name are the same object (`big == big`). Phase 1 small scripts are read-only: a write is a fallback (the static
-//! check refuses assignments, so none reaches here).
+//! The global object's prototype is a [`GlobalNames`] object: a name the global object does not have reaches its `has`
+//! (every string name is there, as on QuickJS, so an unset name reads as null) and its `get`, which reads the context
+//! stack as QuickJS's `read_name` does; a bare assignment reaches its `set` ([`super::tracked`]).
 //!
-//! An entity value is a Proxy over a host object of its cell: `get` reads a field (localized, a view's alias, null for
-//! a field it does not hold), as the QuickJS `HostEntity` does; a relationship, a method, and every other trap fall
-//! back to QuickJS for now.
+//! An entity value is an [`EntityValues`] object over its cell: a field reads as the QuickJS `HostEntity` reads it
+//! (localized, a view's alias, null for a field it does not hold), a field set writes the cell (an assignment whose
+//! receiver is another object, the value on its prototype chain, defines on that object), `in`, `Object.keys` and own
+//! property reads see the fields, and other names are those of `Object.prototype`. A relationship and the QuickJS
+//! entity methods fall back to QuickJS for now.
 
 use std::sync::Arc;
 
 use moqui_lib::context_stack::Lookup;
-use moqui_lib::object::Value as HostValue;
-use quickjs_oxide::engine::api::core::{CallableRef, Context, JsResult, Scope, Value};
+use quickjs_oxide::engine::api::core::{
+    CompleteOrdinaryPropertyDescriptor, Context, ExoticClass, ExoticScope, Hook, HostClass, JsResult, ObjectRef,
+    PropertyKey, RuntimeError, Value,
+};
 
-use super::convert::{to_js, Conv};
-use super::engine::{current, guarded, OxideEngine};
+use super::convert::{to_host, to_js, Conv};
+use super::engine::{current, guarded, guarded_hook};
 use crate::script::run::STACK;
-use crate::script::runtime::{entity_field, EntityCell, EntityField};
-
-/// The target of an entity value's Proxy: the cell the context stack shares.
-pub(super) struct EntityTarget(pub(super) Arc<EntityCell>);
-
-/// The global names Proxy, made by `make(has, get, set)`.
-const NAMES_JS: &str = "(function (has, get, set) { return new Proxy(Object.create(null), { has, get, set }); })";
-
-/// The maker of an entity value's Proxy, over one handler for the runtime.
-const ENTITY_JS: &str = "(function (handler) { return function (target) { return new Proxy(target, handler); }; })";
-
-/// The entity traps that fall back: every one but `get`.
-const ENTITY_FALLBACK_TRAPS: &[&str] = &[
-    "has",
-    "set",
-    "deleteProperty",
-    "defineProperty",
-    "getOwnPropertyDescriptor",
-    "ownKeys",
-    "getPrototypeOf",
-    "setPrototypeOf",
-    "isExtensible",
-    "preventExtensions",
-];
+use crate::script::runtime::{
+    entity_field, entity_field_names, entity_is_field, entity_set_field, EntityCell, EntityField,
+};
 
 /// The names the QuickJS entity value's prototype has (its methods): on QuickJS a method wins over a field of the
 /// same name, so such a name falls back here. A test keeps the list in step with QuickJS.
@@ -89,134 +71,222 @@ pub(super) const ENTITY_METHODS: &[&str] = &[
     "update",
 ];
 
-/// Make the global object's prototype the names Proxy.
-pub(super) fn install_names(context: &Context) -> Result<(), quickjs_oxide::engine::api::core::RuntimeError> {
-    let has = context.new_function(
-        quickjs_oxide::engine::api::core::FunctionOptions::new("has").length(2),
-        |scope: &mut Scope<'_>| -> JsResult<Value> { Ok(Value::Bool(matches!(scope.arg(1), Value::String(_)))) },
-    )?;
-    let get = context.new_function(
-        quickjs_oxide::engine::api::core::FunctionOptions::new("get").length(3),
-        |scope: &mut Scope<'_>| -> JsResult<Value> {
-            guarded(scope, |scope| match scope.arg(1) {
-                Value::String(name) => read_name(scope, &name.to_utf8_lossy()),
-                _ => Ok(Value::Undefined),
-            })
-        },
-    )?;
-    let set = context.new_function(
-        quickjs_oxide::engine::api::core::FunctionOptions::new("set").length(4),
-        |scope: &mut Scope<'_>| -> JsResult<Value> {
-            guarded(scope, |_| Err(Conv::Unsupported("an assignment to a bare name")))
-        },
-    )?;
-    let make = callable(context, NAMES_JS)?;
-    let proxy = context.call(
-        &make,
-        Value::Undefined,
-        &[Value::from(has), Value::from(get), Value::from(set)],
-    )?;
-    let Value::Object(proxy) = proxy else {
-        return Err(quickjs_oxide::engine::api::core::RuntimeError::Invariant(
-            "the names proxy",
-        ));
-    };
+/// The class of the global object's prototype: bare names over the context stack.
+pub(super) struct GlobalNames;
+
+impl ExoticClass for GlobalNames {
+    type Data = ();
+
+    fn has(&self, _: &mut ExoticScope<'_>, _: &(), key: &PropertyKey) -> JsResult<Hook<bool>> {
+        Ok(Hook::Handled(key.as_symbol().is_none()))
+    }
+
+    fn get(&self, scope: &mut ExoticScope<'_>, _: &(), key: &PropertyKey) -> JsResult<Hook<Value>> {
+        let Some(name) = key.to_js_string() else {
+            return Ok(Hook::Handled(Value::Undefined));
+        };
+        let name = name.to_utf8_lossy();
+        guarded_hook(scope, |scope| super::tracked::read_name(scope, &name))
+    }
+
+    fn set(&self, scope: &mut ExoticScope<'_>, _: &(), key: &PropertyKey, value: Value) -> JsResult<Hook<bool>> {
+        let Some(name) = key.to_js_string() else {
+            return Ok(Hook::Handled(true));
+        };
+        let name = name.to_utf8_lossy();
+        guarded_hook(scope, |scope| {
+            super::tracked::write_name(scope, &name, &value)?;
+            Ok(true)
+        })
+    }
+
+    fn delete(&self, _: &mut ExoticScope<'_>, _: &(), _: &PropertyKey) -> JsResult<Hook<bool>> {
+        // as QuickJS's exotic answers
+        Ok(Hook::Handled(true))
+    }
+
+    fn get_own_property(
+        &self,
+        _: &mut ExoticScope<'_>,
+        _: &(),
+        _: &PropertyKey,
+    ) -> JsResult<Hook<Option<CompleteOrdinaryPropertyDescriptor>>> {
+        Ok(Hook::Handled(None))
+    }
+
+    fn own_keys(&self, _: &mut ExoticScope<'_>, _: &()) -> JsResult<Hook<Vec<PropertyKey>>> {
+        Ok(Hook::Handled(Vec::new()))
+    }
+}
+
+/// Make the global object's prototype a [`GlobalNames`] object.
+pub(super) fn install_names(context: &Context) -> Result<(), RuntimeError> {
+    let class = context.register_exotic_class(GlobalNames)?;
+    let names = context.new_host_exotic((), &class, None)?;
     let global = context.global_object()?;
-    context.set_prototype_of(&global, Some(&proxy))?;
+    context.set_prototype_of(&global, Some(&names))?;
     Ok(())
 }
 
-/// The maker of entity value Proxies for the runtime.
-pub(super) fn entity_maker(context: &Context) -> Result<CallableRef, quickjs_oxide::engine::api::core::RuntimeError> {
-    let handler = context.new_object()?;
-    context.define_function(&handler, "get", 3, |scope: &mut Scope<'_>| -> JsResult<Value> {
-        guarded(scope, |scope| {
-            let target = scope.arg(0);
-            let Value::Object(target) = target else {
-                return Err(Conv::Unsupported("an entity value"));
-            };
-            let Some(cell) = scope.host_data::<EntityTarget>(&target)? else {
-                return Err(Conv::Unsupported("an entity value"));
-            };
-            match scope.arg(1) {
-                Value::String(name) => read_field(scope, &cell.0, &name.to_utf8_lossy()),
-                _ => Ok(Value::Undefined),
-            }
+/// An entity value's datum: the cell the context stack shares.
+pub(super) struct EntityTarget(pub(super) Arc<EntityCell>);
+
+/// The class of entity values.
+pub(super) struct EntityValues;
+
+impl ExoticClass for EntityValues {
+    type Data = EntityTarget;
+
+    fn get(&self, scope: &mut ExoticScope<'_>, data: &EntityTarget, key: &PropertyKey) -> JsResult<Hook<Value>> {
+        let Some(name) = key.to_js_string() else {
+            return Ok(Hook::Ordinary);
+        };
+        let name = name.to_utf8_lossy();
+        if ENTITY_METHODS.contains(&name.as_str()) {
+            return guarded_hook(scope, |_| Err(Conv::Unsupported("an entity value method")));
+        }
+        let cell = Arc::clone(&data.0);
+        match entity_field(&cell, &name) {
+            EntityField::Value(value) => guarded_hook(scope, |scope| {
+                let engine = current().ok_or(Conv::Unsupported("no oxide engine"))?;
+                to_js(scope, &engine, &value)
+            }),
+            EntityField::Null => Ok(Hook::Handled(Value::Null)),
+            EntityField::Relationship => guarded_hook(scope, |_| Err(Conv::Unsupported("an entity relationship"))),
+            // `Object.prototype`'s members, else undefined, as QuickJS reads such a name
+            EntityField::Unknown => Ok(Hook::Ordinary),
+        }
+    }
+
+    fn set(
+        &self,
+        scope: &mut ExoticScope<'_>,
+        data: &EntityTarget,
+        key: &PropertyKey,
+        value: Value,
+    ) -> JsResult<Hook<bool>> {
+        // An assignment whose receiver is another object (this value on its prototype chain) defines on that object.
+        if !scope.receiver_is_this() {
+            return Ok(Hook::Ordinary);
+        }
+        let Some(name) = key.to_js_string() else {
+            return guarded_hook(scope, |_| {
+                Err(Conv::Error("an entity value field name is not a symbol".to_string()))
+            });
+        };
+        let name = name.to_utf8_lossy();
+        let cell = Arc::clone(&data.0);
+        guarded_hook(scope, |scope| {
+            let engine = current().ok_or(Conv::Unsupported("no oxide engine"))?;
+            let host = to_host(scope, &engine, &value)?;
+            crate::script::census::note_side_effect();
+            entity_set_field(&cell, name, host).map_err(Conv::Error)?;
+            Ok(true)
         })
-    })?;
-    for trap in ENTITY_FALLBACK_TRAPS {
-        context.define_function(&handler, trap, 2, |scope: &mut Scope<'_>| -> JsResult<Value> {
-            guarded(scope, |_| {
-                Err(Conv::Unsupported("an entity value operation other than a field read"))
-            })
+    }
+
+    fn has(&self, scope: &mut ExoticScope<'_>, data: &EntityTarget, key: &PropertyKey) -> JsResult<Hook<bool>> {
+        let Some(name) = key.to_js_string() else {
+            return Ok(Hook::Ordinary);
+        };
+        let name = name.to_utf8_lossy();
+        if ENTITY_METHODS.contains(&name.as_str()) {
+            return guarded_hook(scope, |_| Err(Conv::Unsupported("an entity value method")));
+        }
+        if entity_is_field(&data.0, &name) {
+            return Ok(Hook::Handled(true));
+        }
+        Ok(Hook::Ordinary)
+    }
+
+    /// A field is not removed from a value, as Java `EntityValueBase` has no remove.
+    fn delete(&self, _: &mut ExoticScope<'_>, _: &EntityTarget, _: &PropertyKey) -> JsResult<Hook<bool>> {
+        Ok(Hook::Handled(false))
+    }
+
+    fn get_own_property(
+        &self,
+        scope: &mut ExoticScope<'_>,
+        data: &EntityTarget,
+        key: &PropertyKey,
+    ) -> JsResult<Hook<Option<CompleteOrdinaryPropertyDescriptor>>> {
+        let Some(name) = key.to_js_string() else {
+            return Ok(Hook::Handled(None));
+        };
+        let name = name.to_utf8_lossy();
+        if !entity_is_field(&data.0, &name) {
+            return Ok(Hook::Handled(None));
+        }
+        let held = match entity_field(&data.0, &name) {
+            EntityField::Value(value) => value,
+            _ => moqui_lib::object::Value::Null,
+        };
+        let value = guarded(scope, |scope| {
+            let engine = current().ok_or(Conv::Unsupported("no oxide engine"))?;
+            to_js(scope, &engine, &held)
         })?;
+        Ok(Hook::Handled(Some(CompleteOrdinaryPropertyDescriptor::Data {
+            value,
+            writable: true,
+            enumerable: true,
+            configurable: true,
+        })))
     }
-    let make = callable(context, ENTITY_JS)?;
-    match context.call(&make, Value::Undefined, &[Value::Object(handler)])? {
-        Value::Object(maker) => {
-            context
-                .as_callable(&maker)?
-                .ok_or(quickjs_oxide::engine::api::core::RuntimeError::Invariant(
-                    "the entity maker",
-                ))
+
+    /// The fields the value holds, so `Object.keys`, `for...in`, a spread and `JSON.stringify` see the field map.
+    fn own_keys(&self, _: &mut ExoticScope<'_>, data: &EntityTarget) -> JsResult<Hook<Vec<PropertyKey>>> {
+        let mut keys = Vec::new();
+        for name in entity_field_names(&data.0) {
+            keys.push(PropertyKey::from_js_string(
+                quickjs_oxide::engine::api::core::JsString::try_from_utf8(&name)?,
+            ));
         }
-        _ => Err(quickjs_oxide::engine::api::core::RuntimeError::Invariant(
-            "the entity maker",
-        )),
+        Ok(Hook::Handled(keys))
     }
 }
 
-/// The function a helper's source evaluates to.
-pub(super) fn callable(
-    context: &Context,
-    source: &str,
-) -> Result<CallableRef, quickjs_oxide::engine::api::core::RuntimeError> {
-    match context.eval(source)? {
-        Value::Object(object) => {
-            context
-                .as_callable(&object)?
-                .ok_or(quickjs_oxide::engine::api::core::RuntimeError::Invariant(
-                    "a helper function",
-                ))
+/// A host object the oxide bindings pass through as itself but do not bind yet (an uploaded file, a stream): any read
+/// of a member falls back to QuickJS, so a script that only hands it on to a host call runs on oxide.
+pub(super) struct OpaqueTarget(pub(super) moqui_lib::object::HostObject);
+
+pub(super) struct OpaqueValues;
+
+impl ExoticClass for OpaqueValues {
+    type Data = OpaqueTarget;
+
+    fn get(&self, scope: &mut ExoticScope<'_>, _: &OpaqueTarget, key: &PropertyKey) -> JsResult<Hook<Value>> {
+        if key.as_symbol().is_some() {
+            return Ok(Hook::Ordinary);
         }
-        _ => Err(quickjs_oxide::engine::api::core::RuntimeError::Invariant(
-            "a helper function",
-        )),
+        guarded_hook(scope, |_| Err(Conv::Unsupported("an upload or stream member")))
+    }
+
+    fn has(&self, scope: &mut ExoticScope<'_>, _: &OpaqueTarget, _: &PropertyKey) -> JsResult<Hook<bool>> {
+        guarded_hook(scope, |_| Err(Conv::Unsupported("an upload or stream member")))
+    }
+
+    fn own_keys(&self, scope: &mut ExoticScope<'_>, _: &OpaqueTarget) -> JsResult<Hook<Vec<PropertyKey>>> {
+        guarded_hook(scope, |_| Err(Conv::Unsupported("an upload or stream member")))
     }
 }
 
-/// A bare `name` read: the object this run already made for it, else the stack's value converted. `context` and the
-/// helper objects QuickJS answers by name fall back.
-fn read_name(scope: &mut Scope<'_>, name: &str) -> Result<Value, Conv> {
-    let engine = current().ok_or(Conv::Unsupported("no oxide engine"))?;
-    if let Some(kept) = engine.kept_name(name) {
-        return Ok(kept);
-    }
-    // In place, without a copy of the stack's value: the conversion runs no script and does not reach the stack.
-    let found = STACK.with(|stack| {
-        let stack = stack.borrow();
-        stack.with_value(name, |value| {
-            let keep = matches!(
-                value,
-                HostValue::List(_) | HostValue::Map(_) | HostValue::Decimal(_) | HostValue::Object(_)
-            );
-            to_js(scope, &engine, value).map(|converted| (converted, keep))
-        })
-    });
-    match found {
-        Some(converted) => {
-            let (value, keep) = converted?;
-            if keep {
-                engine.keep_name(name, value.clone());
-            }
-            Ok(value)
-        }
-        None => missing(&engine, name),
-    }
+/// The entity value class of a runtime, registered when it starts.
+pub(super) fn register_entities(context: &Context) -> Result<HostClass<EntityValues>, RuntimeError> {
+    context.register_exotic_class(EntityValues)
 }
 
-fn missing(engine: &OxideEngine, name: &str) -> Result<Value, Conv> {
-    let _ = engine;
+/// The cell of an entity value object, or `None` for any other object.
+pub(super) fn entity_cell<J: quickjs_oxide::engine::api::core::Js>(
+    js: &mut J,
+    object: &ObjectRef,
+) -> JsResult<Option<Arc<EntityCell>>> {
+    Ok(js
+        .host_data::<EntityTarget>(object)?
+        .map(|target| Arc::clone(&target.0)))
+}
+
+/// The missing name `name`: `context` and the QuickJS globals fall back; any other is null.
+pub(super) fn missing(name: &str) -> Result<Value, Conv> {
     match STACK.with(|stack| stack.borrow().get(name)) {
         Lookup::Context => Err(Conv::Unsupported("the stack as context")),
         Lookup::Value(_) => Err(Conv::Unsupported("a stack value read twice")),
@@ -226,20 +296,5 @@ fn missing(engine: &OxideEngine, name: &str) -> Result<Value, Conv> {
             }
             Ok(Value::Null)
         }
-    }
-}
-
-/// A field of an entity value, as the QuickJS `HostEntity` reads it; anything else falls back.
-fn read_field(scope: &mut Scope<'_>, cell: &Arc<EntityCell>, name: &str) -> Result<Value, Conv> {
-    if ENTITY_METHODS.contains(&name) {
-        return Err(Conv::Unsupported("an entity value method"));
-    }
-    let engine = current().ok_or(Conv::Unsupported("no oxide engine"))?;
-    match entity_field(cell, name) {
-        EntityField::Value(value) => to_js(scope, &engine, &value),
-        EntityField::Null => Ok(Value::Null),
-        EntityField::Other => Err(Conv::Unsupported(
-            "an entity relationship or a name that is not a field",
-        )),
     }
 }

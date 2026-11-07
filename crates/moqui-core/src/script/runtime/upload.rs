@@ -120,19 +120,7 @@ impl HostUpload {
     }
 }
 
-/// The bytes behind a [`HostStream`], as a host value: a stream passed to a service (`upload#Resource` with
-/// `fileList: [ref.openStream()]`) or kept in the context stays the stream, as a Java `InputStream` would, instead of
-/// becoming an empty map that a write would store as the two bytes `{}`.
-pub(crate) struct StreamBytes {
-    pub(crate) source: Arc<dyn crate::resource::source::ByteSource>,
-}
-
-impl StreamBytes {
-    /// All of the content, read from its source.
-    pub(crate) fn bytes(&self) -> Result<Vec<u8>, moqui_lib::error::Error> {
-        crate::resource::source::read_all(self.source.as_ref())
-    }
-}
+pub(crate) use crate::script::host::StreamBytes;
 
 /// The bytes of an uploaded file or a resource, as the Java `InputStream` a script passes to `putStream`. A script
 /// cannot read it a byte at a time: it reads all of it as text or a `Uint8Array`, a window of it from an offset
@@ -244,39 +232,7 @@ pub(super) fn charset_arg(value: &Opt<JsValue<'_>>) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
-/// Bytes as text in a Java charset name, as `new String(bytes, charset)`: UTF-8 when none is given (malformed sequences
-/// become U+FFFD), ISO-8859-1 byte for byte, UTF-16 by its byte order mark (big-endian without one, as Java), and the other
-/// names of the WHATWG Encoding Standard (windows-1252, UTF-16LE, Shift_JIS, ...). A byte order mark of the charset
-/// itself is not removed, as Java keeps it. An unknown name is an error, as Java's `UnsupportedEncodingException`.
-pub(crate) fn decode_text(bytes: &[u8], charset: Option<&str>) -> Result<String, crate::context::Error> {
-    let Some(charset) = charset.map(str::trim).filter(|name| !name.is_empty()) else {
-        return Ok(String::from_utf8_lossy(bytes).into_owned());
-    };
-    let upper = charset.to_ascii_uppercase();
-    if matches!(
-        upper.as_str(),
-        "ISO-8859-1" | "ISO8859-1" | "ISO8859_1" | "LATIN1" | "ISO-LATIN-1"
-    ) {
-        return Ok(bytes.iter().map(|byte| char::from(*byte)).collect());
-    }
-    if upper == "UTF-16" || upper == "UTF16" {
-        let little = bytes.starts_with(&[0xFF, 0xFE]);
-        let units: Vec<u16> = bytes
-            .chunks(2)
-            .map(|pair| {
-                let (first, second) = (pair[0], pair.get(1).copied().unwrap_or(0));
-                if little {
-                    u16::from_le_bytes([first, second])
-                } else {
-                    u16::from_be_bytes([first, second])
-                }
-            })
-            .collect();
-        return Ok(String::from_utf16_lossy(&units));
-    }
-    let encoding = crate::sftp::encoding_for(charset)?;
-    Ok(crate::sftp::decode(encoding, bytes))
-}
+pub(crate) use crate::script::host::decode_text;
 
 /// An uploaded file made from text, as the JavaScript object a service or spec holds. The test harness uses it to call
 /// the services that take a `FileItem` without a web request.

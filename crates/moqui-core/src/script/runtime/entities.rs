@@ -1167,20 +1167,7 @@ impl HostEntity {
     /// definition can be reached, any name is set.
     fn set_field(&self, ctx: &Ctx<'_>, field: String, value: &JsValue<'_>) -> rquickjs::Result<()> {
         let host = js_to_host(ctx, value)?;
-        let known = self.val().fields().contains_key(field.as_str());
-        if !known
-            && self
-                .member(&field)
-                .is_some_and(|member| !matches!(member, Member::Field))
-        {
-            let entity_name = self.val().entity_name().to_string();
-            return Err(Exception::throw_message(
-                ctx,
-                &format!("The field name {field} is not valid for entity {entity_name}"),
-            ));
-        }
-        self.val().set(field, host);
-        Ok(())
+        entity_set_field(&self.inner, field, host).map_err(|message| Exception::throw_message(ctx, &message))
     }
 
     /// A field value, null for a field the value does not hold, or the related value or list for a relationship
@@ -1220,8 +1207,10 @@ pub(crate) enum EntityField {
     Value(Value),
     /// A field the entity defines that the value does not hold.
     Null,
-    /// A relationship, or a name that is not a field, or no entity definition to tell.
-    Other,
+    /// A relationship: its value is a find.
+    Relationship,
+    /// A name that is neither, or no entity definition to tell: undefined, as [`HostEntity::read_member`] reads it.
+    Unknown,
 }
 
 /// [`EntityField`] of `name` on the value in `cell`, as [`HostEntity::read_member`] reads a field.
@@ -1232,8 +1221,32 @@ pub(crate) fn entity_field(cell: &Arc<EntityCell>, name: &str) -> EntityField {
     }
     match host.member(name) {
         Some(Member::Field) => EntityField::Null,
-        _ => EntityField::Other,
+        Some(Member::One | Member::Many) => EntityField::Relationship,
+        Some(Member::Unknown) | None => EntityField::Unknown,
     }
+}
+
+/// Whether `name` is a field of the value in `cell`: one it holds, or one its entity defines.
+pub(crate) fn entity_is_field(cell: &Arc<EntityCell>, name: &str) -> bool {
+    HostEntity::of(Arc::clone(cell)).is_field(name)
+}
+
+/// The names of the fields the value in `cell` holds, for `Object.keys` and a spread.
+pub(crate) fn entity_field_names(cell: &Arc<EntityCell>) -> Vec<String> {
+    lock(cell).fields().keys().map(|name| name.to_string()).collect()
+}
+
+/// Set `field` of the value in `cell` to `value`, as Java's `put`: a name the entity defines as other than a field is an
+/// error with the QuickJS binding's message; with no entity definition to tell, any name is set.
+pub(crate) fn entity_set_field(cell: &Arc<EntityCell>, field: String, value: Value) -> Result<(), String> {
+    let host = HostEntity::of(Arc::clone(cell));
+    let known = host.val().fields().contains_key(field.as_str());
+    if !known && host.member(&field).is_some_and(|member| !matches!(member, Member::Field)) {
+        let entity_name = host.val().entity_name().to_string();
+        return Err(format!("The field name {field} is not valid for entity {entity_name}"));
+    }
+    host.val().set(field, value);
+    Ok(())
 }
 
 /// What a name that is not a method stands for on an entity value.

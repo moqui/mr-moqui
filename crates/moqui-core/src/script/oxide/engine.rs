@@ -20,7 +20,6 @@
 //! re-entry handle F3a lands), so every Context call here is the runtime's one entry.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
@@ -28,14 +27,15 @@ use std::sync::Arc;
 
 use moqui_lib::object::Value as HostValue;
 use quickjs_oxide::engine::api::core::{
-    CallableRef, Context, HeapLimits, JsResult, ObjectRef, OrdinaryPropertyDescriptor, RuntimeError, RuntimeOptions,
-    Scope, Value,
+    CallableRef, Context, HeapLimits, Hook, HostClass, Js, JsResult, ObjectRef, OrdinaryPropertyDescriptor,
+    RuntimeError, RuntimeOptions, Scope, Value,
 };
 
 use super::compiled::Compiled;
 use super::convert::{key, to_host, truthy, Conv};
 use super::errors::{panic_message, runtime_error, throw_plain};
 use super::host::MoquiHost;
+use super::tracked::Flush;
 use crate::context::Error;
 use crate::script::run::{self, EngineTag, ScriptLimit, MAX_SCRIPT_DEPTH};
 use crate::script::runtime::EntityCell;
@@ -64,6 +64,17 @@ const HARDEN_JS: &str = r#"(function () {
     }
 })()"#;
 
+/// `toNumber(x)`, as the QuickJS host's (`runtime/helpers.rs`): a JavaScript number from a decimal, a number or
+/// numeric text, and null from null or empty text. Read-only, as the QuickJS host's globals are.
+const TO_NUMBER_JS: &str = r#"Object.defineProperty(globalThis, "toNumber", {
+    value: function toNumber(value) {
+        if (value == null || value === "") return null;
+        if (typeof value === "number") return value;
+        return toDecimal(value).toNumber();
+    },
+    writable: false, enumerable: true, configurable: false
+})"#;
+
 /// Why an oxide run gave no result.
 pub(crate) enum Outcome {
     /// The script's own error, as the QuickJS path would give it.
@@ -76,7 +87,11 @@ pub(crate) enum Outcome {
 /// Objects of the runtime the bindings use, made once when it starts.
 pub(super) struct Protos {
     pub(super) decimal: ObjectRef,
-    pub(super) make_entity: CallableRef,
+    pub(super) entities: HostClass<super::names::EntityValues>,
+    /// Native tools (`ec.getTool`), the host table's exotic class (`bind::tool`).
+    pub(super) tools: HostClass<super::bind::tool::ToolClass>,
+    /// Host objects the bindings pass through but do not bind yet (an upload, a stream).
+    pub(super) opaque: HostClass<super::names::OpaqueValues>,
     pub(super) set_prototype: ObjectRef,
     pub(super) object_prototype: ObjectRef,
     pub(super) date_prototype: ObjectRef,
@@ -90,13 +105,13 @@ pub(super) struct OxideEngine {
     context: Context,
     pub(super) protos: Protos,
     compiled: RefCell<Compiled>,
-    /// The objects this run made for bare names (lists, maps, decimals, entity values), so a name read twice is the
-    /// same object. Emptied when the run ends.
-    names: RefCell<HashMap<String, Value>>,
+    /// The values this run read or assigned by name ([`super::tracked`]). Emptied when the run ends.
+    run: RefCell<super::tracked::RunValues>,
     /// The entity values this run made, with their cells, so one converts back to its cell.
     entities: RefCell<Vec<(ObjectRef, Arc<EntityCell>)>>,
-    /// The reserved bytes last sampled, counted in [`counts::HEAP`].
+    /// The reserved bytes last sampled, counted in [`counts::HEAP`], and the most sampled.
     heap: Cell<usize>,
+    heap_peak: Cell<usize>,
     runs: Cell<u64>,
 }
 
@@ -110,6 +125,31 @@ mod counts {
     pub(super) static HEAP_MAX: AtomicUsize = AtomicUsize::new(0);
     pub(super) static COMPILED: AtomicU64 = AtomicU64::new(0);
     pub(super) static POISONED: AtomicU64 = AtomicU64::new(0);
+}
+
+/// The most reserved heap bytes each thread's oxide runtime reached, by thread, with the thread's name (or id), for the
+/// peak heap of a run (`MOQUI_SCRIPT_STATS_FILE`). An entry goes with its runtime.
+type ThreadPeaks = std::collections::HashMap<std::thread::ThreadId, (String, usize)>;
+
+static THREAD_PEAKS: std::sync::LazyLock<std::sync::Mutex<ThreadPeaks>> = std::sync::LazyLock::new(Default::default);
+
+fn note_thread_peak(bytes: usize) {
+    let thread = std::thread::current();
+    let mut peaks = moqui_lib::sync::lock(&THREAD_PEAKS);
+    let peak = peaks.entry(thread.id()).or_insert_with(|| {
+        let name = thread
+            .name()
+            .map_or_else(|| format!("{:?}", thread.id()), str::to_string);
+        (name, 0)
+    });
+    peak.1 = peak.1.max(bytes);
+}
+
+/// The peak reserved heap bytes of each live thread's oxide runtime, as sampled, by thread name.
+pub(crate) fn thread_heap_peaks() -> Vec<(String, usize)> {
+    let mut peaks: Vec<(String, usize)> = moqui_lib::sync::lock(&THREAD_PEAKS).values().cloned().collect();
+    peaks.sort();
+    peaks
 }
 
 /// What the process's oxide runtimes have done since it started.
@@ -232,7 +272,9 @@ impl OxideEngine {
         };
         let protos = Protos {
             decimal: super::decimal::make_prototype(&context)?,
-            make_entity: super::names::entity_maker(&context)?,
+            entities: super::names::register_entities(&context)?,
+            tools: super::bind::tool::register(&mut context.clone(), std::rc::Rc::new(EngineHooks))?,
+            opaque: context.register_exotic_class(super::names::OpaqueValues)?,
             set_prototype: object("setPrototype")?,
             object_prototype: object("objectPrototype")?,
             date_prototype: object("datePrototype")?,
@@ -249,6 +291,7 @@ impl OxideEngine {
         )?;
         super::bind::install_ec(&mut context.clone(), &ec, std::rc::Rc::new(EngineHooks))?;
         super::decimal::install_to_decimal(&context)?;
+        context.eval(TO_NUMBER_JS)?;
         context.eval(HARDEN_JS)?;
         super::names::install_names(&context)?;
         counts::STARTED.fetch_add(1, Relaxed);
@@ -259,23 +302,20 @@ impl OxideEngine {
             context,
             protos,
             compiled: RefCell::new(Compiled::new()),
-            names: RefCell::new(HashMap::new()),
+            run: RefCell::default(),
             entities: RefCell::new(Vec::new()),
             heap: Cell::new(0),
+            heap_peak: Cell::new(0),
             runs: Cell::new(0),
         })
     }
 
-    /// The object this run made for `name`.
-    pub(super) fn kept_name(&self, name: &str) -> Option<Value> {
-        self.names.borrow().get(name).cloned()
+    /// The values of the running script, by name.
+    pub(super) fn run_values(&self) -> &RefCell<super::tracked::RunValues> {
+        &self.run
     }
 
-    pub(super) fn keep_name(&self, name: &str, value: Value) {
-        self.names.borrow_mut().insert(name.to_string(), value);
-    }
-
-    /// The Proxy this run made for an entity cell.
+    /// The entity value object this run made for a cell.
     pub(super) fn entity_proxy(&self, cell: &Arc<EntityCell>) -> Option<ObjectRef> {
         self.entities
             .borrow()
@@ -286,15 +326,6 @@ impl OxideEngine {
 
     pub(super) fn keep_entity(&self, proxy: ObjectRef, cell: Arc<EntityCell>) {
         self.entities.borrow_mut().push((proxy, cell));
-    }
-
-    /// The cell of an entity value this run made.
-    pub(super) fn entity_of(&self, object: &ObjectRef) -> Option<Arc<EntityCell>> {
-        self.entities
-            .borrow()
-            .iter()
-            .find(|(proxy, _)| proxy == object)
-            .map(|(_, cell)| Arc::clone(cell))
     }
 
     /// Sample the reserved bytes every [`HEAP_SAMPLE_RUNS`] runs, for the stats.
@@ -313,6 +344,10 @@ impl OxideEngine {
                 counts::HEAP.fetch_sub(before - now, Relaxed) - (before - now)
             };
             counts::HEAP_MAX.fetch_max(total, Relaxed);
+            if now > self.heap_peak.get() {
+                self.heap_peak.set(now);
+                note_thread_peak(now);
+            }
         }
     }
 }
@@ -321,11 +356,13 @@ impl Drop for OxideEngine {
     fn drop(&mut self) {
         counts::LIVE.fetch_sub(1, Relaxed);
         counts::HEAP.fetch_sub(self.heap.get(), Relaxed);
+        // the runtime is dropped on its own thread: its thread's peak goes with it
+        moqui_lib::sync::lock(&THREAD_PEAKS).remove(&std::thread::current().id());
     }
 }
 
 /// The conversions the host table's binder makes on this engine ([`super::bind::OxideHooks`]): those of
-/// [`super::convert`], so a decimal is the decimal host object and an entity value the entity Proxy. A value the bindings
+/// [`super::convert`], so a decimal is the decimal host object and an entity value the entity exotic object. A value the bindings
 /// do not have yet marks the run for a fallback, as in a bare-name read.
 struct EngineHooks;
 
@@ -343,6 +380,17 @@ impl super::bind::OxideHooks for EngineHooks {
         };
         super::convert::to_js(scope, &engine, &value).map_err(|conv| host_error(scope, conv))
     }
+
+    /// The tracked values written back before a method that reads the stack (kept) or may change it (released).
+    fn flush(&self, scope: &mut Scope<'_>, mode: crate::script::host::FlushBefore) -> JsResult<()> {
+        use crate::script::host::FlushBefore;
+        let mode = match mode {
+            FlushBefore::None => return Ok(()),
+            FlushBefore::Keep => Flush::Keep,
+            FlushBefore::Release => Flush::Release,
+        };
+        super::tracked::flush(scope, mode).map_err(|conv| host_error(scope, conv))
+    }
 }
 
 fn conv_runtime(conv: Conv) -> RuntimeError {
@@ -355,22 +403,24 @@ fn conv_runtime(conv: Conv) -> RuntimeError {
 
 /// Run a host function's `body`: a panic becomes a thrown `Error` (the runtime is not poisoned), a value the bindings
 /// do not have marks the run for a fallback and throws, and a conversion error throws a plain `Error` with its message.
-pub(super) fn guarded(
-    scope: &mut Scope<'_>,
-    body: impl FnOnce(&mut Scope<'_>) -> Result<Value, Conv>,
-) -> JsResult<Value> {
-    let result = std::panic::catch_unwind(AssertUnwindSafe(|| body(&mut *scope)));
+pub(super) fn guarded<J: Js, T>(js: &mut J, body: impl FnOnce(&mut J) -> Result<T, Conv>) -> JsResult<T> {
+    let result = std::panic::catch_unwind(AssertUnwindSafe(|| body(&mut *js)));
     match result {
         Ok(Ok(value)) => Ok(value),
-        Ok(Err(conv)) => Err(host_error(scope, conv)),
+        Ok(Err(conv)) => Err(host_error(js, conv)),
         Err(payload) => {
             let message = panic_message(payload);
-            Err(plain(scope, &message))
+            Err(plain(js, &message))
         }
     }
 }
 
-fn host_error(scope: &mut Scope<'_>, conv: Conv) -> RuntimeError {
+/// [`guarded`] for an exotic hook, whose answer is handled.
+pub(super) fn guarded_hook<J: Js, T>(js: &mut J, body: impl FnOnce(&mut J) -> Result<T, Conv>) -> JsResult<Hook<T>> {
+    guarded(js, body).map(Hook::Handled)
+}
+
+pub(super) fn host_error<J: Js>(scope: &mut J, conv: Conv) -> RuntimeError {
     match conv {
         Conv::Js(err) => err,
         Conv::Unsupported(reason) => {
@@ -385,7 +435,7 @@ fn host_error(scope: &mut Scope<'_>, conv: Conv) -> RuntimeError {
     }
 }
 
-fn plain(scope: &mut Scope<'_>, message: &str) -> RuntimeError {
+fn plain<J: Js>(scope: &mut J, message: &str) -> RuntimeError {
     match current() {
         Some(engine) => throw_plain(scope, &engine.protos.error, message),
         None => scope.throw_error(quickjs_oxide::engine::api::core::NativeErrorKind::Type, message),
@@ -393,44 +443,116 @@ fn plain(scope: &mut Scope<'_>, message: &str) -> RuntimeError {
 }
 
 /// Forgets what one run made (the names' objects, the entity values, a fallback mark) when it ends, however it ends.
-struct RunState<'a>(&'a OxideEngine);
+/// A nested run (inside a host call of a running oxide script that lent the engine) sets the outer run's values aside
+/// and gives them back, as QuickJS's `OuterRun` does.
+struct RunState<'a> {
+    engine: &'a OxideEngine,
+    outer: Option<Outer>,
+}
 
-impl Drop for RunState<'_> {
-    fn drop(&mut self) {
-        if let Ok(mut names) = self.0.names.try_borrow_mut() {
-            names.clear();
-        }
-        if let Ok(mut entities) = self.0.entities.try_borrow_mut() {
-            entities.clear();
-        }
+/// What a nested run set aside of the run around it.
+struct Outer {
+    values: super::tracked::RunValues,
+    entities: Vec<(ObjectRef, Arc<EntityCell>)>,
+    fallback: Option<&'static str>,
+}
+
+impl<'a> RunState<'a> {
+    fn enter(engine: &'a OxideEngine, nested: bool) -> Self {
+        let outer = nested.then(|| Outer {
+            values: engine.run.take(),
+            entities: engine.entities.take(),
+            fallback: FALLBACK.with(Cell::take),
+        });
         FALLBACK.with(|fallback| fallback.set(None));
+        Self { engine, outer }
     }
 }
 
-/// Run `source` on the thread's oxide runtime and give its completion value to `finish`.
+impl Drop for RunState<'_> {
+    fn drop(&mut self) {
+        match self.outer.take() {
+            Some(outer) => {
+                if let Ok(mut values) = self.engine.run.try_borrow_mut() {
+                    *values = outer.values;
+                }
+                if let Ok(mut entities) = self.engine.entities.try_borrow_mut() {
+                    *entities = outer.entities;
+                }
+                FALLBACK.with(|fallback| fallback.set(outer.fallback));
+            }
+            None => {
+                if let Ok(mut values) = self.engine.run.try_borrow_mut() {
+                    values.clear();
+                }
+                if let Ok(mut entities) = self.engine.entities.try_borrow_mut() {
+                    entities.clear();
+                }
+                FALLBACK.with(|fallback| fallback.set(None));
+            }
+        }
+    }
+}
+
+/// Before a QuickJS script nested in the running oxide one ([`crate::script::engine::cross_into_quickjs`]): the
+/// tracked values released. Only while the runtime is lent; a host function that does not lend had the binder flush
+/// before its call.
+pub(crate) fn release_for_quickjs() -> Result<(), Error> {
+    let Some(engine) = current() else {
+        return Ok(());
+    };
+    if !engine.runtime.is_lent() {
+        return Ok(());
+    }
+    let mut context = engine.context.clone();
+    super::tracked::flush(&mut context, Flush::Release).map_err(|conv| match conv {
+        Conv::Js(err) => runtime_error(&mut context, err),
+        Conv::Error(message) => Error::new(message),
+        Conv::Unsupported(reason) => Error::new(format!("quickjs-oxide could not write back {reason}")),
+    })
+}
+
+/// This thread's oxide runtime's realm, started if need be, for the tests that define their own host functions.
+#[cfg(test)]
+pub(super) fn context_for_tests() -> Context {
+    engine().expect("the oxide runtime starts").context.clone()
+}
+
+/// Whether this thread's oxide runtime is lent by a running host function (`Scope::lend`, the fork's F3a): a script
+/// may then run on it, nested in the running one.
+pub(crate) fn is_lent() -> bool {
+    current().is_some_and(|engine| engine.runtime.is_lent())
+}
+
+/// Run `source` on the thread's oxide runtime and give its completion value to `finish`. When the text `writes` (the
+/// static check's answer, or any script under `script_engine=oxide`), its tracked values are written back at its end.
 fn run<T>(
     source: &str,
     hash: u64,
+    writes: bool,
+    file_name: &str,
     finish: impl FnOnce(&mut Context, &OxideEngine, Value) -> Result<T, Conv>,
 ) -> Result<T, Outcome> {
     let depth = run::depth();
     if depth >= MAX_SCRIPT_DEPTH {
         return Err(Outcome::Error(Error::new("scripts are nested too deeply")));
     }
-    if run::is_running(EngineTag::Oxide) {
-        return Err(Outcome::Fallback("a run nested in a running oxide script"));
+    let nested = run::is_running(EngineTag::Oxide);
+    if nested && !is_lent() {
+        return Err(Outcome::Fallback(
+            "a run nested in a running oxide script that did not lend its engine",
+        ));
     }
     run::stack_budget(depth).map_err(Outcome::Error)?;
     let engine = engine().map_err(Outcome::Error)?;
     let _tag = EngineTag::Oxide.enter();
     let _limit = (depth == 0).then(ScriptLimit::arm);
     let _depth = run::enter_depth(depth);
-    let state = RunState(&engine);
-    FALLBACK.with(|fallback| fallback.set(None));
+    let state = RunState::enter(&engine, nested);
     let compiled = {
         let mut cache = engine.compiled.borrow_mut();
         let before = cache.compiles();
-        let compiled = cache.get_or_compile(&engine.context, source, hash);
+        let compiled = cache.get_or_compile(&engine.context, source, hash, file_name);
         counts::COMPILED.fetch_add(cache.compiles() - before, Relaxed);
         compiled
     };
@@ -453,16 +575,26 @@ fn run<T>(
             Err(Outcome::Error(runtime_error(&mut context, err)))
         }
     };
-    let fallback = FALLBACK.with(Cell::take);
-    if cfg!(debug_assertions) && fallback.is_none() && !poisoned {
-        check_kept_names(&mut context, &engine, source);
+    let mut outcome = outcome;
+    if FALLBACK.with(Cell::get).is_none() && !poisoned {
+        if writes {
+            // as QuickJS does at a script's end, whether it ended well or not
+            let flushed = super::tracked::flush(&mut context, Flush::End);
+            if let (Ok(_), Err(conv)) = (&outcome, flushed) {
+                outcome = Err(conv_outcome(&mut context, conv));
+            }
+        } else if cfg!(debug_assertions) {
+            check_kept_names(&mut context, &engine, source);
+        }
     }
+    let fallback = FALLBACK.with(Cell::take);
     drop(state);
-    if poisoned {
+    // a poisoned runtime goes when the outermost oxide run ends, which sees the poison too
+    if poisoned && !nested {
         counts::POISONED.fetch_add(1, Relaxed);
         tracing::error!(script = %source, "a host function panicked in quickjs-oxide; the runtime is dropped and restarts on the next script");
         ENGINE.with(|current| *current.borrow_mut() = None);
-    } else {
+    } else if !poisoned {
         if out_of_memory {
             engine.compiled.borrow_mut().clear_transient();
             let _ = engine.runtime.run_gc();
@@ -475,16 +607,12 @@ fn run<T>(
     }
 }
 
-/// The safety net behind the static check's refusal of writes, in debug and test builds: a list or map this run read
-/// by name converts back to what the stack holds, or the run changed a copy QuickJS would have written back. A
-/// difference is logged with the script, and counted for the tests ([`changed_copies`]).
+/// The safety net behind the static check's answer that a text does not write, in debug and test builds, for a run
+/// that skips the flush at its end: a list or map it read by name converts back to what the stack holds, or the run
+/// changed one and the change is lost. A difference is logged with the script, and counted for the tests
+/// ([`changed_copies`]).
 fn check_kept_names(context: &mut Context, engine: &OxideEngine, source: &str) {
-    let kept: Vec<(String, Value)> = engine
-        .names
-        .borrow()
-        .iter()
-        .map(|(name, value)| (name.clone(), value.clone()))
-        .collect();
+    let kept = engine.run.borrow().tracked();
     for (name, value) in kept {
         let held = crate::script::run::STACK.with(|stack| stack.borrow().with_value(&name, HostValue::clone));
         let Some(held) = held.filter(|held| matches!(held, HostValue::List(_) | HostValue::Map(_))) else {
@@ -520,11 +648,68 @@ fn conv_outcome(context: &mut Context, conv: Conv) -> Outcome {
 
 /// [`crate::script::eval_condition`] on quickjs-oxide: `source` (as it runs, after `as_expression`) is true by
 /// JavaScript's truth.
-pub(crate) fn eval_condition(source: &str, hash: u64) -> Result<bool, Outcome> {
-    run(source, hash, |_, _, value| Ok(truthy(&value)))
+pub(crate) fn eval_condition(source: &str, hash: u64, writes: bool) -> Result<bool, Outcome> {
+    run(source, hash, writes, super::compiled::FILE_NAME, |_, _, value| {
+        Ok(truthy(&value))
+    })
+}
+
+/// [`crate::script::expand`] on quickjs-oxide: `source` is the template as a template literal, its value the text.
+pub(crate) fn eval_text(source: &str, hash: u64, writes: bool) -> Result<String, Outcome> {
+    run(
+        source,
+        hash,
+        writes,
+        super::compiled::FILE_NAME,
+        |context, _, value| match value {
+            Value::String(text) => Ok(text.to_utf8_lossy()),
+            other => Ok(context.to_js_string(&other)?.to_utf8_lossy()),
+        },
+    )
+}
+
+/// [`crate::script::eval_map`] on quickjs-oxide: the value of `source`, an object, as a map. Anything else is the
+/// QuickJS path's error.
+pub(crate) fn eval_map(
+    source: &str,
+    hash: u64,
+    writes: bool,
+) -> Result<std::collections::BTreeMap<String, HostValue>, Outcome> {
+    run(
+        source,
+        hash,
+        writes,
+        super::compiled::FILE_NAME,
+        |context, engine, value| {
+            let not_an_object = || Conv::Error("script value is not an object".to_string());
+            let Value::Object(object) = &value else {
+                return Err(not_an_object());
+            };
+            if context.is_array_object(object)? || context.as_callable(object)?.is_some() {
+                return Err(not_an_object());
+            }
+            match to_host(context, engine, &value)? {
+                HostValue::Map(map) => Ok(map.into_iter().collect()),
+                _ => Err(not_an_object()),
+            }
+        },
+    )
+}
+
+/// A generated actions script on quickjs-oxide, named `file_name` in stack traces as on QuickJS. Not strict, as there:
+/// a bare assignment is how a value reaches the context stack. Kept by the hash of its text and name.
+pub(crate) fn run_actions(source: &str, hash: u64, file_name: &str) -> Result<(), Outcome> {
+    let key = crate::script::text::hash_of(hash, file_name);
+    run(source, key, true, file_name, |_, _, _| Ok(()))
 }
 
 /// [`crate::script::eval_value`] on quickjs-oxide: the value of `source` as a host value.
-pub(crate) fn eval_value(source: &str, hash: u64) -> Result<HostValue, Outcome> {
-    run(source, hash, |context, engine, value| to_host(context, engine, &value))
+pub(crate) fn eval_value(source: &str, hash: u64, writes: bool) -> Result<HostValue, Outcome> {
+    run(
+        source,
+        hash,
+        writes,
+        super::compiled::FILE_NAME,
+        |context, engine, value| to_host(context, engine, &value),
+    )
 }

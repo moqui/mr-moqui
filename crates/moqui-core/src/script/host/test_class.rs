@@ -18,25 +18,27 @@ use std::sync::Mutex;
 
 use moqui_lib::object::{HostObject, Value};
 
-use super::{Call, HostClass, HostError, Path, Ret};
+use super::{method, Call, HostClass, HostError, Method, Path, Ret};
 use crate::context::{Error, ErrorKind};
 
 pub(crate) static TEST: HostClass = HostClass {
     name: "host:Test",
     methods: &[
-        method!("ec.test", "echo", [Value], echo),
-        method!("ec.test", "join", [Text, OptText], join),
-        method!("ec.test", "half", [Int], half),
-        method!("ec.test", "flag", [OptBool], flag),
-        method!("ec.test", "fail", [], fail),
-        method!("ec.test", "denied", [], denied),
-        method!("ec.test", "boom", [], boom),
-        method!("ec.test", "twice", [Callback], twice),
-        method!("ec.test", "builder", [], builder),
-        method!("ec.test", "log", [Text, Thrown], log),
+        method!("ec.test", "echo", [Value], None, leaf, echo),
+        method!("ec.test", "nested", [Value], None, nested),
+        method!("ec.test", "join", [Text, OptText], None, leaf, join),
+        method!("ec.test", "half", [Int], None, leaf, half),
+        method!("ec.test", "flag", [OptBool], None, leaf, flag),
+        method!("ec.test", "fail", [], None, leaf, fail),
+        method!("ec.test", "denied", [], None, leaf, denied),
+        method!("ec.test", "boom", [], None, leaf, boom),
+        method!("ec.test", "boomLent", [], None, boom),
+        method!("ec.test", "twice", [Callback], None, leaf, twice),
+        method!("ec.test", "builder", [], None, leaf, builder),
+        method!("ec.test", "log", [Text, Thrown], None, leaf, log),
     ],
-    getters: &[method!("ec.test", "answer", [], answer)],
-    hidden: &[method!("ec.test", "secret", [], answer)],
+    getters: &[method!("ec.test", "answer", [], None, leaf, answer)],
+    hidden: &[method!("ec.test", "secret", [], None, leaf, answer)],
     shim_js: Some("(function (proto, hidden) { proto.shimmed = function () { return 'shim ' + hidden.secret(); }; })"),
     shim_members: &["shimmed"],
 };
@@ -44,9 +46,9 @@ pub(crate) static TEST: HostClass = HostClass {
 static BUILDER: HostClass = HostClass {
     name: "host:TestBuilder",
     methods: &[
-        method!("ec.test.builder()", "add", [Text], add),
-        method!("ec.test.builder()", "done", [], done),
-        method!("ec.test.builder()", "hold", [Callback], hold),
+        method!("ec.test.builder()", "add", [Text], None, leaf, add),
+        method!("ec.test.builder()", "done", [], None, leaf, done),
+        method!("ec.test.builder()", "hold", [Callback], None, leaf, hold),
     ],
     getters: &[],
     hidden: &[],
@@ -54,15 +56,19 @@ static BUILDER: HostClass = HostClass {
     shim_members: &[],
 };
 
-pub(crate) static TEST_PATHS: &[Path] = &[Path {
-    path: "ec.test",
-    class: &TEST,
-}];
+static TEST_FUNCTION: Method = method!("ec", "testJoin", [Text, OptText], None, leaf, join);
+
+pub(crate) static TEST_PATHS: &[Path] = &[
+    Path::object("ec.test", &TEST),
+    Path::function("ec.testJoin", &TEST_FUNCTION),
+];
 
 /// Each script and what it gives on both engines, as text.
 pub(crate) const EXPECTED: &[(&str, &str)] = &[
     ("ec.test.echo({a: [1, 'b', null], c: true}).a[1]", "b"),
     ("ec.test.join('a', 'b') + ec.test.join('c')", "abc"),
+    ("ec.test.nested('lent') + ec.test.nested.length", "lent1"),
+    ("ec.testJoin('x', 'y') + ec.testJoin.length", "xy1"),
     ("ec.test.join.name + ec.test.join.length + ec.test.echo.length + ec.test.flag.length", "join110"),
     ("ec.test.half(7.9)", "3"),
     ("String(ec.test.flag()) + ec.test.flag(true)", "nulltrue"),
@@ -108,6 +114,11 @@ pub(crate) const EXPECTED: &[(&str, &str)] = &[
 ];
 
 fn echo(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::Value(call.value_or_null(0)))
+}
+
+/// A body that may run a nested script: on oxide it runs with the engine lent.
+fn nested(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(Ret::Value(call.value_or_null(0)))
 }
 

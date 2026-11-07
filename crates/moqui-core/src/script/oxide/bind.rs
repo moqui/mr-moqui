@@ -43,7 +43,7 @@ use quickjs_oxide::engine::api::core::{
 };
 
 use crate::script::host::{
-    self, Arg, ArgKind, Args, Call, EngineOps, FlushBefore, HostClass, HostError, Method, Path, Ret,
+    self, Arg, ArgKind, Args, Bound, Call, EngineOps, FlushBefore, HostClass, HostError, Method, Path, Ret,
 };
 
 /// What the binder needs of the oxide engine.
@@ -56,6 +56,11 @@ pub(crate) trait OxideHooks {
     /// Phase 1.
     fn flush(&self, _scope: &mut Scope<'_>, _mode: FlushBefore) -> JsResult<()> {
         Ok(())
+    }
+    /// The whole context as a script sees it, the tracked values written back first.
+    fn whole_context(&self, scope: &mut Scope<'_>) -> JsResult<indexmap::IndexMap<String, Value>> {
+        self.flush(scope, FlushBefore::Keep)?;
+        Ok(crate::script::context_combined())
     }
 }
 
@@ -106,6 +111,9 @@ pub(crate) fn install_paths(
         prototypes: RefCell::new(HashMap::new()),
     });
     for entry in paths.iter() {
+        if let Bound::Shim(_) = entry.bound {
+            continue;
+        }
         let Some(rest) = entry.path.strip_prefix("ec.") else {
             tracing::error!(
                 "The host table path {} is not under ec; it is not installed",
@@ -129,9 +137,66 @@ pub(crate) fn install_paths(
                 }
             };
         }
-        let object = instance(js, &binder, HostObject::new(()), entry.class)?;
-        js.set_property(&target, &key(last)?, JsValue::Object(object))?;
+        let value = match entry.bound {
+            Bound::Object(class) => instance(js, &binder, HostObject::new(()), class)?,
+            Bound::Function(method) => function(js, &binder, method)?.into_object(),
+            Bound::Shim(_) => continue,
+        };
+        js.set_property(&target, &key(last)?, JsValue::Object(value))?;
     }
+    Ok(())
+}
+
+/// Run every shim of the host table ([`host::Shim`]) once `ec` and the helper objects are made: each is called with the
+/// global object, its hidden functions by name and `helpers` (an object of `CollectionUtilities`, `StringUtilities` and
+/// `WebUtilities`). A shim that fails is logged and the rest run. Its prototypes are kept apart from [`install_ec`]'s.
+#[allow(dead_code)] // the engine calls it once its runtime has the helper objects (`oxide` mode)
+pub(crate) fn install_shims(js: &mut impl Js, helpers: &ObjectRef, hooks: Rc<dyn OxideHooks>) -> JsResult<()> {
+    let binder = Rc::new(Binder {
+        hooks,
+        prototypes: RefCell::new(HashMap::new()),
+    });
+    let global = js.global_object()?;
+    for entry in host::all_paths() {
+        let Bound::Shim(shim) = entry.bound else {
+            continue;
+        };
+        if let Err(err) = install_shim(js, &binder, &global, helpers, shim) {
+            tracing::error!("The host shim {} was not installed: {err}", entry.path);
+        }
+    }
+    Ok(())
+}
+
+fn install_shim(
+    js: &mut impl Js,
+    binder: &Rc<Binder>,
+    global: &ObjectRef,
+    helpers: &ObjectRef,
+    shim: &'static host::Shim,
+) -> JsResult<()> {
+    let hidden = js.new_object()?;
+    for method in shim.hidden.iter().flat_map(|group| group.iter()) {
+        let made = function(js, binder, method)?;
+        js.set_property(&hidden, &key(method.name)?, JsValue::Object(made.into_object()))?;
+    }
+    let install = js.eval(shim.js)?;
+    let install = match &install {
+        JsValue::Object(object) => js.as_callable(object)?,
+        _ => None,
+    };
+    let Some(install) = install else {
+        return Err(js.throw_error(NativeErrorKind::Type, "a host shim is not a function"));
+    };
+    js.call(
+        &install,
+        JsValue::Undefined,
+        &[
+            JsValue::Object(global.clone()),
+            JsValue::Object(hidden),
+            JsValue::Object(helpers.clone()),
+        ],
+    )?;
     Ok(())
 }
 
@@ -264,9 +329,30 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
             FlushBefore::None => Ok(()),
             mode => ops.flush(mode),
         };
+        let this_state = state.as_ref().map(|held| &held.obj);
         let result = flushed.and_then(|()| {
+            if !method.leaf {
+                // The body may run a nested script: the engine is lent to it, so the script runs on this runtime.
+                // The scope is the engine's until the body returns, so the body's engine operations are the ones
+                // made before the lend: the flush above, and the whole context an argument passes.
+                let passes_context =
+                    (0..method.args.len()).any(|index| matches!(args.get(index), Some(Arg::WholeContext)));
+                let whole = if passes_context { Some(ops.whole_context()?) } else { None };
+                let mut lent = LentOps { whole };
+                // A panic that unwinds out of the lend came through the engine's frames (a nested trampoline resumes
+                // one that way): the runtime is poisoned, so it goes on to the embedder ([`EngineCall`]).
+                let _engine = EngineCall;
+                return ops.scope.lend(|| {
+                    let mut call = Call {
+                        this: this_state,
+                        args,
+                        ops: &mut lent,
+                    };
+                    (method.f)(&mut call)
+                });
+            }
             let mut call = Call {
-                this: state.as_ref().map(|held| &held.obj),
+                this: this_state,
                 args,
                 ops: &mut ops,
             };
@@ -352,8 +438,8 @@ fn convert_args(
             (ArgKind::Int | ArgKind::OptInt, JsValue::Int(number)) => Arg::Int(*number),
             #[allow(clippy::cast_possible_truncation)] // a fraction truncated, as QuickJS's `i32` conversion
             (ArgKind::Int | ArgKind::OptInt, JsValue::Float(number)) => Arg::Int(*number as i32),
-            (ArgKind::OptNumber, JsValue::Int(number)) => Arg::Number(f64::from(*number)),
-            (ArgKind::OptNumber, JsValue::Float(number)) => Arg::Number(*number),
+            (ArgKind::OptNumber | ArgKind::Number, JsValue::Int(number)) => Arg::Number(f64::from(*number)),
+            (ArgKind::OptNumber | ArgKind::Number, JsValue::Float(number)) => Arg::Number(*number),
             (ArgKind::Callback, JsValue::Object(object)) => match scope.as_callable(object)? {
                 Some(callable) => {
                     callbacks.push(callable);
@@ -361,15 +447,75 @@ fn convert_args(
                 }
                 None => return Err(wrong_type(scope, &value, kind)),
             },
+            (ArgKind::Texts | ArgKind::OptTexts, JsValue::Object(object)) if scope.is_array_object(object)? => {
+                let array = binder.hooks.to_host(scope, &value)?;
+                texts_arg(scope, array)?
+            }
             (ArgKind::Context, JsValue::Object(_)) => {
                 Arg::Context(crate::script::value_map(&binder.hooks.to_host(scope, &value)?))
             }
             (ArgKind::Context, _) => Arg::Context(None),
+            (ArgKind::OptWhole, _) if void => Arg::Undefined,
+            (ArgKind::Whole | ArgKind::OptWhole, JsValue::Int(number)) => Arg::Int(*number),
+            (ArgKind::Whole | ArgKind::OptWhole, JsValue::Float(_)) => {
+                return Err(plain_error(scope, "limit is not an integer"))
+            }
+            (ArgKind::Whole | ArgKind::OptWhole, _) => return Err(plain_error(scope, "limit is not a number")),
+            (ArgKind::Parameters, _) if is_ec_context(scope, &value)? => Arg::WholeContext,
+            (ArgKind::Parameters, _) => Arg::Value(binder.hooks.to_host(scope, &value)?),
             (ArgKind::Thrown, _) => thrown_text(scope, &value)?.map_or(Arg::Missing, Arg::Text),
+            (ArgKind::Host, JsValue::Object(object)) => match scope.host_data::<OxideHost>(object)? {
+                Some(held) => Arg::Host(held.obj.clone()),
+                None => return Err(wrong_type(scope, &value, kind)),
+            },
+            // TODO(oxide units): element literals are converted by the screen units' bindings, which are not on this
+            // engine yet
+            (ArgKind::OptNode, JsValue::Object(_)) => {
+                return Err(plain_error(scope, "element literals are not supported on quickjs-oxide yet"))
+            }
+            (ArgKind::OptNode, _) => Arg::Undefined,
             _ => return Err(wrong_type(scope, &value, kind)),
         });
     }
     Ok(converted)
+}
+
+/// The strings of an array argument, as QuickJS's `Vec<String>` converts it: an item that is not a string throws.
+fn texts_arg(scope: &mut Scope<'_>, array: Value) -> JsResult<Arg> {
+    let Value::List(items) = array else {
+        return Ok(Arg::Texts(Vec::new()));
+    };
+    let mut texts = Vec::with_capacity(items.len());
+    for item in items {
+        let from = match item {
+            Value::String(text) => {
+                texts.push(text);
+                continue;
+            }
+            Value::Null => "null",
+            Value::Bool(_) => "bool",
+            Value::I32(_) | Value::I64(_) => "int",
+            Value::F64(_) => "float",
+            Value::List(_) => "array",
+            _ => "object",
+        };
+        let message = format!("Error converting from js '{from}' into type 'string'");
+        return Err(scope.throw_error(NativeErrorKind::Type, &message));
+    }
+    Ok(Arg::Texts(texts))
+}
+
+/// Whether `value` is the global `ec`'s `context`.
+fn is_ec_context(scope: &mut Scope<'_>, value: &JsValue) -> JsResult<bool> {
+    let JsValue::Object(_) = value else {
+        return Ok(false);
+    };
+    let global = scope.global_object()?;
+    let JsValue::Object(ec) = scope.get_property(&global, &key("ec")?)? else {
+        return Ok(false);
+    };
+    let context = scope.get_property(&ec, &key("context")?)?;
+    Ok(context.strict_equal(value))
 }
 
 /// The text a log call gives its exception: `name: message` of an error object, its `message` alone, or a string.
@@ -394,15 +540,27 @@ fn thrown_text(scope: &mut Scope<'_>, value: &JsValue) -> JsResult<Option<String
     })
 }
 
+/// The text of a thrown error, as QuickJS's caught error gives it: `name: message` of an error object, else the value as
+/// text.
+fn error_text(scope: &mut Scope<'_>, err: RuntimeError) -> String {
+    match err {
+        RuntimeError::Exception(value) => match thrown_text(scope, &value) {
+            Ok(Some(text)) => text,
+            _ => String::from("(exception)"),
+        },
+        other => other.to_string(),
+    }
+}
+
 /// `new Error(message)`, as QuickJS's `Exception::throw_message` makes it, thrown.
-fn plain_error(scope: &mut Scope<'_>, message: &str) -> RuntimeError {
+fn plain_error(scope: &mut impl Js, message: &str) -> RuntimeError {
     match new_error(scope, message) {
         Ok(error) => RuntimeError::Exception(JsValue::Object(error)),
         Err(err) => err,
     }
 }
 
-fn new_error(scope: &mut Scope<'_>, message: &str) -> JsResult<ObjectRef> {
+fn new_error(scope: &mut impl Js, message: &str) -> JsResult<ObjectRef> {
     let global = scope.global_object()?;
     let constructor = match scope.get_property(&global, &key("Error")?)? {
         JsValue::Object(object) => scope.as_callable(&object)?,
@@ -460,6 +618,36 @@ fn marked_error(scope: &mut Scope<'_>, marked: &host::Thrown<'_>) -> JsResult<Ob
     Ok(error)
 }
 
+/// [`EngineOps`] of a body the engine is lent to (a method that is not [`Method::leaf`]): only the whole context the
+/// binder read before the lend.
+struct LentOps {
+    whole: Option<indexmap::IndexMap<String, Value>>,
+}
+
+impl LentOps {
+    fn refused() -> HostError {
+        HostError::message("a host call that may run nested scripts cannot call back into its script (it is not a leaf)")
+    }
+}
+
+impl EngineOps for LentOps {
+    fn evaluate(&mut self, _source: &str, _name: &str) -> Result<Value, HostError> {
+        Err(Self::refused())
+    }
+
+    fn call_back(&mut self, _index: usize, _args: Vec<Value>) -> Result<Value, HostError> {
+        Err(Self::refused())
+    }
+
+    fn flush(&mut self, _mode: FlushBefore) -> Result<(), HostError> {
+        Err(Self::refused())
+    }
+
+    fn whole_context(&mut self) -> Result<indexmap::IndexMap<String, Value>, HostError> {
+        self.whole.take().ok_or_else(Self::refused)
+    }
+}
+
 /// [`EngineOps`] of one call on quickjs-oxide.
 struct OxideOps<'s, 'a> {
     scope: &'s mut Scope<'a>,
@@ -476,6 +664,16 @@ impl OxideOps<'_, '_> {
 }
 
 impl EngineOps for OxideOps<'_, '_> {
+    fn evaluate(&mut self, source: &str, name: &str) -> Result<Value, HostError> {
+        let hooks = Rc::clone(&self.binder.hooks);
+        let _engine = EngineCall;
+        let evaluated = match self.scope.eval_with_filename(source, name) {
+            Ok(evaluated) => evaluated,
+            Err(err) => return Err(HostError::message(error_text(self.scope, err))),
+        };
+        hooks.to_host(self.scope, &evaluated).map_err(|err| self.failed(err))
+    }
+
     fn call_back(&mut self, index: usize, args: Vec<Value>) -> Result<Value, HostError> {
         let Some(function) = self.callbacks.get(index).cloned() else {
             return Err(HostError::message("no such callback"));
@@ -493,6 +691,12 @@ impl EngineOps for OxideOps<'_, '_> {
         called.map_err(|err| self.failed(err))
     }
 
+    fn whole_context(&mut self) -> Result<indexmap::IndexMap<String, Value>, HostError> {
+        let hooks = Rc::clone(&self.binder.hooks);
+        let _engine = EngineCall;
+        hooks.whole_context(self.scope).map_err(|err| self.failed(err))
+    }
+
     fn flush(&mut self, mode: FlushBefore) -> Result<(), HostError> {
         if mode == FlushBefore::None {
             return Ok(());
@@ -502,6 +706,11 @@ impl EngineOps for OxideOps<'_, '_> {
         hooks.flush(self.scope, mode).map_err(|err| self.failed(err))
     }
 }
+
+/// Native tools as host exotic objects.
+#[allow(dead_code)] // the engine makes tool objects once its conversion of host values reaches them
+#[path = "tool.rs"]
+pub(crate) mod tool;
 
 #[cfg(test)]
 #[path = "bind_tests.rs"]

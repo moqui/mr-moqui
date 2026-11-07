@@ -22,7 +22,7 @@ use std::sync::{Arc, OnceLock};
 
 use moqui_lib::error::Error as LibError;
 
-use crate::context::{Error, ExecutionContextFactory};
+use crate::context::ExecutionContextFactory;
 use crate::entity::EntityFacade;
 use crate::screen::overlay::Overlay;
 pub use crate::service::rust_services::RustServiceFn;
@@ -38,8 +38,8 @@ pub struct LlmHooks {
     pub canvas_overlay: fn(&Arc<ExecutionContextFactory>, &str) -> Option<Overlay>,
     /// Sync the skill files into the database, on a dev instance's reload (crate::devtools::reload).
     pub sync_skills: fn(&ExecutionContextFactory, &EntityFacade) -> Result<SkillsSynced, LibError>,
-    /// The `ec.llm` object of a script context.
-    pub script_object: for<'js> fn(&rquickjs::Ctx<'js>) -> Result<rquickjs::Object<'js>, Error>,
+    /// The `ec.llm` paths of the host table (`crate::script::host`), bound on every script engine.
+    pub script_paths: &'static [crate::script::host::Path],
     /// Speech to text through the model bound to the `transcribe` feature ([`transcribe`]).
     pub transcribe: fn(&ExecutionContextFactory, &SpeechRequest<'_>) -> Result<String, SpeechError>,
     /// The provider [`transcribe`] would use now ([`speech_provider`]).

@@ -12,14 +12,49 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `ec.screen.makeRender()` and the calls around it, for services that render a screen to text:
-//! the scheduled screens and email bodies. `ec.screen.render(options)` is the host call and
-//! `makeRender` is a chain of setters over it. A render mode named `xsl-fo` is `html-print`.
+//! `ec.screen` and `ec.resource.xslFoTransform`, for services that render a screen to text: the scheduled screens and
+//! email bodies. `ec.screen.render(options)` is the host call and `makeRender` (the class's shim) is a chain of setters
+//! over it; `makeTest` is Java's `ScreenTest` over `testRender`. A render mode named `xsl-fo` is `html-print`.
 
-use super::*;
+use std::sync::Arc;
 
-const BUILDER: &str = r#"(function (ec) {
-    ec.screen.makeRender = () => {
+use moqui_lib::object::Value;
+
+use super::{method, with_ec, Call, HostClass, HostError, Method, Ret};
+
+pub(super) static SCREEN: HostClass = HostClass {
+    name: "host:Screen",
+    methods: &[
+        method!("ec.screen", "isRenderModeValid", [Text], is_render_mode_valid),
+        method!("ec.screen", "render", [Value], None, render),
+        method!("ec.screen", "testRender", [Value], None, test_render),
+        method!(
+            "ec.screen",
+            "testNoRequiredParameterPaths",
+            [Value],
+            None,
+            test_no_required_parameter_paths
+        ),
+        method!("ec.screen", "staticReport", [Value], None, static_report),
+        method!("ec.screen", "getMimeTypeByMode", [Text], mime_type_by_mode),
+        method!("ec.screen", "isRenderModeText", [Text], is_render_mode_text),
+        method!("ec.screen", "isRenderModeBinary", [Text], is_render_mode_binary),
+    ],
+    getters: &[],
+    hidden: &[],
+    shim_js: Some(SCREEN_JS),
+    shim_members: &["makeRender", "makeTest"],
+};
+
+pub(super) static XSL_FO_TRANSFORM: Method = method!(
+    "ec.resource",
+    "xslFoTransform",
+    [Value, OptValue, OptValue, OptValue],
+    xsl_fo_transform
+);
+
+const SCREEN_JS: &str = r#"(function (proto) {
+    proto.makeRender = () => {
         const o = {};
         const b = {
             webappName: (v) => { o.webappName = v; return b; },
@@ -38,7 +73,7 @@ const BUILDER: &str = r#"(function (ec) {
     };
     // Java's ScreenTest: render paths under a base screen path as the current user, with the errors of each render
     // collected on the result instead of thrown, and counts over the renders.
-    ec.screen.makeTest = () => {
+    proto.makeTest = () => {
         const o = {};
         const t = {
             rootScreen: (v) => { o.rootScreen = v; return t; },
@@ -112,13 +147,24 @@ const BUILDER: &str = r#"(function (ec) {
     };
 })"#;
 
+/// The options map of the first argument, or the error `message`.
+fn options_of(call: &Call<'_>, message: &str) -> Result<indexmap::IndexMap<String, Value>, HostError> {
+    match call.value_or_null(0) {
+        Value::Map(options) => Ok(options),
+        _ => Err(HostError::message(message)),
+    }
+}
+
+fn is_render_mode_valid(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let mode = call.text(0).unwrap_or_default();
+    Ok(with_ec(|ec| crate::screen::ScreenFacade::of(ec.factory()).is_render_mode_valid(mode))?.into())
+}
+
 /// `ec.screen.render(options)`: `{screenPath, renderMode, rootScreen, baseLinkUrl, lastStandalone,
 /// parameters}` to `{status, contentType, text}`. The render runs in this execution context.
-fn screen_render<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::Result<Object<'js>> {
-    host_guard(&ctx, || {
-        let Value::Map(options) = js_to_host(&ctx, &options)? else {
-            return Err(Exception::throw_message(&ctx, "ec.screen.render needs an options map"));
-        };
+fn render(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    {
+        let options = options_of(call, "ec.screen.render needs an options map")?;
         let text = |name: &str| {
             options
                 .get(name)
@@ -132,7 +178,7 @@ fn screen_render<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::Result<
         if !text("lastStandalone").is_empty() {
             parameters.insert("lastStandalone".to_string(), Value::String(text("lastStandalone")));
         }
-        let factory = with_ec(&ctx, |ec| Arc::clone(ec.factory()))?;
+        let factory = with_ec(|ec| Arc::clone(ec.factory()))?;
         let mut render = crate::screen::make_render(&factory)
             .screen_path(text("screenPath"))
             .parameters(parameters)
@@ -147,109 +193,82 @@ fn screen_render<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::Result<
                 webapp_name.as_str()
             };
             let location = crate::screen::info::root_screen_for_host(&factory, &text("rootScreenFromHost"), webapp)
-                .map_err(|err| Exception::throw_message(&ctx, err.message()))?;
+                .map_err(|err| HostError::message(err.message()))?;
             render = render.root_screen(location);
         }
         if !text("renderMode").is_empty() {
             render = render.render_mode(text("renderMode"));
         }
-        let output = render
-            .render()
-            .map_err(|err| Exception::throw_message(&ctx, err.message()))?;
-        let result = Object::new(ctx.clone())?;
-        result.set("status", i32::from(output.status))?;
-        result.set("contentType", output.content_type().unwrap_or_default())?;
-        result.set("text", output.body_text())?;
-        result.set("bytes", host_to_js(&ctx, Value::Bytes(output.body))?)?;
-        Ok(result)
-    })
+        let output = render.render().map_err(|err| HostError::message(err.message()))?;
+        let mut result = indexmap::IndexMap::new();
+        result.insert("status".to_string(), Value::I32(i32::from(output.status)));
+        result.insert(
+            "contentType".to_string(),
+            Value::string(output.content_type().unwrap_or_default()),
+        );
+        result.insert("text".to_string(), Value::String(output.body_text()));
+        result.insert("bytes".to_string(), Value::Bytes(output.body));
+        Ok(Ret::Value(Value::Map(result)))
+    }
 }
 
-fn screen_mime_type_by_mode(ctx: Ctx<'_>, mode: String) -> rquickjs::Result<Option<String>> {
-    host_guard(&ctx, || {
-        with_ec(&ctx, |ec| {
-            crate::screen::ScreenFacade::of(ec.factory()).mime_type(&mode)
-        })
-    })
+fn mime_type_by_mode(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let mode = call.text(0).unwrap_or_default();
+    Ok(with_ec(|ec| crate::screen::ScreenFacade::of(ec.factory()).mime_type(mode))?.into())
 }
 
 /// `ec.screen.isRenderModeBinary(mode)`: a `screen-output` mode such as `xlsx`, whose render is bytes.
-fn screen_is_render_mode_binary(ctx: Ctx<'_>, mode: String) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || {
-        with_ec(&ctx, |ec| {
-            crate::screen::ScreenFacade::of(ec.factory()).is_render_mode_binary(&mode)
-        })
-    })
+fn is_render_mode_binary(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let mode = call.text(0).unwrap_or_default();
+    Ok(with_ec(|ec| crate::screen::ScreenFacade::of(ec.factory()).is_render_mode_binary(mode))?.into())
 }
 
 /// A mode that writes text is every configured mode: the print mode is HTML until PDF exists.
-fn screen_is_render_mode_text(ctx: Ctx<'_>, mode: String) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || {
-        with_ec(&ctx, |ec| {
-            crate::screen::ScreenFacade::of(ec.factory())
-                .mime_type(&mode)
-                .is_some_and(|mime| mime.starts_with("text/") || mime == "application/javascript")
-        })
-    })
+fn is_render_mode_text(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let mode = call.text(0).unwrap_or_default();
+    let text = with_ec(|ec| {
+        crate::screen::ScreenFacade::of(ec.factory())
+            .mime_type(mode)
+            .is_some_and(|mime| mime.starts_with("text/") || mime == "application/javascript")
+    })?;
+    Ok(text.into())
 }
 
 /// `ec.resource.xslFoTransform(document, xslt, out, contentType)`: the PDF bytes of an `html-print` document (the
 /// old name `xsl-fo`), as a `Uint8Array`. Java writes to the `out` stream; a script has none, so the bytes are the
 /// return value and `out` is ignored. Java's XSLT step was an identity transform every caller skipped with null, so a
 /// stylesheet is an error, as is any content type but PDF.
-pub(super) fn resource_xsl_fo_transform<'js>(
-    ctx: Ctx<'js>,
-    document: JsValue<'js>,
-    xslt: Opt<JsValue<'js>>,
-    _out: Opt<JsValue<'js>>,
-    content_type: Opt<JsValue<'js>>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        if xslt
-            .0
-            .as_ref()
-            .is_some_and(|value| !value.is_null() && !value.is_undefined())
-        {
-            return Err(Exception::throw_message(
-                &ctx,
+fn xsl_fo_transform(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    {
+        if call.value(1).is_some_and(|value| !matches!(value, Value::Null)) {
+            return Err(HostError::message(
                 "xslFoTransform does not apply an XSLT stylesheet; pass null",
             ));
         }
-        let content_type = match content_type.0.as_ref().and_then(JsValue::as_string) {
-            Some(text) => text.to_string()?,
-            None => String::new(),
+        let content_type = match call.value(3) {
+            Some(Value::String(text)) => text.clone(),
+            _ => String::new(),
         };
         if !content_type.is_empty() && content_type != "application/pdf" {
-            return Err(Exception::throw_message(
-                &ctx,
-                &format!("xslFoTransform makes application/pdf, not {content_type}"),
-            ));
+            return Err(HostError::message(format!(
+                "xslFoTransform makes application/pdf, not {content_type}"
+            )));
         }
-        let Some(text) = document.as_string() else {
-            return Err(Exception::throw_message(
-                &ctx,
-                "xslFoTransform needs the html-print document text",
-            ));
+        let Some(Value::String(text)) = call.value(0) else {
+            return Err(HostError::message("xslFoTransform needs the html-print document text"));
         };
-        let text = text.to_string()?;
-        let bytes =
-            crate::screen::PdfRenderer::render(&text).map_err(|err| Exception::throw_message(&ctx, err.message()))?;
-        host_to_js(&ctx, Value::Bytes(bytes))
-    })
+        let bytes = crate::screen::PdfRenderer::render(text).map_err(|err| HostError::message(err.message()))?;
+        Ok(Ret::Value(Value::Bytes(bytes)))
+    }
 }
 
 /// `ec.screen.testRender({screenPath, parameters, method, rootScreen, baseScreenPath, renderMode, baseLinkUrl, headers})`,
 /// the host side of `makeTest().render()`: `{output, errorMessages, renderTime, status, headers}` (the request headers in,
 /// the response's out). It does not throw for a failed
 /// render; the failure is in `errorMessages`.
-fn screen_test_render<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let Value::Map(options) = js_to_host(&ctx, &options)? else {
-            return Err(Exception::throw_message(
-                &ctx,
-                "ec.screen.testRender needs an options map",
-            ));
-        };
+fn test_render(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    {
+        let options = options_of(call, "ec.screen.testRender needs an options map")?;
         let text = |name: &str| {
             options
                 .get(name)
@@ -260,7 +279,7 @@ fn screen_test_render<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::Re
         if let Some(Value::Map(given)) = options.get("parameters") {
             parameters.extend(given.iter().map(|(key, value)| (key.clone(), value.clone())));
         }
-        let factory = with_ec(&ctx, |ec| Arc::clone(ec.factory()))?;
+        let factory = with_ec(|ec| Arc::clone(ec.factory()))?;
         let mut test = crate::screen::ScreenTest::new(&factory)
             .base_screen_path(text("baseScreenPath"))
             .base_url(text("baseLinkUrl"));
@@ -307,8 +326,8 @@ fn screen_test_render<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::Re
             headers.insert(name.clone(), Value::string(value));
         }
         out.insert("headers".to_string(), Value::Map(headers));
-        host_to_js(&ctx, Value::Map(out))
-    })
+        Ok(Ret::Value(Value::Map(out)))
+    }
 }
 
 /// `ec.screen.staticReport({rootScreen, screenPath, parameters})`: the server-static qvt report of the screen with the
@@ -316,14 +335,9 @@ fn screen_test_render<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::Re
 /// actions and the wrapped `ec`, as the current user. `{location, path, verdict, marked, eligible, fullCheck, reasons,
 /// violations: [{kind, element, detail}]}`, where verdict is `clean`, `static half only`, `violations` or
 /// `stays a server merge`, as `moqui lint --screens --qvt-static` writes it.
-fn screen_static_report<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let Value::Map(options) = js_to_host(&ctx, &options)? else {
-            return Err(Exception::throw_message(
-                &ctx,
-                "ec.screen.staticReport needs an options map",
-            ));
-        };
+fn static_report(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    {
+        let options = options_of(call, "ec.screen.staticReport needs an options map")?;
         let text = |name: &str| {
             options
                 .get(name)
@@ -332,18 +346,15 @@ fn screen_static_report<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::
         };
         let root = text("rootScreen");
         if root.is_empty() {
-            return Err(Exception::throw_message(
-                &ctx,
-                "ec.screen.staticReport needs a rootScreen",
-            ));
+            return Err(HostError::message("ec.screen.staticReport needs a rootScreen"));
         }
         let parameters: std::collections::BTreeMap<String, Value> = match options.get("parameters") {
             Some(Value::Map(map)) => map.iter().map(|(key, value)| (key.clone(), value.clone())).collect(),
             _ => std::collections::BTreeMap::new(),
         };
-        let factory = with_ec(&ctx, |ec| Arc::clone(ec.factory()))?;
+        let factory = with_ec(|ec| Arc::clone(ec.factory()))?;
         let report = crate::screen::statics::static_report(&factory, &root, &text("screenPath"), &parameters, true)
-            .map_err(|err| Exception::throw_message(&ctx, &err.to_string()))?;
+            .map_err(|err| HostError::message(err.to_string()))?;
         let verdict = if report.is_clean() {
             "clean"
         } else if report.eligible && report.violations.is_empty() {
@@ -376,23 +387,15 @@ fn screen_static_report<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::
             })
             .collect();
         out.insert("violations".to_string(), Value::List(violations));
-        host_to_js(&ctx, Value::Map(out))
-    })
+        Ok(Ret::Value(Value::Map(out)))
+    }
 }
 
 /// `ec.screen.testNoRequiredParameterPaths({rootScreen, baseScreenPath, skip})`, the paths of
 /// [`crate::screen::ScreenTest::no_required_parameter_paths`].
-fn screen_test_no_required_parameter_paths<'js>(
-    ctx: Ctx<'js>,
-    options: JsValue<'js>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let Value::Map(options) = js_to_host(&ctx, &options)? else {
-            return Err(Exception::throw_message(
-                &ctx,
-                "ec.screen.testNoRequiredParameterPaths needs an options map",
-            ));
-        };
+fn test_no_required_parameter_paths(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    {
+        let options = options_of(call, "ec.screen.testNoRequiredParameterPaths needs an options map")?;
         let text = |name: &str| {
             options
                 .get(name)
@@ -403,66 +406,14 @@ fn screen_test_no_required_parameter_paths<'js>(
             Some(Value::List(names)) => names.iter().map(moqui_lib::object::to_plain_string).collect(),
             _ => std::collections::HashSet::new(),
         };
-        let factory = with_ec(&ctx, |ec| Arc::clone(ec.factory()))?;
+        let factory = with_ec(|ec| Arc::clone(ec.factory()))?;
         let mut test = crate::screen::ScreenTest::new(&factory).base_screen_path(text("baseScreenPath"));
         if !text("rootScreen").is_empty() {
             test = test.root_screen(text("rootScreen"));
         }
         let paths = test
             .no_required_parameter_paths(&skip)
-            .map_err(|err| Exception::throw_message(&ctx, &err.to_string()))?;
-        host_to_js(&ctx, Value::List(paths.into_iter().map(Value::String).collect()))
-    })
-}
-
-pub(super) fn install<'js>(ctx: &Ctx<'js>, screen: &Object<'js>) -> Result<(), Error> {
-    let render = caught(ctx, "screen.render", Function::new(ctx.clone(), screen_render))?;
-    caught(ctx, "screen.render", screen.set("render", render))?;
-    let test_render = caught(ctx, "screen.testRender", Function::new(ctx.clone(), screen_test_render))?;
-    caught(ctx, "screen.testRender", screen.set("testRender", test_render))?;
-    let no_required = caught(
-        ctx,
-        "screen.testNoRequiredParameterPaths",
-        Function::new(ctx.clone(), screen_test_no_required_parameter_paths),
-    )?;
-    caught(
-        ctx,
-        "screen.testNoRequiredParameterPaths",
-        screen.set("testNoRequiredParameterPaths", no_required),
-    )?;
-    let static_report = caught(
-        ctx,
-        "screen.staticReport",
-        Function::new(ctx.clone(), screen_static_report),
-    )?;
-    caught(ctx, "screen.staticReport", screen.set("staticReport", static_report))?;
-    let mime = caught(
-        ctx,
-        "screen.getMimeTypeByMode",
-        Function::new(ctx.clone(), screen_mime_type_by_mode),
-    )?;
-    caught(ctx, "screen.getMimeTypeByMode", screen.set("getMimeTypeByMode", mime))?;
-    let text = caught(
-        ctx,
-        "screen.isRenderModeText",
-        Function::new(ctx.clone(), screen_is_render_mode_text),
-    )?;
-    caught(ctx, "screen.isRenderModeText", screen.set("isRenderModeText", text))?;
-    let binary = caught(
-        ctx,
-        "screen.isRenderModeBinary",
-        Function::new(ctx.clone(), screen_is_render_mode_binary),
-    )?;
-    caught(
-        ctx,
-        "screen.isRenderModeBinary",
-        screen.set("isRenderModeBinary", binary),
-    )
-}
-
-/// Define the `makeRender` chain once `ec` is a global.
-pub(super) fn install_builder(ctx: &Ctx<'_>) -> Result<(), Error> {
-    let define: Function = eval_js(ctx, BUILDER)?;
-    let ec: Object = caught(ctx, "ec", ctx.globals().get("ec"))?;
-    caught(ctx, "ec.screen.makeRender", define.call::<_, ()>((ec,)))
+            .map_err(|err| HostError::message(err.to_string()))?;
+        Ok(Ret::Value(Value::List(paths.into_iter().map(Value::String).collect())))
+    }
 }

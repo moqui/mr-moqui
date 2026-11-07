@@ -128,11 +128,46 @@ fn ec_paths_are_the_longest_static_chain_and_the_allow_test_decides() {
         refused.reason().as_deref(),
         Some("ec.user.userId is not bound on quickjs-oxide")
     );
-    // an arrow's own parameter named ec is a local, not the host's
-    assert!(passes("list.some(ec => ec.x)"));
-    assert!(analyze("list.some(ec => ec.x)", Profile::Expression)
-        .ec_paths()
-        .is_empty());
+    // a parameter may not shadow ec
+    assert_eq!(super::tests::refused("list.some(ec => ec.x)"), "a declaration of ec");
+}
+
+/// `let` and `const` are the block's; a declaration may not shadow `ec`, a refused name or a QuickJS global; a method
+/// called by a key the check cannot read, and a Set's or Map's or typed array's `set`, `add`, `delete` and `clear`, write.
+#[test]
+fn block_scopes_shadowing_and_more_writes() {
+    for (text, why) in [
+        (
+            "(function() { { let ec = 0 } ec.service.sync() })()",
+            "a declaration of ec",
+        ),
+        ("(function() { { let eval = 0 } eval('1') })()", "a declaration of eval"),
+        ("(function() { let ec = 0; })()", "a declaration of ec"),
+        ("(function() { var eval = 1; })()", "a declaration of eval"),
+        (
+            "(function() { for (let context = 0; ; ) {} })()",
+            "a declaration of context",
+        ),
+        ("(function() { { const sri = 1 } })()", "a declaration of sri"),
+    ] {
+        let analysis = analyze(text, Profile::Actions);
+        let reason = analysis.refused().map(str::to_string).unwrap_or_else(|| {
+            // an unbound ec path is the allow test's: the walk records it
+            analysis.ec_paths().join(",")
+        });
+        assert!(reason.starts_with(why), "{text}: {reason}");
+    }
+    // a block's own let is a local inside it
+    assert_eq!(
+        analyze("(function() { { let total = 1; x = total; } })()", Profile::Actions).refused(),
+        None
+    );
+    for text in ["list[op](x)", "seen.add(1)", "bytes.set(other)", "cache.delete(k)"] {
+        let analysis = analyze(text, Profile::Expression);
+        assert_eq!(analysis.refused(), None, "{text}");
+        assert!(analysis.writes(), "{text}");
+    }
+    assert!(!analyze("list[0].x", Profile::Expression).writes());
 }
 
 #[test]
@@ -147,31 +182,45 @@ fn the_verdict_is_kept_by_text_and_a_hash_collision_is_parsed_again() {
     assert!(super::parses() >= before + 2);
 }
 
-/// A method that changes an object in place is refused whatever its receiver: the oxide copy would not be written back.
+/// A method that changes an object in place marks the text as writing (the oxide run writes its tracked values back at
+/// its end), and is refused on a value reached from `ec`, which the oxide engine does not track.
 #[test]
-fn mutating_methods_are_refused_on_any_receiver() {
-    for (text, method) in [
-        ("items.sort((a, b) => a - b)[0]", "sort"),
-        ("items.push(1)", "push"),
-        ("items.pop()", "pop"),
-        ("items.shift()", "shift"),
-        ("items.unshift(0)", "unshift"),
-        ("items.splice(0, 1)", "splice"),
-        ("items.reverse()", "reverse"),
-        ("items.fill(0)", "fill"),
-        ("items.copyWithin(0, 1)", "copyWithin"),
-        ("Object.assign(map, {a: 1})", "assign"),
-        ("Object.defineProperty(map, 'a', {value: 1})", "defineProperty"),
-        ("Object.setPrototypeOf(map, null)", "setPrototypeOf"),
-        ("Object.freeze(map)", "freeze"),
-        ("items['sort']()", "sort"),
-        ("items?.sort()", "sort"),
+fn mutating_methods_mark_the_text_as_writing() {
+    for text in [
+        "items.sort((a, b) => a - b)[0]",
+        "items.push(1)",
+        "items.pop()",
+        "items.shift()",
+        "items.unshift(0)",
+        "items.splice(0, 1)",
+        "items.reverse()",
+        "items.fill(0)",
+        "items.copyWithin(0, 1)",
+        "Object.assign(map, {a: 1})",
+        "Object.defineProperty(map, 'a', {value: 1})",
+        "Object.freeze(map)",
+        "items['sort']()",
+        "items?.sort()",
+        "order.items.sort()",
     ] {
-        assert_eq!(refused(text), format!("the mutating method {method}"), "{text}");
+        let analysis = analyze(text, Profile::Expression);
+        assert_eq!(analysis.refused(), None, "{text}");
+        assert!(analysis.writes(), "{text}");
     }
-    // a decimal's add, and the add of a Set the expression made itself, are reads of the stack
-    assert!(passes("price.add(1).eq(total)"));
-    assert!(passes("new Set(items).has(x)"));
+    for text in [
+        "items.length",
+        "price.multiply(2).eq(total)",
+        "new Set(items).has(x)",
+        "items.map(x => x.a)",
+    ] {
+        let analysis = analyze(text, Profile::Expression);
+        assert_eq!(analysis.refused(), None, "{text}");
+        assert!(!analysis.writes(), "{text}");
+    }
+    assert_eq!(
+        refused("ec.user.getPreferences().sort()"),
+        "the mutating method sort on a value reached from ec"
+    );
 }
 
 /// The ways round the check the review found, each refused.
@@ -226,9 +275,60 @@ fn ways_round_the_check_are_refused() {
     }
 }
 
+/// The Actions profile: a generated `(function() { ... })()` with set, if and iterate passes and writes; what it does
+/// not know is refused.
+#[test]
+fn the_actions_profile_takes_generated_set_if_and_iterate() {
+    let generated = crate::script::generated_source(
+        r#"<actions><set field="x" from="a + 1"/><if condition="x &gt; 1"><set field="y" from="[x]"/></if>
+            <iterate list="items" entry="item"><set field="item.seen" from="true"/></iterate></actions>"#,
+        false,
+    )
+    .unwrap();
+    let analysis = analyze(&generated, Profile::Actions);
+    assert_eq!(analysis.refused(), None, "{generated}");
+    assert!(analysis.writes());
+    for (text, why) in [
+        (
+            "(function() { function f() {} })()",
+            "a statement outside the actions profile",
+        ),
+        (
+            "(function() { try { x = 1 } catch (e) {} })()",
+            "a statement outside the actions profile",
+        ),
+        (
+            "(function() { for (const k of list) x = k; })()",
+            "a statement outside the actions profile",
+        ),
+        (
+            "(function() { ec.user.x = 1; })()",
+            "an assignment to a value reached from ec",
+        ),
+        ("(function() { ({a} = b); })()", "a destructuring assignment"),
+        ("(function(p) { x = p; })(1)", "an actions function with arguments"),
+        ("x = 1", "not one actions function"),
+        ("(function() { sri.x = 1; })()", "the QuickJS global sri"),
+    ] {
+        let reason = analyze(text, Profile::Actions)
+            .refused()
+            .unwrap_or_default()
+            .to_string();
+        assert!(reason.starts_with(why), "{text}: {reason}");
+    }
+    // the function's own variables are not context names, wherever declared
+    assert_eq!(
+        analyze(
+            "(function() { if (a) { var total = 1; } x = total; })()",
+            Profile::Actions
+        )
+        .refused(),
+        None
+    );
+}
+
 #[test]
 fn the_later_profiles_are_stubs_that_refuse() {
-    assert!(analyze("1", Profile::Actions).refused().is_some());
     assert!(analyze("1", Profile::Full).refused().is_some());
 }
 

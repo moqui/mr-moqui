@@ -115,6 +115,20 @@ fn a_panic_through_the_engine_is_not_caught_as_an_error() -> Result<(), RuntimeE
     Ok(())
 }
 
+/// A panic in a body the engine is lent to (a method that is not a leaf) unwinds through the lend's frames, as a panic a
+/// nested trampoline resumes does: it goes on to the embedder and poisons the runtime, as a panic through the engine.
+#[test]
+fn a_panic_out_of_a_lent_body_is_not_caught_as_an_error() -> Result<(), RuntimeError> {
+    let paths: Vec<&'static crate::script::host::Path> = TEST_PATHS.iter().collect();
+    let (_runtime, context) = runtime_with(&paths)?;
+    let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        context.eval("try { ec.test.boomLent() } catch (e) { 'caught' }")
+    }));
+    assert!(first.is_err(), "the panic reaches the embedder");
+    assert!(matches!(context.eval("1"), Err(RuntimeError::Poisoned)));
+    Ok(())
+}
+
 /// Minimal conversions for the binder's tests on a bare runtime, which has no oxide engine for `oxide::convert`:
 /// null, booleans, numbers, text, lists and maps; a decimal and a time stamp as their text.
 struct BasicConvert;
@@ -211,4 +225,41 @@ fn basic_to_js(scope: &mut Scope<'_>, value: Value) -> JsResult<JsValue> {
         }
         Value::Bytes(_) | Value::Object(_) => return Err(plain_error(scope, "cannot convert this object")),
     })
+}
+
+/// A tool for [`a_tool_is_an_exotic_object_of_its_methods`].
+struct Greeter;
+
+impl crate::native::Tool for Greeter {
+    fn methods(&self) -> &'static [&'static str] {
+        &["greet", "wave"]
+    }
+}
+
+/// A native tool on oxide answers as `HostTool` does on QuickJS: its methods are own, non-enumerable functions, `in`
+/// finds them and the prototype, a set and a delete are refused, and its other properties are read from the tool (in
+/// an execution context, which a bare runtime has none of).
+#[test]
+fn a_tool_is_an_exotic_object_of_its_methods() -> Result<(), RuntimeError> {
+    let runtime = Runtime::new();
+    let mut context = runtime.context();
+    let class = super::tool::register(&mut context, Rc::new(BasicConvert))?;
+    let prototype = context.object_prototype()?;
+    let tool = std::sync::Arc::new(crate::native::ToolHandle(std::sync::Arc::new(Greeter)));
+    let object = super::tool::tool_object(&mut context, &class, tool, Some(&prototype))?;
+    let global = context.global_object()?;
+    context.set_property(&global, &key("tool")?, JsValue::Object(object))?;
+    for (script, expected) in [
+        ("typeof tool.greet + ' ' + tool.greet.name", "function greet"),
+        ("Object.getOwnPropertyNames(tool).join()", "greet,wave"),
+        ("Object.keys(tool).length", "0"),
+        ("'wave' in tool && 'toString' in tool && !('other' in tool)", "true"),
+        ("typeof tool.hasOwnProperty", "function"),
+        ("(() => { 'use strict'; try { tool.greet = 1; return 'set'; } catch (e) { return e.name; } })()", "TypeError"),
+        ("delete tool.greet", "false"),
+        ("(() => { try { return tool.other; } catch (e) { return e.message; } })()", "no execution context is entered"),
+    ] {
+        assert_eq!(eval_text(&context, script)?, expected, "{script}");
+    }
+    Ok(())
 }

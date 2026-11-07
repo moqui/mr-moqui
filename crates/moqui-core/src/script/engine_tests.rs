@@ -53,7 +53,8 @@ fn small_oxide_routes_covered_kinds_that_pass_the_check() -> Result<(), crate::c
             Route::QuickJs,
             "an unbound ec path"
         );
-        assert_eq!(route_of(EntryKind::Expand, "a")?, Route::QuickJs, "not covered yet");
+        assert_eq!(route_of(EntryKind::Expand, "`${a}`")?, Route::Oxide);
+        assert_eq!(route_of(EntryKind::Template, "a")?, Route::QuickJs, "not covered yet");
         assert_eq!(route_of(EntryKind::Actions, "a")?, Route::QuickJs);
         Ok(())
     })
@@ -89,6 +90,28 @@ fn a_text_that_falls_back_twice_goes_to_quickjs() -> Result<(), crate::context::
     .expect("the thread")
 }
 
+/// With the difference check on, a read-only expression that ran on oxide runs on QuickJS too: a different answer is
+/// counted (and logged), the oxide answer is the caller's, and an equal one is not counted.
+#[test]
+fn the_difference_check_runs_an_expression_on_both_engines() -> Result<(), crate::context::Error> {
+    with_script_engine(ScriptEngine::SmallOxide, || {
+        super::set_thread_difference_check(Some(true));
+        crate::script::clear_context_stack();
+        let before = super::oxide_differences();
+        assert_eq!(crate::script::eval_value("1 + 1")?, moqui_lib::object::Value::I32(2));
+        assert_eq!(super::oxide_differences(), before, "the same answer");
+        // the engines' Date texts differ (QuickJS adds the zone's name), but a text that reads the clock is not run
+        // twice: its answers would differ by the time between the runs
+        let _oxide = crate::script::eval_value("String(new Date(0))")?;
+        let _quickjs = with_script_engine(ScriptEngine::Rquickjs, || {
+            crate::script::eval_value("String(new Date(0))")
+        })?;
+        assert_eq!(super::oxide_differences(), before);
+        super::set_thread_difference_check(None);
+        Ok(())
+    })
+}
+
 #[test]
 fn rquickjs_routes_everything_to_quickjs() -> Result<(), crate::context::Error> {
     with_script_engine(ScriptEngine::Rquickjs, || {
@@ -101,8 +124,8 @@ fn rquickjs_routes_everything_to_quickjs() -> Result<(), crate::context::Error> 
 fn oxide_fails_a_kind_it_does_not_cover_with_its_name() {
     with_script_engine(ScriptEngine::Oxide, || {
         assert_eq!(route_of(EntryKind::Condition, "a = 1").ok(), Some(Route::Oxide));
-        let err = route_of(EntryKind::Expand, "a").unwrap_err();
-        assert!(err.message().contains("expand"), "{}", err.message());
+        let err = route_of(EntryKind::Template, "a").unwrap_err();
+        assert!(err.message().contains("template"), "{}", err.message());
         let err = crate::script::run_script("1").unwrap_err();
         assert!(err.message().contains("run_script"), "{}", err.message());
     });

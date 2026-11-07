@@ -14,16 +14,21 @@
 
 //! The facade calls the tools screens and services make that are not part of the Server host methods: cache admin,
 //! the entity and service model, screen statistics, the server status, the SQL runner, and the data writer and
-//! loader builders. The Rust functions return plain data; [`TOOLS_JS`] puts the Java-shaped methods on it
-//! (`getEntityDefinition(name).getPrettyName(...)`, `workerPool.getActiveCount()`, `makeDataWriter().file(...)`).
+//! loader builders. The functions are the hidden functions of the tools shim ([`SHIM`]) and return plain data;
+//! `tools_js!` puts the Java-shaped methods on it (`getEntityDefinition(name).getPrettyName(...)`,
+//! `workerPool.getActiveCount()`, `makeDataWriter().file(...)`).
 //!
 //! A method does not survive the context stack, which holds data, so each object also has its getters as data
 //! (`prettyName`, `activeCount`), which is what a screen reads once it has `set` the object in a field.
 
-use super::*;
 use moqui_lib::node::MNode;
+use moqui_lib::object::{HostObject, Value};
 
-const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
+use super::{entity_facade, factory, method, with_ec, Call, HostError, Method, Ret, Shim};
+
+macro_rules! tools_js {
+    () => {
+        r#"(function (ec, cu, su, wu, host) {
     // ---- collections ----
     // `context` is the stack; the page values are set on it by bare name, as the generated screen code reads them.
     // A list that is already a page, `{page}AlreadyPaginated` or a `{page}Count` from a paginated find (which sets the
@@ -802,9 +807,16 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
         disableAuthz: host.disableAuthz, enableAuthz: host.enableAuthz,
         // body() as the current user, with authorization on whatever disabled it (a ServiceJob, an async call): the
         // screen at location checked for all actions and pushed under it, as a request to it would be
-        runAsUser: (location, body) => host.runAsUser(String(location), body),
+        runAsUser: (location, body) => {
+            host.runAsUserEnter(String(location), body);
+            try { return body(); } finally { host.runAsUserExit(String(location)); }
+        },
         // body() with no user and authorization off, sharing the transaction; only from a service's own code
-        runAsSystem: (body) => host.runAsSystem(body),
+        runAsSystem: (body) => {
+            let result;
+            host.runAsSystem(body, () => { result = body(); });
+            return result;
+        },
         // whether authorization is disabled now, changing nothing (disableAuthz to ask would hold a guard of its own)
         authzDisabled: host.authzDisabled,
         // Java's: disable returns whether tarpit counting was already disabled; it stays so until enable
@@ -907,35 +919,264 @@ const TOOLS_JS: &str = r#"(function (ec, cu, su, wu, host) {
     };
     // Entities the generic tools (auto screens, data edit, data import) do not take from a request entity name
     wu.isRestrictedGenericEntity = host.isRestrictedGenericEntity;
-})"#;
-
-fn js_list<'js>(ctx: &Ctx<'js>, rows: Vec<indexmap::IndexMap<String, Value>>) -> rquickjs::Result<JsValue<'js>> {
-    host_to_js(ctx, Value::List(rows.into_iter().map(Value::Map).collect()))
+})"#
+    };
 }
 
-fn js_texts<'js>(ctx: &Ctx<'js>, texts: Vec<String>) -> rquickjs::Result<JsValue<'js>> {
-    host_to_js(ctx, Value::List(texts.into_iter().map(Value::String).collect()))
+/// The tools shim: the tools methods across `ec` and the helper objects (`tools_js!`), then `ec.web.request` and
+/// `ec.web.response` (`web.rs`), `ec.service.passAuthority` (`pass.rs`) and the drive calls on `ec.resource`
+/// (`files.rs`), each over the hidden functions of all five files.
+pub(super) static SHIM: Shim = Shim {
+    js: concat!(
+        "(function (global, hidden, helpers) {\n    const ec = global.ec;\n    (",
+        tools_js!(),
+        ")(ec, helpers.CollectionUtilities, helpers.StringUtilities, helpers.WebUtilities, hidden);\n    (",
+        super::web::web_js!(),
+        ")(ec, hidden);\n    (",
+        super::pass::pass_js!(),
+        ")(ec, hidden);\n    (",
+        super::files::files_js!(),
+        ")(ec, hidden);\n})"
+    ),
+    hidden: &[
+        METHODS,
+        super::web::METHODS,
+        super::archive::METHODS,
+        super::pass::METHODS,
+        super::files::METHODS,
+    ],
+};
+
+/// The tools functions of the shim.
+static METHODS: &[Method] = &[
+    method!("tools", "cacheExists", [Text], cache_exists),
+    method!("tools", "clearAllCaches", [], clear_all_caches),
+    method!("tools", "getAllCachesInfo", [OptValue, OptValue], get_all_caches_info),
+    method!("tools", "makeElementInfoList", [Text, OptValue], make_element_info_list),
+    method!("tools", "isEntityDefined", [OptValue], is_entity_defined),
+    method!(
+        "tools",
+        "clearEntityDefinitionFromCache",
+        [OptValue],
+        clear_entity_definition_from_cache
+    ),
+    method!("tools", "getAllEntityNames", [OptValue], get_all_entity_names),
+    method!(
+        "tools",
+        "getAllEntitiesInfo",
+        [OptValue, OptValue, OptValue, OptValue],
+        get_all_entities_info
+    ),
+    method!("tools", "getAllEntityInfo", [OptValue, OptValue], get_all_entity_info),
+    method!("tools", "entityDefinitionInfo", [OptValue], entity_definition_info),
+    method!(
+        "tools",
+        "prettyName",
+        [Text, OptValue, OptValue],
+        None,
+        leaf,
+        pretty_name
+    ),
+    method!("tools", "getDatasourceGroupNames", [], get_datasource_group_names),
+    method!("tools", "checkTables", [Texts, OptTexts], check_tables),
+    method!("tools", "getEecaRuleCount", [], get_eeca_rule_count),
+    method!(
+        "tools",
+        "getQueryStatsList",
+        [OptValue, OptValue, OptValue],
+        get_query_stats_list
+    ),
+    method!("tools", "clearQueryStats", [], clear_query_stats),
+    method!("tools", "eecaRuleTexts", [Text], eeca_rule_texts),
+    method!("tools", "runSqlStatement", [Text, Text, OptValue], run_sql_statement),
+    method!("tools", "writeData", [Value, Text, OptValue, OptValue], write_data),
+    method!("tools", "loadData", [Value], load_data),
+    method!(
+        "tools",
+        "writeDataDocuments",
+        [Text, Text, Texts, Value, OptValue, OptValue, OptValue],
+        Release,
+        write_data_documents
+    ),
+    method!(
+        "tools",
+        "registerServiceOnEnd",
+        [Text, Value, Bool],
+        register_service_on_end
+    ),
+    method!("tools", "getKnownServiceNames", [], get_known_service_names),
+    method!("tools", "getAllServiceInfo", [OptValue], get_all_service_info),
+    method!("tools", "getSecaRuleCount", [], get_seca_rule_count),
+    method!("tools", "secaRuleTexts", [Text], seca_rule_texts),
+    method!("tools", "serviceDefinitionInfo", [OptValue], service_definition_info),
+    method!(
+        "tools",
+        "convertValidateCleanParameters",
+        [Text, Value],
+        convert_validate_clean_parameters
+    ),
+    method!("tools", "parseNode", [Text], None, leaf, parse_node),
+    method!("tools", "jobRunnerInfo", [], job_runner_info),
+    method!("tools", "workerPoolInfo", [], worker_pool_info),
+    method!("tools", "getAllRootScreenLocations", [], get_all_root_screen_locations),
+    method!("tools", "getScreenInfoList", [Text, OptValue], get_screen_info_list),
+    method!("tools", "getStatusMap", [OptValue], get_status_map),
+    method!("tools", "getComponentInfoList", [], get_component_info_list),
+    method!("tools", "getRuntimePath", [], get_runtime_path),
+    method!("tools", "getInstanceId", [], get_instance_id),
+    method!("tools", "runAsUserEnter", [Text, Callback], run_as_user_enter),
+    method!("tools", "runAsUserExit", [Text], run_as_user_exit),
+    method!("tools", "runAsSystem", [Callback, Callback], None, leaf, run_as_system),
+    method!("tools", "getThreadList", [], get_thread_list),
+    method!("tools", "waitWorkerPoolEmpty", [OptNumber], wait_worker_pool_empty),
+    method!("tools", "getRequestDetails", [], get_request_details),
+    method!("tools", "secureRequestParameters", [], secure_request_parameters),
+    method!(
+        "tools",
+        "camelCaseToPretty",
+        [OptValue],
+        None,
+        leaf,
+        camel_case_to_pretty
+    ),
+    method!(
+        "tools",
+        "isRestrictedGenericEntity",
+        [OptValue],
+        is_restricted_generic_entity
+    ),
+    method!(
+        "tools",
+        "getAvailableTimeZones",
+        [],
+        None,
+        leaf,
+        get_available_time_zones
+    ),
+    method!("tools", "resourceInfo", [Text], resource_info),
+    method!("tools", "resourceStat", [Text], resource_stat),
+    method!("tools", "resourceVersionStream", [Text, Text], resource_version_stream),
+    method!("tools", "restRootResources", [], rest_root_resources),
+    method!("tools", "resolveRestService", [Text, Text], resolve_rest_service),
+    method!("tools", "transitionInfo", [Text, Text, Text, Text], transition_info),
+    method!("tools", "valuesFromPlainMap", [Value, Text], values_from_plain_map),
+    method!("tools", "isPermitted", [Text, OptText, OptText], is_permitted),
+    method!("tools", "disableEntityEca", [], disable_entity_eca),
+    method!("tools", "enableEntityEca", [], enable_entity_eca),
+    method!("tools", "disableAuthz", [], disable_authz),
+    method!("tools", "enableAuthz", [], enable_authz),
+    method!("tools", "authzDisabled", [], authz_disabled),
+    method!("tools", "disableTarpit", [], disable_tarpit),
+    method!("tools", "enableTarpit", [], enable_tarpit),
+    method!("tools", "entityEcaDisabled", [], entity_eca_disabled),
+    method!("tools", "stackNameString", [], stack_name_string),
+    method!("tools", "sharedGet", [Text], shared_get),
+    method!("tools", "sharedSet", [Text, Value], shared_set),
+    method!("tools", "sharedDelete", [Text], shared_delete),
+    method!("tools", "sharedHas", [Text], shared_has),
+    method!("tools", "sharedKeys", [], shared_keys),
+    method!("tools", "getFindFiltersForUser", [Text], get_find_filters_for_user),
+    method!(
+        "tools",
+        "getAllEntityNamesWithMaster",
+        [],
+        get_all_entity_names_with_master
+    ),
+    method!("tools", "periodRange", [Text, Text, Text], period_range),
+    method!("tools", "messageInfos", [], message_infos),
+    method!("tools", "resourceText", [Text], resource_text),
+    method!("tools", "resourceTextIn", [Text, Text], resource_text_in),
+    method!("tools", "resourcePutText", [Text, Text], resource_put_text),
+    method!("tools", "resourceStream", [Text], resource_stream),
+    method!("tools", "isTextFilename", [Text], None, leaf, is_text_filename),
+    method!("tools", "resourcePutBytes", [Text, Value], resource_put_bytes),
+    method!("tools", "resourceDelete", [Text], resource_delete),
+    method!("tools", "resourceEntries", [Text], resource_entries),
+    method!("tools", "resourceMove", [Text, Text], resource_move),
+    method!("tools", "resourceCopy", [Text, Text], resource_copy),
+    method!("tools", "resourceSupportsVersion", [Text], resource_supports_version),
+    method!("tools", "resourceVersion", [Text, Text, OptText], resource_version),
+    method!("tools", "resourceVersionHistory", [Text], resource_version_history),
+    method!("tools", "resourceNextVersions", [Text, Text], resource_next_versions),
+    method!("tools", "resourceVersionText", [Text, Text], resource_version_text),
+    method!(
+        "tools",
+        "resourceVersionDiff",
+        [Text, Text, Text],
+        resource_version_diff
+    ),
+    method!("tools", "textDiff", [Text, Text, Text, Text], None, leaf, text_diff),
+    method!("tools", "markdownHtml", [Text], None, leaf, markdown_html),
+    method!("tools", "restSend", [Value], rest_send),
+    method!("tools", "runTokenCommand", [Text], run_token_command),
+    method!("tools", "testConfConnection", [Value], test_conf_connection),
+    method!("tools", "runSqlCountConf", [Text, Text, Value], run_sql_count_conf),
+    method!("tools", "runSqlUpdateConf", [Text, Value], run_sql_update_conf),
+    method!("tools", "formXml", [Text], form_xml),
+    method!("tools", "dbFormXml", [Text, Value, Bool], db_form_xml),
+    method!(
+        "tools",
+        "isLastRunBeforeLastSchedule",
+        [Text, OptValue, OptValue, OptValue],
+        is_last_run_before_last_schedule
+    ),
+    method!("tools", "nextCronExecution", [Text, OptValue], next_cron_execution),
+    method!("tools", "cronDescription", [Text], None, leaf, cron_description),
+    method!(
+        "tools",
+        "prettyToCamelCase",
+        [OptValue, OptValue],
+        None,
+        leaf,
+        pretty_to_camel_case
+    ),
+];
+
+fn list(rows: Vec<indexmap::IndexMap<String, Value>>) -> Ret {
+    Ret::Value(Value::List(rows.into_iter().map(Value::Map).collect()))
 }
 
-fn factory_of(ctx: &Ctx<'_>) -> rquickjs::Result<Arc<crate::context::ExecutionContextFactory>> {
-    with_ec(ctx, |ec| Arc::clone(ec.factory()))
+fn texts(texts: Vec<String>) -> Ret {
+    texts.into()
 }
 
-fn opt_flag(value: &Opt<JsValue<'_>>) -> bool {
-    value.0.as_ref().is_some_and(js_truthy)
+/// The plain text of an optional argument, empty for none (runtime/convert.rs `text_or_empty`).
+fn text_of(value: Option<&Value>) -> String {
+    match value {
+        None | Some(Value::Null) => String::new(),
+        Some(value) => moqui_lib::object::to_plain_string(value),
+    }
 }
 
-fn opt_count(value: &Opt<JsValue<'_>>, default: usize) -> usize {
-    value
-        .0
-        .as_ref()
-        .and_then(JsValue::as_number)
-        .filter(|number| number.is_finite() && *number >= 0.0)
-        .map_or(default, |number| {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // Checked finite and not negative.
-            let count = number as usize;
-            count
-        })
+/// The truthiness of an optional argument, false for none.
+fn flag_of(value: Option<&Value>) -> bool {
+    value.is_some_and(super::truthy)
+}
+
+/// A count argument: a finite number not below zero, else `default`.
+fn count_of(value: Option<&Value>, default: usize) -> usize {
+    #[allow(clippy::cast_precision_loss)]
+    let number = match value {
+        Some(Value::I32(number)) => f64::from(*number),
+        Some(Value::I64(number)) => *number as f64,
+        Some(Value::F64(number)) => *number,
+        _ => return default,
+    };
+    if !number.is_finite() || number < 0.0 {
+        return default;
+    }
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)] // Checked finite and not negative.
+    let count = number as usize;
+    count
+}
+
+/// A timestamp argument as epoch millis: none for null or none, or for a value that is not a moment.
+fn millis_of(value: Option<&Value>) -> Option<i64> {
+    let value = value.filter(|value| !value.is_null())?;
+    match crate::l10n::basic_convert(value, "java.sql.Timestamp").value {
+        Value::Timestamp(stamp) => Some(stamp.as_millisecond()),
+        _ => None,
+    }
 }
 
 // ---- cache ----
@@ -960,12 +1201,12 @@ fn cache_info_row(info: &moqui_lib::cache::CacheInfo) -> indexmap::IndexMap<Stri
 }
 
 /// Every cache the admin screen lists: the conf caches, the screen caches, and the entity list caches.
-fn all_cache_infos(ctx: &Ctx<'_>) -> rquickjs::Result<Vec<moqui_lib::cache::CacheInfo>> {
-    let factory = factory_of(ctx)?;
+fn all_cache_infos() -> Result<Vec<moqui_lib::cache::CacheInfo>, HostError> {
+    let factory = factory()?;
     let mut infos = factory
         .cache()
         .infos()
-        .map_err(|err| Exception::throw_message(ctx, err.message()))?;
+        .map_err(|err| HostError::message(err.message()))?;
     infos.extend(crate::screen::ScreenFacade::of(&factory).cache_infos());
     if let Some(facade) = factory.entity() {
         infos.extend(crate::entity::cache::list_cache_infos(&facade));
@@ -973,41 +1214,36 @@ fn all_cache_infos(ctx: &Ctx<'_>) -> rquickjs::Result<Vec<moqui_lib::cache::Cach
     Ok(infos)
 }
 
-fn cache_exists(ctx: Ctx<'_>, name: String) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || Ok(all_cache_infos(&ctx)?.iter().any(|info| info.name == name)))
+fn cache_exists(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.text_or_empty(0);
+    Ok(Ret::from(all_cache_infos()?.iter().any(|info| info.name == name)))
 }
 
 /// `clearAllCaches`: the conf caches, the screen definitions, and the entity lists.
-fn clear_all_caches(ctx: Ctx<'_>) -> rquickjs::Result<()> {
-    host_guard(&ctx, || {
-        let factory = factory_of(&ctx)?;
-        factory
-            .cache()
-            .clear_all()
-            .map_err(|err| Exception::throw_message(&ctx, err.message()))?;
-        crate::screen::ScreenFacade::of(&factory).clear();
-        if let Some(facade) = factory.entity() {
-            crate::entity::cache::clear_all_list_caches(&facade).map_err(|err| throw_lib(&ctx, &err))?;
-        }
-        Ok(())
-    })
+fn clear_all_caches(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let factory = factory()?;
+    factory
+        .cache()
+        .clear_all()
+        .map_err(|err| HostError::message(err.message()))?;
+    crate::screen::ScreenFacade::of(&factory).clear();
+    if let Some(facade) = factory.entity() {
+        crate::entity::cache::clear_all_list_caches(&facade).map_err(HostError::Lib)?;
+    }
+    Ok(Ret::Undefined)
 }
 
-fn get_all_caches_info<'js>(
-    ctx: Ctx<'js>,
-    order_by: Opt<JsValue<'js>>,
-    filter: Opt<JsValue<'js>>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let filter = text_or_empty(&ctx, filter.0.as_ref())?;
-        let mut rows: Vec<_> = all_cache_infos(&ctx)?
-            .iter()
-            .filter(|info| crate::entity::info::name_matches(&info.name, &filter))
-            .map(cache_info_row)
-            .collect();
-        order_maps(&mut rows, &text_or_empty(&ctx, order_by.0.as_ref())?);
-        js_list(&ctx, rows)
-    })
+fn get_all_caches_info(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let order_by = call.value(0).cloned();
+    let filter = call.value(1).cloned();
+    let filter = text_of(filter.as_ref());
+    let mut rows: Vec<_> = all_cache_infos()?
+        .iter()
+        .filter(|info| crate::entity::info::name_matches(&info.name, &filter))
+        .map(cache_info_row)
+        .collect();
+    order_maps(&mut rows, &text_of(order_by.as_ref()));
+    Ok(list(rows))
 }
 
 /// Order maps by one field, `-` descending, numbers by value and the rest as text.
@@ -1033,209 +1269,180 @@ fn order_maps(rows: &mut [indexmap::IndexMap<String, Value>], order_by: &str) {
     });
 }
 
-fn make_element_info_list<'js>(
-    ctx: Ctx<'js>,
-    name: String,
-    order_by: Opt<JsValue<'js>>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let factory = factory_of(&ctx)?;
-        let found = factory
-            .cache()
-            .get(&name)
-            .map_err(|err| Exception::throw_message(&ctx, err.message()))?;
-        let stamp = |millis: i64| jiff::Timestamp::from_millisecond(millis).map_or(Value::Null, Value::Timestamp);
-        let mut rows: Vec<_> = found
-            .map(|cache| cache.entry_infos())
-            .unwrap_or_default()
-            .into_iter()
-            .map(|entry| {
-                let mut row = indexmap::IndexMap::new();
-                row.insert("key".to_string(), Value::string(entry.key));
-                row.insert("value".to_string(), entry.value);
-                row.insert(
-                    "hitCount".to_string(),
-                    Value::I64(i64::try_from(entry.hit_count).unwrap_or(i64::MAX)),
-                );
-                row.insert("creationTime".to_string(), stamp(entry.created));
-                if entry.updated > 0 {
-                    row.insert("lastUpdateTime".to_string(), stamp(entry.updated));
-                }
-                if entry.accessed > 0 {
-                    row.insert("lastAccessTime".to_string(), stamp(entry.accessed));
-                }
-                row
-            })
-            .collect();
-        order_maps(&mut rows, &text_or_empty(&ctx, order_by.0.as_ref())?);
-        js_list(&ctx, rows)
-    })
+fn make_element_info_list(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.text_or_empty(0);
+    let order_by = call.value(1).cloned();
+    let factory = factory()?;
+    let found = factory
+        .cache()
+        .get(&name)
+        .map_err(|err| HostError::message(err.message()))?;
+    let stamp = |millis: i64| jiff::Timestamp::from_millisecond(millis).map_or(Value::Null, Value::Timestamp);
+    let mut rows: Vec<_> = found
+        .map(|cache| cache.entry_infos())
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entry| {
+            let mut row = indexmap::IndexMap::new();
+            row.insert("key".to_string(), Value::string(entry.key));
+            row.insert("value".to_string(), entry.value);
+            row.insert(
+                "hitCount".to_string(),
+                Value::I64(i64::try_from(entry.hit_count).unwrap_or(i64::MAX)),
+            );
+            row.insert("creationTime".to_string(), stamp(entry.created));
+            if entry.updated > 0 {
+                row.insert("lastUpdateTime".to_string(), stamp(entry.updated));
+            }
+            if entry.accessed > 0 {
+                row.insert("lastAccessTime".to_string(), stamp(entry.accessed));
+            }
+            row
+        })
+        .collect();
+    order_maps(&mut rows, &text_of(order_by.as_ref()));
+    Ok(list(rows))
 }
 
 // ---- entity ----
 
-fn is_entity_defined(ctx: Ctx<'_>, name: Opt<JsValue<'_>>) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        Ok(crate::entity::info::is_entity_defined(
-            &facade,
-            &text_or_empty(&ctx, name.0.as_ref())?,
-        ))
-    })
+fn is_entity_defined(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.value(0).cloned();
+    let facade = entity_facade()?;
+    Ok(Ret::from(crate::entity::info::is_entity_defined(
+        &facade,
+        &text_of(name.as_ref()),
+    )))
 }
 
 /// `clearEntityDefinitionFromCache`, which the data view edit screen calls after it writes a view's rows: the
 /// definitions built from rows are read again on their next use. Java drops the one named; this drops them all.
-fn clear_entity_definition_from_cache(ctx: Ctx<'_>, _name: Opt<JsValue<'_>>) -> rquickjs::Result<()> {
-    host_guard(&ctx, || {
-        facade_of(&ctx)?.clear_derived_definitions();
-        Ok(())
-    })
+fn clear_entity_definition_from_cache(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    entity_facade()?.clear_derived_definitions();
+    Ok(Ret::Undefined)
 }
 
-fn get_all_entity_names<'js>(ctx: Ctx<'js>, filter: Opt<JsValue<'js>>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        js_texts(
-            &ctx,
-            crate::entity::info::all_entity_names(&facade, &text_or_empty(&ctx, filter.0.as_ref())?),
-        )
-    })
+fn get_all_entity_names(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let filter = call.value(0).cloned();
+    let facade = entity_facade()?;
+    Ok(texts(crate::entity::info::all_entity_names(
+        &facade,
+        &text_of(filter.as_ref()),
+    )))
 }
 
-fn get_all_entities_info<'js>(
-    ctx: Ctx<'js>,
-    order_by: Opt<JsValue<'js>>,
-    filter: Opt<JsValue<'js>>,
-    master_only: Opt<JsValue<'js>>,
-    exclude_views: Opt<JsValue<'js>>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        let rows = crate::entity::info::all_entities_info(
-            &facade,
-            &text_or_empty(&ctx, order_by.0.as_ref())?,
-            &text_or_empty(&ctx, filter.0.as_ref())?,
-            opt_flag(&master_only),
-            opt_flag(&exclude_views),
-        );
-        js_list(&ctx, rows)
-    })
+fn get_all_entities_info(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let order_by = call.value(0).cloned();
+    let filter = call.value(1).cloned();
+    let master_only = call.value(2).cloned();
+    let exclude_views = call.value(3).cloned();
+    let facade = entity_facade()?;
+    let rows = crate::entity::info::all_entities_info(
+        &facade,
+        &text_of(order_by.as_ref()),
+        &text_of(filter.as_ref()),
+        flag_of(master_only.as_ref()),
+        flag_of(exclude_views.as_ref()),
+    );
+    Ok(list(rows))
 }
 
-fn get_all_entity_info<'js>(
-    ctx: Ctx<'js>,
-    levels: Opt<JsValue<'js>>,
-    exclude_views: Opt<JsValue<'js>>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        let rows = crate::entity::info::all_entity_info(&facade, opt_count(&levels, 2), opt_flag(&exclude_views));
-        js_list(&ctx, rows)
-    })
+fn get_all_entity_info(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let levels = call.value(0).cloned();
+    let exclude_views = call.value(1).cloned();
+    let facade = entity_facade()?;
+    let rows =
+        crate::entity::info::all_entity_info(&facade, count_of(levels.as_ref(), 2), flag_of(exclude_views.as_ref()));
+    Ok(list(rows))
 }
 
-fn entity_definition_info<'js>(ctx: Ctx<'js>, name: Opt<JsValue<'js>>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        match crate::entity::info::definition_info(&facade, &text_or_empty(&ctx, name.0.as_ref())?) {
-            Some(info) => host_to_js(&ctx, Value::Map(info)),
-            None => Null.into_js(&ctx),
-        }
-    })
+fn entity_definition_info(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.value(0).cloned();
+    let facade = entity_facade()?;
+    match crate::entity::info::definition_info(&facade, &text_of(name.as_ref())) {
+        Some(info) => Ok(Ret::Value(Value::Map(info))),
+        None => Ok(Ret::Value(Value::Null)),
+    }
 }
 
-fn pretty_name(
-    ctx: Ctx<'_>,
-    entity_name: String,
-    title: Opt<JsValue<'_>>,
-    base_name: Opt<JsValue<'_>>,
-) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        let title = text_or_empty(&ctx, title.0.as_ref())?;
-        let base = text_or_empty(&ctx, base_name.0.as_ref())?;
-        Ok(crate::entity::info::pretty_name(
-            &entity_name,
-            Some(title.as_str()).filter(|text| !text.is_empty()),
-            Some(base.as_str()).filter(|text| !text.is_empty()),
-        ))
-    })
+fn pretty_name(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let entity_name = call.text_or_empty(0);
+    let title = call.value(1).cloned();
+    let base_name = call.value(2).cloned();
+    let title = text_of(title.as_ref());
+    let base = text_of(base_name.as_ref());
+    Ok(Ret::from(crate::entity::info::pretty_name(
+        &entity_name,
+        Some(title.as_str()).filter(|text| !text.is_empty()),
+        Some(base.as_str()).filter(|text| !text.is_empty()),
+    )))
 }
 
-fn get_datasource_group_names<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        js_texts(&ctx, crate::entity::info::datasource_group_names(&facade))
-    })
+fn get_datasource_group_names(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let facade = entity_facade()?;
+    Ok(texts(crate::entity::info::datasource_group_names(&facade)))
 }
 
-fn get_eeca_rule_count(ctx: Ctx<'_>) -> rquickjs::Result<i32> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        Ok(i32::try_from(crate::entity::load_feed::eca_rule_count(&facade)).unwrap_or(i32::MAX))
-    })
+fn get_eeca_rule_count(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let facade = entity_facade()?;
+    Ok(Ret::from(
+        i32::try_from(crate::entity::load_feed::eca_rule_count(&facade)).unwrap_or(i32::MAX),
+    ))
 }
 
 /// `ec.entity.getQueryStatsList(orderBy, entityFilter, sqlFilter)`: the statement stats of this instance, as Java's.
-fn get_query_stats_list<'js>(
-    ctx: Ctx<'js>,
-    order_by: Opt<JsValue<'js>>,
-    entity_filter: Opt<JsValue<'js>>,
-    sql_filter: Opt<JsValue<'js>>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let rows = crate::entity::query_stats::list(
-            &text_or_empty(&ctx, order_by.0.as_ref())?,
-            &text_or_empty(&ctx, entity_filter.0.as_ref())?,
-            &text_or_empty(&ctx, sql_filter.0.as_ref())?,
-        );
-        js_list(&ctx, rows)
-    })
+fn get_query_stats_list(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let order_by = call.value(0).cloned();
+    let entity_filter = call.value(1).cloned();
+    let sql_filter = call.value(2).cloned();
+    let rows = crate::entity::query_stats::list(
+        &text_of(order_by.as_ref()),
+        &text_of(entity_filter.as_ref()),
+        &text_of(sql_filter.as_ref()),
+    );
+    Ok(list(rows))
 }
 
 /// `ec.entity.clearQueryStats()`: through `org.moqui.impl.DatabaseServices.reset#QueryStats` (moqui-tools), which
 /// needs `DATABASE_ADMIN` and writes the audit row; a refusal is a message error, as the service adds it.
-fn clear_query_stats(ctx: Ctx<'_>) -> rquickjs::Result<()> {
-    host_guard(&ctx, || {
-        crate::service::call::sync_with(
-            "org.moqui.impl.DatabaseServices.reset#QueryStats",
-            &std::collections::BTreeMap::new(),
-            &crate::service::call::CallOptions::default(),
-        )
-        .map_err(|err| Exception::throw_message(&ctx, err.message()))?;
-        Ok(())
-    })
+fn clear_query_stats(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::service::call::sync_with(
+        "org.moqui.impl.DatabaseServices.reset#QueryStats",
+        &std::collections::BTreeMap::new(),
+        &crate::service::call::CallOptions::default(),
+    )
+    .map_err(|err| HostError::message(err.message()))?;
+    Ok(Ret::Undefined)
 }
 
 /// The EECA rules of an entity, each as the XML of its rule.
-fn eeca_rule_texts<'js>(ctx: Ctx<'js>, entity_name: String) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        let texts = crate::entity::load_feed::eca_rules(&facade, &entity_name)
-            .into_iter()
-            .map(|rule| {
-                let on = |flag: bool, name: &str| {
-                    if flag {
-                        format!(" {name}=\"true\"")
-                    } else {
-                        String::new()
-                    }
-                };
-                format!(
-                    "<eeca id=\"{}\" entity=\"{}\"{}{}{}{}>{}{}</eeca>",
-                    rule.id,
-                    rule.entity_name,
-                    on(rule.on_create, "on-create"),
-                    on(rule.on_update, "on-update"),
-                    on(rule.on_delete, "on-delete"),
-                    on(rule.run_before, "run-before"),
-                    rule.condition,
-                    rule.actions
-                )
-            })
-            .collect();
-        js_texts(&ctx, texts)
-    })
+fn eeca_rule_texts(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let entity_name = call.text_or_empty(0);
+    let facade = entity_facade()?;
+    let rules: Vec<String> = crate::entity::load_feed::eca_rules(&facade, &entity_name)
+        .into_iter()
+        .map(|rule| {
+            let on = |flag: bool, name: &str| {
+                if flag {
+                    format!(" {name}=\"true\"")
+                } else {
+                    String::new()
+                }
+            };
+            format!(
+                "<eeca id=\"{}\" entity=\"{}\"{}{}{}{}>{}{}</eeca>",
+                rule.id,
+                rule.entity_name,
+                on(rule.on_create, "on-create"),
+                on(rule.on_update, "on-update"),
+                on(rule.on_delete, "on-delete"),
+                on(rule.run_before, "run-before"),
+                rule.condition,
+                rule.actions
+            )
+        })
+        .collect();
+    Ok(texts(rules))
 }
 
 /// Check the tables of `names` (view entities by their members), first forgetting what is known of the tables, as
@@ -1243,325 +1450,315 @@ fn eeca_rule_texts<'js>(ctx: Ctx<'js>, entity_name: String) -> rquickjs::Result<
 /// are checked. The names are checked together; when that fails (a view with a member that is not defined), each is
 /// checked on its own, and a name that fails is logged and listed in `failed` (`{entityName, error}`) while the rest
 /// go on.
-fn check_tables<'js>(ctx: Ctx<'js>, names: Vec<String>, groups: Opt<Vec<String>>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        let default_group = facade.default_group().to_string();
-        let mut failed: Vec<(String, String)> = Vec::new();
-        let names: Vec<String> = match &groups.0 {
-            None => names,
-            Some(groups) => names
-                .into_iter()
-                .filter(|name| {
-                    match facade.with_entity(name, |entity, _, _| {
-                        Ok(entity.group.clone().unwrap_or_else(|| default_group.clone()))
-                    }) {
-                        Ok(group) => groups.contains(&group),
-                        Err(err) => {
-                            failed.push((name.clone(), err.message().to_string()));
-                            false
-                        }
+fn check_tables(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let names = call.texts(0).unwrap_or_default().to_vec();
+    let groups = call.texts(1);
+    let facade = entity_facade()?;
+    let default_group = facade.default_group().to_string();
+    let mut failed: Vec<(String, String)> = Vec::new();
+    let names: Vec<String> = match groups {
+        None => names,
+        Some(groups) => names
+            .into_iter()
+            .filter(|name| {
+                match facade.with_entity(name, |entity, _, _| {
+                    Ok(entity.group.clone().unwrap_or_else(|| default_group.clone()))
+                }) {
+                    Ok(group) => groups.contains(&group),
+                    Err(err) => {
+                        failed.push((name.clone(), err.message().to_string()));
+                        false
                     }
-                })
-                .collect(),
-        };
-        facade.forget_tables();
-        let mut ddl = Vec::new();
-        let mut errors = 0usize;
-        let refs: Vec<&str> = names.iter().map(String::as_str).collect();
-        match facade.check_tables_ddl(&refs) {
-            Ok(check) => {
-                ddl = check.ddl;
-                errors = check.errors;
-            }
-            Err(err) => {
-                tracing::warn!(
-                    "Checking the tables together failed, checking each entity: {}",
-                    err.message()
-                );
-                for name in &names {
-                    match facade.check_tables_ddl(&[name.as_str()]) {
-                        Ok(check) => {
-                            ddl.extend(check.ddl);
-                            errors += check.errors;
-                        }
-                        Err(err) => {
-                            tracing::error!("Table check of entity {name} failed: {}", err.message());
-                            failed.push((name.clone(), err.message().to_string()));
-                        }
+                }
+            })
+            .collect(),
+    };
+    facade.forget_tables();
+    let mut ddl = Vec::new();
+    let mut errors = 0usize;
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    match facade.check_tables_ddl(&refs) {
+        Ok(check) => {
+            ddl = check.ddl;
+            errors = check.errors;
+        }
+        Err(err) => {
+            tracing::warn!(
+                "Checking the tables together failed, checking each entity: {}",
+                err.message()
+            );
+            for name in &names {
+                match facade.check_tables_ddl(&[name.as_str()]) {
+                    Ok(check) => {
+                        ddl.extend(check.ddl);
+                        errors += check.errors;
+                    }
+                    Err(err) => {
+                        tracing::error!("Table check of entity {name} failed: {}", err.message());
+                        failed.push((name.clone(), err.message().to_string()));
                     }
                 }
             }
         }
-        let mut map = indexmap::IndexMap::new();
-        map.insert(
-            "ddl".to_string(),
-            Value::List(ddl.into_iter().map(Value::String).collect()),
-        );
-        map.insert(
-            "errors".to_string(),
-            Value::I64(i64::try_from(errors).unwrap_or(i64::MAX)),
-        );
-        let failed = failed
-            .into_iter()
-            .map(|(name, error)| {
-                let mut row = indexmap::IndexMap::new();
-                row.insert("entityName".to_string(), Value::String(name));
-                row.insert("error".to_string(), Value::String(error));
-                Value::Map(row)
-            })
-            .collect();
-        map.insert("failed".to_string(), Value::List(failed));
-        host_to_js(&ctx, Value::Map(map))
-    })
+    }
+    let mut map = indexmap::IndexMap::new();
+    map.insert(
+        "ddl".to_string(),
+        Value::List(ddl.into_iter().map(Value::String).collect()),
+    );
+    map.insert(
+        "errors".to_string(),
+        Value::I64(i64::try_from(errors).unwrap_or(i64::MAX)),
+    );
+    let failed = failed
+        .into_iter()
+        .map(|(name, error)| {
+            let mut row = indexmap::IndexMap::new();
+            row.insert("entityName".to_string(), Value::String(name));
+            row.insert("error".to_string(), Value::String(error));
+            Value::Map(row)
+        })
+        .collect();
+    map.insert("failed".to_string(), Value::List(failed));
+    Ok(Ret::Value(Value::Map(map)))
 }
 
 /// The SQL runner's statement: `{columns, records, limitReached, rowsAffected}`, values formatted as text.
-fn run_sql_statement<'js>(
-    ctx: Ctx<'js>,
-    group: String,
-    sql: String,
-    limit: Opt<JsValue<'js>>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        let result = crate::entity::info::run_sql(&facade, &group, &sql, opt_count(&limit, 500))
-            .map_err(|err| throw_lib(&ctx, &err))?;
-        let mut map = indexmap::IndexMap::new();
-        map.insert(
-            "columns".to_string(),
-            Value::List(result.columns.into_iter().map(Value::String).collect()),
-        );
-        let records = result
-            .records
-            .into_iter()
-            .map(|row| {
-                Value::List(
-                    row.into_iter()
-                        .map(|value| match value {
-                            Value::Bytes(bytes) => Value::string(format!("({} bytes)", bytes.len())),
-                            other => other,
-                        })
-                        .collect(),
-                )
-            })
-            .collect();
-        map.insert("records".to_string(), Value::List(records));
-        map.insert("limitReached".to_string(), Value::Bool(result.limit_reached));
-        map.insert(
-            "rowsAffected".to_string(),
-            result.rows_affected.map_or(Value::Null, |count| {
-                Value::I64(i64::try_from(count).unwrap_or(i64::MAX))
-            }),
-        );
-        host_to_js(&ctx, Value::Map(map))
-    })
+fn run_sql_statement(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let group = call.text_or_empty(0);
+    let sql = call.text_or_empty(1);
+    let limit = call.value(2).cloned();
+    let facade = entity_facade()?;
+    let result =
+        crate::entity::info::run_sql(&facade, &group, &sql, count_of(limit.as_ref(), 500)).map_err(HostError::Lib)?;
+    let mut map = indexmap::IndexMap::new();
+    map.insert(
+        "columns".to_string(),
+        Value::List(result.columns.into_iter().map(Value::String).collect()),
+    );
+    let records = result
+        .records
+        .into_iter()
+        .map(|row| {
+            Value::List(
+                row.into_iter()
+                    .map(|value| match value {
+                        Value::Bytes(bytes) => Value::string(format!("({} bytes)", bytes.len())),
+                        other => other,
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    map.insert("records".to_string(), Value::List(records));
+    map.insert("limitReached".to_string(), Value::Bool(result.limit_reached));
+    map.insert(
+        "rowsAffected".to_string(),
+        result.rows_affected.map_or(Value::Null, |count| {
+            Value::I64(i64::try_from(count).unwrap_or(i64::MAX))
+        }),
+    );
+    Ok(Ret::Value(Value::Map(map)))
 }
 
 /// The data writer: replay the builder's calls, then write in `mode`. Returns `{count, text}`.
-fn write_data<'js>(
-    ctx: Ctx<'js>,
-    ops: JsValue<'js>,
-    mode: String,
-    first: Opt<JsValue<'js>>,
-    second: Opt<JsValue<'js>>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        let mut writer = crate::entity::EntityDataWriter::new(&facade);
-        let Value::List(ops) = js_to_host(&ctx, &ops)? else {
-            return Err(Exception::throw_message(&ctx, "data writer calls are a list"));
-        };
-        for op in ops {
-            let Value::List(pair) = op else { continue };
-            let name = pair.first().map(moqui_lib::object::to_plain_string).unwrap_or_default();
-            let value = pair.get(1).cloned().unwrap_or(Value::Null);
-            let text = moqui_lib::object::to_plain_string(&value);
-            let flag = matches!(value, Value::Bool(true)) || text == "true";
-            match name.as_str() {
-                "fileType" => {
-                    writer.file_type(crate::entity::DataFileType::parse(&text).map_err(|err| throw_lib(&ctx, &err))?);
-                }
-                "entityName" => {
-                    writer.entity_name(&text);
-                }
-                "skipEntityName" => {
-                    writer.skip_entity_name(&text);
-                }
-                "allEntities" => {
-                    writer.all_entities();
-                }
-                "dependentLevels" => {
-                    writer.dependent_levels(text.parse().unwrap_or(0));
-                }
-                "master" => {
-                    writer.master(&text);
-                }
-                "prefix" => {
-                    writer.prefix(&text);
-                }
-                "filterMap" => {
-                    if let Value::Map(map) = value {
-                        writer.filter_map(map.into_iter().collect());
-                    }
-                }
-                "orderBy" => {
-                    writer.order_by(&text);
-                }
-                "fromDate" => {
-                    writer.from_date(value);
-                }
-                "thruDate" => {
-                    writer.thru_date(value);
-                }
-                "isoDateTime" => {
-                    writer.iso_date_time(flag);
-                }
-                "tableColumnNames" => {
-                    writer.table_column_names(flag);
-                }
-                _ => {}
+fn write_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let ops = call.value_or_null(0);
+    let mode = call.text_or_empty(1);
+    let first = call.value(2).cloned();
+    let second = call.value(3).cloned();
+    let facade = entity_facade()?;
+    let mut writer = crate::entity::EntityDataWriter::new(&facade);
+    let Value::List(ops) = ops else {
+        return Err(HostError::message("data writer calls are a list"));
+    };
+    for op in ops {
+        let Value::List(pair) = op else { continue };
+        let name = pair.first().map(moqui_lib::object::to_plain_string).unwrap_or_default();
+        let value = pair.get(1).cloned().unwrap_or(Value::Null);
+        let text = moqui_lib::object::to_plain_string(&value);
+        let flag = matches!(value, Value::Bool(true)) || text == "true";
+        match name.as_str() {
+            "fileType" => {
+                writer.file_type(crate::entity::DataFileType::parse(&text).map_err(HostError::Lib)?);
             }
+            "entityName" => {
+                writer.entity_name(&text);
+            }
+            "skipEntityName" => {
+                writer.skip_entity_name(&text);
+            }
+            "allEntities" => {
+                writer.all_entities();
+            }
+            "dependentLevels" => {
+                writer.dependent_levels(text.parse().unwrap_or(0));
+            }
+            "master" => {
+                writer.master(&text);
+            }
+            "prefix" => {
+                writer.prefix(&text);
+            }
+            "filterMap" => {
+                if let Value::Map(map) = value {
+                    writer.filter_map(map.into_iter().collect());
+                }
+            }
+            "orderBy" => {
+                writer.order_by(&text);
+            }
+            "fromDate" => {
+                writer.from_date(value);
+            }
+            "thruDate" => {
+                writer.thru_date(value);
+            }
+            "isoDateTime" => {
+                writer.iso_date_time(flag);
+            }
+            "tableColumnNames" => {
+                writer.table_column_names(flag);
+            }
+            _ => {}
         }
-        let first = text_or_empty(&ctx, first.0.as_ref())?;
-        let second = text_or_empty(&ctx, second.0.as_ref())?;
-        let mut out = indexmap::IndexMap::new();
-        let lib = |result: Result<u64, moqui_lib::error::Error>| result.map_err(|err| throw_lib(&ctx, &err));
-        let count = match mode.as_str() {
-            "file" => lib(writer.file(&first))?,
-            "directory" => lib(writer.directory(&first))?,
-            "zipFile" => lib(writer.zip_file(&first, &second))?,
-            "zipDirectory" => lib(writer.zip_directory(&first, &second))?,
-            _ => {
-                let (text, count) = writer.text().map_err(|err| throw_lib(&ctx, &err))?;
-                out.insert("text".to_string(), Value::String(text));
-                count
-            }
-        };
-        out.insert(
-            "count".to_string(),
-            Value::I64(i64::try_from(count).unwrap_or(i64::MAX)),
-        );
-        host_to_js(&ctx, Value::Map(out))
-    })
+    }
+    let first = text_of(first.as_ref());
+    let second = text_of(second.as_ref());
+    let mut out = indexmap::IndexMap::new();
+    let lib = |result: Result<u64, moqui_lib::error::Error>| result.map_err(HostError::Lib);
+    let count = match mode.as_str() {
+        "file" => lib(writer.file(&first))?,
+        "directory" => lib(writer.directory(&first))?,
+        "zipFile" => lib(writer.zip_file(&first, &second))?,
+        "zipDirectory" => lib(writer.zip_directory(&first, &second))?,
+        _ => {
+            let (text, count) = writer.text().map_err(HostError::Lib)?;
+            out.insert("text".to_string(), Value::String(text));
+            count
+        }
+    };
+    out.insert(
+        "count".to_string(),
+        Value::I64(i64::try_from(count).unwrap_or(i64::MAX)),
+    );
+    Ok(Ret::Value(Value::Map(out)))
 }
 
 /// The data loader: `{location | xmlText | csvText | jsonText, dataTypes, componentNames, ...}` to `{records,
 /// messages}`. With data types or components and no location it loads the conf data, as `ec.entity.makeDataLoader()
 /// .dataTypes(...).load()` does. CSV and JSON text go through a file in the runtime's `tmp` directory.
-fn load_data<'js>(ctx: Ctx<'js>, options: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        let Value::Map(options) = js_to_host(&ctx, &options)? else {
-            return Err(Exception::throw_message(&ctx, "the data loader takes an options map"));
-        };
-        let text = |name: &str| {
-            options
-                .get(name)
-                .map(moqui_lib::object::to_plain_string)
-                .unwrap_or_default()
-        };
-        let flag = |name: &str| matches!(options.get(name), Some(Value::Bool(true))) || text(name) == "true";
-        let list = |name: &str| match options.get(name) {
-            Some(Value::List(items)) => items.iter().map(moqui_lib::object::to_plain_string).collect(),
+fn load_data(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let options = call.value_or_null(0);
+    let facade = entity_facade()?;
+    let Value::Map(options) = options else {
+        return Err(HostError::message("the data loader takes an options map"));
+    };
+    let text = |name: &str| {
+        options
+            .get(name)
+            .map(moqui_lib::object::to_plain_string)
+            .unwrap_or_default()
+    };
+    let flag = |name: &str| matches!(options.get(name), Some(Value::Bool(true))) || text(name) == "true";
+    let list = |name: &str| match options.get(name) {
+        Some(Value::List(items)) => items.iter().map(moqui_lib::object::to_plain_string).collect(),
+        _ => Vec::new(),
+    };
+    let mut locations: Vec<String> = list("locations");
+    // An older caller passes one `location`.
+    if !text("location").is_empty() {
+        locations.push(text("location"));
+    }
+    let load_options = crate::entity::load_feed::LoadOptions {
+        data_types: list("dataTypes"),
+        components: list("componentNames"),
+        only_create: flag("onlyCreate"),
+        // `useTryInsert` is not read: a store is one upsert wherever that fits.
+        dummy_fks: flag("dummyFks"),
+        disable_fk_create: flag("disableFkCreate"),
+        timeout: text("transactionTimeout")
+            .parse::<u64>()
+            .ok()
+            .map(std::time::Duration::from_secs),
+        restrict_sensitive_entities: flag("restrictSensitiveEntities"),
+        csv_entity_name: Some(text("csvEntityName")).filter(|name| !name.is_empty()),
+        csv_field_names: list("csvFieldNames"),
+        csv_delimiter: text("csvDelimiter").chars().next(),
+        csv_comment_start: text("csvCommentStart").chars().next(),
+        csv_quote_char: text("csvQuoteChar").chars().next(),
+        // Java's `messageNoActionFiles` is true unless the script sets it false.
+        hide_no_action_files: text("messageNoActionFiles") == "false",
+        default_values: match options.get("defaultValues") {
+            Some(Value::Map(entries)) => entries
+                .iter()
+                .filter(|(_, value)| !value.is_null())
+                .map(|(name, value)| (name.clone(), moqui_lib::object::to_plain_string(value)))
+                .collect(),
             _ => Vec::new(),
-        };
-        let mut locations: Vec<String> = list("locations");
-        // An older caller passes one `location`.
-        if !text("location").is_empty() {
-            locations.push(text("location"));
-        }
-        let load_options = crate::entity::load_feed::LoadOptions {
-            data_types: list("dataTypes"),
-            components: list("componentNames"),
-            only_create: flag("onlyCreate"),
-            // `useTryInsert` is not read: a store is one upsert wherever that fits.
-            dummy_fks: flag("dummyFks"),
-            disable_fk_create: flag("disableFkCreate"),
-            timeout: text("transactionTimeout")
-                .parse::<u64>()
-                .ok()
-                .map(std::time::Duration::from_secs),
-            restrict_sensitive_entities: flag("restrictSensitiveEntities"),
-            csv_entity_name: Some(text("csvEntityName")).filter(|name| !name.is_empty()),
-            csv_field_names: list("csvFieldNames"),
-            csv_delimiter: text("csvDelimiter").chars().next(),
-            csv_comment_start: text("csvCommentStart").chars().next(),
-            csv_quote_char: text("csvQuoteChar").chars().next(),
-            // Java's `messageNoActionFiles` is true unless the script sets it false.
-            hide_no_action_files: text("messageNoActionFiles") == "false",
-            default_values: match options.get("defaultValues") {
-                Some(Value::Map(entries)) => entries
-                    .iter()
-                    .filter(|(_, value)| !value.is_null())
-                    .map(|(name, value)| (name.clone(), moqui_lib::object::to_plain_string(value)))
-                    .collect(),
-                _ => Vec::new(),
-            },
-        };
-        let before = facade.flags();
-        facade.set_disable_entity_eca(flag("disableEntityEca") || before.disable_entity_eca);
-        facade.set_disable_audit_log(flag("disableAuditLog") || before.disable_audit_log);
-        facade.set_disable_data_feed(flag("disableDataFeed") || before.disable_data_feed);
-        let factory = factory_of(&ctx)?;
-        let check = flag("check");
-        let listing = flag("list");
-        let mut fields_checked = 0_u64;
-        let mut diff_info = Vec::new();
-        let mut values = Vec::new();
-        let loaded = if listing {
-            let source = || load_source(&facade, &factory, &text, &locations, &load_options);
-            crate::entity::load_feed::list_with(source).map(|((records, _), result)| {
-                values = result.values;
-                (records, Vec::new())
-            })
-        } else if check {
-            // `check()`: the messages are what did not match, not what was loaded. `checkInfo()`: what did not match
-            // is in the diff rows.
-            let source = || load_source(&facade, &factory, &text, &locations, &load_options);
-            let checked = if flag("checkInfo") {
-                crate::entity::load_feed::check_info_with(source)
-            } else {
-                crate::entity::load_feed::check_with(source)
-            };
-            checked.map(|((records, _), result)| {
-                fields_checked = result.fields_checked;
-                diff_info = result.diff_info;
-                (records, result.messages)
-            })
+        },
+    };
+    let before = facade.flags();
+    facade.set_disable_entity_eca(flag("disableEntityEca") || before.disable_entity_eca);
+    facade.set_disable_audit_log(flag("disableAuditLog") || before.disable_audit_log);
+    facade.set_disable_data_feed(flag("disableDataFeed") || before.disable_data_feed);
+    let factory = factory()?;
+    let check = flag("check");
+    let listing = flag("list");
+    let mut fields_checked = 0_u64;
+    let mut diff_info = Vec::new();
+    let mut values = Vec::new();
+    let loaded = if listing {
+        let source = || load_source(&facade, &factory, &text, &locations, &load_options);
+        crate::entity::load_feed::list_with(source).map(|((records, _), result)| {
+            values = result.values;
+            (records, Vec::new())
+        })
+    } else if check {
+        // `check()`: the messages are what did not match, not what was loaded. `checkInfo()`: what did not match
+        // is in the diff rows.
+        let source = || load_source(&facade, &factory, &text, &locations, &load_options);
+        let checked = if flag("checkInfo") {
+            crate::entity::load_feed::check_info_with(source)
         } else {
-            load_source(&facade, &factory, &text, &locations, &load_options)
+            crate::entity::load_feed::check_with(source)
         };
-        facade.set_disable_entity_eca(before.disable_entity_eca);
-        facade.set_disable_audit_log(before.disable_audit_log);
-        facade.set_disable_data_feed(before.disable_data_feed);
-        let (records, messages) = loaded.map_err(|err| throw_lib(&ctx, &err))?;
-        let mut out = indexmap::IndexMap::new();
+        checked.map(|((records, _), result)| {
+            fields_checked = result.fields_checked;
+            diff_info = result.diff_info;
+            (records, result.messages)
+        })
+    } else {
+        load_source(&facade, &factory, &text, &locations, &load_options)
+    };
+    facade.set_disable_entity_eca(before.disable_entity_eca);
+    facade.set_disable_audit_log(before.disable_audit_log);
+    facade.set_disable_data_feed(before.disable_data_feed);
+    let (records, messages) = loaded.map_err(HostError::Lib)?;
+    let mut out = indexmap::IndexMap::new();
+    out.insert(
+        "records".to_string(),
+        Value::I64(i64::try_from(records).unwrap_or(i64::MAX)),
+    );
+    out.insert(
+        "messages".to_string(),
+        Value::List(messages.into_iter().map(Value::String).collect()),
+    );
+    out.insert(
+        "fieldsChecked".to_string(),
+        Value::I64(i64::try_from(fields_checked).unwrap_or(i64::MAX)),
+    );
+    out.insert(
+        "diffInfo".to_string(),
+        Value::List(diff_info.into_iter().map(Value::Map).collect()),
+    );
+    if listing {
         out.insert(
-            "records".to_string(),
-            Value::I64(i64::try_from(records).unwrap_or(i64::MAX)),
+            "values".to_string(),
+            Value::Object(HostObject::new(crate::entity::EntityList::new(values))),
         );
-        out.insert(
-            "messages".to_string(),
-            Value::List(messages.into_iter().map(Value::String).collect()),
-        );
-        out.insert(
-            "fieldsChecked".to_string(),
-            Value::I64(i64::try_from(fields_checked).unwrap_or(i64::MAX)),
-        );
-        out.insert(
-            "diffInfo".to_string(),
-            Value::List(diff_info.into_iter().map(Value::Map).collect()),
-        );
-        let out = host_to_js(&ctx, Value::Map(out))?;
-        if listing {
-            if let Some(object) = out.as_object() {
-                let list = super::entities::HostList::of_list(crate::entity::EntityList::new(values));
-                object.set("values", Class::instance(ctx.clone(), list)?)?;
-            }
-        }
-        Ok(out)
-    })
+    }
+    Ok(Ret::Value(Value::Map(out)))
 }
 
 fn load_source(
@@ -1641,72 +1838,67 @@ fn load_source(
 
 // ---- service ----
 
-fn get_known_service_names<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || js_texts(&ctx, crate::service::info::known_service_names()))
+fn get_known_service_names(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(texts(crate::service::info::known_service_names()))
 }
 
-fn get_all_service_info<'js>(ctx: Ctx<'js>, levels: Opt<JsValue<'js>>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let levels = opt_count(&levels, 2);
-        let mut counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
-        for name in crate::service::info::known_service_names() {
-            *counts
-                .entry(crate::entity::info::name_prefix(&name, levels))
-                .or_default() += 1;
-        }
-        let rows = counts
-            .into_iter()
-            .map(|(name, services)| {
-                let mut row = indexmap::IndexMap::new();
-                row.insert("name".to_string(), Value::String(name));
-                row.insert("services".to_string(), Value::I64(services));
-                row
-            })
-            .collect();
-        js_list(&ctx, rows)
-    })
+fn get_all_service_info(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let levels = call.value(0).cloned();
+    let levels = count_of(levels.as_ref(), 2);
+    let mut counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+    for name in crate::service::info::known_service_names() {
+        *counts
+            .entry(crate::entity::info::name_prefix(&name, levels))
+            .or_default() += 1;
+    }
+    let rows = counts
+        .into_iter()
+        .map(|(name, services)| {
+            let mut row = indexmap::IndexMap::new();
+            row.insert("name".to_string(), Value::String(name));
+            row.insert("services".to_string(), Value::I64(services));
+            row
+        })
+        .collect();
+    Ok(list(rows))
 }
 
-fn get_seca_rule_count(ctx: Ctx<'_>) -> rquickjs::Result<i32> {
-    host_guard(&ctx, || {
-        Ok(i32::try_from(crate::service::info::seca_rule_count()).unwrap_or(i32::MAX))
-    })
+fn get_seca_rule_count(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(
+        i32::try_from(crate::service::info::seca_rule_count()).unwrap_or(i32::MAX),
+    ))
 }
 
-fn seca_rule_texts<'js>(ctx: Ctx<'js>, service: String) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || js_texts(&ctx, crate::service::info::seca_rule_texts(&service)))
+fn seca_rule_texts(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let service = call.text_or_empty(0);
+    Ok(texts(crate::service::info::seca_rule_texts(&service)))
 }
 
-fn service_definition_info<'js>(ctx: Ctx<'js>, name: Opt<JsValue<'js>>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        match crate::service::info::service_definition_info(&text_or_empty(&ctx, name.0.as_ref())?) {
-            Some(info) => host_to_js(&ctx, Value::Map(info)),
-            None => Null.into_js(&ctx),
-        }
-    })
+fn service_definition_info(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.value(0).cloned();
+    match crate::service::info::service_definition_info(&text_of(name.as_ref())) {
+        Some(info) => Ok(Ret::Value(Value::Map(info))),
+        None => Ok(Ret::Value(Value::Null)),
+    }
 }
 
 /// Java's `ServiceDefinition.convertValidateCleanParameters`: the in-parameters converted, checked and cleaned as a call
 /// would before running the service, which does not run. A check that fails is a validation error in `ec.message` and
 /// the parameters come back as given.
-fn convert_validate_clean_parameters<'js>(
-    ctx: Ctx<'js>,
-    name: String,
-    parameters: JsValue<'js>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let parameters: std::collections::BTreeMap<String, Value> = match js_to_host(&ctx, &parameters)? {
-            Value::Map(map) => map.into_iter().collect(),
-            _ => std::collections::BTreeMap::new(),
-        };
-        match crate::service::validate(&name, &parameters) {
-            Ok(cleaned) => host_to_js(&ctx, Value::Map(cleaned.into_iter().collect())),
-            Err(err) if err.kind() == crate::context::ErrorKind::Validation => {
-                host_to_js(&ctx, Value::Map(parameters.into_iter().collect()))
-            }
-            Err(err) => Err(throw_lib(&ctx, &moqui_lib::error::Error::new(err.message()))),
+fn convert_validate_clean_parameters(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.text_or_empty(0);
+    let parameters = call.value_or_null(1);
+    let parameters: std::collections::BTreeMap<String, Value> = match parameters {
+        Value::Map(map) => map.into_iter().collect(),
+        _ => std::collections::BTreeMap::new(),
+    };
+    match crate::service::validate(&name, &parameters) {
+        Ok(cleaned) => Ok(Ret::Value(Value::Map(cleaned.into_iter().collect()))),
+        Err(err) if err.kind() == crate::context::ErrorKind::Validation => {
+            Ok(Ret::Value(Value::Map(parameters.into_iter().collect())))
         }
-    })
+        Err(err) => Err(HostError::Lib(moqui_lib::error::Error::new(err.message()))),
+    }
 }
 
 /// An XML element as `{name, attributes, text, children}`, for the node wrapper of the screens. [`parse_node`] adds the
@@ -1732,130 +1924,128 @@ fn node_value(node: &MNode) -> Value {
     Value::Map(map)
 }
 
-fn parse_node<'js>(ctx: Ctx<'js>, xml: String) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || match MNode::parse_text("node", &xml) {
+fn parse_node(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let xml = call.text_or_empty(0);
+    match MNode::parse_text("node", &xml) {
         Ok(node) => {
             let mut value = node_value(&node);
             if let Value::Map(map) = &mut value {
                 map.insert("xml".to_string(), Value::string(node.write_string()));
             }
-            host_to_js(&ctx, value)
+            Ok(Ret::Value(value))
         }
-        Err(_) => Null.into_js(&ctx),
-    })
+        Err(_) => Ok(Ret::Value(Value::Null)),
+    }
 }
 
-fn job_runner_info<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let factory = factory_of(&ctx)?;
-        let Some(stats) = factory.service_pools().runner_stats() else {
-            return Null.into_js(&ctx);
-        };
-        let number = |value: u64| Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
-        let mut map = indexmap::IndexMap::new();
-        map.insert(
-            "lastExecuteTime".to_string(),
-            jiff::Timestamp::from_millisecond(stats.last_execute_millis).map_or(Value::Null, Value::Timestamp),
-        );
-        map.insert("executeCount".to_string(), number(stats.execute_count));
-        map.insert("totalJobsRun".to_string(), number(stats.total_jobs_run));
-        map.insert("lastJobsActive".to_string(), number(stats.last_jobs_active as u64));
-        map.insert("lastJobsPaused".to_string(), number(stats.last_jobs_paused as u64));
-        host_to_js(&ctx, Value::Map(map))
-    })
+fn job_runner_info(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let factory = factory()?;
+    let Some(stats) = factory.service_pools().runner_stats() else {
+        return Ok(Ret::Value(Value::Null));
+    };
+    let number = |value: u64| Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
+    let mut map = indexmap::IndexMap::new();
+    map.insert(
+        "lastExecuteTime".to_string(),
+        jiff::Timestamp::from_millisecond(stats.last_execute_millis).map_or(Value::Null, Value::Timestamp),
+    );
+    map.insert("executeCount".to_string(), number(stats.execute_count));
+    map.insert("totalJobsRun".to_string(), number(stats.total_jobs_run));
+    map.insert("lastJobsActive".to_string(), number(stats.last_jobs_active as u64));
+    map.insert("lastJobsPaused".to_string(), number(stats.last_jobs_paused as u64));
+    Ok(Ret::Value(Value::Map(map)))
 }
 
-fn worker_pool_info<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let factory = factory_of(&ctx)?;
-        let status = factory.service_pools().status();
-        let number = |value: usize| Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
-        let mut map = indexmap::IndexMap::new();
-        map.insert("workers".to_string(), number(status.workers));
-        map.insert("active".to_string(), number(status.active));
-        map.insert("queued".to_string(), number(status.queued));
-        map.insert("queueCap".to_string(), number(status.queue_cap));
-        host_to_js(&ctx, Value::Map(map))
-    })
+fn worker_pool_info(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let factory = factory()?;
+    let status = factory.service_pools().status();
+    let number = |value: usize| Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
+    let mut map = indexmap::IndexMap::new();
+    map.insert("workers".to_string(), number(status.workers));
+    map.insert("active".to_string(), number(status.active));
+    map.insert("queued".to_string(), number(status.queued));
+    map.insert("queueCap".to_string(), number(status.queue_cap));
+    Ok(Ret::Value(Value::Map(map)))
 }
 
 // ---- screen, factory, web ----
 
-fn get_all_root_screen_locations<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let factory = factory_of(&ctx)?;
-        js_texts(&ctx, crate::screen::info::all_root_screen_locations(&factory))
-    })
+fn get_all_root_screen_locations(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let factory = factory()?;
+    Ok(texts(crate::screen::info::all_root_screen_locations(&factory)))
 }
 
-fn get_screen_info_list<'js>(
-    ctx: Ctx<'js>,
-    root_location: String,
-    levels: Opt<JsValue<'js>>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let factory = factory_of(&ctx)?;
-        let rows = crate::screen::info::screen_info_list(&factory, &root_location, opt_count(&levels, 2))
-            .map_err(|err| Exception::throw_message(&ctx, err.message()))?;
-        js_list(&ctx, rows)
-    })
+fn get_screen_info_list(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let root_location = call.text_or_empty(0);
+    let levels = call.value(1).cloned();
+    let factory = factory()?;
+    let rows = crate::screen::info::screen_info_list(&factory, &root_location, count_of(levels.as_ref(), 2))
+        .map_err(|err| HostError::message(err.message()))?;
+    Ok(list(rows))
 }
 
-fn get_status_map<'js>(ctx: Ctx<'js>, include_sensitive: Opt<JsValue<'js>>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let factory = factory_of(&ctx)?;
-        let map = crate::context::status::status_map(&factory, opt_flag(&include_sensitive));
-        host_to_js(&ctx, Value::Map(map))
-    })
+fn get_status_map(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let include_sensitive = call.value(0).cloned();
+    let factory = factory()?;
+    let map = crate::context::status::status_map(&factory, flag_of(include_sensitive.as_ref()));
+    Ok(Ret::Value(Value::Map(map)))
 }
 
 /// `ec.factory.getInstanceId()`: this server's instance id ([`crate::drain::instance_id`]).
-fn get_instance_id(ctx: Ctx<'_>) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        let factory = factory_of(&ctx)?;
-        Ok(crate::drain::instance_id(&factory))
-    })
+fn get_instance_id(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let factory = factory()?;
+    Ok(Ret::from(crate::drain::instance_id(&factory)))
 }
 
-fn get_component_info_list<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let factory = factory_of(&ctx)?;
-        js_list(&ctx, crate::context::status::component_info_list(&factory))
-    })
+fn get_component_info_list(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let factory = factory()?;
+    Ok(list(crate::context::status::component_info_list(&factory)))
 }
 
-fn get_runtime_path(ctx: Ctx<'_>) -> rquickjs::Result<String> {
-    host_guard(&ctx, || Ok(factory_of(&ctx)?.runtime_dir().display().to_string()))
+fn get_runtime_path(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(factory()?.runtime_dir().display().to_string()))
 }
 
 /// `ec.factory.waitWorkerPoolEmpty(retryLimit)`: wait up to `retryLimit` (default 50) times 100 ms for async service
 /// work to finish. Returns whether the pool is empty.
-fn wait_worker_pool_empty(ctx: Ctx<'_>, retry_limit: Opt<u32>) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || {
-        Ok(factory_of(&ctx)?.wait_worker_pool_empty(retry_limit.0.unwrap_or(50)))
-    })
+fn wait_worker_pool_empty(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    // QuickJS's `Opt<u32>`: a number, refused outside the range of a u32, a fraction truncated
+    let retry_limit = match call.number(0) {
+        None => 50,
+        Some(number) if number < 0.0 => {
+            return Err(HostError::Type(
+                "Error converting from js 'f64' into type 'u32': Underflow".to_string(),
+            ))
+        }
+        Some(number) if number > f64::from(u32::MAX) => {
+            return Err(HostError::Type(
+                "Error converting from js 'f64' into type 'u32': Overflow".to_string(),
+            ))
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        Some(number) => number as u32,
+    };
+    Ok(factory()?.wait_worker_pool_empty(retry_limit).into())
 }
 
-fn get_thread_list<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || js_list(&ctx, crate::context::status::thread_list()))
+fn get_thread_list(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(list(crate::context::status::thread_list()))
 }
 
-fn secure_request_parameters<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let map = crate::web::secure_parameters().into_iter().collect();
-        host_to_js(&ctx, Value::Map(map))
-    })
+fn secure_request_parameters(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let map = crate::web::secure_parameters().into_iter().collect();
+    Ok(Ret::Value(Value::Map(map)))
 }
 
-fn get_request_details(ctx: Ctx<'_>) -> rquickjs::Result<String> {
-    host_guard(&ctx, || Ok(crate::web::request_details()))
+fn get_request_details(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(crate::web::request_details()))
 }
 
 // ---- resources ----
 
-fn resource_ref(ctx: &Ctx<'_>, location: &str) -> rquickjs::Result<crate::context::ResourceRef> {
-    let found = with_ec(ctx, |ec| ec.factory().resource().get(location))?;
-    found.map_err(|err| throw_context(ctx, &err))
+fn resource_ref(location: &str) -> Result<crate::context::ResourceRef, HostError> {
+    let found = with_ec(|ec| ec.factory().resource().get(location))?;
+    found.map_err(HostError::Context)
 }
 
 /// `{location, fileName, exists, directory, file, contentType, text, binary}` of a resource. Its size, last-modified
@@ -1896,38 +2086,36 @@ fn info_value(location: &str, exists: bool, directory: bool, file: bool) -> Valu
 }
 
 /// `{size, lastModified}` of a resource (each null when it has none), or null for a location no scheme resolves.
-fn resource_stat<'js>(ctx: Ctx<'js>, location: String) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        match with_ec(&ctx, |ec| ec.factory().resource().get(&location))? {
-            Ok(resource) => {
-                let mut map = indexmap::IndexMap::new();
-                map.insert(
-                    "size".to_string(),
-                    resource
-                        .size()
-                        .map_or(Value::Null, |size| Value::I64(i64::try_from(size).unwrap_or(i64::MAX))),
-                );
-                map.insert(
-                    "lastModified".to_string(),
-                    resource.last_modified().map_or(Value::Null, Value::I64),
-                );
-                host_to_js(&ctx, Value::Map(map))
-            }
-            Err(_) => Null.into_js(&ctx),
+fn resource_stat(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    match with_ec(|ec| ec.factory().resource().get(&location))? {
+        Ok(resource) => {
+            let mut map = indexmap::IndexMap::new();
+            map.insert(
+                "size".to_string(),
+                resource
+                    .size()
+                    .map_or(Value::Null, |size| Value::I64(i64::try_from(size).unwrap_or(i64::MAX))),
+            );
+            map.insert(
+                "lastModified".to_string(),
+                resource.last_modified().map_or(Value::Null, Value::I64),
+            );
+            Ok(Ret::Value(Value::Map(map)))
         }
-    })
+        Err(_) => Ok(Ret::Value(Value::Null)),
+    }
 }
 
 /// [`resource_info_value`] of a location, or null for a location no scheme
 /// resolves. A `dbresource://` location with no row is a reference that does not exist, as Java's.
-fn resource_info<'js>(ctx: Ctx<'js>, location: String) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        match with_ec(&ctx, |ec| ec.factory().resource().get(&location))? {
-            Ok(resource) => host_to_js(&ctx, resource_info_value(&resource)),
-            Err(_) if location.starts_with("dbresource:") => host_to_js(&ctx, missing_info_value(&location)),
-            Err(_) => Null.into_js(&ctx),
-        }
-    })
+fn resource_info(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    match with_ec(|ec| ec.factory().resource().get(&location))? {
+        Ok(resource) => Ok(Ret::Value(resource_info_value(&resource))),
+        Err(_) if location.starts_with("dbresource:") => Ok(Ret::Value(missing_info_value(&location))),
+        Err(_) => Ok(Ret::Value(Value::Null)),
+    }
 }
 
 fn missing_info_value(location: &str) -> Value {
@@ -1935,140 +2123,139 @@ fn missing_info_value(location: &str) -> Value {
 }
 
 /// The text at a location; a `#versionName` suffix reads that version (`ec.resource.getLocationText`).
-fn resource_text(ctx: Ctx<'_>, location: String) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        with_resources(&ctx, |resources| resources.location_text(&location))
-    })
+fn resource_text(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    Ok(Ret::from(with_resources(|resources| {
+        resources.location_text(&location)
+    })?))
 }
 
 /// The text at a location decoded from its bytes in a charset (`ec.resource.getLocationText(location, charset)`).
-fn resource_text_in(ctx: Ctx<'_>, location: String, charset: String) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        let bytes = resource_ref(&ctx, &location)?
-            .read_bytes()
-            .map_err(|err| throw_context(&ctx, &err))?;
-        super::upload::decode_text(&bytes, Some(&charset)).map_err(|err| throw_context(&ctx, &err))
-    })
+fn resource_text_in(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let charset = call.text_or_empty(1);
+    let bytes = resource_ref(&location)?.read_bytes().map_err(HostError::Context)?;
+    Ok(Ret::from(
+        super::decode_text(&bytes, Some(&charset)).map_err(HostError::Context)?,
+    ))
 }
 
 /// `putText`: a `dbresource://` row, or a file for the file-backed schemes.
-fn resource_put_text(ctx: Ctx<'_>, location: String, text: String) -> rquickjs::Result<()> {
-    put_resource_bytes(&ctx, &location, text.as_bytes())
+fn resource_put_text(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let text = call.text_or_empty(1);
+    put_resource_bytes(&location, text.as_bytes())
 }
 
 /// The bytes of one version as a stream (`openStream` of a `location#versionName` reference), or null when that version
 /// is not there.
-fn resource_version_stream<'js>(
-    ctx: Ctx<'js>,
-    location: String,
-    version_name: String,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let bytes = with_resources(&ctx, |resources| resources.read_version(&location, &version_name))?;
-        match bytes {
-            Some(bytes) => {
-                let source = Arc::new(crate::resource::source::MemorySource::new(bytes));
-                Class::instance(ctx.clone(), super::upload::HostStream::new(source))
-                    .and_then(|class| class.into_js(&ctx))
-            }
-            None => Null.into_js(&ctx),
+fn resource_version_stream(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let version_name = call.text_or_empty(1);
+    let bytes = with_resources(|resources| resources.read_version(&location, &version_name))?;
+    match bytes {
+        Some(bytes) => {
+            let source = std::sync::Arc::new(crate::resource::source::MemorySource::new(bytes));
+            Ok(Ret::Value(Value::Object(HostObject::new(super::StreamBytes {
+                source,
+            }))))
         }
-    })
+        None => Ok(Ret::Value(Value::Null)),
+    }
 }
 
 /// The file as a stream (`openStream`, `getInputStream`), read when the script reads or writes it.
-fn resource_stream<'js>(ctx: Ctx<'js>, location: String) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let opened = with_ec(&ctx, |ec| ec.factory().resource().open(&location))?
-            .map_err(|err| Exception::throw_message(&ctx, err.message()))?
-            .ok_or_else(|| Exception::throw_message(&ctx, &format!("no file at {location}")))?;
-        Class::instance(ctx.clone(), super::upload::HostStream::new(opened.source))
-            .and_then(|class| class.into_js(&ctx))
-    })
+fn resource_stream(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let opened = with_ec(|ec| ec.factory().resource().open(&location))?
+        .map_err(|err| HostError::message(err.message()))?
+        .ok_or_else(|| HostError::message(format!("no file at {location}")))?;
+    Ok(Ret::Value(Value::Object(HostObject::new(super::StreamBytes {
+        source: opened.source,
+    }))))
 }
 
 /// `ResourceReference.isTextFilename`: the content type of the file name is a text type.
-fn is_text_filename(filename: String) -> bool {
-    moqui_lib::resource::content_type_for_name(&filename).is_some_and(moqui_lib::resource::is_text_content_type)
+fn is_text_filename(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let filename = call.text_or_empty(0);
+    Ok(moqui_lib::resource::content_type_for_name(&filename)
+        .is_some_and(moqui_lib::resource::is_text_content_type)
+        .into())
 }
 
 /// `putBytes`: a `Uint8Array` or `ArrayBuffer`, written as `putText` writes.
-fn resource_put_bytes<'js>(ctx: Ctx<'js>, location: String, bytes: JsValue<'js>) -> rquickjs::Result<()> {
-    let bytes = host_guard(&ctx, || {
-        bytes
-            .as_object()
-            .and_then(super::convert::js_bytes)
-            .ok_or_else(|| Exception::throw_message(&ctx, "putBytes needs a Uint8Array or an ArrayBuffer"))
-    })?;
-    put_resource_bytes(&ctx, &location, &bytes)
+fn resource_put_bytes(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let Some(Value::Bytes(bytes)) = call.value(1) else {
+        return Err(HostError::message("putBytes needs a Uint8Array or an ArrayBuffer"));
+    };
+    put_resource_bytes(&location, bytes)
 }
 
-fn put_resource_bytes(ctx: &Ctx<'_>, location: &str, bytes: &[u8]) -> rquickjs::Result<()> {
-    host_guard(ctx, || {
-        let written = with_ec(ctx, |ec| ec.factory().resource().write_bytes(location, bytes))?;
-        written.map_err(|err| Exception::throw_message(ctx, err.message()))
-    })
+fn put_resource_bytes(location: &str, bytes: &[u8]) -> Result<Ret, HostError> {
+    let written = with_ec(|ec| ec.factory().resource().write_bytes(location, bytes))?;
+    written.map_err(|err| HostError::message(err.message()))?;
+    Ok(Ret::Undefined)
 }
 
 /// `delete` of a file, or an empty directory, of a `dbresource://` or file-backed location. `false` when nothing is
 /// there.
-fn resource_delete(ctx: Ctx<'_>, location: String) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || {
-        let deleted = with_ec(&ctx, |ec| ec.factory().resource().delete(&location))?;
-        deleted.map_err(|err| Exception::throw_message(&ctx, err.message()))
-    })
+fn resource_delete(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let deleted = with_ec(|ec| ec.factory().resource().delete(&location))?;
+    Ok(Ret::from(deleted.map_err(|err| HostError::message(err.message()))?))
 }
 
 /// `getDirectoryEntries`: the files and directories directly under a directory, each as [`resource_info`] gives it,
 /// from the listing (no child is looked up again). A location the facade cannot list (such as `classpath`) has its child files only.
-fn resource_entries<'js>(ctx: Ctx<'js>, location: String) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let factory = factory_of(&ctx)?;
-        let resources = factory.resource();
-        let entries = match resources.list(&location) {
-            Ok(entries) => entries
+fn resource_entries(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let factory = factory()?;
+    let resources = factory.resource();
+    let entries = match resources.list(&location) {
+        Ok(entries) => entries
+            .iter()
+            .map(|entry| info_value(&entry.location, true, !entry.is_file, entry.is_file))
+            .collect(),
+        Err(_) => match resources.get(&location) {
+            Ok(resource) if resource.is_directory() => resource
+                .children()
+                .unwrap_or_default()
                 .iter()
-                .map(|entry| info_value(&entry.location, true, !entry.is_file, entry.is_file))
+                .map(resource_info_value)
                 .collect(),
-            Err(_) => match resources.get(&location) {
-                Ok(resource) if resource.is_directory() => resource
-                    .children()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(resource_info_value)
-                    .collect(),
-                _ => Vec::new(),
-            },
-        };
-        host_to_js(&ctx, Value::List(entries))
-    })
+            _ => Vec::new(),
+        },
+    };
+    Ok(Ret::Value(Value::List(entries)))
 }
 
 /// `move`: a file or directory to a new location of the same kind of storage.
-fn resource_move(ctx: Ctx<'_>, location: String, new_location: String) -> rquickjs::Result<()> {
-    host_guard(&ctx, || {
-        let moved = with_ec(&ctx, |ec| ec.factory().resource().rename(&location, &new_location))?;
-        moved.map_err(|err| Exception::throw_message(&ctx, err.message()))
-    })
+fn resource_move(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let new_location = call.text_or_empty(1);
+    let moved = with_ec(|ec| ec.factory().resource().rename(&location, &new_location))?;
+    Ok(Ret::from(moved.map_err(|err| HostError::message(err.message()))?))
 }
 
 /// Copy the bytes of one file to another location, for what a Groovy script did with `openStream` and `putStream`.
-fn resource_copy(ctx: Ctx<'_>, from: String, to: String) -> rquickjs::Result<()> {
-    host_guard(&ctx, || {
-        let bytes = resource_ref(&ctx, &from)?
-            .read_bytes()
-            .map_err(|err| Exception::throw_message(&ctx, err.message()))?;
-        let written = with_ec(&ctx, |ec| ec.factory().resource().write_bytes(&to, &bytes))?;
-        written.map_err(|err| Exception::throw_message(&ctx, err.message()))
-    })
+fn resource_copy(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let from = call.text_or_empty(0);
+    let to = call.text_or_empty(1);
+    let bytes = resource_ref(&from)?
+        .read_bytes()
+        .map_err(|err| HostError::message(err.message()))?;
+    let written = with_ec(|ec| ec.factory().resource().write_bytes(&to, &bytes))?;
+    Ok(Ret::from(written.map_err(|err| HostError::message(err.message()))?))
 }
 
 /// `supportsVersion`: `dbresource://` files keep versions, as in Java, and so does a provider scheme that says so
 /// (`git://`).
-fn resource_supports_version(ctx: Ctx<'_>, location: String) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || {
-        with_ec(&ctx, |ec| ec.factory().resource().supports_version(&location))
-    })
+fn resource_supports_version(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    Ok(Ret::from(with_ec(|ec| {
+        ec.factory().resource().supports_version(&location)
+    })?))
 }
 
 fn version_value(version: crate::context::ResourceVersion) -> Value {
@@ -2086,103 +2273,89 @@ fn version_value(version: crate::context::ResourceVersion) -> Value {
 
 /// A resource facade call from a host function: a facade error is a script exception.
 fn with_resources<T>(
-    ctx: &Ctx<'_>,
     body: impl FnOnce(&crate::context::ResourceFacade) -> Result<T, crate::context::Error>,
-) -> rquickjs::Result<T> {
-    with_ec(ctx, |ec| body(ec.factory().resource()))?.map_err(|err| throw_context(ctx, &err))
+) -> Result<T, HostError> {
+    with_ec(|ec| body(ec.factory().resource()))?.map_err(HostError::Context)
 }
 
 /// `getCurrentVersion`, `getRootVersion` and `getVersion(name)`: `{versionName, previousVersionName, versionDate,
 /// userId}`, or null.
-fn resource_version<'js>(
-    ctx: Ctx<'js>,
-    location: String,
-    which: String,
-    name: Opt<String>,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let found = with_resources(&ctx, |resources| match which.as_str() {
-            "current" => resources.current_version(&location),
-            "root" => resources.root_version(&location),
-            _ => resources.version(&location, name.0.as_deref().unwrap_or_default()),
-        })?;
-        host_to_js(&ctx, found.map_or(Value::Null, version_value))
-    })
+fn resource_version(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let which = call.text_or_empty(1);
+    let name = call.text(2).map(str::to_string);
+    let found = with_resources(|resources| match which.as_str() {
+        "current" => resources.current_version(&location),
+        "root" => resources.root_version(&location),
+        _ => resources.version(&location, name.as_deref().unwrap_or_default()),
+    })?;
+    Ok(Ret::Value(found.map_or(Value::Null, version_value)))
 }
 
 /// `getVersionHistory`: newest first.
-fn resource_version_history<'js>(ctx: Ctx<'js>, location: String) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let versions = with_resources(&ctx, |resources| resources.version_history(&location))?;
-        host_to_js(&ctx, Value::List(versions.into_iter().map(version_value).collect()))
-    })
+fn resource_version_history(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let versions = with_resources(|resources| resources.version_history(&location))?;
+    Ok(Ret::Value(Value::List(
+        versions.into_iter().map(version_value).collect(),
+    )))
 }
 
 /// `getNextVersions(versionName)`: the versions made from that one.
-fn resource_next_versions<'js>(
-    ctx: Ctx<'js>,
-    location: String,
-    version_name: String,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let versions = with_resources(&ctx, |resources| resources.next_versions(&location, &version_name))?;
-        host_to_js(&ctx, Value::List(versions.into_iter().map(version_value).collect()))
-    })
+fn resource_next_versions(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let version_name = call.text_or_empty(1);
+    let versions = with_resources(|resources| resources.next_versions(&location, &version_name))?;
+    Ok(Ret::Value(Value::List(
+        versions.into_iter().map(version_value).collect(),
+    )))
 }
 
 /// `getText(versionName)`: the text of one version, or null when there is no such version.
-fn resource_version_text<'js>(ctx: Ctx<'js>, location: String, version_name: String) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        match with_resources(&ctx, |resources| resources.version_text(&location, &version_name))? {
-            Some(text) => host_to_js(&ctx, Value::string(text)),
-            None => Null.into_js(&ctx),
-        }
-    })
+fn resource_version_text(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let version_name = call.text_or_empty(1);
+    match with_resources(|resources| resources.version_text(&location, &version_name))? {
+        Some(text) => Ok(Ret::Value(Value::string(text))),
+        None => Ok(Ret::Value(Value::Null)),
+    }
 }
 
 /// `getVersionDiff(versionNameLhs, versionNameRhs)`: the line diff from one version to the other (an empty name is
 /// the current text) as `{fromName, toName, unifiedDiff, html, stats, hunks}`. A version that is not there throws.
-fn resource_version_diff<'js>(
-    ctx: Ctx<'js>,
-    location: String,
-    lhs: String,
-    rhs: String,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let diff = with_resources(&ctx, |resources| resources.version_diff(&location, &lhs, &rhs))?;
-        host_to_js(&ctx, diff.to_value())
-    })
+fn resource_version_diff(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let lhs = call.text_or_empty(1);
+    let rhs = call.text_or_empty(2);
+    let diff = with_resources(|resources| resources.version_diff(&location, &lhs, &rhs))?;
+    Ok(Ret::Value(diff.to_value()))
 }
 
 /// `ec.resource.textDiff(oldText, newText, fromName, toName)`: the line diff between two texts, in the same shape as
 /// `getVersionDiff`, for callers that keep their revisions outside resource versioning.
-fn text_diff<'js>(
-    ctx: Ctx<'js>,
-    old: String,
-    new: String,
-    from_name: String,
-    to_name: String,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        host_to_js(
-            &ctx,
-            crate::resource::textdiff::diff(&old, &new, &from_name, &to_name).to_value(),
-        )
-    })
+fn text_diff(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let old = call.text_or_empty(0);
+    let new = call.text_or_empty(1);
+    let from_name = call.text_or_empty(2);
+    let to_name = call.text_or_empty(3);
+    Ok(Ret::Value(
+        crate::resource::textdiff::diff(&old, &new, &from_name, &to_name).to_value(),
+    ))
 }
 
 /// `ec.resource.markdownHtml(text)`: CommonMark (with GitHub tables) as HTML, the `.md` template renderer for text a
 /// script holds, such as imported posts. Raw HTML passes through, so a caller showing the result to others sanitizes it.
-fn markdown_html(ctx: Ctx<'_>, text: String) -> rquickjs::Result<String> {
-    host_guard(&ctx, || Ok(moqui_lib::markdown::to_html(&text)))
+fn markdown_html(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let text = call.text_or_empty(0);
+    Ok(Ret::from(moqui_lib::markdown::to_html(&text)))
 }
 
 // ---- SQL on a database named by a conf map (InstanceServices) ----
 
 /// The `entity_ds_*` entries of a conf map, as Java's `getConfConnection` reads them.
-fn conf_db_of<'js>(ctx: &Ctx<'js>, conf: &JsValue<'js>) -> rquickjs::Result<crate::driver::ConfDb> {
-    let Value::Map(map) = js_to_host(ctx, conf)? else {
-        return Err(Exception::throw_message(ctx, "the database conf is not a map"));
+fn conf_db_of(conf: &Value) -> Result<crate::driver::ConfDb, HostError> {
+    let Value::Map(map) = conf else {
+        return Err(HostError::message("the database conf is not a map"));
     };
     let text = |name: &str| match map.get(name) {
         Some(Value::Null) | None => String::new(),
@@ -2200,61 +2373,56 @@ fn conf_db_of<'js>(ctx: &Ctx<'js>, conf: &JsValue<'js>) -> rquickjs::Result<crat
     })
 }
 
-fn conf_connection<'js>(ctx: &Ctx<'js>, conf: &JsValue<'js>) -> rquickjs::Result<Box<dyn crate::driver::DbConnection>> {
-    let conf = conf_db_of(ctx, conf)?;
+fn conf_connection(conf: &Value) -> Result<Box<dyn crate::driver::DbConnection>, HostError> {
+    let conf = conf_db_of(conf)?;
     crate::driver::conf_driver(&conf)
         .and_then(|driver| driver.connect())
-        .map_err(|err| throw_lib(ctx, &err))
+        .map_err(HostError::Lib)
 }
 
 /// `testConfConnection(conf)`: whether a connection opens. A failure is logged, as the Java scripts did.
-fn test_conf_connection<'js>(ctx: Ctx<'js>, conf: JsValue<'js>) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || {
-        let conf = conf_db_of(&ctx, &conf)?;
-        match crate::driver::conf_driver(&conf).and_then(|driver| driver.connect()) {
-            Ok(_) => Ok(true),
-            Err(err) => {
-                tracing::warn!(host = %conf.host, database = %conf.database, "Test connection failed: {}", err.message());
-                Ok(false)
-            }
+fn test_conf_connection(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let conf = call.value_or_null(0);
+    let conf = conf_db_of(&conf)?;
+    match crate::driver::conf_driver(&conf).and_then(|driver| driver.connect()) {
+        Ok(_) => Ok(true.into()),
+        Err(err) => {
+            tracing::warn!(host = %conf.host, database = %conf.database, "Test connection failed: {}", err.message());
+            Ok(false.into())
         }
-    })
+    }
 }
 
 /// `runSqlCountConf(table, where, conf)`: `SELECT COUNT(*) FROM table WHERE where` on that database.
-fn run_sql_count_conf<'js>(
-    ctx: Ctx<'js>,
-    table: String,
-    where_text: String,
-    conf: JsValue<'js>,
-) -> rquickjs::Result<f64> {
-    host_guard(&ctx, || {
-        let mut conn = conf_connection(&ctx, &conf)?;
-        let sql = if where_text.trim().is_empty() {
-            format!("SELECT COUNT(*) AS row_count FROM {table}")
-        } else {
-            format!("SELECT COUNT(*) AS row_count FROM {table} WHERE {where_text}")
-        };
-        let rows = conn.query_once(&sql, &[]).map_err(|err| throw_lib(&ctx, &err))?;
-        let count = rows
-            .first()
-            .and_then(|row| row.columns.first())
-            .map(|(_, value)| moqui_lib::object::to_plain_string(value))
-            .and_then(|text| text.parse::<f64>().ok())
-            .unwrap_or(0.0);
-        Ok(count)
-    })
+fn run_sql_count_conf(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let table = call.text_or_empty(0);
+    let where_text = call.text_or_empty(1);
+    let conf = call.value_or_null(2);
+    let mut conn = conf_connection(&conf)?;
+    let sql = if where_text.trim().is_empty() {
+        format!("SELECT COUNT(*) AS row_count FROM {table}")
+    } else {
+        format!("SELECT COUNT(*) AS row_count FROM {table} WHERE {where_text}")
+    };
+    let rows = conn.query_once(&sql, &[]).map_err(HostError::Lib)?;
+    let count = rows
+        .first()
+        .and_then(|row| row.columns.first())
+        .map(|(_, value)| moqui_lib::object::to_plain_string(value))
+        .and_then(|text| text.parse::<f64>().ok())
+        .unwrap_or(0.0);
+    Ok(Ret::from(count))
 }
 
 /// `runSqlUpdateConf(sql, conf)`: run one statement outside a transaction (`CREATE DATABASE` cannot run inside one)
 /// and return the rows it changed.
-fn run_sql_update_conf<'js>(ctx: Ctx<'js>, sql: String, conf: JsValue<'js>) -> rquickjs::Result<f64> {
-    host_guard(&ctx, || {
-        let mut conn = conf_connection(&ctx, &conf)?;
-        let rows = conn.execute(&sql, &[]).map_err(|err| throw_lib(&ctx, &err))?;
-        #[allow(clippy::cast_precision_loss)]
-        Ok(rows as f64)
-    })
+fn run_sql_update_conf(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let sql = call.text_or_empty(0);
+    let conf = call.value_or_null(1);
+    let mut conn = conf_connection(&conf)?;
+    let rows = conn.execute(&sql, &[]).map_err(HostError::Lib)?;
+    #[allow(clippy::cast_precision_loss)]
+    Ok(Ret::from(rows as f64))
 }
 
 // ---- registry token command (init#InstanceDocker) ----
@@ -2264,10 +2432,9 @@ const TOKEN_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 
 /// `runTokenCommand(cmd)`: run a configured command, split on whitespace with no shell, and return the first line of
 /// its output, trimmed. A command that fails, or runs past the timeout, throws with its error output.
-fn run_token_command(ctx: Ctx<'_>, command: String) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        run_command_first_line(&command).map_err(|err| throw_lib(&ctx, &err))
-    })
+fn run_token_command(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let command = call.text_or_empty(0);
+    Ok(Ret::from(run_command_first_line(&command).map_err(HostError::Lib)?))
 }
 
 fn run_command_first_line(command: &str) -> Result<String, moqui_lib::error::Error> {
@@ -2337,217 +2504,195 @@ fn run_command_first_line(command: &str) -> Result<String, moqui_lib::error::Err
 
 /// Send one request of `ec.service.rest()`: `{method, uri, headers: [[name, value]], body, timeoutSeconds,
 /// denyInternal}`. Returns `{statusCode, reasonPhrase, text}`. Denied in sim mode, as a `remote-rest` call is.
-fn rest_send<'js>(ctx: Ctx<'js>, request: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let Value::Map(request) = js_to_host(&ctx, &request)? else {
-            return Err(Exception::throw_message(&ctx, "rest request is not an object"));
-        };
-        let text = |name: &str| match request.get(name) {
-            Some(Value::Null) | None => None,
-            Some(value) => Some(moqui_lib::object::to_plain_string(value)),
-        };
-        let method_name = text("method").unwrap_or_else(|| "GET".to_string()).to_ascii_uppercase();
-        let method = crate::outbound::Method::parse(&method_name)
-            .ok_or_else(|| Exception::throw_message(&ctx, &format!("HTTP method {method_name} is not supported")))?;
-        let url = text("uri")
-            .filter(|url| !url.is_empty())
-            .ok_or_else(|| Exception::throw_message(&ctx, "no URI specified for REST call"))?;
-        let mut headers = Vec::new();
-        if let Some(Value::List(pairs)) = request.get("headers") {
-            for pair in pairs {
-                if let Value::List(pair) = pair {
-                    if let [name, value] = pair.as_slice() {
-                        headers.push((
-                            moqui_lib::object::to_plain_string(name),
-                            moqui_lib::object::to_plain_string(value),
-                        ));
-                    }
+fn rest_send(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let request = call.value_or_null(0);
+    let Value::Map(request) = request else {
+        return Err(HostError::message("rest request is not an object"));
+    };
+    let text = |name: &str| match request.get(name) {
+        Some(Value::Null) | None => None,
+        Some(value) => Some(moqui_lib::object::to_plain_string(value)),
+    };
+    let method_name = text("method").unwrap_or_else(|| "GET".to_string()).to_ascii_uppercase();
+    let method = crate::outbound::Method::parse(&method_name)
+        .ok_or_else(|| HostError::message(format!("HTTP method {method_name} is not supported")))?;
+    let url = text("uri")
+        .filter(|url| !url.is_empty())
+        .ok_or_else(|| HostError::message("no URI specified for REST call"))?;
+    let mut headers = Vec::new();
+    if let Some(Value::List(pairs)) = request.get("headers") {
+        for pair in pairs {
+            if let Value::List(pair) = pair {
+                if let [name, value] = pair.as_slice() {
+                    headers.push((
+                        moqui_lib::object::to_plain_string(name),
+                        moqui_lib::object::to_plain_string(value),
+                    ));
                 }
             }
         }
-        let timeout = request
-            .get("timeoutSeconds")
-            .and_then(|value| moqui_lib::object::to_plain_string(value).parse::<f64>().ok())
-            .filter(|seconds| *seconds > 0.0)
-            .map(std::time::Duration::from_secs_f64);
-        let sim = with_ec(&ctx, |ec| ec.factory().entity())?.is_some_and(|facade| facade.sim_active());
-        if sim {
-            return Err(Exception::throw_message(
-                &ctx,
-                &format!(
-                    "HTTP {method} {} denied because sim mode is active",
-                    crate::outbound::redacted(&url)
-                ),
-            ));
-        }
-        if let Err(refused) = crate::entity::fence::check_effect(
-            crate::entity::fence::Effect::RemoteCall,
-            &format!("HTTP {method} {}", crate::outbound::redacted(&url)),
-        ) {
-            return Err(Exception::throw_message(&ctx, refused.message()));
-        }
-        let response = crate::outbound::send(crate::outbound::Request {
-            method,
-            url: url.clone(),
-            headers,
-            body: text("body").filter(|body| !body.is_empty()),
-            timeout,
-            deny_internal: matches!(request.get("denyInternal"), Some(Value::Bool(true))),
-        })
-        .map_err(|err| {
-            Exception::throw_message(
-                &ctx,
-                &format!(
-                    "Error calling HTTP request to {}: {}",
-                    crate::outbound::redacted(&url),
-                    err.message()
-                ),
-            )
-        })?;
-        let mut map = indexmap::IndexMap::new();
-        map.insert("statusCode".to_string(), Value::I64(i64::from(response.status)));
-        map.insert(
-            "reasonPhrase".to_string(),
-            Value::string(crate::outbound::reason_phrase(response.status)),
-        );
-        // A sender that kept no bytes sent text: the text is the bytes.
-        let bytes = if response.bytes.is_empty() {
-            response.body.as_bytes().to_vec()
-        } else {
-            response.bytes
-        };
-        map.insert("text".to_string(), Value::string(response.body));
-        map.insert("bytes".to_string(), Value::Bytes(bytes));
-        map.insert(
-            "headers".to_string(),
-            Value::List(
-                response
-                    .headers
-                    .iter()
-                    .map(|(name, value)| Value::List(vec![Value::string(name), Value::string(value)]))
-                    .collect(),
-            ),
-        );
-        host_to_js(&ctx, Value::Map(map))
+    }
+    let timeout = request
+        .get("timeoutSeconds")
+        .and_then(|value| moqui_lib::object::to_plain_string(value).parse::<f64>().ok())
+        .filter(|seconds| *seconds > 0.0)
+        .map(std::time::Duration::from_secs_f64);
+    let sim = with_ec(|ec| ec.factory().entity())?.is_some_and(|facade| facade.sim_active());
+    if sim {
+        return Err(HostError::message(format!(
+            "HTTP {method} {} denied because sim mode is active",
+            crate::outbound::redacted(&url)
+        )));
+    }
+    if let Err(refused) = crate::entity::fence::check_effect(
+        crate::entity::fence::Effect::RemoteCall,
+        &format!("HTTP {method} {}", crate::outbound::redacted(&url)),
+    ) {
+        return Err(HostError::message(refused.message()));
+    }
+    let response = crate::outbound::send(crate::outbound::Request {
+        method,
+        url: url.clone(),
+        headers,
+        body: text("body").filter(|body| !body.is_empty()),
+        timeout,
+        deny_internal: matches!(request.get("denyInternal"), Some(Value::Bool(true))),
     })
+    .map_err(|err| {
+        HostError::message(format!(
+            "Error calling HTTP request to {}: {}",
+            crate::outbound::redacted(&url),
+            err.message()
+        ))
+    })?;
+    let mut map = indexmap::IndexMap::new();
+    map.insert("statusCode".to_string(), Value::I64(i64::from(response.status)));
+    map.insert(
+        "reasonPhrase".to_string(),
+        Value::string(crate::outbound::reason_phrase(response.status)),
+    );
+    // A sender that kept no bytes sent text: the text is the bytes.
+    let bytes = if response.bytes.is_empty() {
+        response.body.as_bytes().to_vec()
+    } else {
+        response.bytes
+    };
+    map.insert("text".to_string(), Value::string(response.body));
+    map.insert("bytes".to_string(), Value::Bytes(bytes));
+    map.insert(
+        "headers".to_string(),
+        Value::List(
+            response
+                .headers
+                .iter()
+                .map(|(name, value)| Value::List(vec![Value::string(name), Value::string(value)]))
+                .collect(),
+        ),
+    );
+    Ok(Ret::Value(Value::Map(map)))
 }
 
 /// The XML of the form named after `#` in a screen location: `component://.../Screen.xml#FormName`.
-fn form_xml(ctx: Ctx<'_>, location: String) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        let (screen, form) = location.split_once('#').unwrap_or((location.as_str(), ""));
-        let factory = factory_of(&ctx)?;
-        let screens = crate::screen::ScreenFacade::of(&factory);
-        let def = screens
-            .screen_def(&factory, screen)
-            .map_err(|err| Exception::throw_message(&ctx, err.message()))?;
-        let found = crate::screen::form::assemble(&screens, &factory, &def, form)
-            .map_err(|err| Exception::throw_message(&ctx, err.message()))?;
-        // The assembled form's XML as it was written, not parsed and written again.
-        Ok(found.xml.to_string())
-    })
+fn form_xml(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let (screen, form) = location.split_once('#').unwrap_or((location.as_str(), ""));
+    let factory = factory()?;
+    let screens = crate::screen::ScreenFacade::of(&factory);
+    let def = screens
+        .screen_def(&factory, screen)
+        .map_err(|err| HostError::message(err.message()))?;
+    let found = crate::screen::form::assemble(&screens, &factory, &def, form)
+        .map_err(|err| HostError::message(err.message()))?;
+    // The assembled form's XML as it was written, not parsed and written again.
+    Ok(Ret::from(found.xml.to_string()))
 }
 
 /// The XML of the form a `DbForm` makes as of a date (null for now), with its drafts when asked.
-fn db_form_xml(ctx: Ctx<'_>, form_id: String, as_of: JsValue<'_>, drafts: bool) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        let date = if as_of.is_null() || as_of.is_undefined() {
-            None
-        } else {
-            Some(js_to_host(&ctx, &as_of)?)
-        };
-        let as_of = crate::screen::db_form::AsOf::of(date.as_ref(), Some(&Value::Bool(drafts)));
-        crate::screen::db_form::db_form_xml(&form_id, as_of)
-            .map_err(|err| Exception::throw_message(&ctx, err.message()))
-    })
+fn db_form_xml(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let form_id = call.text_or_empty(0);
+    let as_of = call.value_or_null(1);
+    let drafts = call.bool(2).unwrap_or_default();
+    let date = if as_of.is_null() { None } else { Some(as_of) };
+    let as_of = crate::screen::db_form::AsOf::of(date.as_ref(), Some(&Value::Bool(drafts)));
+    Ok(Ret::from(
+        crate::screen::db_form::db_form_xml(&form_id, as_of).map_err(|err| HostError::message(err.message()))?,
+    ))
 }
 
 /// `ScheduledJobRunner.isLastRunBeforeLastSchedule`: no last run, or the last run is before the latest time the cron
 /// expression came due.
-fn is_last_run_before_last_schedule(
-    ctx: Ctx<'_>,
-    cron: String,
-    last_run: Opt<JsValue<'_>>,
-    _description: Opt<JsValue<'_>>,
-    now: Opt<JsValue<'_>>,
-) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || {
-        // Java's `(cron, lastRun, description, nowTimestamp)`: the last two are optional here
-        let millis = |value: Option<&JsValue<'_>>| -> rquickjs::Result<Option<i64>> {
-            match value.filter(|value| !value.is_null() && !value.is_undefined()) {
-                Some(value) => Ok(
-                    match crate::l10n::basic_convert(&js_to_host(&ctx, value)?, "java.sql.Timestamp").value {
-                        Value::Timestamp(stamp) => Some(stamp.as_millisecond()),
-                        _ => None,
-                    },
-                ),
-                None => Ok(None),
-            }
-        };
+fn is_last_run_before_last_schedule(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let cron = call.text_or_empty(0);
+    let last_run = call.value(1).cloned();
+    let now = call.value(3).cloned();
+    // Java's `(cron, lastRun, description, nowTimestamp)`: the last two are optional here
+    Ok(Ret::from(
         crate::service::info::is_last_run_before_last_schedule(
             &cron,
-            millis(last_run.0.as_ref())?,
-            millis(now.0.as_ref())?,
+            millis_of(last_run.as_ref()),
+            millis_of(now.as_ref()),
         )
-        .map_err(|err| Exception::throw_message(&ctx, err.message()))
-    })
+        .map_err(|err| HostError::message(err.message()))?,
+    ))
 }
 
 /// `ec.service.getCronDescription(cron)`.
-fn cron_description(ctx: Ctx<'_>, cron: String) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        crate::service::info::cron_description(&cron).map_err(|err| Exception::throw_message(&ctx, err.message()))
-    })
+fn cron_description(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let cron = call.text_or_empty(0);
+    Ok(Ret::from(
+        crate::service::info::cron_description(&cron).map_err(|err| HostError::message(err.message()))?,
+    ))
 }
 
 /// `ec.service.nextCronExecution(cron, after)`: epoch millis of the next time the Quartz cron expression is due after
 /// the moment (epoch millis, a timestamp, or null for now), or null when it never is.
-fn next_cron_execution<'js>(ctx: Ctx<'js>, cron: String, after: Opt<JsValue<'js>>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let after = match after
-            .0
-            .as_ref()
-            .filter(|value| !value.is_null() && !value.is_undefined())
-        {
-            Some(value) => match crate::l10n::basic_convert(&js_to_host(&ctx, value)?, "java.sql.Timestamp").value {
-                Value::Timestamp(stamp) => stamp.as_millisecond(),
-                _ => {
-                    return Err(Exception::throw_message(
-                        &ctx,
-                        "nextCronExecution needs a moment to start after",
-                    ))
-                }
-            },
-            None => jiff::Timestamp::now().as_millisecond(),
-        };
-        match crate::service::info::next_cron_execution(&cron, after)
-            .map_err(|err| Exception::throw_message(&ctx, err.message()))?
-        {
-            Some(millis) => i64_to_js(&ctx, millis),
-            None => Null.into_js(&ctx),
-        }
-    })
+fn next_cron_execution(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let cron = call.text_or_empty(0);
+    let after = call.value(1).cloned();
+    let after = match after.as_ref().filter(|value| !value.is_null()) {
+        Some(value) => match crate::l10n::basic_convert(value, "java.sql.Timestamp").value {
+            Value::Timestamp(stamp) => stamp.as_millisecond(),
+            _ => return Err(HostError::message("nextCronExecution needs a moment to start after")),
+        },
+        None => jiff::Timestamp::now().as_millisecond(),
+    };
+    match crate::service::info::next_cron_execution(&cron, after).map_err(|err| HostError::message(err.message()))? {
+        Some(millis) => Ok(Ret::Value(Value::I64(millis))),
+        None => Ok(Ret::Value(Value::Null)),
+    }
 }
 
 /// `ec.artifactExecution.disableEntityEca()`: entity ECA rules do not run for this execution context's writes until
 /// `enableEntityEca()`. Returns whether they were already disabled.
-fn disable_entity_eca(ctx: Ctx<'_>) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || with_ec(&ctx, ExecutionContext::disable_entity_eca))
+fn disable_entity_eca(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(with_ec(
+        crate::context::ExecutionContext::disable_entity_eca,
+    )?))
 }
 
-fn enable_entity_eca(ctx: Ctx<'_>) -> rquickjs::Result<()> {
-    host_guard(&ctx, || with_ec(&ctx, ExecutionContext::enable_entity_eca))
+fn enable_entity_eca(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(with_ec(crate::context::ExecutionContext::enable_entity_eca)?))
 }
 
-/// `ec.artifactExecution.runAsUser(location, body)`: authorization required again for the rest of `body` (a ServiceJob
+thread_local! {
+    /// What [`run_as_user_enter`] set aside, innermost last, for [`run_as_user_exit`] to put back: the script's own
+    /// disableAuthz state and the requirement of authorization.
+    static RUN_AS_USER: std::cell::RefCell<Vec<(Option<crate::context::AuthzGuard>, crate::context::AuthzRequired)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The first half of `ec.artifactExecution.runAsUser(location, body)`, which the shim calls before `body()` and
+/// [`run_as_user_exit`] after it, in a `finally`: authorization required again for the rest of `body` (a ServiceJob
 /// or an async call runs with it off), and the screen `location` checked for all actions as the current user and pushed,
 /// so what `body` calls is authorized as from that screen. A user the screen does not authorize is refused, and `body`
 /// does not run. The script's own disableAuthz state is set aside while `body` runs and put back after, whatever `body`
-/// did with `disableAuthz` and `enableAuthz`, so nothing outside the call changes.
-fn run_as_user<'js>(ctx: Ctx<'js>, location: String, body: Function<'js>) -> rquickjs::Result<JsValue<'js>> {
-    let outer_script_authz = with_ec(&ctx, ExecutionContext::take_script_authz)?;
-    let required = with_ec(&ctx, ExecutionContext::require_authz)?;
-    let pushed = with_ec(&ctx, |ec| {
+/// did with `disableAuthz` and `enableAuthz`, so nothing outside the call changes. `body` is an argument so that one
+/// that is not a function is refused before anything changes.
+fn run_as_user_enter(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let outer_script_authz = with_ec(crate::context::ExecutionContext::take_script_authz)?;
+    let required = with_ec(crate::context::ExecutionContext::require_authz)?;
+    let pushed = with_ec(|ec| {
         ec.push_checked(
             "AT_XML_SCREEN",
             &location,
@@ -2557,432 +2702,357 @@ fn run_as_user<'js>(ctx: Ctx<'js>, location: String, body: Function<'js>) -> rqu
             None,
         )
     });
-    // the guards go in the reverse of their making: what body left of the script's state, then the requirement, and then
-    // the caller's own state comes back
-    let restore = |required| {
-        ExecutionContext::with_current(|ec| drop(ec.take_script_authz()));
-        drop(required);
-        ExecutionContext::with_current(|ec| ec.put_script_authz(outer_script_authz));
+    let refused = match pushed {
+        Ok(Ok(())) => {
+            RUN_AS_USER.with(|held| held.borrow_mut().push((outer_script_authz, required)));
+            return Ok(Ret::Undefined);
+        }
+        Ok(Err(err)) => HostError::message(err.message()),
+        Err(err) => err,
     };
-    match pushed {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => {
-            restore(required);
-            return Err(Exception::throw_message(&ctx, err.message()));
-        }
-        Err(err) => {
-            restore(required);
-            return Err(err);
-        }
+    restore_run_as_user(outer_script_authz, required);
+    Err(refused)
+}
+
+/// The second half of `runAsUser`: the frame popped whatever `body` did, and what [`run_as_user_enter`] set aside put
+/// back.
+fn run_as_user_exit(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let location = call.text_or_empty(0);
+    let popped = crate::context::ExecutionContext::with_current(crate::context::ExecutionContext::pop);
+    if let Some((outer_script_authz, required)) = RUN_AS_USER.with(|held| held.borrow_mut().pop()) {
+        restore_run_as_user(outer_script_authz, required);
     }
-    let result = body.call::<_, JsValue<'js>>(());
-    // the frame is popped whatever body did
-    let popped = ExecutionContext::with_current(ExecutionContext::pop);
-    restore(required);
     match popped {
         Some(Err(err)) => tracing::warn!("Pop after runAsUser of {location}: {}", err.message()),
         None => tracing::warn!("No execution context to pop after runAsUser of {location}"),
         Some(Ok(())) => {}
     }
-    result
+    Ok(Ret::Undefined)
+}
+
+/// The guards go in the reverse of their making: what body left of the script's state, then the requirement, and then
+/// the caller's own state comes back.
+fn restore_run_as_user(
+    outer_script_authz: Option<crate::context::AuthzGuard>,
+    required: crate::context::AuthzRequired,
+) {
+    crate::context::ExecutionContext::with_current(|ec| drop(ec.take_script_authz()));
+    drop(required);
+    crate::context::ExecutionContext::with_current(|ec| ec.put_script_authz(outer_script_authz));
 }
 
 /// `ec.artifactExecution.runAsSystem(body)`: `body()` with no user and authorization off, in a fresh execution context
 /// that shares the caller's transaction ([`crate::user::as_system`]); the caller's user, authorization and artifact
 /// stack come back when `body` returns or throws. Only a service's own code may call it
 /// ([`crate::user::system_scope_allowed`]): a screen's widget expressions, actions and transitions, a REST resource and
-/// a web script are refused (docs/security/Attack-Surface.md, Commerce F72).
-fn run_as_system<'js>(ctx: Ctx<'js>, body: Function<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        crate::user::system_scope_allowed().map_err(|err| Exception::throw_message(&ctx, err.message()))
-    })?;
-    match crate::user::as_system(|| body.call::<_, JsValue<'js>>(())) {
-        Ok(result) => result,
-        Err(err) => Err(Exception::throw_message(&ctx, err.message())),
+/// a web script are refused (docs/security/Attack-Surface.md, Commerce F72). The shim passes `body` (refused when it is
+/// not a function) and a function that calls it and keeps its result, so the result is the script's own value.
+fn run_as_system(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    crate::user::system_scope_allowed().map_err(|err| HostError::message(err.message()))?;
+    match crate::user::as_system(|| call.ops.call_back(1, Vec::new())) {
+        Ok(result) => result.map(|_| Ret::Undefined),
+        Err(err) => Err(HostError::message(err.message())),
     }
 }
 
 /// `ec.artifactExecution.disableAuthz()`: authorization is not checked for this execution context until
 /// `enableAuthz()`. Returns whether it was already disabled, as Java.
-fn disable_authz(ctx: Ctx<'_>) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || with_ec(&ctx, ExecutionContext::script_disable_authz))
+fn disable_authz(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(with_ec(
+        crate::context::ExecutionContext::script_disable_authz,
+    )?))
 }
 
-fn enable_authz(ctx: Ctx<'_>) -> rquickjs::Result<()> {
-    host_guard(&ctx, || with_ec(&ctx, ExecutionContext::script_enable_authz))
+fn enable_authz(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(with_ec(
+        crate::context::ExecutionContext::script_enable_authz,
+    )?))
 }
 
 /// `ec.artifactExecution.disableTarpit()`: no hit of this execution context is counted against a tarpit until
 /// `enableTarpit()`. Returns whether it was already disabled, as Java.
-fn disable_tarpit(ctx: Ctx<'_>) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || with_ec(&ctx, ExecutionContext::disable_tarpit))
+fn disable_tarpit(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(with_ec(crate::context::ExecutionContext::disable_tarpit)?))
 }
 
-fn enable_tarpit(ctx: Ctx<'_>) -> rquickjs::Result<()> {
-    host_guard(&ctx, || with_ec(&ctx, ExecutionContext::enable_tarpit))
+fn enable_tarpit(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(with_ec(crate::context::ExecutionContext::enable_tarpit)?))
 }
 
 /// `ec.artifactExecution.authzDisabled()`: whether authorization is disabled for this execution context now, by a
 /// script or by Rust code (a call with `disableAuthz()`, a job), without changing it.
-fn authz_disabled(ctx: Ctx<'_>) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || with_ec(&ctx, ExecutionContext::authz_disabled))
+fn authz_disabled(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(with_ec(crate::context::ExecutionContext::authz_disabled)?))
 }
 
-fn shared_get<'js>(ctx: Ctx<'js>, key: String) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let found = with_ec(&ctx, |ec| ec.shared_map().get(&key).cloned())?;
-        match found {
-            Some(value) => host_to_js(&ctx, value),
-            None => Undefined.into_js(&ctx),
-        }
-    })
+fn shared_get(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let key = call.text_or_empty(0);
+    let found = with_ec(|ec| ec.shared_map().get(&key).cloned())?;
+    match found {
+        Some(value) => Ok(Ret::Value(value)),
+        None => Ok(Ret::Undefined),
+    }
 }
 
-fn shared_set<'js>(ctx: Ctx<'js>, key: String, value: JsValue<'js>) -> rquickjs::Result<()> {
-    host_guard(&ctx, || {
-        let host = js_to_host(&ctx, &value)?;
-        with_ec(&ctx, |ec| {
-            ec.shared_map().insert(key, host);
-        })
-    })
+fn shared_set(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let key = call.text_or_empty(0);
+    let value = call.value_or_null(1);
+    let host = value;
+    Ok(Ret::from(with_ec(|ec| {
+        ec.shared_map().insert(key, host);
+    })?))
 }
 
-fn shared_delete(ctx: Ctx<'_>, key: String) -> rquickjs::Result<()> {
-    host_guard(&ctx, || {
-        with_ec(&ctx, |ec| {
-            ec.shared_map().shift_remove(&key);
-        })
-    })
+fn shared_delete(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let key = call.text_or_empty(0);
+    Ok(Ret::from(with_ec(|ec| {
+        ec.shared_map().shift_remove(&key);
+    })?))
 }
 
-fn shared_has(ctx: Ctx<'_>, key: String) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || with_ec(&ctx, |ec| ec.shared_map().contains_key(&key)))
+fn shared_has(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let key = call.text_or_empty(0);
+    Ok(Ret::from(with_ec(|ec| ec.shared_map().contains_key(&key))?))
 }
 
-fn shared_keys(ctx: Ctx<'_>) -> rquickjs::Result<Vec<String>> {
-    host_guard(&ctx, || with_ec(&ctx, |ec| ec.shared_map().keys().cloned().collect()))
+fn shared_keys(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(with_ec(|ec| {
+        ec.shared_map().keys().cloned().collect::<Vec<String>>()
+    })?))
 }
 
-fn register_service_on_end<'js>(
-    ctx: Ctx<'js>,
-    name: String,
-    parameters: JsValue<'js>,
-    on_commit: bool,
-) -> rquickjs::Result<()> {
-    host_guard(&ctx, || {
-        let parameters = match js_to_host(&ctx, &parameters)? {
-            Value::Map(map) => map.into_iter().collect(),
-            _ => std::collections::BTreeMap::new(),
-        };
+fn register_service_on_end(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.text_or_empty(0);
+    let parameters = call.value_or_null(1);
+    let on_commit = call.bool(2).unwrap_or_default();
+    let parameters = match parameters {
+        Value::Map(map) => map.into_iter().collect(),
+        _ => std::collections::BTreeMap::new(),
+    };
+    Ok(Ret::from(
         crate::service::call::register_on_end(&name, &parameters, on_commit)
-            .map_err(|err| throw_lib(&ctx, &moqui_lib::error::Error::new(err.message())))
-    })
+            .map_err(|err| HostError::Lib(moqui_lib::error::Error::new(err.message())))?,
+    ))
 }
 
-fn stack_name_string(ctx: Ctx<'_>) -> rquickjs::Result<String> {
-    host_guard(&ctx, || with_ec(&ctx, ExecutionContext::artifact_stack_names))
+fn stack_name_string(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(with_ec(
+        crate::context::ExecutionContext::artifact_stack_names,
+    )?))
 }
 
-fn entity_eca_disabled(ctx: Ctx<'_>) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || with_ec(&ctx, ExecutionContext::entity_eca_disabled))
+fn entity_eca_disabled(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(Ret::from(with_ec(
+        crate::context::ExecutionContext::entity_eca_disabled,
+    )?))
 }
 
 /// Whether the user may do `action` on the artifact, checked as a push would check it, without pushing it.
-fn is_permitted(ctx: Ctx<'_>, name: String, artifact_type: Opt<String>, action: Opt<String>) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || {
-        let artifact_type = artifact_type.0.unwrap_or_else(|| "AT_XML_SCREEN".to_string());
-        let action = action.0.unwrap_or_else(|| "view".to_string());
-        Ok(crate::user::authorize(&artifact_type, &name, &action).is_ok())
-    })
+fn is_permitted(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.text_or_empty(0);
+    let artifact_type = call.text(1).map(str::to_string);
+    let action = call.text(2).map(str::to_string);
+    let artifact_type = artifact_type.unwrap_or_else(|| "AT_XML_SCREEN".to_string());
+    let action = action.unwrap_or_else(|| "view".to_string());
+    Ok(Ret::from(
+        crate::user::authorize(&artifact_type, &name, &action).is_ok(),
+    ))
 }
 
 /// `getFindFiltersForUser(entityName)`: the `EntityFilter` records that apply to a find on the entity now, or null
 /// when none do, as Java returns (an empty list would be true in a script condition).
-fn get_find_filters_for_user<'js>(ctx: Ctx<'js>, entity_name: String) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let filters = crate::user::find_filters_for_user(&entity_name)
-            .map_err(|err| Exception::throw_message(&ctx, err.message()))?;
-        if filters.is_empty() {
-            return Ok(JsValue::new_null(ctx.clone()));
-        }
-        let rows = filters
-            .iter()
-            .map(|filter| {
-                filter
-                    .fields()
-                    .iter()
-                    .map(|(name, value)| (name.to_string(), value.clone()))
-                    .collect()
-            })
-            .collect();
-        js_list(&ctx, rows)
-    })
+fn get_find_filters_for_user(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let entity_name = call.text_or_empty(0);
+    let filters = crate::user::find_filters_for_user(&entity_name).map_err(|err| HostError::message(err.message()))?;
+    if filters.is_empty() {
+        return Ok(Ret::Value(Value::Null));
+    }
+    let rows = filters
+        .iter()
+        .map(|filter| {
+            filter
+                .fields()
+                .iter()
+                .map(|(name, value)| (name.to_string(), value.clone()))
+                .collect()
+        })
+        .collect();
+    Ok(list(rows))
 }
 
-fn resolve_rest_service<'js>(ctx: Ctx<'js>, path: String, method: String) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let value = crate::service::resolve_rest_service(&path, &method).map_err(|err| throw_context(&ctx, &err))?;
-        host_to_js(&ctx, value)
-    })
+fn resolve_rest_service(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let path = call.text_or_empty(0);
+    let method = call.text_or_empty(1);
+    let value = crate::service::resolve_rest_service(&path, &method).map_err(HostError::Context)?;
+    Ok(Ret::Value(value))
 }
 
-fn transition_info<'js>(
-    ctx: Ctx<'js>,
-    root: String,
-    location: String,
-    name: String,
-    method: String,
-) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let factory = factory_of(&ctx)?;
-        let value = crate::screen::info::transition_info(&factory, &root, &location, &name, &method)
-            .map_err(|err| throw_context(&ctx, &err))?;
-        host_to_js(&ctx, value)
-    })
+fn transition_info(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let root = call.text_or_empty(0);
+    let location = call.text_or_empty(1);
+    let name = call.text_or_empty(2);
+    let method = call.text_or_empty(3);
+    let factory = factory()?;
+    let value =
+        crate::screen::info::transition_info(&factory, &root, &location, &name, &method).map_err(HostError::Context)?;
+    Ok(Ret::Value(value))
 }
 
-fn values_from_plain_map<'js>(
-    ctx: Ctx<'js>,
-    map: JsValue<'js>,
-    entity: String,
-) -> rquickjs::Result<Class<'js, HostList>> {
-    host_guard(&ctx, || {
-        let Value::Map(map) = js_to_host(&ctx, &map)? else {
-            return Err(Exception::throw_message(&ctx, "Entity graph must be a map"));
-        };
-        let values = crate::entity::query_rest::values_from_plain_map(&facade_of(&ctx)?, &map, &entity)
-            .map_err(|err| throw_lib(&ctx, &err))?;
-        Class::instance(ctx.clone(), HostList::of_list(crate::entity::EntityList::new(values)))
-    })
+fn values_from_plain_map(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let map = call.value_or_null(0);
+    let entity = call.text_or_empty(1);
+    let Value::Map(map) = map else {
+        return Err(HostError::message("Entity graph must be a map"));
+    };
+    let values =
+        crate::entity::query_rest::values_from_plain_map(&entity_facade()?, &map, &entity).map_err(HostError::Lib)?;
+    Ok(Ret::Value(Value::Object(HostObject::new(
+        crate::entity::EntityList::new(values),
+    ))))
 }
 
-fn rest_root_resources<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let roots =
-            crate::service::root_resource_infos().map_err(|err| Exception::throw_message(&ctx, err.message()))?;
-        host_to_js(&ctx, Value::List(roots))
-    })
+fn rest_root_resources(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let roots = crate::service::root_resource_infos().map_err(|err| HostError::message(err.message()))?;
+    Ok(Ret::Value(Value::List(roots)))
 }
 
 /// `getAllEntityNamesWithMaster`: the entities that have a master definition, sorted.
-fn get_all_entity_names_with_master<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let facade = facade_of(&ctx)?;
-        let mut names: Vec<String> = facade.with_model(|model| {
-            model
-                .entities()
-                .iter()
-                .filter(|entity| !entity.masters.is_empty())
-                .map(|entity| entity.full_name.clone())
-                .collect()
-        });
-        names.sort();
-        js_texts(&ctx, names)
-    })
+fn get_all_entity_names_with_master(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let facade = entity_facade()?;
+    let mut names: Vec<String> = facade.with_model(|model| {
+        model
+            .entities()
+            .iter()
+            .filter(|entity| !entity.masters.is_empty())
+            .map(|entity| entity.full_name.clone())
+            .collect()
+    });
+    names.sort();
+    Ok(texts(names))
 }
 
-fn period_range<'js>(ctx: Ctx<'js>, period: String, offset: String, basis: String) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let (from, thru) = crate::user::period_range(&period, &offset, &basis)
-            .map_err(|err| Exception::throw_message(&ctx, err.message()))?;
-        host_to_js(&ctx, Value::List(vec![from, thru]))
-    })
+fn period_range(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let period = call.text_or_empty(0);
+    let offset = call.text_or_empty(1);
+    let basis = call.text_or_empty(2);
+    let (from, thru) =
+        crate::user::period_range(&period, &offset, &basis).map_err(|err| HostError::message(err.message()))?;
+    Ok(Ret::Value(Value::List(vec![from, thru])))
 }
 
 /// `ec.message.messageInfos`: the messages as `{message, typeString}`. The port keeps no type with a message.
-fn message_infos<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let messages = with_ec(&ctx, |ec| ec.message().messages().to_vec())?;
-        let rows = messages
-            .into_iter()
-            .map(|message| {
-                let mut row = indexmap::IndexMap::new();
-                row.insert("message".to_string(), Value::String(message));
-                row.insert("typeString".to_string(), Value::string("info"));
-                row
-            })
-            .collect();
-        js_list(&ctx, rows)
-    })
+fn message_infos(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let messages = with_ec(|ec| ec.message().messages().to_vec())?;
+    let rows = messages
+        .into_iter()
+        .map(|message| {
+            let mut row = indexmap::IndexMap::new();
+            row.insert("message".to_string(), Value::String(message));
+            row.insert("typeString".to_string(), Value::string("info"));
+            row
+        })
+        .collect();
+    Ok(list(rows))
 }
 
 /// `TimeZone.getAvailableIDs()`: the zone names of the time zone database, sorted.
-fn get_available_time_zones<'js>(ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let mut names: Vec<String> = jiff::tz::db().available().map(|name| name.to_string()).collect();
-        names.sort();
-        js_texts(&ctx, names)
-    })
+fn get_available_time_zones(_call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let mut names: Vec<String> = jiff::tz::db().available().map(|name| name.to_string()).collect();
+    names.sort();
+    Ok(texts(names))
 }
 
-fn is_restricted_generic_entity(ctx: Ctx<'_>, name: Opt<JsValue<'_>>) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || {
-        let name = text_or_empty(&ctx, name.0.as_ref())?;
-        // a view over a restricted entity is restricted too
-        Ok(match with_ec(&ctx, |ec| ec.factory().entity())? {
-            Some(facade) => crate::entity::sensitive::is_restricted_entity_or_view(&facade, &name),
-            None => crate::entity::sensitive::is_restricted_generic_entity(&name),
-        })
-    })
+fn is_restricted_generic_entity(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let name = call.value(0).cloned();
+    let name = text_of(name.as_ref());
+    // a view over a restricted entity is restricted too
+    Ok(Ret::from(match with_ec(|ec| ec.factory().entity())? {
+        Some(facade) => crate::entity::sensitive::is_restricted_entity_or_view(&facade, &name),
+        None => crate::entity::sensitive::is_restricted_generic_entity(&name),
+    }))
 }
 
-fn camel_case_to_pretty(ctx: Ctx<'_>, text: Opt<JsValue<'_>>) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        Ok(moqui_lib::string::camel_case_to_pretty(&text_or_empty(
-            &ctx,
-            text.0.as_ref(),
-        )?))
-    })
+fn camel_case_to_pretty(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    Ok(moqui_lib::string::camel_case_to_pretty(&text_of(call.value(0))).into())
 }
 
-fn pretty_to_camel_case(
-    ctx: Ctx<'_>,
-    text: Opt<JsValue<'_>>,
-    first_upper: Opt<JsValue<'_>>,
-) -> rquickjs::Result<String> {
-    host_guard(&ctx, || {
-        Ok(moqui_lib::string::pretty_to_camel_case(
-            &text_or_empty(&ctx, text.0.as_ref())?,
-            opt_flag(&first_upper),
-        ))
-    })
+fn pretty_to_camel_case(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let text = call.value(0).cloned();
+    let first_upper = call.value(1).cloned();
+    Ok(Ret::from(moqui_lib::string::pretty_to_camel_case(
+        &text_of(text.as_ref()),
+        flag_of(first_upper.as_ref()),
+    )))
 }
 
-/// Add the tools calls to `ec` and the helper objects. `ec` is a global by now.
-pub(super) fn install<'js>(
-    ctx: &Ctx<'js>,
-    string_utilities: &Object<'js>,
-    collection_utilities: &Object<'js>,
-    web_utilities: &Object<'js>,
-) -> Result<(), Error> {
-    let host = Object::new(ctx.clone()).map_err(js_error)?;
-    macro_rules! method {
-        ($name:literal, $function:expr) => {
-            let function = caught(ctx, $name, Function::new(ctx.clone(), $function))?;
-            caught(ctx, $name, host.set($name, function))?;
-        };
-    }
-    method!("cacheExists", cache_exists);
-    method!("clearAllCaches", clear_all_caches);
-    method!("getAllCachesInfo", get_all_caches_info);
-    method!("makeElementInfoList", make_element_info_list);
-    method!("isEntityDefined", is_entity_defined);
-    method!("clearEntityDefinitionFromCache", clear_entity_definition_from_cache);
-    method!("getAllEntityNames", get_all_entity_names);
-    method!("getAllEntitiesInfo", get_all_entities_info);
-    method!("getAllEntityInfo", get_all_entity_info);
-    method!("entityDefinitionInfo", entity_definition_info);
-    method!("prettyName", pretty_name);
-    method!("getDatasourceGroupNames", get_datasource_group_names);
-    method!("checkTables", check_tables);
-    method!("getEecaRuleCount", get_eeca_rule_count);
-    method!("getQueryStatsList", get_query_stats_list);
-    method!("clearQueryStats", clear_query_stats);
-    method!("eecaRuleTexts", eeca_rule_texts);
-    method!("runSqlStatement", run_sql_statement);
-    method!("writeData", write_data);
-    method!("loadData", load_data);
-    method!("writeDataDocuments", super::search::write_data_documents);
-    method!("registerServiceOnEnd", register_service_on_end);
-    method!("getKnownServiceNames", get_known_service_names);
-    method!("getAllServiceInfo", get_all_service_info);
-    method!("getSecaRuleCount", get_seca_rule_count);
-    method!("secaRuleTexts", seca_rule_texts);
-    method!("serviceDefinitionInfo", service_definition_info);
-    method!("convertValidateCleanParameters", convert_validate_clean_parameters);
-    method!("parseNode", parse_node);
-    method!("jobRunnerInfo", job_runner_info);
-    method!("workerPoolInfo", worker_pool_info);
-    method!("getAllRootScreenLocations", get_all_root_screen_locations);
-    method!("getScreenInfoList", get_screen_info_list);
-    method!("getStatusMap", get_status_map);
-    method!("getComponentInfoList", get_component_info_list);
-    method!("getRuntimePath", get_runtime_path);
-    method!("getInstanceId", get_instance_id);
-    method!("runAsUser", run_as_user);
-    method!("runAsSystem", run_as_system);
-    method!("getThreadList", get_thread_list);
-    method!("waitWorkerPoolEmpty", wait_worker_pool_empty);
-    method!("getRequestDetails", get_request_details);
-    method!("secureRequestParameters", secure_request_parameters);
-    method!("camelCaseToPretty", camel_case_to_pretty);
-    method!("isRestrictedGenericEntity", is_restricted_generic_entity);
-    method!("getAvailableTimeZones", get_available_time_zones);
-    method!("resourceInfo", resource_info);
-    method!("resourceStat", resource_stat);
-    method!("resourceVersionStream", resource_version_stream);
-    method!("restRootResources", rest_root_resources);
-    method!("resolveRestService", resolve_rest_service);
-    method!("transitionInfo", transition_info);
-    method!("valuesFromPlainMap", values_from_plain_map);
-    method!("isPermitted", is_permitted);
-    method!("disableEntityEca", disable_entity_eca);
-    method!("enableEntityEca", enable_entity_eca);
-    method!("disableAuthz", disable_authz);
-    method!("enableAuthz", enable_authz);
-    method!("authzDisabled", authz_disabled);
-    method!("disableTarpit", disable_tarpit);
-    method!("enableTarpit", enable_tarpit);
-    method!("entityEcaDisabled", entity_eca_disabled);
-    method!("stackNameString", stack_name_string);
-    method!("sharedGet", shared_get);
-    method!("sharedSet", shared_set);
-    method!("sharedDelete", shared_delete);
-    method!("sharedHas", shared_has);
-    method!("sharedKeys", shared_keys);
-    method!("getFindFiltersForUser", get_find_filters_for_user);
-    method!("getAllEntityNamesWithMaster", get_all_entity_names_with_master);
-    method!("periodRange", period_range);
-    method!("messageInfos", message_infos);
-    method!("resourceText", resource_text);
-    method!("resourceTextIn", resource_text_in);
-    method!("resourcePutText", resource_put_text);
-    method!("resourceStream", resource_stream);
-    method!("isTextFilename", is_text_filename);
-    method!("resourcePutBytes", resource_put_bytes);
-    method!("resourceDelete", resource_delete);
-    method!("resourceEntries", resource_entries);
-    method!("resourceMove", resource_move);
-    method!("resourceCopy", resource_copy);
-    method!("resourceSupportsVersion", resource_supports_version);
-    method!("resourceVersion", resource_version);
-    method!("resourceVersionHistory", resource_version_history);
-    method!("resourceNextVersions", resource_next_versions);
-    method!("resourceVersionText", resource_version_text);
-    method!("resourceVersionDiff", resource_version_diff);
-    method!("textDiff", text_diff);
-    method!("markdownHtml", markdown_html);
-    method!("restSend", rest_send);
-    super::web_host::methods(ctx, &host)?;
-    super::archive_host::methods(ctx, &host)?;
-    super::pass_host::methods(ctx, &host)?;
-    method!("runTokenCommand", run_token_command);
-    method!("testConfConnection", test_conf_connection);
-    method!("runSqlCountConf", run_sql_count_conf);
-    method!("runSqlUpdateConf", run_sql_update_conf);
-    method!("formXml", form_xml);
-    method!("dbFormXml", db_form_xml);
-    method!("isLastRunBeforeLastSchedule", is_last_run_before_last_schedule);
-    method!("nextCronExecution", next_cron_execution);
-    method!("cronDescription", cron_description);
-    method!("prettyToCamelCase", pretty_to_camel_case);
-    let define: Function = eval_js(ctx, TOOLS_JS)?;
-    let ec: Object = caught(ctx, "ec", ctx.globals().get("ec"))?;
-    caught(
-        ctx,
-        "tools",
-        define.call::<_, ()>((
-            ec,
-            collection_utilities.clone(),
-            string_utilities.clone(),
-            web_utilities.clone(),
-            host.clone(),
-        )),
-    )?;
-    // the servlet API's request and response for web scripts, ec.web.request and ec.web.response (web_host.rs)
-    super::web_host::install(ctx, &host)?;
-    // a PASS frontend's calls to its authority over gRPC, ec.service.passAuthority (pass_host.rs)
-    super::pass_host::install(ctx, &host)?;
-    // change sets, version notes and the rest of what drives use (files_host.rs)
-    super::files_host::install(ctx)
+/// The host side of `ec.entity.getEntityDataDocument()`'s writers: `mode` `text` gives `{text, count}` for
+/// `writeDocumentsToWriter`, `file` and `dir` write under `path` (`writeDocumentsToFile`, `writeDocumentsToDirectory`)
+/// and give `{count}`. After the condition come `fromUpdateStamp`, `thruUpdateStamp` and `prettyPrint`.
+fn write_data_documents(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    use moqui_db::sql::Condition;
+    let mode = call.text_or_empty(0);
+    let path = call.text_or_empty(1);
+    let ids = call.texts(2).unwrap_or_default().to_vec();
+    let pretty = matches!(call.value(6), Some(Value::Bool(true)));
+    let facade = entity_facade()?;
+    let condition = match call.value_or_null(3) {
+        Value::Null => None,
+        Value::Object(object) if object.downcast::<Condition>().is_some() => object
+            .downcast::<Condition>()
+            .map(|condition| Condition::clone(&condition)),
+        // a map of alias to value: an AND of equalities
+        Value::Map(map) => {
+            let mut equals: Vec<Condition> = map
+                .into_iter()
+                .map(|(field, value)| Condition::equals(field.as_str(), value))
+                .collect();
+            match equals.len() {
+                0 => None,
+                1 => equals.pop(),
+                _ => Some(Condition::and(equals)),
+            }
+        }
+        _ => return Err(HostError::message("the document writers take a condition or a map")),
+    };
+    let stamp = |value: Option<&Value>| value.filter(|value| !value.is_null()).and_then(timestamp_at);
+    let (from, thru) = (stamp(call.value(4)), stamp(call.value(5)));
+    let mut out = indexmap::IndexMap::new();
+    let count = match mode.as_str() {
+        "text" => {
+            let (text, count) = crate::entity::document::documents_json(&facade, &ids, condition, from, thru, pretty)
+                .map_err(HostError::Lib)?;
+            out.insert("text".to_string(), Value::String(text));
+            count
+        }
+        "file" => crate::entity::document::write_documents_to_file(
+            &facade,
+            std::path::Path::new(&path),
+            &ids,
+            condition,
+            from,
+            thru,
+            pretty,
+        )
+        .map_err(HostError::Lib)?,
+        "dir" => crate::entity::document::write_documents_to_directory(
+            &facade,
+            std::path::Path::new(&path),
+            &ids,
+            condition,
+            from,
+            thru,
+            pretty,
+        )
+        .map_err(HostError::Lib)?,
+        other => return Err(HostError::message(format!("unknown document write mode {other}"))),
+    };
+    out.insert(
+        "count".to_string(),
+        Value::I64(i64::try_from(count).unwrap_or(i64::MAX)),
+    );
+    Ok(Ret::Value(Value::Map(out)))
+}
+
+fn timestamp_at(value: &Value) -> Option<jiff::Timestamp> {
+    crate::search::postgres::compile::parse_date_bound(value)
 }

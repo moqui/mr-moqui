@@ -19,7 +19,7 @@ pub mod bounded;
 pub(crate) mod census;
 pub(crate) mod check;
 pub mod engine;
-pub(crate) mod host;
+pub mod host;
 pub(crate) mod oxide;
 pub mod parse;
 pub(crate) mod run;

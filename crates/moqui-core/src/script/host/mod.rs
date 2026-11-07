@@ -27,11 +27,25 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use moqui_lib::object::{HostObject, Value};
 
+mod archive;
 mod cache;
+mod ec_web;
+mod edi;
+mod files;
 mod l10n;
 mod logger;
 mod message;
+mod notification;
+mod pass;
+mod screen;
+mod search;
+mod service;
+mod sftp;
+mod theme;
+mod tools;
+mod urls;
 mod user;
+mod web;
 
 pub(crate) use l10n::rounding_strategy_named;
 
@@ -41,7 +55,7 @@ pub(crate) use l10n::rounding_strategy_named;
 // the kinds, returns and operations the facades B2 moves (services, entities, the spec engine) use
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ArgKind {
+pub enum ArgKind {
     /// Any value as a host value; `undefined` is null.
     Value,
     /// [`ArgKind::Value`], optional: `undefined` is [`Arg::Undefined`], so a body can tell it from null.
@@ -64,31 +78,62 @@ pub(crate) enum ArgKind {
     OptInt,
     /// [`ArgKind::OptInt`] as an `f64`.
     OptNumber,
+    /// A number as an `f64` (another type throws).
+    Number,
+    /// An array of strings ([`Arg::Texts`]); another value, or an item that is not a string, throws a `TypeError`.
+    Texts,
+    /// [`ArgKind::Texts`], optional; passed, it is converted, so `undefined` throws as QuickJS's `Opt<Vec<String>>`.
+    OptTexts,
     /// A function, called back through [`EngineOps::call_back`].
     Callback,
     /// An optional additional context: an object's entries (a map or an entity value's fields), else none.
     Context,
+    /// A whole number (QuickJS's `js_i64`): an integer, else `limit is not an integer` for a fraction and `limit is not a
+    /// number` for anything else.
+    Whole,
+    /// [`ArgKind::Whole`], optional; null or undefined is none.
+    OptWhole,
+    /// A parameters map: `ec.context` itself is [`Arg::WholeContext`] (the whole context, read from the stack), anything
+    /// else a value.
+    Parameters,
     /// The optional exception of a log call, as text: `name: message` of an error, its `message` alone, or a string.
     Thrown,
+    /// An object of a host class ([`Arg::Host`], its state); anything else throws a `TypeError`.
+    Host,
+    /// A screen unit's element literal, optional ([`Arg::Node`]); a value that is not an object is [`Arg::Undefined`].
+    OptNode,
 }
 
 impl ArgKind {
-    pub(crate) const fn required(self) -> bool {
+    pub const fn required(self) -> bool {
         matches!(
             self,
-            Self::Value | Self::Text | Self::NullableText | Self::Bool | Self::Int | Self::Callback
+            Self::Value
+                | Self::Text
+                | Self::NullableText
+                | Self::Bool
+                | Self::Int
+                | Self::Number
+                | Self::Texts
+                | Self::Callback
+                | Self::Whole
+                | Self::Parameters
+                | Self::Host
         )
     }
 
     /// The type name a QuickJS conversion error gives for this kind (`Error converting from js 'int' into type '...'`).
-    pub(crate) const fn type_name(self) -> &'static str {
+    pub const fn type_name(self) -> &'static str {
         match self {
             Self::Text | Self::OptText | Self::NullableText | Self::OptNullableText => "string",
             Self::Bool | Self::OptBool => "bool",
             Self::Int | Self::OptInt => "i32",
-            Self::OptNumber => "f64",
+            Self::OptNumber | Self::Number => "f64",
             Self::Callback => "function",
-            Self::Value | Self::OptValue | Self::Context | Self::Thrown => "value",
+            Self::Whole | Self::OptWhole => "i64",
+            Self::Value | Self::OptValue | Self::Context | Self::Thrown | Self::Parameters | Self::OptNode => "value",
+            Self::Host => "object",
+            Self::Texts | Self::OptTexts => "array",
         }
     }
 }
@@ -97,7 +142,7 @@ impl ArgKind {
 // the kinds, returns and operations the facades B2 moves (services, entities, the spec engine) use
 #[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FlushBefore {
+pub enum FlushBefore {
     /// The body does not read the context stack.
     None,
     /// It reads the stack: write the tracked values back and keep tracking them.
@@ -110,7 +155,7 @@ pub(crate) enum FlushBefore {
 // the kinds, returns and operations the facades B2 moves (services, entities, the spec engine) use
 #[allow(dead_code)]
 #[derive(Debug)]
-pub(crate) enum Arg {
+pub enum Arg {
     /// Not passed (an optional kind only).
     Missing,
     /// `undefined` passed to [`ArgKind::OptValue`], or null or undefined to a nullable text.
@@ -122,47 +167,62 @@ pub(crate) enum Arg {
     Number(f64),
     /// The index of a function for [`EngineOps::call_back`].
     Callback(usize),
+    /// `ec.context` passed as a parameters map ([`ArgKind::Parameters`]).
+    WholeContext,
     /// The entries of an additional-context object.
     Context(Option<indexmap::IndexMap<String, Value>>),
+    /// The state of a host object ([`ArgKind::Host`]).
+    Host(HostObject),
+    /// An element literal ([`ArgKind::OptNode`]).
+    Node(Arc<crate::screen::sri::NodeLit>),
+    /// The strings of an array ([`ArgKind::Texts`]).
+    Texts(Vec<String>),
 }
 
 /// A method or a getter of a [`HostClass`]. Made with [`method!`] so its census path is a literal.
-pub(crate) struct Method {
+pub struct Method {
     /// The JavaScript name.
-    pub(crate) name: &'static str,
+    pub name: &'static str,
     /// The census row for a call, `ec.l10n.localize`, or `<Class>.<name>` for a class reached from a call's result.
-    pub(crate) path: &'static str,
-    pub(crate) args: &'static [ArgKind],
-    pub(crate) flush: FlushBefore,
-    pub(crate) f: fn(&mut Call<'_>) -> Result<Ret, HostError>,
+    pub path: &'static str,
+    pub args: &'static [ArgKind],
+    pub flush: FlushBefore,
+    /// Whether the body provably never runs a nested script. By default a body may (a service call, an entity find with
+    /// its authorization filters, a localized lookup, a screen render): the oxide binder lends the engine to it, so the
+    /// nested script runs on the same runtime, and the body's [`EngineOps`] are what the binder did before the lend (the
+    /// flush, an [`Arg::WholeContext`] read) and nothing else. A leaf body (`host_method!(.., [kinds], Flush, leaf, f)`)
+    /// runs without the lend and has the engine's operations: one that calls back, evaluates or flushes must be a leaf.
+    /// It must not reach entities, services, screens, scripts or the user and l10n lookups that read entities.
+    pub leaf: bool,
+    pub f: fn(&mut Call<'_>) -> Result<Ret, HostError>,
 }
 
 impl Method {
     /// How many arguments a call needs: the function's `length`.
-    pub(crate) fn required(&self) -> usize {
+    pub fn required(&self) -> usize {
         self.args.iter().filter(|kind| kind.required()).count()
     }
 }
 
 /// A prototype the binders make once per engine.
-pub(crate) struct HostClass {
+pub struct HostClass {
     /// The name the engine caches the prototype under; unique among classes.
-    pub(crate) name: &'static str,
-    pub(crate) methods: &'static [Method],
-    pub(crate) getters: &'static [Method],
+    pub name: &'static str,
+    pub methods: &'static [Method],
+    pub getters: &'static [Method],
     /// Functions given to [`HostClass::shim_js`] and not put on the prototype.
-    pub(crate) hidden: &'static [Method],
+    pub hidden: &'static [Method],
     /// `(function (proto, hidden) { ... })`, run once when the prototype is made, for what is written in JavaScript
     /// (a method over a `RegExp`, a `Proxy`). `hidden` holds the [`HostClass::hidden`] functions by name.
-    pub(crate) shim_js: Option<&'static str>,
+    pub shim_js: Option<&'static str>,
     /// The members the shim adds to the prototype, which the static check allows as it allows the methods.
-    pub(crate) shim_members: &'static [&'static str],
+    pub shim_members: &'static [&'static str],
 }
 
 /// What a body returns.
 // the kinds, returns and operations the facades B2 moves (services, entities, the spec engine) use
 #[allow(dead_code)]
-pub(crate) enum Ret {
+pub enum Ret {
     Value(Value),
     /// The receiver, for a builder's chained calls.
     This,
@@ -189,6 +249,30 @@ impl From<String> for Ret {
     }
 }
 
+impl From<()> for Ret {
+    fn from((): ()) -> Self {
+        Ret::Undefined
+    }
+}
+
+impl From<i32> for Ret {
+    fn from(number: i32) -> Self {
+        Ret::Value(Value::I32(number))
+    }
+}
+
+impl From<f64> for Ret {
+    fn from(number: f64) -> Self {
+        Ret::Value(Value::F64(number))
+    }
+}
+
+impl From<Vec<String>> for Ret {
+    fn from(texts: Vec<String>) -> Self {
+        Ret::Value(Value::List(texts.into_iter().map(Value::String).collect()))
+    }
+}
+
 impl From<Option<String>> for Ret {
     fn from(text: Option<String>) -> Self {
         Ret::Value(text.map_or(Value::Null, Value::String))
@@ -197,7 +281,7 @@ impl From<Option<String>> for Ret {
 
 /// A body's failure, thrown as the facades throw it on QuickJS.
 #[derive(Debug)]
-pub(crate) enum HostError {
+pub enum HostError {
     /// A plain `Error` with this message (`Exception::throw_message`).
     Message(String),
     /// A library error, with its diagnostic on the stack and its kind and retry seconds marked (`throw_lib`).
@@ -211,18 +295,18 @@ pub(crate) enum HostError {
 }
 
 impl HostError {
-    pub(crate) fn message(text: impl Into<String>) -> Self {
+    pub fn message(text: impl Into<String>) -> Self {
         HostError::Message(text.into())
     }
 }
 
 /// The marks a thrown error carries (`moquiErrorKind`, `moquiRetryAfter`), as runtime.rs's `mark_kind` puts them; the
 /// oxide binder writes the same properties so the engine's error mapping reads them back.
-pub(crate) const KIND_PROPERTY: &str = "moquiErrorKind";
-pub(crate) const RETRY_AFTER_PROPERTY: &str = "moquiRetryAfter";
+pub const KIND_PROPERTY: &str = "moquiErrorKind";
+pub const RETRY_AFTER_PROPERTY: &str = "moquiRetryAfter";
 
 /// The name of a kind a thrown error carries, `None` for one it does not.
-pub(crate) fn carried_kind_name(kind: crate::context::ErrorKind) -> Option<&'static str> {
+pub fn carried_kind_name(kind: crate::context::ErrorKind) -> Option<&'static str> {
     use crate::context::ErrorKind;
     Some(match kind {
         ErrorKind::AuthenticationRequired => "AuthenticationRequired",
@@ -238,16 +322,16 @@ pub(crate) fn carried_kind_name(kind: crate::context::ErrorKind) -> Option<&'sta
 }
 
 /// A [`HostError::Lib`] or [`HostError::Context`] as the parts a binder throws: message, diagnostic, kind, retry.
-pub(crate) struct Thrown<'a> {
-    pub(crate) message: &'a str,
-    pub(crate) diagnostic: String,
-    pub(crate) kind: Option<&'static str>,
-    pub(crate) retry_after: Option<u64>,
+pub struct Thrown<'a> {
+    pub message: &'a str,
+    pub diagnostic: String,
+    pub kind: Option<&'static str>,
+    pub retry_after: Option<u64>,
 }
 
 impl HostError {
     /// The parts of a marked error; `None` for the others.
-    pub(crate) fn marked(&self) -> Option<Thrown<'_>> {
+    pub fn marked(&self) -> Option<Thrown<'_>> {
         match self {
             HostError::Lib(err) => Some(Thrown {
                 message: err.message(),
@@ -267,7 +351,7 @@ impl HostError {
 }
 
 /// The message of a panic a binder caught, as `host_guard` gives it.
-pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {
         return (*message).to_string();
     }
@@ -280,11 +364,16 @@ pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 /// What a body may ask of the engine it runs in.
 // the kinds, returns and operations the facades B2 moves (services, entities, the spec engine) use
 #[allow(dead_code)]
-pub(crate) trait EngineOps {
+pub trait EngineOps {
     /// Call the [`Arg::Callback`] at `index` with `args`; its result as a host value. A throw is [`HostError::Thrown`].
     fn call_back(&mut self, index: usize, args: Vec<Value>) -> Result<Value, HostError>;
     /// Write the engine's tracked values back to the context stack.
     fn flush(&mut self, mode: FlushBefore) -> Result<(), HostError>;
+    /// The whole context as a script sees it, its tracked values written back first ([`Arg::WholeContext`]).
+    fn whole_context(&mut self) -> Result<indexmap::IndexMap<String, Value>, HostError>;
+    /// Evaluate `source` (a script whose completion value is the result, `name` its file name in errors) in the running
+    /// engine; its value as a host value. A script that throws is [`HostError::Message`] of the error's text.
+    fn evaluate(&mut self, source: &str, name: &str) -> Result<Value, HostError>;
     /// Run the engine's pending jobs until a promise settles (the spec engine's `settle_promise`, Phase 3).
     fn settle(&mut self) -> Result<(), HostError> {
         Err(HostError::message("settling a promise is not supported here"))
@@ -295,14 +384,20 @@ pub(crate) trait EngineOps {
 const INLINE_ARGS: usize = 4;
 
 /// The converted arguments of a call: the first few inline, the rest (rare) in a vector.
-pub(crate) struct Args {
+pub struct Args {
     inline: [Arg; INLINE_ARGS],
     len: usize,
     spill: Vec<Arg>,
 }
 
+impl Default for Args {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Args {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Args {
             inline: [const { Arg::Missing }; INLINE_ARGS],
             len: 0,
@@ -310,7 +405,7 @@ impl Args {
         }
     }
 
-    pub(crate) fn push(&mut self, arg: Arg) {
+    pub fn push(&mut self, arg: Arg) {
         match self.inline.get_mut(self.len) {
             Some(slot) => *slot = arg,
             None => self.spill.push(arg),
@@ -318,7 +413,7 @@ impl Args {
         self.len += 1;
     }
 
-    pub(crate) fn get(&self, index: usize) -> Option<&Arg> {
+    pub fn get(&self, index: usize) -> Option<&Arg> {
         if index >= self.len {
             return None;
         }
@@ -334,7 +429,7 @@ impl Args {
 /// error rather than a deadlock, and so is state an earlier panic left half-changed. Hold the guard only for the
 /// state's own work, never across [`EngineOps::call_back`].
 #[allow(dead_code)] // the builders B2 moves
-pub(crate) fn lock_state<'a, T>(state: &'a Mutex<T>, class: &str) -> Result<MutexGuard<'a, T>, HostError> {
+pub fn lock_state<'a, T>(state: &'a Mutex<T>, class: &str) -> Result<MutexGuard<'a, T>, HostError> {
     match state.try_lock() {
         Ok(guard) => Ok(guard),
         Err(std::sync::TryLockError::WouldBlock) => Err(HostError::message(format!("re-entrant call on {class}"))),
@@ -345,26 +440,26 @@ pub(crate) fn lock_state<'a, T>(state: &'a Mutex<T>, class: &str) -> Result<Mute
 }
 
 /// One call of a [`Method`].
-pub(crate) struct Call<'a> {
+pub struct Call<'a> {
     /// The receiver's state, when the receiver is an object of a host class.
-    pub(crate) this: Option<&'a HostObject>,
-    pub(crate) args: Args,
+    pub this: Option<&'a HostObject>,
+    pub args: Args,
     #[allow(dead_code)] // no migrated facade calls back yet
-    pub(crate) ops: &'a mut dyn EngineOps,
+    pub ops: &'a mut dyn EngineOps,
 }
 
 impl Call<'_> {
-    pub(crate) fn arg(&self, index: usize) -> &Arg {
+    pub fn arg(&self, index: usize) -> &Arg {
         self.args.get(index).unwrap_or(&Arg::Missing)
     }
 
     /// Whether the argument was passed at all.
-    pub(crate) fn passed(&self, index: usize) -> bool {
+    pub fn passed(&self, index: usize) -> bool {
         !matches!(self.arg(index), Arg::Missing)
     }
 
     /// The host value of a value argument; `None` when missing or undefined.
-    pub(crate) fn value(&self, index: usize) -> Option<&Value> {
+    pub fn value(&self, index: usize) -> Option<&Value> {
         match self.arg(index) {
             Arg::Value(value) => Some(value),
             _ => None,
@@ -372,12 +467,12 @@ impl Call<'_> {
     }
 
     /// [`Call::value`], null when missing or undefined.
-    pub(crate) fn value_or_null(&self, index: usize) -> Value {
+    pub fn value_or_null(&self, index: usize) -> Value {
         self.value(index).cloned().unwrap_or(Value::Null)
     }
 
     /// The text of a text argument; `None` when missing, null or undefined.
-    pub(crate) fn text(&self, index: usize) -> Option<&str> {
+    pub fn text(&self, index: usize) -> Option<&str> {
         match self.arg(index) {
             Arg::Text(text) => Some(text),
             _ => None,
@@ -385,7 +480,7 @@ impl Call<'_> {
     }
 
     /// The plain text of a value argument, `None` when missing, null or undefined (runtime/convert.rs `optional_text`).
-    pub(crate) fn opt_text(&self, index: usize) -> Option<String> {
+    pub fn opt_text(&self, index: usize) -> Option<String> {
         match self.arg(index) {
             Arg::Value(Value::Null) => None,
             Arg::Value(value) => Some(moqui_lib::object::to_plain_string(value)),
@@ -395,26 +490,50 @@ impl Call<'_> {
     }
 
     /// [`Call::opt_text`], empty when there is none (`text_or_empty`).
-    pub(crate) fn text_or_empty(&self, index: usize) -> String {
+    pub fn text_or_empty(&self, index: usize) -> String {
         self.opt_text(index).unwrap_or_default()
     }
 
+    /// The state of a host-object argument as a `T`; `None` when it is not one.
+    pub fn host<T: std::any::Any + Send + Sync>(&self, index: usize) -> Option<Arc<T>> {
+        match self.arg(index) {
+            Arg::Host(obj) => obj.downcast::<T>(),
+            _ => None,
+        }
+    }
+
+    /// The strings of an [`ArgKind::Texts`] argument; `None` when it was not passed.
+    pub fn texts(&self, index: usize) -> Option<&[String]> {
+        match self.arg(index) {
+            Arg::Texts(texts) => Some(texts),
+            _ => None,
+        }
+    }
+
+    /// The element literal of an [`ArgKind::OptNode`] argument.
+    pub fn node(&self, index: usize) -> Option<&Arc<crate::screen::sri::NodeLit>> {
+        match self.arg(index) {
+            Arg::Node(node) => Some(node),
+            _ => None,
+        }
+    }
+
     #[allow(dead_code)] // no migrated facade takes a boolean yet
-    pub(crate) fn bool(&self, index: usize) -> Option<bool> {
+    pub fn bool(&self, index: usize) -> Option<bool> {
         match self.arg(index) {
             Arg::Bool(flag) => Some(*flag),
             _ => None,
         }
     }
 
-    pub(crate) fn int(&self, index: usize) -> Option<i32> {
+    pub fn int(&self, index: usize) -> Option<i32> {
         match self.arg(index) {
             Arg::Int(number) => Some(*number),
             _ => None,
         }
     }
 
-    pub(crate) fn number(&self, index: usize) -> Option<f64> {
+    pub fn number(&self, index: usize) -> Option<f64> {
         match self.arg(index) {
             Arg::Number(number) => Some(*number),
             _ => None,
@@ -422,15 +541,76 @@ impl Call<'_> {
     }
 
     /// The receiver's state as a `T`; a `TypeError` when the receiver is not one.
-    pub(crate) fn this<T: std::any::Any + Send + Sync>(&self) -> Result<Arc<T>, HostError> {
+    pub fn this<T: std::any::Any + Send + Sync>(&self) -> Result<Arc<T>, HostError> {
         self.this
             .and_then(HostObject::downcast::<T>)
             .ok_or_else(|| HostError::Type("the receiver is not the host object this method is for".to_string()))
     }
 }
 
+/// The bytes behind a `HostStream` (QuickJS), as a host value: a stream passed to a service (`upload#Resource` with
+/// `fileList: [ref.openStream()]`) or kept in the context stays the stream, as a Java `InputStream` would, instead of
+/// becoming an empty map that a write would store as the two bytes `{}`.
+pub(crate) struct StreamBytes {
+    pub(crate) source: Arc<dyn crate::resource::source::ByteSource>,
+}
+
+impl StreamBytes {
+    /// All of the content, read from its source.
+    pub(crate) fn bytes(&self) -> Result<Vec<u8>, moqui_lib::error::Error> {
+        crate::resource::source::read_all(self.source.as_ref())
+    }
+}
+
+/// Bytes as text in a Java charset name, as `new String(bytes, charset)`: UTF-8 when none is given (malformed sequences
+/// become U+FFFD), ISO-8859-1 byte for byte, UTF-16 by its byte order mark (big-endian without one, as Java), and the other
+/// names of the WHATWG Encoding Standard (windows-1252, UTF-16LE, Shift_JIS, ...). A byte order mark of the charset
+/// itself is not removed, as Java keeps it. An unknown name is an error, as Java's `UnsupportedEncodingException`.
+pub(crate) fn decode_text(bytes: &[u8], charset: Option<&str>) -> Result<String, crate::context::Error> {
+    let Some(charset) = charset.map(str::trim).filter(|name| !name.is_empty()) else {
+        return Ok(String::from_utf8_lossy(bytes).into_owned());
+    };
+    let upper = charset.to_ascii_uppercase();
+    if matches!(
+        upper.as_str(),
+        "ISO-8859-1" | "ISO8859-1" | "ISO8859_1" | "LATIN1" | "ISO-LATIN-1"
+    ) {
+        return Ok(bytes.iter().map(|byte| char::from(*byte)).collect());
+    }
+    if upper == "UTF-16" || upper == "UTF16" {
+        let little = bytes.starts_with(&[0xFF, 0xFE]);
+        let units: Vec<u16> = bytes
+            .chunks(2)
+            .map(|pair| {
+                let (first, second) = (pair[0], pair.get(1).copied().unwrap_or(0));
+                if little {
+                    u16::from_le_bytes([first, second])
+                } else {
+                    u16::from_be_bytes([first, second])
+                }
+            })
+            .collect();
+        return Ok(String::from_utf16_lossy(&units));
+    }
+    let encoding = crate::sftp::encoding_for(charset)?;
+    Ok(crate::sftp::decode(encoding, bytes))
+}
+
+/// The key a script `Set` converts under: a map of it to the set's items (runtime/convert.rs `SET_KEY`).
+pub const SET_KEY: &str = "__set__";
+
+/// The texts of a list, of a converted `Set`, or of one value; none for null (runtime/convert.rs `host_texts`).
+pub fn host_texts(value: Value) -> Vec<String> {
+    match value {
+        Value::List(items) => items.iter().map(moqui_lib::object::to_plain_string).collect(),
+        Value::Map(mut map) if map.contains_key(SET_KEY) => host_texts(map.swap_remove(SET_KEY).unwrap_or(Value::Null)),
+        Value::Null => Vec::new(),
+        other => vec![moqui_lib::object::to_plain_string(&other)],
+    }
+}
+
 /// The JavaScript truthiness of a converted value (runtime/convert.rs `js_truthy`).
-pub(crate) fn truthy(value: &Value) -> bool {
+pub fn truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
         Value::Bool(flag) => *flag,
@@ -443,15 +623,37 @@ pub(crate) fn truthy(value: &Value) -> bool {
 }
 
 /// `body` on the entered execution context; the error the facades throw when none is entered.
-pub(crate) fn with_ec<T>(body: impl FnOnce(&crate::context::ExecutionContext) -> T) -> Result<T, HostError> {
+pub fn with_ec<T>(body: impl FnOnce(&crate::context::ExecutionContext) -> T) -> Result<T, HostError> {
     crate::context::ExecutionContext::with_current(body)
         .ok_or_else(|| HostError::message("no execution context is entered"))
 }
 
-/// A [`Method`] whose census path is `$path.$name`.
-macro_rules! method {
+/// The factory of the entered execution context.
+pub fn factory() -> Result<Arc<crate::context::ExecutionContextFactory>, HostError> {
+    with_ec(|ec| Arc::clone(ec.factory()))
+}
+
+/// The entity facade of the entered execution context; the error the facades throw when none is installed.
+pub fn entity_facade() -> Result<crate::entity::EntityFacade, HostError> {
+    with_ec(|ec| ec.factory().entity())?.ok_or_else(|| HostError::message("no entity facade is installed"))
+}
+
+/// A [`Method`] whose census path is `$path.$name`: `host_method!("ec.l10n", "localize", [Value, OptValue], localize)`,
+/// with an optional [`FlushBefore`] after the kinds. Another crate uses it as `moqui_core::host_method!`.
+#[macro_export]
+macro_rules! host_method {
+    ($path:literal, $name:literal, [$($kind:ident),* $(,)?], $flush:ident, leaf, $f:expr) => {
+        $crate::script::host::Method {
+            name: $name,
+            path: concat!($path, ".", $name),
+            args: &[$($crate::script::host::ArgKind::$kind),*],
+            flush: $crate::script::host::FlushBefore::$flush,
+            leaf: true,
+            f: $f,
+        }
+    };
     ($path:literal, $name:literal, [$($kind:ident),* $(,)?], $f:expr) => {
-        $crate::script::host::method!($path, $name, [$($kind),*], None, $f)
+        $crate::host_method!($path, $name, [$($kind),*], None, $f)
     };
     ($path:literal, $name:literal, [$($kind:ident),* $(,)?], $flush:ident, $f:expr) => {
         $crate::script::host::Method {
@@ -459,46 +661,97 @@ macro_rules! method {
             path: concat!($path, ".", $name),
             args: &[$($crate::script::host::ArgKind::$kind),*],
             flush: $crate::script::host::FlushBefore::$flush,
+            leaf: false,
             f: $f,
         }
     };
 }
-pub(crate) use method;
+pub(crate) use crate::host_method as method;
 
-/// An `ec` path the table installs and the object of `class` it holds.
-pub(crate) struct Path {
+/// An `ec` path the table installs and what it holds.
+pub struct Path {
     /// `ec.l10n`
-    pub(crate) path: &'static str,
-    pub(crate) class: &'static HostClass,
+    pub path: &'static str,
+    pub bound: Bound,
+}
+
+/// What a [`Path`] holds.
+pub enum Bound {
+    /// An object of the class.
+    Object(&'static HostClass),
+    /// A function (`ec.makeNotificationMessage`).
+    Function(&'static Method),
+    /// JavaScript run once when the engine starts, after `ec` and the helper objects are made, for a global outside
+    /// `ec` (`EdiHandler`, `sri`'s URL functions, the tools methods across `ec` and the helpers).
+    Shim(&'static Shim),
+}
+
+/// A [`Bound::Shim`]: `(function (global, hidden, helpers) { ... })`, called with the global object, an object of the
+/// [`Shim::hidden`] functions by name, and an object of the engine's helper objects (`CollectionUtilities`,
+/// `StringUtilities`, `WebUtilities`). What it builds (constructors, functions on `ec` or on the helpers) calls the
+/// hidden functions; the functions themselves are not reachable by name.
+pub struct Shim {
+    pub js: &'static str,
+    /// The hidden functions, in groups (a shim over several files takes each file's table).
+    pub hidden: &'static [&'static [Method]],
+}
+
+impl Path {
+    pub const fn object(path: &'static str, class: &'static HostClass) -> Self {
+        Path {
+            path,
+            bound: Bound::Object(class),
+        }
+    }
+
+    pub const fn function(path: &'static str, method: &'static Method) -> Self {
+        Path {
+            path,
+            bound: Bound::Function(method),
+        }
+    }
+
+    /// A shim, named by the global it makes (`EdiHandler`); not an `ec` path, so the static check does not allow it.
+    pub const fn shim(name: &'static str, shim: &'static Shim) -> Self {
+        Path {
+            path: name,
+            bound: Bound::Shim(shim),
+        }
+    }
 }
 
 /// The paths of this crate. In ec member order.
 static PATHS: &[Path] = &[
-    Path {
-        path: "ec.message",
-        class: &message::MESSAGE,
-    },
-    Path {
-        path: "ec.logger",
-        class: &logger::LOGGER,
-    },
-    Path {
-        path: "ec.user",
-        class: &user::USER,
-    },
-    Path {
-        path: "ec.cache",
-        class: &cache::CACHE_FACADE,
-    },
-    Path {
-        path: "ec.l10n",
-        class: &l10n::L10N,
-    },
+    Path::object("ec.message", &message::MESSAGE),
+    Path::object("ec.logger", &logger::LOGGER),
+    Path::object("ec.service", &service::SERVICE_FACADE),
+    Path::object("ec.user", &user::USER),
+    Path::object("ec.cache", &cache::CACHE_FACADE),
+    Path::object("ec.search", &search::SEARCH),
+    Path::object("ec.l10n", &l10n::L10N),
+    Path::function("ec.makeNotificationMessage", &notification::MAKE),
+    Path::object("ec.web", &ec_web::WEB),
+    Path::object("ec.screen", &screen::SCREEN),
+    Path::function("ec.resource.xslFoTransform", &screen::XSL_FO_TRANSFORM),
+    Path::object("ec.resource.theme", &theme::THEME),
+    Path::shim("tools", &tools::SHIM),
+    Path::shim("EdiHandler", &edi::SHIM),
+    Path::shim("sri", &urls::SHIM),
+    Path::shim("SftpClient", &sftp::SHIM),
 ];
 
 /// The classes a method may return ([`Ret::Object`]), which a static check cannot see but must be complete on both
 /// engines: every class here is, by being in the table.
-static RETURNED: &[&HostClass] = &[&cache::CACHE];
+static RETURNED: &[&HostClass] = &[
+    &cache::CACHE,
+    &service::SERVICE_CALL,
+    &service::SERVICE_JOB,
+    &service::SERVICE_FUTURE,
+    &notification::NOTIFICATION,
+    &edi::EDI_HANDLER,
+    &urls::URL,
+    &sftp::SFTP_CLIENT,
+];
 
 /// Paths other crates contribute (moqui-llm's `ec.llm`), through [`register`], before the table is frozen.
 static EXTRA: Mutex<Vec<&'static [Path]>> = Mutex::new(Vec::new());
@@ -517,14 +770,23 @@ static TABLE: OnceLock<Table> = OnceLock::new();
 fn table() -> &'static Table {
     TABLE.get_or_init(|| {
         let mut paths: Vec<&'static Path> = PATHS.iter().collect();
+        // ec.llm, when the binary links the agent runtime
+        if let Some(hooks) = crate::llm_hooks::get() {
+            paths.extend(hooks.script_paths.iter());
+        }
         for extra in moqui_lib::sync::lock(&EXTRA).iter() {
             paths.extend(extra.iter());
         }
         let mut exact = HashSet::new();
         let mut open = HashSet::new();
         for entry in &paths {
+            if let Bound::Shim(_) = entry.bound {
+                continue;
+            }
             exact.insert(entry.path.to_string());
-            let class = entry.class;
+            let Bound::Object(class) = entry.bound else {
+                continue;
+            };
             for method in class.methods.iter().chain(class.getters) {
                 exact.insert(format!("{}.{}", entry.path, method.name));
             }
@@ -540,14 +802,14 @@ fn table() -> &'static Table {
 
 /// The `ec` paths of this crate's table.
 #[allow(dead_code)] // the census and the static check (script/check.rs) read it at merge
-pub(crate) fn registry() -> &'static [Path] {
+pub fn registry() -> &'static [Path] {
     PATHS
 }
 
 /// Add another crate's paths. Only before the table is frozen (the first engine's start or the first
 /// [`path_allowed`]), so a path is either bound on both engines or on neither.
 #[allow(dead_code)] // the hook for moqui-llm and moqui-devkit
-pub(crate) fn register(paths: &'static [Path]) -> Result<(), String> {
+pub fn register(paths: &'static [Path]) -> Result<(), String> {
     if TABLE.get().is_some() {
         return Err("the host table is already in use; register its paths before the first script runs".to_string());
     }
@@ -556,14 +818,14 @@ pub(crate) fn register(paths: &'static [Path]) -> Result<(), String> {
 }
 
 /// Every path the binders install: this crate's, then the registered ones.
-pub(crate) fn all_paths() -> &'static [&'static Path] {
+pub fn all_paths() -> &'static [&'static Path] {
     &table().paths
 }
 
 /// Whether a script may reach `path` (`ec.l10n`, `ec.l10n.localize`) on both engines: a path the binders install, a
 /// method or getter of its class, a member its shim adds, or anything below such a member. What a method returns is a
 /// class of the table, so it is complete on both engines too. Takes no lock and allocates nothing.
-pub(crate) fn path_allowed(path: &str) -> bool {
+pub fn path_allowed(path: &str) -> bool {
     let table = table();
     if table.exact.contains(path) {
         return true;
@@ -574,16 +836,27 @@ pub(crate) fn path_allowed(path: &str) -> bool {
 
 /// Every class of the table, for a binder that makes its prototypes ahead.
 #[allow(dead_code)] // the oxide binder makes them on first use
-pub(crate) fn classes() -> impl Iterator<Item = &'static HostClass> {
+pub fn classes() -> impl Iterator<Item = &'static HostClass> {
     all_paths()
         .iter()
-        .map(|path| path.class)
+        .filter_map(|path| match path.bound {
+            Bound::Object(class) => Some(class),
+            Bound::Function(_) | Bound::Shim(_) => None,
+        })
         .chain(RETURNED.iter().copied())
+}
+
+/// The shims of the table, in table order.
+pub fn shims() -> impl Iterator<Item = &'static Shim> {
+    all_paths().iter().filter_map(|path| match path.bound {
+        Bound::Shim(shim) => Some(shim),
+        _ => None,
+    })
 }
 
 /// Record that a script reached `path`, into the running script's census entry ([`crate::script::census::note`]).
 #[inline]
-pub(crate) fn note_path(path: &'static str) {
+pub fn note_path(path: &'static str) {
     crate::script::census::note(path);
 }
 

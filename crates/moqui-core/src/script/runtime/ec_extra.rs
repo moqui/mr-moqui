@@ -12,7 +12,7 @@
  * <http://creativecommons.org/publicdomain/zero/1.0/>.
  */
 
-//! `ec.resource` expansion, `ec.context`, `ec.screen`, and the static helpers the screen
+//! `ec.resource` expansion, `ec.context`, and the static helpers the screen
 //! macros call (`WebUtilities`, `StringUtilities`, `CollectionUtilities`).
 
 use moqui_lib::object::to_plain_string;
@@ -184,12 +184,6 @@ pub(super) fn add_resource_functions<'js>(ctx: &Ctx<'js>, resource: &Object<'js>
         Function::new(ctx.clone(), resource_condition),
     )?;
     caught(ctx, "resource.condition", resource.set("condition", condition))?;
-    let xsl_fo = caught(
-        ctx,
-        "resource.xslFoTransform",
-        Function::new(ctx.clone(), super::ec_screen::resource_xsl_fo_transform),
-    )?;
-    caught(ctx, "resource.xslFoTransform", resource.set("xslFoTransform", xsl_fo))?;
     let code128 = caught(
         ctx,
         "resource.code128Svg",
@@ -226,8 +220,7 @@ pub(super) fn add_resource_functions<'js>(ctx: &Ctx<'js>, resource: &Object<'js>
         "resource.getTemplateRendererExtensionSet",
         resource.set("getTemplateRendererExtensionSet", extensions),
     )?;
-    // the theme composition adapter, ec.resource.theme (theme_host.rs)
-    super::theme_host::add_theme(ctx, resource)
+    Ok(())
 }
 
 /// `ec.resource.getTemplateRendererExtensionSet()`: the file extensions a template renderer is configured for (`md`,
@@ -371,26 +364,6 @@ fn context_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     let order_by = Accessor::from(|ctx: Ctx<'js>| host_guard(&ctx, || context_name(&ctx, "orderByField"))).enumerable();
     caught(ctx, "context.orderByField", context.prop("orderByField", order_by))?;
     Ok(context)
-}
-
-fn screen_is_render_mode_valid(ctx: Ctx<'_>, mode: String) -> rquickjs::Result<bool> {
-    host_guard(&ctx, || {
-        with_ec(&ctx, |ec| {
-            crate::screen::ScreenFacade::of(ec.factory()).is_render_mode_valid(&mode)
-        })
-    })
-}
-
-fn screen_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
-    let screen = caught(ctx, "screen", Object::new(ctx.clone()))?;
-    let valid = caught(
-        ctx,
-        "screen.isRenderModeValid",
-        Function::new(ctx.clone(), screen_is_render_mode_valid),
-    )?;
-    caught(ctx, "screen.isRenderModeValid", screen.set("isRenderModeValid", valid))?;
-    super::ec_screen::install(ctx, &screen)?;
-    Ok(screen)
 }
 
 // ---- static helpers ----
@@ -825,8 +798,7 @@ pub(super) fn install_ec_extras<'js>(ctx: &Ctx<'js>, ec: &Object<'js>) -> Result
     )?;
     caught(ctx, "ec.factory.hasFeature", factory.set("hasFeature", has_feature))?;
     super::native_tools::install(ctx, ec, &factory)?;
-    caught(ctx, "ec.factory", ec.set("factory", factory))?;
-    caught(ctx, "ec.screen", ec.set("screen", screen_object(ctx)?))
+    caught(ctx, "ec.factory", ec.set("factory", factory))
 }
 
 #[cfg(test)]

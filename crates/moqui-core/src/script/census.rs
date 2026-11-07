@@ -88,7 +88,14 @@ pub(crate) fn note(path: &'static str) {
     }
 }
 
-/// Host calls made on this thread so far: an oxide run that made none may run again on QuickJS.
+/// A side effect of a running script other than a host call: a write to the context stack or to an entity value's
+/// cell. Counted with the host calls, so a run that made one is not run again on QuickJS.
+pub(crate) fn note_side_effect() {
+    HOST_CALLS.with(|calls| calls.set(calls.get() + 1));
+}
+
+/// Host calls and other side effects ([`note_side_effect`]) made on this thread so far: an oxide run that made none
+/// may run again on QuickJS.
 pub(crate) fn host_calls() -> u64 {
     HOST_CALLS.with(Cell::get)
 }

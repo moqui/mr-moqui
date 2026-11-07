@@ -21,7 +21,7 @@ use super::{method, with_ec, Call, HostClass, HostError, Ret};
 
 pub(super) static CACHE_FACADE: HostClass = HostClass {
     name: "host:CacheFacade",
-    methods: &[method!("ec.cache", "getCache", [Text], get_cache)],
+    methods: &[method!("ec.cache", "getCache", [Text], None, leaf, get_cache)],
     getters: &[],
     hidden: &[],
     shim_js: None,
@@ -31,10 +31,10 @@ pub(super) static CACHE_FACADE: HostClass = HostClass {
 pub(super) static CACHE: HostClass = HostClass {
     name: "host:Cache",
     methods: &[
-        method!("ec.cache.getCache()", "get", [Text], get),
-        method!("ec.cache.getCache()", "put", [Text, Value], put),
-        method!("ec.cache.getCache()", "remove", [Text], remove),
-        method!("ec.cache.getCache()", "containsKey", [Text], contains_key),
+        method!("ec.cache.getCache()", "get", [Text], None, leaf, get),
+        method!("ec.cache.getCache()", "put", [Text, Value], None, leaf, put),
+        method!("ec.cache.getCache()", "remove", [Text], None, leaf, remove),
+        method!("ec.cache.getCache()", "containsKey", [Text], None, leaf, contains_key),
         method!("ec.cache.getCache()", "clear", [], clear),
     ],
     getters: &[],

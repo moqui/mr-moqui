@@ -14,8 +14,9 @@
 
 //! The quickjs-oxide bindings (plans/Script-Engine-Oxide.md section 5): one runtime per thread, started on the
 //! thread's first oxide script, beside the thread's QuickJS engine (`script/runtime.rs`). Phase 1 runs conditions and
-//! values: bare names through a Proxy that is the global object's prototype ([`names`]), host values converted on read
-//! ([`convert`]), decimals and entity values as host objects ([`decimal`], [`convert`]), compiled expressions kept per
+//! values: bare names through an exotic object that is the global object's prototype ([`names`], [`tracked`]), host
+//! values converted on read ([`convert`]), decimals as host objects and entity values as exotic ones ([`decimal`],
+//! [`names`]), compiled expressions kept per
 //! runtime by their text's hash ([`compiled`]), errors as the QuickJS path makes them ([`errors`]), and the clock,
 //! time zone and deadline from [`host`]. `ec` is the host table (`script/host`) through its binder ([`bind`]), with
 //! [`convert`] as its conversions.
@@ -31,8 +32,12 @@ mod engine;
 mod errors;
 mod host;
 mod names;
+mod tracked;
 
-pub(crate) use engine::{engine_memory, eval_condition, eval_value, stats, Outcome};
+pub(crate) use engine::{
+    engine_memory, eval_condition, eval_map, eval_text, eval_value, is_lent, release_for_quickjs, run_actions, stats,
+    thread_heap_peaks, Outcome,
+};
 
 #[cfg(test)]
 mod tests;

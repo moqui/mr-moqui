@@ -60,6 +60,7 @@ impl Compiled {
         context: &Context,
         text: &str,
         hash: u64,
+        file_name: &str,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
         if let Some((kept, compiled)) = self.fixed.get(&hash) {
             if **kept == *text {
@@ -75,7 +76,7 @@ impl Compiled {
         let fixed = self.fixed.len() < MAX_STATIC_UNITS
             && self.fixed_bytes + text.len() <= MAX_STATIC_BYTES
             && !self.fixed.contains_key(&hash);
-        let options = CompileOptions::new(FILE_NAME);
+        let options = CompileOptions::new(file_name);
         let options = if fixed { options } else { options.transient() };
         let compiled = context.compile_with_options(text, &options)?;
         if fixed {

@@ -41,38 +41,26 @@ use rquickjs::{
     Runtime, Undefined, Value as JsValue,
 };
 
-mod archive_host;
 mod bind;
 mod compiled;
 mod conditions;
 mod convert;
 mod decimal;
 mod ec_extra;
-mod ec_screen;
-mod edi;
 mod entities;
 mod error_info;
 mod facades;
-mod files_host;
 #[cfg(test)]
 mod framework_gaps_tests;
 mod helpers;
 #[cfg(test)]
 mod metadata_tests;
 mod native_tools;
-mod notification;
-mod pass_host;
 #[cfg(test)]
 mod realm_tests;
 mod screen_host;
 mod search;
-mod services;
-mod sftp;
-mod theme_host;
-mod tools_host;
 mod upload;
-mod urls;
-mod user_host;
 mod values;
 mod web_host;
 
@@ -97,18 +85,19 @@ use entities::{
 pub(crate) use convert::{temporal_text, MAX_NESTING, SAFE_INTEGER, SET_KEY, TOO_DEEP, WRAP_KEY};
 pub(crate) use crate::script::host::rounding_strategy_named as rounding_named;
 pub(crate) use decimal::{arith, decimal_of, decimals_compare, decimals_equal, Arith};
-pub(crate) use entities::{entity_field, EntityCell, EntityField};
+pub(crate) use entities::{
+    entity_field, entity_field_names, entity_is_field, entity_set_field, EntityCell, EntityField,
+};
 use error_info::HostErrorInfo;
 pub use facades::forget_scripts;
 pub use facades::run_script_location;
 use facades::{
-    read_script, resource_expand, resource_script, sri_send_redirect_and_stop_render, system_get_property, HostWeb,
+    resource_expand, resource_script, sri_send_redirect_and_stop_render, system_get_property,
 };
 use helpers::{install_helpers, now_timestamp, timestamp_of};
 use native_tools::{tool_to_js, HostTool};
 pub(crate) use screen_host::with_screen_runner;
-use search::{entity_get_data_documents, search_object};
-use services::{service_async, service_job, service_sync};
+use search::entity_get_data_documents;
 use upload::{HostStream, HostUpload, StreamBytes};
 pub use values::script_list_values;
 pub(crate) use values::{context_combined, pop_context_frame, put_context_all, value_entity_name, value_field};
@@ -126,7 +115,6 @@ use crate::script::run::{stack_budget, EngineTag, ScriptLimit, DEADLINE, DEPTH, 
 use moqui_db::sql::{CompareOp, Condition};
 
 use crate::entity::{EntityFacade, EntityFind, EntityList, EntityValue};
-use crate::service::call::CallOptions;
 
 const MAX_CACHED_TEMPLATES: usize = 4096;
 /// The source text the template and screen unit caches of an engine may hold. Their bytecode is about the size of the
@@ -155,10 +143,11 @@ pub(crate) fn widget_wrap_on() -> bool {
     WIDGET_WRAP.with(Cell::get)
 }
 
-/// Write the innermost QuickJS script's tracked values back to the stack, still tracked (`Flush::Keep`): the boundary
-/// an oxide script crosses when it starts inside a running QuickJS script, so it reads by bare name what the QuickJS
-/// script changed in place ([`crate::script::engine::cross_into_oxide`]).
-pub(crate) fn flush_innermost_keep() -> Result<(), Error> {
+/// Write the innermost QuickJS script's tracked values back to the stack: the boundary an oxide script crosses when it
+/// starts inside a running QuickJS script, so it reads by bare name what the QuickJS script changed in place
+/// ([`crate::script::engine::cross_into_oxide`]). Kept tracked (`Flush::Keep`) for a read-only oxide script; released
+/// (`Flush::Release`) for one that may write, so the QuickJS script reads what it wrote.
+pub(crate) fn flush_innermost(release: bool) -> Result<(), Error> {
     let Some(engine) = current_engine() else {
         return Ok(());
     };
@@ -166,7 +155,7 @@ pub(crate) fn flush_innermost_keep() -> Result<(), Error> {
     // `Context::with` holds the runtime's lock for as long as this call lasts, and the `Ctx` made here does not
     // outlive it.
     let ctx = unsafe { Ctx::from_raw(engine.context.as_raw()) };
-    flush_tracked(&ctx, &engine, Flush::Keep)
+    flush_tracked(&ctx, &engine, if release { Flush::Release } else { Flush::Keep })
 }
 
 /// Turn the wrapped `ec` for widget expressions on or off. Returns the setting it replaces.
@@ -360,12 +349,16 @@ pub struct EngineStats {
     /// Their reserved heap bytes as last sampled, now and at the highest.
     pub oxide_heap_bytes: usize,
     pub oxide_heap_bytes_max: usize,
+    /// The peak reserved heap bytes of each thread's oxide runtime (sampled every 32 runs), by thread.
+    pub oxide_heap_peaks: Vec<(String, usize)>,
     /// Texts the oxide runtimes compiled.
     pub oxide_compiled: u64,
     /// Oxide runtimes dropped after a host function panicked.
     pub oxide_poisoned: u64,
     /// Oxide runs that met something the bindings do not have before any host call, and ran on QuickJS instead.
     pub oxide_fallbacks: u64,
+    /// Differences between the engines the difference check (`script_engine_check`) found.
+    pub oxide_differences: u64,
     /// Texts the static check parsed.
     pub check_parses: u64,
     /// Scripts run by entry kind: (kind, on QuickJS, on quickjs-oxide).
@@ -391,9 +384,11 @@ pub fn engine_stats() -> EngineStats {
         oxide_engines_live_max: oxide.engines_live_max,
         oxide_heap_bytes: oxide.heap_bytes,
         oxide_heap_bytes_max: oxide.heap_bytes_max,
+        oxide_heap_peaks: crate::script::oxide::thread_heap_peaks(),
         oxide_compiled: oxide.compiled,
         oxide_poisoned: oxide.poisoned,
         oxide_fallbacks: crate::script::engine::oxide_fallbacks(),
+        oxide_differences: crate::script::engine::oxide_differences(),
         check_parses: crate::script::check::parses(),
         scripts_by_kind: crate::script::engine::scripts_by_kind(),
     }
@@ -768,16 +763,15 @@ pub fn eval_condition(expression: &str) -> Result<bool, Error> {
         return Err(Error::new("script source contains a null byte"));
     }
     let source = as_expression(expression);
-    let oxide = crate::script::engine::try_oxide(EntryKind::Condition, &source, crate::script::oxide::eval_condition)?;
-    if let Some(value) = oxide {
-        return Ok(value);
-    }
-    with_kind(EntryKind::Condition, |ctx| {
-        with_widget_ec(ctx, expression, || {
-            let value = eval_compiled::<JsValue>(ctx, &source, true)?;
-            Ok(js_truthy(&value))
+    let quickjs = || {
+        with_kind(EntryKind::Condition, |ctx| {
+            with_widget_ec(ctx, expression, || {
+                let value = eval_compiled::<JsValue>(ctx, &source, true)?;
+                Ok(js_truthy(&value))
+            })
         })
-    })
+    };
+    crate::script::engine::small_script(EntryKind::Condition, &source, crate::script::oxide::eval_condition, quickjs)
 }
 
 /// Expand a template. `${expression}` runs in this runtime. No `$`, or a trailing `$`, is unchanged.
@@ -788,16 +782,13 @@ pub fn expand(template: &str) -> Result<String, Error> {
     if template.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
-    census_only(EntryKind::Expand, template)?;
-    with_kind(EntryKind::Expand, |ctx| expand_in(ctx, template))
-}
-
-/// For a small kind only QuickJS runs yet (`expand`, `eval_map`): the census's record of its text, when it is on.
-fn census_only(kind: EntryKind, text: &str) -> Result<(), Error> {
-    if crate::script::census::enabled() {
-        crate::script::engine::route(kind, text, crate::script::text::hash_text(text))?;
+    if crate::script::engine::may_route() {
+        // on quickjs-oxide the template literal itself, run as an expression: the same text QuickJS's function returns
+        let literal = template_literal(template);
+        let quickjs = || with_kind(EntryKind::Expand, |ctx| expand_in(ctx, template));
+        return crate::script::engine::small_script(EntryKind::Expand, &literal, crate::script::oxide::eval_text, quickjs);
     }
-    Ok(())
+    with_kind(EntryKind::Expand, |ctx| expand_in(ctx, template))
 }
 
 /// See [`upload::text_upload_to_js`].
@@ -826,6 +817,14 @@ where
 /// The script is not strict. A strict function would reject bare assignment, and
 /// that assignment is how a plain value reaches the context stack.
 pub(super) fn eval_script_text(script: &ScriptText) -> Result<(), Error> {
+    if crate::script::engine::may_route() {
+        let ran = crate::script::engine::try_oxide(EntryKind::Actions, script.text(), |source, hash, _| {
+            crate::script::oxide::run_actions(source, hash, script.file_name())
+        })?;
+        if ran.is_some() {
+            return Ok(());
+        }
+    }
     with_kind(EntryKind::Actions, |ctx| eval_compiled_text::<JsValue>(ctx, script, false).map(|_| ()))
 }
 
@@ -898,6 +897,7 @@ fn with_engine<R>(kind: EngineKind, body: impl FnOnce(&Ctx) -> Result<R, Error>)
         return Err(Error::new("scripts are nested too deeply"));
     }
     let stack = stack_budget(depth)?;
+    crate::script::engine::cross_into_quickjs()?;
     let engine = engine_of(kind)?;
     let entered = RUNNING.with(|running| running.borrow().iter().any(|held| Rc::ptr_eq(held, &engine)));
     RUNNING.with(|running| running.borrow_mut().push(Rc::clone(&engine)));
@@ -1251,7 +1251,7 @@ fn install_context(ctx: &Ctx<'_>) -> Result<Helpers, Error> {
     ec_extra::fill_security_checks(ctx, &user_security_checks)?;
     install_ec(ctx)?;
     install_helpers(ctx)?;
-    tools_host::install(ctx, &string_utilities, &collection_utilities, &web_utilities)?;
+    bind::install_shims(ctx, &string_utilities, &collection_utilities, &web_utilities)?;
     install_entity_prototypes(ctx)?;
     freeze_host_globals(ctx, builtins)?;
     install_proxy(ctx)?;
@@ -1766,7 +1766,14 @@ fn call_template(ctx: &Ctx<'_>, function: Function<'_>) -> Result<String, Error>
 }
 
 fn template_source(template: &str) -> String {
-    let mut source = String::from("(function(){return `");
+    format!("(function(){{return {};}})", template_literal(template))
+}
+
+/// A `${}` template as a JavaScript template literal: a backslash before `${` keeps it literal, any other backslash is
+/// itself, and a backtick is escaped.
+fn template_literal(template: &str) -> String {
+    let mut source = String::with_capacity(template.len() + 2);
+    source.push('`');
     let bytes = template.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
@@ -1789,7 +1796,7 @@ fn template_source(template: &str) -> String {
         source.push(ch);
         index += ch.len_utf8();
     }
-    source.push_str("`;})");
+    source.push('`');
     source
 }
 
@@ -1935,30 +1942,17 @@ fn install_ec(ctx: &Ctx<'_>) -> Result<(), Error> {
     let ec = caught(ctx, "ec", Object::new(ctx.clone()))?;
     ec.set("entity", entity_object(ctx)?).map_err(js_error)?;
     ec.set("resource", resource_object(ctx)?).map_err(js_error)?;
-    ec.set("service", service_object(ctx)?).map_err(js_error)?;
-    let web = caught(ctx, "web", Class::instance(ctx.clone(), HostWeb {}))?;
-    ec.set("web", web).map_err(js_error)?;
-    ec.set("search", search_object(ctx)?).map_err(js_error)?;
-    // the agent runtime's object, when the binary links it (crate::llm_hooks)
-    if let Some(hooks) = crate::llm_hooks::get() {
-        ec.set("llm", (hooks.script_object)(ctx)?).map_err(js_error)?;
-    }
     ec.set("transaction", transaction_object(ctx)?).map_err(js_error)?;
     ec_extra::install_ec_extras(ctx, &ec)?;
-    let make_notification = Function::new(ctx.clone(), notification::make_notification_message).map_err(js_error)?;
-    ec.set("makeNotificationMessage", make_notification).map_err(js_error)?;
     // every path of the host table (script/host), as the oxide engine installs them; last, so a path inside a member
     // made above (ec.resource.x) is added to it
     bind::install_ec(ctx, &ec)?;
     caught(ctx, "globals", ctx.globals().set("ec", ec))?;
-    ec_screen::install_builder(ctx)?;
     caught(ctx, "globals", ctx.globals().set("sri", screen_host::sri_object(ctx)?))?;
     let system = Object::new(ctx.clone()).map_err(js_error)?;
     let property = Function::new(ctx.clone(), system_get_property).map_err(js_error)?;
     system.set("getProperty", property).map_err(js_error)?;
     caught(ctx, "globals", ctx.globals().set("System", system))?;
-    edi::install(ctx)?;
-    sftp::install(ctx)?;
     Ok(())
 }
 
@@ -2082,17 +2076,6 @@ fn resource_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     Ok(resource)
 }
 
-fn service_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
-    let service = Object::new(ctx.clone()).map_err(js_error)?;
-    let sync = Function::new(ctx.clone(), service_sync).map_err(js_error)?;
-    service.set("sync", sync).map_err(js_error)?;
-    let async_call = Function::new(ctx.clone(), service_async).map_err(js_error)?;
-    service.set("async", async_call).map_err(js_error)?;
-    let job = Function::new(ctx.clone(), service_job).map_err(js_error)?;
-    service.set("job", job).map_err(js_error)?;
-    Ok(service)
-}
-
 /// The entity facade of the entered context; throws when there is none.
 pub fn facade_of(ctx: &Ctx<'_>) -> rquickjs::Result<EntityFacade> {
     let installed = with_ec(ctx, |ec| ec.factory().entity())?;
@@ -2140,15 +2123,15 @@ fn eval_value_as(kind: EntryKind, expression: &str) -> Result<Value, Error> {
         return Err(Error::new("script source contains a null byte"));
     }
     let source = as_expression(expression);
-    if let Some(value) = crate::script::engine::try_oxide(kind, &source, crate::script::oxide::eval_value)? {
-        return Ok(value);
-    }
-    with_kind(kind, |ctx| {
-        with_widget_ec(ctx, expression, || {
-            let evaluated = eval_compiled::<JsValue>(ctx, &source, true)?;
-            js_value_to_host(ctx, &evaluated)
+    let quickjs = || {
+        with_kind(kind, |ctx| {
+            with_widget_ec(ctx, expression, || {
+                let evaluated = eval_compiled::<JsValue>(ctx, &source, true)?;
+                js_value_to_host(ctx, &evaluated)
+            })
         })
-    })
+    };
+    crate::script::engine::small_script(kind, &source, crate::script::oxide::eval_value, quickjs)
 }
 
 /// Evaluate a field's `from` expression to a host value. A timestamp, date, or time reaches a script as epoch
@@ -2209,13 +2192,15 @@ pub fn eval_map(expression: &str) -> Result<std::collections::BTreeMap<String, V
         return Err(Error::new("script source contains a null byte"));
     }
     let source = as_expression(expression);
-    census_only(EntryKind::Map, &source)?;
-    with_kind(EntryKind::Map, |ctx| {
-        with_widget_ec(ctx, expression, || {
-            let evaluated = eval_compiled::<JsValue>(ctx, &source, true)?;
-            object_map(ctx, &evaluated)
+    let quickjs = || {
+        with_kind(EntryKind::Map, |ctx| {
+            with_widget_ec(ctx, expression, || {
+                let evaluated = eval_compiled::<JsValue>(ctx, &source, true)?;
+                object_map(ctx, &evaluated)
+            })
         })
-    })
+    };
+    crate::script::engine::small_script(EntryKind::Map, &source, crate::script::oxide::eval_map, quickjs)
 }
 
 #[cfg(test)]

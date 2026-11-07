@@ -1302,7 +1302,6 @@ pub(super) fn sri_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
     method!("xlsxCell", sri_xlsx_cell);
     method!("xlsxCellCount", sri_xlsx_cell_count);
     method!("xlsxEndRow", sri_xlsx_end_row);
-    super::urls::install(ctx, &sri)?;
     Ok(sri)
 }
 

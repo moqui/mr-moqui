@@ -36,84 +36,81 @@
 //! text), and with it `json` is the reply parsed and checked. The model is `model`, else the binding of `feature`, else
 //! a model of `tier`. A call that ends without an answer throws.
 
-use moqui_core::context::Error;
-use moqui_core::script::{facade_of, host_guard, host_to_js, js_error, js_to_host, throw_lib, with_ec};
-use rquickjs::{Ctx, Exception, Function, Object, Value as JsValue};
+use moqui_core::host_method;
+use moqui_core::script::host::{with_ec, Call, HostClass, HostError, Path, Ret};
+use moqui_lib::object::Value;
 
 use crate::conf::{ReasoningLevel, Tier};
 use crate::provider::Message;
 use crate::CompleteRequest;
 
-pub(crate) fn llm_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
-    let object = Object::new(ctx.clone()).map_err(js_error)?;
-    let complete = Function::new(ctx.clone(), llm_complete).map_err(js_error)?;
-    object.set("complete", complete).map_err(js_error)?;
-    let enabled = Function::new(ctx.clone(), |ctx: Ctx<'_>| {
-        host_guard(&ctx, || {
-            let factory = with_ec(&ctx, |ec| ec.factory().clone())?;
-            Ok(crate::facade(&factory).enabled())
-        })
-    })
-    .map_err(js_error)?;
-    object.set("isEnabled", enabled).map_err(js_error)?;
-    let summarize = Function::new(
-        ctx.clone(),
-        |ctx: Ctx<'js>, text: String, options: rquickjs::function::Opt<JsValue<'js>>| {
-            host_guard(&ctx, || {
-                let max_words = match options.0.as_ref().map(|value| js_to_host(&ctx, value)).transpose()? {
-                    Some(moqui_lib::object::Value::Map(map)) => {
-                        text_option(&map, "maxWords").and_then(|text| text.parse().ok())
-                    }
-                    _ => None,
-                };
-                let factory = with_ec(&ctx, |ec| ec.factory().clone())?;
-                let facade = facade_of(&ctx)?;
-                let summary = crate::ai_task::summarize(&factory, &facade, &text, max_words)
-                    .map_err(|error| throw_lib(&ctx, &error))?;
-                host_to_js(&ctx, moqui_lib::object::Value::String(summary))
-            })
-        },
-    )
-    .map_err(js_error)?;
-    object.set("summarize", summarize).map_err(js_error)?;
-    let classify = Function::new(ctx.clone(), |ctx: Ctx<'js>, text: String, labels: JsValue<'js>| {
-        host_guard(&ctx, || {
-            let labels: Vec<String> = match js_to_host(&ctx, &labels)? {
-                moqui_lib::object::Value::List(items) => items.iter().map(moqui_lib::object::to_plain_string).collect(),
-                _ => return Err(Exception::throw_message(&ctx, "ec.llm.classify takes a list of labels")),
-            };
-            let factory = with_ec(&ctx, |ec| ec.factory().clone())?;
-            let facade = facade_of(&ctx)?;
-            let label =
-                crate::ai_task::classify(&factory, &facade, &text, &labels).map_err(|error| throw_lib(&ctx, &error))?;
-            host_to_js(&ctx, moqui_lib::object::Value::String(label))
-        })
-    })
-    .map_err(js_error)?;
-    object.set("classify", classify).map_err(js_error)?;
-    let extract = Function::new(ctx.clone(), |ctx: Ctx<'js>, text: String, fields: JsValue<'js>| {
-        host_guard(&ctx, || {
-            let fields = moqui_lib::json::to_json(&js_to_host(&ctx, &fields)?);
-            let factory = with_ec(&ctx, |ec| ec.factory().clone())?;
-            let facade = facade_of(&ctx)?;
-            let values =
-                crate::ai_task::extract(&factory, &facade, &text, &fields).map_err(|error| throw_lib(&ctx, &error))?;
-            host_to_js(&ctx, moqui_lib::json::from_json(&values))
-        })
-    })
-    .map_err(js_error)?;
-    object.set("extract", extract).map_err(js_error)?;
-    let start_run = Function::new(ctx.clone(), |ctx: Ctx<'js>, agent_id: String, text: String| {
-        host_guard(&ctx, || {
-            let factory = with_ec(&ctx, |ec| ec.factory().clone())?;
-            let run_id =
-                crate::ai_task::start_run(&factory, &agent_id, &text).map_err(|error| throw_lib(&ctx, &error))?;
-            host_to_js(&ctx, moqui_lib::object::Value::String(run_id))
-        })
-    })
-    .map_err(js_error)?;
-    object.set("startRun", start_run).map_err(js_error)?;
-    Ok(object)
+/// The paths this crate adds to the host table (`moqui_core::llm_hooks`).
+pub(crate) static PATHS: &[Path] = &[Path::object("ec.llm", &LLM)];
+
+static LLM: HostClass = HostClass {
+    name: "host:Llm",
+    methods: &[
+        host_method!("ec.llm", "complete", [Value], None, complete),
+        host_method!("ec.llm", "isEnabled", [], is_enabled),
+        host_method!("ec.llm", "summarize", [Text, OptValue], None, summarize),
+        host_method!("ec.llm", "classify", [Text, Value], None, classify),
+        host_method!("ec.llm", "extract", [Text, Value], None, extract),
+        host_method!("ec.llm", "startRun", [Text, Text], None, start_run),
+    ],
+    getters: &[],
+    hidden: &[],
+    shim_js: None,
+    shim_members: &[],
+};
+
+fn factory() -> Result<std::sync::Arc<moqui_core::context::ExecutionContextFactory>, HostError> {
+    with_ec(|ec| ec.factory().clone())
+}
+
+/// The entity facade of the entered context; the error the facades throw when there is none.
+fn entity() -> Result<moqui_core::entity::EntityFacade, HostError> {
+    with_ec(|ec| ec.factory().entity())?.ok_or_else(|| HostError::message("no entity facade is installed"))
+}
+
+fn is_enabled(_: &mut Call<'_>) -> Result<Ret, HostError> {
+    let factory = factory()?;
+    Ok(crate::facade(&factory).enabled().into())
+}
+
+fn summarize(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let text = call.text(0).unwrap_or_default().to_string();
+    let max_words = match call.value(1) {
+        Some(Value::Map(map)) => text_option(map, "maxWords").and_then(|text| text.parse().ok()),
+        _ => None,
+    };
+    let (factory, facade) = (factory()?, entity()?);
+    let summary = crate::ai_task::summarize(&factory, &facade, &text, max_words).map_err(HostError::Lib)?;
+    Ok(summary.into())
+}
+
+fn classify(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let text = call.text(0).unwrap_or_default().to_string();
+    let labels: Vec<String> = match call.value_or_null(1) {
+        Value::List(items) => items.iter().map(moqui_lib::object::to_plain_string).collect(),
+        _ => return Err(HostError::message("ec.llm.classify takes a list of labels")),
+    };
+    let (factory, facade) = (factory()?, entity()?);
+    let label = crate::ai_task::classify(&factory, &facade, &text, &labels).map_err(HostError::Lib)?;
+    Ok(label.into())
+}
+
+fn extract(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let text = call.text(0).unwrap_or_default().to_string();
+    let fields = moqui_lib::json::to_json(&call.value_or_null(1));
+    let (factory, facade) = (factory()?, entity()?);
+    let values = crate::ai_task::extract(&factory, &facade, &text, &fields).map_err(HostError::Lib)?;
+    Ok(Ret::Value(moqui_lib::json::from_json(&values)))
+}
+
+fn start_run(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let (agent_id, text) = (call.text(0).unwrap_or_default(), call.text(1).unwrap_or_default());
+    let run_id = crate::ai_task::start_run(&factory()?, agent_id, text).map_err(HostError::Lib)?;
+    Ok(run_id.into())
 }
 
 fn text_option(map: &indexmap::IndexMap<String, moqui_lib::object::Value>, key: &str) -> Option<String> {
@@ -124,10 +121,10 @@ fn text_option(map: &indexmap::IndexMap<String, moqui_lib::object::Value>, key: 
         .filter(|text| !text.is_empty())
 }
 
-fn llm_complete<'js>(ctx: Ctx<'js>, args: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
-    host_guard(&ctx, || {
-        let moqui_lib::object::Value::Map(map) = js_to_host(&ctx, &args)? else {
-            return Err(Exception::throw_message(&ctx, "ec.llm.complete takes an options map"));
+fn complete(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    {
+        let Value::Map(map) = call.value_or_null(0) else {
+            return Err(HostError::message("ec.llm.complete takes an options map"));
         };
         let mut ask = CompleteRequest {
             model: text_option(&map, "model"),
@@ -138,16 +135,14 @@ fn llm_complete<'js>(ctx: Ctx<'js>, args: JsValue<'js>) -> rquickjs::Result<JsVa
             ..CompleteRequest::default()
         };
         if let Some(tier) = text_option(&map, "tier") {
-            ask.tier = Some(Tier::parse(&tier).ok_or_else(|| {
-                Exception::throw_message(&ctx, &format!("tier {tier} is not fast, balanced or thorough"))
-            })?);
+            ask.tier = Some(
+                Tier::parse(&tier)
+                    .ok_or_else(|| HostError::message(format!("tier {tier} is not fast, balanced or thorough")))?,
+            );
         }
         if let Some(level) = text_option(&map, "reasoning") {
             ask.reasoning = Some(ReasoningLevel::parse(&level).ok_or_else(|| {
-                Exception::throw_message(
-                    &ctx,
-                    &format!("reasoning {level} is not none, low, medium, high or max"),
-                )
+                HostError::message(format!("reasoning {level} is not none, low, medium, high or max"))
             })?);
         }
         ask.max_output = text_option(&map, "maxOutput").and_then(|text| text.parse().ok());
@@ -159,7 +154,7 @@ fn llm_complete<'js>(ctx: Ctx<'js>, args: JsValue<'js>) -> rquickjs::Result<JsVa
             None | Some(moqui_lib::object::Value::Null) => None,
             Some(moqui_lib::object::Value::String(text)) => Some(
                 serde_json::from_str(text)
-                    .map_err(|error| Exception::throw_message(&ctx, &format!("the schema is not JSON: {error}")))?,
+                    .map_err(|error| HostError::message(format!("the schema is not JSON: {error}")))?,
             ),
             Some(value) => Some(moqui_lib::json::to_json(value)),
         };
@@ -177,11 +172,10 @@ fn llm_complete<'js>(ctx: Ctx<'js>, args: JsValue<'js>) -> rquickjs::Result<JsVa
                 });
             }
         }
-        let factory = with_ec(&ctx, |ec| ec.factory().clone())?;
-        let facade = facade_of(&ctx)?;
+        let (factory, facade) = (factory()?, entity()?);
         let completion = crate::facade(&factory)
             .complete(&facade, &ask)
-            .map_err(|error| throw_lib(&ctx, &error))?;
+            .map_err(HostError::Lib)?;
         let mut out = indexmap::IndexMap::new();
         let count = |value: u64| moqui_lib::object::Value::I64(i64::try_from(value).unwrap_or(i64::MAX));
         out.insert("text".to_string(), moqui_lib::object::Value::String(completion.text));
@@ -219,8 +213,8 @@ fn llm_complete<'js>(ctx: Ctx<'js>, args: JsValue<'js>) -> rquickjs::Result<JsVa
                     .collect(),
             ),
         );
-        host_to_js(&ctx, moqui_lib::object::Value::Map(out))
-    })
+        Ok(Ret::Value(Value::Map(out)))
+    }
 }
 
 #[cfg(test)]

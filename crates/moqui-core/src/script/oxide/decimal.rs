@@ -149,6 +149,29 @@ pub(super) fn install_to_decimal(context: &Context) -> Result<(), RuntimeError> 
         &super::convert::key("toDecimal").map_err(|_| RuntimeError::Invariant("a key"))?,
         &quickjs_oxide::engine::api::core::OrdinaryPropertyDescriptor::data(Value::from(function), false, true, false),
     )?;
+    // `basicConvert(value, type)`, as the QuickJS host's: the value converted as the type the actions `set` names
+    let convert = context.new_function(
+        quickjs_oxide::engine::api::core::FunctionOptions::new("basicConvert").length(2),
+        |scope: &mut Scope<'_>| -> JsResult<Value> {
+            guarded(scope, |scope| {
+                let value = scope.arg(0);
+                let host = host_of(scope, &value)?;
+                let Value::String(kind) = scope.arg(1) else {
+                    return Err(Conv::Error(
+                        "Error converting from js 'undefined' into type 'string'".to_string(),
+                    ));
+                };
+                let converted = crate::l10n::basic_convert(&host, &kind.to_utf8_lossy()).value;
+                let engine = super::engine::current().ok_or(Conv::Unsupported("no oxide engine"))?;
+                super::convert::to_js(scope, &engine, &converted)
+            })
+        },
+    )?;
+    context.define_own_property(
+        &global,
+        &super::convert::key("basicConvert").map_err(|_| RuntimeError::Invariant("a key"))?,
+        &quickjs_oxide::engine::api::core::OrdinaryPropertyDescriptor::data(Value::from(convert), false, true, false),
+    )?;
     Ok(())
 }
 

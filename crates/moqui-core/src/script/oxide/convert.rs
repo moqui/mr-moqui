@@ -132,22 +132,41 @@ fn object_to_js<J: Js>(js: &mut J, engine: &OxideEngine, object: &HostObject) ->
     if let Some(cell) = object.downcast::<EntityCell>() {
         return entity_to_js(js, engine, cell);
     }
+    if let Some(tool) = object.downcast::<crate::native::ToolHandle>() {
+        let prototype = engine.protos.object_prototype.clone();
+        return Ok(Value::Object(super::bind::tool::tool_object(
+            js,
+            &engine.protos.tools,
+            tool,
+            Some(&prototype),
+        )?));
+    }
+    // An upload or a stream passes through a script to a service as itself, as on QuickJS; its methods fall back.
+    if object.downcast::<crate::web::multipart::UploadedFile>().is_some()
+        || object.downcast::<crate::script::host::StreamBytes>().is_some()
+    {
+        return Ok(Value::Object(js.new_host_exotic(
+            super::names::OpaqueTarget(object.clone()),
+            &engine.protos.opaque,
+            Some(&engine.protos.object_prototype),
+        )?));
+    }
     Err(Conv::Unsupported("a host object the oxide bindings do not have yet"))
 }
 
-/// An entity value: a Proxy whose `get` reads its fields (exotic once F2 lands), kept in the run's table so it
-/// converts back to the same cell.
+/// An entity value: an exotic object over its cell ([`super::names::EntityValues`]), one per cell in a run, so a value
+/// read twice is the same object.
 fn entity_to_js<J: Js>(js: &mut J, engine: &OxideEngine, cell: Arc<EntityCell>) -> Result<Value, Conv> {
     if let Some(proxy) = engine.entity_proxy(&cell) {
         return Ok(Value::Object(proxy));
     }
-    let target = js.new_host_object(super::names::EntityTarget(Arc::clone(&cell)), None)?;
-    let proxy = js.call(&engine.protos.make_entity, Value::Undefined, &[Value::Object(target)])?;
-    let Value::Object(proxy) = proxy else {
-        return Err(Conv::Error("an entity value did not convert".to_string()));
-    };
-    engine.keep_entity(proxy.clone(), cell);
-    Ok(Value::Object(proxy))
+    let object = js.new_host_exotic(
+        super::names::EntityTarget(Arc::clone(&cell)),
+        &engine.protos.entities,
+        Some(&engine.protos.object_prototype),
+    )?;
+    engine.keep_entity(object.clone(), cell);
+    Ok(Value::Object(object))
 }
 
 /// An oxide value as a host value; an error for one that cannot be held (a function, a symbol, a cyclic value).
@@ -182,7 +201,13 @@ fn to_host_in<J: Js>(
     if let Some(decimal) = js.host_data::<OxDecimal>(object)? {
         return Ok(decimal.inner.clone());
     }
-    if let Some(cell) = engine.entity_of(object) {
+    if let Some(tool) = js.host_data::<std::sync::Arc<crate::native::ToolHandle>>(object)? {
+        return Ok(HostValue::Object(HostObject(std::sync::Arc::clone(&tool) as _)));
+    }
+    if let Some(opaque) = js.host_data::<super::names::OpaqueTarget>(object)? {
+        return Ok(HostValue::Object(opaque.0.clone()));
+    }
+    if let Some(cell) = super::names::entity_cell(js, object)? {
         return Ok(HostValue::Object(HostObject(cell)));
     }
     if js.is_array_object(object)? {

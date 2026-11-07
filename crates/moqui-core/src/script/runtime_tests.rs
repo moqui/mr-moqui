@@ -54,15 +54,78 @@ fn small_oxide_runs_conditions_and_values_on_oxide() -> Result<(), Error> {
         let fields = oxide_runs("eval_field_value");
         assert_eq!(crate::script::eval_field_value("n")?, Value::I32(3));
         assert!(oxide_runs("eval_field_value") > fields);
+        // `${}` strings and map literals, on oxide too, with the QuickJS forms' answers
+        let expands = oxide_runs("expand");
+        assert_eq!(expand("n is ${n}, \\${not} `ticked`")?, "n is 3, ${not} `ticked`");
+        assert_eq!(crate::script::expand_localized("${n + 1}")?, "4");
+        assert!(oxide_runs("expand") >= expands + 2);
+        let maps = oxide_runs("eval_map");
+        let map = crate::script::eval_map("{a: n, b: [n]}")?;
+        assert_eq!(map.get("a"), Some(&Value::I32(3)));
+        assert!(oxide_runs("eval_map") > maps);
+        let err = crate::script::eval_map("[n]").unwrap_err();
+        assert_eq!(err.message(), "script value is not an object");
         // a list the QuickJS script changed in place is on the stack when the oxide condition reads it
         run_script("items = [1]")?;
         with_ctx(|ctx| {
             let _: rquickjs::Value = eval_source(ctx, "items.push(2)")?;
             assert!(eval_condition("items.length === 2")?);
+            // an oxide expression that sorts the list in place: the QuickJS script reads the sorted list after
+            let _: rquickjs::Value = eval_source(ctx, "items.unshift(9)")?;
+            assert_eq!(eval_value("items.sort((a, b) => a - b)[0]")?, Value::I32(1));
+            let first: i32 = eval_source(ctx, "items[0] * 100 + items[2]")?;
+            assert_eq!(first, 109);
             Ok(())
         })?;
         Ok(())
     })
+}
+
+/// Generated XML actions in the Actions profile (set, if, iterate over the bound values) give the same context on both
+/// engines, and run on quickjs-oxide under small-oxide.
+#[test]
+fn actions_give_the_same_context_on_both_engines() -> Result<(), Error> {
+    use crate::script::engine::{scripts_by_kind, ScriptEngine};
+    const ACTIONS: &str = r#"<actions>
+        <set field="total" from="a + 1"/>
+        <if condition="total &gt; 2"><set field="big" from="true"/><else><set field="big" from="false"/></else></if>
+        <set field="sum" from="0"/>
+        <iterate list="items" entry="item"><set field="sum" from="sum + item.qty"/></iterate>
+        <set field="names" from="items.map(i => i.name)"/>
+        <set field="names2" from="names" set-if-empty="false"/>
+        <set field="price" from="'12.50'" type="BigDecimal"/>
+        <set field="items[0].seen" from="true"/>
+    </actions>"#;
+    let mut results = Vec::new();
+    on_both_engines(|engine| {
+        clear_context_stack();
+        set_context_name("a", Value::I32(2))?;
+        let item = |name: &str, qty: i32| {
+            let mut map = indexmap::IndexMap::new();
+            map.insert("name".to_string(), Value::string(name));
+            map.insert("qty".to_string(), Value::I32(qty));
+            Value::Map(map)
+        };
+        set_context_name("items", Value::List(vec![item("x", 2), item("y", 5)]))?;
+        let oxide_before = scripts_by_kind()
+            .into_iter()
+            .find(|(kind, _, _)| *kind == "run_actions")
+            .map_or(0, |(_, _, oxide)| oxide);
+        crate::script::run_actions(ACTIONS)?;
+        let oxide_after = scripts_by_kind()
+            .into_iter()
+            .find(|(kind, _, _)| *kind == "run_actions")
+            .map_or(0, |(_, _, oxide)| oxide);
+        if engine == ScriptEngine::SmallOxide {
+            assert!(oxide_after > oxide_before, "the actions ran on oxide");
+        }
+        let names = ["total", "big", "sum", "names", "names2", "price", "items"];
+        results.push(names.map(context_value));
+        Ok(())
+    })?;
+    assert_eq!(results[0], results[1], "rquickjs, then small-oxide");
+    assert_eq!(results[0][2], Some(Value::I32(7)));
+    Ok(())
 }
 
 #[test]
@@ -166,15 +229,17 @@ fn json_stringify_writes_a_decimal_as_a_number() -> Result<(), Error> {
 
 #[test]
 fn expand_substitutes_a_context_field() -> Result<(), Error> {
-    clear_context_stack();
-    set_context_name("name", Value::string("Ada"))?;
-    set_context_name("big", decimal(MAX_COEFFICIENT))?;
-    assert_eq!(expand("Hello ${name}")?, "Hello Ada");
-    assert_eq!(expand("Hello ${name}")?, "Hello Ada");
-    assert_eq!(expand("no dollars")?, "no dollars");
-    assert_eq!(expand("trailing$")?, "trailing$");
-    assert_eq!(expand("${big}")?, MAX_COEFFICIENT);
-    Ok(())
+    on_both_engines(|_| {
+        clear_context_stack();
+        set_context_name("name", Value::string("Ada"))?;
+        set_context_name("big", decimal(MAX_COEFFICIENT))?;
+        assert_eq!(expand("Hello ${name}")?, "Hello Ada");
+        assert_eq!(expand("Hello ${name}")?, "Hello Ada");
+        assert_eq!(expand("no dollars")?, "no dollars");
+        assert_eq!(expand("trailing$")?, "trailing$");
+        assert_eq!(expand("${big}")?, MAX_COEFFICIENT);
+        Ok(())
+    })
 }
 
 fn holds(expression: &str) {

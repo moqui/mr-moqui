@@ -1300,6 +1300,13 @@ fn write_script_stats() {
             "compiled": stats.oxide_compiled,
             "poisoned": stats.oxide_poisoned,
             "fallbacks": stats.oxide_fallbacks,
+            "differences": stats.oxide_differences,
+            "heap_bytes_peak_threads_sum": stats.oxide_heap_peaks.iter().map(|(_, bytes)| bytes).sum::<usize>(),
+            "heap_bytes_peak_by_thread": stats
+                .oxide_heap_peaks
+                .iter()
+                .map(|(thread, bytes)| serde_json::json!({"thread": thread, "peak": bytes}))
+                .collect::<Vec<_>>(),
         },
         "check_parses": stats.check_parses,
         "scripts_by_kind": by_kind,

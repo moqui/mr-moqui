@@ -21,9 +21,10 @@
 //! `new` of a name, arrow functions with an expression body passed directly to one of the array methods that keep
 //! nothing ([`ARROW_METHODS`]), and the `ec` paths the allow test accepts. It refuses:
 //!
-//! - writes: any assignment, update or `delete`, and the methods that change an object in place
-//!   ([`MUTATING_METHODS`]), whatever the receiver; a Phase 1 oxide script reads lists and maps as copies and writes
-//!   nothing back;
+//! - writes to names and fields: any assignment, update or `delete`; and the methods that change an object in place
+//!   ([`MUTATING_METHODS`]) on a value reached from `ec`, which the oxide engine does not track. On any other value
+//!   such a method marks the text as writing ([`Verdict::writes`]): the oxide run tracks what it reads by name and
+//!   writes it back at its end;
 //! - functions that could outlive the run or leave the engine: function and class literals, block-bodied arrows, an
 //!   arrow anywhere but as an argument of an [`ARROW_METHODS`] call, `Promise`, `then`, `WeakRef`,
 //!   `FinalizationRegistry`, the legacy accessor definers;
@@ -66,6 +67,9 @@ pub(crate) enum Profile {
 pub(crate) struct Analysis {
     refused: Option<String>,
     ec_paths: Vec<String>,
+    /// Whether the text may change a value it read by name (a mutating method), so the oxide run writes its tracked
+    /// values back at its end.
+    writes: bool,
 }
 
 #[cfg(test)]
@@ -76,6 +80,10 @@ impl Analysis {
 
     pub(crate) fn ec_paths(&self) -> &[String] {
         &self.ec_paths
+    }
+
+    pub(crate) fn writes(&self) -> bool {
+        self.writes
     }
 }
 
@@ -105,6 +113,11 @@ impl Verdict {
     pub(crate) fn ec_paths(&self) -> &[String] {
         &self.analysis.ec_paths
     }
+
+    /// Whether the text may change a value it read by name.
+    pub(crate) fn writes(&self) -> bool {
+        self.analysis.writes
+    }
 }
 
 /// The global names QuickJS has (the host's and QuickJS's own) that the oxide engine does not, so a bare one would
@@ -127,7 +140,6 @@ pub(crate) const QUICKJS_ONLY_GLOBALS: &[&str] = &[
     "__compareOrder",
     "__inDateRange",
     "__moquiWrap",
-    "basicConvert",
     "compare",
     "elasticQueryAutoWildcard",
     "filterMapList",
@@ -136,7 +148,6 @@ pub(crate) const QUICKJS_ONLY_GLOBALS: &[&str] = &[
     "numberToWordsWithDecimal",
     "orderMapList",
     "sri",
-    "toNumber",
     // names the QuickJS bare-name object answers itself (`read_name`'s helper objects, the stack as `context`)
     "ObjectUtilities",
     "CollectionUtilities",
@@ -149,7 +160,7 @@ pub(crate) const QUICKJS_ONLY_GLOBALS: &[&str] = &[
 /// The host globals the oxide runtime has too (`oxide::decimal::install_to_decimal`), which a text may name; the test
 /// of [`QUICKJS_ONLY_GLOBALS`] leaves them out.
 #[cfg(test)]
-pub(crate) const OXIDE_HOST_GLOBALS: &[&str] = &["toDecimal"];
+pub(crate) const OXIDE_HOST_GLOBALS: &[&str] = &["basicConvert", "toDecimal", "toNumber"];
 
 /// Names a text may not read at all: the ways to code the check cannot see, to the global object itself, to a function
 /// that outlives the run (a promise's reaction, a finalizer) or to an object the check cannot follow.
@@ -179,11 +190,10 @@ const REFUSED_PROPERTIES: &[&str] = &[
     "then",
 ];
 
-/// Methods that change their receiver or another object in place, refused whatever the receiver: a Phase 1 oxide
-/// script reads a list or map from the stack as a copy and writes nothing back, so `items.sort()` would leave the
-/// stack unsorted where QuickJS sorts it. `add`, `set`, `delete` and `clear` (a Set's or Map's) are not on the list:
-/// a decimal's `add` is everywhere, the stack holds no JavaScript Map, and a Set read from the stack falls back to
-/// QuickJS (`oxide::convert`), so those methods change only a Set or Map the expression made itself.
+/// Methods that change their receiver or another object in place: a text that calls one writes, so its oxide run writes
+/// its tracked values back at the end. `add`, `set`, `delete` and `clear` (a Set's or Map's) are not on the list: a
+/// decimal's `add` is everywhere, the stack holds no JavaScript Map, and a Set read from the stack falls back to QuickJS
+/// (`oxide::convert`), so those methods change only a Set or Map the expression made itself.
 const MUTATING_METHODS: &[&str] = &[
     "push",
     "pop",
@@ -203,6 +213,10 @@ const MUTATING_METHODS: &[&str] = &[
     "preventExtensions",
 ];
 
+/// Methods that change their receiver in place but are refused on no receiver: a Set's, a Map's or a typed array's
+/// `set`, `add`, `delete` and `clear` (a decimal's `add` changes nothing, but the text is taken as writing anyway).
+const WRITE_METHODS: &[&str] = &["set", "add", "delete", "clear"];
+
 /// The methods an arrow function may be passed to: the array methods that call it during the call and keep nothing.
 const ARROW_METHODS: &[&str] = &[
     "map",
@@ -217,6 +231,8 @@ const ARROW_METHODS: &[&str] = &[
     "reduceRight",
     "flatMap",
     "forEach",
+    "sort",
+    "toSorted",
 ];
 
 /// Texts kept with their analysis, and the source bytes they may add up to.
@@ -292,19 +308,27 @@ pub(crate) fn verdict(text: &str, hash: u64, profile: Profile, allow: &dyn Fn(&s
 pub(crate) fn analyze(text: &str, profile: Profile) -> Analysis {
     PARSES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     match profile {
-        Profile::Expression => {}
-        Profile::Actions | Profile::Full => {
+        Profile::Expression | Profile::Actions => {}
+        Profile::Full => {
             return Analysis {
                 refused: Some(format!("the {profile:?} profile is not written yet")),
                 ec_paths: Vec::new(),
+                writes: true,
             }
         }
     }
     crate::script::parse::with_arena(|allocator| {
         let parsed = Parser::new(allocator, text, oxc_ast::ast::SourceType::default()).parse();
-        let mut walk = Walk::default();
+        let mut walk = Walk {
+            actions: profile == Profile::Actions,
+            // generated actions assign to bare names: they always write
+            writes: profile == Profile::Actions,
+            ..Walk::default()
+        };
         if parsed.fatal_error || parsed.diagnostics.has_errors() {
             walk.refuse("not JavaScript");
+        } else if walk.actions {
+            walk.actions_program(&parsed.program);
         } else {
             let program = &parsed.program;
             match (program.body.as_slice(), program.directives.as_slice()) {
@@ -318,6 +342,7 @@ pub(crate) fn analyze(text: &str, profile: Profile) -> Analysis {
         Analysis {
             refused: walk.refused,
             ec_paths: walk.ec_paths,
+            writes: walk.writes,
         }
     })
 }
@@ -326,6 +351,9 @@ pub(crate) fn analyze(text: &str, profile: Profile) -> Analysis {
 #[derive(Default)]
 struct Walk<'a> {
     refused: Option<String>,
+    writes: bool,
+    /// The [`Profile::Actions`] walk: assignments and the actions statements allowed.
+    actions: bool,
     ec_paths: Vec<String>,
     locals: Vec<HashSet<&'a str>>,
 }
@@ -451,7 +479,7 @@ impl<'a> Walk<'a> {
                 }
                 if let Expression::StringLiteral(key) = &member.expression {
                     let allowed = match key.value.as_str() {
-                        Some(name) => self.property_allowed(name),
+                        Some(name) => self.property_allowed(&member.object, name),
                         None => {
                             self.refuse("a string key that is not text");
                             false
@@ -468,6 +496,14 @@ impl<'a> Walk<'a> {
             Expression::ArrowFunctionExpression(_) => {
                 self.refuse("an arrow function that is not a call's argument");
             }
+            Expression::AssignmentExpression(assignment) if self.actions => {
+                match assignment.left.as_simple_assignment_target() {
+                    Some(target) => self.assignment_target(target),
+                    None => self.refuse("a destructuring assignment"),
+                }
+                self.expression(&assignment.right);
+            }
+            Expression::UpdateExpression(update) if self.actions => self.assignment_target(&update.argument),
             Expression::AssignmentExpression(_) => self.refuse("an assignment"),
             Expression::UpdateExpression(_) => self.refuse("an update (++ or --)"),
             Expression::ThisExpression(_) => self.refuse("this"),
@@ -480,6 +516,222 @@ impl<'a> Walk<'a> {
                 self.refuse("super, new.target or #x in")
             }
             _ => self.refuse("syntax outside the expression profile"),
+        }
+    }
+
+    /// What an actions script assigns to: a bare name (a context name, or the function's own variable) or a member of
+    /// a value not reached from `ec`.
+    fn assignment_target(&mut self, target: &'a oxc_ast::ast::SimpleAssignmentTarget<'a>) {
+        use oxc_ast::ast::SimpleAssignmentTarget;
+        match target {
+            SimpleAssignmentTarget::AssignmentTargetIdentifier(identifier) => self.name(identifier.name.as_str()),
+            other => match other.as_member_expression() {
+                Some(member) => {
+                    if self.rooted_at_ec(member.object()) {
+                        self.refuse("an assignment to a value reached from ec");
+                        return;
+                    }
+                    self.member(member);
+                }
+                None => self.refuse("an assignment target"),
+            },
+        }
+    }
+
+    /// A generated actions script: `(function() { ... })()`, the macros' root, with no parameters.
+    fn actions_program(&mut self, program: &'a oxc_ast::ast::Program<'a>) {
+        let [Statement::ExpressionStatement(statement)] = program.body.as_slice() else {
+            self.refuse("not one actions function");
+            return;
+        };
+        let Expression::CallExpression(call) = statement.expression.get_inner_expression() else {
+            self.refuse("not one actions function");
+            return;
+        };
+        let Expression::FunctionExpression(function) = call.callee.get_inner_expression() else {
+            self.refuse("not one actions function");
+            return;
+        };
+        if !call.arguments.is_empty()
+            || function.r#async
+            || function.generator
+            || !function.params.items.is_empty()
+            || function.params.rest.is_some()
+        {
+            self.refuse("an actions function with arguments");
+            return;
+        }
+        let Some(body) = &function.body else {
+            self.refuse("an actions function with no body");
+            return;
+        };
+        // the function's variables, wherever declared in it, are its own and not context names
+        self.locals.push(HashSet::new());
+        for statement in &body.statements {
+            self.declared(statement, true);
+        }
+        for statement in &body.statements {
+            self.statement(statement);
+        }
+        self.locals.pop();
+    }
+
+    /// Note the names `statement` declares into the current scope: `var` at any depth of blocks, ifs and loops (it is
+    /// the function's), `let` and `const` only when `top` (they belong to the block that holds them).
+    fn declared(&mut self, statement: &'a Statement<'a>, top: bool) {
+        let add = |declaration: &'a oxc_ast::ast::VariableDeclaration<'a>, locals: &mut Vec<HashSet<&'a str>>| {
+            for declarator in &declaration.declarations {
+                if let BindingPattern::BindingIdentifier(name) = &declarator.id {
+                    if let Some(scope) = locals.last_mut() {
+                        scope.insert(name.name.as_str());
+                    }
+                }
+            }
+        };
+        let hoisted = |declaration: &oxc_ast::ast::VariableDeclaration<'_>| {
+            top || declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var
+        };
+        match statement {
+            Statement::VariableDeclaration(declaration) if hoisted(declaration) => add(declaration, &mut self.locals),
+            Statement::BlockStatement(block) => {
+                for inner in &block.body {
+                    self.declared(inner, false);
+                }
+            }
+            Statement::IfStatement(branch) => {
+                self.declared(&branch.consequent, false);
+                if let Some(alternate) = &branch.alternate {
+                    self.declared(alternate, false);
+                }
+            }
+            Statement::ForStatement(each) => {
+                if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) = &each.init {
+                    if declaration.kind == oxc_ast::ast::VariableDeclarationKind::Var {
+                        add(declaration, &mut self.locals);
+                    }
+                }
+                self.declared(&each.body, false);
+            }
+            Statement::WhileStatement(each) => self.declared(&each.body, false),
+            _ => {}
+        }
+    }
+
+    /// The `let` and `const` names `statements` declare directly: a block's own scope.
+    fn block_scope(&mut self, statements: &'a [Statement<'a>]) -> HashSet<&'a str> {
+        let mut names = HashSet::new();
+        for statement in statements {
+            if let Statement::VariableDeclaration(declaration) = statement {
+                if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Var {
+                    for declarator in &declaration.declarations {
+                        if let BindingPattern::BindingIdentifier(name) = &declarator.id {
+                            names.insert(name.name.as_str());
+                        }
+                    }
+                }
+            }
+        }
+        names
+    }
+
+    /// Refuse a declaration (a variable, an arrow's parameter) that would shadow `ec`, a refused name or a QuickJS
+    /// global: a later read of it would not be what the check took it for.
+    fn binding(&mut self, name: &str) {
+        if name == "ec" || REFUSED_NAMES.contains(&name) || QUICKJS_ONLY_GLOBALS.contains(&name) {
+            self.refuse(format!("a declaration of {name}"));
+        }
+    }
+
+    /// A statement of an actions function: declarations, expressions (assignments among them), `if`, `for`, `while`,
+    /// blocks, `return` and `throw`. Anything else (a function or class declaration, `try`, `switch`, `for...in` or
+    /// `for...of`, labels, `with`) is refused.
+    fn statement(&mut self, statement: &'a Statement<'a>) {
+        if self.refused.is_some() {
+            return;
+        }
+        match statement {
+            Statement::VariableDeclaration(declaration) => self.declaration(declaration),
+            Statement::ExpressionStatement(statement) => self.expression(&statement.expression),
+            Statement::IfStatement(branch) => {
+                self.expression(&branch.test);
+                self.statement(&branch.consequent);
+                if let Some(alternate) = &branch.alternate {
+                    self.statement(alternate);
+                }
+            }
+            Statement::ForStatement(each) => {
+                // a `let` or `const` of the loop's start is the loop's own
+                let mut scope = HashSet::new();
+                if let Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) = &each.init {
+                    if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Var {
+                        for declarator in &declaration.declarations {
+                            if let BindingPattern::BindingIdentifier(name) = &declarator.id {
+                                scope.insert(name.name.as_str());
+                            }
+                        }
+                    }
+                }
+                self.locals.push(scope);
+                self.for_statement(each);
+                self.locals.pop();
+            }
+            Statement::WhileStatement(each) => {
+                self.expression(&each.test);
+                self.statement(&each.body);
+            }
+            _ => self.statement_rest(statement),
+        }
+    }
+
+    fn for_statement(&mut self, each: &'a oxc_ast::ast::ForStatement<'a>) {
+        match &each.init {
+            Some(oxc_ast::ast::ForStatementInit::VariableDeclaration(declaration)) => self.declaration(declaration),
+            Some(init) => match init.as_expression() {
+                Some(init) => self.expression(init),
+                None => self.refuse("a for statement's start"),
+            },
+            None => {}
+        }
+        if let Some(test) = &each.test {
+            self.expression(test);
+        }
+        if let Some(update) = &each.update {
+            self.expression(update);
+        }
+        self.statement(&each.body);
+    }
+
+    fn statement_rest(&mut self, statement: &'a Statement<'a>) {
+        match statement {
+            Statement::BlockStatement(block) => {
+                let scope = self.block_scope(&block.body);
+                self.locals.push(scope);
+                for inner in &block.body {
+                    self.statement(inner);
+                }
+                self.locals.pop();
+            }
+            Statement::ReturnStatement(statement) => {
+                if let Some(argument) = &statement.argument {
+                    self.expression(argument);
+                }
+            }
+            Statement::ThrowStatement(statement) => self.expression(&statement.argument),
+            Statement::EmptyStatement(_) => {}
+            _ => self.refuse("a statement outside the actions profile"),
+        }
+    }
+
+    fn declaration(&mut self, declaration: &'a oxc_ast::ast::VariableDeclaration<'a>) {
+        for declarator in &declaration.declarations {
+            let BindingPattern::BindingIdentifier(name) = &declarator.id else {
+                self.refuse("a destructuring declaration");
+                return;
+            };
+            self.binding(name.name.as_str());
+            if let Some(init) = &declarator.init {
+                self.expression(init);
+            }
         }
     }
 
@@ -534,7 +786,7 @@ impl<'a> Walk<'a> {
 
     /// `object.property`; an `ec` path is recorded whole, from its longest static chain.
     fn static_member(&mut self, object: &'a Expression<'a>, property: &str) {
-        if !self.property_allowed(property) {
+        if !self.property_allowed(object, property) {
             return;
         }
         if let Some(path) = self.ec_path(object) {
@@ -561,7 +813,7 @@ impl<'a> Walk<'a> {
                 }
                 if let Expression::StringLiteral(key) = &member.expression {
                     let allowed = match key.value.as_str() {
-                        Some(name) => self.property_allowed(name),
+                        Some(name) => self.property_allowed(&member.object, name),
                         None => {
                             self.refuse("a string key that is not text");
                             false
@@ -578,14 +830,22 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// A property name a text may read: not one of [`REFUSED_PROPERTIES`] or [`MUTATING_METHODS`].
-    fn property_allowed(&mut self, property: &str) -> bool {
+    /// A property name a text may read of `object`: not one of [`REFUSED_PROPERTIES`]; one of [`MUTATING_METHODS`] marks
+    /// the text as writing, and is refused on a value reached from `ec` (a host object the oxide engine does not track).
+    fn property_allowed(&mut self, object: &Expression<'_>, property: &str) -> bool {
         if REFUSED_PROPERTIES.contains(&property) {
             self.refuse(format!("the property {property}"));
             false
+        } else if WRITE_METHODS.contains(&property) {
+            self.writes = true;
+            true
         } else if MUTATING_METHODS.contains(&property) {
-            self.refuse(format!("the mutating method {property}"));
-            false
+            if self.rooted_at_ec(object) {
+                self.refuse(format!("the mutating method {property} on a value reached from ec"));
+                return false;
+            }
+            self.writes = true;
+            true
         } else {
             true
         }
@@ -606,6 +866,15 @@ impl<'a> Walk<'a> {
                 false
             }
             other => {
+                // a method named by a key the check cannot read (`list[op](x)`) may be a mutator
+                if let Expression::ComputedMemberExpression(member) = other {
+                    if !matches!(
+                        member.expression,
+                        Expression::StringLiteral(_) | Expression::NumericLiteral(_)
+                    ) {
+                        self.writes = true;
+                    }
+                }
                 self.expression(other);
                 false
             }
@@ -645,6 +914,7 @@ impl<'a> Walk<'a> {
         for parameter in &arrow.params.items {
             match &parameter.pattern {
                 BindingPattern::BindingIdentifier(name) if parameter.initializer.is_none() => {
+                    self.binding(name.name.as_str());
                     names.insert(name.name.as_str());
                 }
                 _ => {

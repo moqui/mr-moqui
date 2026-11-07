@@ -25,7 +25,7 @@ use crate::script::{clear_context_stack, push_context_frame, set_context_name};
 
 /// The value of `source` on the oxide engine, an error for an error or a fallback.
 fn value(source: &str) -> Result<Value, Error> {
-    match eval_value(source, hash_text(source)) {
+    match eval_value(source, hash_text(source), false) {
         Ok(value) => Ok(value),
         Err(Outcome::Error(err)) => Err(err),
         Err(Outcome::Fallback(reason)) => Err(Error::new(format!("fallback: {reason}"))),
@@ -33,7 +33,7 @@ fn value(source: &str) -> Result<Value, Error> {
 }
 
 fn condition(source: &str) -> bool {
-    match eval_condition(source, hash_text(source)) {
+    match eval_condition(source, hash_text(source), false) {
         Ok(value) => value,
         Err(Outcome::Error(err)) => panic!("{source}: {}", err.message()),
         Err(Outcome::Fallback(reason)) => panic!("{source}: fallback {reason}"),
@@ -41,11 +41,161 @@ fn condition(source: &str) -> bool {
 }
 
 fn fallback(source: &str) -> &'static str {
-    match eval_value(source, hash_text(source)) {
+    match eval_value(source, hash_text(source), false) {
         Err(Outcome::Fallback(reason)) => reason,
         Ok(value) => panic!("{source} gave {value:?}"),
         Err(Outcome::Error(err)) => panic!("{source}: {}", err.message()),
     }
+}
+
+/// [`value`] of a text that writes: its tracked values are written back at its end.
+fn written(source: &str) -> Result<Value, Error> {
+    match eval_value(source, hash_text(source), true) {
+        Ok(value) => Ok(value),
+        Err(Outcome::Error(err)) => Err(err),
+        Err(Outcome::Fallback(reason)) => Err(Error::new(format!("fallback: {reason}"))),
+    }
+}
+
+/// A list or map a run read by name and changed is written back at its end; one it did not change is left as the
+/// stack holds it; a bare assignment puts the value on the top frame, and a plain object stays the script's.
+#[test]
+fn tracked_values_are_written_back_at_the_end() -> Result<(), Error> {
+    clear_context_stack();
+    push_context_frame();
+    set_context_name("items", Value::List(vec![Value::I32(2), Value::I32(1)]))?;
+    let mut map = indexmap::IndexMap::new();
+    map.insert("a".to_string(), Value::I32(1));
+    set_context_name("map", Value::Map(map))?;
+    assert_eq!(written("items.sort()[0]")?, Value::I32(1));
+    assert_eq!(
+        crate::script::context_value("items"),
+        Some(Value::List(vec![Value::I32(1), Value::I32(2)]))
+    );
+    assert_eq!(
+        written("(() => { items.push(3); map.b = items.length; return 0 })()")?,
+        Value::I32(0)
+    );
+    assert_eq!(
+        crate::script::context_value("items"),
+        Some(Value::List(vec![Value::I32(1), Value::I32(2), Value::I32(3)]))
+    );
+    let Some(Value::Map(map)) = crate::script::context_value("map") else {
+        panic!("a map");
+    };
+    assert_eq!(map.get("b"), Some(&Value::I32(3)));
+    assert_eq!(
+        written("(() => { made = {x: 1}; made.y = 2; return 0 })()")?,
+        Value::I32(0)
+    );
+    let Some(Value::Map(made)) = crate::script::context_value("made") else {
+        panic!("the assigned map");
+    };
+    assert_eq!(
+        made.get("y"),
+        Some(&Value::I32(2)),
+        "a plain object assigned stays the script's, tracked"
+    );
+    // a read-only run writes nothing and the stack keeps its own value
+    let before = super::engine::changed_copies();
+    assert_eq!(value("items.length")?, Value::I32(3));
+    assert_eq!(super::engine::changed_copies(), before);
+    Ok(())
+}
+
+/// A host function that lends the engine (the fork's F3a) runs a nested small script on oxide itself, under
+/// small-oxide, with the outer run's values set aside and given back; without the lend it goes to QuickJS.
+#[test]
+fn a_script_nested_under_a_lend_runs_on_oxide() -> Result<(), Error> {
+    use crate::script::{with_script_engine, ScriptEngine};
+    use quickjs_oxide::engine::api::core::{Scope, Value as JsValue};
+    clear_context_stack();
+    push_context_frame();
+    set_context_name("n", Value::I32(1))?;
+    set_context_name("items", Value::List(vec![Value::I32(1)]))?;
+    let context = super::engine::context_for_tests();
+    let global = context.global_object().unwrap();
+    let oxide_values = || crate::script::engine::oxide_runs_here(crate::script::engine::EntryKind::Value);
+    for (name, lend) in [("lent", true), ("unlent", false)] {
+        context
+            .define_function(&global, name, 0, move |scope: &mut Scope<'_>| -> Result<JsValue, _> {
+                let nested = || crate::script::eval_value("n + items.length");
+                let got = if lend { scope.lend(nested) } else { nested() };
+                match got {
+                    Ok(Value::I32(number)) => Ok(JsValue::Int(number)),
+                    other => Err(scope.throw_error(
+                        quickjs_oxide::engine::api::core::NativeErrorKind::Type,
+                        &format!("{other:?}"),
+                    )),
+                }
+            })
+            .unwrap();
+    }
+    with_script_engine(ScriptEngine::SmallOxide, || -> Result<(), Error> {
+        let before = oxide_values();
+        assert_eq!(value("items.length + lent() + items.length")?, Value::I32(4));
+        assert_eq!(oxide_values(), before + 1, "the nested script ran on oxide");
+        let before = oxide_values();
+        assert_eq!(value("unlent()")?, Value::I32(2));
+        assert_eq!(oxide_values(), before, "without a lend it ran on QuickJS");
+        Ok(())
+    })
+}
+
+/// A run that wrote to the stack and then met what the bindings lack is an error, not a second run on QuickJS that
+/// would write again.
+#[test]
+fn a_fallback_after_a_write_is_an_error() -> Result<(), Error> {
+    use crate::script::{with_script_engine, ScriptEngine};
+    clear_context_stack();
+    push_context_frame();
+    set_context_name("total", Value::I32(1))?;
+    let mut tools = indexmap::IndexMap::new();
+    tools.insert("__wrap".to_string(), Value::string("x"));
+    set_context_name("tools", Value::Map(tools))?;
+    with_script_engine(ScriptEngine::SmallOxide, || -> Result<(), Error> {
+        let err = crate::script::run_actions(
+            r#"<actions><set field="total" from="total + 1"/><set field="copy" from="tools"/></actions>"#,
+        )
+        .unwrap_err();
+        assert!(err.message().contains("after a host call"), "{}", err.message());
+        assert_eq!(crate::script::context_value("total"), Some(Value::I32(2)), "added once");
+        Ok(())
+    })
+}
+
+/// A QuickJS script a lent host function runs inside an oxide script reads what the oxide script changed in place,
+/// and the oxide script then reads by name what the QuickJS one wrote.
+#[test]
+fn a_quickjs_script_nested_in_oxide_sees_its_changes() -> Result<(), Error> {
+    use quickjs_oxide::engine::api::core::{Scope, Value as JsValue};
+    clear_context_stack();
+    push_context_frame();
+    set_context_name("items", Value::List(vec![Value::I32(1)]))?;
+    let context = super::engine::context_for_tests();
+    let global = context.global_object().unwrap();
+    context
+        .define_function(&global, "quick", 0, |scope: &mut Scope<'_>| -> Result<JsValue, _> {
+            // a script kind oxide does not run: on QuickJS, nested in the oxide script
+            let ran = scope.lend(|| crate::script::run_script("seenLength = items.length; items.push(7)"));
+            match ran {
+                Ok(()) => Ok(JsValue::Undefined),
+                Err(err) => {
+                    Err(scope.throw_error(quickjs_oxide::engine::api::core::NativeErrorKind::Type, err.message()))
+                }
+            }
+        })
+        .unwrap();
+    assert_eq!(
+        written("(() => { items.push(5); quick(); return items.length })()")?,
+        Value::I32(3)
+    );
+    assert_eq!(crate::script::context_value("seenLength"), Some(Value::I32(2)));
+    assert_eq!(
+        crate::script::context_value("items"),
+        Some(Value::List(vec![Value::I32(1), Value::I32(5), Value::I32(7)]))
+    );
+    Ok(())
 }
 
 fn decimal(text: &str) -> Value {
@@ -209,7 +359,7 @@ fn what_the_bindings_do_not_have_yet_falls_back() -> Result<(), Error> {
     assert_eq!(fallback("context"), "the stack as context");
     assert_eq!(fallback("compare"), "a QuickJS global");
     assert_eq!(value("toDecimal('1.50').add(1).toString()")?, Value::string("2.50"));
-    assert_eq!(fallback("(() => { unsetName = 1 })()"), "an assignment to a bare name");
+    assert_eq!(value("toNumber('12.5') + toNumber(null)")?, Value::F64(12.5));
     let condition_object = Value::Object(HostObject::new(String::from("not a binding")));
     set_context_name("cond", condition_object)?;
     assert_eq!(fallback("cond"), "a host object the oxide bindings do not have yet");
@@ -277,9 +427,35 @@ fn an_entity_value_reads_its_fields() -> Result<(), Error> {
         .downcast::<crate::script::runtime::EntityCell>()
         .is_some_and(|back| Arc::ptr_eq(&back, &cell)));
     assert_eq!(fallback("order.getEntityName()"), "an entity value method");
+    // the exotic hooks: keys, `in`, own property reads and JSON see the fields; other names are Object.prototype's
     assert_eq!(
-        fallback("Object.keys(order)"),
-        "an entity value operation other than a field read"
+        value("Object.keys(order).join()")?,
+        Value::string("grandTotal,statusId")
+    );
+    assert!(condition("'statusId' in order && !('nothing' in order)"));
+    assert_eq!(
+        value("JSON.stringify(order)")?,
+        Value::string("{\"grandTotal\":12.5,\"statusId\":\"OrderPlaced\"}")
+    );
+    assert!(condition(
+        "typeof order.toString === 'function' && order.nothing === undefined"
+    ));
+    assert!(condition(
+        "Object.getOwnPropertyDescriptor(order, 'statusId').value === 'OrderPlaced'"
+    ));
+    // a set through a value on another object's prototype chain defines on that object, not on the entity
+    assert!(condition(
+        "(() => { const o = Object.create(order); o.statusId = 'X'; return o.statusId === 'X' })()"
+    ));
+    assert!(condition("order.statusId === 'OrderPlaced'"));
+    // a field set on the value itself writes the cell the stack shares
+    assert_eq!(
+        value("(() => { order.statusId = 'OrderApproved'; return order.statusId })()")?,
+        Value::string("OrderApproved")
+    );
+    assert_eq!(
+        cell.lock().unwrap().get("statusId").cloned(),
+        Some(Value::string("OrderApproved"))
     );
     Ok(())
 }

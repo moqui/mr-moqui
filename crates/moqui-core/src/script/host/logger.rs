@@ -22,12 +22,12 @@ use super::{method, Arg, Call, HostClass, HostError, Ret};
 pub(super) static LOGGER: HostClass = HostClass {
     name: "host:Logger",
     methods: &[
-        method!("ec.logger", "log", [Value, Text, Thrown], log),
-        method!("ec.logger", "warn", [Text, Thrown], warn),
-        method!("ec.logger", "info", [Text, Thrown], info),
-        method!("ec.logger", "error", [Text, Thrown], error),
-        method!("ec.logger", "debug", [Text, Thrown], debug),
-        method!("ec.logger", "trace", [Text, Thrown], trace),
+        method!("ec.logger", "log", [Value, Text, Thrown], None, leaf, log),
+        method!("ec.logger", "warn", [Text, Thrown], None, leaf, warn),
+        method!("ec.logger", "info", [Text, Thrown], None, leaf, info),
+        method!("ec.logger", "error", [Text, Thrown], None, leaf, error),
+        method!("ec.logger", "debug", [Text, Thrown], None, leaf, debug),
+        method!("ec.logger", "trace", [Text, Thrown], None, leaf, trace),
     ],
     getters: &[],
     hidden: &[],
