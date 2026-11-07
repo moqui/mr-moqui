@@ -330,6 +330,57 @@ fn worker_failed(err: &moqui_core::context::Error) -> Status {
     Status::unavailable(err.message().to_string())
 }
 
+/// A download's metadata as its first part.
+fn meta_message(meta: &core::DownloadMeta) -> DownloadMeta {
+    let mut message = DownloadMeta {
+        content_type: meta.content_type.clone(),
+        filename: meta.filename.clone(),
+        length: meta.length.unwrap_or_default(),
+        disposition: meta.disposition.clone(),
+        cache_control: meta.cache_control.clone().unwrap_or_default(),
+        ..DownloadMeta::default()
+    };
+    if let Some(ranged) = meta.ranged {
+        message.ranged = true;
+        message.status = u32::from(ranged.status());
+        match ranged {
+            core::Ranged::Whole => {}
+            core::Ranged::Part { start, end, complete } => {
+                (message.range_start, message.range_end, message.complete_length) = (start, end, complete);
+            }
+            core::Ranged::Unsatisfiable { complete } => message.complete_length = complete,
+        }
+    }
+    message
+}
+
+/// A download's metadata as it arrived: a range only as a status and bounds that agree, a `Cache-Control` only as
+/// [`core::PUBLIC_IMAGE_CACHE`].
+pub(crate) fn meta_from(meta: DownloadMeta) -> core::DownloadMeta {
+    let ranged = meta.ranged.then_some(match meta.status {
+        206 if meta.range_start <= meta.range_end && meta.range_end < meta.complete_length => core::Ranged::Part {
+            start: meta.range_start,
+            end: meta.range_end,
+            complete: meta.complete_length,
+        },
+        206 | 416 => core::Ranged::Unsatisfiable {
+            complete: meta.complete_length,
+        },
+        _ => core::Ranged::Whole,
+    });
+    core::DownloadMeta {
+        content_type: meta.content_type,
+        filename: meta.filename,
+        length: match ranged {
+            Some(core::Ranged::Unsatisfiable { .. }) => Some(0),
+            _ => (meta.length > 0).then_some(meta.length),
+        },
+        disposition: meta.disposition,
+        ranged,
+        cache_control: (meta.cache_control == core::PUBLIC_IMAGE_CACHE).then_some(meta.cache_control),
+    }
+}
+
 type DownloadStream = Pin<Box<dyn Stream<Item = Result<DownloadPart, Status>> + Send>>;
 
 /// The parts of a download as a stream, from a channel a reader fills.
@@ -376,12 +427,7 @@ impl PassAuthority for Authority {
                 }));
             }
             Ok(served) => {
-                let meta = DownloadMeta {
-                    content_type: served.meta.content_type.clone(),
-                    filename: served.meta.filename.clone(),
-                    length: served.meta.length.unwrap_or_default(),
-                    disposition: served.meta.disposition.clone(),
-                };
+                let meta = meta_message(&served.meta);
                 // the source is read a window at a time on a blocking thread, as a streamed response is
                 tokio::task::spawn_blocking(move || {
                     let first = DownloadPart {
@@ -390,10 +436,15 @@ impl PassAuthority for Authority {
                     if sender.blocking_send(Ok(first)).is_err() {
                         return;
                     }
-                    let length = served.source.len();
-                    let mut offset = 0_u64;
-                    while offset < length {
-                        match served.source.read_at(offset, CHUNK) {
+                    // only the bytes sent: the whole file, or a range of it (Shop F88)
+                    let end = served
+                        .start
+                        .saturating_add(served.meta.length.unwrap_or_default())
+                        .min(served.source.len());
+                    let mut offset = served.start;
+                    while offset < end {
+                        let window = usize::try_from(end - offset).map_or(CHUNK, |left| left.min(CHUNK));
+                        match served.source.read_at(offset, window) {
                             Ok(bytes) if bytes.is_empty() => break,
                             Ok(bytes) => {
                                 offset += bytes.len() as u64;

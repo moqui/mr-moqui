@@ -445,6 +445,8 @@ interface MoquiThemeAdapter {
         dependencies: string[];
     };
     engines(): string[];
+    /** Each engine with its renderer version (a new one may render a package differently) and view API versions. */
+    engineInfo(): { id: string; rendererVersion: number; viewApiVersions: number[] }[];
     limits(): Required<MoquiThemeLimits>;
     sanitizeSvg(text: string): string;
     sanitizeRichText(html: string): string;

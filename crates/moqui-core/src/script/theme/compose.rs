@@ -46,6 +46,8 @@ struct Page<'a> {
     base: Map<String, Json>,
     /// The component placeholders, by name.
     components: Vec<(String, String, bool)>,
+    /// The texts of `t(key)` for the view's locale.
+    texts: std::sync::Arc<template::Texts>,
 }
 
 /// Why one render failed.
@@ -119,6 +121,11 @@ pub(crate) fn render(package: &Package, request: &RenderRequest) -> Rendered {
         template_name: name,
         base: Map::new(),
         components: Vec::new(),
+        texts: std::sync::Arc::new(package::texts(
+            package,
+            request.view.get("locale").and_then(Json::as_str),
+            &manifest.default_locale,
+        )),
     };
     page.dependencies.insert(package::MANIFEST.to_string());
     page.dependencies.insert(template.file.clone());
@@ -646,19 +653,19 @@ impl Page<'_> {
         }
         let deadline = self.deadline.min(now + self.limits.render_time);
         let json = serde_json::to_string(view).map_err(|err| Failure::new(file, err.to_string()))?;
-        let out = template::render_locked_bounded(&assembled.text, &json, deadline, self.limits.memory_bytes).map_err(
-            |err| {
-                let message = if Instant::now() >= deadline {
-                    format!(
-                        "stopped at its time budget of {} ms",
-                        deadline.saturating_duration_since(now).as_millis()
-                    )
-                } else {
-                    err.message().to_string()
-                };
-                Failure::new(file, message)
-            },
-        )?;
+        let out =
+            template::render_locked_bounded(&assembled.text, &json, &self.texts, deadline, self.limits.memory_bytes)
+                .map_err(|err| {
+                    let message = if Instant::now() >= deadline {
+                        format!(
+                            "stopped at its time budget of {} ms",
+                            deadline.saturating_duration_since(now).as_millis()
+                        )
+                    } else {
+                        err.message().to_string()
+                    };
+                    Failure::new(file, message)
+                })?;
         if out.len() > self.limits.max_output_bytes {
             return Err(Failure::new(
                 file,

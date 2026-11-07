@@ -21,7 +21,10 @@
 //!     -> {result} or {error: {code, message, fieldErrors, correlationId, status}}, with sessionHandle
 //! client.upload(call, file)   file: an uploaded file (ec.web.multiPartParameters.file); the same answer
 //! client.download(call)       -> a response for ec.web.response.forward: statusCode, headerPairs and the body left on
-//!                                the server, or the error envelope as a JSON body with its status; .error is set then
+//!                                the server, or the error envelope as a JSON body with its status; .error is set then.
+//!                                A file that takes byte ranges (the call's input asked one) answers 200, 206 or 416
+//!                                with Accept-Ranges and Content-Range; a public image may carry the authority's
+//!                                `public, max-age=60` in place of no-store
 //! ```
 //!
 //! With no gRPC in the host (Lite, Dev) `passAuthority` throws "gRPC not built into this host", which mr-pass's
@@ -45,7 +48,7 @@ const PASS_JS: &str = r#"(function (ec, host) {
                 headerPairs: [["Content-Type", "application/json"], ["Cache-Control", "no-store"]],
                 bytes: function () { return body; }, text: function () { return body; } };
         }
-        return { error: null, statusCode: 200, headerPairs: opened.headers, bodyId: opened.bodyId,
+        return { error: null, statusCode: opened.status, headerPairs: opened.headers, bodyId: opened.bodyId,
             contentLength: opened.length,
             bytes: function () {
                 if (this.bodyId == null) return null;
@@ -206,7 +209,7 @@ fn pass_upload<'js>(
     })
 }
 
-/// A download: `{headers, bodyId, length}` with the body left on the server, or `{error}`.
+/// A download: `{status, headers, bodyId, length}` with the body left on the server, or `{error}`.
 fn pass_open<'js>(ctx: Ctx<'js>, endpoint: String, call: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
     host_guard(&ctx, || {
         let call = call_of(&ctx, &call)?;
@@ -226,15 +229,32 @@ fn pass_open<'js>(ctx: Ctx<'js>, endpoint: String, call: JsValue<'js>) -> rquick
                 } else {
                     meta.content_type.clone()
                 };
-                let headers = [
+                // only a public product image may be kept by a shared cache (Shop F118); the sender passes no other value
+                let cache_control = meta
+                    .cache_control
+                    .as_deref()
+                    .filter(|value| *value == pass_authority::PUBLIC_IMAGE_CACHE)
+                    .unwrap_or("no-store");
+                let mut headers = vec![
                     ("Content-Type".to_string(), content_type),
-                    ("Cache-Control".to_string(), "no-store".to_string()),
+                    ("Cache-Control".to_string(), cache_control.to_string()),
                     ("X-Content-Type-Options".to_string(), "nosniff".to_string()),
                     (
                         "Content-Disposition".to_string(),
                         format!("{}; filename=\"{filename}\"", meta.disposition),
                     ),
                 ];
+                // a file that takes byte ranges answers its range as a static file does (Shop F88)
+                if let Some(ranged) = meta.ranged {
+                    headers.push(("Accept-Ranges".to_string(), "bytes".to_string()));
+                    if let Some(range) = ranged.content_range() {
+                        headers.push(("Content-Range".to_string(), range));
+                    }
+                }
+                map.insert(
+                    "status".to_string(),
+                    Value::I64(i64::from(meta.ranged.map_or(200, pass_authority::Ranged::status))),
+                );
                 map.insert(
                     "headers".to_string(),
                     Value::List(

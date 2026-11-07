@@ -17,6 +17,18 @@ declare const StringUtilities: MoquiStringUtilities;
 declare const WebUtilities: MoquiWebUtilities;
 declare const System: { getProperty(name: string): string | null };
 
+/** The bytes of a resource or an uploaded file, as `openStream()` and `getInputStream()` of a location reference
+ * return them: read whole, a window from an offset, or written to a location as they are read. */
+interface MoquiResourceStream {
+    readonly size: number;
+    available(): number;
+    /** Up to `max` bytes from `offset` (at most 8 MiB): fewer only at the end, none past it. Only the window is read. */
+    read(offset: number, max: number): Uint8Array;
+    readAllBytes(): Uint8Array;
+    getText(charset?: string | null): string;
+    write(location: string): void;
+    close(): void;
+}
 /** A directory entry of `SftpClient.ls`. Times are seconds since the epoch. */
 interface SftpFileInfo {
     name: string;

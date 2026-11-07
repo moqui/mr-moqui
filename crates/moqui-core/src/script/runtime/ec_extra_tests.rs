@@ -267,6 +267,12 @@ fn a_service_validates_and_renders_a_theme_package() {
     }}) !== null"#;
     holds(setup);
     holds(r#"ec.resource.theme.engines().join() === "js-fancy" && ec.resource.theme.limits().maxSections === 100"#);
+    // the renderer version beside the engine's id (Shop F57); engines() stays the ids
+    holds(
+        r#"(function () { const info = ec.resource.theme.engineInfo();
+            return info.length === 1 && info[0].id === "js-fancy" && info[0].rendererVersion === 1
+                && info[0].viewApiVersions.join() === "1"; })()"#,
+    );
     holds(r#"ec.resource.theme.validate(themeFiles, {requiredPageKinds: ["home"]}).ok === true"#);
     holds(
         r#"ec.resource.theme.render(themeFiles, {pageKind: "home", view: {site: {name: "S"}}}).html

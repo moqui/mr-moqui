@@ -42,7 +42,7 @@ use serde_json::{json, Value as Json};
 use crate::context::ExecutionContextFactory;
 
 pub use markup::sanitize_rich_text;
-pub use package::Package;
+pub use package::{BinaryAsset, Package};
 pub use svg::sanitize_svg;
 
 /// The id of the first engine: the fancy dialect in the locked renderer with this adapter.
@@ -50,6 +50,10 @@ pub const JS_FANCY: &str = "js-fancy";
 
 /// The view API versions this framework renders.
 pub const VIEW_API_VERSIONS: &[u64] = &[1];
+
+/// The version of the `js-fancy` renderer: raised when the same package and view may render differently (the
+/// renderer's dialect, the adapter's composition or checks), so an app keys what it keeps of a render by it.
+pub const JS_FANCY_RENDERER_VERSION: u64 = 1;
 
 /// The budgets of a page (design-shop §12.4). The defaults are the ceilings: operator conf and a request may lower them,
 /// never raise them, and the renderer's own deadline and memory cap them again.
@@ -377,6 +381,9 @@ pub trait ThemeEngine: Send + Sync {
     /// The view API versions the engine renders.
     fn view_api_versions(&self) -> &'static [u64];
 
+    /// The renderer's version: a new one may render the same package and view differently.
+    fn renderer_version(&self) -> u64;
+
     /// Check a package: its manifest, schemas, settings, templates and assets, with a file and line for each finding.
     fn validate(&self, package: &Package, options: &ValidateOptions) -> Validation;
 
@@ -394,6 +401,10 @@ impl ThemeEngine for JsFancy {
 
     fn view_api_versions(&self) -> &'static [u64] {
         VIEW_API_VERSIONS
+    }
+
+    fn renderer_version(&self) -> u64 {
+        JS_FANCY_RENDERER_VERSION
     }
 
     fn validate(&self, package: &Package, options: &ValidateOptions) -> Validation {
@@ -418,6 +429,22 @@ pub fn engine(id: &str) -> Option<&'static dyn ThemeEngine> {
 /// The ids of the registered engines.
 pub fn engine_ids() -> Vec<&'static str> {
     ENGINES.iter().map(|engine| engine.id()).collect()
+}
+
+/// Each registered engine with its renderer and view API versions: `[{id, rendererVersion, viewApiVersions}]`.
+pub fn engine_info() -> Json {
+    Json::Array(
+        ENGINES
+            .iter()
+            .map(|engine| {
+                json!({
+                    "id": engine.id(),
+                    "rendererVersion": engine.renderer_version(),
+                    "viewApiVersions": engine.view_api_versions(),
+                })
+            })
+            .collect(),
+    )
 }
 
 /// The engine `theme.json` names, or the diagnostic that says why there is none.

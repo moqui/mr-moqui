@@ -17,7 +17,7 @@
 //!
 //! The trusted renderer runs that function on the script runtime with the live context. The
 //! locked-down renderer runs it in a separate QuickJS context that holds nothing but the plain
-//! snapshot of a map, `format` and `localize`. Tags are listed in Templating in
+//! snapshot of a map, `format`, `localize` and `t` (a theme's own texts by key). Tags are listed in Templating in
 //! `plans/archive/Architecture-Proposal.md`. Every template also has `raw(v)` (output as is), `html(v)` (HTML escaped
 //! once) and `cssString(v)` (a quoted CSS string that cannot end a `<style>` element, for `@page` margin boxes).
 
@@ -1079,9 +1079,13 @@ struct Sandbox {
     runtime: Runtime,
 }
 
+/// Texts by key for `t(key)` in a locked render: a theme package's `locales/` for the view's locale (`script/theme`).
+pub(crate) type Texts = std::collections::HashMap<String, String>;
+
 thread_local! {
     static SANDBOX: RefCell<Option<Sandbox>> = const { RefCell::new(None) };
     static LOCKED_DEADLINE: Cell<Option<Instant>> = const { Cell::new(None) };
+    static LOCKED_TEXTS: RefCell<Option<Arc<Texts>>> = const { RefCell::new(None) };
 }
 
 impl Sandbox {
@@ -1102,6 +1106,9 @@ impl Sandbox {
                     "localize",
                     Function::new(ctx.clone(), locked_localize).map_err(js_error)?,
                 )
+                .map_err(js_error)?;
+            globals
+                .set("t", Function::new(ctx.clone(), locked_text).map_err(js_error)?)
                 .map_err(js_error)?;
             ctx.eval::<(), _>(SANDBOX_PRELUDE)
                 .catch(&ctx)
@@ -1164,6 +1171,22 @@ fn locked_localize(ctx: Ctx<'_>, text: String) -> rquickjs::Result<String> {
     crate::l10n::localize(&text).map_err(|err| Exception::throw_message(&ctx, err.message()))
 }
 
+/// `t(key)`: the render's text for `key`, or the key itself when the theme has none (so a missing text shows, as the
+/// key, rather than nothing).
+fn locked_text(key: JsValue<'_>) -> rquickjs::Result<String> {
+    let key = match key.as_string() {
+        Some(key) => key.to_string()?,
+        None => return Ok(String::new()),
+    };
+    Ok(LOCKED_TEXTS.with(|texts| {
+        texts
+            .borrow()
+            .as_ref()
+            .and_then(|texts| texts.get(&key).cloned())
+            .unwrap_or(key)
+    }))
+}
+
 fn render_locked(compiled: &str, json: &str) -> Result<String, Error> {
     render_locked_until(compiled, json, Instant::now() + LOCKED_TIME_LIMIT, LOCKED_MEMORY_LIMIT)
 }
@@ -1171,9 +1194,10 @@ fn render_locked(compiled: &str, json: &str) -> Result<String, Error> {
 /// The locked renderer's own budgets: a theme's operator limits may lower them, never raise them.
 pub(crate) const LOCKED_BUDGET: (Duration, usize) = (LOCKED_TIME_LIMIT, LOCKED_MEMORY_LIMIT);
 
-/// Render `source` (HTML escaped) in the locked-down renderer with `json` as its snapshot, stopped at `deadline` and
-/// with at most `memory` bytes for the sandbox, each capped at the renderer's own limits. The theme adapter calls this
-/// for each layout, section and block, with the page's deadline and its operator's memory (`script/theme`).
+/// Render `source` (HTML escaped) in the locked-down renderer with `json` as its snapshot and `texts` for `t(key)`,
+/// stopped at `deadline` and with at most `memory` bytes for the sandbox, each capped at the renderer's own limits. The
+/// theme adapter calls this for each layout, section and block, with the page's deadline, its operator's memory and the
+/// package's texts for the view's locale (`script/theme`).
 ///
 /// # Errors
 ///
@@ -1181,13 +1205,17 @@ pub(crate) const LOCKED_BUDGET: (Duration, usize) = (LOCKED_TIME_LIMIT, LOCKED_M
 pub(crate) fn render_locked_bounded(
     source: &str,
     json: &str,
+    texts: &Arc<Texts>,
     deadline: Instant,
     memory: usize,
 ) -> Result<String, Error> {
     let compiled = compiled(source, Escape::Html, Scope::Snapshot)?;
     let deadline = deadline.min(Instant::now() + LOCKED_TIME_LIMIT);
+    let previous = LOCKED_TEXTS.with(|cell| cell.replace(Some(Arc::clone(texts))));
     // QuickJS reads a memory limit of 0 as none, so the least is 1 byte (every allocation fails), never 0.
-    render_locked_until(&compiled, json, deadline, memory.clamp(1, LOCKED_MEMORY_LIMIT))
+    let result = render_locked_until(&compiled, json, deadline, memory.clamp(1, LOCKED_MEMORY_LIMIT));
+    LOCKED_TEXTS.with(|cell| cell.replace(previous));
+    result
 }
 
 fn render_locked_until(compiled: &str, json: &str, deadline: Instant, memory: usize) -> Result<String, Error> {

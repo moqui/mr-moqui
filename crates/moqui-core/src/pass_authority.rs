@@ -200,14 +200,73 @@ pub struct UploadFile {
     pub bytes: Vec<u8>,
 }
 
+/// The only `Cache-Control` a download may carry instead of `no-store`: a public product image of the current generation
+/// (Shop P8, F75 and F118). The authority names it; any other value is sent as `no-store`.
+pub const PUBLIC_IMAGE_CACHE: &str = "public, max-age=60";
+
 /// What a downloaded file is.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DownloadMeta {
     pub content_type: String,
     pub filename: String,
+    /// The bytes sent: the file's length, the range's, or 0 for a range outside the file; none when not known.
     pub length: Option<u64>,
     /// `attachment` or `inline`.
     pub disposition: String,
+    /// For a file that takes byte ranges (a granted Shop download, F88): what of it is sent.
+    pub ranged: Option<Ranged>,
+    /// [`PUBLIC_IMAGE_CACHE`] when the authority allows it, else none (`no-store`).
+    pub cache_control: Option<String>,
+}
+
+/// What of a file that takes byte ranges a download sends, as a static file's `Range` answer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ranged {
+    /// The whole file (200, with `Accept-Ranges`).
+    Whole,
+    /// Bytes `start` to `end`, both included, of a file of `complete` bytes (206).
+    Part { start: u64, end: u64, complete: u64 },
+    /// A range outside a file of `complete` bytes (416, no body).
+    Unsatisfiable { complete: u64 },
+}
+
+impl Ranged {
+    /// The HTTP status of the answer.
+    pub fn status(self) -> u16 {
+        match self {
+            Self::Whole => 200,
+            Self::Part { .. } => 206,
+            Self::Unsatisfiable { .. } => 416,
+        }
+    }
+
+    /// The `Content-Range` header's value, for a part or a range outside the file.
+    pub fn content_range(self) -> Option<String> {
+        match self {
+            Self::Whole => None,
+            Self::Part { start, end, complete } => Some(format!("bytes {start}-{end}/{complete}")),
+            Self::Unsatisfiable { complete } => Some(format!("bytes */{complete}")),
+        }
+    }
+
+    /// The range of a file of `complete` bytes as the authority answered it (`{start, end}`, `{unsatisfiable}` or
+    /// null for the whole file), checked again against the file: a start past its end or an end before the start is
+    /// outside it, and an end past it is cut to its last byte.
+    pub fn of(range: &serde_json::Value, complete: u64) -> Self {
+        if range.is_null() {
+            return Self::Whole;
+        }
+        let bound = |name: &str| range.get(name).and_then(serde_json::Value::as_u64);
+        let refused = range.get("unsatisfiable").and_then(serde_json::Value::as_bool) == Some(true);
+        match (bound("start"), bound("end")) {
+            (Some(start), Some(end)) if !refused && start <= end && start < complete => Self::Part {
+                start,
+                end: end.min(complete - 1),
+                complete,
+            },
+            _ => Self::Unsatisfiable { complete },
+        }
+    }
 }
 
 /// A downloaded file as it arrives.
@@ -216,10 +275,12 @@ pub struct Download {
     pub reader: Box<dyn Read + Send>,
 }
 
-/// A file the authority serves, read a window at a time.
+/// A file the authority serves, read a window at a time: `meta.length` bytes of `source` from `start`.
 pub struct Served {
     pub meta: DownloadMeta,
     pub source: Arc<dyn ByteSource>,
+    /// The offset of the first byte sent: 0, or a range's start.
+    pub start: u64,
 }
 
 /// Sends calls to a PASS authority on the host's gRPC: `endpoint` is `grpc://host:port` or `grpcs://host:port` (the
@@ -401,6 +462,17 @@ pub fn serve_download(
         Err(err) => return Ok(Err(logged_unavailable(call, err.message()))),
     };
     let text = |name: &str| download[name].as_str().unwrap_or_default().to_string();
+    // a ranged file (the authority sends its size) answers its range, checked again against the file as it is here
+    let complete = opened.source.len();
+    let ranged = download
+        .get("size")
+        .is_some_and(|size| !size.is_null())
+        .then(|| Ranged::of(&download["range"], complete));
+    let (start, length) = match ranged {
+        Some(Ranged::Part { start, end, .. }) => (start, end - start + 1),
+        Some(Ranged::Unsatisfiable { .. }) => (0, 0),
+        Some(Ranged::Whole) | None => (0, complete),
+    };
     Ok(Ok(Served {
         meta: DownloadMeta {
             content_type: match text("contentType") {
@@ -408,20 +480,24 @@ pub fn serve_download(
                 kind => kind,
             },
             filename: text("filename"),
-            length: Some(opened.stat.size),
+            length: Some(length),
             disposition: match text("disposition") {
                 disposition if disposition == "inline" => disposition,
                 _ => "attachment".to_string(),
             },
+            ranged,
+            cache_control: (text("cacheControl") == PUBLIC_IMAGE_CACHE).then(|| PUBLIC_IMAGE_CACHE.to_string()),
         },
         source: opened.source,
+        start,
     }))
 }
 
 /// What the authority service answered.
 struct Outcome {
     result: Result<serde_json::Value, PassError>,
-    /// A file to send: `{location, contentType, filename, disposition}`.
+    /// A file to send: `{location, contentType, filename, disposition}`, with `size` and `range` (`{start, end}`,
+    /// `{unsatisfiable}` or null) for a file that takes byte ranges and `cacheControl` for a public image.
     download: Option<serde_json::Value>,
     session_handle: String,
 }
