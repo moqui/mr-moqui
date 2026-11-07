@@ -113,6 +113,9 @@ impl TemplateRenderer for FancyRenderer {
         if let Some(Value::Map(entries)) = data {
             super::put_context_all(entries);
         }
+        if super::oxide::templates::on_oxide() {
+            return super::oxide::templates::run_live(&compiled);
+        }
         super::runtime::run_template_function(&compiled)
     }
 
@@ -379,6 +382,9 @@ pub fn render_locked_with(source: &str, escape: Escape, data: &Value) -> Result<
 /// Render `source` as a trusted fancy template on the context of a running host call.
 pub(crate) fn render_trusted_here(ctx: &Ctx<'_>, source: &str, escape: Escape) -> Result<String, Error> {
     let compiled = compiled(source, escape, Scope::Live)?;
+    if super::oxide::templates::on_oxide() {
+        return super::oxide::templates::run_live(&compiled);
+    }
     super::runtime::run_template_function_here(ctx, &compiled)
 }
 
@@ -1093,7 +1099,7 @@ pub fn unwrap_json(value: &Value) -> serde_json::Value {
 
 /// `$scope(json)` is the reader of one render's snapshot names: a name of the global object is that global, any other
 /// is the snapshot's value, and a name the snapshot does not have is null.
-const SANDBOX_PRELUDE: &str = r#"
+pub(super) const SANDBOX_PRELUDE: &str = r#"
 globalThis.$scope = (data) => {
     const d = JSON.parse(data);
     if (d === null || typeof d !== "object") throw new TypeError("a template snapshot is not an object");
@@ -1103,7 +1109,7 @@ globalThis.$scope = (data) => {
 
 /// Freeze the global object, every object reachable from it, and the built-ins that no global names (the iterator,
 /// generator and async function prototypes, `%TypedArray%`).
-const SANDBOX_LOCKDOWN: &str = r#"
+pub(super) const SANDBOX_LOCKDOWN: &str = r#"
 (() => {
     const seen = new Set();
     const freeze = (o) => {
@@ -1187,11 +1193,27 @@ impl Sandbox {
 
 fn locked_format(ctx: Ctx<'_>, value: JsValue<'_>, pattern: Opt<String>) -> rquickjs::Result<String> {
     let host = if let Some(text) = value.as_string() {
-        let text = text.to_string()?;
+        Value::String(text.to_string()?)
+    } else if let Some(number) = value.as_int() {
+        Value::I64(i64::from(number))
+    } else if let Some(number) = value.as_float() {
+        Value::F64(number)
+    } else if let Some(flag) = value.as_bool() {
+        Value::Bool(flag)
+    } else {
+        Value::Null
+    };
+    format_snapshot_value(host, pattern.0.as_deref()).map_err(|err| Exception::throw_message(&ctx, err.message()))
+}
+
+/// The locked renderers' `format(value, pattern)` on either engine: `value` is the snapshot's text, number or flag
+/// (anything else is null).
+pub(super) fn format_snapshot_value(value: Value, pattern: Option<&str>) -> Result<String, Error> {
+    let host = match value {
         // The snapshot sends decimals and dates as text, so the pattern says which it is: a date pattern reads a
         // date or time stamp, a number pattern a number. (Digits alone are also epoch milliseconds to the date
         // parser, so trying it first would print a quantity as a date.)
-        match pattern.0.as_deref().filter(|pattern| !pattern.is_empty()) {
+        Value::String(text) => match pattern.filter(|pattern| !pattern.is_empty()) {
             // A date alone (`yyyy-MM-dd`) is a date, formatted with no time zone shift, as Java formats a Date.
             Some(pattern) if crate::l10n::is_date_pattern(pattern) => {
                 let trimmed = text.trim();
@@ -1211,37 +1233,37 @@ fn locked_format(ctx: Ctx<'_>, value: JsValue<'_>, pattern: Opt<String>) -> rqui
             None => crate::l10n::epoch_millis_text(&text)
                 .map(|millis| moqui_lib::object::basic_convert(&Value::I64(millis), "java.sql.Timestamp").value)
                 .unwrap_or(Value::String(text)),
-        }
-    } else if let Some(number) = value.as_int() {
-        Value::I64(i64::from(number))
-    } else if let Some(number) = value.as_float() {
-        Value::F64(number)
-    } else if let Some(flag) = value.as_bool() {
-        Value::Bool(flag)
-    } else {
-        Value::Null
+        },
+        other => other,
     };
-    crate::l10n::format_value(&host, pattern.0.as_deref()).map_err(|err| Exception::throw_message(&ctx, err.message()))
+    crate::l10n::format_value(&host, pattern)
 }
 
 fn locked_localize(ctx: Ctx<'_>, text: String) -> rquickjs::Result<String> {
     crate::l10n::localize(&text).map_err(|err| Exception::throw_message(&ctx, err.message()))
 }
 
-/// `t(key)`: the render's text for `key`, or the key itself when the theme has none (so a missing text shows, as the
-/// key, rather than nothing).
 fn locked_text(key: JsValue<'_>) -> rquickjs::Result<String> {
     let key = match key.as_string() {
-        Some(key) => key.to_string()?,
-        None => return Ok(String::new()),
+        Some(key) => Some(key.to_string()?),
+        None => None,
     };
-    Ok(LOCKED_TEXTS.with(|texts| {
+    Ok(snapshot_text(key))
+}
+
+/// `t(key)` on either engine: the render's text for `key`, or the key itself when the theme has none (so a missing
+/// text shows, as the key, rather than nothing); empty for a key that is not a string (`None`).
+pub(super) fn snapshot_text(key: Option<String>) -> String {
+    let Some(key) = key else {
+        return String::new();
+    };
+    LOCKED_TEXTS.with(|texts| {
         texts
             .borrow()
             .as_ref()
             .and_then(|texts| texts.get(&key).cloned())
             .unwrap_or(key)
-    }))
+    })
 }
 
 fn render_locked(compiled: &str, json: &str) -> Result<String, Error> {
@@ -1291,6 +1313,9 @@ impl Drop for TextsSet {
 }
 
 fn render_locked_until(compiled: &str, json: &str, deadline: Instant, memory: usize) -> Result<String, Error> {
+    if super::oxide::templates::on_oxide() {
+        return super::oxide::templates::render_locked(compiled, json, deadline, memory);
+    }
     SANDBOX.with(|cell| {
         if cell.borrow().is_none() {
             *cell.borrow_mut() = Some(Sandbox::start()?);
