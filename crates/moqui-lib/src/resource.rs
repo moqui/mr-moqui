@@ -297,10 +297,37 @@ pub struct FileResource {
 
 impl FileResource {
     pub fn new(location: impl Into<String>) -> Self {
-        let location = location.into();
-        let path = PathBuf::from(&location);
+        let raw = location.into();
+        // A location is a `/`-separated name, as `component://` and `runtime://` are. Windows
+        // canonicalize yields `\\?\` and `\`. A child is built by joining the location and parsing
+        // it back into a path, and that prefix does not accept `/`, so the subscreen directory
+        // beside a screen would not be listed. Drop the prefix when the path fits in MAX_PATH.
+        let path = plain_fs_path(PathBuf::from(&raw));
+        let location = path.to_string_lossy().replace('\\', "/");
         Self { location, path }
     }
+}
+
+/// `\\?\` and `\\?\UNC\` are the Windows verbatim prefixes. Without one, both separators work.
+fn plain_fs_path(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let text = path.to_string_lossy();
+        let plain = if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{rest}")
+        } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+            rest.to_string()
+        } else {
+            return path;
+        };
+        // MAX_PATH is 260 UTF-16 code units. A longer path keeps the prefix so it can still be opened.
+        if plain.encode_utf16().count() >= 260 {
+            return path;
+        }
+        return PathBuf::from(plain);
+    }
+    #[cfg(not(windows))]
+    path
 }
 
 impl FileResource {
@@ -672,7 +699,7 @@ fn parent_path(path: &str) -> &str {
 }
 
 fn file_tail(path: &str) -> &str {
-    path.rsplit_once('/').map_or(path, |(_, tail)| tail)
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
 fn now_millis() -> i64 {
@@ -696,6 +723,7 @@ mod tests {
         assert_eq!(parent_path("a/b"), "a");
         assert_eq!(parent_path("a"), "");
         assert_eq!(file_tail("a/b"), "b");
+        assert_eq!(file_tail(r"a\b"), "b");
         assert_eq!(file_tail("b"), "b");
         assert_eq!(file_tail("a/"), "");
         assert_eq!(strip_extension_after_slash("a/b.c/d.tar.gz"), "a/b.c/d");
@@ -729,6 +757,18 @@ mod tests {
         assert_eq!(content_type_for_name("page.xml"), Some("application/xml"));
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn windows_file_location_uses_slashes_and_drops_the_verbatim_prefix() {
+        let resource = FileResource::new(r"\\?\D:\app\screen\webroot\Login.xml");
+        assert_eq!(resource.location(), "D:/app/screen/webroot/Login.xml");
+        assert_eq!(resource.file_name(), "Login.xml");
+        assert_eq!(resource.path(), std::path::Path::new(r"D:\app\screen\webroot\Login.xml"));
+        let child = FileResource::new(r"\\?\D:\app\screen\webroot").child("Login.xml").unwrap();
+        assert_eq!(child.location(), "D:/app/screen/webroot/Login.xml");
+        assert_eq!(child.file_name(), "Login.xml");
+    }
+
     #[test]
     fn file_resource_round_trips_in_a_temp_directory() {
         let dir = std::env::temp_dir().join(format!("moqui-lib-resource-{}-{}", std::process::id(), now_millis()));
@@ -746,6 +786,7 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[cfg(unix)]
     #[test]
     fn file_write_replaces_whole_and_delete_reports_failures() {
         use std::os::unix::fs::PermissionsExt;

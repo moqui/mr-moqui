@@ -39,7 +39,6 @@
 
 mod cdp;
 
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::Ordering;
@@ -136,14 +135,35 @@ fn remove_orphan_profiles(temp_dir: &Path) {
 
 /// True while process `pid` exists.
 fn process_live(pid: u32) -> bool {
-    if cfg!(target_os = "linux") {
-        return Path::new("/proc").join(pid.to_string()).exists();
+    #[cfg(target_os = "linux")]
+    {
+        Path::new("/proc").join(pid.to_string()).exists()
     }
-    Command::new("kill")
-        .args(["-0", &pid.to_string()])
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .stderr(Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+    #[cfg(windows)]
+    {
+        windows_process_live(pid)
+    }
+}
+
+/// `tasklist` is the process probe that does not add a Windows crate.
+#[cfg(windows)]
+fn windows_process_live(pid: u32) -> bool {
+    let Ok(output) = Command::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])
+        .output()
+    else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.contains(&pid.to_string()) && !text.to_ascii_lowercase().contains("no tasks")
 }
 
 /// Removes the engine from core and stops its browser.
@@ -651,7 +671,8 @@ impl ChromiumProcess {
         let _ = std::fs::remove_dir_all(&profile);
         std::fs::create_dir_all(&profile)
             .map_err(|err| Error::new(format!("could not create {}", profile.display())).with_source(err))?;
-        let child = Command::new(binary)
+        let mut command = Command::new(binary);
+        command
             .args(ISOLATION_ARGS)
             .args(launch_args())
             .arg(format!("--user-data-dir={}", profile.display()))
@@ -659,8 +680,9 @@ impl ChromiumProcess {
             .env_remove("NOTIFY_SOCKET")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .process_group(0)
+            .stderr(Stdio::null());
+        isolate_process_group(&mut command);
+        let child = command
             .spawn()
             .map_err(|err| Error::new(format!("could not start {}", binary.display())).with_source(err))?;
         let mut process = Self { child, profile };
@@ -686,14 +708,44 @@ impl ChromiumProcess {
 impl Drop for ChromiumProcess {
     fn drop(&mut self) {
         // The renderer and GPU processes are in the same group.
-        let _ = Command::new("kill")
-            .args(["-KILL", &format!("-{}", self.child.id())])
-            .stderr(Stdio::null())
-            .status();
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        kill_tree(&mut self.child);
         let _ = std::fs::remove_dir_all(&self.profile);
     }
+}
+
+/// Put the browser in its own process group so its renderer and GPU children die with it.
+fn isolate_process_group(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt as _;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        // CREATE_NEW_PROCESS_GROUP. `taskkill /T` then reaches the renderer and GPU processes.
+        command.creation_flags(0x0000_0200);
+    }
+}
+
+/// Kill the browser and the helpers in its process group.
+fn kill_tree(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        let _ = Command::new("kill")
+            .args(["-KILL", &format!("-{}", child.id())])
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/F", "/T", "/PID", &child.id().to_string()])
+            .stderr(Stdio::null())
+            .status();
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 #[cfg(test)]
