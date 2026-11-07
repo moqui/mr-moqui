@@ -30,6 +30,7 @@ const r = ec.resource.theme.render(pkg, {
 //  dependencies: ["theme.json", "templates/product.json", "sections/hero.html.fancy-locked", ...]}
 
 ec.resource.theme.engines()          // ["js-fancy"]
+ec.resource.theme.engineInfo()       // [{id: "js-fancy", rendererVersion: 1, viewApiVersions: [1]}]
 ec.resource.theme.limits()           // the operator's limits
 ec.resource.theme.sanitizeSvg(text)  // an SVG asset cleaned to the safe set
 ec.resource.theme.sanitizeRichText(html)
@@ -49,15 +50,20 @@ and section, and listed in `omitted`. Diagnostics are for the developer (preview
 
 | Path | What it is |
 |---|---|
-| `theme.json` | `{schemaVersion: 1, name, engine: "js-fancy", viewApiVersion: 1, layout, requiredComponents, styles, defaultTemplates}` |
+| `theme.json` | `{schemaVersion: 1, name, engine: "js-fancy", viewApiVersion: 1, layout, requiredComponents, styles, defaultTemplates, defaultLocale}` |
 | `layouts/<name>.html.fancy-locked` | The page around the sections: `${content}` places them, `${styles}` the stylesheet links |
 | `templates/<name>.json` | `{layout?, sections: {id: {type, settings, blocks, blockOrder, required, disabled}}, order}`; `layout: false` for none. `<kind>.<alt>.json` is an alternate of a page kind |
 | `sections/<type>.html.fancy-locked`, `.schema.json` | A section and its schema: `{settings, blocks: [{type, limit}], maxBlocks, allowedPageKinds, required, placeholder}` |
 | `blocks/<type>.html.fancy-locked`, `.schema.json` | A block; its schema may allow nested blocks |
 | `snippets/<name>.html.fancy-locked` | Included with `<#include "name">`, which the adapter puts in before the render |
 | `config/settings.schema.json`, `config/settings.json` | The global settings (`{settings: [...]}` or groups `[{name, settings}]`) and their values |
-| `locales/<name>.json` | Texts by key |
-| `assets/...` | css and svg as text (checked), images and fonts as anything else (named only) |
+| `locales/<name>.json` | Texts by key, nested objects allowed (`{"cart": {"title": "Cart"}}` is `cart.title`), for `t(key)` |
+| `assets/...` | css and svg as text (checked); images and fonts by reference, `{digest, size, contentType}`, so their bytes stay out of the package |
+
+A binary asset's `contentType` must be its extension's (`image/png` for `.png`), its size at most 16 MiB and its digest
+at most 128 letters, digits and `+/=_:-`; one that does not check is left out with `invalid-asset`. The caller keeps
+the bytes and serves them by that digest; `Package::binary_asset(path)` gives the reference back. `true` in place of a
+reference only names the file, and an image given as text (an earlier release's base64) is read as before.
 
 Anything else, `.liquid` included, is refused. Ids and names are letters, digits, `-` and `_`. A JSON object with a key
 given twice is an error. Without `order` a template has at most one section.
@@ -70,7 +76,12 @@ What a template sees:
 - in a section: `section` (`{id, type, settings, blocks}`) and `blocks`, each `{id, type, settings, html}`, where
   `${block.html}` places the rendered block;
 - in a block: `section` (`{id, type}`), `block` and its own `blocks`;
-- `format(value, pattern)` and `localize(text)`.
+- `format(value, pattern)`, `localize(text)` (the framework's own localization) and `t(key)`, the theme's own text.
+
+`t(key)` reads `locales/`: the view's `locale` file (`fr_CA`, `fr-CA` read as `fr_CA`), then its language's (`fr`), then
+the default locale's (`theme.json`'s `defaultLocale`, `en` when it names none), the first that has the key. A key no file
+has shows as the key. A text is escaped as any value is. These function names hide a view key of the same name (a
+view's `t` is not reachable), as the template's own names do.
 
 A view value `{"$richText": html}` is sanitized and placed as a fragment, as a `richText` setting is.
 
@@ -100,7 +111,8 @@ null is kept. A reference that does not resolve is null with a warning, or a fai
   relative URLs. What the page loads (`src`, `srcset`, `<link href>`, CSS `url()`, an SVG `fill`, `filter`, `mask`…
   `url()`) is the page's own origin, an `allowedOrigins` origin, or a raster `data:` image; a `\` in a URL is read as
   `/`, as a browser reads it. CSS has no `@import`, `expression()`, `image-set()` or binding, read after its comments
-  and escapes. `<link rel>` is one of
+  and escapes. IE's `behavior` property (an `.htc` script) is refused as a property of its own, also as `*behavior`
+  or `_behavior`; one that only ends in it, such as `scroll-behavior`, passes. `<link rel>` is one of
   stylesheet, icon, apple-touch-icon, preload, canonical, alternate, next, prev, author and license.
 - Fragments (rendered blocks and sections, sanitized rich text, trusted components) are placeholders until the end and
   may stand only in text outside an `<svg>`, where the render's own view gave them, and a render's output leaves no
@@ -112,7 +124,7 @@ null is kept. A reference that does not resolve is null with a warning, or a fai
 Codes: `syntax`, `forbidden-name`, `forbidden-expression`, `unsafe-markup`, `unsafe-url`, `unsafe-css`, `unsafe-svg`,
 `recursion`, `include-depth`, `invalid-include`, `budget`, `invalid-json`, `invalid-manifest`, `invalid-template`,
 `invalid-schema`, `invalid-setting`, `invalid-reference`, `unknown-setting`, `unknown-type`, `unknown-file`,
-`unknown-engine`, `liquid`, `missing-file`, `missing-template`, `not-allowed`, `not-rendered`, `duplicate-id`,
+`unknown-engine`, `invalid-asset`, `liquid`, `missing-file`, `missing-template`, `not-allowed`, `not-rendered`, `duplicate-id`,
 `unresolved`, `render-failed`, `required-failed`.
 
 ## Budgets

@@ -135,8 +135,8 @@ impl StreamBytes {
 }
 
 /// The bytes of an uploaded file or a resource, as the Java `InputStream` a script passes to `putStream`. A script
-/// cannot read it a byte at a time: it reads all of it as text or a `Uint8Array`, or writes it to a location, which
-/// takes it as it is read.
+/// cannot read it a byte at a time: it reads all of it as text or a `Uint8Array`, a window of it from an offset
+/// (`read(offset, max)`, for a byte range), or writes it to a location, which takes it as it is read.
 #[derive(Trace, JsLifetime)]
 #[rquickjs::class]
 pub(super) struct HostStream {
@@ -172,10 +172,40 @@ impl HostStream {
     }
 }
 
+/// The most bytes one `read(offset, max)` returns, so a script reading a large file a window at a time never holds
+/// more than this of it.
+pub(super) const MAX_STREAM_READ: usize = 8 * 1024 * 1024;
+
 #[rquickjs::methods(rename_all = "camelCase")]
 impl HostStream {
     /// Nothing is held open, so closing is only for the script's `try`/`finally`.
     fn close(&self) {}
+
+    /// Up to `max` bytes from `offset` as a `Uint8Array`, at most [`MAX_STREAM_READ`]: fewer only at the end or at
+    /// that cap, none past the end. Only the window is read from the source (a file, a database blob), so a byte range
+    /// of a large file does not read the rest (Shop F88).
+    fn read<'js>(&self, ctx: Ctx<'js>, offset: f64, max: f64) -> rquickjs::Result<JsValue<'js>> {
+        host_guard(&ctx, || {
+            let whole = |value: f64| value.is_finite() && value >= 0.0 && value.fract() == 0.0;
+            if !whole(offset) || !whole(max) {
+                return Err(Exception::throw_message(
+                    &ctx,
+                    &format!("read(offset, max) takes whole numbers from 0, not {offset} and {max}"),
+                ));
+            }
+            // whole, non-negative and finite, so these casts only saturate at the type's top
+            let (offset, max) = (offset as u64, (max as u64).min(MAX_STREAM_READ as u64) as usize);
+            let bytes = if max == 0 || offset >= self.size() {
+                Vec::new()
+            } else {
+                self.inner
+                    .source
+                    .read_at(offset, max)
+                    .map_err(|err| Exception::throw_message(&ctx, err.message()))?
+            };
+            rquickjs::TypedArray::<u8>::new(ctx.clone(), bytes).map(rquickjs::TypedArray::into_value)
+        })
+    }
 
     fn available<'js>(&self, ctx: Ctx<'js>) -> rquickjs::Result<JsValue<'js>> {
         host_guard(&ctx, || i64_to_js(&ctx, i64::try_from(self.size()).unwrap_or(i64::MAX)))

@@ -76,3 +76,45 @@ fn with_no_sender_installed_a_call_is_not_built() {
     };
     assert_eq!(err.message(), NOT_BUILT);
 }
+
+/// A ranged download's range as the authority answered it, checked again against the file (Shop F88): a part, the
+/// whole file, or outside it, with the status and `Content-Range` the frontend answers.
+#[test]
+fn a_download_range_is_checked_against_the_file() {
+    use serde_json::json;
+    assert_eq!(Ranged::of(&serde_json::Value::Null, 10), Ranged::Whole);
+    let part = Ranged::of(&json!({"start": 2, "end": 5}), 10);
+    assert_eq!(
+        part,
+        Ranged::Part {
+            start: 2,
+            end: 5,
+            complete: 10
+        }
+    );
+    assert_eq!(
+        (part.status(), part.content_range().as_deref()),
+        (206, Some("bytes 2-5/10"))
+    );
+    // an end past the file is cut to its last byte
+    assert_eq!(
+        Ranged::of(&json!({"start": 8, "end": 99}), 10)
+            .content_range()
+            .as_deref(),
+        Some("bytes 8-9/10")
+    );
+    for outside in [
+        json!({"unsatisfiable": true, "size": 10}),
+        json!({"start": 10, "end": 12}),
+        json!({"start": 5, "end": 4}),
+        json!({"start": "2"}),
+    ] {
+        let ranged = Ranged::of(&outside, 10);
+        assert_eq!(ranged, Ranged::Unsatisfiable { complete: 10 }, "{outside}");
+        assert_eq!(
+            (ranged.status(), ranged.content_range().as_deref()),
+            (416, Some("bytes */10"))
+        );
+    }
+    assert_eq!((Ranged::Whole.status(), Ranged::Whole.content_range()), (200, None));
+}

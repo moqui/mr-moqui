@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
-use moqui_core::pass_authority::{Call, Download, DownloadMeta, PassError, PassSender, Reply, UploadFile};
+use moqui_core::pass_authority::{Call, Download, PassError, PassSender, Reply, UploadFile};
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
 
@@ -298,12 +298,7 @@ impl PassSender for Sender {
             }
         });
         Ok(Ok(Download {
-            meta: DownloadMeta {
-                content_type: meta.content_type,
-                filename: meta.filename,
-                length: (meta.length > 0).then_some(meta.length),
-                disposition: meta.disposition,
-            },
+            meta: super::meta_from(meta),
             reader: Box::new(ChannelReader {
                 receiver,
                 current: Bytes::new(),

@@ -156,6 +156,26 @@ fn locked_down_format_and_localize_are_plain_functions() {
     assert_eq!(out, "1,234.50 2024-03-05 Hello");
 }
 
+/// A theme render's `t(key)` texts last only as long as that render, also when it fails: a later locked render on the
+/// thread reads the key itself.
+#[test]
+fn locked_down_texts_end_with_their_render() {
+    let texts = Arc::new(Texts::from([("a".to_string(), "<A>".to_string())]));
+    let deadline = Instant::now() + LOCKED_TIME_LIMIT;
+    let out = render_locked_bounded(
+        "${t('a')}|${t('b')}|${t(1)}",
+        "{}",
+        &texts,
+        deadline,
+        LOCKED_MEMORY_LIMIT,
+    )
+    .unwrap();
+    assert_eq!(out, "&lt;A&gt;|b|");
+    assert!(render_locked_bounded("${t('a')}${nothing()}", "{}", &texts, deadline, LOCKED_MEMORY_LIMIT).is_err());
+    let empty = Value::Map(Default::default());
+    assert_eq!(render_locked_with("${t('a')}", Escape::None, &empty).unwrap(), "a");
+}
+
 #[test]
 fn a_locked_down_template_cannot_change_what_the_next_one_runs() {
     let empty = Value::Map(Default::default());

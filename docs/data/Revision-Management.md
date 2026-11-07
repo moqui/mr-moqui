@@ -183,6 +183,7 @@ cannot be.
 | `ec.resource.restoreVersion(location, versionName, note)` | That version written back as the newest (on `git://` one commit that puts the entry of that commit back, so a directory deleted later comes back whole); the new version's name |
 | `ec.resource.getVersionBytes(location, versionName)` | A version's bytes as a `Uint8Array`, or null |
 | `ec.resource.getLocationReference("location#versionName")` | The file's reference, whose `openStream()`, `getInputStream()` and `getText()` read that version (null when it is not there) |
+| `stream.read(offset, max)` | Of a stream from `openStream()` or `getInputStream()`: up to `max` bytes (at most 8 MiB) from `offset` as a `Uint8Array`, fewer only at the end; only that window is read, so a byte range of a large file reads no more |
 | `ec.web.sendResourceResponse("location#versionName", inline, fileName)` | That version as the response (404 when it is not there) |
 
 In Rust: `ResourceFacade::write_bytes_noted`, `restore_version`, and `ResourceProvider::write_bytes_noted` (a provider
