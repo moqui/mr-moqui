@@ -17,7 +17,8 @@ along with this software (see the LICENSE.md file). If not, see
     <webapp-list><webapp name="webroot"><token-route name="link" screen-location="component://example/screen/PublicLink.xml"
         token-service="org.moqui.impl.FileServices.check#PublicShareToken" title="Shared with you"/></webapp></webapp-list>
     The route's token check has run first: tokenRoute.context is what the link shows (name, sharer, note). The files
-    transition calls the public-share service, which checks the token again before it reads the folder. -->
+    transition calls the public-share service, which checks the token again before it reads the folder. The form posts to
+    it and the back transition returns to the page: both stay under /<route>/<token>, the root of the screen's links. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
         require-authentication="false" default-menu-include="false" default-menu-title="Shared">
     <transition name="files" read-only="true">
@@ -30,6 +31,7 @@ along with this software (see the LICENSE.md file). If not, see
             ]]></script></actions>
         <default-response type="none"/>
     </transition>
+    <transition name="back" read-only="true"><default-response url="."/></transition>
     <actions>
         <set field="shared" from="(tokenRoute &amp;&amp; tokenRoute.context) || {}"/>
     </actions>
@@ -39,6 +41,10 @@ along with this software (see the LICENSE.md file). If not, see
             <box-body>
                 <label text="Shared by ${shared.sharerName || 'someone'}" type="p"/>
                 <label text="${shared.note || ''}" type="p" style="public-link-note"/>
+                <form-single name="FolderForm" transition="files">
+                    <field name="path"><default-field title="Folder"><text-line size="30"/></default-field></field>
+                    <field name="submitButton"><default-field title="List"><submit/></default-field></field>
+                </form-single>
             </box-body>
         </container-box>
     </widgets>

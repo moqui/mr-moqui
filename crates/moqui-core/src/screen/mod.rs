@@ -131,7 +131,11 @@ pub fn serve_at(factory: &Arc<ExecutionContextFactory>, mut request: WebRequest,
         );
     }
     if let Some(origin) = web::refused_origin(factory, &request) {
-        tracing::warn!("Origin not allowed: {origin} for {} {}", request.method, request.path);
+        tracing::warn!(
+            "Origin not allowed: {origin} for {} {}",
+            request.method,
+            token_route::redact(factory, &request.path)
+        );
         return web::early_error(factory, &request, 401, "Origin not allowed");
     }
     if request.method.eq_ignore_ascii_case("options") {
