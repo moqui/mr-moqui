@@ -478,6 +478,9 @@
         transaction cache, as a service marked transaction="cache" does; false (the default) begins it as
         transaction="use". Off by default: Mr. Boss's receiving walk (Finish receipt) sees a stale shipment with it on. -->
     <default-property name="screen_tx_cache" value="false"/>
+    <!-- A module ec.resource.script loads whose top level only declares (functions, constants, other modules) gives the
+        same value for the rest of the outermost script run, made once; false makes it again at each load. -->
+    <default-property name="script_module_cache" value="true"/>
     <default-property name="entity_empty_db_load" value="seed,seed-initial,install"/>
     <default-property name="entity_on_start_load_types" value="none"/>
     <default-property name="entity_on_start_load_components" value=""/>

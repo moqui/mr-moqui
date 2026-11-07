@@ -318,12 +318,12 @@
         // its links are the list's in-cell links with the row's ids, and gives that state back when it ends, so the rows after it
         // render as before. The outermost unit ($depth 0) starts afresh.
         const units = [];
+        // the outermost unit of a render ($depth 0) starts afresh and gives back the state of a render it ran inside
         const enter = (depth) => {
-            if (!depth) { units.length = 0; reset(); return; }
             units.push({ st: Object.assign({}, st), saved: saved.slice() });
+            if (!depth) reset();
         };
         const leave = (depth) => {
-            if (!depth) return;
             const outer = units.pop();
             if (!outer) return;
             Object.keys(st).forEach((key) => { delete st[key]; });

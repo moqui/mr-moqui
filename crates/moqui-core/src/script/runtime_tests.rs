@@ -739,7 +739,7 @@ fn heap_pressure_releases_cached_code_without_losing_live_values() {
     // hard limit, and verify the next script can still read it. No retry of a possibly side-effectful script occurs.
     std::thread::spawn(|| -> Result<(), Error> {
         assert!(eval_condition("1 + 1 === 2")?);
-        let engine = super::ENGINES.with(|engines| engines.borrow()[0].clone());
+        let engine = super::ENGINES.with(|engines| engines.borrow()[0].1.clone());
         assert!(!engine.reclaim_cache_pressure());
         let retained = engine.context.with(|ctx| -> Result<_, Error> {
             let array: rquickjs::Array = ctx.eval("new Array(3200000).fill(42)").map_err(js_error)?;
@@ -774,7 +774,7 @@ fn heap_pressure_releases_cached_code_without_losing_live_values() {
 fn running_out_of_memory_frees_the_engine_caches() -> Result<(), Error> {
     clear_context_stack();
     assert!(eval_condition("1 + 1 === 2")?);
-    let cached = || super::ENGINES.with(|engines| engines.borrow()[0].scripts.borrow().len());
+    let cached = || super::ENGINES.with(|engines| engines.borrow()[0].1.scripts.borrow().len());
     assert!(cached() > 0);
     let err = run_script("(function () { const hog = []; while (true) hog.push(new Array(100000).fill(1)); })()")
         .expect_err("out of memory");

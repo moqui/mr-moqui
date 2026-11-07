@@ -168,7 +168,7 @@ fn a_script_reads_localized_fields_and_writes_the_stored_ones() {
 /// holds the runtime's lock.
 fn live_allocations() -> i64 {
     let engine = super::super::ENGINES
-        .with(|engines| engines.borrow().first().cloned())
+        .with(|engines| engines.borrow().first().map(|(_, engine)| engine.clone()))
         .expect("a started engine");
     engine.runtime.run_gc();
     engine.runtime.memory_usage().malloc_count
@@ -604,7 +604,7 @@ fn the_engine_counts_its_heap_as_quickjs_does() {
     let _entered = context.enter();
     run_script("globalThis.big = []; for (let i = 0; i < 20000; i++) globalThis.big.push('x' + i)").unwrap();
     let engine = super::super::ENGINES
-        .with(|engines| engines.borrow().first().cloned())
+        .with(|engines| engines.borrow().first().map(|(_, engine)| engine.clone()))
         .expect("a started engine");
     engine.runtime.run_gc();
     let counted = i64::try_from(engine.heap_bytes.get()).unwrap();

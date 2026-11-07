@@ -1004,6 +1004,7 @@ fn finish_report(
     }
     let (text, mut failed) = report::summary(results, started.elapsed());
     print!("{text}");
+    write_script_stats();
     // the regression budget: not a worker's part of a run (its parent checks the whole), not the acceptance suite, not
     // the fixture run of a served suite
     if !args.acceptance && args.results_json.is_none() && args.serve.is_none() {
@@ -1117,3 +1118,36 @@ pub(crate) fn order_by_load(components: &mut [TestComponent], factory: &Executio
 
 #[cfg(test)]
 mod tests;
+
+/// With `MOQUI_SCRIPT_STATS_FILE` set, a JSON line of this process's script engine counts appended to that file
+/// (`moqui_core::script::engine_stats`): a worker of a run writes its own.
+fn write_script_stats() {
+    let path = moqui_lib::env::get_prop_or_env("MOQUI_SCRIPT_STATS_FILE");
+    if path.is_empty() {
+        return;
+    }
+    let stats = moqui_core::script::engine_stats();
+    let line = format!(
+        "{{\"pid\":{},\"threads\":{},\"engines_started\":{},\"engines_live\":{},\"engines_live_max\":{},\"depth_max\":{},\
+         \"heap_bytes\":{},\"heap_bytes_max\":{},\"compiled\":{},\"shared_reads\":{}}}\n",
+        std::process::id(),
+        stats.threads,
+        stats.engines_started,
+        stats.engines_live,
+        stats.engines_live_max,
+        stats.depth_max,
+        stats.heap_bytes,
+        stats.heap_bytes_max,
+        stats.compiled,
+        stats.shared_reads
+    );
+    use std::io::Write as _;
+    match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        Ok(mut file) => {
+            if let Err(err) = file.write_all(line.as_bytes()) {
+                tracing::warn!(error = %err, path, "could not write the script stats");
+            }
+        }
+        Err(err) => tracing::warn!(error = %err, path, "could not open the script stats"),
+    }
+}

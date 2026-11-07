@@ -235,20 +235,21 @@
         // its links are the list's in-cell links with the row's ids, and gives that state back when it ends, so the rows after it
         // render as before. The outermost unit ($depth 0) starts afresh.
         const units = [];
+        // the outermost unit of a render ($depth 0) starts afresh and gives back the state of a render it ran inside
         const enter = (depth) => {
             secText = null;
-            if (!depth) { units.length = 0; reset(); displays = new WeakMap(); return; }
-            units.push({ st: Object.assign({}, st), saved: saved.slice() });
+            units.push({ st: Object.assign({}, st), saved: saved.slice(), displays });
+            if (!depth) { reset(); displays = new WeakMap(); }
         };
         const leave = (depth) => {
             secText = null;
-            if (!depth) return;
             const outer = units.pop();
             if (!outer) return;
             Object.keys(st).forEach((key) => { delete st[key]; });
             Object.assign(st, outer.st);
             saved.length = 0;
             outer.saved.forEach((item) => saved.push(item));
+            displays = outer.displays;
         };
 
         // The id suffix of a section-iterate entry, read once a unit: each entry is a unit of its own (enter and leave

@@ -54,9 +54,12 @@ Each component is its own git repository. Commit in each repository that a chang
   `??`. `moqui lint --groovy <dir>` reports Groovy left in a component; `moqui lint --screens` reports idioms and hazards
   in screen expressions.
 - **A service script module** is a file whose last expression is its value, by convention `;({execute: run})`. A service
-  calls it with `ec.resource.script(location).execute(op, context)`. `ec.resource.script` evaluates the file afresh
-  in its own scope on each call, so module-level state does not survive between calls; per-call caches belong in the
-  call (§4).
+  calls it with `ec.resource.script(location).execute(op, context)`. A module whose top level only declares (functions,
+  constants of literals or tables of them, other modules by `ec.resource.script("...")`) gives the same value for the
+  rest of the outermost script run (the request, job or call on the thread), made once; any other top level (a `let`,
+  a loop, a call, a change to a table) is evaluated afresh in its own scope on each load. So module-level state lasts at
+  most the run, never into the next request; a cache kept in a module constant lasts the whole run, and a per-call cache
+  belongs in the call (§4).
 - **Screens render** in `qvt` (the browser: Vue 3 and Quasar), `tui` (the terminal, as a JSON node document; see
   [TUI](../ui/TUI.md) "For screen authors"), `html` and `html-print` (print and PDF). Every screen must work in `qvt` and
   `tui`. A `render-mode` text for one mode needs its twin for the other.

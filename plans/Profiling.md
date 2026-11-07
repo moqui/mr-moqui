@@ -1387,6 +1387,67 @@ Next:
 3. `WorkCenters`' load of a released operation, which failed once in a full `./moq test-apps` (and once under the
    census in Round 22) and passes alone and in the full mr-mantle run.
 
+## Round 28: one script engine per thread, and inert modules kept for the run
+
+Round 27 left the script engine's memory and its repeated work. A baseline of the full mr-mantle regression run, by
+process-wide counts (`script::engine_stats`, written per process to `MOQUI_SCRIPT_STATS_FILE` at the end of `moqui
+test`), and a spike of what QuickJS allows (`script/runtime/realm_tests.rs`):
+
+- 104 threads ran scripts in 588 engines (a runtime for each nesting depth a script reached: `Context::with` cannot be
+  entered again while held), up to 222 alive at once, nesting 18 deep; the JS heaps took up to 393 MiB.
+- A runtime costs 27 KiB and a context 52 to 76 KiB, but each copy of a script's functions about 2.6 times its
+  bytecode. A function compiled in one context runs with that context's globals from any other (QuickJS keeps its
+  realm), so compiled code is not shared between contexts; bytecode read into each is. A context per depth would save
+  little: what costs is a copy of each module per engine.
+- A host call of a running script can enter its runtime again with `Ctx::from_raw` while the outer `with` holds the
+  lock, in the same context or a sibling one, three deep, an exception coming back cleanly.
+
+Built:
+
+1. **One engine per thread.** A script that runs while another runs on the thread (a service a script calls runs a
+   script) runs in the same engine and context (`with_nested_context`), entered again through the outer lock. Its run
+   state is its own: the caller's tracked and released values, screen unit depth and flush in progress are set aside
+   untouched and given back after (`OuterRun`), as a runtime of its own left them. A script file and generated actions
+   are already functions, so their declarations do not meet; a screen mode's outermost unit now saves the render state
+   around it and gives it back (`enter`/`leave` in ScreenHtml.js, ScreenQvt.js, ScreenQvtStatic.js), so a document
+   rendered inside a render (an html-print a service makes) leaves the outer render as it was. The stack limit is set
+   once, at the outermost entry, for the scripts it nests. The test harness's spec code runs in an engine of its own
+   (`EngineKind::Spec`): the globals it defines (`call`, `login`, ...) would otherwise come before the context stack for
+   the services a spec calls.
+2. **An inert module is kept for the outermost run.** `ec.resource.script` ran a module's whole top level at every
+   load, making its functions again (5.5% of a Mantle service call's CPU). A module whose top level only declares
+   (functions, constants of literals, tables of them, other modules, the module's own names and operators over them:
+   `parse::module_is_inert`, decided once per file text) gives the same value for the rest of the outermost script run
+   on the thread, and is made again in the next. 290 of the 327 loaded modules of the runtime are inert; the others
+   keep a memo at the top level (`let accessCache = null`), change a table at load, or build a constant with a call,
+   and are made at each load as before. `script_module_cache=false` turns it off.
+
+The full mr-mantle run after (1,908 of 1,908 passing):
+
+| | before | after |
+|---|---:|---:|
+| engines started | 588 | 155 (104 main, the rest the harness's spec engines) |
+| alive at once, at most | 222 | 32 |
+| JS heap, all engines, at most | 393 MiB | 139 MiB |
+| JS heap at the end | 110 MiB | 25 MiB |
+| scripts read from the shared bytecode | 23,537 | 12,139 |
+| feature time | 224 s | 213 to 215 s |
+
+Found on the way, not this round's:
+- `MantleSearch` ("the sales fixture loads and its feed is indexed") and `SalesReportStoreScope`'s setup fail in a run
+  that starts an hour or more after its test database snapshot was made: the demo data load leaves data feed pending
+  rows whose document ids lack key values (`MantleSalesOrderPart` `101190`, `MantleSalesOrderItem`,
+  `MantleInventoryRunConsume`, `MantleInventoryRunProduce`), which never deliver and count as stuck after 60 minutes.
+- `AccountingCollections` (an instalment's overdue days, 9 for 10) and `SupportCases` (Today) fail after 23:00 local
+  time, on Round 27's code too.
+- moqui-core's tarpit lock test counted other threads' generation moves from after its first hit; a move during that
+  hit's load is counted now.
+
+Next:
+1. The data feed's pending rows with partial document ids (above).
+2. The rest of the profile: SipHash 5%, allocation 12%, `memcmp` 3%.
+3. The receiving walk with transitions held (`screen_tx_cache`), and `WorkCenters`' intermittent load count.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
@@ -1417,6 +1478,9 @@ Next:
 - 13 more Mantle services are `transaction="cache"` (Round 26's list); `complete#ShipmentPack` calls `pack#Shipment`, and Customer 360 its service, with `transaction="force-cache"`.
 - A script engine's QuickJS heap is allocated through Rust's allocator (rquickjs `RustAllocator`, counted), not QuickJS's malloc functions; compiled script bytecode is shared by the process's engines.
 - `screen_tx_cache` (default false): true makes screen transitions' and `begin-transaction` screens' transactions hold, as `cache`.
+- A script that runs while another runs on the thread runs in the same script engine and context, not in an engine of its own; its globals are the thread's. A screen mode's outermost unit gives back the render state around it.
+- A module `ec.resource.script` loads whose top level only declares is the same value for the rest of the outermost script run (`script_module_cache`, default true).
+- The test harness's spec code runs in a script engine of its own.
 - SMTP-delivered Inbox mail and its account rules commit together when no email ECA is installed; a failure there stores the message alone and runs the rules after.
 - Mail stored by IMAP and POP3 sync, SMTP delivery and import, and the IMAP flag sync, run in transaction-cache frames; `react#Message`, `edit#Message`, `redact#Message`, `vote#Poll`, `mark#AllRead` and `mark#NotificationsViewed` are `transaction="cache"`, and a redacted message leaves the search index after its commit.
 - `no-tx-cache` turns a frame to read-through (writes go to the database, reads still kept), and a later `cache` call that joins it no longer turns holding back on.

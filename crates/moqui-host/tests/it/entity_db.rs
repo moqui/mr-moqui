@@ -717,7 +717,7 @@ fn a_view_read_sees_the_frames_held_rows_through_shadowed_tables() {
         put(
             enumeration,
             &[
-                ("enumId", Value::string(&format!("SHS{at}"))),
+                ("enumId", Value::string(format!("SHS{at}"))),
                 ("enumTypeId", Value::string("SHQ")),
             ],
         );
@@ -759,12 +759,12 @@ fn a_view_read_sees_the_frames_held_rows_through_shadowed_tables() {
                 } else if at == 1 {
                     Value::Null
                 } else {
-                    Value::string(&format!("d{at}"))
+                    Value::string(format!("d{at}"))
                 };
                 put(
                     enumeration,
                     &[
-                        ("enumId", Value::string(&format!("SHB{at:02}"))),
+                        ("enumId", Value::string(format!("SHB{at:02}"))),
                         ("enumTypeId", Value::string("SHBULK")),
                         ("description", description),
                     ],
@@ -772,7 +772,7 @@ fn a_view_read_sees_the_frames_held_rows_through_shadowed_tables() {
             }
             for at in 0..3 {
                 let mut moved = facade.make_value(enumeration)?;
-                moved.set("enumId", Value::string(&format!("SHS{at}")));
+                moved.set("enumId", Value::string(format!("SHS{at}")));
                 moved.set("enumTypeId", Value::string("SHBULK"));
                 moved.update(&facade)?;
             }

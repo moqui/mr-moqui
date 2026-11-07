@@ -113,6 +113,179 @@ fn parse_program(source: &str) -> Result<(), Error> {
     })
 }
 
+/// Whether a script file, run as [`file_function`] makes it, gives a module whose value may be kept for the rest of
+/// the outermost script run ([`crate::script::runtime::facades`], `ec.resource.script`): what it does at its top level
+/// only declares, so running it again would make the same functions over the same constants. Each top-level statement
+/// is a function declaration, a `const` of an inert value (a function, a literal, a table of literals, a `Set` or
+/// `Map` of them, another module by `ec.resource.script("...")`, or names taken apart from one), or the value given
+/// back last (an object of names and functions, a name, or a function). A loop, a call, a `let` or a `var` at the top
+/// level (a memo for one run, rows read from the database) keeps the file out.
+pub(crate) fn module_is_inert(source: &str) -> bool {
+    module_not_inert(source).is_none()
+}
+
+/// What keeps a script file out of [`module_is_inert`]: the first statement that does, as text.
+pub(crate) fn module_not_inert(source: &str) -> Option<String> {
+    use std::collections::HashSet;
+
+    use oxc_ast::ast::{
+        ArrayExpressionElement, BindingPattern, Expression, ObjectPropertyKind, Statement, VariableDeclarationKind,
+    };
+    /// The names the module declares at its top level: its functions and its constants, destructured ones included.
+    fn declared<'a>(body: &'a [Statement<'a>]) -> HashSet<&'a str> {
+        fn bound<'a>(pattern: &'a BindingPattern<'a>, names: &mut HashSet<&'a str>) {
+            match pattern {
+                BindingPattern::BindingIdentifier(name) => {
+                    names.insert(name.name.as_str());
+                }
+                BindingPattern::ObjectPattern(object) => {
+                    for property in &object.properties {
+                        bound(&property.value, names);
+                    }
+                    if let Some(rest) = &object.rest {
+                        bound(&rest.argument, names);
+                    }
+                }
+                BindingPattern::ArrayPattern(array) => {
+                    for element in array.elements.iter().flatten() {
+                        bound(element, names);
+                    }
+                    if let Some(rest) = &array.rest {
+                        bound(&rest.argument, names);
+                    }
+                }
+                BindingPattern::AssignmentPattern(assignment) => bound(&assignment.left, names),
+            }
+        }
+        let mut names = HashSet::new();
+        for statement in body {
+            match statement {
+                Statement::FunctionDeclaration(function) => {
+                    if let Some(id) = &function.id {
+                        names.insert(id.name.as_str());
+                    }
+                }
+                Statement::VariableDeclaration(declaration) if declaration.kind == VariableDeclarationKind::Const => {
+                    for declarator in &declaration.declarations {
+                        bound(&declarator.id, &mut names);
+                    }
+                }
+                _ => {}
+            }
+        }
+        names
+    }
+    /// A value that is the same each time the module's top level runs: a function, a literal, a table of them, a
+    /// `Set` or `Map` of them, another module by `ec.resource.script("...")`, the module's own names and what is read
+    /// from them, and operators over all of these.
+    fn inert(expression: &Expression<'_>, names: &HashSet<&str>, depth: usize) -> bool {
+        if depth > 32 {
+            return false;
+        }
+        let again = |value: &Expression<'_>| inert(value, names, depth + 1);
+        match expression {
+            Expression::BooleanLiteral(_)
+            | Expression::NullLiteral(_)
+            | Expression::NumericLiteral(_)
+            | Expression::BigIntLiteral(_)
+            | Expression::RegExpLiteral(_)
+            | Expression::StringLiteral(_)
+            | Expression::ArrowFunctionExpression(_)
+            | Expression::FunctionExpression(_) => true,
+            Expression::TemplateLiteral(template) => template.expressions.iter().all(again),
+            Expression::Identifier(name) => name.name == "undefined" || names.contains(name.name.as_str()),
+            Expression::ParenthesizedExpression(inner) => again(&inner.expression),
+            Expression::UnaryExpression(unary) => again(&unary.argument),
+            Expression::BinaryExpression(binary) => again(&binary.left) && again(&binary.right),
+            Expression::LogicalExpression(logical) => again(&logical.left) && again(&logical.right),
+            Expression::ConditionalExpression(choice) => {
+                again(&choice.test) && again(&choice.consequent) && again(&choice.alternate)
+            }
+            Expression::StaticMemberExpression(member) => again(&member.object),
+            Expression::ComputedMemberExpression(member) => again(&member.object) && again(&member.expression),
+            Expression::ArrayExpression(array) => array.elements.iter().all(|element| match element {
+                ArrayExpressionElement::SpreadElement(spread) => again(&spread.argument),
+                ArrayExpressionElement::Elision(_) => true,
+                other => other.as_expression().is_some_and(again),
+            }),
+            Expression::ObjectExpression(object) => object.properties.iter().all(|property| match property {
+                ObjectPropertyKind::ObjectProperty(property) => {
+                    (!property.computed || property.key.as_expression().is_some_and(again)) && again(&property.value)
+                }
+                ObjectPropertyKind::SpreadProperty(spread) => again(&spread.argument),
+            }),
+            Expression::NewExpression(new) => {
+                matches!(&new.callee, Expression::Identifier(name) if name.name == "Set" || name.name == "Map")
+                    && new
+                        .arguments
+                        .iter()
+                        .all(|argument| argument.as_expression().is_some_and(again))
+            }
+            Expression::CallExpression(call) => module_load(call),
+            _ => false,
+        }
+    }
+    /// `ec.resource.script("component://...")`.
+    fn module_load(call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+        let Expression::StaticMemberExpression(script) = &call.callee else {
+            return false;
+        };
+        let Expression::StaticMemberExpression(resource) = &script.object else {
+            return false;
+        };
+        script.property.name == "script"
+            && resource.property.name == "resource"
+            && matches!(&resource.object, Expression::Identifier(ec) if ec.name == "ec")
+            && call.arguments.len() == 1
+            && matches!(call.arguments[0].as_expression(), Some(Expression::StringLiteral(_)))
+    }
+    let options = ParseOptions {
+        allow_return_outside_function: true,
+        ..ParseOptions::default()
+    };
+    with_arena(|allocator| {
+        let parsed = Parser::new(allocator, source, SourceType::script())
+            .with_options(options)
+            .parse();
+        if parsed.fatal_error || parsed.diagnostics.has_errors() {
+            return Some("does not parse".to_string());
+        }
+        let body = &parsed.program.body;
+        let Some((last, declarations)) = body.split_last() else {
+            return Some("empty".to_string());
+        };
+        let excerpt = |span: oxc_span::Span| {
+            let text = &source[span.start as usize..span.end as usize];
+            text.chars().take(90).collect::<String>().replace('\n', " ")
+        };
+        let names = declared(body);
+        let gives_back = match last {
+            Statement::ExpressionStatement(statement) => inert(&statement.expression, &names, 0),
+            Statement::ReturnStatement(statement) => {
+                statement.argument.as_ref().is_some_and(|value| inert(value, &names, 0))
+            }
+            _ => false,
+        };
+        if !gives_back {
+            return Some(format!("gives back {}", excerpt(oxc_span::GetSpan::span(last))));
+        }
+        declarations
+            .iter()
+            .find(|statement| match statement {
+                Statement::FunctionDeclaration(_) | Statement::EmptyStatement(_) => false,
+                Statement::VariableDeclaration(declaration) => {
+                    declaration.kind != VariableDeclarationKind::Const
+                        || !declaration
+                            .declarations
+                            .iter()
+                            .all(|declarator| declarator.init.as_ref().is_some_and(|init| inert(init, &names, 0)))
+                }
+                _ => true,
+            })
+            .map(|statement| excerpt(oxc_span::GetSpan::span(statement)))
+    })
+}
+
 /// A script file as the body of a function called at once, the way the action macros run a `<script>` body.
 ///
 /// The thread's engine keeps global code's declarations: a top-level `let` or `const` would fail as a redeclaration at

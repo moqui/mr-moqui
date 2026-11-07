@@ -154,16 +154,16 @@
         };
         reset();
         // A unit inside another (a section in a form-list cell) starts from the state of the one around it and gives it back
-        // when it ends, as ScreenQvt.js; the outermost unit ($depth 0) starts afresh.
+        // when it ends, as ScreenQvt.js; the outermost unit of a render ($depth 0) starts afresh, and gives back the state
+        // of a render it ran inside (a screen rendered by a service a unit called, in the thread's one script engine).
         const units = [];
         const enter = (depth) => {
             secText = null;
-            if (!depth) { units.length = 0; reset(); return; }
             units.push(Object.assign({}, st));
+            if (!depth) reset();
         };
         const leave = (depth) => {
             secText = null;
-            if (!depth) return;
             const outer = units.pop();
             if (!outer) return;
             Object.keys(st).forEach((key) => { delete st[key]; });

@@ -829,7 +829,7 @@ pub fn install_prelude() -> Result<(), Error> {
 fn install_prelude_for(host: Option<&dyn SpecHost>) -> Result<(), Error> {
     moqui_core::script::eval_named_value(PRELUDE, PRELUDE_NAME)?;
     moqui_core::script::eval_named_value(ASSERT, ASSERT_NAME)?;
-    moqui_core::script::with_ctx(|ctx| install_host(ctx).map_err(|err| Error::new(err.to_string())))?;
+    moqui_core::script::with_spec_ctx(|ctx| install_host(ctx).map_err(|err| Error::new(err.to_string())))?;
     match host {
         Some(host) => moqui_core::script::eval_named_value(host.prelude(), HOST_PRELUDE_NAME)?,
         None => moqui_core::script::eval_named_value(SERVER_PRELUDE, SERVER_PRELUDE_NAME)?,

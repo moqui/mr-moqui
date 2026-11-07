@@ -192,8 +192,14 @@ where
 /// Scripts read from [`SHARED_BYTECODE`] instead of compiled, since the process started.
 static SHARED_BYTECODE_READS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Scripts compiled from their text, since the process started.
+static COMPILED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub(crate) fn compiled_count() -> u64 {
+    COMPILED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Scripts an engine read from the process's bytecode instead of compiling them.
-#[cfg(test)]
 pub(crate) fn shared_bytecode_reads() -> u64 {
     SHARED_BYTECODE_READS.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -252,6 +258,7 @@ fn compile_shared<'js>(
 }
 
 fn compile_global<'js>(ctx: &Ctx<'js>, source: &str, strict: bool, file_name: &str) -> Result<JsValue<'js>, Error> {
+    COMPILED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let text = CString::new(source).map_err(|_| Error::new("script source contains a null byte"))?;
     let name = CString::new(file_name).map_err(|_| Error::new("file name contains a null byte"))?;
     let mut flags = qjs::JS_EVAL_TYPE_GLOBAL | qjs::JS_EVAL_FLAG_COMPILE_ONLY;

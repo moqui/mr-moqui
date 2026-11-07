@@ -824,12 +824,13 @@ fn tarpit_locks_and_check_views_are_read_once_until_a_lock_is_written() {
         }
         pushed
     };
+    // The generation is a process static: an authorization write of another test on another thread moves it too, and
+    // each such move may make a hit here read the locks again, the first hit's included (a load that a move overlapped
+    // is not kept). Those are allowed for, counted from before the first hit; this thread's are none.
+    let (generation_at, moved_at) = (super::generation(), super::moved_here());
     hit().expect("first hit");
     let (locks, checks) = (reads("artifact_tarpit_lock"), reads("artifact_tarpit"));
     assert!(locks >= 1, "the first hit reads the locks");
-    // The generation is a process static: an authorization write of another test on another thread moves it too, and
-    // each such move may make a hit here read the locks again. Those are allowed for; this thread's are none.
-    let (generation_at, moved_at) = (super::generation(), super::moved_here());
     // A new session (as a stateless client's next request) and two more hits read neither again.
     session::set_user("nobody", "nobody");
     hit().expect("second hit");
