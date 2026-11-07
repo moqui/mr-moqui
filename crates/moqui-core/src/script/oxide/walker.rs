@@ -31,7 +31,7 @@ use quickjs_oxide::engine::api::core::{
 };
 
 use super::convert::key;
-use super::errors::runtime_error;
+use super::errors::{runtime_error, rquickjs_type_name};
 use crate::context::Error;
 use crate::script::bounded::BoundedMap;
 use crate::script::engine::{script_engine, ScriptEngine};
@@ -45,12 +45,34 @@ pub(crate) fn on_oxide() -> bool {
 /// `walker::walk` in JavaScript, over the tree's JSON text: the node objects (`name`, `text`, `attrs`, `src`, `inert`,
 /// `parent`, `children`) first, then the macros in post-order, each node's `source` set as its macro returns. The
 /// result is `{source}`, or how the walk ended: `{missing}` for an element with no macro when there is no fallback,
-/// `{converting}` (the rquickjs name of the value's type) for a macro that did not return a string, `{thrown}` for a
+/// `{converting}` for a macro entry that is not a function or a macro that did not return a string (the `value`, the
+/// type it is `to` be, and whether it is a `proxy`, for the rquickjs conversion error Rust words), `{thrown}` for a
 /// macro that threw (its stack without the walker's frames, as on QuickJS where the walker is Rust). `logged` is the
-/// elements that took the fallback, however the walk ended. The outer function takes the stamped element names
-/// (`screen::stamp::STAMPED`) once per runtime and gives the walk.
+/// elements that took the fallback, however the walk ended.
+///
+/// The outer function runs once per runtime: it takes the stamped element names (`screen::stamp::STAMPED`), puts a
+/// `Proxy` on the global that notes each proxy it makes (rquickjs names a proxy's type, which the bindings cannot
+/// tell), and gives the walk.
 const WALK_JS: &str = r#"(function (stampedNames) {
   const stamped = new Set(stampedNames);
+  const proxies = new WeakSet();
+  const NativeProxy = Proxy;
+  const nativeRevocable = NativeProxy.revocable;
+  const revocable = function revocable(target, handler) {
+      const made = nativeRevocable(target, handler);
+      proxies.add(made.proxy);
+      return made;
+  };
+  globalThis.Proxy = new NativeProxy(NativeProxy, {
+      construct(target, args, newTarget) {
+          const made = Reflect.construct(target, args, newTarget);
+          proxies.add(made);
+          return made;
+      },
+      get(target, key, receiver) {
+          return key === "revocable" ? revocable : Reflect.get(target, key, receiver);
+      },
+  });
   return function (macros, treeText, missing, fallback) {
     const logged = [];
     const build = (n, parent) => {
@@ -61,27 +83,6 @@ const WALK_JS: &str = r#"(function (stampedNames) {
         o.children = [];
         for (const c of n.children) o.children.push(build(c, o));
         return o;
-    };
-    // the type names of rquickjs's `Value::type_name`, which its conversion error names
-    const typeName = (v) => {
-        switch (typeof v) {
-            case "undefined": return "undefined";
-            case "boolean": return "bool";
-            case "number":
-                return Number.isInteger(v) && v >= -2147483648 && v <= 2147483647 && !Object.is(v, -0) ? "int" : "float";
-            case "symbol": return "symbol";
-            case "bigint": return "big_int";
-            case "string": return "string";
-        }
-        if (v === null) return "null";
-        if (Array.isArray(v)) return "array";
-        if (typeof v === "function") {
-            try { Reflect.construct(Object, [], v); return "constructor"; } catch (e) { return "function"; }
-        }
-        const tag = Object.prototype.toString.call(v);
-        if (tag === "[object Promise]") return "promise";
-        if (tag === "[object Error]") return "exception";
-        return "object";
     };
     // the stack of an error a macro threw, down to the macro: the walker's frames and the native call into it go
     const trim = (e) => {
@@ -110,15 +111,17 @@ const WALK_JS: &str = r#"(function (stampedNames) {
             combined = "";
             macro = fallback;
         }
+        const fn = macros[macro];
+        if (typeof fn !== "function") { converting.value = fn; converting.to = "function"; throw converting; }
         let source;
         try {
             // `this` undefined, as the QuickJS walker calls a macro
-            source = macros[macro].call(undefined, o, combined);
+            source = fn.call(undefined, o, combined);
         } catch (e) {
             trim(e);
             throw e;
         }
-        if (typeof source !== "string") { converting.type = typeName(source); throw converting; }
+        if (typeof source !== "string") { converting.value = source; converting.to = "string"; throw converting; }
         if (typeof o.src === "string" && stamped.has(name) && source !== "") {
             source = "sri.stamp(" + JSON.stringify(o.src) + ");\n" + source + "sri.stamp(null);\n";
         }
@@ -129,7 +132,11 @@ const WALK_JS: &str = r#"(function (stampedNames) {
         return { source: run(build(JSON.parse(treeText), null)), logged };
     } catch (e) {
         if (e === lacking) return { missing: lacking.message, logged };
-        if (e === converting) return { converting: converting.type, logged };
+        if (e === converting) {
+            const value = converting.value;
+            converting.value = undefined;
+            return { converting: true, value, to: converting.to, proxy: proxies.has(value), logged };
+        }
         return { thrown: e, threw: true, logged };
     }
   };
@@ -410,11 +417,13 @@ fn walk(
     if let Some(missing) = text_property(context, &result, "missing")? {
         return Err(Error::new(missing));
     }
-    if let Some(type_name) = text_property(context, &result, "converting")? {
-        // as rquickjs's `FromJs` error for the macro's value reads
-        return Err(Error::new(format!(
-            "Error converting from js '{type_name}' into type 'string'"
-        )));
+    if matches!(property(context, &result, "converting")?, Value::Bool(true)) {
+        let value = property(context, &result, "value")?;
+        let to = text_property(context, &result, "to")?.unwrap_or_default();
+        let proxy = matches!(property(context, &result, "proxy")?, Value::Bool(true));
+        let from = rquickjs_type_name(&mut context.clone(), &value, proxy);
+        // as rquickjs's `FromJs` error for the macro or its value reads
+        return Err(Error::new(format!("Error converting from js '{from}' into type '{to}'")));
     }
     if matches!(property(context, &result, "threw")?, Value::Bool(true)) {
         let thrown = property(context, &result, "thrown")?;

@@ -979,6 +979,10 @@ mod tests {
             "object": () => ({}), "array": () => [], "bool": () => true, "fn": () => function () {},
             "arrow": () => () => 1, "err": () => new Error("x"), "sym": () => Symbol("s"), "big": () => 10n,
             "promise": () => Promise.resolve(1), "cls": () => class {}, "negz": () => -0, "huge": () => 2 ** 40,
+            "proxy": () => new Proxy({}, {}), "revocable": () => Proxy.revocable({}, {}).proxy,
+            "fnproxy": () => new Proxy(() => 1, {}), "arrproxy": () => new Proxy([], {}),
+            "tagged": () => ({ [Symbol.toStringTag]: "Error" }), "errlike": () => Object.create(Error.prototype),
+            "textentry": "not a function", "numentry": 7,
         };
         return { macros, opaque: [] };
     })"#;
@@ -1024,9 +1028,26 @@ mod tests {
             ("cls", "constructor"),
             ("negz", "float"),
             ("huge", "float"),
+            ("proxy", "proxy"),
+            ("revocable", "proxy"),
+            ("fnproxy", "function"),
+            ("arrproxy", "proxy"),
+            ("tagged", "object"),
+            ("errlike", "object"),
         ] {
             let (quickjs, oxide) = on_both(FAILING_MODULE, &format!("<widgets><{name}/></widgets>"));
             let expected = format!("Error converting from js '{type_name}' into type 'string'");
+            assert_eq!(quickjs.unwrap_err().message(), expected, "{name}");
+            assert_eq!(oxide.unwrap_err().message(), expected, "{name}");
+        }
+    }
+
+    /// A macro entry that is not a function fails with rquickjs's conversion error on both engines.
+    #[test]
+    fn a_macro_entry_that_is_no_function_fails_alike_on_both_engines() {
+        for (name, type_name) in [("textentry", "string"), ("numentry", "int")] {
+            let (quickjs, oxide) = on_both(FAILING_MODULE, &format!("<widgets><{name}/></widgets>"));
+            let expected = format!("Error converting from js '{type_name}' into type 'function'");
             assert_eq!(quickjs.unwrap_err().message(), expected, "{name}");
             assert_eq!(oxide.unwrap_err().message(), expected, "{name}");
         }

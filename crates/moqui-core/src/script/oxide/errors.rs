@@ -99,6 +99,41 @@ pub(super) fn throw_plain<J: Js>(js: &mut J, error: &CallableRef, message: &str)
     }
 }
 
+/// The name rquickjs's `Value::type_name` gives `value`, which its conversion errors (`Error converting from js
+/// '<name>' into type 'string'`) word: its checks in its order (array, constructor, function, promise, exception,
+/// proxy, object). A `Float` tag is `float` even for a whole number, where QuickJS may hold the same number as an int.
+/// `proxy` is whether the caller knows the object is a Proxy, which the embedding API cannot tell.
+pub(super) fn rquickjs_type_name<J: Js>(js: &mut J, value: &Value, proxy: bool) -> &'static str {
+    let object = match value {
+        Value::Undefined => return "undefined",
+        Value::Null => return "null",
+        Value::Bool(_) => return "bool",
+        Value::Int(_) => return "int",
+        Value::Float(_) => return "float",
+        Value::String(_) => return "string",
+        Value::Symbol(_) => return "symbol",
+        Value::BigInt(_) => return "big_int",
+        Value::Object(object) => object,
+    };
+    // rquickjs's array check is of the object's class, so a Proxy of an array is not one; its function checks see
+    // through a Proxy
+    if !proxy && js.is_array_object(object).unwrap_or(false) {
+        "array"
+    } else if js.is_constructor(object).unwrap_or(false) {
+        "constructor"
+    } else if js.as_callable(object).ok().flatten().is_some() {
+        "function"
+    } else if js.promise_snapshot(object).ok().flatten().is_some() {
+        "promise"
+    } else if js.is_error_object(object).unwrap_or(false) {
+        "exception"
+    } else if proxy {
+        "proxy"
+    } else {
+        "object"
+    }
+}
+
 /// The text of a panic's payload.
 pub(super) fn panic_message(payload: Box<dyn Any + Send>) -> String {
     if let Some(message) = payload.downcast_ref::<&str>() {

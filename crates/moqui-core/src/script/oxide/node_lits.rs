@@ -99,19 +99,10 @@ fn lit_in(js: &mut impl Js, value: &JsValue, path: &mut Vec<ObjectRef>) -> JsRes
     Ok(node)
 }
 
-/// The `TypeError` QuickJS's string conversion of an attribute value throws.
+/// The `TypeError` QuickJS's string conversion of an attribute value throws, the value's type named as rquickjs names
+/// it (a Proxy is `object` here: the bindings cannot tell one, where rquickjs says `proxy`).
 fn not_a_string(js: &mut impl Js, value: &JsValue) -> quickjs_oxide::engine::api::core::RuntimeError {
-    let from = match value {
-        JsValue::Undefined => "undefined",
-        JsValue::Null => "null",
-        JsValue::Bool(_) => "bool",
-        JsValue::Int(_) => "int",
-        JsValue::Float(_) => "float",
-        JsValue::BigInt(_) => "big_int",
-        JsValue::Symbol(_) => "symbol",
-        JsValue::String(_) => "string",
-        JsValue::Object(_) => "object",
-    };
+    let from = super::super::errors::rquickjs_type_name(js, value, false);
     let message = format!("Error converting from js '{from}' into type 'string'");
     js.throw_error(NativeErrorKind::Type, &message)
 }
@@ -130,6 +121,37 @@ mod tests {
         let value = context.eval(crate::script::host::SRI_HOLD_SCRIPT)?;
         let got = context.to_js_string(&value)?.to_utf8_lossy();
         assert_eq!(got, crate::script::host::SRI_HOLD_EXPECTED);
+        Ok(())
+    }
+
+    /// An attribute value that is not a string is refused with rquickjs's conversion error, its type named as rquickjs
+    /// names it.
+    #[test]
+    fn an_attribute_that_is_no_string_is_named_as_rquickjs_names_it() -> Result<(), RuntimeError> {
+        let (_runtime, mut context) = shimmed_runtime()?;
+        for (value, type_name) in [
+            ("[]", "array"),
+            ("() => 1", "function"),
+            ("function () {}", "constructor"),
+            ("new Error('x')", "exception"),
+            ("({ [Symbol.toStringTag]: 'Error' })", "object"),
+            ("Promise.resolve(1)", "promise"),
+            ("7", "int"),
+            ("1.5", "float"),
+            ("true", "bool"),
+            ("null", "null"),
+        ] {
+            let element = context.eval(&format!("({{ name: 'x', attrs: {{ a: {value} }} }})"))?;
+            let Err(RuntimeError::Exception(thrown)) = super::lit_of(&mut context, &element) else {
+                panic!("{value} converted");
+            };
+            let message = context.to_js_string(&thrown)?.to_utf8_lossy();
+            assert_eq!(
+                message,
+                format!("TypeError: Error converting from js '{type_name}' into type 'string'"),
+                "{value}"
+            );
+        }
         Ok(())
     }
 }
