@@ -324,6 +324,9 @@ pub(crate) fn start_failed_recently() -> bool {
 /// began, so it gives back what was there before.
 struct Starting {
     before: bool,
+    /// The fallback mark of a run of another runtime the start is under (a spec's lent host call): set aside, so the
+    /// shims' host calls are not refused as calls of a run that fell back.
+    fallback: Option<&'static str>,
     _census: crate::script::census::Suspended,
 }
 
@@ -331,6 +334,7 @@ impl Starting {
     fn enter() -> Self {
         Self {
             before: STARTING.with(|starting| starting.replace(true)),
+            fallback: FALLBACK.with(Cell::take),
             _census: crate::script::census::suspend(),
         }
     }
@@ -339,6 +343,7 @@ impl Starting {
 impl Drop for Starting {
     fn drop(&mut self) {
         STARTING.with(|starting| starting.set(self.before));
+        FALLBACK.with(|fallback| fallback.set(self.fallback));
     }
 }
 
@@ -369,6 +374,12 @@ pub(super) fn starting_for_tests() -> impl Drop {
 /// script at its next poll ([`super::host::MoquiHost`]). The run then falls back.
 pub(super) fn fallback_pending() -> bool {
     FALLBACK.with(|fallback| fallback.get().is_some())
+}
+
+/// Mark the running oxide script as having met what the bindings do not have, for the tests.
+#[cfg(test)]
+pub(super) fn set_fallback_for_tests(reason: &'static str) {
+    FALLBACK.with(|fallback| fallback.set(Some(reason)));
 }
 
 /// What the running oxide script met that the bindings do not have, taken: a run that does not fall back reports it as
@@ -408,6 +419,16 @@ impl Active {
     pub(super) fn starting(engine: &Rc<OxideEngine>) -> Self {
         ACTIVE.with(|active| active.borrow_mut().push((Rc::clone(engine), false)));
         Active
+    }
+
+    /// Whether a runtime other than `engine` has a run in progress on this thread.
+    fn other_run(engine: &OxideEngine) -> bool {
+        ACTIVE.with(|active| {
+            active
+                .borrow()
+                .iter()
+                .any(|(held, run)| *run && !std::ptr::eq(Rc::as_ptr(held), engine))
+        })
     }
 
     /// Whether `engine` has a run in progress on this thread: a run on it now is nested in that one.
@@ -847,7 +868,9 @@ struct Outer {
 
 impl<'a> RunState<'a> {
     pub(super) fn enter(engine: &'a OxideEngine, nested: bool) -> Self {
-        let outer = nested.then(|| Outer {
+        // a run of another runtime (the spec runtime's, lent to this one's run) keeps its fallback mark too: the mark
+        // is the thread's
+        let outer = (nested || Active::other_run(engine)).then(|| Outer {
             values: engine.run.take(),
             entities: engine.entities.take(),
             fallback: FALLBACK.with(Cell::take),

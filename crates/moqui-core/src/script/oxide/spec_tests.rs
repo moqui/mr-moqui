@@ -123,10 +123,43 @@ fn a_host_call_runs_a_script_on_the_main_runtime() {
     spec("void Object.defineProperty(globalThis, 'probeOwn', { value: 1, writable: true, configurable: true })");
     assert_eq!(
         spec("[probeNested.main('probeShared + 2'), probeNested.main('typeof probeOwn'), probeOwn]"),
-        Value::List(vec![
-            Value::I32(42),
-            Value::String("object".to_string()),
-            Value::I32(1)
-        ])
+        Value::List(vec![Value::I32(42), Value::String("object".to_string()), Value::I32(1)])
     );
+}
+
+static MARKS: HostClass = HostClass {
+    name: "host:ProbeMarks",
+    // not a leaf: the main runtime's run is under the lend
+    methods: &[crate::script::host::method!(
+        "Probe",
+        "markThenMain",
+        [Text],
+        None,
+        mark_then_main
+    )],
+    getters: &[],
+    hidden: &[],
+    shim_js: None,
+    shim_members: &[],
+};
+
+/// The spec's run meets what the bindings do not have, then the main runtime runs a script.
+fn mark_then_main(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    super::super::engine::set_fallback_for_tests("a probe's missing binding");
+    main_value(call)
+}
+
+/// The spec run's mark is kept through a main run under it, whether that run starts the main runtime (its shims'
+/// host calls are not refused for the mark) or finds it started.
+#[test]
+fn a_main_run_under_a_spec_keeps_the_spec_runs_fallback() {
+    clear_context_stack();
+    install_global("probeMarks", &MARKS).expect("install");
+    install_global("probeNested", &NESTED).expect("install");
+    for _ in 0..2 {
+        let err = eval_named_value("probeMarks.markThenMain('1 + 1')", "Probe.spec.js").expect_err("falls back");
+        assert!(err.to_string().contains("a probe's missing binding"), "{err}");
+        // the mark goes with the run that had it, and the main runtime started
+        assert_eq!(spec("probeNested.main('2')"), Value::I32(2));
+    }
 }
