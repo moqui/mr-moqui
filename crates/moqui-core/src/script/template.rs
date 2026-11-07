@@ -1148,12 +1148,21 @@ pub(super) const SANDBOX_LOCKDOWN: &str = r#"
         }
         freeze(Object.getPrototypeOf(o));
     };
+    // An engine without one of these (iterator helpers, `Iterator.from`) leaves it out.
     const hidden = [
-        [][Symbol.iterator](), new Map().entries(), new Set().values(), ""[Symbol.iterator](), /a/[Symbol.matchAll]("a"),
-        function* () {}, async function () {}, async function* () {}, (function* () {})(), Int8Array,
+        () => [][Symbol.iterator](), () => new Map().entries(), () => new Set().values(), () => ""[Symbol.iterator](),
+        () => /a/[Symbol.matchAll]("a"), () => function* () {}, () => async function () {}, () => async function* () {},
+        () => (function* () {})(), () => (async function* () {})(), () => Int8Array,
+        () => [].values().map((x) => x), () => Iterator.from({ next() {} }),
+        () => Object.getOwnPropertyDescriptor(Function.prototype, "caller").get,
+        () => (function () { "use strict"; return Object.getOwnPropertyDescriptor(arguments, "callee").get; })(),
     ];
     freeze(globalThis);
-    for (const item of hidden) freeze(item);
+    for (const make of hidden) {
+        let item;
+        try { item = make(); } catch (e) { continue; }
+        freeze(item);
+    }
 })();
 "#;
 

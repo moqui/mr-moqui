@@ -304,6 +304,47 @@ fn a_locked_down_template_cannot_change_what_the_next_one_runs_on() {
     assert_eq!(out, "&lt;b&gt;|true|ab");
 }
 
+/// The intrinsics a template reaches from literals and built-ins, which no global names, are frozen too.
+#[test]
+fn locked_down_intrinsics_are_frozen() {
+    on_template_engines(locked_down_intrinsics_are_frozen_on);
+}
+
+fn locked_down_intrinsics_are_frozen_on() {
+    let probe = r#"${(() => {
+        const P = Object.getPrototypeOf, D = Object.getOwnPropertyDescriptor;
+        const at = (name, make) => { try { const o = make(); return o == null ? [] : [[name, o]]; } catch (e) { return []; } };
+        const all = [
+            ...at("ArrayIterator", () => P([][Symbol.iterator]())),
+            ...at("IteratorPrototype", () => P(P([][Symbol.iterator]()))),
+            ...at("MapIterator", () => P(new Map().entries())),
+            ...at("SetIterator", () => P(new Set().values())),
+            ...at("StringIterator", () => P(""[Symbol.iterator]())),
+            ...at("RegExpStringIterator", () => P(/a/[Symbol.matchAll]("a"))),
+            ...at("GeneratorFunction", () => P(function* () {}).constructor),
+            ...at("GeneratorFunction.prototype", () => P(function* () {})),
+            ...at("GeneratorPrototype", () => P(function* () {}).prototype),
+            ...at("AsyncFunction", () => P(async function () {}).constructor),
+            ...at("AsyncFunction.prototype", () => P(async function () {})),
+            ...at("AsyncGeneratorFunction", () => P(async function* () {}).constructor),
+            ...at("AsyncGeneratorFunction.prototype", () => P(async function* () {})),
+            ...at("AsyncGeneratorPrototype", () => P(async function* () {}).prototype),
+            ...at("AsyncIteratorPrototype", () => P(P(async function* () {}).prototype)),
+            ...at("TypedArray", () => P(Int8Array)),
+            ...at("TypedArray.prototype", () => P(Int8Array.prototype)),
+            ...at("IteratorHelper", () => P([].values().map((x) => x))),
+            ...at("WrapForValidIterator", () => P(Iterator.from({ next() {} }))),
+            ...at("ThrowTypeError", () => D(Function.prototype, "caller").get),
+            ...at("StrictCallee", () => (function () { "use strict"; return D(arguments, "callee").get; })()),
+            ...at("Promise.prototype", () => P((async () => {})())),
+        ];
+        const open = all.filter(([, o]) => Object.isExtensible(o) || !Object.isFrozen(o)).map(([n]) => n);
+        return all.length + ":" + (open.join(",") || "none");
+    })()}"#;
+    let out = render_locked_with(probe, Escape::None, &Value::Map(Default::default())).unwrap();
+    assert!(out.ends_with(":none"), "{out}");
+}
+
 #[test]
 fn locked_down_format_reads_a_decimal_text_by_a_number_pattern_and_a_date_by_a_date_pattern() {
     on_template_engines(locked_down_format_reads_a_decimal_text_by_a_number_pattern_and_a_date_by_a_date_pattern_on);
