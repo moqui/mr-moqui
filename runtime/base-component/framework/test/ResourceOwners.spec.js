@@ -3,7 +3,7 @@
 // owns is theirs to see and another user's only with the owner-change permission; the new owner must be an enabled account
 // that is not external, and only a shared drive or a shared mail account moves (a personal drive and a personal mail account
 // stay). Each service implements the owned-resource contract of org.moqui.admin.IdentityServices, which an account's
-// lifecycle relies on.
+// lifecycle relies on, calling it through call#OwnedResourceService (a service without the contract is never called).
 // Run: ./moq test framework --spec ResourceOwners
 const P = "SPEC_ROWN_"
 const ownerId = P + "OWNER"
@@ -131,6 +131,7 @@ spec({
 feature("a shared drive is its owner's to see and moves only with DRIVE_OWNER_CHANGE, to an enabled internal account", {
     when() {
         const F = "org.moqui.impl.FileServices."
+        const C = "org.moqui.admin.IdentityServices.call#OwnedResourceService"
         const move = toUserId => invoke(F + "transfer#DriveOwner", {driveId: P + "SHARED", fromUserId: ownerId, toUserId})
         return {
             own: as(ownerId, () => invoke(F + "find#OwnedDrives", {userId: ownerId})),
@@ -141,7 +142,17 @@ feature("a shared drive is its owner's to see and moves only with DRIVE_OWNER_CH
             personal: as(operatorId, () =>
                 invoke(F + "transfer#DriveOwner", {driveId: P + "PERSONAL", fromUserId: ownerId, toUserId: heirId})
             ),
-            moved: as(operatorId, () => move(heirId)),
+            // a coordinator's call (IdentityServices.call#OwnedResourceService): a service without the contract is never called
+            notContract: as(operatorId, () =>
+                invoke(C, {serviceName: F + "add#DriveMember", contract: "transfer", stepParameters: {driveId: P + "SHARED"}})
+            ),
+            moved: as(operatorId, () =>
+                invoke(C, {
+                    serviceName: F + "transfer#DriveOwner",
+                    contract: "transfer",
+                    stepParameters: {driveId: P + "SHARED", fromUserId: ownerId, toUserId: heirId}
+                })
+            ),
             drive: one("moqui.resource.ResourceDrive", {driveId: P + "SHARED"}),
             heirMember: one("moqui.resource.ResourceDriveMember", {driveMemberId: P + "HEIR_MEMBER"}),
             contract:
@@ -149,13 +160,14 @@ feature("a shared drive is its owner's to see and moves only with DRIVE_OWNER_CH
                 implementsContract(F + "transfer#DriveOwner", "OwnedResourceTransfer")
         }
     },
-    then({own, peek, take, closed, external, personal, moved, drive, heirMember, contract}) {
+    then({own, peek, take, closed, external, personal, notContract, moved, drive, heirMember, contract}) {
         own.error == "" && own.resourceList.length == 1
         own.resourceList[0].resourceId == P + "SHARED" && own.resourceList[0].transferable == true
         peek.error.includes("DRIVE_OWNER_CHANGE") && take.error.includes("DRIVE_OWNER_CHANGE")
         closed.error.includes("not enabled") && external.error.includes("external user")
         personal.error.includes("not a shared drive")
-        moved.error == "" && moved.transferred == true
+        notContract.error.includes("does not carry")
+        moved.error == "" && moved.result.transferred == true
         drive.ownerUserId == heirId
         // the new owner's member row ends: the owner manages
         heirMember.thruDate != null

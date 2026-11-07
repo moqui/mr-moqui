@@ -156,4 +156,29 @@ along with this software (see the LICENSE.md file). If not, see
         </in-parameters>
         <out-parameters><parameter name="pausedCount" type="Integer"/></out-parameters>
     </service>
+    <service verb="call" noun="OwnedResourceService" allow-remote="false">
+        <description>A coordinator's call of a stored step's owner service (Mantle's account lifecycle): serviceName must carry the
+            contract's parameters (contract lookup, transfer or pause; else an error and nothing is called), and it runs under its
+            own authorization, as if the caller called it directly. This service's ALL_USERS ALLOW (OwnedResourceCall) is not
+            inheritable, so an inheritable ALLOW of the coordinator (Mantle's identity services' ALL_USERS grant) does not carry
+            into the owner service: one the caller is not authorized for on its own records is refused. An app screen's inheritable
+            ALWAYS grant, which already covers everything below it, still does. result is the owner service's out-parameters.</description>
+        <in-parameters>
+            <parameter name="serviceName" required="true"/>
+            <parameter name="contract" required="true"><description>lookup, transfer or pause</description></parameter>
+            <parameter name="stepParameters" type="Map"/>
+        </in-parameters>
+        <out-parameters><parameter name="result" type="Map"/></out-parameters>
+        <actions><script><![CDATA[
+            const contracts = {lookup: [['userId'], ['resourceList']], transfer: [['fromUserId', 'toUserId'], ['transferred']],
+                pause: [['userId'], ['pausedCount']]}
+            const terms = contracts[contract]
+            const definition = terms ? ec.service.getServiceDefinition(serviceName) : null
+            const inNames = definition ? Array.from(definition.inParameterNames || []) : []
+            if (!definition || !terms[0].every((name) => inNames.includes(name)) ||
+                    !terms[1].every((name) => Object.hasOwn(definition.outParameterInfoMap || {}, name))) {
+                ec.message.addError(`${serviceName} does not carry the owned-resource ${contract} contract`); return }
+            result = ec.service.sync().name(serviceName).parameters(stepParameters || {}).call() || {}
+        ]]></script></actions>
+    </service>
 </services>

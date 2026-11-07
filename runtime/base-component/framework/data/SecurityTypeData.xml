@@ -135,6 +135,14 @@ along with this software (see the LICENSE.md file). If not, see
             artifactName="org\.moqui\.impl\.(FileServices\.(find#OwnedDrives|transfer#DriveOwner)|EmailClientServices\.(find#OwnedEmailAccounts|transfer#EmailAccountOwner))"/>
     <moqui.security.ArtifactAuthz artifactAuthzId="ResourceOwnerServicesALL" userGroupId="ALL_USERS" artifactGroupId="ResourceOwnerServices"
             authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
+    <!-- A coordinator's call of a stored step's owner service (IdentityServices.call#OwnedResourceService; impl-admin P6 review,
+        F-P6-1): not inheritable, so the coordinator's own inheritable ALLOW (Mantle's identity services') stops here and the owner
+        service is authorized on its own records, as a direct call would be -->
+    <moqui.security.ArtifactGroup artifactGroupId="OwnedResourceCall" description="Owned resource step call"/>
+    <moqui.security.ArtifactGroupMember artifactGroupId="OwnedResourceCall" artifactTypeEnumId="AT_SERVICE" inheritAuthz="N" nameIsPattern="N"
+            artifactName="org.moqui.admin.IdentityServices.call#OwnedResourceService"/>
+    <moqui.security.ArtifactAuthz artifactAuthzId="OwnedResourceCallALL" userGroupId="ALL_USERS" artifactGroupId="OwnedResourceCall"
+            authzTypeEnumId="AUTHZT_ALLOW" authzActionEnumId="AUTHZA_ALL"/>
     <!-- The registered purposes of a custom group (optionIndicator Y): CreateGroup offers them, and a group of one of them is a
         custom group an access administrator created, never privileged. A component adds its own. -->
     <moqui.basic.Enumeration description="Team" enumId="UgtCustomTeam" enumTypeId="UserGroupType" optionIndicator="Y" sequenceNum="10"/>
