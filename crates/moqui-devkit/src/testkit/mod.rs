@@ -19,6 +19,7 @@
 
 mod host;
 mod lines;
+mod sandbox;
 pub mod rewrite;
 pub mod run;
 

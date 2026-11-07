@@ -59,7 +59,14 @@ pub(super) static TEST_HOST: HostClass = HostClass {
             leaf,
             set_property
         ),
-        host_method!("__moquiTestHost", "completionBody", [Text], None, leaf, completion_body),
+        host_method!(
+            "__moquiTestHost",
+            "sandboxBody",
+            [Text, Texts],
+            None,
+            leaf,
+            sandbox_body
+        ),
         // a client host's call may reach anything
         host_method!("__moquiTestHost", "call", [Text, Text], None, call),
     ],
@@ -134,10 +141,13 @@ fn set_property(call: &mut Call<'_>) -> Result<Ret, HostError> {
     Ok(before.into())
 }
 
-/// `completionBody(source)`: the script as a function body that returns its value (`runInContext` on an engine
-/// without `with`, server.js).
-fn completion_body(call: &mut Call<'_>) -> Result<Ret, HostError> {
-    Ok(moqui_core::script::parse::completion_body(call.text(0).unwrap_or_default()).into())
+/// `sandboxBody(source, names)`: the source as the body of `runInContext`'s function on an engine without `with`
+/// ([`super::sandbox`]); one that does not parse throws the parser's message (server.js throws it as a `SyntaxError`).
+fn sandbox_body(call: &mut Call<'_>) -> Result<Ret, HostError> {
+    let names = call.texts(1).unwrap_or_default();
+    super::sandbox::sandbox_body(call.text(0).unwrap_or_default(), names)
+        .map(Ret::from)
+        .map_err(HostError::Message)
 }
 
 /// `call(name, argsJson)`: the call of the client host set on this thread, its error thrown as the script's.

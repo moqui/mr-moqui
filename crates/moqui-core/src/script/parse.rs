@@ -302,9 +302,8 @@ pub(crate) fn file_function(source: &str) -> String {
 }
 
 /// A script as a function body that returns the script's value: its last statement, when that is an expression
-/// statement, gets a `return` (a script that does not parse is left as it is, for the engine to report). The test
-/// harness's `runInContext` runs a file this way on an engine without `with` and direct `eval` (quickjs-oxide).
-pub fn completion_body(source: &str) -> String {
+/// statement, gets a `return` (a script that does not parse is left as it is, for the engine to report).
+fn completion_body(source: &str) -> String {
     let options = ParseOptions {
         allow_return_outside_function: true,
         ..ParseOptions::default()

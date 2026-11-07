@@ -132,17 +132,29 @@
         const box = sandbox == null ? {} : sandbox;
         if (withSandbox) return withSandbox(source, box);
         // Without with (and with eval always indirect there): the source is the body of a function whose parameters
-        // are the sandbox's own names, its last expression returned, and what it assigns to those names is written
-        // back when it ends. A function the source made reads the names as they were passed, and its later
-        // assignments to them stay in it.
-        const names = Object.keys(box).filter((name) => IDENTIFIER.test(name) && !RESERVED.has(name));
-        const body = __moquiTestHost.completionBody(String(source));
-        const run = new Function(...names, "globalThis",
-            `const __moquiValue = (() => {${body}\n})();\nreturn [__moquiValue, [${names.join(", ")}]];`);
-        const [value, after] = run(...names.map((name) => box[name]), box);
-        names.forEach((name, index) => {
-            if (box[name] !== after[index]) box[name] = after[index];
-        });
-        return value;
+        // are the sandbox's own names (testkit/sandbox.rs), so a bare or var assignment to one binds the parameter,
+        // and what the source changed is written back when it ends, however it ends. Its completion value is what
+        // eval would give. A known limit: a function the source made sees the names as they were passed, and its
+        // later assignments to them stay in it, where with would reach the sandbox.
+        const names = Object.keys(box).filter((name) => IDENTIFIER.test(name) && !RESERVED.has(name) &&
+            !name.startsWith("__moqui"));
+        let body;
+        try {
+            body = __moquiTestHost.sandboxBody(String(source), names);
+        } catch (error) {
+            throw new SyntaxError(error.message);
+        }
+        const run = new Function(...names, "globalThis", "__moquiOut", body);
+        const before = names.map((name) => box[name]);
+        const out = { value: undefined, after: null };
+        try {
+            run(...before, box, out);
+        } finally {
+            // only what the source assigned: a write through globalThis (the sandbox itself) stays
+            if (out.after) names.forEach((name, index) => {
+                if (out.after[index] !== before[index]) box[name] = out.after[index];
+            });
+        }
+        return out.value;
     });
 })(globalThis);

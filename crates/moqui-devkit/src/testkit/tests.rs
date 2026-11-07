@@ -694,9 +694,43 @@ feature("dialog sandbox", {
         assert.equal(sawHelper, true)
     },
 })
+feature("assignments and completion values", {
+    expect() {
+        const box = { count: 1, other: 1, held: 1, flag: true, __moquiOut: "kept" }
+        // a bare assignment and a var bind the sandbox's names; a write through globalThis is the sandbox's own
+        runInContext("count = 2; var other = 5; globalThis.held = 3", box)
+        assert.equal(box.count, 2)
+        assert.equal(box.other, 5)
+        assert.equal(box.held, 3)
+        // a second run on the same sandbox defines more and keeps the first's
+        runInContext("Object.defineProperty(globalThis, 'made', { value: 1, enumerable: true, configurable: true })", box)
+        assert.equal(box.made, 1)
+        assert.equal(box.count, 2)
+        // the completion value is eval's, also of a statement that is not an expression
+        assert.equal(runInContext("flag ? 'x' : 'y'", box), "x")
+        assert.equal(runInContext("if (flag) { 'a' } else { 'b' }", box), "a")
+        assert.equal(runInContext("try { 'tried' } finally { 'not this' }", box), "tried")
+        assert.equal(runInContext("let n = 0; for (const i of [1, 2, 3]) { n += i } n", box), 6)
+        assert.equal(runInContext("1; if (false) { 'never' }", box), undefined)
+        assert.equal(runInContext("var x = 1; { 'block' }", box), "block")
+        // a name the harness uses for itself is the sandbox's still
+        assert.equal(box.__moquiOut, "kept")
+        // a return outside a function is a syntax error, as eval's
+        assert.throws(() => runInContext("return 1", box), SyntaxError)
+        // what the source assigned before it threw is kept
+        assert.throws(() => runInContext("count = 9; throw new Error('stop')", box), /stop/)
+        assert.equal(box.count, 9)
+    },
+})
 "#);
     assert!(result.setup_failure.is_none(), "{:?}", result.setup_failure);
-    assert_eq!(outcomes(&result), vec![("dialog sandbox".to_string(), "passed")]);
+    assert_eq!(
+        outcomes(&result),
+        vec![
+            ("dialog sandbox".to_string(), "passed"),
+            ("assignments and completion values".to_string(), "passed")
+        ]
+    );
 }
 
 #[test]
