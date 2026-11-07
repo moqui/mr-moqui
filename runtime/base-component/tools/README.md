@@ -4,6 +4,10 @@ The administration apps, mounted under `/apps` (and `/qapps`) by `MoquiConf.xml`
 ([docs/tools/Monitoring.md](../../../docs/tools/Monitoring.md)), System and Tools. Their access is the artifact groups
 of `data/ToolsSecurityData.xml` and `data/MonitoringSecurityData.xml`, granted to `ADMIN`.
 
+Another app may mount the Dashboards screens under its own root, as BOSS Insights does
+([Mounting the report screens](../../../docs/tools/Monitoring.md#mounting-the-report-screens)); `test/screen/` holds
+the test mount of the ReportMounts spec.
+
 ## Tools
 
 `screen/Tools.xml`, grouped by section. The guide to Data, SQL, Schema, ETL and Database is

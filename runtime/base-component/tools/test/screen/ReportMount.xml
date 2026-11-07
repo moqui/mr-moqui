@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
+<!-- The ReportMounts spec's app root (test only, never mounted): an app that mounts Tools' report screens under its own root, as BOSS
+    Insights does (docs/tools/Monitoring.md, "Mounting the report screens"). Its reportLinks send the report links to its own
+    screens, leave out alert rules, and fix the dashboard variable "region". -->
+<screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd"
+        default-menu-title="Report mount">
+    <always-actions>
+        <set field="reportLinks" from="{dashboards:'../Board', dashboard:'../Board', definition:'../Editor', panel:'../Editor', explore:'../Board', alertRule:null}"/>
+        <set field="reportFixedVariables" from="{region:'EU'}"/>
+    </always-actions>
+    <subscreens default-item="Board"/>
+    <widgets><subscreens-active/></widgets>
+</screen>

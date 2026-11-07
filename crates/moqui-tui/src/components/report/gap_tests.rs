@@ -487,3 +487,57 @@ fn playlist_rotation_is_bounded_pauses_and_preserves_request_authority() {
     assert_eq!(params["from"], "now-1h");
     assert_eq!(params["thru"], "now");
 }
+#[test]
+fn a_mounted_dashboard_links_its_apps_screens_and_an_unreadable_panel_says_so() {
+    // An app that mounts the report screens (Insights) sends appLinks: edit, Explore and the panel posts go to its
+    // screens, and a screen it leaves out (no alert rules) is not offered.
+    let props = json!({"dashboard":{"definitionId":"d","editable":true,"absoluteTime":{"from":"2026-10-27T00:00:00Z","thru":"2026-10-28T00:00:00Z"},
+        "appLinks":{"definition":"/apps/Insights/DashboardEditor","panel":"/apps/Insights/PanelDetail","explore":"/apps/Insights/ReportBuilder/Explore","dashboard":"/apps/Insights/Dashboard","alertRule":null},
+        "panels":{"p":{"title":"Orders","queries":[{"datasetId":"orders","aggregations":[{"id":"n","type":"sum","role":"metric"}]}]},
+            "q":{"title":"Sales","queries":[{"datasetId":"sales"}],"notices":[{"level":"error","complete":false,"message":"viewer may not read dataset sales"}]}}},"frames":{}});
+    let mut state = ComponentState::default();
+    let press = |state: &mut ComponentState, key: Key| ReportDashboard.key(&props, state, &KeyPress::plain(key), false);
+    press(&mut state, Key::Char('m'));
+    let items: Vec<&str> = panel_menu(&props["dashboard"], &props["dashboard"]["panels"]["p"])
+        .iter()
+        .map(|(id, _)| *id)
+        .collect();
+    assert_eq!(
+        items,
+        ["view", "edit", "share", "explore", "inspect", "duplicate", "remove"]
+    );
+    let dashboard = &props["dashboard"];
+    let panel = &dashboard["panels"]["p"];
+    let edit = panel_menu_act("edit", dashboard, "p", panel, &mut state);
+    assert!(
+        matches!(&edit[..], [Act::Follow(url)] if url.starts_with("/apps/Insights/DashboardEditor?definitionId=d&panelId=p")),
+        "{edit:?}"
+    );
+    let explore = panel_menu_act("explore", dashboard, "p", panel, &mut state);
+    assert!(
+        matches!(&explore[..], [Act::Follow(url)] if url.starts_with("/apps/Insights/ReportBuilder/Explore?datasetId=orders")),
+        "{explore:?}"
+    );
+    let duplicate = panel_menu_act("duplicate", dashboard, "p", panel, &mut state);
+    assert!(
+        matches!(&duplicate[..], [Act::Post { url, .. }] if url == "/apps/Insights/Dashboard/duplicatePanel"),
+        "{duplicate:?}"
+    );
+    assert!(panel_menu_act("alert", dashboard, "p", panel, &mut state).is_empty());
+    let unavailable = panel_lines(&json!({"fields":[]}), &dashboard["panels"]["q"], 80)
+        .iter()
+        .map(|line| line.iter().map(|span| span.text.as_str()).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        unavailable.contains("Not available: viewer may not read dataset sales"),
+        "{unavailable}"
+    );
+    assert!(!unavailable.contains("No data"), "{unavailable}");
+    // Tools' own dashboards send Tools' links, and a dashboard without appLinks keeps them.
+    let tools = json!({"definitionId":"d","panels":{}});
+    assert_eq!(
+        app_link(&tools, "alertRule", "AlertRule").as_deref(),
+        Some("/apps/dashboards/AlertRule")
+    );
+}

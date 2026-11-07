@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- This software is in the public domain under CC0 1.0 Universal plus a Grant of Patent License. -->
 <!-- Its links go through its own transitions, so a screen that includes it (BOSS Insights › Dashboards) can take them in with
-    transition-include: a dashboard then opens in that screen's sibling Dashboard screen. -->
+    transition-include. They go to the report screens where the app mounts them, by the reportLinks map its root sets
+    (docs/tools/Monitoring.md, "Mounting the report screens"): a dashboard opens in that app's Dashboard, a panel in its panel
+    editor; Tools' Dashboards app sets none and keeps its own screens. A mount whose links have no editor (the viewer does not
+    author there) shows no New or edit links, and one may leave out the definitions of components it names
+    (reportHiddenComponents). -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Dashboards" default-menu-index="1">
     <parameter name="definitionType"/><parameter name="folder"/><parameter name="tag"/><parameter name="starredOnly"/>
     <transition name="dashboard" method="post" authz-action="view">
@@ -11,11 +15,11 @@
             let recent=[];try {recent=JSON.parse(ec.user.getPreference('REPORT_RECENT') || '[]')}catch(_){}
             recent=Array.isArray(recent)?recent:[]
             ec.user.setPreference('REPORT_RECENT',JSON.stringify([definitionId,...recent.filter(id=>id!==definitionId)].slice(0,20)))
-        ]]></script></actions><default-response url="../Dashboard"><parameter name="definitionId"/></default-response>
+        ]]></script></actions><default-response url="${ec.context.get('reportLinks')?.dashboard ?? '../Dashboard'}"><parameter name="definitionId"/></default-response>
     </transition>
-    <transition name="edit"><default-response url="//apps/dashboards/Definition"/></transition>
-    <transition name="new"><default-response url="//apps/dashboards/Definition"/></transition>
-    <transition name="explore"><default-response url="//apps/dashboards/Explore"/></transition>
+    <transition name="edit"><default-response url="${ec.context.get('reportLinks')?.[definitionType === 'panel' ? 'panel' : 'definition'] ?? '//apps/dashboards/Definition'}"/></transition>
+    <transition name="new"><default-response url="${ec.context.get('reportLinks')?.[definitionType === 'panel' ? 'panel' : 'definition'] ?? '//apps/dashboards/Definition'}"/></transition>
+    <transition name="explore"><default-response url="${ec.context.get('reportLinks')?.explore ?? '//apps/dashboards/Explore'}"/></transition>
     <transition name="star" method="post" authz-action="update">
         <actions><script><![CDATA[
             ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call()
@@ -26,7 +30,11 @@
         ]]></script></actions><default-response url="."><parameter name="definitionType"/></default-response>
     </transition>
     <actions><script><![CDATA[
-        const all=ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:definitionType || 'dashboard'}).call().definitions || []
+        // a mount may leave out the definitions a component ships for another audience (reportHiddenComponents: Tools' telemetry
+        // dashboards under a business app)
+        const hiddenComponents=ec.context.get('reportHiddenComponents') || []
+        const all=(ec.service.sync().name('org.moqui.report.ReportServices.list#Definitions').parameters({definitionType:definitionType || 'dashboard'}).call().definitions || [])
+            .filter(definition=>!hiddenComponents.includes(definition.component))
         let stars=[],recent=[]
         try { stars=JSON.parse(ec.user.getPreference('REPORT_STARRED') || '[]') } catch (_) {}
         try { recent=JSON.parse(ec.user.getPreference('REPORT_RECENT') || '[]') } catch (_) {}
@@ -37,11 +45,14 @@
         definitions=definitions.filter(definition=>(!folder || definition.folderName===folder || definition.folderName.startsWith(folder+'/')) &&
             (!tag || (Array.isArray(definition.body.tags)?definition.body.tags:[]).includes(tag)) && (starredOnly!=='Y' || definition.isStarred))
         definitions.sort((a,b)=>a.folderName.localeCompare(b.folderName) || a.title.localeCompare(b.title))
+        // The mount's links: no editor (null) for a viewer who does not author there, no Explore where it is not mounted.
+        const mountLinks=ec.context.get('reportLinks')
+        homeOffers={edit:!mountLinks || !!mountLinks[(definitionType || 'dashboard')==='panel'?'panel':'definition'],explore:!mountLinks || !!mountLinks.explore}
     ]]></script></actions>
     <widgets>
         <container style="row items-center q-gutter-sm q-mb-md">
-            <link url="new" text="New ${definitionType || 'dashboard'}" btn-type="primary" parameter-map="{definitionType:definitionType || 'dashboard'}"/>
-            <link url="explore" text="Explore data"/>
+            <link url="new" text="New ${definitionType || 'dashboard'}" btn-type="primary" parameter-map="{definitionType:definitionType || 'dashboard'}" condition="homeOffers.edit"/>
+            <link url="explore" text="Explore data" condition="homeOffers.explore"/>
         </container>
         <form-single name="DashboardFolders" transition=".">
             <field name="definitionType"><default-field><hidden/></default-field></field>
@@ -58,25 +69,25 @@
         <section name="StarredLibrary" condition="starredDefinitions.length"><widgets>
             <label text="Starred" type="h6"/>
             <form-list name="StarredDefinitions" list="starredDefinitions" skip-form="true" paginate="false">
-                <field name="title"><conditional-field condition="type === 'dashboard'"><link url="dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><default-field><link url="edit" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+                <field name="title"><conditional-field condition="type === 'dashboard'"><link url="dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><conditional-field condition="homeOffers.edit"><link url="edit" text="${title}" link-type="anchor" parameter-map="{definitionId:id,definitionType:type}"/></conditional-field><default-field><display text="${title}"/></default-field></field>
             </form-list>
         </widgets></section>
         <section name="RecentLibrary" condition="recentDefinitions.length"><widgets>
             <label text="Recent" type="h6"/>
             <form-list name="RecentDefinitions" list="recentDefinitions" skip-form="true" paginate="false">
-                <field name="title"><conditional-field condition="type === 'dashboard'"><link url="dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><default-field><link url="edit" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+                <field name="title"><conditional-field condition="type === 'dashboard'"><link url="dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><conditional-field condition="homeOffers.edit"><link url="edit" text="${title}" link-type="anchor" parameter-map="{definitionId:id,definitionType:type}"/></conditional-field><default-field><display text="${title}"/></default-field></field>
             </form-list>
         </widgets></section>
         <label text="All definitions" type="h6"/>
         <form-list name="Definitions" list="definitions" skip-form="true">
-            <field name="title"><conditional-field condition="type === 'dashboard'"><link url="dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><default-field><link url="edit" text="${title}" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+            <field name="title"><conditional-field condition="type === 'dashboard'"><link url="dashboard" text="${title}" link-type="hidden-form-link"><parameter name="definitionId" from="id"/></link></conditional-field><conditional-field condition="homeOffers.edit"><link url="edit" text="${title}" link-type="anchor" parameter-map="{definitionId:id,definitionType:type}"/></conditional-field><default-field><display text="${title}"/></default-field></field>
             <field name="folderName"><default-field title="Folder"><display/></default-field></field>
             <field name="tagNames"><default-field title="Tags"><display/></default-field></field>
             <field name="star"><default-field><link url="star" text="${isStarred ? 'Unstar' : 'Star'}" link-type="hidden-form-link" parameter-map="{definitionId:id,definitionType:definitionType}"/></default-field></field>
             <field name="type"><default-field><display/></default-field></field>
             <field name="component"><default-field><display/></default-field></field>
             <field name="readOnly"><default-field title="Shipped"><display/></default-field></field>
-            <field name="edit"><default-field><link url="edit" text="Definition and versions" link-type="anchor"><parameter name="definitionId" from="id"/></link></default-field></field>
+            <field name="edit"><conditional-field condition="homeOffers.edit"><link url="edit" text="Definition and versions" link-type="anchor" parameter-map="{definitionId:id,definitionType:type}"/></conditional-field><default-field><display text=""/></default-field></field>
         </form-list>
     </widgets>
 </screen>
