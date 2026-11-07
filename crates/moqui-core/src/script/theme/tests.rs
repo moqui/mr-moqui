@@ -668,6 +668,8 @@ fn behavior_is_refused_only_as_its_own_property() {
         "a { color: red }\n.b { _behavior: url(x.htc) }",
         "a { color: red }\n.b { color: red;behavior: url(x.htc) }",
         "a { color: red }\n.b { \\62 ehavior: url(x.htc) }",
+        "a { color: red }\n.b { -ms-behavior: url(x.htc) }",
+        "a { color: red }\n.b{-MS-Behavior:url(x.htc)}",
     ] {
         let found = css_errors(css);
         assert!(

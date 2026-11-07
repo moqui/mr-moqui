@@ -80,7 +80,8 @@ What a template sees:
 
 `t(key)` reads `locales/`: the view's `locale` file (`fr_CA`, `fr-CA` read as `fr_CA`), then its language's (`fr`), then
 the default locale's (`theme.json`'s `defaultLocale`, `en` when it names none), the first that has the key. A key no file
-has shows as the key. A text is escaped as any value is.
+has shows as the key. A text is escaped as any value is. These function names hide a view key of the same name (a
+view's `t` is not reachable), as the template's own names do.
 
 A view value `{"$richText": html}` is sanitized and placed as a fragment, as a `richText` setting is.
 

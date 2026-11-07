@@ -1211,11 +1211,26 @@ pub(crate) fn render_locked_bounded(
 ) -> Result<String, Error> {
     let compiled = compiled(source, Escape::Html, Scope::Snapshot)?;
     let deadline = deadline.min(Instant::now() + LOCKED_TIME_LIMIT);
-    let previous = LOCKED_TEXTS.with(|cell| cell.replace(Some(Arc::clone(texts))));
+    let _texts = TextsSet::new(texts);
     // QuickJS reads a memory limit of 0 as none, so the least is 1 byte (every allocation fails), never 0.
-    let result = render_locked_until(&compiled, json, deadline, memory.clamp(1, LOCKED_MEMORY_LIMIT));
-    LOCKED_TEXTS.with(|cell| cell.replace(previous));
-    result
+    render_locked_until(&compiled, json, deadline, memory.clamp(1, LOCKED_MEMORY_LIMIT))
+}
+
+/// The texts of `t(key)` for one locked render, put back as they were when it ends however it ends (an error or a
+/// panic too), so a render's texts never reach the next render on the thread.
+struct TextsSet(Option<Arc<Texts>>);
+
+impl TextsSet {
+    fn new(texts: &Arc<Texts>) -> Self {
+        Self(LOCKED_TEXTS.with(|cell| cell.replace(Some(Arc::clone(texts)))))
+    }
+}
+
+impl Drop for TextsSet {
+    fn drop(&mut self) {
+        let previous = self.0.take();
+        LOCKED_TEXTS.with(|cell| *cell.borrow_mut() = previous);
+    }
 }
 
 fn render_locked_until(compiled: &str, json: &str, deadline: Instant, memory: usize) -> Result<String, Error> {

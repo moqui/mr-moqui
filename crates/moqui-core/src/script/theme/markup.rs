@@ -678,10 +678,11 @@ const DENIED_CSS: &[(&str, &str)] = &[
     ("src(", "src()"),
 ];
 
-/// CSS properties that load a script (IE's `behavior`, the `.htc` binding). They are refused only as a property name of
-/// their own: one that does not continue another name, so `scroll-behavior` passes. The IE hacks `*behavior` and
-/// `_behavior` are still refused, as only a letter, digit or `-` before the name joins it to another.
-const DENIED_CSS_PROPERTIES: &[&str] = &["behavior", "behaviour"];
+/// CSS properties that load a script (IE's `behavior`, the `.htc` binding, and IE 8's prefixed `-ms-behavior`). They
+/// are refused only as a property name of their own: one that does not continue another name, so `scroll-behavior`
+/// passes. The IE hacks `*behavior` and `_behavior` are still refused, as only a letter, digit or `-` before the name
+/// joins it to another.
+const DENIED_CSS_PROPERTIES: &[&str] = &["behavior", "behaviour", "-ms-behavior"];
 
 /// The byte offset in `text` of the first `name:` (whitespace allowed before the colon) that starts a name of its own.
 fn property_at(text: &str, name: &str) -> Option<usize> {
