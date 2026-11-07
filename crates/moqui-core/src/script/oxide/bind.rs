@@ -93,7 +93,12 @@ impl OxideHost {
 thread_local! {
     /// The objects of this thread's runs whose state goes when the outermost script ends.
     static RELEASED_AT_END: RefCell<Vec<std::rc::Weak<OxideHost>>> = const { RefCell::new(Vec::new()) };
+    /// The length of [`RELEASED_AT_END`] past which the entries of objects already collected are dropped, doubled each
+    /// time, so a long run that opens a stream per record does not keep an entry for each.
+    static PRUNE_AT: Cell<usize> = const { Cell::new(MIN_PRUNE_AT) };
 }
+
+const MIN_PRUNE_AT: usize = 64;
 
 /// Let go the state of every object of a resource class ([`host::released_at_run_end`]) made since the outermost script
 /// on the thread started, the objects themselves still reachable or not: called when it ends
@@ -105,6 +110,7 @@ pub(crate) fn release_run_objects() {
     let Ok(held) = held else {
         return;
     };
+    PRUNE_AT.with(|at| at.set(MIN_PRUNE_AT));
     for object in held {
         if let Some(object) = object.upgrade() {
             // taken out before it drops, so a drop that reaches the binder finds the cell free
@@ -333,7 +339,14 @@ fn instance(js: &mut impl Js, binder: &Rc<Binder>, obj: HostObject, class: &'sta
     )?;
     if host::released_at_run_end(class) {
         if let Some(held) = js.host_data::<OxideHost>(&made)? {
-            RELEASED_AT_END.with(|list| list.borrow_mut().push(Rc::downgrade(&held)));
+            RELEASED_AT_END.with(|list| {
+                let mut list = list.borrow_mut();
+                if list.len() >= PRUNE_AT.with(Cell::get) {
+                    list.retain(|object| object.strong_count() > 0);
+                    PRUNE_AT.with(|at| at.set((list.len() * 2).max(MIN_PRUNE_AT)));
+                }
+                list.push(Rc::downgrade(&held));
+            });
         }
     }
     Ok(made)

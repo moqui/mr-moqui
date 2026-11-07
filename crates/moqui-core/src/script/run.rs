@@ -86,7 +86,8 @@ pub(crate) fn depth() -> usize {
 /// process is counted for [`crate::script::engine_stats`]. When the outermost script on the thread ends, on either
 /// engine, what its scripts held to the end goes: the response bodies opened with `send()` and not read or forwarded
 /// ([`crate::web::upstream::clear`]), and the state of quickjs-oxide's resource objects
-/// ([`crate::script::oxide::bind::release_run_objects`]), which a tracing collector would keep until it ran.
+/// ([`crate::script::oxide::bind::release_run_objects`]), which a tracing collector would keep until it ran, unless a
+/// [`ReleaseScope`] is open.
 pub(crate) fn enter_depth(depth: usize) -> DepthGuard {
     DEPTH.with(|current| current.set(depth + 1));
     DEPTH_MAX.fetch_max(depth + 1, std::sync::atomic::Ordering::Relaxed);
@@ -280,6 +281,41 @@ impl Drop for DepthGuard {
         });
         if left == 0 {
             crate::web::upstream::clear();
+            if RELEASE_SCOPES.with(Cell::get) == 0 {
+                crate::script::oxide::bind::release_run_objects();
+            }
+        }
+    }
+}
+
+thread_local! {
+    /// How many [`ReleaseScope`]s are open on this thread.
+    static RELEASE_SCOPES: Cell<usize> = const { Cell::new(0) };
+}
+
+/// A span of several outermost scripts that share their objects, such as a spec's registration, `setupSpec`, features
+/// and `cleanupSpec`, each its own run on a runtime that lasts: while one is open the end of an outermost script does
+/// not let quickjs-oxide's resource objects go ([`crate::script::oxide::bind::release_run_objects`]); the last scope's
+/// end does, once no script is running. Only that release waits: each script's own end (its write-back, the heap's
+/// sample, its deadline, the response bodies it left unread) stays its own.
+pub struct ReleaseScope(());
+
+impl ReleaseScope {
+    #[must_use]
+    pub fn enter() -> Self {
+        RELEASE_SCOPES.with(|scopes| scopes.set(scopes.get() + 1));
+        Self(())
+    }
+}
+
+impl Drop for ReleaseScope {
+    fn drop(&mut self) {
+        let left = RELEASE_SCOPES.with(|scopes| {
+            let left = scopes.get().saturating_sub(1);
+            scopes.set(left);
+            left
+        });
+        if left == 0 && depth() == 0 {
             crate::script::oxide::bind::release_run_objects();
         }
     }

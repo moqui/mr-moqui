@@ -457,8 +457,12 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
     state of each object of a resource class made since it started (`host::released_at_run_end`: `UploadedFile`,
     `InputStream`, `SftpClient`, `ServiceFuture`; `bind::release_run_objects`), the objects still reachable or not: a
     stream's buffer of a whole file, an upload's view of its spool file, an SFTP client (closed with an error in the
-    log, as Java's `finalize`), a future's results. A later call of the object's methods, or passing it to the host,
-    throws `this X was let go when the script that made it ended`. QuickJS has let such an object go by then unless a
+    log, as Java's `finalize`), a future's results. A later call of the object's methods, or passing it as an argument
+    that takes the object, throws `this X was let go when the script that made it ended`; a value that holds one (a
+    list written back at a script's end) converts it to null. A `ReleaseScope` (`script::run`) holds this release over
+    several outermost scripts: the spec runner opens one for each spec (`testkit::run_spec`), whose registration,
+    `setupSpec`, features and `cleanupSpec` are runs of their own sharing the file's objects; only the release waits,
+    each run's own end (write-back, heap sample, deadline, unread bodies) stays its own. QuickJS has let such an object go by then unless a
     script kept it past its end (on the global object), where it still works; the host's own copies are not touched
     on either engine.
   - The response bodies a script opened with `send()` and did not read go when the outermost script ends on both

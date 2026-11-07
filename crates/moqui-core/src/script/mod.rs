@@ -31,6 +31,7 @@ pub(crate) mod walker;
 
 pub use census::write_census;
 pub use engine::{script_engine, set_thread_script_engine, with_script_engine, ScriptEngine};
+pub use run::ReleaseScope;
 
 pub(crate) use actions::run_actions_at;
 pub use actions::{check_actions, eval_condition_element, eval_condition_group, generated_source, run_actions};

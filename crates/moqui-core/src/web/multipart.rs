@@ -97,6 +97,16 @@ impl SpoolFile {
         }
         Ok(&self.path)
     }
+
+    /// `err` of a read, or the error of a file let go if the request ended between the check and the read (the file
+    /// is then not found).
+    fn failed(&self, file_name: &str, err: moqui_lib::error::Error) -> moqui_lib::error::Error {
+        if self.released.load(Ordering::Acquire) {
+            gone(file_name)
+        } else {
+            err
+        }
+    }
 }
 
 impl Drop for SpoolFile {
@@ -157,7 +167,8 @@ impl UploadedFile {
         match &self.content {
             Content::Memory(bytes) => Ok(bytes.to_vec()),
             Content::Spooled(file) => std::fs::read(file.path(&self.file_name)?).map_err(|err| {
-                moqui_lib::error::Error::new(format!("cannot read the upload {}: {err}", self.file_name))
+                let err = moqui_lib::error::Error::new(format!("cannot read the upload {}: {err}", self.file_name));
+                file.failed(&self.file_name, err)
             }),
         }
     }
@@ -171,7 +182,7 @@ impl UploadedFile {
         Ok(match &self.content {
             Content::Memory(bytes) => Arc::new(MemorySource::new(bytes.to_vec())),
             Content::Spooled(file) => Arc::new(SpooledSource {
-                file: FileSource::open(file.path(&self.file_name)?)?,
+                file: FileSource::open(file.path(&self.file_name)?).map_err(|err| file.failed(&self.file_name, err))?,
                 file_name: self.file_name.clone(),
                 keep: Arc::clone(file),
             }),
@@ -188,7 +199,8 @@ impl UploadedFile {
             Content::Memory(bytes) => Box::new(std::io::Cursor::new(Arc::clone(bytes))),
             Content::Spooled(file) => Box::new(SpooledReader {
                 file: std::fs::File::open(file.path(&self.file_name)?).map_err(|err| {
-                    moqui_lib::error::Error::new(format!("cannot read the upload {}: {err}", self.file_name))
+                    let err = moqui_lib::error::Error::new(format!("cannot read the upload {}: {err}", self.file_name));
+                    file.failed(&self.file_name, err)
                 })?,
                 file_name: self.file_name.clone(),
                 keep: Arc::clone(file),
@@ -222,7 +234,9 @@ impl ByteSource for SpooledSource {
 
     fn read_at(&self, offset: u64, max: usize) -> Result<Vec<u8>, moqui_lib::error::Error> {
         self.keep.path(&self.file_name)?;
-        self.file.read_at(offset, max)
+        self.file
+            .read_at(offset, max)
+            .map_err(|err| self.keep.failed(&self.file_name, err))
     }
 }
 

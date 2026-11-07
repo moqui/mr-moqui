@@ -281,6 +281,10 @@ struct BlockResult {
 /// The context is the spec's own: the effective time, the login and the authorization the spec leaves are reset
 /// after it. A host closes what the spec opened in [`SpecHost::after_spec`].
 pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&CaseResult)) -> SpecResult {
+    // the spec's registration, setupSpec, features and cleanupSpec are runs of their own that share the file's objects
+    // (a stream setupSpec opened, a client): under quickjs-oxide they are let go once, when the spec ends, not at the
+    // end of each run (dropped last, after `finish`)
+    let _objects = moqui_core::script::ReleaseScope::enter();
     let host = options.host.clone();
     let _host = HostGuard::set(host.clone());
     let finish_host = || match &host {

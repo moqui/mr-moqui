@@ -128,3 +128,92 @@ fn an_unread_response_body_goes_when_the_script_ends() -> Result<(), Error> {
     );
     Ok(())
 }
+
+/// While a release scope is open (a spec's whole run), an object outlives the outermost script that made it; the
+/// scope's end lets it go.
+#[test]
+fn a_release_scope_keeps_objects_across_scripts_until_it_ends() -> Result<(), Error> {
+    clear_context_stack();
+    push_context_frame();
+    set_context_name(
+        "doc",
+        Value::Object(HostObject::new(UploadedFile::in_memory(
+            "doc",
+            "a.txt",
+            "text/plain",
+            b"abc".to_vec(),
+        ))),
+    )?;
+    let scope = crate::script::ReleaseScope::enter();
+    value(&format!(
+        "(() => {{ {}; return 0 }})()",
+        keep("scopedStream", "doc.getInputStream()")
+    ))?;
+    assert_eq!(value("globalThis.scopedStream.available()")?, Value::I32(3));
+    assert!(super::bind::release_pending_for_tests() > 0, "held for the scope");
+    drop(scope);
+    assert_eq!(super::bind::release_pending_for_tests(), 0);
+    let err = value("globalThis.scopedStream.available()").expect_err("let go at the scope's end");
+    assert!(err.message().contains("was let go"), "{}", err.message());
+    let _ = value("(() => { delete globalThis.scopedStream; return 0 })()");
+    clear_context_stack();
+    Ok(())
+}
+
+/// An object let go in a value a later script writes back converts to null: the write-back at the script's end does
+/// not fail. A call of its methods still throws.
+#[test]
+fn a_let_go_object_in_a_written_back_value_is_null() -> Result<(), Error> {
+    clear_context_stack();
+    push_context_frame();
+    set_context_name(
+        "doc",
+        Value::Object(HostObject::new(UploadedFile::in_memory(
+            "doc",
+            "a.txt",
+            "text/plain",
+            b"abc".to_vec(),
+        ))),
+    )?;
+    set_context_name("items", Value::List(Vec::new()))?;
+    value(&format!("(() => {{ {}; return 0 }})()", keep("goneDoc", "doc")))?;
+    let source = "(() => { items.push(globalThis.goneDoc); return items.length })()";
+    match eval_value(source, hash_text(source), true) {
+        Ok(value) => assert_eq!(value, Value::I32(1)),
+        Err(Outcome::Error(err)) => panic!("{}", err.message()),
+        Err(Outcome::Fallback(reason)) => panic!("fallback: {reason}"),
+    }
+    assert_eq!(
+        crate::script::context_value("items"),
+        Some(Value::List(vec![Value::Null]))
+    );
+    let _ = value("(() => { delete globalThis.goneDoc; return 0 })()");
+    clear_context_stack();
+    Ok(())
+}
+
+/// The list of objects to let go drops the entries of those already collected as it grows, so a long script that
+/// makes one per record keeps no entry for each.
+#[test]
+fn the_list_of_objects_to_let_go_drops_collected_ones_as_it_grows() -> Result<(), Error> {
+    clear_context_stack();
+    push_context_frame();
+    set_context_name(
+        "doc",
+        Value::Object(HostObject::new(UploadedFile::in_memory(
+            "doc",
+            "a.txt",
+            "text/plain",
+            b"abc".to_vec(),
+        ))),
+    )?;
+    // the runtime collects as the loop allocates; each stream is garbage once read
+    let source = "(() => { let total = 0; for (let i = 0; i < 20000; i++) total += doc.getInputStream().available(); \
+                  return total })()";
+    let _scope = crate::script::ReleaseScope::enter();
+    assert_eq!(value(source)?, Value::I32(60_000));
+    let pending = super::bind::release_pending_for_tests();
+    assert!(pending < 10_000, "{pending} entries kept");
+    clear_context_stack();
+    Ok(())
+}
