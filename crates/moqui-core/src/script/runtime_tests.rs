@@ -1108,3 +1108,115 @@ fn the_quickjs_builtins_are_on_each_whole_runtime() -> Result<(), Error> {
     assert_eq!(quickjs.lines().count(), oxide.lines().count());
     Ok(())
 }
+
+/// Run the pending jobs of the thread's runtime of `engine`'s setting, outside any run.
+fn run_jobs(engine: crate::script::engine::ScriptEngine) -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    if engine == ScriptEngine::Oxide {
+        return crate::script::oxide::run_jobs_for_tests();
+    }
+    with_script_engine(ScriptEngine::Rquickjs, || {
+        with_ctx(|ctx| {
+            while ctx.execute_pending_job() {}
+            Ok(())
+        })
+    })
+}
+
+/// The builtins' jobs and stacks do on each engine what QuickJS's do: a `queueMicrotask` callback runs when the jobs
+/// run, `move()` hands the resources over, and `disposeAsync()` disposes last first (a null `Symbol.asyncDispose`
+/// falling back to `Symbol.dispose`, a null resource awaited), a later error wrapping the earlier one. A script that
+/// changes the builtins they would call changes none of that.
+#[test]
+fn the_builtins_jobs_and_stacks_run_on_each_engine() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    const SCRIPT: &str = r#"
+        micro = "";
+        queueMicrotask(() => { micro = micro + "ran" });
+        const calls = [];
+        const first = new DisposableStack();
+        first.defer(() => calls.push("deferred"));
+        const moved = first.move();
+        first.dispose();
+        const before = calls.length;
+        moved.dispose();
+        movedCalls = before + ":" + calls.join();
+        asyncLog = "";
+        const stack = new AsyncDisposableStack();
+        stack.defer(() => { asyncLog = asyncLog + "1" });
+        stack.use({ [Symbol.asyncDispose]: null, [Symbol.dispose]() { asyncLog = asyncLog + "2" } });
+        stack.use(null);
+        stack.defer(async () => { asyncLog = asyncLog + "3"; throw new Error("three") });
+        stack.defer(() => { asyncLog = asyncLog + "4"; throw new Error("four") });
+        stack.disposeAsync().then(() => { asyncLog = asyncLog + "|ok" },
+            (e) => { asyncLog = asyncLog + "|" + e.name + ":" + e.error.message + ":" + e.suppressed.message });
+    "#;
+    const TAMPER: &str = r#"
+        const saved = { then: Promise.prototype.then, get: WeakMap.prototype.get, set: WeakMap.prototype.set,
+            charCodeAt: String.prototype.charCodeAt };
+        Promise.prototype.then = function () { throw new Error("then tampered") };
+        WeakMap.prototype.get = function () { return { kind: "DisposableStack", disposed: false, resources: [] } };
+        WeakMap.prototype.set = function () { throw new Error("set tampered") };
+        String.prototype.charCodeAt = function () { return 65 };
+        Object.defineProperty(Object.prototype, "get", { value: () => 1, configurable: true, writable: true });
+        Object.defineProperty(Array.prototype, "0", { set() { throw new Error("index tampered") }, configurable: true });
+        let seen;
+        try {
+            const stack = new DisposableStack();
+            stack.defer(() => {});
+            stack.dispose();
+            seen = [btoa("hi"), atob("aGk="), stack.disposed, new DOMException("m", "NotFoundError").code].join("|");
+        } catch (e) {
+            seen = String(e);
+        } finally {
+            Promise.prototype.then = saved.then;
+            WeakMap.prototype.get = saved.get;
+            WeakMap.prototype.set = saved.set;
+            String.prototype.charCodeAt = saved.charCodeAt;
+            delete Object.prototype.get;
+            delete Array.prototype[0];
+        }
+        tampered = seen;
+    "#;
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+        with_script_engine(engine, || -> Result<(), Error> {
+            clear_context_stack();
+            push_context_frame();
+            run_script(SCRIPT)?;
+            let name = engine.name();
+            assert_eq!(context_value("movedCalls"), Some(Value::string("0:deferred")), "{name}");
+            assert_eq!(context_value("micro"), Some(Value::string("")), "{name}: not before the jobs run");
+            run_jobs(engine)?;
+            assert_eq!(context_value("micro"), Some(Value::string("ran")), "{name}");
+            assert_eq!(
+                context_value("asyncLog"),
+                Some(Value::string("4321|SuppressedError:three:four")),
+                "{name}"
+            );
+            run_script(TAMPER)?;
+            assert_eq!(context_value("tampered"), Some(Value::string("aGk=|hi|true|8")), "{name}");
+            Ok(())
+        })?;
+    }
+    Ok(())
+}
+
+/// A live-form template is not a widget expression: under the widget check it runs with the real `ec` on each engine,
+/// as QuickJS's `run_template_function` runs it.
+#[test]
+fn a_template_under_the_widget_check_reads_the_real_ec() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+        with_script_engine(engine, || -> Result<(), Error> {
+            clear_context_stack();
+            let _wrap = super::WidgetWrap::set(true);
+            let text = crate::script::template::render_trusted(
+                "${typeof ec.entity}",
+                crate::script::template::Escape::None,
+            )?;
+            assert_eq!(text, "object", "under {}", engine.name());
+            Ok(())
+        })?;
+    }
+    Ok(())
+}

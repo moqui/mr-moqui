@@ -209,7 +209,7 @@ impl<'js> RealEc<'js> {
 impl Drop for RealEc<'_> {
     fn drop(&mut self) {
         if let Err(err) = set_ec(&self.ctx, self.real.clone()) {
-            tracing::error!(error = %err, "the real ec could not be put back after a widget expression; the script engine is dropped and starts again on the next script");
+            tracing::error!(error = %err, "the real ec could not be put back after a widget expression");
             discard_engine_of(&self.ctx);
         }
         let previous = self.previous.take();
@@ -241,23 +241,40 @@ impl Drop for RealEcForNested<'_> {
     fn drop(&mut self) {
         if let Some(outer) = self.outer.take() {
             if let Err(err) = set_ec(&self.ctx, outer) {
-                tracing::error!(error = %err, "the widget check's ec could not be put back after a nested run; the script engine is dropped and starts again on the next script");
+                tracing::error!(error = %err, "the widget check's ec could not be put back after a nested run");
                 discard_engine_of(&self.ctx);
             }
         }
     }
 }
 
-/// Drop the thread's engine of `ctx` from [`ENGINES`], so the next script starts a new one: a run left it in a state
-/// the later scripts must not see (the widget check's wrapper of `ec` that could not be taken off). The running
-/// scripts hold it until they end.
+/// Mark the thread's engine of `ctx` to go from [`ENGINES`] when its outermost run ends ([`with_engine`]), so the next
+/// script starts a new one: a run left it in a state the later scripts must not see (the widget check's wrapper of
+/// `ec` that could not be taken off). The runs still on the stack go on in it.
 fn discard_engine_of(ctx: &Ctx<'_>) {
-    let raw = ctx.as_raw();
-    ENGINES.with(|engines| {
-        if let Ok(mut engines) = engines.try_borrow_mut() {
-            engines.retain(|(_, engine)| engine.context.as_raw() != raw);
+    let raw = ctx.as_raw().as_ptr().cast_const().cast::<()>();
+    DISCARD.with(|pending| pending.set(raw));
+}
+
+thread_local! {
+    /// The context of the engine [`discard_engine_of`] marked.
+    static DISCARD: Cell<*const ()> = const { Cell::new(std::ptr::null()) };
+}
+
+/// Drop `engine` from [`ENGINES`] when [`discard_engine_of`] marked it; the mark is taken.
+fn drop_if_discarded(engine: &Rc<Engine>) {
+    let raw = engine.context.as_raw().as_ptr().cast_const().cast::<()>();
+    let marked = DISCARD.with(|pending| {
+        let marked = std::ptr::eq(pending.get(), raw);
+        if marked {
+            pending.set(std::ptr::null());
         }
+        marked
     });
+    if marked {
+        tracing::error!("the script engine was left with the widget check's wrapper of ec; it is dropped and starts again on the next script");
+        ENGINES.with(|engines| engines.borrow_mut().retain(|(_, held)| !Rc::ptr_eq(held, engine)));
+    }
 }
 
 /// Replace the global `ec`. It is read-only to scripts (see [`freeze_host_globals`]), so it is defined again.
@@ -1006,7 +1023,7 @@ fn with_engine<R>(kind: EngineKind, body: impl FnOnce(&Ctx) -> Result<R, Error>)
     engine.runtime.set_max_stack_size(stack);
     let _limit = (depth == 0).then(ScriptLimit::arm);
     let _guard = crate::script::run::enter_depth(depth);
-    engine.context.with(|ctx| {
+    let ran = engine.context.with(|ctx| {
         let _run = RunValues {
             engine: &engine,
             outer: None,
@@ -1028,7 +1045,10 @@ fn with_engine<R>(kind: EngineKind, body: impl FnOnce(&Ctx) -> Result<R, Error>)
             (Ok(value), Ok(())) => Ok(value),
             (Err(err), _) | (Ok(_), Err(err)) => Err(err),
         }
-    })
+    });
+    // the outermost run of this engine has ended
+    drop_if_discarded(&engine);
+    ran
 }
 
 /// A script run by a host call of a running script (a service it calls runs another script): in the thread's one

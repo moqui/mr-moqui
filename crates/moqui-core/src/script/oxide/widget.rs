@@ -119,7 +119,7 @@ impl Drop for RealEc<'_> {
     fn drop(&mut self) {
         let real = std::mem::replace(&mut self.real, Value::Undefined);
         if let Err(err) = define_ec(&mut self.context, &self.global, real) {
-            tracing::error!(error = ?err, "the real ec could not be put back after a widget expression; the quickjs-oxide runtime is dropped and restarts on the next script");
+            tracing::error!(error = ?err, "the real ec could not be put back after a widget expression");
             super::engine::discard(self.engine);
         }
         let previous = self.previous.take();
@@ -173,7 +173,7 @@ impl Drop for RealEcForNested {
     fn drop(&mut self) {
         if let Some((mut context, global, outer)) = self.outer.take() {
             if let Err(err) = define_ec(&mut context, &global, outer) {
-                tracing::error!(error = ?err, "the widget check's ec could not be put back after a nested run; the quickjs-oxide runtime is dropped and restarts on the next script");
+                tracing::error!(error = ?err, "the widget check's ec could not be put back after a nested run");
                 super::engine::discard(&self.engine);
             }
         }

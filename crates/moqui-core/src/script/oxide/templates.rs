@@ -77,7 +77,7 @@ pub(crate) fn run_live(function: &str) -> Result<String, Error> {
         calls.borrow_mut().insert(Rc::from(function), (Rc::clone(&call), hash));
         (call, hash)
     });
-    let ran = crate::script::engine::cross_into_oxide(true, || super::eval_text(&call, hash, true))?;
+    let ran = crate::script::engine::cross_into_oxide(true, || super::engine::eval_template(&call, hash, true))?;
     crate::script::engine::count(EntryKind::Template, Route::Oxide);
     ran.map_err(|outcome| match outcome {
         super::Outcome::Error(err) => err,

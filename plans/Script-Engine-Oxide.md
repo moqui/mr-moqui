@@ -435,10 +435,11 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
   the stack), so the write the check guards fails while the value is on the stack (`service/eca_tests.rs`,
   `the_security_checks_run_on_each_engine`).
 - The server-static widget check's wrapper of `ec` (`runtime::WRAPPED_EC`) is on both engines (`oxide/widget.rs`): a
-  widget expression (a condition, value, map or template, its value converted inside the wrapper),
-  `ec.resource.expand`, `expression` or `condition` runs with it; a screen unit, a script, actions and
-  `ec.resource.script` with the real `ec`, as on QuickJS. A wrapper that cannot be taken off drops the thread's runtime
-  (either engine), which starts again on the next script. A run nested in a wrapped expression (a host call that runs a
+  widget expression (a condition, value, map or `expand` template, its value converted inside the wrapper),
+  `ec.resource.expand`, `expression` or `condition` runs with it; a screen unit, a script, actions, a live-form
+  template function (`FancyRenderer`, `render_trusted`) and `ec.resource.script` with the real `ec`, as on QuickJS. A
+  wrapper that cannot be taken off drops the thread's runtime (either engine) when its outermost run ends, as a
+  poisoned one goes; the next script starts a new one. A run nested in a wrapped expression (a host call that runs a
   script) gets the real `ec` for its run on both engines; on QuickJS that had been lost since Round 28 put nested runs
   in the one engine (`the_wrapped_ec_takes_probes_and_leaves_the_framework_the_real_one`). Under `oxide` the expression
   a violation names is set at the entry point (`note_widget_expression`), since oxide sees only the text as it runs. The
@@ -459,6 +460,9 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
   - The prototypes' own keys come in another order (`constructor` first, as a class makes them), and a
     `SuppressedError` has an own `stack`, as every oxide error does.
   - `Error.captureStackTrace` and `Error.prototype.stack` are QuickJS's only.
+  - A `queueMicrotask` callback that throws: QuickJS's job throws and rquickjs's `execute_pending_job` drains the
+    exception; oxide's callback runs after an `await`, so the throw rejects a promise nothing holds. Neither reaches
+    `settle` or the run, so a spec sees the same.
   - The small-script runtime (`small-oxide`) does not have them; the static check sends a text naming one to QuickJS.
 
 ### Memory under `oxide` (Phase 3)

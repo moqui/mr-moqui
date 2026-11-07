@@ -52,6 +52,8 @@ pub(crate) use engine::{
 pub(crate) use reads::reads_are_held;
 
 #[cfg(test)]
+pub(crate) use engine::run_jobs_for_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod memory_tests;

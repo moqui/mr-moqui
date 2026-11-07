@@ -679,6 +679,19 @@ pub(super) fn start_for_tests() -> Result<Rc<OxideEngine>, Error> {
     engine()
 }
 
+/// Run the thread's runtime's pending jobs (promise reactions, `queueMicrotask`) until none is left, outside any run.
+#[cfg(test)]
+pub(crate) fn run_jobs_for_tests() -> Result<(), Error> {
+    let engine = engine()?;
+    while engine
+        .runtime()
+        .run_pending_job()
+        .map_err(|err| Error::new(format!("a pending job: {err:?}")))?
+        .executed()
+    {}
+    Ok(())
+}
+
 impl OxideEngine {
     /// The runtime with `ec` and the helper objects, and the names of its own globals read before the host added any
     /// (for [`Self::finish_start`]'s freeze of the host's).
@@ -1234,14 +1247,25 @@ fn run<T>(
 /// Drop the thread's runtime when it is `engine`, so the next script starts a new one: a run left it in a state the
 /// later scripts must not see (the widget check's wrapper of `ec` that could not be taken off, [`super::widget`]).
 /// Counted as a poisoned runtime.
+/// It goes when the outermost run of it ends, as a poisoned one does, not under the runs still on the stack.
 pub(super) fn discard(engine: &OxideEngine) {
-    counts::POISONED.fetch_add(1, Relaxed);
-    ENGINE.with(|current| {
-        let mut current = current.borrow_mut();
-        if current.as_ref().is_some_and(|held| std::ptr::eq(Rc::as_ptr(held), engine)) {
-            *current = None;
+    DISCARD.with(|pending| pending.set(std::ptr::from_ref(engine)));
+}
+
+thread_local! {
+    /// The runtime [`discard`] marked, dropped when its outermost run ends.
+    static DISCARD: Cell<*const OxideEngine> = const { Cell::new(std::ptr::null()) };
+}
+
+/// Whether `engine` was marked by [`discard`]; the mark is taken.
+fn take_discard(engine: &Rc<OxideEngine>) -> bool {
+    DISCARD.with(|pending| {
+        let marked = std::ptr::eq(pending.get(), Rc::as_ptr(engine));
+        if marked {
+            pending.set(std::ptr::null());
         }
-    });
+        marked
+    })
 }
 
 /// One run on the thread's oxide runtime, from `body`: counted in the thread's depth, deadline and default limit, its
@@ -1307,6 +1331,18 @@ pub(super) fn with_run<T>(
     }
     let fallback = FALLBACK.with(Cell::take);
     drop(state);
+    // a runtime a run left as the later scripts must not see goes when its outermost run ends, its peak kept
+    if !nested && take_discard(&engine) {
+        counts::POISONED.fetch_add(1, Relaxed);
+        tracing::error!(script = %what, "the quickjs-oxide runtime was left with the widget check's wrapper of ec; it is dropped and restarts on the next script");
+        engine.restarting.set(true);
+        ENGINE.with(|current| {
+            let mut current = current.borrow_mut();
+            if current.as_ref().is_some_and(|held| Rc::ptr_eq(held, &engine)) {
+                *current = None;
+            }
+        });
+    }
     // a poisoned runtime goes when the outermost oxide run ends, which sees the poison too
     if poisoned && !nested {
         counts::POISONED.fetch_add(1, Relaxed);
@@ -1386,6 +1422,22 @@ pub(crate) fn eval_condition(source: &str, hash: u64, writes: bool) -> Result<bo
     run(source, hash, writes, super::compiled::FILE_NAME, true, |_, _, value| {
         Ok(truthy(&value))
     })
+}
+
+/// A live-form template function's call (`super::templates::run_live`) on quickjs-oxide, its value the text: as
+/// [`eval_text`], but not a widget expression, as QuickJS's `run_template_function` runs it.
+pub(super) fn eval_template(source: &str, hash: u64, writes: bool) -> Result<String, Outcome> {
+    run(
+        source,
+        hash,
+        writes,
+        super::compiled::FILE_NAME,
+        false,
+        |context, _, value| match value {
+            Value::String(text) => Ok(text.to_utf8_lossy()),
+            other => Ok(context.to_js_string(&other)?.to_utf8_lossy()),
+        },
+    )
 }
 
 /// [`crate::script::expand`] on quickjs-oxide: `source` is the template as a template literal, its value the text.
