@@ -17,6 +17,7 @@
 //! The evaluation harness of the agents (`moqui test --agents`, `test/agent/*.agent.js`) is moqui-llm's, on this. A
 //! [`SpecHost`] runs the same specs as a client of a running server (`moqui test-client`, plans/archive/ClientTestHarness.md).
 
+mod host;
 mod lines;
 pub mod rewrite;
 pub mod run;

@@ -25,7 +25,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use moqui_lib::object::to_plain_string;
-use rquickjs::{Ctx, Exception, Function, Object};
 use serde::{Deserialize, Serialize};
 
 use super::rewrite::rewrite_spec;
@@ -35,8 +34,6 @@ const PRELUDE: &str = include_str!("prelude.js");
 const PRELUDE_NAME: &str = "moqui-test-prelude.js";
 const ASSERT: &str = include_str!("assert.js");
 const ASSERT_NAME: &str = "moqui-test-assert.js";
-/// Jobs `settle` will run for one promise before calling it still pending.
-const SETTLE_JOBS: u32 = 10_000;
 const SERVER_PRELUDE: &str = include_str!("server.js");
 const SERVER_PRELUDE_NAME: &str = "moqui-test-server.js";
 const HOST_PRELUDE_NAME: &str = "moqui-test-client.js";
@@ -829,27 +826,13 @@ pub fn install_prelude() -> Result<(), Error> {
 fn install_prelude_for(host: Option<&dyn SpecHost>) -> Result<(), Error> {
     moqui_core::script::eval_named_value(PRELUDE, PRELUDE_NAME)?;
     moqui_core::script::eval_named_value(ASSERT, ASSERT_NAME)?;
-    moqui_core::script::with_spec_ctx(|ctx| install_host(ctx).map_err(|err| Error::new(err.to_string())))?;
+    // a plain set of a global goes through the context stack's names, which take only data: it is defined
+    moqui_core::script::install_spec_global("__moquiTestHost", &super::host::TEST_HOST)?;
     match host {
         Some(host) => moqui_core::script::eval_named_value(host.prelude(), HOST_PRELUDE_NAME)?,
         None => moqui_core::script::eval_named_value(SERVER_PRELUDE, SERVER_PRELUDE_NAME)?,
     };
     Ok(())
-}
-
-fn install_host(ctx: &Ctx<'_>) -> rquickjs::Result<()> {
-    let host = Object::new(ctx.clone())?;
-    host.set("parallel", Function::new(ctx.clone(), parallel_host)?)?;
-    host.set("uploadedFile", Function::new(ctx.clone(), uploaded_file_host)?)?;
-    host.set("setProperty", Function::new(ctx.clone(), set_property_host)?)?;
-    host.set("call", Function::new(ctx.clone(), host_call)?)?;
-    // assert.rejects runs the promise's jobs here. QuickJS has no event loop of its own.
-    host.set("settle", Function::new(ctx.clone(), settle_promise)?)?;
-    // A plain set of a global goes through the context stack's proxy, which takes only data.
-    let define: Function = ctx.eval(
-        "(host) => Object.defineProperty(globalThis, '__moquiTestHost', { value: host, writable: true, configurable: true })",
-    )?;
-    define.call::<_, rquickjs::Value>((host,)).map(|_| ())
 }
 
 /// Run one block call and read its result. The deadline, when given, stops a block that runs too long.
@@ -930,44 +913,9 @@ fn reset_context() {
     moqui_core::script::clear_context_stack();
 }
 
-/// `__moquiTestHost.settle(promise)`: run this context's jobs until the promise fulfills or rejects.
-///
-/// `{ status: "fulfilled" | "rejected", value }`. A promise that is still pending when the job queue is empty, or
-/// after [`SETTLE_JOBS`] jobs, throws. QuickJS does not run promise jobs unless something asks it to.
-fn settle_promise<'js>(ctx: Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Object<'js>> {
-    let Some(promise) = value.as_promise().cloned() else {
-        return Err(Exception::throw_message(&ctx, "settle: not a promise"));
-    };
-    let mut steps = 0;
-    loop {
-        if let Some(result) = promise.result::<rquickjs::Value>() {
-            let (status, payload) = match result {
-                Ok(value) => ("fulfilled", value),
-                Err(_) => ("rejected", ctx.catch()),
-            };
-            let object = Object::new(ctx.clone())?;
-            object.set("status", status)?;
-            object.set("value", payload)?;
-            return Ok(object);
-        }
-        if steps == SETTLE_JOBS || !ctx.execute_pending_job() {
-            return Err(Exception::throw_message(&ctx, "settle: the promise is still pending"));
-        }
-        steps += 1;
-    }
-}
-
-/// `__moquiTestHost.call(name, argsJson)`: the call of the host set on this thread, its error thrown as the script's.
-fn host_call(ctx: Ctx<'_>, name: String, args: String) -> rquickjs::Result<String> {
-    let host = HOST.with(|cell| cell.borrow().clone());
-    let Some(host) = host else {
-        return Err(Exception::throw_message(
-            &ctx,
-            &format!("{name}: a client test host is not running (moqui test-client)"),
-        ));
-    };
-    host.call(&name, &args)
-        .map_err(|message| Exception::throw_message(&ctx, &message))
+/// The client host set on this thread, for `__moquiTestHost.call` ([`super::host`]).
+pub(super) fn current_host() -> Option<Arc<dyn SpecHost>> {
+    HOST.with(|cell| cell.borrow().clone())
 }
 
 /// Run a function of a client spec on a thread of its own: an engine with the core prelude and `host`'s, no execution
@@ -1004,46 +952,9 @@ pub fn run_on_thread(
         })
 }
 
-/// `uploadedFile(fileName, text, contentType)` of the prelude: an uploaded file holding the text.
-fn uploaded_file_host<'js>(
-    ctx: Ctx<'js>,
-    file_name: String,
-    text: String,
-    content_type: Option<String>,
-) -> rquickjs::Result<rquickjs::Value<'js>> {
-    let content_type = content_type.unwrap_or_else(|| "text/plain".to_string());
-    moqui_core::script::text_upload_to_js(&ctx, "contentFile", &file_name, &content_type, &text)
-}
-
-/// `__moquiTestHost.setProperty(name, value)`: a process property (`null` clears it); the property as it was, from the
-/// process table only, or `null`. Under `setProperty` and `withProperty` (server.js), which keep what to put back when
-/// the spec ends (`__moquiTest.restoreProperties`, in cleanupSpec and in [`run_spec`]'s finish).
-fn set_property_host(name: String, value: Option<String>) -> Option<String> {
-    let before = moqui_lib::env::get_property(&name);
-    match value {
-        Some(value) => moqui_lib::env::set_property(&name, value),
-        None => moqui_lib::env::clear_property(&name),
-    }
-    before
-}
-
-/// `__moquiTestHost.parallel(n, source, argsJson, transaction, timeoutSeconds)`: run the function source on `n`
-/// threads, each with its own execution context and engine, and return `{results, errors}` as JSON.
-fn parallel_host(
-    ctx: Ctx<'_>,
-    count: u32,
-    source: String,
-    args: String,
-    transaction: bool,
-    timeout_seconds: f64,
-) -> rquickjs::Result<String> {
-    let factory = ExecutionContext::with_current(|ec| Arc::clone(ec.factory()))
-        .ok_or_else(|| Exception::throw_message(&ctx, "parallel needs an execution context"))?;
-    let timeout = Duration::from_secs_f64(timeout_seconds.max(1.0));
-    Ok(run_parallel(&factory, count, &source, &args, transaction, timeout))
-}
-
-fn run_parallel(
+/// `__moquiTestHost.parallel` ([`super::host`]): the function source on `count` threads, each with its own execution
+/// context and engine; `{results, errors}` as JSON.
+pub(super) fn run_parallel(
     factory: &Arc<ExecutionContextFactory>,
     count: u32,
     source: &str,

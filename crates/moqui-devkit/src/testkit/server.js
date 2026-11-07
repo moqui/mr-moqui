@@ -111,11 +111,38 @@
     // a stub that holds a function (sri.write) cannot live there. This function is non-strict: with keeps the sandbox
     // on the scope chain of the functions the source creates, and the shadowed globalThis is what
     // Object.defineProperty(globalThis, ...) writes. A free name the sandbox lacks continues to the real global.
+    // quickjs-oxide has no with statement, so it is compiled from text here, and null there.
+    const withSandbox = (() => {
+        try {
+            return (0, eval)(`(function (source, sandbox) {
+                const globalThis = sandbox;
+                with (sandbox) { return eval(source); }
+            })`);
+        } catch (error) {
+            return null;
+        }
+    })();
+    const IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+    const RESERVED = new Set(["arguments", "await", "break", "case", "catch", "class", "const", "continue", "debugger",
+        "default", "delete", "do", "else", "enum", "eval", "export", "extends", "false", "finally", "for", "function",
+        "globalThis", "if", "implements", "import", "in", "instanceof", "interface", "let", "new", "null", "package",
+        "private", "protected", "public", "return", "static", "super", "switch", "this", "throw", "true", "try",
+        "typeof", "var", "void", "while", "with", "yield"]);
     define("runInContext", (source, sandbox) => {
         const box = sandbox == null ? {} : sandbox;
-        return (function (sandbox) {
-            const globalThis = sandbox;
-            with (sandbox) { return eval(source); }
-        })(box);
+        if (withSandbox) return withSandbox(source, box);
+        // Without with (and with eval always indirect there): the source is the body of a function whose parameters
+        // are the sandbox's own names, its last expression returned, and what it assigns to those names is written
+        // back when it ends. A function the source made reads the names as they were passed, and its later
+        // assignments to them stay in it.
+        const names = Object.keys(box).filter((name) => IDENTIFIER.test(name) && !RESERVED.has(name));
+        const body = __moquiTestHost.completionBody(String(source));
+        const run = new Function(...names, "globalThis",
+            `const __moquiValue = (() => {${body}\n})();\nreturn [__moquiValue, [${names.join(", ")}]];`);
+        const [value, after] = run(...names.map((name) => box[name]), box);
+        names.forEach((name, index) => {
+            if (box[name] !== after[index]) box[name] = after[index];
+        });
+        return value;
     });
 })(globalThis);

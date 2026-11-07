@@ -54,6 +54,7 @@ mod user;
 mod web;
 
 pub(crate) use l10n::rounding_strategy_named;
+pub use upload::text_upload;
 #[cfg(test)]
 pub(crate) use sri::{HOLD_EXPECTED as SRI_HOLD_EXPECTED, HOLD_SCRIPT as SRI_HOLD_SCRIPT};
 
@@ -404,9 +405,10 @@ pub trait EngineOps {
     fn screen_runner(&mut self) -> Result<&dyn crate::screen::sri::Runner, HostError> {
         Err(HostError::message("screen units do not run on this engine yet"))
     }
-    /// Run the engine's pending jobs until a promise settles (the spec engine's `settle_promise`, Phase 3).
-    fn settle(&mut self) -> Result<(), HostError> {
-        Err(HostError::message("settling a promise is not supported here"))
+    /// Run the engine's oldest pending job (a promise reaction); `false` when none is pending. The engines run no job
+    /// unless asked, so the test harness's `settle` drives a promise to its end with this, one job at a time.
+    fn run_pending_job(&mut self) -> Result<bool, HostError> {
+        Err(HostError::message("running pending jobs is not supported here"))
     }
 }
 

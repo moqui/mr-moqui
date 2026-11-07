@@ -2092,10 +2092,28 @@ pub fn eval_named_value(source: &str, file_name: &str) -> Result<Value, Error> {
     if source.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
+    if crate::script::engine::script_engine() == crate::script::engine::ScriptEngine::Oxide {
+        return crate::script::oxide::spec::eval_named_value(source, file_name);
+    }
     crate::script::engine::require_quickjs(EntryKind::Spec)?;
     with_engine(EngineKind::Spec, |ctx| {
         let evaluated = compiled::eval_named(ctx, source, file_name)?;
         js_value_to_host(ctx, &evaluated)
+    })
+}
+
+/// Define the global `name` in the thread's spec engine as an object of the host table's `class`, writable and
+/// configurable (the test harness's `__moquiTestHost`). A plain set of a global would go to the context stack.
+pub fn install_spec_global(name: &str, class: &'static crate::script::host::HostClass) -> Result<(), Error> {
+    if crate::script::engine::script_engine() == crate::script::engine::ScriptEngine::Oxide {
+        return crate::script::oxide::spec::install_global(name, class);
+    }
+    with_spec_ctx(|ctx| {
+        let object = bind::running_instance(ctx, HostObject::new(()), class).map_err(js_error)?;
+        let define: Function = ctx
+            .eval("(name, value) => Object.defineProperty(globalThis, name, { value, writable: true, configurable: true })")
+            .map_err(js_error)?;
+        define.call::<_, JsValue>((name, object)).map(|_| ()).map_err(js_error)
     })
 }
 

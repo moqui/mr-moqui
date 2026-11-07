@@ -34,6 +34,7 @@ mod errors;
 mod host;
 mod names;
 mod reads;
+pub(crate) mod spec;
 pub(crate) mod templates;
 mod tracked;
 pub(crate) mod walker;

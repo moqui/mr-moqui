@@ -56,7 +56,7 @@ pub use runtime::{
 };
 pub use runtime::{text_upload_to_js, with_ctx, with_spec_ctx};
 // for host callbacks outside this crate: moqui-llm's ec.llm
-pub use runtime::{eval_named_value, value_items, value_map};
+pub use runtime::{eval_named_value, install_spec_global, value_items, value_map};
 pub use runtime::{facade_of, host_guard, host_to_js, js_error, js_to_host, throw_lib, with_ec};
 
 #[cfg(test)]

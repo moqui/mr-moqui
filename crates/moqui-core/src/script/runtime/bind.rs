@@ -451,6 +451,10 @@ impl EngineOps for QuickOps<'_, '_> {
         Ok(&self.runner)
     }
 
+    fn run_pending_job(&mut self) -> Result<bool, HostError> {
+        Ok(self.ctx.execute_pending_job())
+    }
+
     fn flush(&mut self, mode: FlushBefore) -> Result<(), HostError> {
         let clear = match mode {
             FlushBefore::None => return Ok(()),

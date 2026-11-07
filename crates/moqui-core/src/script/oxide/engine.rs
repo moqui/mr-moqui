@@ -371,15 +371,69 @@ pub(super) fn fallback_pending() -> bool {
     FALLBACK.with(|fallback| fallback.get().is_some())
 }
 
-/// This thread's oxide runtime, when it has started.
+/// What the running oxide script met that the bindings do not have, taken: a run that does not fall back reports it as
+/// its error ([`super::spec`]).
+pub(super) fn take_fallback() -> Option<&'static str> {
+    FALLBACK.with(Cell::take)
+}
+
+/// The oxide runtime of the innermost run on this thread ([`Active`]), else the thread's main runtime when it has
+/// started: what the conversions, the names and the binder's hooks work in.
 pub(super) fn current() -> Option<Rc<OxideEngine>> {
+    if let Some((active, _)) = ACTIVE.with(|active| active.borrow().last().cloned()) {
+        return Some(active);
+    }
     ENGINE.with(|engine| engine.borrow().clone())
+}
+
+thread_local! {
+    /// The runtimes entered on this thread, innermost last, each with whether it was entered for a run (else for its
+    /// start). A thread may hold two: the main one, and the test harness's spec runtime ([`super::spec`]), whose host
+    /// calls run the main one's scripts.
+    static ACTIVE: RefCell<Vec<(Rc<OxideEngine>, bool)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A runtime entered for a run or its start, until dropped: [`current`] is it.
+pub(super) struct Active;
+
+impl Active {
+    /// For a run.
+    pub(super) fn enter(engine: &Rc<OxideEngine>) -> Self {
+        ACTIVE.with(|active| active.borrow_mut().push((Rc::clone(engine), true)));
+        Active
+    }
+
+    /// For work on it that is not a run: the rest of its start (its shims' host calls convert in it), a global's
+    /// install.
+    pub(super) fn starting(engine: &Rc<OxideEngine>) -> Self {
+        ACTIVE.with(|active| active.borrow_mut().push((Rc::clone(engine), false)));
+        Active
+    }
+
+    /// Whether `engine` has a run in progress on this thread: a run on it now is nested in that one.
+    pub(super) fn holds(engine: &Rc<OxideEngine>) -> bool {
+        ACTIVE.with(|active| {
+            active
+                .borrow()
+                .iter()
+                .any(|(held, run)| *run && Rc::ptr_eq(held, engine))
+        })
+    }
+}
+
+impl Drop for Active {
+    fn drop(&mut self) {
+        ACTIVE.with(|active| {
+            active.borrow_mut().pop();
+        });
+    }
 }
 
 /// This thread's oxide runtime, started if need be. A start that fails is remembered for the thread
 /// ([`START_BACKOFF`]) and logged once for the process; nothing of a script has run then, so its caller falls back.
 fn engine() -> Result<Rc<OxideEngine>, Error> {
-    if let Some(engine) = current() {
+    // the main one, whichever runtime has the innermost run
+    if let Some(engine) = ENGINE.with(|engine| engine.borrow().clone()) {
         return Ok(engine);
     }
     if start_failed_recently() {
@@ -428,11 +482,32 @@ fn start_engine() -> Result<Rc<OxideEngine>, RuntimeError> {
     let started = Rc::new(started);
     // the shims call host functions as they install, whose conversions read the thread's engine
     ENGINE.with(|engine| *engine.borrow_mut() = Some(Rc::clone(&started)));
-    if let Err(err) = started.finish_start(&builtins) {
+    // and the innermost, when it starts under a run of the spec runtime
+    let active = Active::starting(&started);
+    let finished = started.finish_start(&builtins);
+    drop(active);
+    if let Err(err) = finished {
         ENGINE.with(|engine| *engine.borrow_mut() = None);
         return Err(err);
     }
     Ok(started)
+}
+
+/// A runtime of its own for whole scripts, not the thread's main one: `ec`, the shims and the bare names as the main
+/// one has them, without the small scripts' lockdown. The test harness's spec runtime ([`super::spec`]).
+pub(super) fn start_whole() -> Result<Rc<OxideEngine>, RuntimeError> {
+    let _starting = Starting::enter();
+    let calls = crate::script::census::host_calls();
+    let started = (|| {
+        let (started, builtins) = OxideEngine::start()?;
+        let started = Rc::new(started);
+        // the shims call host functions as they install, whose conversions read the innermost runtime
+        let _active = Active::starting(&started);
+        started.finish_start_with(&builtins, false)?;
+        Ok(started)
+    })();
+    crate::script::census::forget_host_calls_since(calls);
+    started
 }
 
 /// Drop this thread's runtime and its start failure, and make the next start fail or not, for the tests.
@@ -552,6 +627,12 @@ impl OxideEngine {
     /// lockdown, which no shim's code needs, then the bare names last, so a global a shim makes (`EdiHandler`,
     /// `__moquiWrap`) is the global object's own rather than a write to the context stack.
     fn finish_start(&self, builtins: &ObjectRef) -> Result<(), RuntimeError> {
+        self.finish_start_with(builtins, true)
+    }
+
+    /// [`Self::finish_start`], with the small scripts' lockdown ([`HARDEN_JS`]) only when `harden`: a runtime for
+    /// whole scripts (the spec runtime) keeps the function constructors, as QuickJS's main context does.
+    fn finish_start_with(&self, builtins: &ObjectRef, harden: bool) -> Result<(), RuntimeError> {
         let mut context = self.context.clone();
         super::bind::install_shims(&mut context, &self.protos.helpers, std::rc::Rc::new(EngineHooks))?;
         let global = context.global_object()?;
@@ -570,8 +651,19 @@ impl OxideEngine {
         }
         .ok_or(RuntimeError::Invariant("the host globals' freeze"))?;
         context.call(&freeze, Value::Undefined, &[Value::Object(builtins.clone())])?;
-        context.eval(HARDEN_JS)?;
+        if harden {
+            context.eval(HARDEN_JS)?;
+        }
         super::names::install_names(&context)
+    }
+
+    /// The runtime's realm and the runtime, for a runner outside this file ([`super::spec`]).
+    pub(super) fn context(&self) -> &Context {
+        &self.context
+    }
+
+    pub(super) fn runtime(&self) -> &quickjs_oxide::engine::api::core::Runtime {
+        &self.runtime
     }
 
     /// The tools shim's wrapper, which gives a tools map (a map with `__wrap`) its methods back.
@@ -741,7 +833,7 @@ fn plain<J: Js>(scope: &mut J, message: &str) -> RuntimeError {
 /// Forgets what one run made (the names' objects, the entity values, a fallback mark) when it ends, however it ends.
 /// A nested run (inside a host call of a running oxide script that lent the engine) sets the outer run's values aside
 /// and gives them back, as QuickJS's `OuterRun` does.
-struct RunState<'a> {
+pub(super) struct RunState<'a> {
     engine: &'a OxideEngine,
     outer: Option<Outer>,
 }
@@ -754,7 +846,7 @@ struct Outer {
 }
 
 impl<'a> RunState<'a> {
-    fn enter(engine: &'a OxideEngine, nested: bool) -> Self {
+    pub(super) fn enter(engine: &'a OxideEngine, nested: bool) -> Self {
         let outer = nested.then(|| Outer {
             values: engine.run.take(),
             entities: engine.entities.take(),
@@ -833,15 +925,16 @@ fn run<T>(
     if depth >= MAX_SCRIPT_DEPTH {
         return Err(Outcome::Error(Error::new("scripts are nested too deeply")));
     }
-    let nested = run::is_running(EngineTag::Oxide);
-    if nested && !is_lent() {
+    // nothing of the script has run: it runs on QuickJS
+    let engine = engine().map_err(|_| Outcome::Fallback(DID_NOT_START))?;
+    let nested = Active::holds(&engine);
+    if nested && !engine.runtime.is_lent() {
         return Err(Outcome::Fallback(
             "a run nested in a running oxide script that did not lend its engine",
         ));
     }
     run::stack_budget(depth).map_err(Outcome::Error)?;
-    // nothing of the script has run: it runs on QuickJS
-    let engine = engine().map_err(|_| Outcome::Fallback(DID_NOT_START))?;
+    let _active = Active::enter(&engine);
     let _tag = EngineTag::Oxide.enter();
     let _not_starting = StartSetAside::enter();
     let _limit = (depth == 0).then(ScriptLimit::arm);

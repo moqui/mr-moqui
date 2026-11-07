@@ -72,6 +72,13 @@ pub(crate) static STREAM: HostClass = HostClass {
     shim_members: &[],
 };
 
+/// An uploaded file holding `text`, as a method returns it: the test harness's `uploadedFile`, for the services that
+/// take a `FileItem` without a web request.
+pub fn text_upload(field_name: &str, file_name: &str, content_type: &str, text: &str) -> Ret {
+    let file = UploadedFile::in_memory(field_name, file_name, content_type, text.as_bytes().to_vec());
+    Ret::Object(HostObject::new(file), &UPLOAD)
+}
+
 /// The most bytes one `read(offset, max)` returns, so a script reading a large file a window at a time never holds
 /// more than this of it.
 pub(crate) const MAX_STREAM_READ: usize = 8 * 1024 * 1024;

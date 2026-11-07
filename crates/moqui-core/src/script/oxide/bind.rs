@@ -770,6 +770,18 @@ impl EngineOps for OxideOps<'_, '_> {
         called.map_err(|err| self.failed(err))
     }
 
+    fn run_pending_job(&mut self) -> Result<bool, HostError> {
+        let Some(engine) = super::engine::current() else {
+            return Err(HostError::message("no oxide engine"));
+        };
+        // the job queue is the runtime's: it runs inside a lend, above this call's frames
+        let _engine = EngineCall;
+        match self.scope.lend(|| engine.runtime().run_pending_job()) {
+            Ok(outcome) => Ok(outcome.executed()),
+            Err(err) => Err(self.failed(err)),
+        }
+    }
+
     fn whole_context(&mut self) -> Result<indexmap::IndexMap<String, Value>, HostError> {
         let hooks = Rc::clone(&self.binder.hooks);
         let _engine = EngineCall;
