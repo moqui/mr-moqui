@@ -460,7 +460,7 @@ fn a_held_row_reads_in_its_frame_as_the_database_gives_it() {
             .unwrap();
         let mut seen: Vec<String> = fields
             .iter()
-            .map(|name| format!("{label} {name}={:?}", row.get(*name)))
+            .map(|name| format!("{label} {name}={:?}", row.get(name)))
             .collect();
         // a field the create left out is there, null, as the database gives it
         seen.push(format!("{label} names={:?}", row.fields().keys().collect::<Vec<_>>()));
@@ -522,4 +522,141 @@ impl Drop for DirGuard {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.0);
     }
+}
+
+/// A view read in a transaction-cache frame sees the frame's held rows through shadowed member tables, on Postgres:
+/// a join of a created, a moved and a deleted row, and a grouped count, minimum and sum, with nothing written before
+/// the commit, and the same rows after it.
+#[test]
+fn a_view_read_sees_the_frames_held_rows_through_shadowed_tables() {
+    use moqui_core::transaction::TransactionAttribute;
+    let _lock = crate::common::shared();
+    let dir = temp_dir("moqui-txc-shadow");
+    let _guard = DirGuard(dir.clone());
+    std::fs::create_dir_all(&dir).unwrap();
+    let (cluster, driver) = EmbeddedCluster::start(&dir, 20).unwrap();
+    let driver: Arc<dyn DbDriver> = Arc::new(driver);
+    let framework = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../runtime/base-component/framework");
+    let facade = open_entity_facade(&framework, Arc::clone(&driver), pool()).unwrap();
+    let (kind, enumeration, queue) = (
+        "moqui.basic.EnumerationType",
+        "moqui.basic.Enumeration",
+        "moqui.edge.EdgeQueueItem",
+    );
+    facade.check_tables(&[kind, enumeration, queue]).unwrap();
+    let put = |entity: &str, fields: &[(&str, Value)]| {
+        let mut row = facade.make_value(entity).unwrap();
+        for (name, value) in fields {
+            row.set(*name, value.clone());
+        }
+        row.create(&facade).unwrap();
+    };
+    for id in ["SHA", "SHB", "SHQ"] {
+        put(kind, &[("enumTypeId", Value::string(id))]);
+    }
+    // the queue item's direction and status
+    for id in ["EdqOut", "EdqsQueued"] {
+        put(
+            enumeration,
+            &[("enumId", Value::string(id)), ("enumTypeId", Value::string("SHQ"))],
+        );
+    }
+    for (id, of) in [("SH1", "SHA"), ("SH2", "SHA"), ("SH3", "SHA")] {
+        put(
+            enumeration,
+            &[
+                ("enumId", Value::string(id)),
+                ("enumTypeId", Value::string(of)),
+                ("description", Value::string(id)),
+            ],
+        );
+    }
+    let item = |id: &str, size: i64, millis: i64| {
+        vec![
+            ("queueItemId", Value::string(id)),
+            ("pairedNodeId", Value::string("N1")),
+            ("directionEnumId", Value::string("EdqOut")),
+            ("sequenceNum", Value::I64(size)),
+            ("kind", Value::string("k")),
+            ("conversationKey", Value::string("c")),
+            ("idempotencyKey", Value::string(id)),
+            ("payloadSize", Value::I64(size)),
+            ("statusEnumId", Value::string("EdqsQueued")),
+            (
+                "createdDate",
+                Value::Timestamp(jiff::Timestamp::from_millisecond(millis).unwrap()),
+            ),
+        ]
+    };
+    put(queue, &item("Q1", 10, 2_000_000_000_000));
+    put(queue, &item("Q2", 20, 2_000_000_001_000));
+    let view = "moqui.basic.EnumerationAndType";
+    let ids = |of: &str| -> Vec<String> {
+        let mut ids: Vec<String> = facade
+            .find(view)
+            .unwrap()
+            .eq("enumTypeId", Value::string(of))
+            .list()
+            .unwrap()
+            .values()
+            .iter()
+            .map(|row| {
+                row.get("enumId")
+                    .map(moqui_lib::object::to_plain_string)
+                    .unwrap_or_default()
+            })
+            .collect();
+        ids.sort();
+        ids
+    };
+    let counted = || -> (String, String, String) {
+        let rows = facade
+            .find("moqui.edge.EdgeQueueCount")
+            .unwrap()
+            .eq("pairedNodeId", Value::string("N1"))
+            .list()
+            .unwrap();
+        let row = &rows.values()[0];
+        let text = |name: &str| {
+            row.get(name)
+                .map(moqui_lib::object::to_plain_string)
+                .unwrap_or_default()
+        };
+        (text("itemCount"), text("payloadBytes"), text("oldestCreatedDate"))
+    };
+    let stored_count = counted();
+    let tx = facade.transactions_for(enumeration).unwrap();
+    let before = moqui_core::entity::cache::tx_cache_stats();
+    let seen = tx
+        .run(TransactionAttribute::Cache, None, || {
+            put(
+                enumeration,
+                &[("enumId", Value::string("SH4")), ("enumTypeId", Value::string("SHA"))],
+            );
+            let mut moved = facade.make_value(enumeration)?;
+            moved.set("enumId", Value::string("SH2"));
+            moved.set("enumTypeId", Value::string("SHB"));
+            moved.update(&facade)?;
+            let mut gone = facade.make_value(enumeration)?;
+            gone.set("enumId", Value::string("SH3"));
+            gone.delete(&facade)?;
+            put(queue, &item("Q3", 5, 1_900_000_000_000));
+            let mut grown = facade.make_value(queue)?;
+            grown.set("queueItemId", Value::string("Q1"));
+            grown.set("payloadSize", Value::I64(100));
+            grown.update(&facade)?;
+            Ok((ids("SHA"), ids("SHB"), counted()))
+        })
+        .unwrap();
+    let stats = moqui_core::entity::cache::tx_cache_stats().since(&before);
+    assert_eq!(stats.early_flush_count(), 0, "{stats:?}");
+    assert_eq!(stats.shadowed_reads, 3, "{stats:?}");
+    assert_eq!(seen.0, ["SH1", "SH4"]);
+    assert_eq!(seen.1, ["SH2"]);
+    assert_eq!(seen.2 .0, "3");
+    assert_eq!(seen.2 .1, "125");
+    assert_ne!(seen.2 .2, stored_count.2, "the held item is the oldest");
+    assert_eq!((ids("SHA"), ids("SHB"), counted()), seen, "the same after the commit");
+    drop(facade);
+    drop(cluster);
 }

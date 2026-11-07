@@ -724,6 +724,9 @@ impl EntityFind {
             all => Some(Condition::and(all.to_vec())),
         };
         let use_clone = self.use_clone && !self.for_update;
+        // A view in a transaction-cache frame reads the frame's held rows of its members through shadowed tables (or
+        // has them written first).
+        let shadows = cache::view_shadows(&self.facade, &self.entity_name, condition.as_ref())?;
         self.facade
             .with_read_group(&self.entity_name, use_clone, |entity, dialect, model, tx| {
                 let condition = field_rw::encrypt_condition(&self.facade, entity, condition.clone())?;
@@ -746,6 +749,7 @@ impl EntityFind {
                     skip_locked: self.skip_locked,
                     having: having.clone(),
                     fields: select_fields.clone(),
+                    shadows: shadows.clone(),
                 };
                 let wanted = |name: &str| select_fields.is_empty() || select_fields.iter().any(|field| field == name);
                 // Java's `orderBy` skips a name that is not a field of the entity, such as a default

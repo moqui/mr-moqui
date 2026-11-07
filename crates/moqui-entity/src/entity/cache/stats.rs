@@ -88,6 +88,8 @@ pub struct TxCacheStats {
     pub db_reads: u64,
     /// Early flushes, by [`FlushCause`] in the order of [`FlushCause::ALL`].
     pub early_flushes: [u64; 5],
+    /// View reads that saw the frame's held rows through shadowed member tables, with no early flush.
+    pub shadowed_reads: u64,
     /// Statements, rows and waited round trips of the flushes at commit.
     pub batch_statements: u64,
     pub batch_rows: u64,
@@ -122,6 +124,7 @@ impl TxCacheStats {
         for (sum, count) in self.early_flushes.iter_mut().zip(other.early_flushes) {
             *sum += count;
         }
+        self.shadowed_reads += other.shadowed_reads;
         self.batch_statements += other.batch_statements;
         self.batch_rows += other.batch_rows;
         self.batch_round_trips += other.batch_round_trips;
@@ -143,6 +146,7 @@ impl TxCacheStats {
             memory_reads: self.memory_reads.saturating_sub(earlier.memory_reads),
             db_reads: self.db_reads.saturating_sub(earlier.db_reads),
             early_flushes,
+            shadowed_reads: self.shadowed_reads.saturating_sub(earlier.shadowed_reads),
             batch_statements: self.batch_statements.saturating_sub(earlier.batch_statements),
             batch_rows: self.batch_rows.saturating_sub(earlier.batch_rows),
             batch_round_trips: self.batch_round_trips.saturating_sub(earlier.batch_round_trips),
@@ -191,6 +195,11 @@ pub(super) fn note_read_of(token: u64, memory: bool) {
             stats.db_reads += 1;
         }
     });
+}
+
+/// A view read of the frame `token` that saw its held rows through shadowed member tables.
+pub(super) fn note_shadowed(token: u64) {
+    with_frame(token, |stats| stats.shadowed_reads += 1);
 }
 
 /// The flush at commit: its statements, rows and waited round trips.
@@ -256,7 +265,8 @@ pub(crate) fn census_frame(mode: &str, stats: Option<&TxCacheStats>, committed: 
     census(&format!(
         "{{\"kind\":\"frame\",\"service\":\"{service}\",\"mode\":\"{mode}\",\"committed\":{committed},\
          \"creates\":{},\"updates\":{},\"deletes\":{},\"upserts\":{},\"memory_reads\":{},\"db_reads\":{},\
-         \"early_flushes\":{},\"batch_statements\":{},\"batch_rows\":{},\"round_trips\":{round_trips}}}",
+         \"early_flushes\":{},\"shadowed_reads\":{},\"batch_statements\":{},\"batch_rows\":{},\
+         \"round_trips\":{round_trips}}}",
         stats.held_creates,
         stats.held_updates,
         stats.held_deletes,
@@ -264,6 +274,7 @@ pub(crate) fn census_frame(mode: &str, stats: Option<&TxCacheStats>, committed: 
         stats.memory_reads,
         stats.db_reads,
         stats.early_flush_count(),
+        stats.shadowed_reads,
         stats.batch_statements,
         stats.batch_rows,
     ));

@@ -28,7 +28,7 @@ use crate::transaction::{CacheMode, TransactionAttribute};
 /// The overlay: an update of a row the condition did not load comes back whole (stored row plus the update), a
 /// find by key sees the held write, and a view read writes the held rows first.
 #[test]
-fn held_updates_merge_onto_the_stored_row_and_a_view_read_flushes_them() {
+fn held_updates_merge_onto_the_stored_row_and_a_view_read_sees_them() {
     let facade = testing::open();
     let entity = "moqui.basic.Enumeration";
     for (id, kind) in [("E1", "A"), ("E2", "A")] {
@@ -393,11 +393,9 @@ fn a_frame_counts_its_held_writes_reads_early_flushes_and_commit_batch() {
     })
     .unwrap();
     let stats = super::super::tx_cache_stats().since(&before);
-    assert_eq!(stats.early_flushes_of(super::FlushCause::View), 1, "{stats:?}");
-    assert_eq!(
-        stats.batch_statements, 0,
-        "the view read wrote the held row before the commit"
-    );
+    assert_eq!(stats.early_flush_count(), 0, "{stats:?}");
+    assert_eq!(stats.shadowed_reads, 1, "the view read the held row through its shadow");
+    assert_eq!(stats.batch_statements, 1, "the held row went out with the commit");
 }
 
 /// Strict mode: an early flush marks the frame rollback-only, so the operation fails and writes nothing.
@@ -408,10 +406,21 @@ fn strict_mode_fails_a_frame_that_flushes_early() {
     tx.set_tx_cache_strict(true);
     let held = run(&tx, TransactionAttribute::Cache, || {
         put_enum(&facade, "STRICT", "A", "held");
-        facade
-            .find("moqui.basic.EnumerationAndType")?
-            .eq("enumTypeId", Value::string("A"))
-            .list()?;
+        // What an aggregate find does before its query (the test driver cannot run one): the held rows go first.
+        let lookup = super::super::FindLookup {
+            entity_name: ENUM.to_string(),
+            use_cache: None,
+            condition: None,
+            order: Vec::new(),
+            limit: None,
+            offset: None,
+            filtered: false,
+        };
+        let selective = super::super::Selective {
+            aggregate: true,
+            ..Default::default()
+        };
+        super::super::before_selective_find(&facade, &lookup, &selective)?;
         Ok(())
     });
     tx.set_tx_cache_strict(false);
@@ -1041,9 +1050,9 @@ fn a_held_update_of_a_locked_row_is_not_checked_at_the_commit() {
     assert_eq!(one.get("description"), Some(&Value::string("locked")));
 }
 
-/// D5: a view read writes the held rows first only when a held row of a member may be in its result.
+/// D5: a view read shadows a member's table only when a held row of the member may be in its result.
 #[test]
-fn a_view_read_flushes_only_for_a_held_row_it_may_show() {
+fn a_view_read_shadows_only_a_held_row_it_may_show() {
     let facade = testing::open();
     put(&facade, TYPE, "enumTypeId", "A");
     put(&facade, TYPE, "enumTypeId", "Z");
@@ -1065,11 +1074,8 @@ fn a_view_read_flushes_only_for_a_held_row_it_may_show() {
     })
     .unwrap();
     let stats = super::super::tx_cache_stats().since(&before);
-    assert_eq!(
-        stats.early_flushes_of(super::FlushCause::View),
-        0,
-        "type Z cannot show V1"
-    );
+    assert_eq!(stats.shadowed_reads, 0, "type Z cannot show V1");
+    assert_eq!(stats.early_flush_count(), 0);
     let before = super::super::tx_cache_stats();
     run(&tx, TransactionAttribute::Cache, || {
         assert!(facade
@@ -1085,7 +1091,75 @@ fn a_view_read_flushes_only_for_a_held_row_it_may_show() {
     })
     .unwrap();
     let stats = super::super::tx_cache_stats().since(&before);
-    assert_eq!(stats.early_flushes_of(super::FlushCause::View), 1, "type A shows V1");
+    assert_eq!(stats.shadowed_reads, 1, "type A shows V1");
+    assert_eq!(
+        stats.early_flush_count(),
+        0,
+        "the view read the held update with none written"
+    );
+}
+
+/// A view read in a frame sees the frame's held creates, updates and deletes of its members as the database would
+/// after them, with none written: rows the writes move into or out of its condition, a created member row joined to
+/// a stored one, a deleted one gone, and its count.
+#[test]
+fn a_view_read_sees_held_creates_updates_and_deletes_with_none_written() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    put(&facade, TYPE, "enumTypeId", "A");
+    put(&facade, TYPE, "enumTypeId", "B");
+    put_enum(&facade, "W1", "A", "stays");
+    put_enum(&facade, "W2", "A", "moves");
+    put_enum(&facade, "W3", "A", "goes");
+    let tx = facade.transactions_for(ENUM).unwrap();
+    let view = "moqui.basic.EnumerationAndType";
+    let before = super::super::tx_cache_stats();
+    run(&tx, TransactionAttribute::Cache, || {
+        put_enum(&facade, "W4", "A", "made");
+        set_enum(&facade, "W2", "enumTypeId", "B")?;
+        set_enum(&facade, "W1", "description", "changed")?;
+        let mut gone = facade.make_value(ENUM)?;
+        gone.set("enumId", Value::string("W3"));
+        gone.delete(&facade)?;
+        let writes = statements(&tape, "INSERT INTO \"enumeration\"") + statements(&tape, "UPDATE \"enumeration\"");
+        let ids = |kind: &str| -> Result<Vec<String>, Error> {
+            let mut ids: Vec<String> = facade
+                .find(view)?
+                .eq("enumTypeId", Value::string(kind))
+                .list()?
+                .values()
+                .iter()
+                .map(|row| plain(row, "enumId") + ":" + &plain(row, "description"))
+                .collect();
+            ids.sort();
+            Ok(ids)
+        };
+        assert_eq!(ids("A")?, ["W1:changed", "W4:made"]);
+        assert_eq!(ids("B")?, ["W2:moves"]);
+        assert_eq!(facade.find(view)?.eq("enumTypeId", Value::string("A")).count()?, 2);
+        assert_eq!(
+            statements(&tape, "INSERT INTO \"enumeration\"") + statements(&tape, "UPDATE \"enumeration\""),
+            writes,
+            "nothing held was written for the view reads"
+        );
+        Ok(())
+    })
+    .unwrap();
+    let stats = super::super::tx_cache_stats().since(&before);
+    assert_eq!(stats.early_flush_count(), 0, "{stats:?}");
+    assert_eq!(stats.shadowed_reads, 3);
+    let mut after: Vec<String> = facade
+        .find(view)
+        .unwrap()
+        .eq("enumTypeId", Value::string("A"))
+        .list()
+        .unwrap()
+        .values()
+        .iter()
+        .map(|row| plain(row, "enumId"))
+        .collect();
+    after.sort();
+    assert_eq!(after, ["W1", "W4"], "the same rows after the commit");
 }
 
 /// A find by key with a key value of another type than the stored one (a number as text) finds the row, from the

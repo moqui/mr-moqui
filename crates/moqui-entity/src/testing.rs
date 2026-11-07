@@ -691,14 +691,44 @@ impl MemConn {
     }
 
     /// The rows of the select's table, and of each join, with every column also under `"ALIAS.column"`.
-    fn select_rows(&self, query: &SelectQuery) -> Vec<Row> {
+    /// The rows of a member source, its shadow applied with the parameters from `idx` on.
+    fn read_source(
+        &self,
+        table: &str,
+        shadow: Option<&ShadowSpec>,
+        params: &[Value],
+        idx: &mut usize,
+    ) -> Result<Vec<Row>, Error> {
+        let Some(shadow) = shadow else {
+            return Ok(self.read_table(table));
+        };
+        let mut rows = Vec::new();
+        for row in self.read_table(table) {
+            if keep(&shadow.hidden, &row, params, *idx)? {
+                rows.push(row);
+            }
+        }
+        *idx += pred_slots(&shadow.hidden);
+        for _ in 0..shadow.rows {
+            let mut row = Row::new();
+            for column in &shadow.columns {
+                row.insert(column.clone(), take_param(params, idx)?.clone());
+            }
+            rows.push(row);
+        }
+        Ok(rows)
+    }
+
+    /// The joined rows of the query's sources, and the parameters their shadows took.
+    fn select_rows(&self, query: &SelectQuery, params: &[Value]) -> Result<(Vec<Row>, usize), Error> {
         let qualified = |row: &Row, alias: &str, into: &mut Row| {
             for (column, value) in row {
                 into.insert(format!("{alias}.{column}"), value.clone());
             }
         };
+        let mut idx = 0;
         let mut rows: Vec<Row> = self
-            .read_table(&query.table)
+            .read_source(&query.table, query.shadow.as_ref(), params, &mut idx)?
             .into_iter()
             .map(|row| {
                 let mut out = row.clone();
@@ -707,7 +737,7 @@ impl MemConn {
             })
             .collect();
         for join in &query.joins {
-            let right = self.read_table(&join.table);
+            let right = self.read_source(&join.table, join.shadow.as_ref(), params, &mut idx)?;
             let mut next = Vec::new();
             for left in rows {
                 let mut found = false;
@@ -731,13 +761,14 @@ impl MemConn {
             }
             rows = next;
         }
-        rows
+        Ok((rows, idx))
     }
 
     fn exec_select(&mut self, query: &SelectQuery, params: &[Value]) -> Result<(u64, Vec<DbRow>), Error> {
         let mut matched = Vec::new();
-        for row in self.select_rows(query) {
-            if keep(&query.pred, &row, params, 0)? {
+        let (rows, start) = self.select_rows(query, params)?;
+        for row in rows {
+            if keep(&query.pred, &row, params, start)? {
                 matched.push(row);
             }
         }
@@ -755,7 +786,7 @@ impl MemConn {
             matched = group_rows(matched, &query.group, &query.columns);
         }
         matched.sort_by(|left, right| sort_rows(left, right, &query.order));
-        let mut idx = pred_slots(&query.pred);
+        let mut idx = start + pred_slots(&query.pred);
         // The statement reads LIMIT then OFFSET, and the parameters follow that order.
         let take_n = if query.limit {
             Some(as_i64(take_param(params, &mut idx)?)?)
@@ -932,6 +963,7 @@ fn count_slots(pred: &Pred) -> usize {
         Pred::In { slots, .. } => *slots,
         Pred::IsNull { .. } | Pred::Fields { .. } => 0,
         Pred::And(parts) | Pred::Or(parts) => parts.iter().map(count_slots).sum(),
+        Pred::Not(inner) => count_slots(inner),
     }
 }
 
@@ -986,6 +1018,7 @@ fn eval_pred(pred: &Pred, row: &Row, params: &[Value], idx: &mut usize) -> Resul
             }
             Ok(any)
         }
+        Pred::Not(inner) => Ok(!eval_pred(inner, row, params, idx)?),
     }
 }
 
@@ -1203,7 +1236,7 @@ enum Stmt {
         table: String,
         pred: Option<Pred>,
     },
-    Select(SelectQuery),
+    Select(Box<SelectQuery>),
 }
 
 struct SelectQuery {
@@ -1212,6 +1245,8 @@ struct SelectQuery {
     /// The name each column is returned as.
     names: Vec<String>,
     table: String,
+    /// `table` read through a shadow sub-select (`TableShadow`).
+    shadow: Option<ShadowSpec>,
     /// The alias of `table` in a view select.
     alias: Option<String>,
     joins: Vec<Join>,
@@ -1258,6 +1293,7 @@ enum Pred {
     },
     And(Vec<Pred>),
     Or(Vec<Pred>),
+    Not(Box<Pred>),
 }
 
 #[derive(Clone, Copy)]
@@ -1275,9 +1311,19 @@ enum Op {
 /// A member table joined on equal columns, `ON "A"."x" = "B"."x" AND ...`.
 struct Join {
     table: String,
+    shadow: Option<ShadowSpec>,
     alias: String,
     outer: bool,
     on: Vec<(String, String)>,
+}
+
+/// A member table read as a transaction sees it (moqui-db `TableShadow`): `(SELECT "c", ... FROM "table" WHERE NOT
+/// (...) UNION ALL SELECT CAST(? AS type), ...)`. The table's rows but those `hidden` matches, then `rows` rows of
+/// `columns.len()` parameters each, the hidden condition's parameters first.
+struct ShadowSpec {
+    columns: Vec<String>,
+    hidden: Option<Pred>,
+    rows: usize,
 }
 
 struct OrderKey {
@@ -1415,9 +1461,19 @@ fn parse_select(cur: &mut Cur) -> Result<Stmt, Error> {
         parse_columns(cur)?.into_iter().unzip()
     };
     cur.expect_keyword("FROM")?;
-    // A view of several members joins them in parentheses: FROM ("A" "X" INNER JOIN "B" "Y" ON ...).
-    let joined = cur.eat_symbol(b'(');
-    let table = cur.quoted_part()?;
+    // A view of several members joins them in parentheses: FROM ("A" "X" INNER JOIN "B" "Y" ON ...). A member may be
+    // a shadow sub-select, FROM ((SELECT ...) "X" ...).
+    let mut joined = false;
+    let (table, shadow) = if cur.eat_symbol(b'(') {
+        if cur.peek_keyword("SELECT") {
+            parse_shadow(cur)?
+        } else {
+            joined = true;
+            parse_source(cur)?
+        }
+    } else {
+        parse_source(cur)?
+    };
     // A view select aliases its member table: FROM "Product" "PROD".
     cur.skip();
     let alias = if cur.peek_symbol(b'"') {
@@ -1436,7 +1492,7 @@ fn parse_select(cur: &mut Cur) -> Result<Stmt, Error> {
                 false
             };
             cur.expect_keyword("JOIN")?;
-            let table = cur.quoted_part()?;
+            let (table, shadow) = parse_source(cur)?;
             let alias = cur.quoted_part()?;
             cur.expect_keyword("ON")?;
             let mut on = Vec::new();
@@ -1450,6 +1506,7 @@ fn parse_select(cur: &mut Cur) -> Result<Stmt, Error> {
             }
             joins.push(Join {
                 table,
+                shadow,
                 alias,
                 outer,
                 on,
@@ -1513,11 +1570,12 @@ fn parse_select(cur: &mut Cur) -> Result<Stmt, Error> {
         }
     }
     cur.expect_end()?;
-    Ok(Stmt::Select(SelectQuery {
+    Ok(Stmt::Select(Box::new(SelectQuery {
         count,
         columns,
         names,
         table,
+        shadow,
         alias,
         joins,
         pred,
@@ -1525,7 +1583,66 @@ fn parse_select(cur: &mut Cur) -> Result<Stmt, Error> {
         order,
         limit,
         offset,
-    }))
+    })))
+}
+
+/// A member source: a quoted table, or a shadow sub-select of one.
+fn parse_source(cur: &mut Cur) -> Result<(String, Option<ShadowSpec>), Error> {
+    if cur.eat_symbol(b'(') {
+        return parse_shadow(cur);
+    }
+    Ok((cur.quoted_part()?, None))
+}
+
+/// The rest of a shadow sub-select after its `(`, to its `)`.
+fn parse_shadow(cur: &mut Cur) -> Result<(String, Option<ShadowSpec>), Error> {
+    cur.expect_keyword("SELECT")?;
+    let mut columns = Vec::new();
+    loop {
+        columns.push(cur.quoted_part()?);
+        if !cur.eat_symbol(b',') {
+            break;
+        }
+    }
+    cur.expect_keyword("FROM")?;
+    let table = cur.quoted_part()?;
+    let hidden = if cur.eat_keyword("WHERE") {
+        Some(parse_or(cur)?)
+    } else {
+        None
+    };
+    let mut rows = 0;
+    while cur.eat_keyword("UNION") {
+        cur.expect_keyword("ALL")?;
+        cur.expect_keyword("SELECT")?;
+        for at in 0..columns.len() {
+            if at > 0 {
+                cur.expect_symbol(b',')?;
+            }
+            cur.expect_keyword("CAST")?;
+            cur.expect_symbol(b'(')?;
+            cur.expect_symbol(b'?')?;
+            cur.expect_keyword("AS")?;
+            // the type, to the cast's own `)`: NUMERIC(20,0) has one of its own
+            let mut depth = 0;
+            loop {
+                cur.skip();
+                let Some(&byte) = cur.sql.as_bytes().get(cur.i) else {
+                    return Err(cur.fail("unexpected end in a cast"));
+                };
+                cur.i += 1;
+                match byte {
+                    b'(' => depth += 1,
+                    b')' if depth == 0 => break,
+                    b')' => depth -= 1,
+                    _ => {}
+                }
+            }
+        }
+        rows += 1;
+    }
+    cur.expect_symbol(b')')?;
+    Ok((table, Some(ShadowSpec { columns, hidden, rows })))
 }
 
 /// Each column and the name it is returned as: the `AS` alias, or its own without the table alias, as a database
@@ -1620,6 +1737,12 @@ fn parse_and(cur: &mut Cur) -> Result<Pred, Error> {
 }
 
 fn parse_primary(cur: &mut Cur) -> Result<Pred, Error> {
+    if cur.eat_keyword("NOT") {
+        cur.expect_symbol(b'(')?;
+        let pred = parse_or(cur)?;
+        cur.expect_symbol(b')')?;
+        return Ok(Pred::Not(Box::new(pred)));
+    }
     if cur.eat_symbol(b'(') {
         let pred = parse_or(cur)?;
         cur.expect_symbol(b')')?;

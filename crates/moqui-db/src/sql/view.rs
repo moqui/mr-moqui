@@ -44,7 +44,7 @@ use crate::model::{
 
 use super::condition::{Column, Condition, FieldRef, LimitOffset, OrderBy, Writer};
 use super::ident::{quote_column, quote_ident, quote_physical_ident};
-use super::statement::{for_update, SelectOptions};
+use super::statement::{field_sql_type, for_update, SelectOptions, TableShadow};
 use super::{ConditionValues, Statement};
 
 /// View-entity select. See the module notes.
@@ -81,7 +81,7 @@ pub fn select_view_with(
     page: LimitOffset,
     options: &SelectOptions,
 ) -> Result<Statement, Error> {
-    let renderer = Renderer::new(view, model, dialect, values)?;
+    let renderer = Renderer::new(view, model, dialect, values)?.shadowed(&options.shadows);
     let query = renderer.query(condition, options, order_by)?;
     if options.for_update && (query.distinct || renderer.grouped()) {
         return Err(Error::new("a select cannot lock rows with distinct or an aggregate"));
@@ -107,7 +107,7 @@ pub fn count_view(
     condition: Option<&Condition>,
     options: &SelectOptions,
 ) -> Result<Statement, Error> {
-    let renderer = Renderer::new(view, model, dialect, values)?;
+    let renderer = Renderer::new(view, model, dialect, values)?.shadowed(&options.shadows);
     let query = renderer.query(condition, options, &[])?;
     let mut out = Writer::new(dialect);
     if renderer.grouped() || query.distinct {
@@ -154,6 +154,8 @@ struct Renderer<'a> {
     dialect: &'a Dialect,
     values: &'a dyn ConditionValues,
     exposures: RefCell<BTreeMap<String, Vec<Exposure>>>,
+    /// Member tables read as a transaction sees them ([`TableShadow`]).
+    shadows: &'a [TableShadow],
 }
 
 impl<'a> Renderer<'a> {
@@ -178,7 +180,95 @@ impl<'a> Renderer<'a> {
             dialect,
             values,
             exposures: RefCell::new(BTreeMap::new()),
+            shadows: &[],
         })
+    }
+
+    /// This renderer reading the tables of `shadows` as they shadow them.
+    fn shadowed(mut self, shadows: &'a [TableShadow]) -> Self {
+        self.shadows = shadows;
+        self
+    }
+
+    /// A member's table, or its [`TableShadow`] as a sub-select of the same columns.
+    fn write_table(&self, out: &mut Writer<'_>, entity: &EntityDefinition) -> Result<(), Error> {
+        let Some(shadow) = self
+            .shadows
+            .iter()
+            .find(|shadow| shadow.entity_name == entity.full_name)
+        else {
+            out.push(&quote_physical_ident(self.dialect, &entity.table_name));
+            return Ok(());
+        };
+        let columns: Vec<String> = entity
+            .fields
+            .iter()
+            .map(|field| quote_column(self.dialect, &field.column_name))
+            .collect();
+        let pk_columns: Vec<String> = entity
+            .fields
+            .iter()
+            .filter(|field| field.is_pk)
+            .map(|field| quote_column(self.dialect, &field.column_name))
+            .collect();
+        out.push("(SELECT ");
+        out.push(&columns.join(", "));
+        out.push(" FROM ");
+        out.push(&quote_physical_ident(self.dialect, &entity.table_name));
+        if !shadow.hidden.is_empty() {
+            out.push(" WHERE NOT (");
+            for (index, key) in shadow.hidden.iter().enumerate() {
+                if key.len() != pk_columns.len() {
+                    return Err(Error::new(format!(
+                        "a shadow of {} hides a key of {} values, the entity has {}",
+                        entity.full_name,
+                        key.len(),
+                        pk_columns.len()
+                    )));
+                }
+                out.push(if index == 0 { "(" } else { " OR (" });
+                for (at, (column, value)) in pk_columns.iter().zip(key).enumerate() {
+                    if at > 0 {
+                        out.push(" AND ");
+                    }
+                    out.push(column);
+                    out.push(" = ");
+                    out.bind(value.clone());
+                }
+                out.push(")");
+            }
+            out.push(")");
+        }
+        if !shadow.rows.is_empty() {
+            let types = entity
+                .fields
+                .iter()
+                .map(|field| field_sql_type(self.model, self.dialect, field))
+                .collect::<Result<Vec<_>, _>>()?;
+            for row in &shadow.rows {
+                if row.len() != types.len() {
+                    return Err(Error::new(format!(
+                        "a shadow row of {} has {} values, the entity has {} fields",
+                        entity.full_name,
+                        row.len(),
+                        types.len()
+                    )));
+                }
+                out.push(" UNION ALL SELECT ");
+                for (at, (value, sql_type)) in row.iter().zip(&types).enumerate() {
+                    if at > 0 {
+                        out.push(", ");
+                    }
+                    out.push("CAST(");
+                    out.bind(value.clone());
+                    out.push(" AS ");
+                    out.push(sql_type);
+                    out.push(")");
+                }
+            }
+        }
+        out.push(")");
+        Ok(())
     }
 
     /// A member's table alias. Java writes it unquoted (`ORDER_ITEM OITM`), so the database folds it as it folds any
@@ -1018,9 +1108,9 @@ impl<'a> Renderer<'a> {
     ) -> Result<(), Error> {
         let entity = self.member_entity(member)?;
         match self.kind(member)? {
-            Kind::Table => out.push(&quote_physical_ident(self.dialect, &entity.table_name)),
+            Kind::Table => self.write_table(out, entity)?,
             Kind::View => {
-                let nested = Renderer::new(entity, self.model, self.dialect, self.values)?;
+                let nested = Renderer::new(entity, self.model, self.dialect, self.values)?.shadowed(self.shadows);
                 let query = nested.query(None, &SelectOptions::default(), &[])?;
                 out.push("(");
                 nested.write_select(out, &query, true)?;
@@ -1099,7 +1189,7 @@ impl<'a> Renderer<'a> {
                 );
                 condition = Condition::and_opt(condition, Some(link));
             }
-            let nested = Renderer::new(entity, self.model, self.dialect, self.values)?;
+            let nested = Renderer::new(entity, self.model, self.dialect, self.values)?.shadowed(self.shadows);
             let options = SelectOptions {
                 fields,
                 ..SelectOptions::default()
@@ -1140,7 +1230,7 @@ impl<'a> Renderer<'a> {
         out.push("SELECT ");
         out.push(&items.join(", "));
         out.push(" FROM ");
-        out.push(&quote_physical_ident(self.dialect, &entity.table_name));
+        self.write_table(out, entity)?;
         out.push(" ");
         out.push(&qualifier);
         let mut wrote_where = false;

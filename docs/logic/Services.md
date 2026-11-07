@@ -116,12 +116,18 @@ first find that loads that row, else at the commit; the commit's failure names t
 held it. A service that must report each row it could not write on its own (`save#DataGridChanges`) runs without the
 cache.
 
-**What writes the held rows early** (an early flush, which costs a batch of its own): a find or count of a view entity,
-or of a view built in code (a data document, a REST query view), when a held row of a member may be in its result; a
-`distinct`, `having` or aggregate find of an entity the transaction holds rows of (the held writes up to that entity's
-last); raw SQL (`run_sql`); a `no-tx-cache` service joining (after which the transaction writes through and keeps what
-it read); more than 10,000 held writes. Read the member entity instead of a view of rows the service just wrote, and do
-work that reads a document of those rows (a search index) after the commit (`registerOnCommit`).
+**Views.** A find or count of a view entity sees the transaction's held rows of its members without writing them: on
+Postgres each member table it holds rows of that may be in the result is read as a sub-select of the table's other rows
+and the held ones (`UNION ALL` of their values), so the database joins, filters, groups and counts what the transaction
+would see.
+
+**What writes the held rows early** (an early flush, which costs a batch of its own): a view read that cannot be
+shadowed so (another database, a member with an encrypted or full-text field, more than 500 held rows of its members),
+and a find or count of a view built in code (a data document, a REST query view), when a held row of a member may be
+in its result; a `distinct`, `having` or aggregate find of an entity the transaction holds rows of (the held writes up
+to that entity's last); raw SQL (`run_sql`); a `no-tx-cache` service joining (after which the transaction writes
+through and keeps what it read); more than 10,000 held writes. Do work that reads a document of the rows a service
+wrote (a search index) after the commit (`registerOnCommit`).
 
 **Strict and census modes.** `moqui.tx_cache.strict=true` (or `MOQUI_TX_CACHE_STRICT=true`, tests only) makes an early
 flush mark the transaction rollback-only, so a test of a `cache` service fails when it does not commit in one batch.

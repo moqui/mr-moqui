@@ -42,7 +42,7 @@ pub use statement::{
     add_column, count, count_with, create_fk_index, create_foreign_key, create_index, create_table, delete,
     drop_fts_index, field_sql_type, foreign_key_index_name, foreign_key_name, fts_column_name, fts_index_name,
     fts_index_sql, fts_old_index_name, insert, insert_if_missing, insert_or_update, select, select_head, select_with,
-    select_with_head, supports_insert_if_missing, supports_upsert, update, SelectOptions,
+    select_with_head, supports_insert_if_missing, supports_upsert, update, SelectOptions, TableShadow,
 };
 pub use view::{count_view, select_view, select_view_with};
 

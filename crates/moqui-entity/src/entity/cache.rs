@@ -55,8 +55,9 @@ use hold::Held;
 pub(crate) use stats::{census_frame, census_measures, end_frame as end_frame_stats};
 pub use stats::{tx_cache_stats, FlushCause, TxCacheStats};
 pub(crate) use tx::flush_for_members;
+use tx::overlay_rows;
+pub(crate) use tx::view_shadows;
 pub use tx::{flush_and_disable, flush_before_sql, register_cache_flush};
-use tx::{flush_for_view, overlay_rows};
 
 const LIST_MAX: usize = 10_000;
 const PK_SEP: char = '\u{1f}';
@@ -514,10 +515,9 @@ const FRAME_WRITES_MAX: usize = 200;
 /// G5) or of a view's early flush fails the find: the database alone would answer without the frame's held rows.
 pub fn before_find(facade: &EntityFacade, lookup: &FindLookup) -> Result<Option<EntityList>, Error> {
     let meta = read_meta(facade, &lookup.entity_name)?;
-    if meta.is_view {
-        // A view is read from the database, so the frame's held rows of its members go there first.
-        flush_for_view(facade, &lookup.entity_name, lookup.condition.as_ref())?;
-    } else {
+    // A view is read from the database: its read sees the frame's held rows of its members through shadowed member
+    // tables, or with them written first (`find::plan`, `tx::view_shadows`).
+    if !meta.is_view {
         let page = LimitOffset {
             limit: lookup.limit,
             offset: lookup.offset,
@@ -546,7 +546,7 @@ pub fn before_find(facade: &EntityFacade, lookup: &FindLookup) -> Result<Option<
 pub fn before_count(facade: &EntityFacade, lookup: &FindLookup) -> Result<Option<i64>, Error> {
     let meta = read_meta(facade, &lookup.entity_name)?;
     if meta.is_view {
-        flush_for_view(facade, &lookup.entity_name, lookup.condition.as_ref())?;
+        // read as `before_find` reads a view
     } else if let Some(rows) = overlay_rows(
         facade,
         &meta,
@@ -594,7 +594,7 @@ pub fn before_selective_find(
 ) -> Result<Option<EntityList>, Error> {
     let meta = read_meta(facade, &lookup.entity_name)?;
     if meta.is_view {
-        flush_for_view(facade, &lookup.entity_name, lookup.condition.as_ref())?;
+        // read as `before_find` reads a view
         return Ok(None);
     }
     // A locking find goes through the frame even when it holds nothing of the entity, so the frame keeps the rows it
@@ -752,7 +752,8 @@ pub fn after_selective_find(facade: &EntityFacade, lookup: &FindLookup, selectiv
 pub fn before_selective_count(facade: &EntityFacade, entity_name: &str) -> Result<(), Error> {
     let meta = read_meta(facade, entity_name)?;
     if meta.is_view {
-        return flush_for_view(facade, entity_name, None);
+        // read as `before_find` reads a view
+        return Ok(());
     }
     if tx::holds_entity(facade, &meta.full_name) {
         tx::flush_through(facade, &meta.full_name)?;

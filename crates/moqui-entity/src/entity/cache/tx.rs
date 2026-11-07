@@ -22,7 +22,7 @@ use std::rc::Rc;
 use crate::entity::EntityList;
 use std::sync::Arc;
 
-use moqui_db::sql::{select, Condition, FieldRef, LimitOffset, OrderBy};
+use moqui_db::sql::{select, Condition, FieldRef, LimitOffset, OrderBy, TableShadow};
 use moqui_lib::error::Error;
 
 use super::batch::{flush_writes, Flushed};
@@ -819,19 +819,14 @@ pub(super) fn pinned_pk(condition: Option<&Condition>, pk_fields: &[String]) -> 
     pk_of(&keys, pk_fields)
 }
 
-/// Before a view read: when the frame holds a row of one of the view's members that may be in the result, write every
-/// held row now (in order, so a child row follows its parent), as Java's bypass of the transaction cache for a view.
-/// A held row may be in the result unless the view's `condition`, mapped to the member's fields through the view's
-/// aliases, surely does not match it, before or after the write (plans/TX-Cache.md D5); a row whose stored values the
-/// frame does not know may be.
-pub(super) fn flush_for_view(facade: &EntityFacade, view: &str, condition: Option<&Condition>) -> Result<(), Error> {
-    if TX_HOLD.with(|slot| slot.borrow().is_empty()) {
-        return Ok(());
-    }
-    let tx = facade.transactions_for(view)?;
-    let Some(token) = tx.frame_token() else {
-        return Ok(());
-    };
+/// The members of `view` the frame of `token` holds rows of that may show in a read with `condition`: each base
+/// entity's full name, once.
+fn showing_members(
+    facade: &EntityFacade,
+    view: &str,
+    token: u64,
+    condition: Option<&Condition>,
+) -> Result<Vec<String>, Error> {
     // Each member: its full name, and the view's aliases of its fields (alias, field); a member that is a view itself
     // stands for the entities under it, whose rows are judged with no condition (`None`): any held row of them shows.
     let members: Vec<ViewMember> = facade.with_entity(view, |entity, _, model| {
@@ -866,26 +861,141 @@ pub(super) fn flush_for_view(facade: &EntityFacade, view: &str, condition: Optio
             })
             .collect())
     })?;
-    let shows = TX_HOLD.with(|slot| {
+    Ok(TX_HOLD.with(|slot| {
         let map = slot.borrow();
         let Some(frame) = map.get(&token) else {
-            return false;
+            return Vec::new();
         };
-        members.iter().any(|(entity, aliases)| {
-            frame.holds(entity).iter().any(|held| match aliases {
+        let mut showing: Vec<String> = Vec::new();
+        for (entity, aliases) in &members {
+            if showing.contains(entity) {
+                continue;
+            }
+            let shows = frame.holds(entity).iter().any(|held| match aliases {
                 Some(aliases) => held_may_show(frame, held, aliases, condition),
                 None => true,
-            })
-        })
-    });
-    if shows {
-        flush_early(facade, &tx, token, FlushCause::View, view)?;
+            });
+            if shows {
+                showing.push(entity.clone());
+            }
+        }
+        showing
+    }))
+}
+
+/// Held rows of a view's members past which a view read writes them first instead of shadowing them.
+const SHADOW_ROWS_MAX: usize = 500;
+
+/// Before a find or count of a view entity in a frame that holds rows of a member that may be in its result: the
+/// shadows of those members' tables (`TableShadow`), so the read sees the held rows with none of them written. Where
+/// a shadow cannot be made (a database other than Postgres, a member with an encrypted or full-text field, more
+/// than [`SHADOW_ROWS_MAX`] held rows) every held row is written now instead (an early flush, in order, so a child row
+/// follows its parent), as Java's bypass of the transaction cache for a view. A held row may be in the result unless
+/// the view's `condition`, mapped to the member's fields through the view's aliases, surely does not match it, before
+/// or after the write. Empty when nothing held may show.
+pub(crate) fn view_shadows(
+    facade: &EntityFacade,
+    view: &str,
+    condition: Option<&Condition>,
+) -> Result<Vec<TableShadow>, Error> {
+    if TX_HOLD.with(|slot| slot.borrow().is_empty()) {
+        return Ok(Vec::new());
     }
-    Ok(())
+    let tx = facade.transactions_for(view)?;
+    let Some(token) = tx.frame_token() else {
+        return Ok(Vec::new());
+    };
+    let showing = showing_members(facade, view, token, condition)?;
+    if showing.is_empty() {
+        return Ok(Vec::new());
+    }
+    match shadows_of(facade, view, token, &showing)? {
+        Some(shadows) => {
+            stats::note_shadowed(token);
+            Ok(shadows)
+        }
+        None => {
+            flush_early(facade, &tx, token, FlushCause::View, view)?;
+            Ok(Vec::new())
+        }
+    }
+}
+
+/// The shadow of each of `entities` from the frame's held rows, or `None` where one cannot be made.
+fn shadows_of(
+    facade: &EntityFacade,
+    view: &str,
+    token: u64,
+    entities: &[String],
+) -> Result<Option<Vec<TableShadow>>, Error> {
+    let shadowable = facade.with_entity(view, |_, dialect, model| {
+        if !dialect.name.starts_with("postgres") {
+            return Ok(false);
+        }
+        Ok(entities.iter().all(|name| {
+            model.entity(name).is_ok_and(|entity| {
+                !entity.is_view
+                    && entity
+                        .fields
+                        .iter()
+                        .all(|field| !field.encrypt && field.field_type != "text-fts")
+            })
+        }))
+    })?;
+    let held_count: usize = TX_HOLD.with(|slot| {
+        slot.borrow()
+            .get(&token)
+            .map_or(0, |frame| entities.iter().map(|name| frame.holds(name).len()).sum())
+    });
+    if !shadowable || held_count > SHADOW_ROWS_MAX {
+        return Ok(None);
+    }
+    let mut shadows = Vec::with_capacity(entities.len());
+    for name in entities {
+        let meta = super::read_meta(facade, name)?;
+        let holds: Vec<Rc<Held>> = TX_HOLD.with(|slot| {
+            slot.borrow()
+                .get(&token)
+                .map(|frame| frame.holds(name))
+                .unwrap_or_default()
+        });
+        let overlay = Overlay::new(Vec::new(), &holds, &meta.pk_fields);
+        let (stored, _) = stored_rows(facade, &meta, Some(token), &overlay)?;
+        let rows = overlay.apply(&stored)?;
+        let fields: Vec<String> = facade.with_entity(name, |entity, _, _| {
+            Ok(entity.fields.iter().map(|field| field.name.clone()).collect())
+        })?;
+        let mut seen = HashSet::new();
+        let hidden: Vec<Vec<Value>> = holds
+            .iter()
+            .filter(|held| seen.insert(held.pk.as_str()))
+            .map(|held| {
+                meta.pk_fields
+                    .iter()
+                    .map(|field| held.plain.get(field.as_str()).cloned().unwrap_or(Value::Null))
+                    .collect()
+            })
+            .collect();
+        let rows = rows
+            .iter()
+            .map(|row| {
+                fields
+                    .iter()
+                    .map(|field| row.fields.get(field.as_str()).cloned().unwrap_or(Value::Null))
+                    .collect()
+            })
+            .collect();
+        shadows.push(TableShadow {
+            entity_name: meta.full_name.clone(),
+            hidden,
+            rows,
+        });
+    }
+    Ok(Some(shadows))
 }
 
 /// Before a read of a view built in code (a data document, a REST query): when the frame holds a row of one of its
-/// `members`, write every held row now, as [`flush_for_view`] does with no condition to judge by.
+/// `members`, write every held row now, as a view read that cannot be shadowed does ([`view_shadows`]), with no condition to judge by.
 pub(crate) fn flush_for_members(facade: &EntityFacade, members: &[String], view: &str) -> Result<(), Error> {
     if TX_HOLD.with(|slot| slot.borrow().is_empty()) {
         return Ok(());

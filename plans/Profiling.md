@@ -1166,6 +1166,62 @@ Next:
    their locks; with `for-update` finds going to the database under hold, check whether they can hold.
 3. The shared services next (`create#Payment`, `apply#Settlement`, `pack#Shipment`, `ship#OrderPart`), by their callers.
 
+## Round 24: view reads see held rows without writing them
+
+Round 23's first two next steps.
+
+1. **A view read shadows the member tables the frame holds rows of** (`moqui-db` `TableShadow`, `tx::view_shadows`): on
+   Postgres the member table is read as `(SELECT columns FROM table WHERE NOT (key of each held row) UNION ALL SELECT
+   CAST(? AS type), ...)`, the held rows' values as the frame sees them (held creates, and stored rows with the held
+   updates on them; held deletes only hidden). The database joins, filters, groups and counts what the frame would see,
+   outer joins, aggregates, sub-select and nested-view members included, and nothing held is written before the commit.
+   Only members with a held row that may be in the result are shadowed (D5's test). It falls back to the early flush
+   on another database, for a member with an encrypted or full-text field, and past 500 held rows of the members. The
+   unit tests' SQL engine (`testing.rs`) reads shadows too.
+   Census 7, every component's specs with the cache everywhere: view-read early flushes 3,652 to 34 (4,779 view reads
+   shadowed), the same features passing, no commit batch failing.
+2. **Mantle's 19 `no-tx-cache` services hold** (the asset reservations, issuances, receipts, physical inventory, and
+   `cancel#OrderItem`, `reject#OrderItem`): each locks its `Asset` (or `OrderItem`) rows with a `for-update` find,
+   which under hold goes to the database and keeps its lock to the commit, and reads the rows it changed through views,
+   which are shadowed now. `place#Order` and `approve#Order` no longer turn to read-through.
+
+The 45 services of Round 23, waited round trips per call in the specs of mr-mantle, mr-boss and mr-pass (the 20 that
+changed most from Round 23):
+
+| Service | Calls | Off | Round 23 | Round 24 | Fewer than off | Early flushes | Shadowed reads |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `work.ProductionServices.record#ProductionQuantity` | 23 | 205 | 168 | 128 | 37% | 0.0 | 0.7 |
+| `order.OrderServices.place#Order` | 202 | 105 | 78 | 71 | 33% | 0.0 | 1.5 |
+| `account.PaymentRunServices.pay#RunSupplier` | 12 | 145 | 79 | 74 | 49% | 0.0 | 0.3 |
+| `order.OrderServices.approve#Order` | 183 | 81 | 58 | 54 | 33% | 0.0 | 0.0 |
+| `order.ShopCheckoutServices.run#Step` | 136 | 53 | 34 | 31 | 42% | 0.0 | 0.6 |
+| `work.ProductionServices.transition#ProductionOrder` | 312 | 101 | 70 | 68 | 33% | 0.0 | 0.4 |
+| `product.SupplyPlanningServices.convert#PlanningSuggestion` | 30 | 113 | 69 | 66 | 41% | 0.0 | 0.0 |
+| `order.ShopCheckoutServices.submit#Checkout` | 29 | 162 | 89 | 86 | 47% | 0.0 | 0.0 |
+| `order.OrderServices.add#OrderProductQuantity` | 234 | 97 | 60 | 59 | 40% | 0.0 | 0.3 |
+| `request.SupportCaseServices.create#Case` | 66 | 67 | 38 | 37 | 45% | 0.0 | 0.3 |
+| `order.ReturnPolicyServices.authorize#Return` | 42 | 53 | 34 | 33 | 38% | 0.0 | 0.0 |
+| `product.CostServices.preview#ProductCostRollup` | 16 | 118 | 59 | 58 | 51% | 0.0 | 0.0 |
+| `ledger.SetupServices.store#SetupRun` | 17 | 70 | 33 | 32 | 54% | 0.0 | 0.1 |
+| `org.moqui.impl.CallServices.start#Call` | 3 | 49 | 28 | 27 | 45% | 0.0 | 0.0 |
+| `product.BomServices.store#Bom` | 46 | 70 | 50 | 50 | 29% | 0.0 | 0.0 |
+| `order.PurchaseServices.store#PurchaseOrderItem` | 22 | 152 | 63 | 63 | 59% | 0.0 | 0.0 |
+| `ledger.InvoiceAutoPostServices.repost#Invoice` | 217 | 132 | 78 | 78 | 41% | 0.0 | 0.0 |
+| `order.ShopCheckoutServices.set#CheckoutContact` | 20 | 144 | 93 | 93 | 35% | 0.0 | 0.1 |
+| `work.RoutingServices.store#RoutingOperation` | 32 | 102 | 74 | 74 | 28% | 0.0 | 0.0 |
+| `products.PriceNoticeServices.send#ProductPriceNotice` | 1266 | 23 | 17 | 17 | 27% | 0.0 | 0.0 |
+
+All 45: 319883 waited round trips off, 210973 in Round 23 (34% fewer), 205714 now (36% fewer).
+
+Every one of the 45 now commits in one batch, with no early flush.
+
+Next:
+1. The view reads left that flush: `PartyDetail` (Person's encrypted `mothersMaidenName`: a shadow could carry the held rows' sealed values) and views built in code (data documents,
+   REST query views: `flush_for_members`), which could take the same shadows.
+2. `distinct`, `having` and aggregate finds of one entity (66 early flushes in Census 7, most of them `pack#Shipment`'s
+   `ShipmentItemSource`): the same shadow as a sub-select of the entity's table.
+3. The shared services (`create#Payment`, `apply#Settlement`, `pack#Shipment`, `ship#OrderPart`), by their callers.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
@@ -1187,6 +1243,8 @@ Next:
 - `expire#UserStatuses` writes its users in batches (`publish#UserStatusBatch`), split down to a failing user.
 - 45 application and framework services are `transaction="cache"` (Round 23's list), among them `place#Order`, `approve#Order`, `change#InvoiceState`, the Shop checkout steps and `CallServices.start#Call`: their writes go out at the commit and a row they read is not read again in the transaction.
 - A time stamp held in a transaction-cache frame reads back in the frame at the precision the database keeps (Postgres microseconds).
+- On Postgres a view read in a transaction-cache frame no longer writes the held rows first: it reads the member tables with the held rows in place of their stored ones (a sub-select of each), so the held writes still go out at the commit.
+- Mantle's asset reservation, issuance, receipt and physical inventory services, and `cancel#OrderItem` and `reject#OrderItem`, are no longer `no-tx-cache`.
 - SMTP-delivered Inbox mail and its account rules commit together when no email ECA is installed; a failure there stores the message alone and runs the rules after.
 - Mail stored by IMAP and POP3 sync, SMTP delivery and import, and the IMAP flag sync, run in transaction-cache frames; `react#Message`, `edit#Message`, `redact#Message`, `vote#Poll`, `mark#AllRead` and `mark#NotificationsViewed` are `transaction="cache"`, and a redacted message leaves the search index after its commit.
 - `no-tx-cache` turns a frame to read-through (writes go to the database, reads still kept), and a later `cache` call that joins it no longer turns holding back on.

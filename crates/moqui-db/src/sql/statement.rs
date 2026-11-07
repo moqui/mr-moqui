@@ -20,6 +20,7 @@
 use std::collections::HashSet;
 
 use moqui_lib::error::Error;
+use moqui_lib::object::Value;
 
 use crate::dialect::Dialect;
 use crate::model::{EntityDefinition, EntityModel, FieldDefinition, IndexDefinition, Relationship};
@@ -45,6 +46,25 @@ pub struct SelectOptions {
     /// For a view: the aliases to select. Empty selects every alias. For a count with
     /// `distinct`, the fields that are distinct.
     pub fields: Vec<String>,
+    /// For a view: member tables read as a transaction sees them before its held writes reach the database
+    /// ([`TableShadow`]).
+    pub shadows: Vec<TableShadow>,
+}
+
+/// A table as one transaction sees it while it holds writes in memory (the transaction cache): the stored rows but
+/// those of `hidden` keys, and `rows` in their place. A view read renders each member table that has a shadow as
+/// `(SELECT columns FROM table WHERE NOT (key of hidden ...) UNION ALL SELECT CAST(? AS type), ... )`, so the
+/// database joins, filters, groups and counts the rows the transaction would see, and none of its writes is sent
+/// early.
+#[derive(Debug, Clone, Default)]
+pub struct TableShadow {
+    /// The entity's full name.
+    pub entity_name: String,
+    /// The primary key values of every row the transaction wrote, in the entity's primary key field order: those rows
+    /// of the table are left out.
+    pub hidden: Vec<Vec<Value>>,
+    /// Each row the transaction's writes leave, every field in the entity's field order.
+    pub rows: Vec<Vec<Value>>,
 }
 
 /// The column a field name maps to on a plain entity, and whether it is text.
