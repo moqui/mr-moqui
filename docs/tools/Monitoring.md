@@ -367,10 +367,10 @@ The app's root sets, in its `always-actions` so that the transitions read them t
 
 | Context | What it does |
 |---|---|
-| `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlist`, `alertRule`, `logContext`, `import` (where definition import returns) and `share`. Without the map the screens keep Tools' own (`//apps/dashboards/...`); a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `import` hides import; a `share` hides the editor's group field (the app shares in its own screen) and keeps the group as it is |
-| `reportFixedVariables` | Dashboard variables the app fixes, such as the organization in scope: a viewer's `var-` parameter or carried value never replaces one, and it is shown as a constant |
+| `reportLinks` | Where each report link goes, as screen URLs: `dashboards` (the list), `dashboard`, `definition` (the editor), `panel` (the library panel editor), `explore`, `split`, `playlist`, `alertRule`, `logContext`, `import` (where definition import returns) and `share`. Without the map the screens keep Tools' own (`//apps/dashboards/...`); a key the map leaves out or sets to null is not offered: no editor hides New, Edit, the panel menu's Edit and `e`, and Explore's Save; no `import` hides import; a `share` hides the editor's group field (the app shares in its own screen) and the editor's save keeps the saved group, whatever group is posted |
+| `reportFixedVariables` | Dashboard variables the app fixes, such as the organization in scope: a viewer's `var-` parameter, carried value or panel export and inspect variables never replace one, and it is shown as a constant (set by the Dashboard screen's own `always-actions` when it depends on the request) |
 | `reportHiddenComponents` | Components whose shipped definitions the list leaves out (Insights: `tools`, the telemetry dashboards) |
-| `reportDefinitionTypes` | Set by an editor's screen: the definition types it offers |
+| `reportDefinitionTypes` | Set by an editor's screen in its `always-actions`: the definition types it offers, and the only ones its save and copy take |
 
 Dashboard sends the links to the browser and the terminal as the dashboard's `appLinks`, server paths beside
 `screenUrl` (`definition`, `panel`, `explore`, `alertRule`, `dashboard`), and Explore's count over time carries its own
@@ -381,9 +381,14 @@ Explore and Split open on one of them. A panel the viewer may not read (a datase
 available" with the reason, never "No data". Saving a definition still checks every dataset it references as the
 author, so a copy of a dashboard over a dataset the author may not read is refused until the dataset is granted.
 
+Request parameters are names in a screen's context, so these names are set only by screens: Tools' Dashboards and
+Monitor roots set them to null, and a mount sets each in `always-actions` of the screen that reads it.
+
 The mount's root grant is inherited by the screens it mounts (impl-admin F34): deny, on the screens of an area only some
-groups use, the root's groups and grant the others there, and take in only the transitions the area needs; an
-inheritable `AUTHZT_ALWAYS` on a screen passes every deny below it, including the engine operations' own. The regression
+groups use, the root's groups and grant the others there, and take in only the transitions the area needs. An
+inheritable `AUTHZT_ALWAYS` on a screen passes every deny below it, including the engine operations' own, so grant such
+an area with `inheritAuthz="N"` on the screen and on its transitions by name (`AT_XML_SCREEN_TRANS`, `<screen>/<transition>`,
+as BOSS Insights' editors): a transition not named is refused, and each engine operation is checked by its own grant. The regression
 spec is `tools/test/ReportMounts.spec.js`, over the test mount `tools/test/screen/ReportMount.xml`.
 
 ## Regressions and incidents

@@ -5,7 +5,8 @@
     root sets (docs/tools/Monitoring.md, "Mounting the report screens"), sent to the browser and the terminal as the
     dashboard's appLinks beside screenUrl; without one they are Tools' Dashboards screens, and a link the map sets to null is
     not offered. A mount may fix variables (reportFixedVariables, such as the organization in scope): a viewer's var-* parameter
-    or carried value never replaces a fixed one, and a fixed variable is not offered for editing. -->
+    or carried value never replaces a fixed one (nor the variables of a panel export or inspect), and a fixed variable is not
+    offered for editing. The mount sets reportLinks and reportFixedVariables in always-actions, so these transitions read them. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Dashboard">
     <parameter name="filtersJson"/><parameter name="definitionId" required="true"/><parameter name="panelId"/><parameter name="from"/><parameter name="thru"/>
     <transition name="exportPanel" method="get" read-only="true">
@@ -13,7 +14,7 @@
             if (!panelId) throw new Error('Choose a panel')
             if (!['csv','xlsx'].includes(String(renderMode))) throw new Error('Choose CSV or XLSX')
             const output=ec.service.sync().name('org.moqui.report.ReportServices.preview#Report').parameters({definitionId,panelId,
-                renderMode,from:from || 'now-7d',thru:thru || 'now',variables:variables ? JSON.parse(variables) : {},filters:JSON.parse(filtersJson || '[]')}).call()
+                renderMode,from:from || 'now-7d',thru:thru || 'now',variables:Object.assign(variables ? JSON.parse(variables) : {},ec.context.get('reportFixedVariables') || {}),filters:JSON.parse(filtersJson || '[]')}).call()
             ec.web.sendJsonResponse(output)
         ]]></script></actions><default-response type="none"/>
     </transition>
@@ -21,7 +22,7 @@
         <actions><script><![CDATA[
             if (!panelId) throw new Error('Choose a panel')
             const output=ec.service.sync().name('org.moqui.report.ReportServices.render#Dashboard').parameters({definitionId,panelId,inspect:true,
-                from:from || 'now-7d',thru:thru || 'now',variables:variables ? JSON.parse(variables) : {},filters:JSON.parse(filtersJson || '[]')}).call()
+                from:from || 'now-7d',thru:thru || 'now',variables:Object.assign(variables ? JSON.parse(variables) : {},ec.context.get('reportFixedVariables') || {}),filters:JSON.parse(filtersJson || '[]')}).call()
             ec.web.sendJsonResponse(output)
         ]]></script></actions><default-response type="none"/>
     </transition>
@@ -29,7 +30,7 @@
         <actions><script><![CDATA[
             const definition=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
             const variable=(definition.body.variables || []).find(variable=>variable.name===variableName)
-            if (!variable || variable.kind==='constant') throw new Error('Choose an editable variable')
+            if (!variable || variable.kind==='constant' || Object.prototype.hasOwnProperty.call(ec.context.get('reportFixedVariables') || {},variableName)) throw new Error('Choose an editable variable')
             const values=JSON.parse(variableValuesJson || '{}')
             values[variableName]=variable.multi?String(variableValue || '').split(',').map(value=>value.trim()).filter(Boolean):variableValue
             variableParameters={definitionId,from,thru,filtersJson}

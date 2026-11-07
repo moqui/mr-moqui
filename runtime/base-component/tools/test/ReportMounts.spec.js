@@ -3,7 +3,8 @@
 // reportLinks. A mounted editor offers the datasets the author may read by each dataset's own artifact, without DASHBOARDS_APP or
 // REPORT_DATASETS_ADMIN, starts a new panel on one of them and saves and returns under the mount; a mounted dashboard sends the
 // mount's links to the browser and terminal (appLinks), leaves out the screens the mount does not offer and keeps its fixed
-// variables over a viewer's; Tools' own Dashboards screens keep Tools' links.
+// variables over a viewer's (in a panel inspect too); the mount's editor saves only its types and, where the mount shares in its own
+// screen, keeps a definition's group over a posted one; Tools' own Dashboards screens keep Tools' links, whatever a request sends.
 // Run: ./moq test tools --spec ReportMounts
 const mount = "component://tools/test/screen/ReportMount.xml"
 const webroot = "component://webroot/screen/webroot.xml"
@@ -137,11 +138,41 @@ feature("a mounted editor offers the author's datasets without DASHBOARDS_APP, a
             },
             "post"
         )
+        // the mount shares in its own screen, so a posted group is not taken; and the editor saves only the mount's types
+        const regrouped = screen(
+            mount,
+            "Editor/save",
+            {
+                definitionId: panelId,
+                definitionType: "panel",
+                definitionTitle: "Mount panel",
+                definitionVersion: "1",
+                definitionJson: body,
+                definitionUserGroupId: "ADMIN"
+            },
+            "post"
+        )
+        const search = screen(
+            mount,
+            "Editor/save",
+            {definitionId: panelId + "_S", definitionType: "search", definitionTitle: "S", definitionJson: "{}"},
+            "post"
+        )
         const stored = sys(() => ec.entity.find("moqui.report.Definition").condition("definitionId", panelId).one())
         const text = decoded(editor.output)
-        return {editor, text, newPanelDataset: /"datasetId":\s*"(\w+)"/.exec(text)?.[1], saved, owner: stored?.ownerId}
+        return {
+            editor,
+            text,
+            newPanelDataset: /"datasetId":\s*"(\w+)"/.exec(text)?.[1],
+            saved,
+            owner: stored?.ownerId,
+            regrouped,
+            group: stored?.userGroupId,
+            version: stored?.versionNumber,
+            search
+        }
     },
-    then({editor, text, newPanelDataset, saved, owner}) {
+    then({editor, text, newPanelDataset, saved, owner, regrouped, group, version, search}) {
         editor.status == 200
         editor.errors == ""
         // the datasets the author may read, by the dataset's own artifact: otel_metrics, not otel_logs
@@ -153,20 +184,35 @@ feature("a mounted editor offers the author's datasets without DASHBOARDS_APP, a
         saved.errors == ""
         saved.location.endsWith("/Editor?definitionId=" + panelId)
         owner == USER
+        regrouped.errors == ""
+        version == 2
+        group == null
+        search.errors.includes("This editor saves only panel, dashboard definitions")
     }
 })
 
 feature("a mounted dashboard sends the mount's links and keeps its fixed variable; Tools' Dashboards keep Tools' links", {
     when() {
         const board = screen(mount, "Board", {definitionId: boardId, "var-region": "US"}, null, "qvt")
-        // Tools' own Dashboards app (ADMIN): the same dashboard with Tools' links, and Home's edit going to Tools' editor
+        const inspect = screen(mount, "Board/inspectPanel", {
+            definitionId: boardId,
+            panelId: "note",
+            variables: '{"region":"US"}'
+        })
+        // Tools' own Dashboards app (ADMIN): the same dashboard with Tools' links, a mount's names sent as request parameters not
+        // taken, and Home's edit going to Tools' editor
         login("john.doe")
-        const tools = screen(webroot, "apps/dashboards/Dashboard", {definitionId: boardId}, null, "qvt")
-        const edit = screen(webroot, "apps/dashboards/Home/edit", {definitionId: boardId, definitionType: "dashboard"})
+        const forged = {reportLinks: {definition: "/forged", dashboard: "/forged"}}
+        const tools = screen(webroot, "apps/dashboards/Dashboard", Object.assign({definitionId: boardId}, forged), null, "qvt")
+        const edit = screen(
+            webroot,
+            "apps/dashboards/Home/edit",
+            Object.assign({definitionId: boardId, definitionType: "dashboard"}, forged)
+        )
         ec.user.internalLoginUser(USERNAME)
-        return {board, mounted: decoded(board.output), tools, toolsText: decoded(tools.output), edit}
+        return {board, mounted: decoded(board.output), inspect, tools, toolsText: decoded(tools.output), edit}
     },
-    then({board, mounted, tools, toolsText, edit}) {
+    then({board, mounted, inspect, tools, toolsText, edit}) {
         board.status == 200
         board.errors == ""
         mounted.includes(
@@ -174,9 +220,15 @@ feature("a mounted dashboard sends the mount's links and keeps its fixed variabl
         )
         mounted.includes('"variableValues":{"region":"EU"}')
         !mounted.includes('"US"')
+        // a panel inspect keeps the fixed variable over the viewer's variables
+        inspect.errors == ""
+        inspect.output.includes('"EU"')
+        !inspect.output.includes('"US"')
         tools.errors == ""
         toolsText.includes('"definition":"/apps/dashboards/Definition"')
         toolsText.includes('"alertRule":"/apps/dashboards/AlertRule"')
         edit.location.includes("/apps/dashboards/Definition")
+        !toolsText.includes("/forged")
+        !edit.location.includes("/forged")
     }
 })

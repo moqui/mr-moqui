@@ -4,9 +4,9 @@
     that mounts it under another app (BOSS Insights › DashboardEditor and PanelDetail) takes in its transitions; save, copy and
     restore return to that screen, and the other links go to the report screens of the app's reportLinks map
     (docs/tools/Monitoring.md, "Mounting the report screens"). Under a mount, the dataset choices are the datasets the author may
-    read (list#Datasets, each dataset's own artifact), a new panel starts on the first of them, the types offered are the mount's
-    reportDefinitionTypes, import is offered only where the map names a screen for it, and sharing is the mount's own (its share
-    link): the editor keeps the definition's group as it is. -->
+    read (list#Datasets, each dataset's own artifact), a new panel starts on the first of them, the types offered, saved and
+    copied are the mount's reportDefinitionTypes, import is offered only where the map names a screen for it, and sharing is the
+    mount's own (its share link): the editor's save keeps the definition's group as it is, whatever group is posted. -->
 <screen xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://moqui.org/xsd/xml-screen-3.xsd" default-menu-title="Definition" default-menu-include="false">
     <parameter name="definitionId"/><parameter name="definitionType"/><parameter name="leftVersion"/><parameter name="rightVersion"/>
     <transition name="reference"><default-response url="${ec.context.get('reportLinks')?.[definitionType === 'panel' ? 'panel' : 'definition'] ?? '//apps/dashboards/Definition'}"/></transition>
@@ -15,13 +15,33 @@
         <actions><script><![CDATA[
             const body=JSON.parse(definitionJson || '{}')
             body.folder=definitionFolder || '';body.tags=String(definitionTags || '').split(',').map(tag=>tag.trim()).filter(Boolean)
-            const definition = {id:definitionId,type:definitionType || 'dashboard',title:definitionTitle,body,version:parseInt(definitionVersion || '0',10),userGroupId:definitionUserGroupId || null}
+            // A mount's editor saves only its types (reportDefinitionTypes, set in the mounting screen's always-actions), and a mount
+            // that shares in its own screen keeps the saved definition's group: a posted group is not taken.
+            const type=definitionType || 'dashboard', mountTypes=ec.context.get('reportDefinitionTypes')
+            if (Array.isArray(mountTypes) && mountTypes.length && !mountTypes.includes(type)) throw new Error('This editor saves only '+mountTypes.join(', ')+' definitions')
+            let userGroupId=definitionUserGroupId || null
+            if (ec.context.get('reportLinks')?.share) {
+                userGroupId=null
+                if (definitionId) {
+                    ec.message.pushErrors()
+                    try{const found=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).requireNewTransaction(true).call();if(!ec.message.hasError() && found && found.definition)userGroupId=found.definition.userGroupId || null}
+                    catch(error){ec.logger.info('Definition '+definitionId+' not read for its group: '+String(error))}
+                    finally{ec.message.clearErrors();ec.message.popErrors()}
+                }
+            }
+            const definition = {id:definitionId,type,title:definitionTitle,body,version:parseInt(definitionVersion || '0',10),userGroupId}
             savedDefinition = ec.service.sync().name('org.moqui.report.ReportServices.save#Definition').parameters({definition,note:note || ''}).call().definition
             definitionId = savedDefinition.id
         ]]></script></actions><default-response url="."><parameter name="definitionId"/></default-response>
     </transition>
     <transition name="copy" method="post" authz-action="create">
         <actions><script><![CDATA[
+            // a mount's editor copies only its types (as save)
+            const mountTypes=ec.context.get('reportDefinitionTypes')
+            if (Array.isArray(mountTypes) && mountTypes.length) {
+                const source=ec.service.sync().name('org.moqui.report.ReportServices.get#Definition').parameters({definitionId}).call().definition
+                if (!mountTypes.includes(source.type)) throw new Error('This editor copies only '+mountTypes.join(', ')+' definitions')
+            }
             savedDefinition = ec.service.sync().name('org.moqui.report.ReportServices.copy#Definition').parameters({definitionId,newDefinitionId:copyId,title:copyTitle}).call().definition
             definitionId = savedDefinition.id
         ]]></script></actions><default-response url="."><parameter name="definitionId"/></default-response>
