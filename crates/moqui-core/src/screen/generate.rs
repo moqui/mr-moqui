@@ -802,4 +802,113 @@ mod tests {
         assert_eq!(quickjs.unwrap(), "sri.write(\"undefined\");\n");
         assert_eq!(oxide.unwrap(), "sri.write(\"undefined\");\n");
     }
+
+    /// A macro module whose macros fail in the ways a mode file's may: they throw, or return what is not a string.
+    const FAILING_MODULE: &str = r#"(function (T, S) {
+        "use strict";
+        function deeper() { throw new Error("boom"); }
+        const macros = {
+            "widgets": (node, children) => children,
+            "@element": () => "",
+            "boom": function boomMacro() { deeper(); },
+            "int": () => 42, "float": () => 1.5, "null": () => null, "undef": () => undefined,
+            "object": () => ({}), "array": () => [], "bool": () => true, "fn": () => function () {},
+            "arrow": () => () => 1, "err": () => new Error("x"), "sym": () => Symbol("s"), "big": () => 10n,
+            "promise": () => Promise.resolve(1), "cls": () => class {}, "negz": () => -0, "huge": () => 2 ** 40,
+        };
+        return { macros, opaque: [] };
+    })"#;
+
+    /// A macro that throws fails the walk with the same text on both engines: the error, and the stack down to the
+    /// macro in the file name QuickJS gives an evaluated source, none of the oxide walker's own frames.
+    #[test]
+    fn a_macro_that_throws_fails_with_the_text_quickjs_gives() {
+        let (quickjs, oxide) = on_both(FAILING_MODULE, "<widgets><boom/></widgets>");
+        let (quickjs, oxide) = (quickjs.unwrap_err(), oxide.unwrap_err());
+        // quickjs-oxide places a call's column at its `(`, QuickJS at the callee's name: the lines are the same
+        let columns = regex::Regex::new(r":(\d+):\d+\)").unwrap();
+        let without_columns = |text: &str| columns.replace_all(text, ":$1)").into_owned();
+        assert_eq!(without_columns(oxide.message()), without_columns(quickjs.message()));
+        assert!(
+            oxide
+                .message()
+                .starts_with("Error: boom\n    at deeper (eval_script:3:"),
+            "{}",
+            oxide.message()
+        );
+        assert!(!oxide.message().contains("(native)"), "{}", oxide.message());
+    }
+
+    /// A macro that returns what is not a string fails with rquickjs's conversion error on both engines, its type
+    /// named as rquickjs names it.
+    #[test]
+    fn a_macro_that_returns_no_string_fails_alike_on_both_engines() {
+        for (name, type_name) in [
+            ("int", "int"),
+            ("float", "float"),
+            ("null", "null"),
+            ("undef", "undefined"),
+            ("object", "object"),
+            ("array", "array"),
+            ("bool", "bool"),
+            ("fn", "constructor"),
+            ("arrow", "function"),
+            ("err", "exception"),
+            ("sym", "symbol"),
+            ("big", "big_int"),
+            ("promise", "promise"),
+            ("cls", "constructor"),
+            ("negz", "float"),
+            ("huge", "float"),
+        ] {
+            let (quickjs, oxide) = on_both(FAILING_MODULE, &format!("<widgets><{name}/></widgets>"));
+            let expected = format!("Error converting from js '{type_name}' into type 'string'");
+            assert_eq!(quickjs.unwrap_err().message(), expected, "{name}");
+            assert_eq!(oxide.unwrap_err().message(), expected, "{name}");
+        }
+    }
+
+    /// An element with no macro is logged as it takes the fallback, on both engines, also when a later macro throws.
+    #[test]
+    fn the_fallback_is_logged_when_a_later_macro_throws() {
+        use crate::script::engine::{with_script_engine, ScriptEngine};
+        for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+            let lines = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let subscriber = crate::testing::LogSubscriber(std::sync::Arc::clone(&lines));
+            let result = tracing::subscriber::with_default(subscriber, || {
+                with_script_engine(engine, || {
+                    let root = MNode::parse_text("fixture", "<widgets><unheard/><boom/></widgets>")?;
+                    with_module(FAILING_MODULE, "html", false, |module| {
+                        generate_body(module, &root, None, "html")
+                    })
+                })
+            });
+            assert!(result.is_err(), "{engine:?}");
+            let logged = lines.lock().unwrap().join("\n");
+            assert!(
+                logged.contains("No screen macro in html, element for unheard; it renders as an unknown element"),
+                "{engine:?}: {logged}"
+            );
+        }
+    }
+
+    /// A collection of element literals that fails is a "screen macros" error on both engines.
+    #[test]
+    fn a_failed_collection_is_a_screen_macros_error() {
+        use crate::script::engine::{with_script_engine, ScriptEngine};
+        const MODULE: &str = r#"(function (T, S) {
+            S.beginLits = () => { throw new Error("no collection"); };
+            return { macros: { "widgets": (node, children) => children }, opaque: [] };
+        })"#;
+        for engine in [ScriptEngine::Rquickjs, ScriptEngine::Oxide] {
+            let failed = with_script_engine(engine, || {
+                let root = MNode::parse_text("fixture", "<widgets/>")?;
+                with_module(MODULE, "html", false, |module| {
+                    generate_unit_body(module, &root, None, "html").map(|body| body.code)
+                })
+            })
+            .unwrap_err();
+            assert!(failed.message().starts_with("screen macros: "), "{engine:?}: {}", failed.message());
+        }
+    }
 }

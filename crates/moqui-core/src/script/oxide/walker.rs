@@ -40,8 +40,11 @@ pub(crate) fn on_oxide() -> bool {
 }
 
 /// `walker::walk` in JavaScript, over the tree's JSON text: the node objects (`name`, `text`, `attrs`, `src`, `inert`,
-/// `parent`, `children`) first, then the macros in post-order, each node's `source` set as its macro returns. An
-/// element with no macro is `{missing}` when there is no fallback; the elements that took the fallback are `logged`.
+/// `parent`, `children`) first, then the macros in post-order, each node's `source` set as its macro returns. The
+/// result is `{source}`, or how the walk ended: `{missing}` for an element with no macro when there is no fallback,
+/// `{converting}` (the rquickjs name of the value's type) for a macro that did not return a string, `{thrown}` for a
+/// macro that threw (its stack without the walker's frames, as on QuickJS where the walker is Rust). `logged` is the
+/// elements that took the fallback, however the walk ended.
 const WALK_JS: &str = r#"(function (macros, treeText, missing, fallback, stamped) {
     const logged = [];
     const build = (n, parent) => {
@@ -53,7 +56,41 @@ const WALK_JS: &str = r#"(function (macros, treeText, missing, fallback, stamped
         for (const c of n.children) o.children.push(build(c, o));
         return o;
     };
+    // the type names of rquickjs's `Value::type_name`, which its conversion error names
+    const typeName = (v) => {
+        switch (typeof v) {
+            case "undefined": return "undefined";
+            case "boolean": return "bool";
+            case "number":
+                return Number.isInteger(v) && v >= -2147483648 && v <= 2147483647 && !Object.is(v, -0) ? "int" : "float";
+            case "symbol": return "symbol";
+            case "bigint": return "big_int";
+            case "string": return "string";
+        }
+        if (v === null) return "null";
+        if (Array.isArray(v)) return "array";
+        if (typeof v === "function") {
+            try { Reflect.construct(Object, [], v); return "constructor"; } catch (e) { return "function"; }
+        }
+        const tag = Object.prototype.toString.call(v);
+        if (tag === "[object Promise]") return "promise";
+        if (tag === "[object Error]") return "exception";
+        return "object";
+    };
+    // the stack of an error a macro threw, down to the macro: the walker's frames and the native call into it go
+    const trim = (e) => {
+        if (e === null || typeof e !== "object") return;
+        try {
+            if (typeof e.stack !== "string") return;
+            const lines = e.stack.split("\n");
+            let end = lines.findIndex((line) => line.includes("(moqui-walker:"));
+            if (end < 0) return;
+            if (end > 0 && lines[end - 1] === "    at call (native)") end--;
+            e.stack = lines.slice(0, end).join("\n") + "\n";
+        } catch (ignored) {}
+    };
     const lacking = {};
+    const converting = {};
     const run = (o) => {
         if (o.inert) { o.source = ""; return ""; }
         let combined = "";
@@ -67,11 +104,15 @@ const WALK_JS: &str = r#"(function (macros, treeText, missing, fallback, stamped
             combined = "";
             macro = fallback;
         }
-        // `this` undefined, as the QuickJS walker calls a macro
-        let source = macros[macro].call(undefined, o, combined);
-        if (typeof source !== "string") {
-            throw new TypeError("Error converting from js '" + (source === null ? "null" : typeof source) + "' into type 'string'");
+        let source;
+        try {
+            // `this` undefined, as the QuickJS walker calls a macro
+            source = macros[macro].call(undefined, o, combined);
+        } catch (e) {
+            trim(e);
+            throw e;
         }
+        if (typeof source !== "string") { converting.type = typeName(source); throw converting; }
         if (typeof o.src === "string" && stamped.includes(name) && source !== "") {
             source = "sri.stamp(" + JSON.stringify(o.src) + ");\n" + source + "sri.stamp(null);\n";
         }
@@ -82,9 +123,16 @@ const WALK_JS: &str = r#"(function (macros, treeText, missing, fallback, stamped
         return { source: run(build(JSON.parse(treeText), null)), logged };
     } catch (e) {
         if (e === lacking) return { missing: lacking.message, logged };
-        throw e;
+        if (e === converting) return { converting: converting.type, logged };
+        return { thrown: e, threw: true, logged };
     }
 })"#;
+
+/// The file name of [`WALK_JS`] in a stack, which `trim` cuts at.
+const WALK_FILE: &str = "moqui-walker";
+
+/// The file name of a macro source in a stack: QuickJS's for the scripts it evaluates (`compiled::eval_shared`).
+const MACROS_FILE: &str = "eval_script";
 
 /// Sets a support object's `options.debug` and `options.mode`, as `walker::load_chain_for` does.
 const OPTIONS_JS: &str =
@@ -110,7 +158,9 @@ thread_local! {
 }
 
 fn callable(context: &Context, source: &str) -> Result<CallableRef, RuntimeError> {
-    let Value::Object(object) = context.eval(source)? else {
+    let mut context = context.clone();
+    let compiled = context.compile_with_options(source, &CompileOptions::new(WALK_FILE))?;
+    let Value::Object(object) = context.execute(&compiled)? else {
         return Err(RuntimeError::Invariant("a walker function"));
     };
     context
@@ -204,7 +254,7 @@ fn evaluate(generator: &Generator, source: &str) -> Result<Value, Error> {
         Some(compiled) => compiled,
         None => {
             let compiled = context
-                .compile_with_options(source, &CompileOptions::new("macros"))
+                .compile_with_options(source, &CompileOptions::new(MACROS_FILE))
                 .map_err(|err| failed(context, err))?;
             generator
                 .compiled
@@ -311,6 +361,17 @@ fn walk(
     if let Some(missing) = text_property(context, &result, "missing")? {
         return Err(Error::new(missing));
     }
+    if let Some(type_name) = text_property(context, &result, "converting")? {
+        // as rquickjs's `FromJs` error for the macro's value reads
+        return Err(Error::new(format!(
+            "Error converting from js '{type_name}' into type 'string'"
+        )));
+    }
+    if matches!(property(context, &result, "threw")?, Value::Bool(true)) {
+        let thrown = property(context, &result, "thrown")?;
+        // the text QuickJS's walker gives a macro's exception (`caught.to_string()`), not a script error of its own
+        return Err(Error::new(failed(context, RuntimeError::Exception(thrown)).message().to_string()));
+    }
     text_property(context, &result, "source")?.ok_or_else(|| Error::new("the walker gave no source"))
 }
 
@@ -414,15 +475,21 @@ impl ScreenModule {
             ctx.call(&function, Value::Object(self.support.clone()), &[])
                 .map_err(|err| failed(context, err))
         };
+        // as `screen::generate`'s `js_error` names a failure of the collection on QuickJS
+        let screen_macros = |err: Error| Error::new(format!("screen macros: {}", err.message()));
         if lits {
-            call(&mut ctx, "beginLits")?;
+            call(&mut ctx, "beginLits").map_err(screen_macros)?;
         }
         let missing = format!("screen macro in {mode}, element");
         let walked = walk(&generator, &self.macros, tree, &missing, Some("@element"));
-        let collected = if lits { Some(call(&mut ctx, "endLits")) } else { None };
+        let collected = if lits {
+            Some(call(&mut ctx, "endLits").map_err(screen_macros))
+        } else {
+            None
+        };
         let source = walked?.replace(['\u{1}', '\u{2}'], "");
         let lits = match collected {
-            Some(value) => strings(context, &value?)?,
+            Some(value) => strings(context, &value?).map_err(screen_macros)?,
             None => Vec::new(),
         };
         Ok((source, lits))
