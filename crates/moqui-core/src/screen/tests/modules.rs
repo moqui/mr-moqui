@@ -137,6 +137,7 @@ const TEMPLATES: &[(&str, &[&str])] = &[
 
 #[test]
 fn text_with_quotes_backslashes_newlines_and_dollar_braces_survives_every_macro() {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     for mode in ["text", "csv", "xml", "html-print"] {
         for (template, shown_in) in TEMPLATES {
             for nasty in NASTY {
@@ -363,6 +364,7 @@ fn the_generated_code_of_the_whole_render_is_one_function_per_section() {
 /// cannot be assembled fails here and not on the first request that reaches the screen.
 #[test]
 fn every_base_component_screen_generates_in_all_three_modes() {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     use crate::screen::generate::{unit_for, UnitRequest};
 
     fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {

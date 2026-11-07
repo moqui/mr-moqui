@@ -345,6 +345,7 @@ fn the_later_profiles_are_stubs_that_refuse() {
 /// does not (the host's globals and QuickJS's own extras), plus the names the bare-name object answers itself.
 #[test]
 fn the_quickjs_only_globals_are_what_quickjs_has_and_oxide_does_not() {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     let quickjs: String = crate::script::with_ctx(|ctx| {
         ctx.eval::<String, _>("Object.getOwnPropertyNames(globalThis).join(',')")
             .map_err(crate::script::js_error)
@@ -528,6 +529,7 @@ fn the_context_methods_that_write_mark_the_text_as_writing() {
 /// oxide runtime's, and QuickJS's but for the names refused as QuickJS's own.
 #[test]
 fn the_builtin_globals_are_both_engines() {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     const OBJECTS: &str = "Object.getOwnPropertyNames(globalThis).filter((name) => { const value = globalThis[name]; \
          return value !== globalThis \
          && (typeof value === 'object' && value !== null || typeof value === 'function') }).join(',')";

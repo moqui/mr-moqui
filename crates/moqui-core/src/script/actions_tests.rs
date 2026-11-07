@@ -189,6 +189,7 @@ fn the_ignore_attribute_is_an_expression() {
 
 #[test]
 fn generated_scripts_are_shared_by_threads_and_the_macros_kept_per_engine() {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     let xml = r#"<actions><set field="sharedGenerationProbe" value="1"/></actions>"#;
     let here = super::generated(xml).unwrap();
     let there = std::thread::spawn(move || super::generated(xml).unwrap())
@@ -357,6 +358,7 @@ fn a_missing_macro_names_the_element() {
 
 #[test]
 fn each_concrete_element_has_a_macro() {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     let names = macro_names().unwrap();
     assert_eq!(names, MACROS);
     assert!(!names
@@ -720,6 +722,8 @@ fn actions_first_generated_deep_inside_a_script_generate() -> Result<(), Error> 
     let outcome = std::thread::Builder::new()
         .stack_size(2 * 1024 * 1024)
         .spawn(move || {
+            // the setting is the thread's: this one's own
+            let _quickjs = crate::script::engine::quickjs_for_test();
             let base = [0_u8; 1];
             let base = std::hint::black_box(&base).as_ptr() as usize;
             with_ctx(|ctx| {

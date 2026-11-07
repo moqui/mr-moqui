@@ -19,6 +19,7 @@ use crate::script::host::test_class::{EXPECTED, TEST_PATHS};
 /// and lengths, getters, the shim, builders, callbacks, and the errors thrown.
 #[test]
 fn the_quickjs_binder_answers_the_host_table_scripts() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     with_ctx(|ctx| {
         let ec: Object = ctx.globals().get("ec").map_err(js_error)?;
         install_paths(ctx, &ec, TEST_PATHS)?;
@@ -37,6 +38,7 @@ fn the_quickjs_binder_answers_the_host_table_scripts() -> Result<(), Error> {
 /// call with too few arguments is refused as a typed method's was.
 #[test]
 fn the_web_shim_methods_keep_their_names_and_lengths() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     with_ctx(|ctx| {
         let script = "['sendError', 'sendTextResponse', 'sendResourceResponse', 'saveScreenLastInfo', \
             'getWebappRootUrl', 'sendJsonError'].map((name) => name + '/' + ec.web[name].name + '/' + \
@@ -56,6 +58,7 @@ fn the_web_shim_methods_keep_their_names_and_lengths() -> Result<(), Error> {
 /// is for: `tools`' members of `ec`, `EdiHandler`, `sri` and `SftpClient`.
 #[test]
 fn every_host_shim_installs() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     with_ctx(|ctx| {
         let got: String = ctx
             .eval("[typeof ec.artifactExecution.runAsUser, typeof EdiHandler, typeof sri, typeof SftpClient].join()")
@@ -71,6 +74,7 @@ fn every_host_shim_installs() -> Result<(), Error> {
 /// and a call with too few arguments is refused as a typed function's was.
 #[test]
 fn sri_keeps_its_members_and_lengths() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     const MEMBERS: &str = "sendRedirectAndStopRender/1 baseLinkUrl/0 getBaseLinkUrl/0 setFocusField/1 uniqueId/1 \
         htmlText/1 write/1 stamp/1 renderSection/1 renderSectionInclude/1 renderSubscreen/0 renderIncludeScreen/1 \
         renderDynamicForm/1 renderUserColumnsForm/1 renderText/1 renderTextValue/1 renderInlineText/1 \
@@ -114,6 +118,7 @@ fn sri_keeps_its_members_and_lengths() -> Result<(), Error> {
 /// reads back as the element it was, and an argument that is not an element object is refused as before.
 #[test]
 fn sri_holds_node_literals() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     with_ctx(|ctx| {
         let got: String = ctx
             .eval(crate::script::host::SRI_HOLD_SCRIPT)

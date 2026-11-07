@@ -78,8 +78,12 @@ impl ExoticClass for ListValues {
         }
     }
 
-    /// A list is read-only: an assignment is ignored, as on a frozen array.
-    fn set(&self, _: &mut ExoticScope<'_>, _: &ListTarget, _: &PropertyKey, _: Value) -> JsResult<Hook<bool>> {
+    /// A list is read-only: an assignment is ignored, as on a frozen array. One whose receiver is another object (the
+    /// list on its prototype chain, `Object.create(list)`) defines on that object, as on QuickJS.
+    fn set(&self, scope: &mut ExoticScope<'_>, _: &ListTarget, _: &PropertyKey, _: Value) -> JsResult<Hook<bool>> {
+        if !scope.receiver_is_this() {
+            return Ok(Hook::Ordinary);
+        }
         Ok(Hook::Handled(false))
     }
 

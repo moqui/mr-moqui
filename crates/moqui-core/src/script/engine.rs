@@ -92,14 +92,31 @@ pub fn set_thread_script_engine(engine: Option<ScriptEngine>) -> Option<ScriptEn
 
 /// Run `body` with this thread's setting at `engine`, put back after, also by a panic.
 pub fn with_script_engine<R>(engine: ScriptEngine, body: impl FnOnce() -> R) -> R {
-    struct Restore(Option<ScriptEngine>);
-    impl Drop for Restore {
-        fn drop(&mut self) {
-            set_thread_script_engine(self.0);
-        }
-    }
-    let _restore = Restore(set_thread_script_engine(Some(engine)));
+    let _restore = ThreadEngine::set(engine);
     body()
+}
+
+/// This thread's setting at an engine while it lives, put back when dropped, also by a panic.
+pub(crate) struct ThreadEngine(Option<ScriptEngine>);
+
+impl ThreadEngine {
+    pub(crate) fn set(engine: ScriptEngine) -> Self {
+        Self(set_thread_script_engine(Some(engine)))
+    }
+}
+
+impl Drop for ThreadEngine {
+    fn drop(&mut self) {
+        set_thread_script_engine(self.0);
+    }
+}
+
+/// For a test of a QuickJS-only entry point (`with_ctx`, the QuickJS walker, binder or engine): the thread's setting
+/// at `rquickjs` for the test, so it passes under any process setting.
+#[cfg(test)]
+#[must_use]
+pub(crate) fn quickjs_for_test() -> ThreadEngine {
+    ThreadEngine::set(ScriptEngine::Rquickjs)
 }
 
 /// Run `body` once under `rquickjs` and once under `small-oxide` (plans/Script-Engine-Oxide.md section 8): the binding

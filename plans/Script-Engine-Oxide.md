@@ -444,6 +444,8 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
 - A Set the stack holds is a live JavaScript `Set` under `oxide`, tracked and written back; `small-oxide` still runs such
   a text on QuickJS.
 - Error columns: oxide places a call at its `(`, QuickJS at the callee's name.
+- An assignment through a list on the prototype chain (`Object.create(list).x = 1`) defines on the receiver on both
+  engines now; oxide's list ignored it, as it ignores one to the list itself.
 
 ### Memory under `oxide` (Phase 3)
 
@@ -460,7 +462,10 @@ heaps after each spec. The fork could give back interior free space (a compactin
 ## 8. Testing
 
 - **Unit tests for the bindings.** The tests in `script/` that check binding behaviour (conversions, tracked values,
-  nested runs, errors) run under each engine from one body: a test helper sets the engine for the test's thread.
+  nested runs, errors) run under each engine from one body: a test helper sets the engine for the test's thread. A
+  test of a QuickJS-only entry point (`with_ctx`, the QuickJS walker, binder or engine internals) pins its thread to
+  `rquickjs` (`engine::quickjs_for_test`, in each thread it spawns too), so `script:: screen::` passes under every
+  setting; those tests go with the QuickJS bindings in Phase 4.
 - **The difference check.** `script_engine_check=true`, for development and test runs only, runs each small script on
   both engines and logs a difference in result or error. That shows where the oxide bindings give a different value
   before a user sees it. It is off by default and in every package.

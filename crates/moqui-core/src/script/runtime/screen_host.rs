@@ -187,6 +187,7 @@ mod tests {
 
     #[test]
     fn a_security_kind_goes_with_its_error_only() {
+        let _quickjs = crate::script::engine::quickjs_for_test();
         assert_eq!(kind_after("deny();"), ErrorKind::Unauthorized);
         assert_eq!(
             kind_after("try { deny(); } catch (e) { throw e; }"),

@@ -360,6 +360,7 @@ fn the_deadline_interrupts_an_oxide_script() {
 
 #[test]
 fn local_time_is_the_process_zone_as_on_quickjs() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     let offset = super::host::local_offset_minutes(0.0);
     assert_eq!(value("new Date(0).getTimezoneOffset()")?, Value::I32(offset));

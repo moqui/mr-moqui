@@ -178,6 +178,7 @@ fn live_allocations() -> i64 {
 /// every assigned string alive.
 #[test]
 fn a_field_assigned_many_times_does_not_grow_the_runtime() {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     let context = enumerations();
     let _entered = context.enter();
     let assign = |count: u32| {
@@ -600,6 +601,7 @@ fn a_template_loop_reads_fields_by_dot() {
 /// of the heap reports.
 #[test]
 fn the_engine_counts_its_heap_as_quickjs_does() {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     let context = enumerations();
     let _entered = context.enter();
     run_script("globalThis.big = []; for (let i = 0; i < 20000; i++) globalThis.big.push('x' + i)").unwrap();
@@ -621,6 +623,8 @@ fn the_engine_counts_its_heap_as_quickjs_does() {
 fn another_threads_engine_reads_a_compiled_script_s_bytecode() {
     let source = "(function () { let total = 0; for (let i = 1; i <= 10; i++) total += i; return 'sum ' + total })() /* shared bytecode test */";
     let run = move || {
+        // the setting is the thread's: each spawned one's own
+        let _quickjs = crate::script::engine::quickjs_for_test();
         let context = enumerations();
         let _entered = context.enter();
         super::super::eval_value(source).unwrap()

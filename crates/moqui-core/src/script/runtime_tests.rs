@@ -286,6 +286,7 @@ fn a_push_of_a_host_call_result_reaches_the_list() -> Result<(), Error> {
 
 #[test]
 fn a_held_list_survives_a_host_call_that_leaves_it() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     set_context_name("keptList", Value::List(vec![Value::I32(1)]))?;
     with_ctx(|ctx| {
@@ -307,6 +308,7 @@ fn a_held_list_survives_a_host_call_that_leaves_it() -> Result<(), Error> {
 
 #[test]
 fn a_host_call_that_changes_a_held_list_wins() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     set_context_name("replacedList", Value::List(vec![Value::I32(1)]))?;
     set_context_name("appendedList", Value::List(vec![Value::I32(1)]))?;
@@ -343,6 +345,7 @@ fn a_host_call_that_changes_a_held_list_wins() -> Result<(), Error> {
 
 #[test]
 fn a_nested_script_that_changes_a_held_list_wins() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     set_context_name("nestedChanged", Value::List(vec![Value::I32(1)]))?;
     set_context_name("nestedRead", Value::List(vec![Value::I32(1)]))?;
@@ -571,6 +574,7 @@ fn a_tracked_value_the_script_did_not_change_keeps_the_stack_value() -> Result<(
 
 #[test]
 fn context_passed_to_a_host_call_is_the_combined_map() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     set_context_name("outerName", Value::string("outer"))?;
     push_context_frame();
@@ -678,6 +682,7 @@ fn a_script_file_runs_in_names_of_its_own() -> Result<(), Error> {
 
 #[test]
 fn an_error_or_a_panic_out_of_a_run_leaves_no_tracked_values() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     set_context_name("heldRows", Value::List(vec![Value::I32(1)]))?;
     let failed = with_ctx(|ctx| -> Result<(), Error> {
@@ -701,6 +706,7 @@ fn an_error_or_a_panic_out_of_a_run_leaves_no_tracked_values() -> Result<(), Err
 
 #[test]
 fn a_callback_panic_in_a_compiled_script_is_that_scripts_error() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     with_ctx(|ctx| {
         let unguarded =
@@ -754,6 +760,7 @@ fn a_unit_that_throws_after_a_push_leaves_the_stack_as_it_found_it() -> Result<(
 
 #[test]
 fn a_loop_outside_a_transaction_stops_at_the_default_limit() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     use std::time::{Duration, Instant};
     clear_context_stack();
     // As a `resource-facade` `script-timeout` of 200 ms would set it.
@@ -805,6 +812,8 @@ fn deep_recursion_in_a_nested_script_is_a_script_error() {
     let outcome = std::thread::Builder::new()
         .stack_size(1536 * 1024)
         .spawn(|| {
+            // the setting is the thread's: this one's own
+            let _quickjs = crate::script::engine::quickjs_for_test();
             with_ctx(|ctx| {
                 let most: i64 = eval_source(
                     ctx,
@@ -914,6 +923,7 @@ fn running_out_of_memory_on_quickjs() -> Result<(), Error> {
 /// expression calls into runs on an engine of its own, with the real `ec`.
 #[test]
 fn the_wrapped_ec_takes_probes_and_leaves_the_framework_the_real_one() -> Result<(), Error> {
+    let _quickjs = crate::script::engine::quickjs_for_test();
     clear_context_stack();
     with_ctx(|ctx| {
         let read = rquickjs::Function::new(ctx.clone(), || -> rquickjs::Result<String> {
