@@ -248,7 +248,10 @@ pub struct UnitRequest<'a> {
 ///
 /// Returns an error when the module cannot be loaded, an element has no macro, a macro throws, or
 /// the generated code does not parse.
-pub fn unit_for(ctx: &Ctx<'_>, request: &UnitRequest<'_>) -> Result<Option<Arc<Unit>>, Error> {
+///
+/// `ctx` is the QuickJS context generation runs in; under `script_engine=oxide` generation runs on the thread's
+/// quickjs-oxide generator and none is needed.
+pub fn unit_for(ctx: Option<&Ctx<'_>>, request: &UnitRequest<'_>) -> Result<Option<Arc<Unit>>, Error> {
     let key = format!(
         "{}|{}|{}|{}",
         request.mode,
@@ -336,7 +339,7 @@ pub fn unit_for(ctx: &Ctx<'_>, request: &UnitRequest<'_>) -> Result<Option<Arc<U
 ///
 /// Returns an error when the module cannot be loaded or the form's code cannot be generated.
 pub fn unit_for_dynamic_form(
-    ctx: &Ctx<'_>,
+    ctx: Option<&Ctx<'_>>,
     request: &UnitRequest<'_>,
     form: &FormInstance,
 ) -> Result<Arc<Unit>, Error> {
@@ -491,10 +494,11 @@ fn runtime_id(runtime: &str) -> u64 {
 }
 
 /// [`load_mode_source`], or under `script_engine=oxide` the module on the thread's quickjs-oxide generator.
-fn load_module<'js>(ctx: &Ctx<'js>, source: &str, mode: &str, debug: bool) -> Result<ModeModule<'js>, Error> {
+fn load_module<'js>(ctx: Option<&Ctx<'js>>, source: &str, mode: &str, debug: bool) -> Result<ModeModule<'js>, Error> {
     if crate::script::oxide::walker::on_oxide() {
         return load_oxide(source, mode, debug);
     }
+    let ctx = ctx.ok_or_else(|| Error::new("screen units are generated on QuickJS here, and no QuickJS context is given"))?;
     load_mode_source(ctx, source, mode, debug)
 }
 

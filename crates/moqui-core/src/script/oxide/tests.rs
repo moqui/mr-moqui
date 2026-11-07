@@ -113,7 +113,8 @@ fn a_script_nested_under_a_lend_runs_on_oxide() -> Result<(), Error> {
     push_context_frame();
     set_context_name("n", Value::I32(1))?;
     set_context_name("items", Value::List(vec![Value::I32(1)]))?;
-    let context = super::engine::context_for_tests();
+    // the runtime small-oxide runs on, which a change of the setting would start again
+    let context = with_script_engine(ScriptEngine::SmallOxide, super::engine::context_for_tests);
     let global = context.global_object().unwrap();
     let oxide_values = || crate::script::engine::oxide_runs_here(crate::script::engine::EntryKind::Value);
     for (name, lend) in [("lent", true), ("unlent", false)] {
@@ -365,7 +366,7 @@ fn what_the_bindings_do_not_have_yet_falls_back() -> Result<(), Error> {
     set_context_name("tools", Value::Map(tools))?;
     assert_eq!(fallback("tools.x"), "a member of a host object the oxide bindings do not have yet");
     assert!(matches!(value("[tools][0]")?, Value::Map(map) if map.contains_key("__wrap")), "passed through");
-    assert_eq!(fallback("compare"), "a QuickJS global");
+    assert_eq!(fallback("ObjectUtilities"), "a QuickJS global");
     assert_eq!(value("toDecimal('1.50').add(1).toString()")?, Value::string("2.50"));
     assert_eq!(value("toNumber('12.5') + toNumber(null)")?, Value::F64(12.5));
     let condition_object = Value::Object(HostObject::new(String::from("not a binding")));

@@ -149,6 +149,8 @@ pub(super) struct Protos {
     /// The helper objects the shims extend, as QuickJS's `install_context` makes them: `CollectionUtilities`,
     /// `StringUtilities` and `WebUtilities` by name.
     pub(super) helpers: ObjectRef,
+    /// The same helper objects by name, which a bare name reads when the stack does not hold it.
+    pub(super) helper_objects: Vec<(&'static str, ObjectRef)>,
 }
 
 pub(super) struct OxideEngine {
@@ -171,6 +173,14 @@ pub(super) struct OxideEngine {
     tools_wrap: std::cell::OnceCell<CallableRef>,
     /// When the reserved bytes were last sampled.
     sampled: Cell<Option<std::time::Instant>>,
+    /// The screen units' compiled functions by unit id, the mode runtimes run so far by id, and the depth of the unit
+    /// running now ([`super::units`]).
+    pub(super) units: RefCell<crate::script::BoundedMap<u64, CallableRef>>,
+    pub(super) unit_runtimes: RefCell<std::collections::HashSet<u64>>,
+    pub(super) unit_depth: Cell<u32>,
+    /// The values inert modules gave in the outermost run, by location, with the text each was made from
+    /// (`ec.resource.script`, [`super::resource`]); emptied when the outermost run ends.
+    modules: RefCell<std::collections::HashMap<String, (Arc<str>, Value)>>,
     /// Property keys of the map keys converted ([`OxideEngine::key`]): a key made once interns once.
     keys: RefCell<std::collections::HashMap<Box<str>, quickjs_oxide::engine::api::core::PropertyKey>>,
 }
@@ -510,12 +520,15 @@ impl OxideEngine {
         };
         let (stack_object, context_methods) = super::context::make(&context)?;
         let helpers = context.new_object()?;
+        let mut helper_objects = Vec::new();
         for name in ["CollectionUtilities", "StringUtilities", "WebUtilities"] {
             let helper = context.new_object()?;
-            context.set_property(&helpers, &key(name).map_err(conv_runtime)?, Value::Object(helper))?;
+            context.set_property(&helpers, &key(name).map_err(conv_runtime)?, Value::Object(helper.clone()))?;
+            helper_objects.push((name, helper));
         }
         let protos = Protos {
             helpers,
+            helper_objects,
             context: stack_object.clone(),
             context_methods,
             decimal: super::decimal::make_prototype(&context)?,
@@ -538,6 +551,7 @@ impl OxideEngine {
             &OrdinaryPropertyDescriptor::data(Value::Object(ec.clone()), false, false, true),
         )?;
         super::bind::install_ec(&mut context.clone(), &ec, std::rc::Rc::new(EngineHooks))?;
+        super::resource::install(&context, &ec)?;
         let extras = context.eval(EC_EXTRAS_JS)?;
         let extras = match &extras {
             Value::Object(object) => context.as_callable(object)?,
@@ -563,6 +577,13 @@ impl OxideEngine {
             runs: Cell::new(0),
             sampled: Cell::new(None),
             tools_wrap: std::cell::OnceCell::new(),
+            modules: RefCell::default(),
+            units: RefCell::new(crate::script::BoundedMap::with_bytes(
+                super::units::MAX_UNITS,
+                super::units::MAX_UNIT_BYTES,
+            )),
+            unit_runtimes: RefCell::default(),
+            unit_depth: Cell::new(0),
             keys: RefCell::default(),
         }, builtins))
     }
@@ -574,6 +595,14 @@ impl OxideEngine {
     fn finish_start(&self, builtins: &ObjectRef) -> Result<(), RuntimeError> {
         let mut context = self.context.clone();
         super::bind::install_shims(&mut context, &self.protos.helpers, std::rc::Rc::new(EngineHooks))?;
+        // the host's globals and helper functions QuickJS installs outside the table, then its helper script over them
+        super::bind::install_one_shim(
+            &mut context,
+            &self.protos.helpers,
+            &crate::script::host::globals::SHIM,
+            std::rc::Rc::new(EngineHooks),
+        )?;
+        context.eval(crate::script::runtime::HELPERS_JS)?;
         let global = context.global_object()?;
         match context.get_property(&global, &key("__moquiWrap").map_err(conv_runtime)?)? {
             Value::Object(object) => {
@@ -594,6 +623,37 @@ impl OxideEngine {
             context.eval(HARDEN_JS)?;
         }
         super::names::install_names(&context)
+    }
+
+    /// The runtime's realm, for a host function that lent the engine.
+    pub(super) fn context(&self) -> &Context {
+        &self.context
+    }
+
+    /// The compiled form of `source`, named `file_name` and kept by `hash`, through the runtime's cache.
+    pub(super) fn compile(
+        &self,
+        source: &str,
+        hash: u64,
+        file_name: &str,
+    ) -> Result<quickjs_oxide::engine::api::core::FunctionBytecodeRef, RuntimeError> {
+        let mut cache = self.compiled.borrow_mut();
+        let before = cache.compiles();
+        let compiled = cache.get_or_compile(&self.context, source, hash, file_name);
+        counts::COMPILED.fetch_add(cache.compiles() - before, Relaxed);
+        compiled
+    }
+
+    /// The value the inert module at `location` gave earlier in this outermost run, when made from the same text.
+    pub(super) fn kept_module(&self, location: &str, text: &Arc<str>) -> Option<Value> {
+        let modules = self.modules.borrow();
+        let (kept, value) = modules.get(location)?;
+        (Arc::ptr_eq(kept, text) || **kept == **text).then(|| value.clone())
+    }
+
+    /// Keep an inert module's value for the rest of the outermost run.
+    pub(super) fn keep_module(&self, location: &str, text: Arc<str>, value: Value) {
+        self.modules.borrow_mut().insert(location.to_string(), (text, value));
     }
 
     /// The tools shim's wrapper, which gives a tools map (a map with `__wrap`) its methods back.
@@ -771,6 +831,8 @@ struct RunState<'a> {
 /// What a nested run set aside of the run around it.
 struct Outer {
     values: super::tracked::RunValues,
+    /// The screen unit depth of the outer run: a render the nested run makes starts afresh, as on QuickJS.
+    unit_depth: u32,
     entities: Vec<(ObjectRef, Arc<EntityCell>)>,
     fallback: Option<&'static str>,
 }
@@ -779,6 +841,7 @@ impl<'a> RunState<'a> {
     fn enter(engine: &'a OxideEngine, nested: bool) -> Self {
         let outer = nested.then(|| Outer {
             values: engine.run.take(),
+            unit_depth: engine.unit_depth.replace(0),
             entities: engine.entities.take(),
             fallback: FALLBACK.with(Cell::take),
         });
@@ -797,11 +860,16 @@ impl Drop for RunState<'_> {
                 if let Ok(mut entities) = self.engine.entities.try_borrow_mut() {
                     *entities = outer.entities;
                 }
+                self.engine.unit_depth.set(outer.unit_depth);
                 FALLBACK.with(|fallback| fallback.set(outer.fallback));
             }
             None => {
                 if let Ok(mut values) = self.engine.run.try_borrow_mut() {
                     values.clear();
+                }
+                // the modules kept for this run go with it: the next run makes them again
+                if let Ok(mut modules) = self.engine.modules.try_borrow_mut() {
+                    modules.clear();
                 }
                 if let Ok(mut entities) = self.engine.entities.try_borrow_mut() {
                     entities.clear();
@@ -851,6 +919,32 @@ fn run<T>(
     file_name: &str,
     finish: impl FnOnce(&mut Context, &OxideEngine, Value) -> Result<T, Conv>,
 ) -> Result<T, Outcome> {
+    with_run(writes, source, |engine, context, note| {
+        match engine.compile(source, hash, file_name).and_then(|compiled| context.execute(&compiled)) {
+            Ok(value) => finish(context, engine, value).map_err(|conv| {
+                if let Conv::Js(err) = &conv {
+                    note(err);
+                }
+                conv_outcome(context, conv)
+            }),
+            Err(err) => {
+                note(&err);
+                Err(Outcome::Error(runtime_error(context, err)))
+            }
+        }
+    })
+}
+
+/// One run on the thread's oxide runtime, from `body`: counted in the thread's depth, deadline and default limit, its
+/// run state its own (a nested run, inside a host function that lent the engine, sets the outer run's aside and gives
+/// it back, its screen unit depth too). When the run `writes`, its tracked values are written back at its end. `body`
+/// notes each engine error it met, so a poisoned runtime is dropped when the outermost run ends and one short of memory
+/// lets its transient code go. `what` names the run in the log.
+pub(super) fn with_run<T>(
+    writes: bool,
+    what: &str,
+    body: impl FnOnce(&OxideEngine, &mut Context, &mut dyn FnMut(&RuntimeError)) -> Result<T, Outcome>,
+) -> Result<T, Outcome> {
     let depth = run::depth();
     if depth >= MAX_SCRIPT_DEPTH {
         return Err(Outcome::Error(Error::new("scripts are nested too deeply")));
@@ -869,13 +963,6 @@ fn run<T>(
     let _limit = (depth == 0).then(ScriptLimit::arm);
     let _depth = run::enter_depth(depth);
     let state = RunState::enter(&engine, nested);
-    let compiled = {
-        let mut cache = engine.compiled.borrow_mut();
-        let before = cache.compiles();
-        let compiled = cache.get_or_compile(&engine.context, source, hash, file_name);
-        counts::COMPILED.fetch_add(cache.compiles() - before, Relaxed);
-        compiled
-    };
     let mut context = engine.context.clone();
     let mut poisoned = false;
     let mut out_of_memory = false;
@@ -883,19 +970,7 @@ fn run<T>(
         poisoned |= matches!(err, RuntimeError::Poisoned);
         out_of_memory |= matches!(err, RuntimeError::OutOfMemory);
     };
-    let outcome = match compiled.and_then(|compiled| context.execute(&compiled)) {
-        Ok(value) => finish(&mut context, &engine, value).map_err(|conv| {
-            if let Conv::Js(err) = &conv {
-                note(err);
-            }
-            conv_outcome(&mut context, conv)
-        }),
-        Err(err) => {
-            note(&err);
-            Err(Outcome::Error(runtime_error(&mut context, err)))
-        }
-    };
-    let mut outcome = outcome;
+    let mut outcome = body(&engine, &mut context, &mut note);
     if FALLBACK.with(Cell::get).is_none() && !poisoned {
         if writes {
             // as QuickJS does at a script's end, whether it ended well or not
@@ -904,7 +979,7 @@ fn run<T>(
                 outcome = Err(conv_outcome(&mut context, conv));
             }
         } else if cfg!(debug_assertions) {
-            check_kept_names(&mut context, &engine, source);
+            check_kept_names(&mut context, &engine, what);
         }
     }
     let fallback = FALLBACK.with(Cell::take);
@@ -912,7 +987,7 @@ fn run<T>(
     // a poisoned runtime goes when the outermost oxide run ends, which sees the poison too
     if poisoned && !nested {
         counts::POISONED.fetch_add(1, Relaxed);
-        tracing::error!(script = %source, "a host function panicked in quickjs-oxide; the runtime is dropped and restarts on the next script");
+        tracing::error!(script = %what, "a host function panicked in quickjs-oxide; the runtime is dropped and restarts on the next script");
         ENGINE.with(|current| *current.borrow_mut() = None);
     } else if !poisoned {
         if out_of_memory {
@@ -1019,6 +1094,12 @@ pub(crate) fn eval_map(
 pub(crate) fn run_actions(source: &str, hash: u64, file_name: &str) -> Result<(), Outcome> {
     let key = crate::script::text::hash_of(hash, file_name);
     run(source, key, true, file_name, |_, _, _| Ok(()))
+}
+
+/// [`crate::script::run_script`] on quickjs-oxide, under `script_engine=oxide`: one script, not strict, named
+/// `eval_script` in stack traces as on QuickJS; what it wrote by name is written back at its end.
+pub(crate) fn run_script(source: &str, hash: u64) -> Result<(), Outcome> {
+    run(source, hash, true, super::compiled::FILE_NAME, |_, _, _| Ok(()))
 }
 
 /// [`crate::script::eval_value`] on quickjs-oxide: the value of `source` as a host value.

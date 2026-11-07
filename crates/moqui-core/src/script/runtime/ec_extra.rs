@@ -48,7 +48,7 @@ fn with_additional<'js, T>(
     result
 }
 
-fn localized(template: &str) -> Result<String, Error> {
+pub(crate) fn localized(template: &str) -> Result<String, Error> {
     if template.chars().count() < LOCALIZE_LIMIT {
         l10n::localize(template).map_err(|err| Error::new(err.message()))
     } else {
@@ -259,7 +259,7 @@ fn resource_code128_svg(ctx: Ctx<'_>, text: JsValue<'_>, options: Opt<JsValue<'_
 }
 
 /// The SVG options of a `code128Svg` options map.
-fn code128_options(value: &Value) -> Result<moqui_lib::barcode::SvgOptions, String> {
+pub(crate) fn code128_options(value: &Value) -> Result<moqui_lib::barcode::SvgOptions, String> {
     let Value::Map(map) = value else {
         return Err("the options are not an object".to_string());
     };
@@ -368,7 +368,7 @@ fn context_object<'js>(ctx: &Ctx<'js>) -> Result<Object<'js>, Error> {
 
 // ---- static helpers ----
 
-fn url_safe_chars(name: &str) -> bool {
+pub(crate) fn url_safe_chars(name: &str) -> bool {
     !name.is_empty()
         && name != "."
         && name != ".."
@@ -419,7 +419,7 @@ fn js_safe_object(value: &Value) -> String {
     }
 }
 
-fn js_safe_map(entries: &indexmap::IndexMap<String, Value>) -> String {
+pub(crate) fn js_safe_map(entries: &indexmap::IndexMap<String, Value>) -> String {
     let parts: Vec<String> = entries
         .iter()
         .map(|(key, value)| format!("'{}':{}", encode_html_js_safe(key), js_safe_object(value)))
@@ -624,7 +624,9 @@ fn collection_get_map_array_list_values<'js>(
 
 /// Java's `CollectionUtilities.flattenNestedMap`: the entries of a map, an entity value's fields among them, with each
 /// nested map's entries, and those of the maps in a nested list, put in its place. A later key replaces an earlier one.
-fn collection_flatten_nested_map<'js>(ctx: Ctx<'js>, map: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
+/// `CollectionUtilities.flattenNestedMap(map)`: the leaves of nested maps and lists in one map; null for a value that
+/// is not a map.
+pub(crate) fn flatten_nested_map(value: &Value) -> Value {
     fn flatten(value: &Value, out: &mut indexmap::IndexMap<String, Value>) {
         let Some(entries) = super::values::value_map(value) else {
             return;
@@ -641,14 +643,18 @@ fn collection_flatten_nested_map<'js>(ctx: Ctx<'js>, map: JsValue<'js>) -> rquic
             }
         }
     }
-    host_guard(&ctx, || {
-        let value = js_to_host(&ctx, &map)?;
-        if super::values::value_map(&value).is_none() {
-            return Null.into_js(&ctx);
-        }
-        let mut out = indexmap::IndexMap::new();
-        flatten(&value, &mut out);
-        collection_to_js(&ctx, Value::Map(out))
+    if super::values::value_map(value).is_none() {
+        return Value::Null;
+    }
+    let mut out = indexmap::IndexMap::new();
+    flatten(value, &mut out);
+    Value::Map(out)
+}
+
+fn collection_flatten_nested_map<'js>(ctx: Ctx<'js>, map: JsValue<'js>) -> rquickjs::Result<JsValue<'js>> {
+    host_guard(&ctx, || match flatten_nested_map(&js_to_host(&ctx, &map)?) {
+        Value::Null => Null.into_js(&ctx),
+        flat => collection_to_js(&ctx, flat),
     })
 }
 

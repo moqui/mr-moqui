@@ -46,7 +46,7 @@ pub(super) fn resource_script<'js>(ctx: Ctx<'js>, location: String) -> rquickjs:
 }
 
 /// Whether module values are kept for the run: the `script_module_cache` property, true unless `false` (read once).
-fn module_cache_on() -> bool {
+pub(crate) fn module_cache_on() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| moqui_lib::env::get_prop_or_env("script_module_cache") != "false")
 }
@@ -99,7 +99,7 @@ pub(super) fn read_script(location: &str) -> Result<Arc<str>, Error> {
 }
 
 /// [`read_script`], and whether the file's top level only declares, so its value may be kept for the run.
-pub(super) fn read_module(location: &str) -> Result<(super::ScriptText, bool), Error> {
+pub(crate) fn read_module(location: &str) -> Result<(super::ScriptText, bool), Error> {
     let production = crate::web::is_production();
     {
         let mut texts = lock(script_texts());

@@ -23,6 +23,9 @@ use quickjs_oxide::engine::api::core::{CallableRef, Js, JsString, NativeErrorKin
 
 use crate::context::Error;
 
+/// The start of the error a poisoned runtime gives.
+pub(super) const POISONED: &str = "the quickjs-oxide runtime is poisoned";
+
 /// The framework error of an oxide run that ended with `err`. `js` reads the thrown error's properties.
 pub(super) fn runtime_error<J: Js>(js: &mut J, err: RuntimeError) -> Error {
     match err {
@@ -30,7 +33,7 @@ pub(super) fn runtime_error<J: Js>(js: &mut J, err: RuntimeError) -> Error {
         RuntimeError::Interrupted => Error::script("Error: interrupted\n    at <eval> (eval_script)\n"),
         RuntimeError::OutOfMemory => Error::script("Error: out of memory"),
         RuntimeError::Compile(compile) => Error::script(format!("Error: {compile}")),
-        RuntimeError::Poisoned => Error::new("the quickjs-oxide runtime is poisoned: a host function panicked"),
+        RuntimeError::Poisoned => Error::new(format!("{POISONED}: a host function panicked")),
         other => Error::new(format!("quickjs-oxide: {other}")),
     }
 }

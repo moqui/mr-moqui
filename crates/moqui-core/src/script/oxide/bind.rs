@@ -187,6 +187,21 @@ pub(crate) fn install_shims(js: &mut impl Js, helpers: &ObjectRef, hooks: Rc<dyn
     )))
 }
 
+/// One shim outside the table's paths ([`host::globals::SHIM`]), with prototypes of its own.
+pub(crate) fn install_one_shim(
+    js: &mut impl Js,
+    helpers: &ObjectRef,
+    shim: &'static host::Shim,
+    hooks: Rc<dyn OxideHooks>,
+) -> JsResult<()> {
+    let binder = Rc::new(Binder {
+        hooks,
+        prototypes: RefCell::new(HashMap::new()),
+    });
+    let global = js.global_object()?;
+    install_shim(js, &binder, &global, helpers, shim)
+}
+
 fn install_shim(
     js: &mut impl Js,
     binder: &Rc<Binder>,
@@ -719,6 +734,11 @@ impl EngineOps for LentOps {
     fn whole_context(&mut self) -> Result<indexmap::IndexMap<String, Value>, HostError> {
         self.whole.take().ok_or_else(Self::refused)
     }
+
+    /// The units a render runs from the lent body run on this runtime, in the script that made the call.
+    fn screen_runner(&mut self) -> Result<&dyn crate::screen::sri::Runner, HostError> {
+        Ok(&super::units::RUNNER)
+    }
 }
 
 /// [`EngineOps`] of one call on quickjs-oxide.
@@ -741,6 +761,10 @@ impl EngineOps for OxideOps<'_, '_> {
         // a panic in the body's own code is an error; one through the engine goes on ([`caught_panic`])
         let _engine = EngineCall;
         self.scope.lend(|| caught_panic(body)).map_err(HostError::Message)
+    }
+
+    fn screen_runner(&mut self) -> Result<&dyn crate::screen::sri::Runner, HostError> {
+        Ok(&super::units::RUNNER)
     }
 
     fn evaluate(&mut self, source: &str, name: &str) -> Result<Value, HostError> {

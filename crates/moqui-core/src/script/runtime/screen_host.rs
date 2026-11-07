@@ -21,8 +21,12 @@ use super::*;
 use crate::screen::generate::{self, Unit, UnitRequest};
 use crate::screen::sri::{NodeLit, Runner};
 
-/// Run `body` on the script runtime with a [`Runner`] for the render in progress.
+/// Run `body` on the script runtime with a [`Runner`] for the render in progress: under `script_engine=oxide` the
+/// thread's quickjs-oxide runtime's (`oxide::units`).
 pub(crate) fn with_screen_runner<R>(body: impl FnOnce(&dyn Runner) -> Result<R, Error>) -> Result<R, Error> {
+    if crate::script::engine::script_engine() == crate::script::engine::ScriptEngine::Oxide {
+        return crate::script::oxide::units::with_screen_runner(body);
+    }
     with_context(|ctx| body(&CtxRunner { ctx }))
 }
 
@@ -33,7 +37,7 @@ pub(super) struct CtxRunner<'a, 'js> {
 
 impl Runner for CtxRunner<'_, '_> {
     fn generate(&self, request: &UnitRequest<'_>) -> Result<Option<Arc<Unit>>, Error> {
-        generate::unit_for(self.ctx, request)
+        generate::unit_for(Some(self.ctx), request)
     }
 
     fn generate_dynamic(
@@ -41,7 +45,7 @@ impl Runner for CtxRunner<'_, '_> {
         request: &UnitRequest<'_>,
         form: &crate::screen::form::FormInstance,
     ) -> Result<Arc<Unit>, Error> {
-        generate::unit_for_dynamic_form(self.ctx, request, form)
+        generate::unit_for_dynamic_form(Some(self.ctx), request, form)
     }
 
     fn run(&self, unit: &Unit) -> Result<(), Error> {
