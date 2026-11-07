@@ -45,6 +45,11 @@ const HEAP_CAP: usize = 64 * 1024 * 1024;
 /// The collection floor: below it the runtime does not collect. Lower than the fork's 1 MiB default, since every
 /// thread that runs a small script holds a runtime (plans/Script-Engine-Oxide.md section 4).
 const MIN_HEAP: usize = 512 * 1024;
+/// What a collection lets the heap grow by before the next, as a multiple of the live bytes it left: 1 where the fork's
+/// default is 2. Over the mr-mantle suite under `oxide` the runtimes' summed peak fell from 157 MB to 117 MB (the main
+/// thread's from 39 MB to 29 MB) at the same run time; the reserved bytes follow the budget, and the arenas give little
+/// back once grown.
+const GROWTH: f64 = 1.0;
 /// Runs between looks at the clock for a sample of the runtime's reserved bytes, and the least time between two
 /// samples: a memory report walks the runtime's code store, so its cost grows with the texts compiled (4000 texts made
 /// a sample every 32 runs cost an expression about twice its time).
@@ -676,6 +681,7 @@ impl OxideEngine {
         let options = RuntimeOptions {
             heap: HeapLimits { max_bytes: HEAP_CAP },
             min_heap: MIN_HEAP,
+            growth: GROWTH,
             ..RuntimeOptions::default()
         };
         let runtime = quickjs_oxide::engine::api::core::Runtime::with_host(MoquiHost, options);
