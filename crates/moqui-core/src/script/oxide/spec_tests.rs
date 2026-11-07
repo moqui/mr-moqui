@@ -189,11 +189,11 @@ fn the_whole_runtimes_share_their_globals() {
         install_global("probeNested", &NESTED).expect("install");
         let names = "[typeof System.getProperty, typeof StringUtilities.base64Encode, typeof \
                      CollectionUtilities.flattenNestedMap, typeof WebUtilities.encodeHtml, typeof compare, typeof \
-                     UserSecurityChecks.assertPrivilegedGroupMembership].join()";
+                     UserSecurityChecks.assertPrivilegedGroupMembership, typeof ObjectUtilities].join()";
         let main = spec(&format!("probeNested.main({names:?})"));
         assert_eq!(
             main,
-            Value::String("function,function,function,function,function,function".to_string())
+            Value::String("function,function,function,function,function,function,object".to_string())
         );
         assert_eq!(spec(names), main);
     });
@@ -229,8 +229,8 @@ fn render_units(call: &mut Call<'_>) -> Result<Ret, HostError> {
 }
 
 /// A render started from a spec run (spec script, host call, `with_screen_runner`, `runner.run(unit)`) runs its units
-/// in the main runtime's run (`Active::main_running`), with the spec runtime innermost before it: its units, and a value
-/// between them, see what each other wrote.
+/// in the main runtime's run (`Active::main_running`), with the spec runtime innermost before it: its units, and a
+/// value between them, see what each other wrote.
 #[test]
 fn a_render_from_a_spec_run_runs_its_units_in_the_main_runtime() {
     crate::script::with_script_engine(crate::script::ScriptEngine::Oxide, || {

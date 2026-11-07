@@ -17,8 +17,8 @@
 //! `numberToWords`, `numberToWordsWithDecimal`, `orderMapList`, `filterMapList`, `filterMapListByDate`,
 //! `elasticQueryAutoWildcard`, `System.getProperty`, and the functions of `StringUtilities`, `WebUtilities` and
 //! `CollectionUtilities` whose arguments and results are host values, and `UserSecurityChecks`, the checks
-//! `Security.eecas.xml` runs. The helper objects, their functions and `System` are frozen ([`FREEZE_HELPERS_JS`]), so a
-//! script cannot replace a check, or any helper, for the later scripts on the thread.
+//! `Security.eecas.xml` runs. The helper objects, their functions and `System` are frozen ([`FREEZE_HELPERS_JS`]), so
+//! a script cannot replace a check, or any helper, for the later scripts on the thread.
 //!
 //! [`SHIM`] is not a path of the table: the oxide engine installs it itself (`oxide::engine`), and QuickJS keeps its own
 //! until Phase 4 removes it, when this shim takes their place.
@@ -95,10 +95,12 @@ const GLOBALS_JS: &str = concat!(
     const resource = ec.resource || (ec.resource = {});
     for (const name of ["code128Svg", "barcodeSvg", "parseGs1", "isValidGs1CheckDigit", "template",
         "getTemplateRendererExtensionSet"]) resource[name] = hidden[name];
+    // QuickJS's `ObjectUtilities` has no functions; a whole script reads it (`typeof ObjectUtilities`)
+    helpers.ObjectUtilities = {};
     // the last shim to fill them (`oxide::engine`, `finish_start`), so nothing writes them after this
     ("#,
     freeze_helpers_js!(),
-    r#")([helpers.CollectionUtilities, helpers.StringUtilities, helpers.WebUtilities,
+    r#")([helpers.ObjectUtilities, helpers.CollectionUtilities, helpers.StringUtilities, helpers.WebUtilities,
         helpers.UserSecurityChecks, global.System]);
 })"#
 );

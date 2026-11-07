@@ -802,7 +802,7 @@ impl OxideEngine {
         if !self.hardened {
             // a whole script names the helper objects as QuickJS's bare names answer them; the small scripts' static
             // check refuses them (`check::QUICKJS_ONLY_GLOBALS`), so a cut runtime leaves them out. Frozen below.
-            for name in ["CollectionUtilities", "StringUtilities", "WebUtilities", "UserSecurityChecks"] {
+            for name in ["ObjectUtilities", "CollectionUtilities", "StringUtilities", "WebUtilities", "UserSecurityChecks"] {
                 let name = key(name).map_err(conv_runtime)?;
                 let helper = context.get_property(&self.protos.helpers, &name)?;
                 context.set_property(&global, &name, helper)?;

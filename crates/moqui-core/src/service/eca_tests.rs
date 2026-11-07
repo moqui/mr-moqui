@@ -345,6 +345,21 @@ fn the_security_checks_run_on_each_engine() {
             assert!(err.to_string().contains("grant permission ADMIN_PASSWORD"), "{name}: {err}");
             let err = document_field("01").create(&facade).expect_err("document expression");
             assert!(err.to_string().contains("DATABASE_ADMIN"), "{name}: {err}");
+            // a bare name over the helper's, then a write in the same script: on QuickJS the name is the context
+            // stack's, which hides the helper from the rule's script, whose call then fails, so the write does (fails
+            // closed); on oxide the assignment throws
+            let hidden = crate::script::run_script(
+                "UserSecurityChecks = {assertPrivilegedGroupMembership: function () {}};
+                 const row = ec.entity.makeValue('moqui.security.UserGroupMember');
+                 row.set('userGroupId', 'ADMIN'); row.set('userId', 'U1'); row.set('fromDate', ec.user.nowTimestamp);
+                 row.create()",
+            );
+            let err = hidden.expect_err("a hidden check").to_string();
+            let why = if engine == ScriptEngine::Oxide { "host global" } else { "UserGroupMemberPrivileged" };
+            assert!(err.contains(why), "{name}: {err}");
+            // the value stays on QuickJS's stack, hiding the helper from the later writes of this context
+            crate::script::clear_context_stack();
+            assert!(!user_in_group(&facade, "ADMIN").unwrap(), "{name}");
             // a plain group, a plain path: allowed to the same user
             member("ALL_USERS").create(&facade).expect("a group that is not privileged");
             let _authz = context.disable_authz();

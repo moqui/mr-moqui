@@ -952,11 +952,12 @@ fn the_wrapped_ec_takes_probes_and_leaves_the_framework_the_real_one() -> Result
 #[test]
 fn the_helper_objects_and_their_functions_are_frozen() -> Result<(), Error> {
     use crate::script::engine::{with_script_engine, ScriptEngine};
-    let held = "[CollectionUtilities, StringUtilities, WebUtilities, UserSecurityChecks, System]\
+    let held = "[ObjectUtilities, CollectionUtilities, StringUtilities, WebUtilities, UserSecurityChecks, System]\
                 .every(Object.isFrozen) && Object.isFrozen(UserSecurityChecks.assertPrivilegedGroupMembership) \
                 && UserSecurityChecks.assertSealedPermissionGrant.extra === undefined \
                 && typeof StringUtilities.base64Encode === 'function' && typeof WebUtilities.encodeHtml === 'function' \
-                && typeof System.getProperty === 'function' && CollectionUtilities.added === undefined";
+                && typeof System.getProperty === 'function' && CollectionUtilities.added === undefined \
+                && ObjectUtilities.added === undefined";
     for engine in [ScriptEngine::Rquickjs, ScriptEngine::SmallOxide, ScriptEngine::Oxide] {
         with_script_engine(engine, || -> Result<(), Error> {
             clear_context_stack();
@@ -964,12 +965,12 @@ fn the_helper_objects_and_their_functions_are_frozen() -> Result<(), Error> {
                 "UserSecurityChecks.assertPrivilegedGroupMembership = function () {};
                  UserSecurityChecks.assertSealedPermissionGrant.extra = 1;
                  StringUtilities.base64Encode = null; WebUtilities.encodeHtml = null;
-                 CollectionUtilities.added = 1; System.getProperty = null;",
+                 CollectionUtilities.added = 1; ObjectUtilities.added = 1; System.getProperty = null;",
             )?;
             assert!(eval_condition(held)?, "under {}", engine.name());
-            let err = run_script(
-                "(function () { 'use strict'; UserSecurityChecks.assertPrivilegedGroupMembership = function () {}; })()",
-            )
+            let strict = "(function () { 'use strict'; \
+                          UserSecurityChecks.assertPrivilegedGroupMembership = function () {}; })()";
+            let err = run_script(strict)
             .expect_err("a strict assignment throws");
             let text = err.to_string();
             assert!(text.contains("read-only") || text.contains("TypeError"), "under {}: {text}", engine.name());

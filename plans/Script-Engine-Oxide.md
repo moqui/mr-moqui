@@ -420,9 +420,18 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
 
 ### Engine differences under `oxide` (Phase 3, scripts, modules and screen units)
 
-- `ec.context` on oxide is only `{get, formListFindId, orderByField}`, the members the shims and forms read; QuickJS's
-  object is the same three, but a text that reaches for more of QuickJS's helpers (`ObjectUtilities`,
-  `UserSecurityChecks`, `ResourceReference`) finds nothing on oxide yet.
+- `ec.context` on oxide is only `{get, formListFindId, orderByField}`, the members the shims and forms read, as
+  QuickJS's object is. The helper objects (`ObjectUtilities`, `CollectionUtilities`, `StringUtilities`, `WebUtilities`,
+  `UserSecurityChecks`) and `System` are globals of a whole oxide runtime, from `host::globals`; a text that reaches for
+  `ResourceReference` finds nothing on oxide yet. On both engines the helper objects, `System` and the functions on them
+  are frozen, so a script cannot replace one (a `UserSecurityChecks` check among them) for the later scripts on the
+  thread.
+- A bare assignment to a helper's name (`StringUtilities = x`) writes the context stack on QuickJS; on oxide the name is
+  a read-only global and the assignment throws a TypeError. A context value named after a helper (a request parameter
+  `UserSecurityChecks`, say) hides the helper on QuickJS, whose bare names read the stack first; on oxide the global
+  wins. On QuickJS a check so hidden fails closed: the stack's value is not callable (a function does not convert to
+  the stack), so the write the check guards fails while the value is on the stack (`service/eca_tests.rs`,
+  `the_security_checks_run_on_each_engine`).
 - The server-static widget check's wrapper of `ec` is QuickJS's only: under it, a screen unit and
   `ec.resource.script`, `expand`, `expression` and `condition` are refused on oxide, so the check reports a failed render
   rather than passing a screen unchecked.
