@@ -14,12 +14,44 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 version=$(sed -n 's/^POSTGRESQL_VERSION = { value = "=\([0-9.]*\)".*/\1/p' "$root/.cargo/config.toml")
 [ -n "$version" ] || { echo "POSTGRESQL_VERSION is not an exact version in .cargo/config.toml" >&2; exit 1; }
 host_target=$(rustc -vV | sed -n 's/^host: //p')
-cache_dir=${HOME}/.theseus/postgresql
+# On Git Bash, HOME is an MSYS path of the same directory USERPROFILE names. The build script opens
+# USERPROFILE, so the archive has to land there.
+case $(uname -s) in
+    MINGW*|MSYS*|CYGWIN*)
+        if [ -n "${USERPROFILE:-}" ] && command -v cygpath >/dev/null 2>&1; then
+            cache_dir=$(cygpath -u "$USERPROFILE")/.theseus/postgresql
+        else
+            cache_dir=${HOME}/.theseus/postgresql
+        fi
+        ;;
+    *) cache_dir=${HOME}/.theseus/postgresql ;;
+esac
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 cached_archive() {
     echo "$cache_dir/postgresql-$version-$1.tar.gz"
+}
+
+# theseus publishes sha256sum lines for the Unix archives and certutil output for the Windows
+# archive (`SHA256 hash of <name>:` then a 64-hex line). Accept either.
+verify_sha256() {
+    local file=$1 sumfile=$2 expected actual
+    if (cd "$(dirname "$file")" && sha256sum -c "$(basename "$sumfile")") >/dev/null 2>&1; then
+        return 0
+    fi
+    expected=$(tr -d '\r' < "$sumfile" | grep -E '^[0-9a-fA-F]{64}$' | head -n 1 | tr 'A-F' 'a-f')
+    if [ -z "$expected" ]; then
+        echo "no SHA256 in $sumfile" >&2
+        return 1
+    fi
+    actual=$(sha256sum "$file" | awk '{print $1}')
+    if [ "$actual" != "$expected" ]; then
+        echo "SHA256 mismatch for $file" >&2
+        echo "expected $expected" >&2
+        echo "actual   $actual" >&2
+        return 1
+    fi
 }
 
 strip_archive() {
@@ -31,9 +63,21 @@ strip_archive() {
         url=https://github.com/theseus-rs/postgresql-binaries/releases/download/$version/$name.tar.gz
         echo "downloading $url"
         mkdir -p "$cache_dir"
-        curl -fsSL -o "$work/$name.tar.gz" "$url"
-        curl -fsSL -o "$work/$name.tar.gz.sha256" "$url.sha256"
-        (cd "$work" && sha256sum -c "$name.tar.gz.sha256")
+        # curl does not read git's proxy. Pass it on the command line: mingw curl does not
+        # always honor an https_proxy exported in this script.
+        proxy=${https_proxy:-${HTTPS_PROXY:-}}
+        if [ -z "$proxy" ] && command -v git >/dev/null 2>&1; then
+            proxy=$(git config --get https.proxy || git config --get http.proxy || true)
+            proxy=${proxy//$'\r'/}
+        fi
+        if [ -n "$proxy" ]; then
+            curl -fsSL --proxy "$proxy" -o "$work/$name.tar.gz" "$url"
+            curl -fsSL --proxy "$proxy" -o "$work/$name.tar.gz.sha256" "$url.sha256"
+        else
+            curl -fsSL -o "$work/$name.tar.gz" "$url"
+            curl -fsSL -o "$work/$name.tar.gz.sha256" "$url.sha256"
+        fi
+        verify_sha256 "$work/$name.tar.gz" "$work/$name.tar.gz.sha256"
         mv "$work/$name.tar.gz" "$archive"
     fi
     mkdir "$work/unpack"
@@ -71,6 +115,7 @@ check_archive() {
     fi
     local needed
     needed=$(find "$dir" -type f -print0 | while IFS= read -r -d '' file; do
+        # PE files (the Windows archive) have no ELF NEEDED entries. readelf does not run on them.
         if head -c 4 "$file" | grep -q $'\x7fELF'; then
             readelf -d "$file" 2>/dev/null | sed -n "s|.*(NEEDED).*\[\(.*\)\]|${file#"$dir/"*/} \1|p"
         fi

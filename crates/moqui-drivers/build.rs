@@ -91,6 +91,12 @@ fn gpl_entry(bytes: &[u8]) -> Option<String> {
 }
 
 fn home_dir() -> PathBuf {
+    // Git Bash sets HOME to an MSYS path (`/c/Users/...`), which std::fs cannot open. USERPROFILE is the
+    // Windows path of that same directory, and it is where `scripts/pg-payload.sh` keeps the archive.
+    #[cfg(windows)]
+    if let Some(profile) = std::env::var_os("USERPROFILE") {
+        return PathBuf::from(profile);
+    }
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map_or_else(|| PathBuf::from("."), PathBuf::from)

@@ -1,17 +1,41 @@
 #!/usr/bin/env bash
 # moq: MR Moqui tasks, the replacement for the Java Moqui Gradle tasks. moq-completion-protocol-1
 #
-# Run ./moq with no arguments for the task list, and ./moq help <task> for one task. Written for bash 3.2 (macOS /bin/bash)
-# and the BSD and GNU userlands: no associative arrays, ${x,,}, mapfile, sed -i, readlink -f, or tail --pid.
+# Run ./moq with no arguments for the task list, and ./moq help <task> for one task. Written for bash 3.2 (macOS /bin/bash),
+# Git Bash on Windows, and the BSD and GNU userlands: no associative arrays, ${x,,}, mapfile, sed -i, readlink -f, or tail --pid.
 # MOQ_DRY_RUN=1 prints each command that changes something, instead of running it.
 
 set -o pipefail
 
 # ========== globals ==========
 
+MOQ_UNAME=$(uname -s)
+
+# Git Bash (MINGW, MSYS, CYGWIN) is the Windows shell. cargo.exe and moqui.exe need Windows
+# paths; this script keeps MSYS paths until it starts them.
+moq_on_windows() {
+    case $MOQ_UNAME in
+        MINGW*|MSYS*|CYGWIN*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# unpacked is Unix DWARF. Cargo has no per-target profile, so Unix exports it and Windows keeps
+# the compiler default (a PDB beside the binary). `unpacked` is not a Windows option.
+if ! moq_on_windows; then
+    : "${CARGO_PROFILE_DEV_SPLIT_DEBUGINFO:=unpacked}"
+    export CARGO_PROFILE_DEV_SPLIT_DEBUGINFO
+fi
+
 MOQ_CWD=$(pwd)
 
 moq_script=$0
+# moq.cmd passes a drive-letter path. Git Bash's dirname does not treat `\` as a separator.
+if moq_on_windows && command -v cygpath >/dev/null 2>&1; then
+    case $moq_script in
+        [A-Za-z]:*) moq_script=$(cygpath -u "$moq_script") ;;
+    esac
+fi
 while [ -h "$moq_script" ]; do
     moq_link_dir=$(cd -P "$(dirname "$moq_script")" && pwd)
     moq_script=$(readlink "$moq_script")
@@ -20,11 +44,55 @@ done
 ROOT=$(cd -P "$(dirname "$moq_script")" && pwd)
 MOQ="$ROOT/$(basename "$moq_script")"
 
-abs_path() {
+# Absolute: a Unix path, a drive letter (`C:\`, `C:/`), or a UNC path (`\\server\share`).
+is_abs_path() {
     case $1 in
-        /*) printf '%s\n' "$1" ;;
-        *) printf '%s\n' "$MOQ_CWD/$1" ;;
+        /*|[A-Za-z]:*) return 0 ;;
     esac
+    [ "${1:0:2}" = '\\' ]
+}
+
+abs_path() {
+    if is_abs_path "$1"; then
+        printf '%s\n' "$1"
+    else
+        printf '%s\n' "$MOQ_CWD/$1"
+    fi
+}
+
+# A path a Windows program can open. Git Bash keeps MSYS paths (`/d/...`) in this shell.
+win_path() {
+    if moq_on_windows && command -v cygpath >/dev/null 2>&1; then
+        cygpath -w "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
+
+# An argument for moqui.exe. Git Bash converts a bare absolute path when it starts a program, and
+# leaves `location=/d/...` alone because the argument does not start with `/`.
+win_arg() {
+    case $1 in
+        /*) win_path "$1" ;;
+        *=/*)
+            printf '%s=%s\n' "${1%%=*}" "$(win_path "${1#*=}")"
+            ;;
+        *) printf '%s\n' "$1" ;;
+    esac
+}
+
+# The child reads the runtime. On Windows those variables are Windows paths; this shell keeps its own.
+apply_win_env() {
+    MOQUI_RUNTIME=$(win_path "$RUNTIME_DIR")
+    export MOQUI_RUNTIME
+    if [ -n "${MOQUI_FRAMEWORK:-}" ]; then
+        MOQUI_FRAMEWORK=$(win_path "$MOQUI_FRAMEWORK")
+        export MOQUI_FRAMEWORK
+    fi
+    if [ -n "${MOQUI_CONF:-}" ]; then
+        MOQUI_CONF=$(win_path "$MOQUI_CONF")
+        export MOQUI_CONF
+    fi
 }
 
 # The binary reads MOQUI_RUNTIME and MOQUI_FRAMEWORK relative to its working directory, which is ROOT here.
@@ -177,6 +245,47 @@ exec_cmd() {
     exec "$@"
 }
 
+# moqui.exe does not translate an MSYS path in the environment or in `name=/d/...` arguments.
+exec_moqui() {
+    if moq_on_windows; then
+        if dry_run; then
+            show_cmd exec "$@"
+            exit 0
+        fi
+        apply_win_env
+        local arg
+        local -a args
+        args=()
+        for arg in "$@"; do
+            args+=("$(win_arg "$arg")")
+        done
+        exec "${args[@]}"
+    else
+        exec_cmd "$@"
+    fi
+}
+
+run_moqui() {
+    if moq_on_windows; then
+        if dry_run; then
+            show_cmd "$@"
+            return 0
+        fi
+        local arg
+        local -a args
+        args=()
+        for arg in "$@"; do
+            args+=("$(win_arg "$arg")")
+        done
+        (
+            apply_win_env
+            exec "${args[@]}"
+        )
+    else
+        run_cmd "$@"
+    fi
+}
+
 export_var() {
     if dry_run; then
         show_cmd export "$1=$2"
@@ -211,6 +320,20 @@ need_tool() {
     done
 }
 
+# aws-lc-sys 0.46 looks up nasm.exe on PATH. On Windows, download a pinned NASM once
+# (scripts/nasm.sh) and prepend it. A dry run prints the curl and does not download.
+# `moq run` does not call need_cargo, so starting the server does not fetch it.
+ensure_nasm() {
+    [ -z "${MOQ_NASM_CHECKED:-}" ] || return 0
+    MOQ_NASM_CHECKED=1
+    moq_on_windows || return 0
+    local script=$ROOT/scripts/nasm.sh dir
+    [ -f "$script" ] || die "missing $(rel "$script")"
+    dir=$("$script" ensure | tr -d '\r') || die "could not get NASM"
+    [ -n "$dir" ] || return 0
+    export PATH="$dir:$PATH"
+}
+
 # cargo, with sccache as its rustc wrapper when MOQ_SCCACHE=1 asks for it (opt-in), so the worktrees of this repo
 # share compiled dependencies instead of each building them into its own target/ (docs/Build-Test.md, Compile cache).
 # A crate compiled incrementally goes straight to rustc, so incremental builds work as before. A wrapper already
@@ -218,6 +341,7 @@ need_tool() {
 # Asked for without sccache on the PATH, the build goes on without it, with a warning once per moq run.
 need_cargo() {
     need_tool cargo
+    ensure_nasm
     [ -z "${MOQ_SCCACHE_CHECKED:-}" ] || return 0
     MOQ_SCCACHE_CHECKED=1
     case ${MOQ_SCCACHE:-} in 1 | yes | on | true) ;; *) return 0 ;; esac
@@ -1265,7 +1389,11 @@ set_package() {
 }
 
 binary_path() {
-    printf '%s\n' "$ROOT/target/$(package_dir "$1")/moqui"
+    local name=moqui
+    if moq_on_windows; then
+        name=moqui.exe
+    fi
+    printf '%s\n' "$ROOT/target/$(package_dir "$1")/$name"
 }
 
 # cargo build for a package ($1: lite, debug, release, or enterprise), with any more cargo arguments after it. With
@@ -1294,7 +1422,12 @@ build_binary() {
     fi
     local app=$ROOT/target/moqui-app
     write_app_crate "$app" "${addons[@]}"
-    run_cmd cargo build "${package_args[@]}" --manifest-path "$app/Cargo.toml" --target-dir "$ROOT/target" "$@" >&2 \
+    local manifest=$app/Cargo.toml target_dir=$ROOT/target
+    if moq_on_windows; then
+        manifest=$(win_path "$manifest")
+        target_dir=$(win_path "$target_dir")
+    fi
+    run_cmd cargo build "${package_args[@]}" --manifest-path "$manifest" --target-dir "$target_dir" "$@" >&2 \
         || die "cargo build failed"
 }
 
@@ -1476,18 +1609,15 @@ any_binary() {
 # MOQUI_CONF as an absolute path. A relative name is tried in the runtime directory, then from the caller's directory.
 resolve_conf() {
     local conf=$1
-    case $conf in
-        /*) [ -f "$conf" ] || die "conf file $conf not found" ;;
-        *)
-            if [ -f "$RUNTIME_DIR/$conf" ]; then
-                conf=$RUNTIME_DIR/$conf
-            elif [ -f "$MOQ_CWD/$conf" ]; then
-                conf=$MOQ_CWD/$conf
-            else
-                die "conf file $conf not found in $(rel "$RUNTIME_DIR") or $(rel "$MOQ_CWD")"
-            fi
-            ;;
-    esac
+    if is_abs_path "$conf"; then
+        [ -f "$conf" ] || die "conf file $conf not found"
+    elif [ -f "$RUNTIME_DIR/$conf" ]; then
+        conf=$RUNTIME_DIR/$conf
+    elif [ -f "$MOQ_CWD/$conf" ]; then
+        conf=$MOQ_CWD/$conf
+    else
+        die "conf file $conf not found in $(rel "$RUNTIME_DIR") or $(rel "$MOQ_CWD")"
+    fi
     printf '%s\n' "$conf"
 }
 
@@ -2062,7 +2192,7 @@ task_run() {
     local bin
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     apply_run_env ""
-    exec_cmd "$bin" "${OPT_REST[@]}"
+    exec_moqui "$bin" "${OPT_REST[@]}"
 }
 
 task_run_production() {
@@ -2070,7 +2200,7 @@ task_run_production() {
     local bin
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     apply_run_env "$PRODUCTION_CONF"
-    exec_cmd "$bin" "${OPT_REST[@]}"
+    exec_moqui "$bin" "${OPT_REST[@]}"
 }
 
 task_test() {
@@ -2078,7 +2208,7 @@ task_test() {
     local bin
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     apply_run_env ""
-    exec_cmd "$bin" test "${OPT_REST[@]}"
+    exec_moqui "$bin" test "${OPT_REST[@]}"
 }
 
 # The client reads no conf: -p N is the server at http://localhost:N, and -c and -D are not passed on.
@@ -2093,7 +2223,7 @@ task_test_client() {
         esac
     done
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
-    exec_cmd "$bin" test-client "${server[@]}" "${OPT_REST[@]}"
+    exec_moqui "$bin" test-client "${server[@]}" "${OPT_REST[@]}"
 }
 
 # moqui autodoc with the caller's directory as the base: --out defaults to ./autodoc there, and the path options are
@@ -2137,7 +2267,7 @@ task_autodoc() {
     done
     [ -n "$has_out" ] || args+=(--out "$MOQ_CWD/autodoc")
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
-    exec_cmd "$bin" autodoc "${args[@]}"
+    exec_moqui "$bin" autodoc "${args[@]}"
 }
 
 # The suites of test-framework, test-apps and test-all: each runs whatever the last did, then a summary lists them
@@ -2422,7 +2552,7 @@ run_load() {
     fi
     bin=$(moqui_binary "${OPT_PACKAGE:-release}") || exit 1
     apply_run_env "$conf"
-    exec_cmd "$bin" load "${flags[@]}"
+    exec_moqui "$bin" load "${flags[@]}"
 }
 
 task_load() {
@@ -3483,7 +3613,7 @@ task_save_db() {
     dir=$SAVE_DIR/$SAVE_NAME
     run_cmd mkdir -p "$dir" || die "could not make $(rel "$dir")"
     info "Saving the embedded database to $(rel "$dir/moqui.dump")"
-    run_cmd "$bin" save-db "$CLUSTER_DIR" "$dir/moqui.dump.part" || die "save-db failed"
+    run_moqui "$bin" save-db "$CLUSTER_DIR" "$dir/moqui.dump.part" || die "save-db failed"
     run_cmd mv "$dir/moqui.dump.part" "$dir/moqui.dump"
     if [ -z "$SKIP_OPENSEARCH" ] && [ -d "$OS_DIR/data" ]; then
         info "Saving OpenSearch data to $(rel "$dir/opensearch-data.tar.gz")"
@@ -3512,7 +3642,7 @@ task_reload_save() {
     rm_path "$CLUSTER_DIR"
     rm_path "$RUNTIME_DIR/txlog"
     info "Restoring the embedded database from $(rel "$dir/moqui.dump")"
-    run_cmd "$bin" load-save "$CLUSTER_DIR" "$dir/moqui.dump" || die "load-save failed"
+    run_moqui "$bin" load-save "$CLUSTER_DIR" "$dir/moqui.dump" || die "load-save failed"
     if [ -z "$SKIP_OPENSEARCH" ] && { [ -d "$OS_DIR/data" ] || [ -f "$dir/opensearch-data.tar.gz" ]; }; then
         opensearch_pause
         clean_opensearch_data
@@ -4303,7 +4433,7 @@ archive_readme() {
     if [ -n "$commit" ] && [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null)" ]; then
         commit="$commit, with local changes"
     fi
-    version=$("$bin" version 2>/dev/null) || version=
+    version=$(run_moqui "$bin" version 2>/dev/null) || version=
     {
         printf '%s\n\n' "$name"
         printf 'MR Moqui, from ./moq archive on %s%s.\n' "$(date +%Y-%m-%d)" "${commit:+ (commit $commit)}"

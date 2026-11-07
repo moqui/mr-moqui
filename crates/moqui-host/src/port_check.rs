@@ -228,7 +228,8 @@ fn listening_sockets(text: &str, port: u16) -> Vec<Socket> {
 }
 
 /// The processes in `lsof -F pc` output: a `p<pid>` line, then its `c<command>` line.
-#[cfg_attr(target_os = "linux", allow(dead_code))]
+/// Used on Unix other than Linux. Linux reads `/proc`, and Windows has no `lsof`.
+#[cfg_attr(not(all(unix, not(target_os = "linux"))), allow(dead_code))]
 fn lsof_holders(text: &str) -> Vec<Holder> {
     let mut holders: Vec<Holder> = Vec::new();
     for line in text.lines() {
