@@ -24,6 +24,19 @@ use crate::script::text::hash_text;
 use crate::script::{clear_context_stack, push_context_frame, set_context_name};
 
 /// The value of `source` on the oxide engine, an error for an error or a fallback.
+/// This thread's setting at `small-oxide` until dropped, then back to what it was.
+fn small_oxide() -> impl Drop {
+    struct Restore(Option<crate::script::engine::ScriptEngine>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            crate::script::engine::set_thread_script_engine(self.0);
+        }
+    }
+    Restore(crate::script::engine::set_thread_script_engine(Some(
+        crate::script::engine::ScriptEngine::SmallOxide,
+    )))
+}
+
 fn value(source: &str) -> Result<Value, Error> {
     match eval_value(source, hash_text(source), false) {
         Ok(value) => Ok(value),
@@ -355,7 +368,7 @@ fn local_time_is_the_process_zone_as_on_quickjs() -> Result<(), Error> {
 #[test]
 fn what_the_bindings_do_not_have_yet_falls_back() -> Result<(), Error> {
     // a test thread is not run again, so the setting stays: a fallback is small-oxide's, oxide has none
-    crate::script::engine::set_thread_script_engine(Some(crate::script::engine::ScriptEngine::SmallOxide));
+    let _small = small_oxide();
     clear_context_stack();
     push_context_frame();
     let mut set = indexmap::IndexMap::new();
@@ -386,7 +399,7 @@ fn what_the_bindings_do_not_have_yet_falls_back() -> Result<(), Error> {
 #[test]
 fn no_host_call_after_a_fallback() -> Result<(), Error> {
     // a test thread is not run again, so the setting stays: a fallback is small-oxide's, oxide has none
-    crate::script::engine::set_thread_script_engine(Some(crate::script::engine::ScriptEngine::SmallOxide));
+    let _small = small_oxide();
     clear_context_stack();
     push_context_frame();
     let mut set = indexmap::IndexMap::new();
@@ -522,7 +535,7 @@ fn the_oxide_setting_runs_a_whole_runtime() -> Result<(), Error> {
 #[test]
 fn a_changed_copy_of_a_context_value_is_noticed() -> Result<(), Error> {
     // the unflushed expressions and the fallback are small-oxide's
-    crate::script::engine::set_thread_script_engine(Some(crate::script::engine::ScriptEngine::SmallOxide));
+    let _small = small_oxide();
     clear_context_stack();
     push_context_frame();
     set_context_name("items", Value::List(vec![Value::I32(2), Value::I32(1)]))?;
@@ -940,6 +953,26 @@ fn web_handlers_run_on_oxide() -> Result<(), Error> {
     })?;
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
+}
+
+/// A setting changed under a live run does not run the nested script on the live runtime, which is the other
+/// setting's (here a small-oxide runtime, cut for small scripts, for a nested script under `oxide`).
+#[test]
+fn a_setting_changed_under_a_live_run_does_not_use_its_runtime() {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    use quickjs_oxide::engine::api::core::{Scope, Value as JsValue};
+    clear_context_stack();
+    push_context_frame();
+    let _small = small_oxide();
+    let context = super::engine::context_for_tests();
+    let global = context.global_object().unwrap();
+    context
+        .define_function(&global, "underOxide", 0, |scope: &mut Scope<'_>| -> Result<JsValue, _> {
+            let nested = scope.lend(|| with_script_engine(ScriptEngine::Oxide, || crate::script::eval_value("1")));
+            Ok(JsValue::Bool(nested.is_err()))
+        })
+        .unwrap();
+    assert_eq!(value("underOxide()").unwrap(), Value::Bool(true));
 }
 
 /// A top-level render is one run with one deadline: its units run with the depth they are given (back after a unit

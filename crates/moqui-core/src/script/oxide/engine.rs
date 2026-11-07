@@ -404,8 +404,14 @@ pub(super) fn current() -> Option<Rc<OxideEngine>> {
 fn engine() -> Result<Rc<OxideEngine>, Error> {
     if let Some(engine) = current() {
         // a thread whose setting changed (a test, `js_speed`) starts the runtime its setting needs, between scripts
-        if engine.hardened == hardened_for_setting() || run::is_running(EngineTag::Oxide) {
+        if engine.hardened == hardened_for_setting() {
             return Ok(engine);
+        }
+        // a setting changed under a live run: its runtime is the wrong one for this script, and cannot be restarted
+        if run::is_running(EngineTag::Oxide) {
+            return Err(Error::new(
+                "the script_engine setting changed while a quickjs-oxide run is live; the nested script does not run on it",
+            ));
         }
         ENGINE.with(|current| *current.borrow_mut() = None);
     }
