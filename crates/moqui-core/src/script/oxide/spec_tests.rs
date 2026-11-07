@@ -149,6 +149,22 @@ fn mark_then_main(call: &mut Call<'_>) -> Result<Ret, HostError> {
     main_value(call)
 }
 
+/// A lent main run that fails, and the spec run it ends, leave no runtime entered.
+#[test]
+fn a_failing_main_run_under_a_spec_leaves_the_runtimes_entered_balanced() {
+    clear_context_stack();
+    install_global("probeNested", &NESTED).expect("install");
+    assert_eq!(super::super::engine::active_depth(), 0);
+    let err = eval_named_value("probeNested.main('null.x')", "Probe.spec.js").expect_err("throws");
+    assert!(err.to_string().contains("Probe.spec.js"), "{err}");
+    assert_eq!(super::super::engine::active_depth(), 0);
+    assert_eq!(
+        spec("try { probeNested.main('null.x') } catch (e) { 'caught' }"),
+        Value::String("caught".to_string())
+    );
+    assert_eq!(super::super::engine::active_depth(), 0);
+}
+
 /// The spec run's mark is kept through a main run under it, whether that run starts the main runtime (its shims'
 /// host calls are not refused for the mark) or finds it started.
 #[test]

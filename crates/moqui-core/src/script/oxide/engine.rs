@@ -405,20 +405,20 @@ thread_local! {
 }
 
 /// A runtime entered for a run or its start, until dropped: [`current`] is it.
-pub(super) struct Active;
+pub(super) struct Active(Rc<OxideEngine>);
 
 impl Active {
     /// For a run.
     pub(super) fn enter(engine: &Rc<OxideEngine>) -> Self {
         ACTIVE.with(|active| active.borrow_mut().push((Rc::clone(engine), true)));
-        Active
+        Active(Rc::clone(engine))
     }
 
     /// For work on it that is not a run: the rest of its start (its shims' host calls convert in it), a global's
     /// install.
     pub(super) fn starting(engine: &Rc<OxideEngine>) -> Self {
         ACTIVE.with(|active| active.borrow_mut().push((Rc::clone(engine), false)));
-        Active
+        Active(Rc::clone(engine))
     }
 
     /// Whether a runtime other than `engine` has a run in progress on this thread.
@@ -445,9 +445,19 @@ impl Active {
 impl Drop for Active {
     fn drop(&mut self) {
         ACTIVE.with(|active| {
-            active.borrow_mut().pop();
+            let popped = active.borrow_mut().pop();
+            debug_assert!(
+                popped.is_some_and(|(held, _)| Rc::ptr_eq(&held, &self.0)),
+                "the oxide runtimes entered are left in another order than they were entered"
+            );
         });
     }
+}
+
+/// The runtimes entered on this thread now, for the tests.
+#[cfg(test)]
+pub(super) fn active_depth() -> usize {
+    ACTIVE.with(|active| active.borrow().len())
 }
 
 /// This thread's oxide runtime, started if need be. A start that fails is remembered for the thread

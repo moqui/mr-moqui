@@ -400,6 +400,8 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
             binder,
             callbacks,
             thrown: None,
+            // the innermost runtime entered is the one whose script called this function
+            engine: super::engine::current(),
         };
         let flushed = match method.flush {
             FlushBefore::None => Ok(()),
@@ -727,6 +729,8 @@ struct OxideOps<'s, 'a> {
     binder: &'s Binder,
     callbacks: Vec<CallableRef>,
     thrown: Option<RuntimeError>,
+    /// The runtime the call is in.
+    engine: Option<Rc<super::engine::OxideEngine>>,
 }
 
 impl OxideOps<'_, '_> {
@@ -771,12 +775,16 @@ impl EngineOps for OxideOps<'_, '_> {
     }
 
     fn run_pending_job(&mut self) -> Result<bool, HostError> {
-        let Some(engine) = super::engine::current() else {
+        let Some(engine) = self.engine.clone() else {
             return Err(HostError::message("no oxide engine"));
         };
         // the job queue is the runtime's: it runs inside a lend, above this call's frames
         let _engine = EngineCall;
-        match self.scope.lend(|| engine.runtime().run_pending_job()) {
+        let ran = self.scope.lend(|| {
+            debug_assert!(engine.runtime().is_lent(), "a job run on a runtime this call did not lend");
+            engine.runtime().run_pending_job()
+        });
+        match ran {
             Ok(outcome) => Ok(outcome.executed()),
             Err(err) => Err(self.failed(err)),
         }
