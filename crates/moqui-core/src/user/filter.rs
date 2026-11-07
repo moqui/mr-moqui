@@ -98,7 +98,8 @@ fn with_user_context<T>(body: impl FnOnce() -> T) -> T {
             tracing::warn!(error = %err, name = %name, "could not add a user context value for the entity filters");
         }
     }
-    body()
+    // the filter's own expressions read the real ec, also while the static report's full check is on
+    crate::script::with_real_ec(body)
 }
 
 fn extra_conditions(target: &Target<'_>) -> Result<Vec<Condition>, Error> {

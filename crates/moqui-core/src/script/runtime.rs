@@ -176,6 +176,16 @@ impl Drop for WidgetWrap {
     }
 }
 
+/// Run `body`, which evaluates expressions for the framework itself (an entity filter's apply condition and map), with
+/// the real `ec` while the static report's full check is on: they are not the screen's widget expressions. An entity
+/// find in a render (a drop-down's options) evaluates its filters on this thread with the check on, and with the
+/// wrapper a filter's `ec.user.context` was recorded against the screen and closed the find. A script a widget
+/// expression calls into runs on an engine of its own, with the real `ec`, already.
+pub(crate) fn with_real_ec<T>(body: impl FnOnce() -> T) -> T {
+    let _unchecked = WidgetWrap::set(false);
+    body()
+}
+
 /// The real `ec` put back on `globalThis` when dropped, after a widget expression ran with the wrapper.
 struct RealEc<'js> {
     ctx: Ctx<'js>,
@@ -195,26 +205,33 @@ fn set_ec<'js>(ctx: &Ctx<'js>, value: JsValue<'js>) -> rquickjs::Result<()> {
 }
 
 /// The `ec` of the browser host as a wrapper over the real one: the members `plans/archive/QvtServerStatic.md` lists are the real members,
-/// and any other area is reported through `deny` and throws.
+/// and any other area, or any other member of an allowed area (`ec.l10n.getAvailableLocales`), is reported through `deny` and
+/// throws, so the check records it rather than the expression failing on an undefined member. Symbol keys (a coercion's
+/// `Symbol.toPrimitive`) and the probes of a plain object (`toString`, `valueOf` and the other `Object.prototype`
+/// members a template's coercion or a check reads; `then` and `toJSON`, undefined there) are as on a plain object, not
+/// violations.
 const WRAPPED_EC: &str = r#"(function (real, deny) {
-    const pick = (source, names) => {
-        const out = {};
-        names.forEach((name) => { const value = source[name]; out[name] = typeof value === "function" ? value.bind(source) : value; });
-        return out;
-    };
-    const allowed = {
-        l10n: pick(real.l10n, ["localize", "format", "formatCurrency", "formatCurrencyNoSymbol"]),
-        user: pick(real.user, ["userId", "username", "locale", "timeZone", "userAccount", "getPreference"]),
-        resource: pick(real.resource, ["expand", "expandNoL10n"])
-    };
-    return new Proxy(allowed, {
+    const has = (target, key) => Object.prototype.hasOwnProperty.call(target, key);
+    const guard = (target, prefix) => new Proxy(target, {
         get(target, key) {
             if (typeof key === "symbol") return undefined;
-            if (Object.prototype.hasOwnProperty.call(target, key)) return target[key];
-            deny(String(key));
-            throw new Error("ec." + String(key) + " is not available in a server-static qvt screen");
+            if (has(target, key)) return target[key];
+            if (key in Object.prototype) return Object.prototype[key];
+            if (key === "then" || key === "toJSON") return undefined;
+            deny(prefix + String(key));
+            throw new Error("ec." + prefix + String(key) + " is not available in a server-static qvt screen");
         }
     });
+    const area = (name, names) => {
+        const source = real[name], out = {};
+        names.forEach((member) => { const value = source[member]; out[member] = typeof value === "function" ? value.bind(source) : value; });
+        return guard(out, name + ".");
+    };
+    return guard({
+        l10n: area("l10n", ["localize", "format", "formatCurrency", "formatCurrencyNoSymbol"]),
+        user: area("user", ["userId", "username", "locale", "timeZone", "userAccount", "getPreference"]),
+        resource: area("resource", ["expand", "expandNoL10n"])
+    }, "");
 })"#;
 
 /// Run `body`, a widget expression, with the wrapped `ec` when a widget check is on. A violation is recorded when the expression

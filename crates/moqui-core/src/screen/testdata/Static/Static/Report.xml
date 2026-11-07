@@ -14,6 +14,8 @@
         <label text="count ${ec.entity.find('moqui.basic.EnumerationType').count()}"/>
         <label text="sum ${amount.add(tax)}"/>
         <label text="after the violations the render goes on"/>
+        <!-- a member missing from an allowed area: recorded, not undefined -->
+        <label text="locales ${ec.l10n.getAvailableLocales()}"/>
         <link url="." text="Here" link-type="anchor" condition="sri.getScreenUrlInstance() != null"/>
         <label text="Total ${enumListCount}"/>
         <section-iterate name="Each" list="enumList" entry="enumRow"><widgets><label text="${enumRow.enumId}"/></widgets></section-iterate>

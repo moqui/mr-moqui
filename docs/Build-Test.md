@@ -546,22 +546,25 @@ component's `test/client/`, which `moqui test-client` runs against a running ser
 ./moq test mr-mantle                                  # the Maximal binary and the dev conf
 moqui test mr-mantle                                  # every spec, fresh database
 moqui test mr-mantle --db snapshot                    # load once, restore the saved dump on later runs
-moqui test mr-mantle --spec OrderToCashBasicFlow      # one spec and the specs its dependsOn names
+moqui test mr-mantle --spec OrderToCashBasicFlow      # one spec and the specs its dependsOn names, run first
 moqui test mr-mantle --spec OrderToCashBasicFlow --feature "ship Sales Order"
 moqui test mr-mantle --junit build/test-results       # JUnit XML for CI
 moqui test mr-mantle --coverage                       # the services no spec called, per service file
 moqui test mr-mantle --keep --log-level info          # keep the scratch runtime, more on the console
 ```
 
-With no component, every component that has `test/*.spec.js` runs, in load order. A run with no `--spec` leaves out
-each fixture spec that a served client suite of its component names in `server.specs` (`test/client/suite.js`,
+With no component, every component that has `test/*.spec.js` runs, in load order, each component's specs in its
+`suite.js` order and then by name; a spec whose `dependsOn` names a spec later in that order (in its own component or
+another) waits for it, with the specs after it in its `suite.js` chain, and the rest keep their places. A `dependsOn`
+cycle fails the run before any spec runs. So a spec's name need not sort after its fixture's: name the fixture in
+`dependsOn`. A run with no `--spec` leaves out each fixture spec that a served client suite of its component names in `server.specs` (`test/client/suite.js`,
 `acceptance/client/suite.js`), unless a spec that runs depends on it: `moqui test-client --serve` runs it on its
 server, so a plain run would make the same data twice. `./moq test --debug` uses the debug
 binary.
 
 | Option | |
 |---|---|
-| `--spec Name[,Name]` | The specs to run, by file name without `.spec.js` (`component/Name` for one component's, where two have a spec of the name), with the specs their `dependsOn` names, in suite order. A `dependsOn` name the spec's own component lacks is found in the run's other components |
+| `--spec Name[,Name]` | The specs to run, by file name without `.spec.js` (`component/Name` for one component's, where two have a spec of the name), with the specs their `dependsOn` names, each run before the spec that names it. With components named, a name is a spec of those components; a `dependsOn` name the spec's own component lacks is found in the other components of the pool, and its component joins the run (`moqui test mr-boss --spec X` brings the mr-pass specs X depends on) |
 | `--feature text` | Only the features whose names contain the text |
 | `--workers N` | Run the specs in N child processes, each on its own copy of the `--db snapshot` database, which the run makes once first. A component's `suite.js` chain and what a spec's `dependsOn` names stay in one worker; every other spec may run in any worker, on a database without the other specs' writes, so a spec that reads another spec's data names it in `dependsOn`. The summary, JUnit files and feature times are of the whole run. Not with `--serve` |
 | `--acceptance` | The acceptance specs (`acceptance/`) in place of the regression specs; `--spec` and `dependsOn` resolve across both ([The two suites](#the-two-suites)) |
@@ -595,7 +598,7 @@ const effectiveTime = Date.now()
 let cartOrderId                                     // shared between features (Spock's @Shared)
 
 spec({
-    dependsOn: ["OrderProcureToPayBasicFlow"],      // run first when this spec is picked with --spec
+    dependsOn: ["OrderProcureToPayBasicFlow"],      // run first, and added when this spec is picked with --spec
     tempSequences: { start: 55500, banks: { "mantle.order.OrderHeader": 10 } },   // reset after cleanupSpec
     setupSpec() { ec.user.setEffectiveTime(effectiveTime) },                      // reset after the spec
     setup() { ec.artifactExecution.disableAuthz() },
@@ -633,7 +636,9 @@ feature("call the REST API (#requestMethod, #screenPath)", {
 
 Once per file:
 
-- `dependsOn`: the specs that run first when this one is picked with `--spec`.
+- `dependsOn`: the specs that run before this one in any run, and that `--spec` adds when it picks this one, from its
+  own component or, where that has none of the name, another component. A spec that reads another spec's data names it
+  here, rather than relying on file names or load order.
 - `requires`: build features the spec needs, such as `["git"]` (`moqui version` lists a binary's; see
   [Packages](#packages)). In a binary without one of them the spec is reported as skipped, not run.
 - `database: false`: the spec does not use the entity facade. `ec.entity`, `call`, and `screenTest` throw, and the

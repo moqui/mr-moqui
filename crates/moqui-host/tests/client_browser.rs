@@ -95,6 +95,7 @@ fn a_browser_spec_drives_the_gallery_and_its_problems_fail_a_feature() {
         "Browser > allowPageProblems lets a console error pass  PASSED",
         "Browser > allowProblems and takeProblems keep a page problem from failing the feature  PASSED",
         "Browser > a screenshot, a PDF, the viewport and the color scheme  PASSED",
+        "Browser > reduced motion and a page with its own scripts off  PASSED",
     ] {
         line_of(&text, passed);
     }

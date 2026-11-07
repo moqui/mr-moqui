@@ -73,6 +73,54 @@ struct Page {
     reported: HashSet<String>,
     /// The user and password whose kept sign-in it was given, until its first `goto` shows the session still works.
     reused: Option<(String, String)>,
+    /// The media features it emulates.
+    media: Media,
+    /// Whether its own scripts are off (`javaScript: false`).
+    scripts_off: bool,
+}
+
+/// The media features a page emulates (`newPage`, `page.setEmulation`); `None` is the browser's own.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct Media {
+    color_scheme: Option<String>,
+    reduced_motion: Option<String>,
+}
+
+impl Media {
+    /// This media with the `colorScheme` and `reducedMotion` of `args` that are set, each checked; `call` names the
+    /// call in an error.
+    fn with(&self, args: &Value, call: &str) -> Result<Media, String> {
+        let mut media = self.clone();
+        if let Some(scheme) = field(args, "colorScheme").as_str() {
+            if !matches!(scheme, "light" | "dark" | "no-preference") {
+                return Err(format!(
+                    "{call}: colorScheme is light, dark or no-preference, not {scheme}"
+                ));
+            }
+            media.color_scheme = Some(scheme.to_string());
+        }
+        if let Some(motion) = field(args, "reducedMotion").as_str() {
+            if !matches!(motion, "reduce" | "no-preference") {
+                return Err(format!(
+                    "{call}: reducedMotion is reduce or no-preference, not {motion}"
+                ));
+            }
+            media.reduced_motion = Some(motion.to_string());
+        }
+        Ok(media)
+    }
+
+    /// The parameters of one `Emulation.setEmulatedMedia` carrying every feature, since each call replaces the last.
+    fn params(&self) -> Value {
+        let mut features = Vec::new();
+        if let Some(scheme) = &self.color_scheme {
+            features.push(json!({ "name": "prefers-color-scheme", "value": scheme }));
+        }
+        if let Some(motion) = &self.reduced_motion {
+            features.push(json!({ "name": "prefers-reduced-motion", "value": motion }));
+        }
+        json!({ "features": features })
+    }
 }
 
 /// The spec's browser and its pages.
@@ -642,6 +690,28 @@ impl At<'_> {
         )?;
         Ok(())
     }
+
+    /// Emulate the media of `args` (`colorScheme`, `reducedMotion`) over what the page has, in one call.
+    fn set_media(&mut self, args: &Value, call: &str) -> Result<(), String> {
+        let media = self.page.media.with(args, call)?;
+        if media == self.page.media {
+            return Ok(());
+        }
+        self.driver.use_tab(&self.page.session);
+        self.driver.call("Emulation.setEmulatedMedia", media.params())?;
+        self.page.media = media;
+        Ok(())
+    }
+
+    /// Turn the page's own scripts off or on. The harness still evaluates in the page (`evaluate`, the locators), and
+    /// `locate.js` is put in each document by evaluation where the page's scripts no longer run it.
+    fn set_scripts(&mut self, enabled: bool) -> Result<(), String> {
+        self.driver.use_tab(&self.page.session);
+        self.driver
+            .call("Emulation.setScriptExecutionDisabled", json!({ "value": !enabled }))?;
+        self.page.scripts_off = !enabled;
+        Ok(())
+    }
 }
 
 /// The path of a URL, with its query: `/Login?x=1` of `http://host:8080/Login?x=1`.
@@ -819,6 +889,8 @@ impl SpecBrowser {
             problems: Vec::new(),
             reported: HashSet::new(),
             reused: None,
+            media: Media::default(),
+            scripts_off: false,
         };
         self.pages.insert(id, page);
         let opened = self.set_up(id, server, args);
@@ -829,7 +901,17 @@ impl SpecBrowser {
         opened
     }
 
+    /// The viewport, the media and the sign-in of a new page; then, with `javaScript: false`, its own scripts off, after
+    /// the sign-in so that the form at `/Login` works as it does for a user.
     fn set_up(&mut self, id: u64, server: &Server, args: &Value) -> Result<(), String> {
+        self.set_up_signed_in(id, server, args)?;
+        if field(args, "javaScript") == false {
+            self.at(&json!({ "page": id }))?.set_scripts(false)?;
+        }
+        Ok(())
+    }
+
+    fn set_up_signed_in(&mut self, id: u64, server: &Server, args: &Value) -> Result<(), String> {
         let sign_in = field(args, "user").as_str().map(|user| {
             let password = field(args, "password").as_str().unwrap_or("moqui");
             (user.to_string(), password.to_string())
@@ -840,17 +922,7 @@ impl SpecBrowser {
         let width = viewport["width"].as_f64().unwrap_or(f64::from(VIEWPORT.0));
         let height = viewport["height"].as_f64().unwrap_or(f64::from(VIEWPORT.1));
         at.set_viewport(width, height)?;
-        if let Some(scheme) = field(args, "colorScheme").as_str() {
-            if !matches!(scheme, "light" | "dark" | "no-preference") {
-                return Err(format!(
-                    "newPage: colorScheme is light, dark or no-preference, not {scheme}"
-                ));
-            }
-            at.driver.call(
-                "Emulation.setEmulatedMedia",
-                json!({ "features": [{ "name": "prefers-color-scheme", "value": scheme }] }),
-            )?;
-        }
+        at.set_media(args, "newPage")?;
         let Some((user, password)) = sign_in else {
             return Ok(());
         };
@@ -880,7 +952,16 @@ impl SpecBrowser {
         if !landed.starts_with("/Login") || text_field(args, "path").starts_with("/Login") {
             return Ok(went);
         }
-        at.login(server, &user, &password)?;
+        // the form at /Login signs in with the page's scripts on, as at newPage
+        let scripts_off = at.page.scripts_off;
+        if scripts_off {
+            at.set_scripts(true)?;
+        }
+        let signed_in = at.login(server, &user, &password);
+        if scripts_off {
+            at.set_scripts(false)?;
+        }
+        signed_in?;
         at.gather();
         at.page.problems.clear();
         let cookies = at.cookies()?;
@@ -1077,6 +1158,13 @@ impl SpecBrowser {
                 at.set_viewport(width, height)?;
                 Ok(Value::Null)
             }
+            "page.setEmulation" => {
+                at.set_media(args, "setEmulation")?;
+                if let Some(enabled) = field(args, "javaScript").as_bool() {
+                    at.set_scripts(enabled)?;
+                }
+                Ok(Value::Null)
+            }
             "locator.act" => at.act(args),
             "locator.read" => at.read_locator(args),
             "locator.waitFor" => at.wait_locator(args),
@@ -1183,6 +1271,33 @@ mod tests {
         assert_eq!(url_path("http://host:8080"), "/");
         assert_eq!(url_path("/apps/x"), "/apps/x");
         assert_eq!(url_path(""), "");
+    }
+
+    /// Color scheme and reduced motion go in one `setEmulatedMedia`, since each call replaces the features of the last;
+    /// a later call keeps what it does not name; a value outside the feature's is refused.
+    #[test]
+    fn emulated_media_carries_both_features() {
+        let media = Media::default()
+            .with(&json!({ "colorScheme": "dark", "reducedMotion": null }), "newPage")
+            .unwrap();
+        assert_eq!(
+            media.params(),
+            json!({ "features": [{ "name": "prefers-color-scheme", "value": "dark" }] })
+        );
+        let media = media
+            .with(&json!({ "reducedMotion": "reduce" }), "setEmulation")
+            .unwrap();
+        assert_eq!(
+            media.params(),
+            json!({ "features": [
+                { "name": "prefers-color-scheme", "value": "dark" },
+                { "name": "prefers-reduced-motion", "value": "reduce" },
+            ] })
+        );
+        assert_eq!(Media::default().params(), json!({ "features": [] }));
+        let err = media.with(&json!({ "reducedMotion": "less" }), "newPage").unwrap_err();
+        assert_eq!(err, "newPage: reducedMotion is reduce or no-preference, not less");
+        assert!(media.with(&json!({ "colorScheme": "blue" }), "setEmulation").is_err());
     }
 
     #[test]

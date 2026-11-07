@@ -783,3 +783,40 @@ fn running_out_of_memory_frees_the_engine_caches() -> Result<(), Error> {
     assert!(eval_condition("1 + 1 === 2")?, "the engine runs again");
     Ok(())
 }
+
+/// The wrapped `ec` of the static report's full check (Commerce F172): a coercion, JSON and a promise's probe of an area
+/// read it as a plain object, not as violations; a member not on the list throws; an expression the framework evaluates
+/// for itself while the check is on (an entity filter's condition) reads the real `ec`; and a script a checked
+/// expression calls into runs on an engine of its own, with the real `ec`.
+#[test]
+fn the_wrapped_ec_takes_probes_and_leaves_the_framework_the_real_one() -> Result<(), Error> {
+    clear_context_stack();
+    with_ctx(|ctx| {
+        let read = rquickjs::Function::new(ctx.clone(), || -> rquickjs::Result<String> {
+            Ok(eval_value("typeof ec.entity")
+                .map(|value| value.as_str().unwrap_or_default().to_string())
+                .unwrap_or_else(|err| err.to_string()))
+        })
+        .map_err(js_error)?;
+        ctx.globals()
+            .prop("__nestedRead", rquickjs::object::Property::from(read).configurable())
+            .map_err(js_error)
+    })?;
+    let _wrap = super::WidgetWrap::set(true);
+    assert_eq!(
+        expand("${ec.user}|${JSON.stringify(ec.l10n)}|${typeof ec.user.then}|${ec.l10n.valueOf() === ec.l10n}")?,
+        "[object Object]|{}|undefined|true"
+    );
+    let err = eval_value("ec.user.context").unwrap_err().to_string();
+    assert!(err.contains("ec.user.context is not available"), "{err}");
+    assert!(super::with_real_ec(|| eval_condition(
+        "typeof ec.user.context === 'object'"
+    ))?);
+    assert_eq!(
+        eval_value(
+            "__nestedRead() + '|' + (() => { try { ec.entity; return 'real' } catch (e) { return 'wrapped' } })()"
+        )?,
+        Value::string("object|wrapped")
+    );
+    Ok(())
+}

@@ -192,6 +192,138 @@ fn depends_on_is_found_in_the_other_components_of_the_run() {
     assert_eq!(both.len(), 2);
 }
 
+/// A run takes its specs in the components' order and each one's own, except that a spec waits for what its dependsOn
+/// names, in its own component or a later one (Commerce F106: a mr-boss spec on mr-pass specs, and a spec named to sort
+/// before its fixture); a cycle is an error.
+#[test]
+fn a_run_orders_specs_after_their_depends_on() {
+    let component = |name: &str, specs: Vec<SpecFile>| TestComponent {
+        name: name.to_string(),
+        dir: PathBuf::from(name),
+        specs,
+    };
+    let components = vec![
+        component(
+            "boss",
+            vec![
+                spec("Access", "spec({})"),
+                spec("CommerceOrders", "spec({ dependsOn: ['ShopOrders'] })"),
+                spec("Stores", "spec({})"),
+            ],
+        ),
+        component(
+            "pass",
+            vec![
+                spec("CommerceWalk", "spec({ dependsOn: ['ShopFixtures'] })"),
+                spec("ShopFixtures", "spec({})"),
+                spec("ShopOrders", "spec({ dependsOn: ['ShopFixtures'] })"),
+                spec("Theme", "spec({ dependsOn: ['NotInTheRun'] })"),
+            ],
+        ),
+    ];
+    let order: Vec<String> = run_order(&components, false)
+        .unwrap()
+        .into_iter()
+        .map(|(c, s)| format!("{}/{}", components[c].name, components[c].specs[s].name))
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            "boss/Access",
+            "boss/Stores",
+            "pass/ShopFixtures",
+            "pass/CommerceWalk",
+            "pass/ShopOrders",
+            "boss/CommerceOrders",
+            "pass/Theme",
+        ]
+    );
+    let cycle = vec![component(
+        "c",
+        vec![
+            spec("Free", "spec({})"),
+            spec("A", "spec({ dependsOn: ['B'] })"),
+            spec("B", "spec({ dependsOn: ['A'] })"),
+        ],
+    )];
+    let err = run_order(&cycle, false).unwrap_err().to_string();
+    assert!(
+        err.contains("cycle") && err.contains("c/A, c/B") && !err.contains("Free"),
+        "{err}"
+    );
+}
+
+/// A spec of a suite.js chain that waits for its dependsOn holds back the specs after it in the chain, which may rely on
+/// its data; the specs outside the chain keep their place.
+#[test]
+fn a_waiting_spec_holds_back_its_suite_chain() {
+    let dir = std::env::temp_dir().join(format!("moqui-test-run-order-chain-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("test")).unwrap();
+    std::fs::write(dir.join("test/suite.js"), r#"suite(["A", "B", "C"])"#).unwrap();
+    let components = vec![
+        TestComponent {
+            name: "app".to_string(),
+            dir: dir.clone(),
+            specs: vec![
+                spec("A", "spec({})"),
+                spec("B", "spec({ dependsOn: ['Fixtures'] })"),
+                spec("C", "spec({})"),
+                spec("Other", "spec({})"),
+            ],
+        },
+        TestComponent {
+            name: "base".to_string(),
+            dir: PathBuf::from("base"),
+            specs: vec![spec("Fixtures", "spec({})")],
+        },
+    ];
+    let order: Vec<String> = run_order(&components, false)
+        .unwrap()
+        .into_iter()
+        .map(|(c, s)| components[c].specs[s].name.clone())
+        .collect();
+    std::fs::remove_dir_all(&dir).ok();
+    assert_eq!(order, vec!["A", "Other", "Fixtures", "B", "C"]);
+}
+
+/// `--spec` with components named: an unqualified name is that of the named components only, and its dependsOn may
+/// reach any component of the pool.
+#[test]
+fn spec_names_are_qualified_by_the_components_named() {
+    let component = |name: &str, specs: Vec<SpecFile>| TestComponent {
+        name: name.to_string(),
+        dir: PathBuf::from(name),
+        specs,
+    };
+    let pool = vec![
+        component("pass", vec![spec("ShopOrders", "spec({})"), spec("Shared", "spec({})")]),
+        component(
+            "boss",
+            vec![
+                spec("Shared", "spec({})"),
+                spec("CommerceOrders", "spec({ dependsOn: ['ShopOrders'] })"),
+            ],
+        ),
+    ];
+    let named = vec!["boss".to_string()];
+    let names = qualify_spec_names(&pool, &named, &["CommerceOrders".to_string(), "Shared".to_string()]).unwrap();
+    assert_eq!(names, vec!["boss/CommerceOrders", "boss/Shared"]);
+    let picked = select_across(&pool, &names).unwrap();
+    let picked: Vec<(&str, usize)> = picked.iter().map(|c| (c.name.as_str(), c.specs.len())).collect();
+    assert_eq!(picked, vec![("pass", 1), ("boss", 2)]);
+    let err = qualify_spec_names(&pool, &named, &["ShopOrders".to_string()])
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains("none of the components named (boss) has a spec ShopOrders"),
+        "{err}"
+    );
+    assert_eq!(
+        qualify_spec_names(&pool, &[], &["Shared".to_string()]).unwrap(),
+        vec!["Shared"]
+    );
+}
+
 #[test]
 fn serve_args_parse() {
     let args = |list: &[&str]| list.iter().map(|arg| (*arg).to_string()).collect::<Vec<String>>();
