@@ -188,6 +188,11 @@ impl Compiled {
         self.fixed_bytes + self.transient.bytes()
     }
 
+    /// Static texts and their source bytes, transient texts and theirs, for the heap log.
+    pub(super) fn split(&self) -> (usize, usize, usize, usize) {
+        (self.fixed.len(), self.fixed_bytes, self.transient.len(), self.transient.bytes())
+    }
+
     /// Texts compiled by this runtime (not those loaded from an image).
     pub(super) fn compiles(&self) -> u64 {
         self.compiles

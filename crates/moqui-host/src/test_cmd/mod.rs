@@ -1299,6 +1299,7 @@ fn write_script_stats() {
             "heap_bytes_max": stats.oxide_heap_bytes_max,
             "compiled": stats.oxide_compiled,
             "poisoned": stats.oxide_poisoned,
+            "restarted": stats.oxide_restarted,
             "images_made": stats.oxide_images_made,
             "image_loads": stats.oxide_image_loads,
             "image_failures": stats.oxide_image_failures,

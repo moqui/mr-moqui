@@ -39,9 +39,11 @@ use crate::screen::form::FormInstance;
 use crate::screen::generate::{self, Unit, UnitRequest};
 use crate::screen::sri::Runner;
 
-/// Compiled unit functions a runtime keeps, and their source bytes, as QuickJS's engine keeps them.
-pub(super) const MAX_UNITS: usize = 4096;
-pub(super) const MAX_UNIT_BYTES: usize = 8 * 1024 * 1024;
+/// Compiled unit functions a runtime keeps, and their source bytes. Fewer than QuickJS's engine keeps (4096 and 8 MiB):
+/// past the static code store a unit's code is on the runtime's heap, about 3.5 bytes for each byte of its source (the
+/// app suites' main thread held 25 MB of code for 7 MB of units), under the same 64 MiB cap.
+pub(super) const MAX_UNITS: usize = 1024;
+pub(super) const MAX_UNIT_BYTES: usize = 2 * 1024 * 1024;
 
 /// The runner of the thread's oxide runtime.
 pub(crate) struct OxideRunner;

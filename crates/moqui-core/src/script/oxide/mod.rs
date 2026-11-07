@@ -44,10 +44,12 @@ pub(crate) mod walker;
 
 pub(crate) use engine::{
     start_failed_recently, DID_NOT_START,
-    engine_memory, eval_condition, eval_map, eval_text, eval_value, is_lent, release_for_quickjs, run_actions, run_script, stats,
+    engine_memory, eval_condition, heap_line, eval_map, eval_text, eval_value, is_lent, release_for_quickjs, run_actions, run_script, stats,
     thread_heap_peaks, Outcome,
 };
 pub(crate) use reads::reads_are_held;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod memory_tests;

@@ -347,6 +347,8 @@ pub struct EngineStats {
     pub oxide_compiled: u64,
     /// Oxide runtimes dropped after a host function panicked.
     pub oxide_poisoned: u64,
+    /// Runtimes dropped and started again because their heap stayed near the cap with their caches gone.
+    pub oxide_restarted: u64,
     /// The process's oxide code images: made, loaded by a runtime instead of compiled (each a parse avoided), failed,
     /// and the bytes kept.
     pub oxide_images_made: u64,
@@ -385,6 +387,7 @@ pub fn engine_stats() -> EngineStats {
         oxide_heap_peaks: crate::script::oxide::thread_heap_peaks(),
         oxide_compiled: oxide.compiled,
         oxide_poisoned: oxide.poisoned,
+        oxide_restarted: oxide.restarted,
         oxide_images_made: oxide.images.made,
         oxide_image_loads: oxide.images.loads,
         oxide_image_failures: oxide.images.failed,
@@ -695,6 +698,12 @@ pub struct EngineMemory {
     pub oxide_code_bytes: usize,
     pub oxide_compiled_scripts: usize,
     pub oxide_compiled_script_bytes: usize,
+}
+
+/// One line of this thread's quickjs-oxide heaps after a collection (the main runtime's and the spec runtime's), for a
+/// per-spec heap log.
+pub fn oxide_heap_line() -> String {
+    crate::script::oxide::heap_line()
 }
 
 /// [`EngineMemory`] of this thread's engines, after a collection when `collect`. Not while a script runs on the thread.

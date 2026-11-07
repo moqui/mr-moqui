@@ -50,6 +50,14 @@ const MIN_HEAP: usize = 512 * 1024;
 /// a sample every 32 runs cost an expression about twice its time).
 const HEAP_SAMPLE_RUNS: u64 = 32;
 const HEAP_SAMPLE_EVERY: std::time::Duration = std::time::Duration::from_millis(250);
+/// The cache pressure check, as QuickJS's (`runtime.rs`, `CACHE_HEAP_PRESSURE`, three quarters of its limit) but on the
+/// reserved bytes the cap compares against: when a sample at the end of an outermost run finds them past this, the
+/// runtime collects, and if they are still past it its caches go (the transient code, the screen units, the property
+/// keys) and it collects again. The heap's arenas give memory back only from their ends, so once a run has made many
+/// values the reserved bytes stay two to three times the live ones (the app suites' main thread: 45 MB for 15 MB); a
+/// runtime still past this after its caches went is dropped and started again on the next script, rather than failing
+/// every later script with `out of memory` at the cap.
+const PRESSURE_BYTES: usize = HEAP_CAP / 2;
 
 /// What the runtime cuts when it starts for small scripts (`rquickjs` and `small-oxide`), behind the static check
 /// (`script::check`): a computed key it cannot read
@@ -187,6 +195,8 @@ pub(super) struct OxideEngine {
     modules: RefCell<std::collections::HashMap<String, (Arc<str>, Value)>>,
     /// Property keys of the map keys converted ([`OxideEngine::key`]): a key made once interns once.
     keys: RefCell<std::collections::HashMap<Box<str>, quickjs_oxide::engine::api::core::PropertyKey>>,
+    /// Set when the runtime is dropped to start again on the same thread ([`PRESSURE_BYTES`]): the thread's peak stays.
+    restarting: Cell<bool>,
 }
 
 /// Map keys kept as property keys, at most; past it the cache starts again. Only a key of at most [`MAX_KEY_BYTES`] is
@@ -205,6 +215,7 @@ mod counts {
     pub(super) static HEAP_MAX: AtomicUsize = AtomicUsize::new(0);
     pub(super) static COMPILED: AtomicU64 = AtomicU64::new(0);
     pub(super) static POISONED: AtomicU64 = AtomicU64::new(0);
+    pub(super) static RESTARTED: AtomicU64 = AtomicU64::new(0);
 }
 
 /// The most reserved heap bytes each thread's oxide runtime reached, by thread, with the thread's name (or id), for the
@@ -245,6 +256,8 @@ pub(crate) struct OxideStats {
     pub(crate) compiled: u64,
     /// Runtimes dropped after a host function panicked.
     pub(crate) poisoned: u64,
+    /// Runtimes dropped and started again because their heap stayed past [`PRESSURE_BYTES`] with their caches gone.
+    pub(crate) restarted: u64,
     /// The process's code images ([`super::compiled`]).
     pub(crate) images: super::compiled::ImageStats,
 }
@@ -258,6 +271,7 @@ pub(crate) fn stats() -> OxideStats {
         heap_bytes_max: counts::HEAP_MAX.load(Relaxed),
         compiled: counts::COMPILED.load(Relaxed),
         poisoned: counts::POISONED.load(Relaxed),
+        restarted: counts::RESTARTED.load(Relaxed),
         images: super::compiled::image_stats(),
     }
 }
@@ -302,6 +316,54 @@ pub(crate) fn engine_memory(collect: bool) -> OxideMemory {
         memory.compiled_script_bytes += compiled.bytes();
     }
     memory
+}
+
+/// One line of this thread's oxide runtimes' heaps (the main one and the spec runtime), after a collection, for a
+/// per-spec heap log (`MOQUI_SCRIPT_HEAP_LOG`). Empty while a script runs on the thread.
+pub(crate) fn heap_line() -> String {
+    if run::is_running(EngineTag::Oxide) {
+        return String::new();
+    }
+    let mut line = String::new();
+    let engines = [("main", ENGINE.with(|engine| engine.borrow().clone())), ("spec", super::spec::current())];
+    for (name, engine) in engines {
+        let Some(engine) = engine else { continue };
+        let _ = engine.runtime.run_gc();
+        let Ok(report) = engine.runtime.memory_report() else { continue };
+        use std::fmt::Write;
+        let _ = write!(
+            line,
+            "{name}: reserved={} live={} dyncode={} atoms={} pinned={} ic={} tables={} compiled={:?} units={}/{} modules={} keys={} entities={} |",
+            report.reserved_bytes(),
+            report.gc.live_bytes,
+            report.code.dynamic_bytes,
+            report.atoms,
+            report.pinned_atoms,
+            report.ic_entries,
+            report.table_bytes,
+            engine.compiled.borrow().split(),
+            engine.units.borrow().len(),
+            engine.units.borrow().bytes(),
+            engine.modules.borrow().len(),
+            engine.keys.borrow().len(),
+            engine.entities.borrow().len(),
+        );
+        for (arena, held) in report.arenas() {
+            let _ = write!(line, " {arena}={}/{}/{}", held.live, held.used_bytes, held.reserved_bytes);
+        }
+        let _ = write!(
+            line,
+            " values={}/{}/{} rope={} regexp={} budget={} threshold={}; ",
+            report.values.used_slots,
+            report.values.capacity_slots,
+            report.values.reserved_bytes,
+            report.rope_bytes,
+            report.code.regexp_bytes,
+            report.budget,
+            report.threshold
+        );
+    }
+    line
 }
 
 thread_local! {
@@ -710,6 +772,7 @@ impl OxideEngine {
             unit_runtimes: RefCell::default(),
             unit_depth: Cell::new(0),
             keys: RefCell::default(),
+            restarting: Cell::new(false),
         }, builtins))
     }
 
@@ -865,19 +928,61 @@ impl OxideEngine {
         }
         self.sampled.set(Some(now));
         if let Ok(report) = self.runtime.memory_report() {
-            let now = report.reserved_bytes();
-            let before = self.heap.replace(now);
-            let total = if now >= before {
-                counts::HEAP.fetch_add(now - before, Relaxed) + (now - before)
-            } else {
-                counts::HEAP.fetch_sub(before - now, Relaxed) - (before - now)
-            };
-            counts::HEAP_MAX.fetch_max(total, Relaxed);
-            if now > self.heap_peak.get() {
-                self.heap_peak.set(now);
-                note_thread_peak(now);
+            self.note_heap(report.reserved_bytes());
+        }
+    }
+
+    /// Count `now` reserved bytes as this runtime's in the stats.
+    fn note_heap(&self, now: usize) {
+        let before = self.heap.replace(now);
+        let total = if now >= before {
+            counts::HEAP.fetch_add(now - before, Relaxed) + (now - before)
+        } else {
+            counts::HEAP.fetch_sub(before - now, Relaxed) - (before - now)
+        };
+        counts::HEAP_MAX.fetch_max(total, Relaxed);
+        if now > self.heap_peak.get() {
+            self.heap_peak.set(now);
+            note_thread_peak(now);
+        }
+    }
+
+    /// Let the caches' code and objects go and collect: the transient code, the screen units' functions and the
+    /// property keys. The static code stays in the runtime whatever the caches hold.
+    pub(super) fn shed(&self) {
+        if let Ok(mut compiled) = self.compiled.try_borrow_mut() {
+            compiled.clear_transient();
+        }
+        if let Ok(mut units) = self.units.try_borrow_mut() {
+            units.clear();
+        }
+        if let Ok(mut keys) = self.keys.try_borrow_mut() {
+            keys.clear();
+        }
+        let _ = self.runtime.run_gc();
+    }
+
+    /// The reserved bytes now, sampled for the stats.
+    fn reserved_now(&self) -> Option<usize> {
+        let reserved = self.runtime.memory_report().ok()?.reserved_bytes();
+        self.note_heap(reserved);
+        Some(reserved)
+    }
+
+    /// At the end of an outermost run: the cache pressure check ([`PRESSURE_BYTES`]) on the last sample, or at once
+    /// after the run ran out of memory. Whether the runtime is still past it with its caches gone, so is to be dropped.
+    fn relieve(&self, out_of_memory: bool) -> bool {
+        if !out_of_memory && self.heap.get() < PRESSURE_BYTES {
+            return false;
+        }
+        if !out_of_memory {
+            let _ = self.runtime.run_gc();
+            if self.reserved_now().is_some_and(|reserved| reserved < PRESSURE_BYTES) {
+                return false;
             }
         }
+        self.shed();
+        self.reserved_now().is_none_or(|reserved| reserved >= PRESSURE_BYTES)
     }
 }
 
@@ -885,8 +990,10 @@ impl Drop for OxideEngine {
     fn drop(&mut self) {
         counts::LIVE.fetch_sub(1, Relaxed);
         counts::HEAP.fetch_sub(self.heap.get(), Relaxed);
-        // the runtime is dropped on its own thread: its thread's peak goes with it
-        moqui_lib::sync::lock(&THREAD_PEAKS).remove(&std::thread::current().id());
+        // the runtime is dropped on its own thread: its thread's peak goes with it, unless one starts again there
+        if !self.restarting.get() {
+            moqui_lib::sync::lock(&THREAD_PEAKS).remove(&std::thread::current().id());
+        }
     }
 }
 
@@ -1073,7 +1180,15 @@ fn run<T>(
     finish: impl FnOnce(&mut Context, &OxideEngine, Value) -> Result<T, Conv>,
 ) -> Result<T, Outcome> {
     with_run(writes, source, |engine, context, note| {
-        match engine.compile(source, hash, file_name).and_then(|compiled| context.execute(&compiled)) {
+        let compiled = match engine.compile(source, hash, file_name) {
+            // nothing of the script has run: its compile is tried again once the caches went
+            Err(RuntimeError::OutOfMemory) => {
+                engine.shed();
+                engine.compile(source, hash, file_name)
+            }
+            compiled => compiled,
+        };
+        match compiled.and_then(|compiled| context.execute(&compiled)) {
             Ok(value) => finish(context, engine, value).map_err(|conv| {
                 if let Conv::Js(err) = &conv {
                     note(err);
@@ -1133,6 +1248,8 @@ pub(super) fn with_run<T>(
         out_of_memory |= matches!(err, RuntimeError::OutOfMemory);
     };
     let mut outcome = body(&engine, &mut context, &mut note);
+    // a script that caught the engine's `out of memory` and threw it on, or a screen unit's error, ran out too
+    out_of_memory |= matches!(&outcome, Err(Outcome::Error(err)) if err.message().contains("out of memory"));
     if FALLBACK.with(Cell::get).is_none() && !poisoned {
         if writes {
             // as QuickJS does at a script's end, whether it ended well or not
@@ -1152,11 +1269,24 @@ pub(super) fn with_run<T>(
         tracing::error!(script = %what, "a host function panicked in quickjs-oxide; the runtime is dropped and restarts on the next script");
         ENGINE.with(|current| *current.borrow_mut() = None);
     } else if !poisoned {
-        if out_of_memory {
-            engine.compiled.borrow_mut().clear_transient();
-            let _ = engine.runtime.run_gc();
+        if out_of_memory && nested {
+            // the caches go, so the next script on the thread has room; this one fails alone (the outermost run's
+            // pressure check below does the same)
+            engine.shed();
         }
         engine.sample_heap();
+        // the pressure check of the outermost run: a runtime its caches' going leaves past it starts again
+        if !nested && engine.relieve(out_of_memory) {
+            tracing::info!(script = %what, "the quickjs-oxide runtime's heap stays near its cap with its caches gone; it is dropped and restarts on the next script");
+            counts::RESTARTED.fetch_add(1, Relaxed);
+            engine.restarting.set(true);
+            ENGINE.with(|current| {
+                let mut current = current.borrow_mut();
+                if current.as_ref().is_some_and(|held| Rc::ptr_eq(held, &engine)) {
+                    *current = None;
+                }
+            });
+        }
     }
     match fallback {
         Some(reason) => Err(Outcome::Fallback(reason)),

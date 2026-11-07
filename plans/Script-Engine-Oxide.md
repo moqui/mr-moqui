@@ -430,6 +430,18 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
   a text on QuickJS.
 - Error columns: oxide places a call at its `(`, QuickJS at the callee's name.
 
+### Memory under `oxide` (Phase 3)
+
+The app suites under `oxide` ran the main thread's runtime into its 64 MiB cap and failed every later script with
+`out of memory` (2604 of 3306 features passed). The screen unit cache kept QuickJS's bounds (4096 units, 8 MiB of
+source), but once the static code store is full (4 MiB of source, mostly units) a unit's code is on the heap, about 3.5
+bytes for each byte of source: 25 MB of code for 7 MB of units. And the heap's arenas give memory back only from their
+ends, so the reserved bytes, which the cap counts, stay two to three times the live ones after a run that made many
+values. Now the unit cache keeps 1024 units and 2 MiB of source; at half the cap the runtime collects, then lets its
+caches go, then starts again on the next script (`restarted` in the stats); and a script that runs out fails alone, its
+compile tried again once the caches went. `MOQUI_SCRIPT_HEAP_LOG=<file>` appends a line of the thread's runtimes'
+heaps after each spec. The fork could give back interior free space (a compacting sweep, or arenas in chunks).
+
 ## 8. Testing
 
 - **Unit tests for the bindings.** The tests in `script/` that check binding behaviour (conversions, tracked values,

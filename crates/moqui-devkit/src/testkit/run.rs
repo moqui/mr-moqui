@@ -467,7 +467,24 @@ pub fn run_spec(spec: &SpecFile, options: &RunOptions, on_case: &mut dyn FnMut(&
     }
     finish();
     result.duration = started.elapsed();
+    heap_log(&spec.name);
     result
+}
+
+/// With `MOQUI_SCRIPT_HEAP_LOG` set, a line of this thread's quickjs-oxide heaps appended to that file after each spec.
+fn heap_log(spec: &str) {
+    let path = moqui_lib::env::get_prop_or_env("MOQUI_SCRIPT_HEAP_LOG");
+    if path.is_empty() {
+        return;
+    }
+    let line = moqui_core::script::oxide_heap_line();
+    if line.is_empty() {
+        return;
+    }
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(file, "{} {spec} {line}", std::process::id());
+    }
 }
 
 /// Run one `browser.runInPage` and emit each of its `test()` calls. The spec itself is not a case.
