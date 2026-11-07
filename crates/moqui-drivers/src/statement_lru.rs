@@ -25,7 +25,9 @@ use std::sync::Arc;
 pub(crate) struct StatementLru<S> {
     cap: usize,
     tick: u64,
-    entries: HashMap<Arc<str>, (S, Cell<u64>)>,
+    /// By the SQL text, hashed with foldhash: each statement looks its text up, and SipHash of it was 0.7% of a Mantle
+    /// service call's time.
+    entries: HashMap<Arc<str>, (S, Cell<u64>), foldhash::fast::RandomState>,
     order: VecDeque<(Arc<str>, u64)>,
 }
 
@@ -35,7 +37,7 @@ impl<S> StatementLru<S> {
         Self {
             cap: cap.max(1),
             tick: 0,
-            entries: HashMap::new(),
+            entries: HashMap::default(),
             order: VecDeque::new(),
         }
     }

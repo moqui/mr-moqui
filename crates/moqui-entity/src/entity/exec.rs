@@ -378,8 +378,8 @@ fn trace<T>(sql: &str, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Err
 pub fn redact_sql(sql: &str) -> String {
     thread_local! {
         /// This thread's redactions by SQL text: a statement traced again is not scanned again. Cleared past 1,024.
-        static REDACTED: std::cell::RefCell<std::collections::HashMap<Box<str>, Box<str>>> =
-            std::cell::RefCell::new(std::collections::HashMap::new());
+        static REDACTED: std::cell::RefCell<std::collections::HashMap<Box<str>, Box<str>, foldhash::fast::RandomState>> =
+            std::cell::RefCell::new(std::collections::HashMap::default());
     }
     REDACTED.with(|kept| {
         if let Some(redacted) = kept.borrow().get(sql) {

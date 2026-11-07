@@ -25,7 +25,7 @@
 //! rquickjs does not wrap these two calls for scripts, so they are made through `rquickjs::qjs`.
 
 use std::ffi::CString;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{Hash, Hasher};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
@@ -76,16 +76,22 @@ impl ScriptText {
     pub(crate) fn text(&self) -> &str {
         &self.text
     }
+
+    /// The text, shared.
+    pub(crate) fn shared_text(&self) -> &Arc<str> {
+        &self.text
+    }
 }
 
 fn hash_text(text: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    text.hash(&mut hasher);
-    hasher.finish()
+    use std::hash::BuildHasher as _;
+    // foldhash: a script's text is hashed at each lookup that has no kept hash, and SipHash of it showed in profiles
+    foldhash::fast::FixedState::default().hash_one(text)
 }
 
 fn hash_of(text_hash: u64, file_name: &str) -> u64 {
-    let mut hasher = DefaultHasher::new();
+    use std::hash::BuildHasher as _;
+    let mut hasher = foldhash::fast::FixedState::default().build_hasher();
     text_hash.hash(&mut hasher);
     file_name.hash(&mut hasher);
     hasher.finish()

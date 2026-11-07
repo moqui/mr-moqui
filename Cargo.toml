@@ -125,6 +125,8 @@ regex = "1"
 # serde is already in the crate's default set. Named so it stays if defaults change.
 rust_decimal = { version = "1", features = ["serde"] }
 indexmap = "2"
+# A fast hash for the internal maps keyed by SQL or script text and frame tokens. Already in the tree under hashbrown.
+foldhash = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["arbitrary_precision"] }
 # Signer stand-ins. Stay in RustCrypto (or aws-lc). No OpenSSL.

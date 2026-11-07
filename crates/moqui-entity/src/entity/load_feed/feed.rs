@@ -58,6 +58,18 @@ pub(super) struct Touch {
 }
 
 impl Touch {
+    /// A touch recorded without values, as one made before the feed configuration targeted the entity.
+    #[cfg(test)]
+    pub(super) fn without_values(entity_name: &str, operation: &str) -> Self {
+        Self {
+            entity_name: entity_name.to_string(),
+            operation: operation.to_string(),
+            fields: None,
+            old: None,
+            origin_agent: None,
+        }
+    }
+
     #[cfg(test)]
     pub(super) fn keeps_fields(&self) -> bool {
         self.fields.is_some()
@@ -242,7 +254,7 @@ pub fn register_feed_insert(facade: &EntityFacade, tx: &TransactionManager) -> R
 }
 
 /// Insert `DataFeedPending` rows for this frame's writes. Returns the inserted row ids.
-fn insert_pending(
+pub(super) fn insert_pending(
     facade: &EntityFacade,
     conn: &mut dyn DbConnection,
     frame: Option<u64>,
@@ -372,8 +384,57 @@ fn insert_pending(
         let Some(keys) = primary_keys(facade, conn, entity_name)? else {
             continue;
         };
+        let pk_names: Vec<String> = facade.with_entity(entity_name, |entity, _, _| {
+            Ok(entity.pk_field_names().into_iter().map(str::to_string).collect())
+        })?;
         for key in keys {
+            // The touched row as it is now, for a document it is not the primary entity of: the documents' ids are its
+            // primary rows' keys, walked to as for a write with values, not this row's own key.
+            let mut touched: Option<Option<FieldMap>> = None;
             for hit in &hits {
+                if !hit.primary {
+                    let row = match &touched {
+                        Some(row) => row.clone(),
+                        None => {
+                            let mut fields = FieldMap::default();
+                            for (name, part) in pk_names.iter().zip(key.split("::")) {
+                                fields.insert(std::sync::Arc::from(name.as_str()), Value::string(part));
+                            }
+                            let row = reread(facade, conn, entity_name, &fields)?;
+                            touched = Some(row.clone());
+                            row
+                        }
+                    };
+                    // a row gone since leaves its documents to the writes of their primary entities
+                    let Some(row) = row else {
+                        continue;
+                    };
+                    for path in &hit.paths {
+                        for id in walk_to_primary(facade, conn, path, vec![row.clone()])? {
+                            let dedup = (
+                                hit.data_document_id.clone(),
+                                hit.primary_entity.clone(),
+                                id.clone(),
+                                "index".to_string(),
+                            );
+                            if !seen.insert(dedup) {
+                                continue;
+                            }
+                            let row_id = crate::entity::uuid_v4()?;
+                            rows.push(vec![
+                                Value::string(&row_id),
+                                Value::string(&hit.data_document_id),
+                                Value::string(&hit.primary_entity),
+                                Value::string(&id),
+                                Value::string("index"),
+                                legacy_origin(&touches, entity_name).map_or(Value::Null, Value::String),
+                                stamp.clone(),
+                            ]);
+                            inserted.push(row_id);
+                        }
+                    }
+                    continue;
+                }
                 let operation = if agg.saw_write {
                     "index"
                 } else if hit.primary {

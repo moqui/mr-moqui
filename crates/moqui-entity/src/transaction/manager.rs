@@ -46,7 +46,7 @@ const CANCEL_BACKLOG: usize = 256;
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 thread_local! {
-    static STACKS: RefCell<HashMap<u64, Vec<Frame>>> = RefCell::new(HashMap::new());
+    static STACKS: RefCell<HashMap<u64, Vec<Frame>, foldhash::fast::RandomState>> = RefCell::new(HashMap::default());
 }
 
 type ConnHook = Box<dyn FnOnce(&mut dyn DbConnection) -> Result<(), Error> + Send>;

@@ -1448,6 +1448,39 @@ Next:
 2. The rest of the profile: SipHash 5%, allocation 12%, `memcmp` 3%.
 3. The receiving walk with transitions held (`screen_tx_cache`), and `WorkCenters`' intermittent load count.
 
+## Round 29: the data feed's related writes without values, and fast hashes for the internal maps
+
+Round 28's next steps.
+
+1. **A write recorded without values, of an entity a document reads through a relationship, is fed by the
+   document's primary rows.** A data load writes rows before the feed configuration has been read, so their touches
+   keep no values and the commit finds the rows through the Postgres `xmin` probe. That path wrote a pending row for
+   every document on the entity with the written row's own key, which for a related entity (an `OrderHeader` of
+   `MantleSalesOrderPart`) is not a document id: delivery could never read it (`document id 101190 does not have 2 key
+   values`), and after 60 minutes the rows counted as stuck, so `MantleSearch` and `SalesReportStoreScope` failed in
+   any run started an hour or more after its test database snapshot. The probe path now reads the row and walks to
+   the document's primary rows, as a write with values does
+   (`a_related_write_without_values_is_fed_by_the_documents_primary_keys`). A fresh data load of mr-mantle made 12 such
+   rows before and none after.
+2. **foldhash for the hashes of the internal maps keyed by text** (the Postgres statement cache by SQL, the query
+   stats' key memo and shards, the redaction memo, the transaction frames by token, the compiled scripts by text), and
+   a script file's text hashed once when it is read rather than at each `ec.resource.script`. Already in the tree under
+   hashbrown. The profile of the Mantle specs: 7,564 samples under service calls against 8,365 (10% less), SipHash 3.2%
+   of them against 5.0% (what is left is OpenTelemetry's attribute sets and `IndexMap`s of values).
+3. **The receiving walk** (`WarehouseReceivingWalk`) failed once in `./moq test-apps` with `screen_tx_cache` off too,
+   and passes in the Mr. Boss client suite alone with it on: it is flaky by itself, more often with transitions held.
+   Its cause is not found; the setting stays off.
+
+Seen in the runs: moqui-host's xmpp test failed twice right after a full run and passed 8 of 8 after; moqui-core's
+`calls_are_counted_only_between_enable_and_finish` failed once in a full run and passed in 6 more.
+
+Next:
+1. The receiving walk: a log of its transitions' transactions (the census over the client walks) to find what is
+   stale, then transitions on the cache.
+2. Allocation (13% of the service calls' time: `malloc` and `free`) and `memcmp` (3.7%: string compares in scripts'
+   `every`, select lists, the telemetry span's secret check).
+3. OpenTelemetry's attribute set hashing on each metric record (1%).
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.

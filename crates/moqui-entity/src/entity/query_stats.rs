@@ -130,8 +130,8 @@ pub fn statement_key(sql: &str) -> String {
 const KEYS_KEPT: usize = 2048;
 
 thread_local! {
-    static KEYS: std::cell::RefCell<HashMap<Box<str>, std::sync::Arc<str>>> =
-        std::cell::RefCell::new(HashMap::new());
+    static KEYS: std::cell::RefCell<HashMap<Box<str>, std::sync::Arc<str>, foldhash::fast::RandomState>> =
+        std::cell::RefCell::new(HashMap::default());
 }
 
 /// [`statement_key`] of `sql`, from this thread's [`KEYS`] when it made it before.
@@ -167,9 +167,9 @@ impl Registry {
     }
 
     fn shard_of(&self, key: &str) -> &Mutex<HashMap<String, Stat>> {
-        let mut hasher = DefaultHasher::new();
-        key.hash(&mut hasher);
-        let index = usize::try_from(hasher.finish() % SHARDS as u64).unwrap_or(0);
+        use std::hash::BuildHasher as _;
+        let hash = foldhash::fast::FixedState::default().hash_one(key);
+        let index = usize::try_from(hash % SHARDS as u64).unwrap_or(0);
         &self.shards[index]
     }
 
