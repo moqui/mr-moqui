@@ -185,15 +185,16 @@ Guides [Git-Hosting](../docs/interfaces/Git-Hosting.md), [Revision-Management](.
 
 The BOSS designs roll their needs up in mr-boss `plan/design-crosscut.md` §7 (its Kind column marks the framework
 items) and say how apps plug into the framework in §1.5. The framework items they wait on, from the Nov 1, 2026 review
-(mr-boss `plan/review-suite-apps.md`):
+(removed in mr-boss bd74564; `git show bd74564^:plan/review-suite-apps.md`) and the Admin and Insights plans (mr-boss
+`plan/impl-admin.md`, `plan/impl-insights.md`):
 
 | Item | Needed by | Source |
 |---|---|---|
-| A device credential limited to one artifact group, revocable in Admin, with register, find and revoke (proposed `org.moqui.admin.DeviceServices`); each action still identifies its person by badge and PIN | People ClockingKiosk, Maintenance TechnicianKiosk, Manufacturing ShopFloor, Marketing CheckIn | design-admin ADM-DEVICES; crosscut CX-DEVICE |
+| A device credential limited to one artifact group, revocable in Admin, with register, find and revoke (proposed `org.moqui.admin.DeviceServices`); each action still identifies its person by badge and PIN; a wall display reads as a principal still open (design-admin §19) | Insights wall displays (first, Admin P18 and Insights P11), People ClockingKiosk, Maintenance TechnicianKiosk, Manufacturing ShopFloor, Marketing CheckIn | design-admin ADM-DEVICES; crosscut CX-DEVICE |
 | A per-field or per-screen switch that turns off inline text actions, dictation and Update with AI, or routes them to a local model | People confidential records; every app's Assist contribution | design-people PE-21; crosscut CX-ASSIST |
 | A decimal evaluator tool: exact decimal arithmetic in a sandbox, for payroll formulas | People payroll | design-people PE-09 |
 | Agent administration screens: an AgentDefinition editor, an A2A tasks screen, a gateway client key shown once (the Agents rows above) | Admin Agents | design-admin ADM-AGENTS |
-| The `org.moqui.admin.*` service families: administration-path check, sessions and access revocation, connection endpoint changes that clear stored secrets, protocol and job operations, the import and export transfer contract, audit and retention; Monitor checks beyond HTTP; a per-group inactivity timeout; a runtime password-policy setter; passkeys (later) | Admin | design-admin §17 (ADM-ACCESS to ADM-RETENTION) |
+| The `org.moqui.admin.*` service families: `authz` `sealed-permission` and `privileged-group` elements a component adds to the lists, and the framework seals of `ADMIN_IDENTITY_GLOBAL`, `ADMIN_ACCESS_MANAGE` and `ADMIN_BACKUP_DOWNLOAD`; administration-path check, sessions and access revocation with the per-request session refresh checking `disabled` and `terminateDate`, owner changes for drives and shared mail accounts, connection endpoint changes that clear stored secrets, protocol and job operations, the import and export transfer contract, audit and retention; Monitor checks beyond HTTP; a per-group inactivity timeout; a runtime password-policy setter; passkeys (later) | Admin | design-admin §17 (ADM-ACCESS to ADM-RETENTION) |
 | Report engine: dataset admission with `index#BusinessDataset`; the Definition editor, Explore, Home and Playlist mountable under an app root with dataset-scoped grants; `check#ReportAudience` (owner-equivalent group delivery as separate messages), render reuse per scope fingerprint, `pause#OwnedSchedules`, `transfer#DefinitionOwner`; full per-recipient execution later | Insights | design-insights INS-03, INS-04, INS-06, INS-07 |
 | Comms C1 delivery rows and C4-SMS ([Comms-Framework §7](Comms-Framework.md#7-order)) | The one Mantle delivery ledger; Marketing's SMS stage | crosscut CX-DELIVERY; design-marketing MKT-TRANSPORT |
 | The wasm browser host's login flow and per-database tab lock (below) | Maintenance offline execution; offline kiosks and check-in, later | design-maintenance MT-14; crosscut CX-DEVICE |
