@@ -28,7 +28,7 @@ use std::sync::Arc;
 use quickjs_oxide::engine::api::core::{Context, FunctionOptions, JsResult, ObjectRef, RuntimeError, Scope, Value};
 
 use super::convert::{key, to_host, truthy, Conv};
-use super::engine::{current, guarded, OxideEngine};
+use super::engine::{current, OxideEngine};
 use super::errors::runtime_error;
 use super::tracked::Flush;
 use crate::context::Error;
@@ -47,7 +47,7 @@ pub(super) fn install(context: &Context, ec: &ObjectRef) -> Result<(), RuntimeEr
     let define = |name: &'static str, length: u32, body: fn(&mut Scope<'_>) -> Result<Value, Conv>| {
         let function = context.new_function(
             FunctionOptions::new(name).length(length),
-            move |scope: &mut Scope<'_>| -> JsResult<Value> { guarded(scope, body) },
+            move |scope: &mut Scope<'_>| -> JsResult<Value> { super::bind::host_body(scope, body) },
         )?;
         let name = key(name).map_err(|_| RuntimeError::Invariant("a key"))?;
         context.set_property(&resource, &name, Value::from(function))
@@ -69,7 +69,8 @@ fn engine() -> Result<std::rc::Rc<OxideEngine>, Conv> {
 /// runtime's cache and executed while the engine is lent, so its names are the caller's.
 fn run_here(scope: &mut Scope<'_>, source: &str, hash: u64, file_name: &str) -> Result<Value, RuntimeError> {
     let engine = engine().map_err(|_| RuntimeError::Invariant("no oxide engine"))?;
-    scope.lend(|| {
+    super::bind::lend(scope, || {
+        let _engine = super::bind::engine_call();
         let compiled = engine.compile(source, hash, file_name)?;
         engine.context().execute(&compiled)
     })

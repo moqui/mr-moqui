@@ -358,6 +358,40 @@ fn trampoline(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'_
     }
 }
 
+/// A host function of the engine's own outside the table (`oxide::resource`, `oxide::web`), through the table's
+/// trampoline: a panic in its own code is thrown as an `Error`, one that unwound through the engine (a nested run in
+/// a lend) goes on and poisons the runtime, as for a table method; a [`Conv`](super::convert::Conv) failure throws as
+/// [`super::engine::host_error`] makes it.
+pub(super) fn host_body<T>(
+    scope: &mut Scope<'_>,
+    body: impl FnOnce(&mut Scope<'_>) -> Result<T, super::convert::Conv>,
+) -> JsResult<T> {
+    UNWOUND.with(|unwound| unwound.set(false));
+    match caught_panic(|| body(&mut *scope).map_err(|conv| super::engine::host_error(&mut *scope, conv))) {
+        Ok(result) => result,
+        Err(message) => Err(plain_error(scope, &message)),
+    }
+}
+
+/// Lend the engine to `body`, as a non-leaf table method's lend does ([`OxideOps::lend`]): a panic in the body's own
+/// code is thrown as an `Error`, one through a nested run goes on.
+pub(super) fn lend<R>(scope: &mut Scope<'_>, body: impl FnOnce() -> JsResult<R>) -> JsResult<R> {
+    let lent = {
+        let _engine = EngineCall;
+        scope.lend(|| caught_panic(body))
+    };
+    match lent {
+        Ok(result) => result,
+        Err(message) => Err(plain_error(scope, &message)),
+    }
+}
+
+/// A mark over an engine operation a body makes itself (an `execute` in a lend): a panic that unwinds through it came
+/// through the engine, so [`caught_panic`] passes it on rather than making it an error.
+pub(super) fn engine_call() -> impl Drop {
+    EngineCall
+}
+
 /// `body`, with a panic in its own code caught as its message, as `host_guard` catches one on QuickJS. A panic that
 /// unwound through the engine (a nested call, a conversion, a nested script in a lent body) left it inconsistent and
 /// poisoned: it goes on to the embedder's call, as quickjs-oxide passes a host function's panic, rather than becoming

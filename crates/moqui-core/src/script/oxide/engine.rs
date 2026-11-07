@@ -173,6 +173,8 @@ pub(super) struct OxideEngine {
     /// The tools shim's `__moquiWrap(name, data)`, which gives a tools map its methods back as on QuickJS
     /// ([`super::convert`]); set once the shims installed.
     tools_wrap: std::cell::OnceCell<CallableRef>,
+    /// The script servlets' invoker, made at the first request ([`super::web`]).
+    web_invoker: std::cell::OnceCell<CallableRef>,
     /// When the reserved bytes were last sampled.
     sampled: Cell<Option<std::time::Instant>>,
     /// The screen units' compiled functions by unit id, the mode runtimes run so far by id, and the depth of the unit
@@ -580,6 +582,7 @@ impl OxideEngine {
             runs: Cell::new(0),
             sampled: Cell::new(None),
             tools_wrap: std::cell::OnceCell::new(),
+            web_invoker: std::cell::OnceCell::new(),
             modules: RefCell::default(),
             units: RefCell::new(crate::script::BoundedMap::with_bytes(
                 super::units::MAX_UNITS,
@@ -663,6 +666,11 @@ impl OxideEngine {
     /// Keep an inert module's value for the rest of the outermost run.
     pub(super) fn keep_module(&self, location: &str, text: Arc<str>, value: Value) {
         self.modules.borrow_mut().insert(location.to_string(), (text, value));
+    }
+
+    /// The script servlets' invoker, once made.
+    pub(super) fn web_invoker(&self) -> &std::cell::OnceCell<CallableRef> {
+        &self.web_invoker
     }
 
     /// The tools shim's wrapper, which gives a tools map (a map with `__wrap`) its methods back.

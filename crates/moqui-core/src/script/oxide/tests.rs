@@ -883,6 +883,65 @@ fn the_runtimes_start_notes_nothing_in_the_running_scripts_row() {
     drop(entry);
 }
 
+/// A panic that unwinds through a nested run in `ec.resource`'s lend goes on to the embedder, as through a table
+/// method's lend: the script's `catch` does not see it.
+#[test]
+fn a_panic_through_a_resource_lend_is_not_the_scripts_to_catch() {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    use quickjs_oxide::engine::api::core::{Scope, Value as JsValue};
+    clear_context_stack();
+    push_context_frame();
+    with_script_engine(ScriptEngine::Oxide, || {
+        let context = super::engine::context_for_tests();
+        let global = context.global_object().unwrap();
+        context
+            .define_function(&global, "boom", 0, |_: &mut Scope<'_>| -> Result<JsValue, _> {
+                panic!("boom in a nested run")
+            })
+            .unwrap();
+        let ran = std::panic::catch_unwind(|| {
+            value("(() => { try { return ec.resource.expression('boom()') } catch (e) { return 'caught' } })()")
+        });
+        assert!(ran.is_err(), "the script caught a panic: {ran:?}");
+        super::engine::restart_for_tests(false);
+    });
+}
+
+/// Script web handlers on oxide: the invoker is made once per runtime, a listener is called by its event, and what a
+/// handler throws, or a file that is no handler, is the request's error.
+#[test]
+fn web_handlers_run_on_oxide() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    let dir = std::env::temp_dir().join(format!("moqui-oxide-web-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let listener = dir.join("Listener.js");
+    std::fs::write(&listener, "({ started(event, config) { throw new Error('heard ' + event.type + ' ' + config.name) } })")
+        .unwrap();
+    let not_handler = dir.join("Number.js");
+    std::fs::write(&not_handler, "42").unwrap();
+    let data = |location: &std::path::Path| {
+        Value::Map(indexmap::IndexMap::from([
+            ("name".to_string(), Value::string("probe")),
+            ("location".to_string(), Value::string(location.to_string_lossy())),
+            ("event".to_string(), Value::string("started")),
+        ]))
+    };
+    with_script_engine(ScriptEngine::Oxide, || {
+        clear_context_stack();
+        for _ in 0..2 {
+            let location = listener.to_string_lossy();
+            let err = super::web::invoke(&location, "listener", data(&listener)).unwrap_err();
+            assert!(err.message().contains("heard started probe"), "{}", err.message());
+        }
+        assert!(super::engine::start_for_tests()?.web_invoker().get().is_some(), "the invoker is kept");
+        let err = super::web::invoke(&not_handler.to_string_lossy(), "servlet", data(&not_handler)).unwrap_err();
+        assert!(err.message().contains("must evaluate to a handler object"), "{}", err.message());
+        Ok::<_, Error>(())
+    })?;
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
 /// Review fixes: a Proxy in a tracked value is compared with the stack free; `ec.resource.expression` and `condition`
 /// run strict, as on QuickJS; under the server-static widget check the `ec.resource` texts and screen units are
 /// refused, not run unchecked.
