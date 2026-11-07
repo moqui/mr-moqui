@@ -189,6 +189,28 @@ fn locked_down_names_are_variables_of_the_template_function_on() {
     assert_eq!(out, "4|55|6|undefined|function|object");
 }
 
+/// The template function is kept for every render on the thread: one render cannot leave a value on it, its
+/// `arguments` or its `this` for the next (one user's render read by another's).
+#[test]
+fn a_locked_down_render_leaves_nothing_on_the_template_function() {
+    on_template_engines(a_locked_down_render_leaves_nothing_on_the_template_function_on);
+}
+
+fn a_locked_down_render_leaves_nothing_on_the_template_function_on() {
+    let alice = moqui_lib::json::from_json(&serde_json::json!({"secret": "alice"}));
+    let bob = Value::Map(Default::default());
+    let source = "<#if secret != null>${(() => { try { arguments.callee.s = secret; return 'kept' } \
+                  catch (e) { return 'refused' } })()}${(() => { try { $t.s = secret; return 'kept' } \
+                  catch (e) { return 'refused' } })()}<#else>${(() => { try { return String(arguments.callee.s) } \
+                  catch (e) { return 'refused' } })()}${String($t.s)}${typeof this}\
+                  </#if>";
+    assert_eq!(render_locked_with(source, Escape::None, &alice).unwrap(), "refusedrefused");
+    assert_eq!(
+        render_locked_with(source, Escape::None, &bob).unwrap(),
+        "refusedundefinedundefined"
+    );
+}
+
 #[test]
 fn locked_down_sees_plain_values_and_decimals_as_strings() {
     on_template_engines(locked_down_sees_plain_values_and_decimals_as_strings_on);
@@ -259,14 +281,18 @@ fn a_locked_down_template_cannot_change_what_the_next_one_runs() {
 
 fn a_locked_down_template_cannot_change_what_the_next_one_runs_on() {
     let empty = Value::Map(Default::default());
-    // Each of these would change the shared context for later renders if it held.
-    render_locked_with(
-        "${String.prototype.replace = function () { return 'x' }}${JSON.parse = null}${globalThis.leak = 'kept'}\
-         ${Array.prototype.join = null}${Object.getPrototypeOf([][Symbol.iterator]()).next = null}",
-        Escape::None,
-        &empty,
-    )
-    .unwrap();
+    // Each of these would change the shared context for later renders if it held. The template is strict, so each
+    // assignment to a frozen object throws.
+    for attempt in [
+        "${String.prototype.replace = function () { return 'x' }}",
+        "${JSON.parse = null}",
+        "${globalThis.leak = 'kept'}",
+        "${Array.prototype.join = null}",
+        "${Object.getPrototypeOf([][Symbol.iterator]()).next = null}",
+    ] {
+        let err = render_locked_with(attempt, Escape::None, &empty).expect_err(attempt);
+        assert!(err.message().contains("Error"), "{attempt}: {}", err.message());
+    }
     let mut entries = indexmap::IndexMap::new();
     entries.insert("v".to_string(), Value::string("<b>"));
     let out = render_locked_with(

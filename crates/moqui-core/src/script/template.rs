@@ -680,13 +680,18 @@ fn compile(source: &str, escape: Escape, scope: Scope) -> Result<String, Error> 
         // own frame, read once from the snapshot by `$scope`'s reader (plans/Script-Engine-Oxide.md section 5.4). A
         // name the body does not name is not reached: code a template makes at run time (`Function`, indirect `eval`)
         // sees only the frozen globals.
+        //
+        // The function is kept and called for every render on the thread, so nothing of it may carry a value from one
+        // render to the next: it is strict (no `arguments.callee`, `this` is undefined, an assignment to a frozen
+        // global's property throws), and it and its prototype are frozen.
         Scope::Snapshot => {
             let mut names = String::new();
             for name in snapshot_names(&body) {
                 names.push_str(&format!("var {name} = $n({});\n", js_string(&name)));
             }
             format!(
-                "(function($data){{\nconst $n = $scope($data);\n{PRELUDE}{names}{body}return $o.join(\"\");\n}})"
+                "(function(){{\n\"use strict\";\nconst $t = function($data){{\nconst $n = $scope($data);\n{PRELUDE}\
+                 {names}{body}return $o.join(\"\");\n}};\nObject.freeze($t.prototype);\nreturn Object.freeze($t);\n}})()"
             )
         }
     };
@@ -697,7 +702,8 @@ fn compile(source: &str, escape: Escape, scope: Scope) -> Result<String, Error> 
 /// The names a snapshot template's body uses as variables, each once in the order first seen: every identifier of
 /// the parsed body but a member's or property's name and a label. A name the body binds itself (a list variable, an
 /// arrow's parameter) may be among them; it is shadowed where it is bound. Names that start with `$`, the prelude's
-/// `html`, `raw` and `cssString`, `arguments` and `eval` are left to the function and the global object.
+/// `html`, `raw` and `cssString`, `arguments` and `eval`, and the words strict code reserves are left to the function
+/// and the global object.
 fn snapshot_names(body: &str) -> Vec<String> {
     use serde_json::Value as Json;
     fn walk(node: &Json, names: &mut Vec<String>) {
@@ -708,7 +714,24 @@ fn snapshot_names(body: &str) -> Vec<String> {
                 if kind == "Identifier" {
                     if let Some(name) = fields.get("name").and_then(Json::as_str) {
                         let kept = !name.starts_with('$')
-                            && !matches!(name, "html" | "raw" | "cssString" | "arguments" | "eval")
+                            && !matches!(
+                                name,
+                                "html"
+                                    | "raw"
+                                    | "cssString"
+                                    | "arguments"
+                                    | "eval"
+                                    | "implements"
+                                    | "interface"
+                                    | "let"
+                                    | "package"
+                                    | "private"
+                                    | "protected"
+                                    | "public"
+                                    | "static"
+                                    | "yield"
+                                    | "await"
+                            )
                             && !names.iter().any(|seen| seen == name);
                         if kept {
                             names.push(name.to_string());
