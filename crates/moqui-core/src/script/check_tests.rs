@@ -201,7 +201,7 @@ fn mutating_methods_mark_the_text_as_writing() {
         "Object.freeze(map)",
         "items['sort']()",
         "items?.sort()",
-        "order.items.sort()",
+        "order.items.slice().sort()",
     ] {
         let analysis = analyze(text, Profile::Expression);
         assert_eq!(analysis.refused(), None, "{text}");
@@ -281,13 +281,22 @@ fn ways_round_the_check_are_refused() {
 fn the_actions_profile_takes_generated_set_if_and_iterate() {
     let generated = crate::script::generated_source(
         r#"<actions><set field="x" from="a + 1"/><if condition="x &gt; 1"><set field="y" from="[x]"/></if>
-            <iterate list="items" entry="item"><set field="item.seen" from="true"/></iterate></actions>"#,
+            <iterate list="items" entry="item"><set field="seen" from="item.name"/></iterate></actions>"#,
         false,
     )
     .unwrap();
     let analysis = analyze(&generated, Profile::Actions);
     assert_eq!(analysis.refused(), None, "{generated}");
     assert!(analysis.writes());
+    // an entry is read from the list by a key the check cannot read, which may name a prototype's function: an
+    // assignment to its member goes to QuickJS
+    let entry = crate::script::generated_source(
+        r#"<actions><iterate list="items" entry="item"><set field="item.seen" from="true"/></iterate></actions>"#,
+        false,
+    )
+    .unwrap();
+    let reason = analyze(&entry, Profile::Actions).refused().unwrap_or_default().to_string();
+    assert!(reason.starts_with("an assignment to a member of item"), "{reason}");
     for (text, why) in [
         ("(function() { if (a) { function f() {} } })()", "a function declared in a block"),
         ("(function() { function f() {} x = f; })()", "the function f used as a value"),
@@ -515,17 +524,16 @@ fn the_context_methods_that_write_mark_the_text_as_writing() {
     assert!(!analyze("context.containsKey('a') && context.keySet().length > 0", Profile::Expression).writes());
 }
 
-/// The builtins whose members an assignment may not change are the oxide runtime's global objects and functions.
+/// The builtins whose members an assignment may not change are the global objects and functions of both engines: the
+/// oxide runtime's, and QuickJS's but for the names refused as QuickJS's own.
 #[test]
-fn the_builtin_globals_are_the_oxide_runtimes() {
+fn the_builtin_globals_are_both_engines() {
+    const OBJECTS: &str = "Object.getOwnPropertyNames(globalThis).filter((name) => { const value = globalThis[name]; \
+         return value !== globalThis \
+         && (typeof value === 'object' && value !== null || typeof value === 'function') }).join(',')";
     let runtime = quickjs_oxide::engine::api::core::Runtime::new();
     let context = runtime.context();
-    let names = context
-        .eval(
-            "Object.getOwnPropertyNames(globalThis).filter((name) => { const value = globalThis[name]; \
-             return value !== globalThis && (typeof value === 'object' && value !== null || typeof value === 'function') }).join(',')",
-        )
-        .unwrap();
+    let names = context.eval(OBJECTS).unwrap();
     let names = context.to_js_string(&names).unwrap().to_utf8_lossy();
     let oxide: std::collections::BTreeSet<&str> = names.split(',').collect();
     let listed: std::collections::BTreeSet<&str> = super::BUILTIN_GLOBALS
@@ -533,5 +541,96 @@ fn the_builtin_globals_are_the_oxide_runtimes() {
         .copied()
         .filter(|name| !super::OXIDE_HOST_GLOBALS.contains(name))
         .collect();
-    assert_eq!(oxide, listed, "builtin globals");
+    assert_eq!(oxide, listed, "the oxide runtime's builtin globals");
+    let quickjs: String =
+        crate::script::with_ctx(|ctx| ctx.eval::<String, _>(OBJECTS).map_err(crate::script::js_error)).unwrap();
+    let quickjs: std::collections::BTreeSet<&str> = quickjs
+        .split(',')
+        .filter(|name| *name != "ec" && !QUICKJS_ONLY_GLOBALS.contains(name))
+        .collect();
+    let listed: std::collections::BTreeSet<&str> = super::BUILTIN_GLOBALS.iter().copied().collect();
+    assert_eq!(quickjs, listed, "QuickJS's builtin globals");
+}
+
+/// A builtin, or a function or object a member read may give (a prototype's method), is shared by every later text on
+/// the thread's runtime of one engine: it is not bound to a name or kept as a value, and nothing changes it in place.
+/// An object the run itself holds may be changed.
+#[test]
+fn nothing_changes_an_object_that_outlives_the_run() {
+    for (text, profile, why) in [
+        ("(function() { const m = Math; m.x = 1 })()", Profile::Actions, "the global Math as a value"),
+        ("(function() { const {parse} = JSON; parse.x = 1 })()", Profile::Actions, "the global JSON as a value"),
+        ("(function() { [].map.x = 1 })()", Profile::Actions, "an assignment to a member of a value the text may not"),
+        (
+            "(function() { (1).toFixed.x = 1 })()",
+            Profile::Actions,
+            "an assignment to a member of a value the text may not",
+        ),
+        ("(function() { (0, Math).x = 1 })()", Profile::Actions, "an assignment to a member of the global Math"),
+        (
+            "(function() { [Math][0].x = 1 })()",
+            Profile::Actions,
+            "an assignment to a member of a value the text may not",
+        ),
+        ("(function() { const f = row.toString; f.x = 1 })()", Profile::Actions, "an assignment to a member of f,"),
+        (
+            "(function() { for (const f of [row.toString]) f.x = 1 })()",
+            Profile::Actions,
+            "an assignment to a member of f,",
+        ),
+        ("(function() { rows.forEach((r) => { r.x = 1 }) })()", Profile::Actions, "an assignment to a member of r,"),
+        ("(function() { var o = {}; o = row.toString; o.x++ })()", Profile::Actions, "an assignment to a member of o,"),
+        ("(function() { var Math = {} })()", Profile::Actions, "a declaration of Math"),
+        ("Object.assign(Math, {x: 1})", Profile::Expression, "Object.assign on the global Math"),
+        ("Object['assign'](JSON, {x: 1})", Profile::Expression, "Object.assign on the global JSON"),
+        (
+            "Object.defineProperty(JSON, 'x', {value: 1})",
+            Profile::Expression,
+            "Object.defineProperty on the global JSON",
+        ),
+        ("Object.setPrototypeOf(row.toString, null)", Profile::Expression, "Object.setPrototypeOf on a value"),
+        ("Object.assign(context, {x: 1})", Profile::Expression, "Object.assign on the context stack"),
+        ("[].push.call(row.toString, 1)", Profile::Expression, "a call with this as a value the text may not"),
+        ("[].push.bind(Math)", Profile::Expression, "a call with this as the global Math"),
+        ("({f: Object.assign}).f(Math, {})", Profile::Expression, "a member of the global Object as a value"),
+        ("rows.map(Object.assign)", Profile::Expression, "a member of the global Object as a value"),
+        ("Object.getPrototypeOf(row)", Profile::Expression, "the property getPrototypeOf"),
+        // `||=` may keep the old value, which must be the run's own too
+        ("(function() { ([].map ||= {}).x = 1 })()", Profile::Actions, "an assignment to a member of a value"),
+        (
+            "(function() { var f = row.toString; var o = (f ||= {}); o.x = 1 })()",
+            Profile::Actions,
+            "an assignment to a member of o,",
+        ),
+        // the receiver of a method that changes it, which a computed key may make a prototype (`__proto__`)
+        ("[][k].push(7)", Profile::Expression, "the method push on a value the text may not"),
+        ("(function() { var k = '__proto__'; [][k].sort() })()", Profile::Actions, "the method sort on a value"),
+        ("[][k][j](1)", Profile::Expression, "the method named by a computed key on a value"),
+        // a member read may be a prototype's object: a mutator on one goes to QuickJS
+        ("order.items.sort()", Profile::Expression, "the method sort on a value the text may not"),
+    ] {
+        let reason = analyze(text, profile).refused().unwrap_or_default().to_string();
+        assert!(reason.starts_with(why), "{text}: {reason}");
+    }
+    for (text, profile) in [
+        ("Math.max(a, b) + Math.PI + Number.MAX_SAFE_INTEGER", Profile::Expression),
+        ("x instanceof Date && typeof JSON === 'object'", Profile::Expression),
+        ("rows.map(String).filter(Boolean)", Profile::Expression),
+        ("Object.assign({}, a, b)", Profile::Expression),
+        ("Object.assign(row, {x: 1})", Profile::Expression),
+        ("statusLogs.slice().sort((a, b) => a - b).concat(Object.keys(row)).reverse()", Profile::Expression),
+        // a context name the text does not bind is the run's copy: a function cannot be put there (oxide's tests)
+        (
+            "(function() { context.f = ''.toString; f.x = 1; o ||= {}; o.y = 1; total = total.add(1) })()",
+            Profile::Actions,
+        ),
+        (
+            "(function() { var o = {}; o.x = 1; product = ec.entity.makeValue('X'); product.name = 'a'; \
+             order.total = 1; context.seen = true; let n = 0; n++; t = n > 1 ? [] : {}; t.a = 1 })()",
+            Profile::Actions,
+        ),
+    ] {
+        let analysis = analyze(text, profile);
+        assert_eq!(analysis.refused(), None, "{text}");
+    }
 }

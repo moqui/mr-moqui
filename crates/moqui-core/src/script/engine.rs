@@ -489,6 +489,10 @@ pub(crate) fn try_oxide<T>(
     if !may_route() {
         return Ok(None);
     }
+    // a thread whose oxide runtime did not start: no hash, no check, no flush of QuickJS's values for nothing
+    if script_engine() != ScriptEngine::Oxide && crate::script::oxide::start_failed_recently() {
+        return Ok(None);
+    }
     let hash = crate::script::text::hash_text(source);
     let (route, verdict) = route_checked(kind, source, hash)?;
     if route != Route::Oxide {
@@ -520,7 +524,10 @@ pub(crate) fn try_oxide<T>(
                     kind.name()
                 )));
             }
-            note_fallback(kind, hash, reason);
+            // a runtime that did not start is the thread's, not the text's
+            if reason != crate::script::oxide::DID_NOT_START {
+                note_fallback(kind, hash, reason);
+            }
             Ok(None)
         }
     }

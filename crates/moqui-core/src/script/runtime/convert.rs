@@ -488,7 +488,7 @@ fn js_text_is(value: &JsValue<'_>, text: &str) -> bool {
 }
 
 /// Whether converting `value` to a script value runs script code: a tools map is wrapped by a script function.
-pub(super) fn converts_with_script(value: &Value) -> bool {
+pub(crate) fn converts_with_script(value: &Value) -> bool {
     match value {
         Value::List(items) => items.iter().any(converts_with_script),
         Value::Map(entries) => entries.contains_key(WRAP_KEY) || entries.values().any(converts_with_script),

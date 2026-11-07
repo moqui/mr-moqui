@@ -32,7 +32,13 @@
 //!   `globalThis`, `this`, `arguments`, `with`, computed `ec[...]` (or computed members of any value reached from
 //!   `ec`), `ec` itself as a value (an alias would reach paths the check cannot see), every statement but the one
 //!   expression ([`REFUSED_NAMES`], [`REFUSED_PROPERTIES`]);
-//! - the names QuickJS has on its global object that quickjs-oxide does not ([`QUICKJS_ONLY_GLOBALS`]).
+//! - the names QuickJS has on its global object that quickjs-oxide does not ([`QUICKJS_ONLY_GLOBALS`]);
+//! - a change to an object that outlives the run on the thread's runtime of one engine: a builtin global or a value
+//!   reached from one ([`BUILTIN_GLOBALS`]) bound to a name, a declaration that shadows a builtin, and an assignment to
+//!   a member, an `Object.assign` (or `defineProperty`, `setPrototypeOf`, ...) or a `call`'s `this` on anything but an
+//!   object the run itself holds ([`Walk::own_object`]): an object or array literal, a `new` object, a context value,
+//!   or a name every binding of which is one of those. A member read (`[].map`, `row.toString`) may be a prototype's
+//!   function, so a value reached by one is not the run's own.
 //!
 //! A computed key the check cannot read (`row[name]`) may still name `constructor` at run time, so the oxide runtime
 //! also cuts the way from a function to `Function` and drops the legacy accessor definers when it starts
@@ -249,6 +255,10 @@ const REFUSED_PROPERTIES: &[&str] = &[
     "__lookupGetter__",
     "__lookupSetter__",
     "then",
+    // a prototype object, or a descriptor holding a builtin's accessor
+    "getPrototypeOf",
+    "getOwnPropertyDescriptor",
+    "getOwnPropertyDescriptors",
 ];
 
 /// Methods that change their receiver or another object in place: a text that calls one writes, so its oxide run writes
@@ -277,6 +287,65 @@ const MUTATING_METHODS: &[&str] = &[
 /// Methods that change their receiver in place but are refused on no receiver: a Set's, a Map's or a typed array's
 /// `set`, `add`, `delete` and `clear` (a decimal's `add` changes nothing, but the text is taken as writing anyway).
 const WRITE_METHODS: &[&str] = &["set", "add", "delete", "clear"];
+
+/// The `Object` functions that change their first argument in place: only on an object the run holds
+/// ([`Walk::own_object`]), since a builtin changed so would stay changed on the thread's runtime.
+const OBJECT_WRITERS: &[&str] = &[
+    "assign",
+    "defineProperty",
+    "defineProperties",
+    "setPrototypeOf",
+    "freeze",
+    "seal",
+    "preventExtensions",
+];
+
+/// The function methods that call or bind it with their first argument as `this`, which a builtin method could change.
+const THIS_METHODS: &[&str] = &["call", "apply", "bind"];
+
+/// The members of a builtin that are numbers, which a text may use as values: any other member of a builtin (a
+/// function, an object) and a builtin itself are only called, constructed or read from, so none is kept in the run's
+/// data where an assignment or `Object.assign` could reach it.
+const BUILTIN_CONSTANTS: &[(&str, &str)] = &[
+    ("Math", "E"),
+    ("Math", "LN10"),
+    ("Math", "LN2"),
+    ("Math", "LOG10E"),
+    ("Math", "LOG2E"),
+    ("Math", "PI"),
+    ("Math", "SQRT1_2"),
+    ("Math", "SQRT2"),
+    ("Number", "EPSILON"),
+    ("Number", "MAX_SAFE_INTEGER"),
+    ("Number", "MAX_VALUE"),
+    ("Number", "MIN_SAFE_INTEGER"),
+    ("Number", "MIN_VALUE"),
+    ("Number", "NaN"),
+    ("Number", "NEGATIVE_INFINITY"),
+    ("Number", "POSITIVE_INFINITY"),
+];
+
+/// The methods whose result is a new array or string, not their receiver or a value it holds.
+const COPY_METHODS: &[&str] = &[
+    "slice", "concat", "map", "filter", "flat", "flatMap", "toSorted", "toReversed", "toSpliced", "with", "split",
+];
+
+/// The builtins' functions whose result is a new object or array.
+const FRESH_BUILTINS: &[(&str, &str)] = &[
+    ("Array", "from"),
+    ("Array", "of"),
+    ("Object", "keys"),
+    ("Object", "values"),
+    ("Object", "entries"),
+    ("Object", "fromEntries"),
+    ("JSON", "parse"),
+];
+
+/// The builtin functions an array method may be handed as its callback (`list.map(String)`, `filter(Boolean)`): each
+/// returns a primitive and keeps nothing.
+const PURE_CALLBACKS: &[&str] = &[
+    "String", "Number", "Boolean", "parseFloat", "parseInt", "isNaN", "isFinite", "toNumber",
+];
 
 /// The methods an arrow function may be passed to: the array methods that call it during the call and keep nothing.
 const ARROW_METHODS: &[&str] = &[
@@ -401,6 +470,7 @@ pub(crate) fn analyze(text: &str, profile: Profile) -> Analysis {
                 _ => walk.refuse("not one expression"),
             }
         }
+        walk.finish_own_names();
         let mut reads: Vec<String> = Vec::new();
         for name in walk.reads {
             if !reads.iter().any(|kept| kept == name) {
@@ -476,6 +546,106 @@ struct Walk<'a> {
     functions: HashSet<&'a str>,
     /// See [`Analysis::context_values`].
     context_values: bool,
+    /// Each name the text binds (a variable, a parameter, a bare name assigned), wherever, and whether every binding of
+    /// it is an object the run makes ([`fresh_making`]).
+    bound: std::collections::HashMap<&'a str, bool>,
+    /// The names an assignment to a member (or an `Object.assign`, a `call`'s `this`) changes, with the refusal if one
+    /// is not the run's own object: checked against [`Self::bound`] once the whole text is walked.
+    own_names: Vec<(&'a str, String)>,
+}
+
+/// Whether `expression` makes a new object or a primitive (an object or array literal, `new` of a builtin but `Object`,
+/// a literal, an operator's result), so a name it is bound to holds the run's own object.
+fn fresh_making(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::ObjectExpression(_)
+        | Expression::ArrayExpression(_)
+        | Expression::BooleanLiteral(_)
+        | Expression::NullLiteral(_)
+        | Expression::NumericLiteral(_)
+        | Expression::StringLiteral(_)
+        | Expression::BigIntLiteral(_)
+        | Expression::RegExpLiteral(_)
+        | Expression::TemplateLiteral(_)
+        | Expression::BinaryExpression(_)
+        | Expression::UnaryExpression(_)
+        | Expression::UpdateExpression(_) => true,
+        Expression::NewExpression(new) => {
+            matches!(&new.callee, Expression::Identifier(id)
+                if BUILTIN_GLOBALS.contains(&id.name.as_str()) && id.name != "Object")
+        }
+        Expression::ParenthesizedExpression(inner) => fresh_making(&inner.expression),
+        Expression::LogicalExpression(logical) => fresh_making(&logical.left) && fresh_making(&logical.right),
+        Expression::ConditionalExpression(conditional) => {
+            fresh_making(&conditional.consequent) && fresh_making(&conditional.alternate)
+        }
+        Expression::SequenceExpression(sequence) => sequence.expressions.last().is_some_and(fresh_making),
+        // `name = value` is the value; `name ||= value` may be what the name held, `+=` and the rest make primitives
+        Expression::AssignmentExpression(assignment) if assignment.operator.is_assign() => {
+            fresh_making(&assignment.right)
+        }
+        Expression::AssignmentExpression(assignment) => !assignment.operator.is_logical(),
+        Expression::CallExpression(call) => fresh_call(&call.callee),
+        Expression::ChainExpression(chain) => match &chain.expression {
+            ChainElement::CallExpression(call) => fresh_call(&call.callee),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Whether a call of `callee` makes a new object or a primitive: a host call (its result is converted for the run;
+/// `ec` is never the text's own name), a method that copies ([`COPY_METHODS`]: on a shared object it is the builtin's,
+/// which no text changes, and on the run's own object it is the builtin's too or a data member holding a builtin
+/// method, whose result is new or the receiver itself), or a builtin's function that makes one ([`FRESH_BUILTINS`]).
+fn fresh_call(callee: &Expression<'_>) -> bool {
+    match callee {
+        Expression::StaticMemberExpression(member) => {
+            let property = member.property.name.as_str();
+            ec_rooted(&member.object)
+                || COPY_METHODS.contains(&property)
+                || matches!(&member.object, Expression::Identifier(id)
+                    if FRESH_BUILTINS.contains(&(id.name.as_str(), property)))
+        }
+        other => ec_rooted(other),
+    }
+}
+
+/// Whether `expression` is reached from the bare `ec` down members and calls, as [`Walk::rooted_at_ec`] without the
+/// text's names: a declaration of `ec` is refused.
+fn ec_rooted(expression: &Expression<'_>) -> bool {
+    match expression {
+        Expression::Identifier(identifier) => identifier.name == "ec",
+        Expression::StaticMemberExpression(member) => ec_rooted(&member.object),
+        Expression::ComputedMemberExpression(member) => ec_rooted(&member.object),
+        Expression::CallExpression(call) => ec_rooted(&call.callee),
+        Expression::ParenthesizedExpression(inner) => ec_rooted(&inner.expression),
+        _ => false,
+    }
+}
+
+/// What an [`Walk::own_object`] check is for, which names its refusal.
+#[derive(Clone, Copy)]
+enum OwnUse<'a> {
+    /// `object.name = value`, `object[key]++`.
+    Assignment,
+    /// `Object.assign(object, ...)` and the other [`OBJECT_WRITERS`]: the builtin and its function.
+    Writer(&'a str, &'a str),
+    /// `fn.call(object, ...)` and the other [`THIS_METHODS`], or a method named by a computed key.
+    This,
+    /// `object.push(...)` and the other methods that change their receiver.
+    Receiver(&'a str),
+}
+
+impl OwnUse<'_> {
+    fn refusal(self, of: &str) -> String {
+        match self {
+            OwnUse::Assignment => format!("an assignment to a member of {of}"),
+            OwnUse::Writer(builtin, name) => format!("{builtin}.{name} on {of}"),
+            OwnUse::This => format!("a call with this as {of}"),
+            OwnUse::Receiver(name) => format!("the method {name} on {of}"),
+        }
+    }
 }
 
 impl<'a> Walk<'a> {
@@ -505,7 +675,14 @@ impl<'a> Walk<'a> {
                     self.expression(part);
                 }
             }
-            Expression::Identifier(identifier) => self.name(identifier.name.as_str()),
+            Expression::Identifier(identifier) => {
+                let name = identifier.name.as_str();
+                if BUILTIN_GLOBALS.contains(&name) {
+                    self.refuse(format!("the global {name} as a value"));
+                    return;
+                }
+                self.name(name);
+            }
             Expression::ArrayExpression(array) => {
                 for element in &array.elements {
                     match element {
@@ -543,7 +720,12 @@ impl<'a> Walk<'a> {
             }
             Expression::BinaryExpression(binary) => {
                 self.expression(&binary.left);
-                self.expression(&binary.right);
+                // `value instanceof Date` reads the builtin and keeps nothing
+                if binary.operator == oxc_ast::ast::BinaryOperator::Instanceof {
+                    self.operand(&binary.right);
+                } else {
+                    self.expression(&binary.right);
+                }
             }
             Expression::LogicalExpression(logical) => {
                 self.expression(&logical.left);
@@ -568,7 +750,11 @@ impl<'a> Walk<'a> {
                     self.refuse("delete");
                     return;
                 }
-                self.expression(&unary.argument);
+                if unary.operator == UnaryOperator::Typeof {
+                    self.operand(&unary.argument);
+                } else {
+                    self.expression(&unary.argument);
+                }
             }
             Expression::SequenceExpression(sequence) => {
                 for item in &sequence.expressions {
@@ -584,6 +770,7 @@ impl<'a> Walk<'a> {
             }
             Expression::CallExpression(call) => {
                 let host = self.rooted_at_ec(&call.callee);
+                self.call_target(&call.callee, &call.arguments);
                 let arrows = self.callee(&call.callee);
                 self.arguments(&call.arguments, arrows, host);
             }
@@ -597,6 +784,7 @@ impl<'a> Walk<'a> {
             Expression::ChainExpression(chain) => match &chain.expression {
                 ChainElement::CallExpression(call) => {
                     let host = self.rooted_at_ec(&call.callee);
+                    self.call_target(&call.callee, &call.arguments);
                     let arrows = self.callee(&call.callee);
                     self.arguments(&call.arguments, arrows, host);
                 }
@@ -607,8 +795,11 @@ impl<'a> Walk<'a> {
                 },
             },
             Expression::StaticMemberExpression(member) => {
-                self.static_member(&member.object, member.property.name.as_str());
+                if !self.builtin_member_value(&member.object, Some(member.property.name.as_str())) {
+                    self.static_member(&member.object, member.property.name.as_str());
+                }
             }
+            Expression::ComputedMemberExpression(member) if self.builtin_member_value(&member.object, None) => {}
             Expression::ComputedMemberExpression(member) => {
                 if self.rooted_at_ec(&member.object) {
                     self.refuse("computed ec[...]");
@@ -626,7 +817,7 @@ impl<'a> Walk<'a> {
                         return;
                     }
                 }
-                self.expression(&member.object);
+                self.operand(&member.object);
                 self.expression(&member.expression);
             }
             Expression::PrivateFieldExpression(_) => self.refuse("a private field"),
@@ -634,6 +825,13 @@ impl<'a> Walk<'a> {
                 self.refuse("an arrow function that is not a call's argument");
             }
             Expression::AssignmentExpression(assignment) if self.actions => {
+                if let oxc_ast::ast::AssignmentTarget::AssignmentTargetIdentifier(identifier) = &assignment.left {
+                    // `name = value`, `name ??= value`: what the name holds after; `+=` and the rest make primitives
+                    if assignment.operator.is_assign() || assignment.operator.is_logical() {
+                        let fresh = fresh_making(&assignment.right);
+                        self.bind(identifier.name.as_str(), fresh);
+                    }
+                }
                 if let (
                     oxc_ast::ast::AssignmentOperator::Assign,
                     oxc_ast::ast::AssignmentTarget::AssignmentTargetIdentifier(identifier),
@@ -682,6 +880,7 @@ impl<'a> Walk<'a> {
                         self.refuse(format!("an assignment to a member of the global {name}"));
                         return;
                     }
+                    self.own_object(member.object(), OwnUse::Assignment);
                     self.member(member);
                 }
                 None => self.refuse("an assignment target"),
@@ -767,6 +966,7 @@ impl<'a> Walk<'a> {
             match &parameter.pattern {
                 BindingPattern::BindingIdentifier(name) if parameter.initializer.is_none() => {
                     self.binding(name.name.as_str());
+                    self.bind(name.name.as_str(), false);
                     names.insert(name.name.as_str());
                 }
                 _ => {
@@ -800,6 +1000,7 @@ impl<'a> Walk<'a> {
                 if let Some(id) = &function.id {
                     let name = id.name.as_str();
                     self.binding(name);
+                    self.bind(name, false);
                     self.functions.insert(name);
                     if let Some(scope) = self.locals.last_mut() {
                         scope.insert(name);
@@ -902,10 +1103,15 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// Refuse a declaration (a variable, a parameter, a function) that would shadow `ec`, a refused name or a QuickJS
-    /// global, or that names a function the text declares: a later read of it would not be what the check took it for.
+    /// Refuse a declaration (a variable, a parameter, a function) that would shadow `ec`, a refused name, a QuickJS
+    /// global or a builtin (so a builtin's name is never the text's own), or that names a function the text declares:
+    /// a later read of it would not be what the check took it for.
     fn binding(&mut self, name: &str) {
-        if name == "ec" || REFUSED_NAMES.contains(&name) || QUICKJS_ONLY_GLOBALS.contains(&name) {
+        if name == "ec"
+            || REFUSED_NAMES.contains(&name)
+            || QUICKJS_ONLY_GLOBALS.contains(&name)
+            || BUILTIN_GLOBALS.contains(&name)
+        {
             self.refuse(format!("a declaration of {name}"));
         } else if self.functions.contains(name) {
             self.refuse(format!("a second declaration of the function {name}"));
@@ -1004,12 +1210,14 @@ impl<'a> Walk<'a> {
                     return;
                 }
                 self.pattern(&declarator.id);
+                self.bind_unknown(&declarator.id);
                 if declaration.kind != oxc_ast::ast::VariableDeclarationKind::Var {
                     pattern_names(&declarator.id, &mut names);
                 }
             }
             oxc_ast::ast::ForStatementLeft::AssignmentTargetIdentifier(identifier) => {
                 self.written_name(identifier.name.as_str());
+                self.bind(identifier.name.as_str(), false);
             }
             other => match other.as_assignment_target().and_then(|target| target.as_simple_assignment_target()) {
                 Some(target) => self.assignment_target(target),
@@ -1030,6 +1238,7 @@ impl<'a> Walk<'a> {
                     let mut names = Vec::new();
                     if let Some(parameter) = &handler.param {
                         self.pattern(&parameter.pattern);
+                        self.bind_unknown(&parameter.pattern);
                         pattern_names(&parameter.pattern, &mut names);
                     }
                     self.locals.push(names.into_iter().collect());
@@ -1066,6 +1275,13 @@ impl<'a> Walk<'a> {
 
     fn declaration(&mut self, declaration: &'a oxc_ast::ast::VariableDeclaration<'a>) {
         for declarator in &declaration.declarations {
+            match (&declarator.id, &declarator.init) {
+                (BindingPattern::BindingIdentifier(name), init) => {
+                    self.bind(name.name.as_str(), init.as_ref().is_none_or(fresh_making));
+                }
+                // a destructured name holds a member read, which may be a prototype's function
+                (pattern, _) => self.bind_unknown(pattern),
+            }
             let noted = matches!(
                 (&declarator.id, &declarator.init),
                 (BindingPattern::BindingIdentifier(name), Some(Expression::ArrowFunctionExpression(_)))
@@ -1331,15 +1547,18 @@ impl<'a> Walk<'a> {
                 self.members.push((identifier.name.as_str(), property));
             }
         }
-        self.expression(object);
+        self.operand(object);
     }
 
     /// A member of an optional chain.
     fn member(&mut self, member: &'a MemberExpression<'a>) {
         match member {
             MemberExpression::StaticMemberExpression(member) => {
-                self.static_member(&member.object, member.property.name.as_str());
+                if !self.builtin_member_value(&member.object, Some(member.property.name.as_str())) {
+                    self.static_member(&member.object, member.property.name.as_str());
+                }
             }
+            MemberExpression::ComputedMemberExpression(member) if self.builtin_member_value(&member.object, None) => {}
             MemberExpression::ComputedMemberExpression(member) => {
                 if self.rooted_at_ec(&member.object) {
                     self.refuse("computed ec[...]");
@@ -1357,7 +1576,7 @@ impl<'a> Walk<'a> {
                         return;
                     }
                 }
-                self.expression(&member.object);
+                self.operand(&member.object);
                 self.expression(&member.expression);
             }
             MemberExpression::PrivateFieldExpression(_) => self.refuse("a private field"),
@@ -1385,6 +1604,183 @@ impl<'a> Walk<'a> {
         }
     }
 
+    /// Note a binding of `name`: whether it holds an object the run makes ([`fresh_making`]).
+    fn bind(&mut self, name: &'a str, fresh: bool) {
+        let all = self.bound.entry(name).or_insert(true);
+        *all &= fresh;
+    }
+
+    /// Note each name of `pattern` as holding a value the run may not have made.
+    fn bind_unknown(&mut self, pattern: &'a BindingPattern<'a>) {
+        let mut names = Vec::new();
+        pattern_names(pattern, &mut names);
+        for name in names {
+            self.bind(name, false);
+        }
+    }
+
+    /// An expression that is read from, called or constructed, not kept: a builtin itself may be it (`Math` of
+    /// `Math.max`, `Date` of `x instanceof Date`), where [`Self::expression`] refuses a builtin as a value.
+    fn operand(&mut self, expression: &'a Expression<'a>) {
+        if self.refused.is_some() {
+            return;
+        }
+        match expression {
+            Expression::Identifier(identifier) => self.name(identifier.name.as_str()),
+            Expression::StaticMemberExpression(member) => {
+                self.static_member(&member.object, member.property.name.as_str());
+            }
+            Expression::ParenthesizedExpression(inner) => self.operand(&inner.expression),
+            other => self.expression(other),
+        }
+    }
+
+    /// Whether `object.property` (`property` `None` for a computed key) is a member of a builtin used as a value, which
+    /// is refused, but for the number constants ([`BUILTIN_CONSTANTS`]).
+    fn builtin_member_value(&mut self, object: &'a Expression<'a>, property: Option<&str>) -> bool {
+        let Some(root) = self.builtin_root(object) else {
+            return false;
+        };
+        // `Array.prototype` and the like are refused by their property's name
+        if property.is_some_and(|property| REFUSED_PROPERTIES.contains(&property)) {
+            return false;
+        }
+        let constant = match (object, property) {
+            (Expression::Identifier(identifier), Some(property)) => {
+                BUILTIN_CONSTANTS.contains(&(identifier.name.as_str(), property))
+            }
+            _ => false,
+        };
+        if constant {
+            return false;
+        }
+        // a refusal further in (`Array.prototype.x`) is named first
+        let root = root.to_string();
+        self.operand(object);
+        self.refuse(format!("a member of the global {root} as a value"));
+        true
+    }
+
+    /// An object that `used` changes in place must be one the run holds: an object or array literal, a `new` object,
+    /// a host call's result, a primitive, or a name every binding of which is one of those (a context value the text
+    /// does not bind is the run's own copy). Anything else (a member read, another call's result, a parameter) may be a
+    /// builtin or a prototype's function, shared by every later text on the thread's runtime.
+    fn own_object(&mut self, object: &'a Expression<'a>, used: OwnUse<'_>) {
+        match object {
+            Expression::ParenthesizedExpression(inner) => self.own_object(&inner.expression, used),
+            Expression::LogicalExpression(logical) => {
+                self.own_object(&logical.left, used);
+                self.own_object(&logical.right, used);
+            }
+            Expression::ConditionalExpression(conditional) => {
+                self.own_object(&conditional.consequent, used);
+                self.own_object(&conditional.alternate, used);
+            }
+            Expression::SequenceExpression(sequence) => {
+                if let Some(last) = sequence.expressions.last() {
+                    self.own_object(last, used);
+                }
+            }
+            Expression::AssignmentExpression(assignment) if assignment.operator.is_assign() => {
+                self.own_object(&assignment.right, used);
+            }
+            // `target ||= value` is the target's old value or the value: both must be the run's own
+            Expression::AssignmentExpression(assignment) if assignment.operator.is_logical() => {
+                match &assignment.left {
+                    oxc_ast::ast::AssignmentTarget::AssignmentTargetIdentifier(identifier) => {
+                        self.own_name(identifier.name.as_str(), used);
+                    }
+                    _ => self.refuse(used.refusal("a value the text may not have made")),
+                }
+                self.own_object(&assignment.right, used);
+            }
+            // `+=` and the rest make primitives
+            Expression::AssignmentExpression(_) => {}
+            Expression::Identifier(identifier) => self.own_name(identifier.name.as_str(), used),
+            other if fresh_making(other) => {}
+            other => match self.builtin_root(other) {
+                Some(root) => self.refuse(used.refusal(&format!("the global {root}"))),
+                None => self.refuse(used.refusal("a value the text may not have made")),
+            },
+        }
+    }
+
+    /// The name `name` as an object `used` changes: not a builtin, the stack itself only for a member assignment, and
+    /// any other name checked against its bindings once the whole text is walked ([`Self::finish_own_names`]).
+    fn own_name(&mut self, name: &'a str, used: OwnUse<'_>) {
+        if BUILTIN_GLOBALS.contains(&name) {
+            self.refuse(used.refusal(&format!("the global {name}")));
+        } else if name == "context" && !self.is_local(name) {
+            // `context.name = value` writes the stack; the stack object itself is the runtime's
+            if !matches!(used, OwnUse::Assignment) {
+                self.refuse(used.refusal("the context stack"));
+            }
+        } else {
+            let why = used.refusal(&format!("{name}, which the text binds to a value it may not have made"));
+            self.own_names.push((name, why));
+        }
+    }
+
+    /// A call that changes its receiver in place ([`MUTATING_METHODS`], or a method named by a key
+    /// the check cannot read, which may also reach a prototype by `__proto__`), or its first argument
+    /// ([`OBJECT_WRITERS`], `Error.captureStackTrace`), or calls with that argument as `this` ([`THIS_METHODS`], or a
+    /// method named by a key the check cannot read): that receiver or argument must be the run's own object
+    /// ([`Self::own_object`]).
+    fn call_target(&mut self, callee: &'a Expression<'a>, arguments: &'a [Argument<'a>]) {
+        let (object, property) = match callee {
+            Expression::StaticMemberExpression(member) => (&member.object, Some(member.property.name.as_str())),
+            Expression::ComputedMemberExpression(member) => match &member.expression {
+                Expression::StringLiteral(key) => (&member.object, key.value.as_str()),
+                _ => (&member.object, None),
+            },
+            _ => return,
+        };
+        if self.rooted_at_ec(object) {
+            return;
+        }
+        let builtin = match object {
+            Expression::Identifier(identifier) => Some(identifier.name.as_str()),
+            _ => None,
+        };
+        // [`WRITE_METHODS`] change only a Map, a Set or a typed array, and no builtin object is one, so on a shared
+        // receiver they throw or change nothing; a decimal's `add` changes nothing either
+        let writer = matches!((builtin, property), (Some("Object"), Some(name)) if OBJECT_WRITERS.contains(&name));
+        match property {
+            Some(name) if !writer && MUTATING_METHODS.contains(&name) => {
+                self.own_object(object, OwnUse::Receiver(name));
+            }
+            None => self.own_object(object, OwnUse::Receiver("named by a computed key")),
+            Some(_) => {}
+        }
+        let used = match (builtin, property) {
+            (Some("Object"), Some(name)) if OBJECT_WRITERS.contains(&name) => OwnUse::Writer("Object", name),
+            (Some("Error"), Some("captureStackTrace")) => OwnUse::Writer("Error", "captureStackTrace"),
+            (_, Some(name)) if THIS_METHODS.contains(&name) => OwnUse::This,
+            (_, None) => OwnUse::This,
+            _ => return,
+        };
+        match arguments.first() {
+            None => {}
+            Some(Argument::SpreadElement(_)) => self.refuse(used.refusal("a spread argument")),
+            // refused by the arguments' walk, as an arrow where one may not go
+            Some(Argument::ArrowFunctionExpression(_)) => {}
+            Some(first) => match first.as_expression() {
+                Some(first) => self.own_object(first, used),
+                None => self.refuse(used.refusal("an argument")),
+            },
+        }
+    }
+
+    /// The names [`Self::own_object`] left for the end of the walk: refused when any binding of one may hold a value
+    /// the run did not make.
+    fn finish_own_names(&mut self) {
+        for (name, why) in std::mem::take(&mut self.own_names) {
+            if self.bound.get(name) == Some(&false) {
+                self.refuse(why);
+            }
+        }
+    }
+
     /// A call's callee; whether an arrow function may be its argument (one of [`ARROW_METHODS`] on a value not
     /// reached from `ec`).
     fn callee(&mut self, callee: &'a Expression<'a>) -> bool {
@@ -1403,6 +1799,11 @@ impl<'a> Walk<'a> {
             Expression::Identifier(identifier)
                 if self.functions.contains(identifier.name.as_str()) && self.is_local(identifier.name.as_str()) =>
             {
+                false
+            }
+            // a builtin function called (`String(x)`) is not kept
+            Expression::Identifier(identifier) => {
+                self.name(identifier.name.as_str());
                 false
             }
             other => {
@@ -1429,6 +1830,9 @@ impl<'a> Walk<'a> {
                 Argument::Identifier(identifier)
                     if host && identifier.name == "context" && !self.is_local("context") => {}
                 Argument::SpreadElement(spread) => self.expression(&spread.argument),
+                Argument::Identifier(identifier) if arrows && PURE_CALLBACKS.contains(&identifier.name.as_str()) => {
+                    self.name(identifier.name.as_str());
+                }
                 Argument::ArrowFunctionExpression(arrow) => {
                     if !arrows {
                         self.refuse("an arrow function passed to anything but an array method that keeps nothing");

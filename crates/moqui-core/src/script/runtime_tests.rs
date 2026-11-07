@@ -94,7 +94,7 @@ fn actions_give_the_same_context_on_both_engines() -> Result<(), Error> {
         <set field="names" from="items.map(i => i.name)"/>
         <set field="names2" from="names" set-if-empty="false"/>
         <set field="price" from="'12.50'" type="BigDecimal"/>
-        <set field="items[0].seen" from="true"/>
+        <script>items.push({name: 'z', qty: 1})</script>
     </actions>"#;
     let mut results = Vec::new();
     on_both_engines(|engine| {

@@ -59,8 +59,9 @@ static CENSUS: LazyLock<Mutex<Census>> = LazyLock::new(|| Mutex::new(Census::def
 thread_local! {
     /// Host calls (binder trampolines) made on this thread since it started; see [`host_calls`].
     static HOST_CALLS: Cell<u64> = const { Cell::new(0) };
-    /// The row the running small script on this thread records into, while one runs ([`begin`]).
-    static CURRENT: RefCell<Vec<(EntryKind, u64)>> = const { RefCell::new(Vec::new()) };
+    /// The row the running small script on this thread records into, while one runs ([`begin`]); `None` while an
+    /// engine starts ([`suspend`]).
+    static CURRENT: RefCell<Vec<Option<(EntryKind, u64)>>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Whether the census records, read once: `MOQUI_SCRIPT_CENSUS` is `true` or `1`, or `MOQUI_SCRIPT_CENSUS_FILE` is set.
@@ -80,10 +81,14 @@ fn census_file() -> String {
 /// always, recorded only when the census is on.
 pub(crate) fn note(path: &'static str) {
     HOST_CALLS.with(|calls| calls.set(calls.get() + 1));
+    #[cfg(test)]
+    if noting_row().is_some() {
+        NOTED_FOR_TESTS.with(|noted| noted.set(noted.get() + 1));
+    }
     if !enabled() {
         return;
     }
-    let Some(current) = CURRENT.with(|current| current.borrow().last().copied()) else {
+    let Some(current) = noting_row() else {
         return;
     };
     if let Some(row) = moqui_lib::sync::lock(&CENSUS).rows.get_mut(&current) {
@@ -95,6 +100,53 @@ pub(crate) fn note(path: &'static str) {
 /// cell. Counted with the host calls, so a run that made one is not run again on QuickJS.
 pub(crate) fn note_side_effect() {
     HOST_CALLS.with(|calls| calls.set(calls.get() + 1));
+}
+
+/// The row a host call noted now records into: the running small script's, none while an engine starts.
+fn noting_row() -> Option<(EntryKind, u64)> {
+    CURRENT.with(|current| current.borrow().last().copied().flatten())
+}
+
+/// The census set aside until dropped ([`suspend`]).
+pub(crate) struct Suspended;
+
+/// Set the running script's row aside while an engine starts: the host calls a shim makes as it installs are the
+/// engine's, not the script's that happened to start it.
+pub(crate) fn suspend() -> Suspended {
+    CURRENT.with(|current| current.borrow_mut().push(None));
+    Suspended
+}
+
+impl Drop for Suspended {
+    fn drop(&mut self) {
+        CURRENT.with(|current| {
+            current.borrow_mut().pop();
+        });
+    }
+}
+
+/// [`begin`] with the census on, and the row a note now goes to, for the tests (the census is off in them).
+#[cfg(test)]
+pub(crate) fn begin_for_tests(kind: EntryKind, hash: u64) -> Entry {
+    CURRENT.with(|current| current.borrow_mut().push(Some((kind, hash))));
+    Entry { active: true }
+}
+
+#[cfg(test)]
+pub(crate) fn noting_row_for_tests() -> Option<(EntryKind, u64)> {
+    noting_row()
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Notes on this thread that went to a row, with the census on or not, for the tests.
+    static NOTED_FOR_TESTS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Notes on this thread that went to a row ([`note`]), for the tests.
+#[cfg(test)]
+pub(crate) fn noted_for_tests() -> u64 {
+    NOTED_FOR_TESTS.with(Cell::get)
 }
 
 /// Host calls and other side effects ([`note_side_effect`]) made on this thread so far: an oxide run that made none
@@ -118,7 +170,7 @@ pub(crate) struct Entry {
 pub(crate) fn begin(kind: EntryKind, hash: u64) -> Entry {
     let active = enabled() && kind.is_small();
     if active {
-        CURRENT.with(|current| current.borrow_mut().push((kind, hash)));
+        CURRENT.with(|current| current.borrow_mut().push(Some((kind, hash))));
     }
     Entry { active }
 }
