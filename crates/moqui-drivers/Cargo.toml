@@ -18,6 +18,7 @@ postgres = ["dep:postgres-protocol", "dep:postgres-types", "dep:fallible-iterato
 mysql = ["dep:mysql"]
 
 [dependencies]
+foldhash = { workspace = true }
 moqui-core = { workspace = true }
 moqui-lib = { workspace = true }
 base64 = { workspace = true }

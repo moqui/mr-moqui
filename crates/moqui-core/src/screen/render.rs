@@ -2477,8 +2477,21 @@ pub(crate) fn check_condition(condition: &Condition) -> Result<bool, Error> {
     }
 }
 
-/// Run `body`, in a transaction when `begin` is set. The transaction joins one already in place.
-/// Errors the actions left in the message facade roll it back without failing the call.
+/// How a screen render or transition begins its transaction: with the transaction cache (`cache`) when the
+/// `screen_tx_cache` property is `true` (read once), else as `use`. Off by default for now (plans/Profiling.md Round 27).
+fn screen_attribute() -> crate::transaction::TransactionAttribute {
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let cache = *CACHE.get_or_init(|| moqui_lib::env::get_prop_or_env("screen_tx_cache") == "true");
+    if cache {
+        crate::transaction::TransactionAttribute::Cache
+    } else {
+        crate::transaction::TransactionAttribute::UseOrBegin
+    }
+}
+
+/// Run `body`, in a transaction when `begin` is set, as [`screen_attribute`] says. The
+/// transaction joins one already in place. Errors the actions left in the message facade roll it back without failing
+/// the call.
 fn in_transaction<T>(begin: bool, timeout: Option<i64>, body: impl FnOnce() -> Result<T, Error>) -> Result<T, Error> {
     let facade = if begin {
         ExecutionContext::with_current(|ec| ec.factory().entity()).flatten()
@@ -2494,7 +2507,7 @@ fn in_transaction<T>(begin: bool, timeout: Option<i64>, body: impl FnOnce() -> R
         .map(std::time::Duration::from_secs);
     let mut rolled_back = false;
     let mut kept = None;
-    let outcome = tx.run(crate::transaction::TransactionAttribute::UseOrBegin, timeout, || {
+    let outcome = tx.run(screen_attribute(), timeout, || {
         let _deadline = script::DeadlineGuard::new(tx.time_remaining());
         kept = Some(body()?);
         if screen_has_error() {

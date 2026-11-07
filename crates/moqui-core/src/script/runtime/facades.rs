@@ -107,10 +107,28 @@ pub(super) fn sri_send_redirect_and_stop_render(ctx: Ctx<'_>, url: String) -> rq
 /// returns, or its last expression statement.
 pub(super) fn resource_script<'js>(ctx: Ctx<'js>, location: String) -> rquickjs::Result<JsValue<'js>> {
     host_guard(&ctx, || {
-        let source = read_script(&location).map_err(|err| throw_context(&ctx, &err))?;
-        let script = super::ScriptText::named(source, location.as_str());
-        eval_compiled_text::<JsValue>(&ctx, &script, false).map_err(|err| throw_context(&ctx, &err))
+        let (script, inert) = read_module(&location).map_err(|err| throw_context(&ctx, &err))?;
+        let source = script.shared_text();
+        let inert = inert && module_cache_on();
+        // A module whose top level only declares gives the same value each time it runs: the value it gave earlier in
+        // this outermost run is given again, its functions not made again (`parse::module_is_inert`).
+        if inert {
+            if let Some(kept) = super::kept_module(&ctx, &location, source) {
+                return Ok(kept);
+            }
+        }
+        let value = eval_compiled_text::<JsValue>(&ctx, &script, false).map_err(|err| throw_context(&ctx, &err))?;
+        if inert {
+            super::keep_module(&ctx, &location, Arc::clone(source), &value);
+        }
+        Ok(value)
     })
+}
+
+/// Whether module values are kept for the run: the `script_module_cache` property, true unless `false` (read once).
+fn module_cache_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| moqui_lib::env::get_prop_or_env("script_module_cache") != "false")
 }
 
 /// A script file's text by location, as the function [`crate::script::parse::file_function`] makes of it, with the
@@ -119,7 +137,10 @@ struct ScriptText {
     path: std::path::PathBuf,
     modified: Option<std::time::SystemTime>,
     checked: Instant,
-    text: Arc<str>,
+    /// The text, with its hash made once and the location as its name.
+    text: super::ScriptText,
+    /// Whether the file's top level only declares ([`crate::script::parse::module_is_inert`]).
+    inert: bool,
 }
 
 /// How long a script file's text is used before its modified time is looked at again.
@@ -154,16 +175,21 @@ pub fn forget_scripts(files: &[std::path::PathBuf]) -> Vec<String> {
 /// changes: its text as the body of a function called at once (see [`crate::script::parse::file_function`]), so it runs
 /// in names of its own and evaluates to what it returns. The compiled form is kept by the runtime by text.
 pub(super) fn read_script(location: &str) -> Result<Arc<str>, Error> {
+    read_module(location).map(|(script, _)| Arc::clone(script.shared_text()))
+}
+
+/// [`read_script`], and whether the file's top level only declares, so its value may be kept for the run.
+pub(super) fn read_module(location: &str) -> Result<(super::ScriptText, bool), Error> {
     let production = crate::web::is_production();
     {
         let mut texts = lock(script_texts());
         if let Some(found) = texts.get_mut(location) {
             if production || found.checked.elapsed() < SCRIPT_CHECK {
-                return Ok(Arc::clone(&found.text));
+                return Ok((found.text.clone(), found.inert));
             }
             if modified_of(&found.path) == found.modified {
                 found.checked = Instant::now();
-                return Ok(Arc::clone(&found.text));
+                return Ok((found.text.clone(), found.inert));
             }
         }
     }
@@ -171,17 +197,20 @@ pub(super) fn read_script(location: &str) -> Result<Arc<str>, Error> {
     let modified = modified_of(&path);
     let text = std::fs::read_to_string(&path)
         .map_err(|err| Error::new(format!("could not read script {location}")).with_source(err))?;
+    let inert = crate::script::parse::module_is_inert(&text);
     let text: Arc<str> = crate::script::parse::file_function(&text).into();
+    let script = super::ScriptText::named(text, location);
     lock(script_texts()).insert(
         location.to_string(),
         ScriptText {
             path,
             modified,
             checked: Instant::now(),
-            text: Arc::clone(&text),
+            text: script.clone(),
+            inert,
         },
     );
-    Ok(text)
+    Ok((script, inert))
 }
 
 /// Run a script file as a service body does: in the current context frame, with bare names.
@@ -190,8 +219,8 @@ pub(super) fn read_script(location: &str) -> Result<Arc<str>, Error> {
 ///
 /// Returns an error when the file cannot be read or the script throws.
 pub fn run_script_location(location: &str) -> Result<(), Error> {
-    let source = read_script(location)?;
-    eval_script_text(&super::ScriptText::named(source, location))
+    let (script, _) = read_module(location)?;
+    eval_script_text(&script)
 }
 
 /// `ec.logger.log(level, message, thrown)`: the level is a name or one of Java's `LoggerFacade` numbers, `ERROR_INT`

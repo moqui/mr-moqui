@@ -13,6 +13,7 @@ publish.workspace = true
 # Mail (lettre, imap) is moqui-mail's (plans/archive/Crate-Split.md).
 
 [dependencies]
+foldhash = { workspace = true }
 bytes = { workspace = true }
 inventory = { workspace = true }
 moqui-lib = { workspace = true }

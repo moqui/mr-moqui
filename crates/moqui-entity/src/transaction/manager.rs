@@ -46,7 +46,7 @@ const CANCEL_BACKLOG: usize = 256;
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 thread_local! {
-    static STACKS: RefCell<HashMap<u64, Vec<Frame>>> = RefCell::new(HashMap::new());
+    static STACKS: RefCell<HashMap<u64, Vec<Frame>, foldhash::fast::RandomState>> = RefCell::new(HashMap::default());
 }
 
 type ConnHook = Box<dyn FnOnce(&mut dyn DbConnection) -> Result<(), Error> + Send>;
@@ -73,6 +73,8 @@ struct Frame {
     trace: Option<Box<dyn crate::hooks::TransactionTrace>>,
     /// This thread's waited round trips when the frame began.
     round_trips_at: u64,
+    /// When the frame began, for the census's frame time.
+    began: std::time::Instant,
 }
 
 impl Drop for Frame {
@@ -98,6 +100,7 @@ struct Phase {
     on_rollback: Vec<AfterHook>,
     trace: Option<Box<dyn crate::hooks::TransactionTrace>>,
     round_trips_at: u64,
+    began: std::time::Instant,
     cache_mode: CacheMode,
 }
 
@@ -396,6 +399,7 @@ impl TransactionManager {
                 on_rollback: Vec::new(),
                 trace: crate::hooks::trace_transaction(),
                 round_trips_at: crate::driver::thread_round_trips(),
+                began: std::time::Instant::now(),
             });
             Ok(true)
         })
@@ -965,7 +969,13 @@ impl TransactionManager {
             }
         }
         if let Some(line) = census_line {
-            crate::entity::cache::census_frame(line.mode, line.stats.as_ref(), line.committed, line.round_trips);
+            crate::entity::cache::census_frame(
+                line.mode,
+                line.stats.as_ref(),
+                line.committed,
+                line.round_trips,
+                line.micros,
+            );
         }
         for member in resumes {
             member.resume_parked_parent();
@@ -1007,6 +1017,7 @@ impl TransactionManager {
                 on_rollback: std::mem::take(&mut frame.on_rollback),
                 trace: frame.trace.take(),
                 round_trips_at: frame.round_trips_at,
+                began: frame.began,
                 cache_mode: frame.cache_mode,
             };
             Ok(Prepared::Ready {
@@ -1610,6 +1621,7 @@ fn end_trace(phase: &mut Phase, committed: bool, census: bool) -> Option<CensusL
         stats: stats.clone(),
         committed,
         round_trips: crate::driver::thread_round_trips().saturating_sub(phase.round_trips_at),
+        micros: u64::try_from(phase.began.elapsed().as_micros()).unwrap_or(u64::MAX),
     });
     let Some(trace) = phase.trace.take() else {
         return line;
@@ -1644,6 +1656,8 @@ struct CensusLine {
     stats: Option<crate::entity::cache::TxCacheStats>,
     committed: bool,
     round_trips: u64,
+    /// From the frame's begin to the end of its commit or rollback.
+    micros: u64,
 }
 
 /// Runs the after-commit or after-rollback hooks in order. The transaction has already ended, so a panicking hook is

@@ -1316,3 +1316,67 @@ fn a_held_row_matches_a_condition_of_another_number_type() {
     })
     .unwrap();
 }
+
+/// A view built in code (a data document, a REST query view) in a frame reads the frame's held rows through shadowed
+/// member tables, with none written.
+#[test]
+fn a_view_built_in_code_reads_the_held_rows_through_shadows() {
+    use std::collections::BTreeMap;
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    put_enum(&facade, "B1", "A", "stored");
+    let map = |pairs: &[(&str, &str)]| {
+        Value::Map(
+            pairs
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), Value::string(*value)))
+                .collect(),
+        )
+    };
+    let mut parameters = BTreeMap::new();
+    parameters.insert(
+        "member-entity".to_string(),
+        map(&[("entity-alias", "ENUM"), ("entity-name", ENUM)]),
+    );
+    parameters.insert(
+        "alias".to_string(),
+        Value::List(vec![
+            map(&[("entity-alias", "ENUM"), ("name", "enumId")]),
+            map(&[("entity-alias", "ENUM"), ("name", "description")]),
+        ]),
+    );
+    let tx = facade.transactions_for(ENUM).unwrap();
+    let before = super::super::tx_cache_stats();
+    run(&tx, TransactionAttribute::Cache, || {
+        put_enum(&facade, "B2", "A", "held");
+        set_enum(&facade, "B1", "description", "changed")?;
+        let mut rows: Vec<String> = facade
+            .dynamic_view("dynamic.EnumBuilt", &parameters)?
+            .iter()
+            .filter(|row| row.get("enumId").is_some_and(|id| plain_value(id).starts_with('B')))
+            .map(|row| {
+                format!(
+                    "{}:{}",
+                    row.get("enumId").map(plain_value).unwrap_or_default(),
+                    row.get("description").map(plain_value).unwrap_or_default()
+                )
+            })
+            .collect();
+        rows.sort();
+        assert_eq!(rows, ["B1:changed", "B2:held"]);
+        assert_eq!(
+            statements(&tape, "INSERT INTO \"enumeration\""),
+            1,
+            "only the stored row's insert"
+        );
+        Ok(())
+    })
+    .unwrap();
+    let stats = super::super::tx_cache_stats().since(&before);
+    assert_eq!(stats.early_flush_count(), 0, "{stats:?}");
+    assert_eq!(stats.shadowed_reads, 1);
+}
+
+fn plain_value(value: &Value) -> String {
+    moqui_lib::object::to_plain_string(value)
+}

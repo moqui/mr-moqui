@@ -739,3 +739,38 @@ fn actions_first_generated_deep_inside_a_script_generate() -> Result<(), Error> 
     assert_eq!(outcome, "generated");
     Ok(())
 }
+
+/// An inert module (`parse::module_is_inert`) loaded twice in one run is the same value, its functions made once; a
+/// module with a memo at its top level is made again at each load.
+#[test]
+fn an_inert_module_is_kept_for_the_run_and_one_with_a_memo_is_not() {
+    let ctx = ExecutionContextFactory::test_context();
+    let _entered = ctx.enter();
+    clear_context_stack();
+    let dir = std::env::temp_dir().join(format!("moqui-script-modules-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (name, text, kept) in [
+        ("Inert.js", "function twice(n) { return n * 2 }\n({twice})\n", true),
+        (
+            "Memo.js",
+            "let memo = null\nfunction twice(n) { return n * 2 }\n({twice})\n",
+            false,
+        ),
+    ] {
+        let file = dir.join(name);
+        std::fs::write(&file, text).unwrap();
+        set_context_name("where", Value::string(file.to_string_lossy())).unwrap();
+        run_actions(
+            "<actions><script>const a = ec.resource.script(where), b = ec.resource.script(where); same = a === b; \
+             four = b.twice(2)</script></actions>",
+        )
+        .unwrap();
+        let read = |name: &str| {
+            crate::script::runtime::context_value(name).map(|value| moqui_lib::object::to_plain_string(&value))
+        };
+        assert_eq!(read("same"), Some(kept.to_string()), "{name}");
+        assert_eq!(read("four"), Some("4".to_string()), "{name}");
+    }
+    clear_context_stack();
+    let _ = std::fs::remove_dir_all(&dir);
+}

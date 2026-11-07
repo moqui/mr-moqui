@@ -40,8 +40,11 @@ pub(crate) use runtime::{
     context_combined, invoke_web_handler, mark_request_thread, put_context_all, value_entity_name, value_field,
     with_real_ec, with_screen_runner, WidgetWrap,
 };
-pub use runtime::{eval_condition, expand_localized, ContextFrame, DeadlineGuard, EngineMemory, IsolatedContext};
-pub use runtime::{text_upload_to_js, with_ctx};
+pub use runtime::{
+    engine_stats, eval_condition, expand_localized, ContextFrame, DeadlineGuard, EngineMemory, EngineStats,
+    IsolatedContext,
+};
+pub use runtime::{text_upload_to_js, with_ctx, with_spec_ctx};
 // for host callbacks outside this crate: moqui-llm's ec.llm
 pub use runtime::{eval_named_value, value_items, value_map};
 pub use runtime::{facade_of, host_guard, host_to_js, js_error, js_to_host, throw_lib, with_ec};
@@ -49,6 +52,40 @@ pub use runtime::{facade_of, host_guard, host_to_js, js_error, js_to_host, throw
 #[cfg(test)]
 mod tests {
     use super::{parse_js, run_actions};
+
+    /// A module whose top level only declares may be kept for a run; one with a memo, a call or a read of a name it does
+    /// not declare (a context value) may not.
+    #[test]
+    fn a_module_that_only_declares_is_inert() {
+        use super::parse::module_is_inert;
+        let lib = r#"
+            const lib = ec.resource.script("component://framework/service/Lib.js")
+            const {find, one} = lib
+            const P = "mantle.product.", E = P + "ProductPrice"
+            const LIMIT = 24 * 7
+            const kinds = new Set(["a", "b"])
+            const table = {open: {label: "Open", statuses: ["A"]}}
+            const policy = lib.policy
+            function execute(op, input) { return operations[op](input) }
+            const operations = {find, run: input => one(E, input)};
+            ({execute, LIMIT})
+        "#;
+        assert!(module_is_inert(lib));
+        assert!(
+            !module_is_inert("let memo = null\nfunction f() { return memo }\n({f})"),
+            "a memo"
+        );
+        assert!(
+            !module_is_inert("const rows = ec.entity.find('X').list()\n({rows})"),
+            "rows read at load"
+        );
+        assert!(!module_is_inert("const user = partyId\n({user})"), "a context name");
+        assert!(
+            !module_is_inert("const table = {}\ntable.a = 1\n({table})"),
+            "a change at load"
+        );
+        assert!(!module_is_inert("function f() {}\nf()"), "a value computed at load");
+    }
 
     #[test]
     fn parse_js_accepts_arithmetic_and_actions_return_ok() {

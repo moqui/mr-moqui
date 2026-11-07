@@ -27,7 +27,7 @@ use moqui_lib::object::Value;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-use super::feed::{probe_query, Touch, TOUCHES};
+use super::feed::{insert_pending, probe_query, Touch, TOUCHES};
 use super::xml::decode_xml_entities;
 use super::{
     component_data_locations, conf_data_locations, data_directory_locations, data_types_of, eca_rules, error_chain,
@@ -1084,4 +1084,94 @@ fn xml_entities_decode_between_text_and_name_the_bad_one() {
     let error = |raw: &str| decode_xml_entities(raw).unwrap_err().to_string();
     assert_eq!(error("x &amp y"), "unterminated entity '&amp y'");
     assert_eq!(error("x &nbsp; y"), "unknown entity '&nbsp;'");
+}
+
+/// A write recorded without values (made before the feed configuration targeted its entity, as a data load's are) of
+/// an entity a document reads through a relationship is fed as the document's primary rows, by their keys, not by the
+/// written row's own key, which the delivery would take for a document id it cannot read.
+#[test]
+fn a_related_write_without_values_is_fed_by_the_documents_primary_keys() {
+    let facade = crate::testing::open();
+    facade.set_disable_data_feed(false);
+    let put = |entity: &str, fields: &[(&str, &str)]| {
+        let mut value = facade.make_value(entity).unwrap();
+        for (name, text) in fields {
+            value.set(*name, Value::string(*text));
+        }
+        value.create(&facade).unwrap();
+    };
+    put(
+        "moqui.basic.EnumerationType",
+        &[("enumTypeId", "FEEDT"), ("description", "a type")],
+    );
+    put(
+        "moqui.basic.Enumeration",
+        &[("enumId", "FEEDE1"), ("enumTypeId", "FEEDT")],
+    );
+    put(
+        "moqui.entity.document.DataDocument",
+        &[
+            ("dataDocumentId", "FEEDDOC"),
+            ("primaryEntityName", "moqui.basic.Enumeration"),
+            ("indexName", "feedtest"),
+        ],
+    );
+    put(
+        "moqui.entity.document.DataDocumentField",
+        &[
+            ("dataDocumentId", "FEEDDOC"),
+            ("fieldSeqId", "01"),
+            ("sequenceNum", "1"),
+            ("fieldPath", "enumId"),
+        ],
+    );
+    put(
+        "moqui.entity.document.DataDocumentField",
+        &[
+            ("dataDocumentId", "FEEDDOC"),
+            ("fieldSeqId", "02"),
+            ("sequenceNum", "2"),
+            ("fieldPath", "type:description"),
+            ("fieldNameAlias", "typeDescription"),
+        ],
+    );
+    put(
+        "moqui.entity.feed.DataFeed",
+        &[("dataFeedId", "FEEDF"), ("dataFeedTypeEnumId", "DTFDTP_RT_PUSH")],
+    );
+    put(
+        "moqui.entity.feed.DataFeedDocument",
+        &[("dataFeedId", "FEEDF"), ("dataDocumentId", "FEEDDOC")],
+    );
+    let tx = facade.transactions_for("moqui.basic.EnumerationType").unwrap();
+    facade.begin("moqui.basic.EnumerationType", None).unwrap();
+    let frame = tx.frame_token().unwrap();
+    TOUCHES.with(|touches| {
+        touches
+            .borrow_mut()
+            .entry(frame)
+            .or_default()
+            .push(Touch::without_values("moqui.basic.EnumerationType", "update"));
+    });
+    tx.with_connection(|conn| insert_pending(&facade, conn, Some(frame)))
+        .unwrap();
+    let pending: Vec<(String, String)> = facade
+        .find("moqui.entity.feed.DataFeedPending")
+        .unwrap()
+        .eq("dataDocumentId", Value::string("FEEDDOC"))
+        .list()
+        .unwrap()
+        .values()
+        .iter()
+        .map(|row| {
+            let text = |name: &str| {
+                row.get(name)
+                    .map(moqui_lib::object::to_plain_string)
+                    .unwrap_or_default()
+            };
+            (text("entityName"), text("primaryKey"))
+        })
+        .collect();
+    facade.rollback("moqui.basic.EnumerationType").unwrap();
+    assert_eq!(pending, [("moqui.basic.Enumeration".to_string(), "FEEDE1".to_string())]);
 }

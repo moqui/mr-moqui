@@ -31,8 +31,8 @@ use std::time::{Duration, Instant};
 
 use moqui_lib::context_stack::{ContextStack, Lookup};
 use moqui_lib::object::{HostObject, Value};
+use rquickjs::allocator::{Allocator, RustAllocator};
 use rquickjs::class::Trace;
-use rquickjs::context::EvalOptions;
 use rquickjs::function::{Opt, Rest, This};
 use rquickjs::object::Property;
 use rquickjs::Error as JsError;
@@ -61,6 +61,8 @@ mod metadata_tests;
 mod native_tools;
 mod notification;
 mod pass_host;
+#[cfg(test)]
+mod realm_tests;
 mod screen_host;
 mod search;
 mod services;
@@ -124,9 +126,9 @@ const MEMORY_LIMIT: usize = 64 * 1024 * 1024;
 // Leave room for a new render's transient values and compilation. Source-byte cache limits cannot predict bytecode
 // size, and a screen may catch an allocation error before with_context sees it and releases the caches.
 const CACHE_HEAP_PRESSURE: i64 = (MEMORY_LIMIT * 3 / 4) as i64;
-/// The stack the outermost script on a thread may use, below the 2 MiB of a service worker. QuickJS counts an engine's
-/// stack from where it is entered. Nested scripts share this budget plus [`NESTED_STACK`], capped at [`NESTED_STACK`]
-/// per engine except on larger request workers. Less than [`MIN_NESTED_STACK`] left fails before entering an engine.
+/// The stack the outermost script on a thread may use, below the 2 MiB of a service worker. QuickJS counts the engine's
+/// stack from where the outermost script enters it, so the scripts it nests share this budget plus [`NESTED_STACK`]
+/// (on a request worker, [`REQUEST_SCRIPT_STACK`]). Less than [`MIN_NESTED_STACK`] left fails before a nested script.
 const SCRIPT_STACK: usize = 1024 * 1024;
 /// Full app renders nest widget templates, includes and services on the request worker's 8 MiB stack.
 const REQUEST_SCRIPT_STACK: usize = 4 * 1024 * 1024;
@@ -148,7 +150,10 @@ thread_local! {
     /// Where the stack was when the outermost script on the thread was entered.
     static STACK_BASE: Cell<usize> = const { Cell::new(0) };
     static STACK: RefCell<ContextStack> = RefCell::new(ContextStack::new());
-    static ENGINES: RefCell<Vec<Rc<Engine>>> = const { RefCell::new(Vec::new()) };
+    /// This thread's engines: the main one ([`EngineKind::Main`]) and, for the test harness, the spec one.
+    static ENGINES: RefCell<Vec<(EngineKind, Rc<Engine>)>> = const { RefCell::new(Vec::new()) };
+    /// The engine of each running script, innermost last.
+    static RUNNING: RefCell<Vec<Rc<Engine>>> = const { RefCell::new(Vec::new()) };
     static DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
@@ -399,7 +404,8 @@ fn stack_address() -> usize {
     std::hint::black_box(std::ptr::from_ref(&marker)) as usize
 }
 
-/// The stack budget of the engine entered at `depth`, or an error when a nested script has too little stack left.
+/// The engine's stack limit when the outermost script enters it (`depth` 0), or for a nested script what is left of
+/// it, an error when too little is.
 fn stack_budget(depth: usize) -> Result<usize, Error> {
     let here = stack_address();
     let (budget, ceiling) = if REQUEST_THREAD.with(Cell::get) {
@@ -409,7 +415,12 @@ fn stack_budget(depth: usize) -> Result<usize, Error> {
     };
     if depth == 0 {
         STACK_BASE.with(|base| base.set(here));
-        return Ok(budget);
+        // the one runtime's limit, from here: this script and the scripts it nests
+        return Ok(if REQUEST_THREAD.with(Cell::get) {
+            budget
+        } else {
+            budget + NESTED_STACK
+        });
     }
     let used = STACK_BASE.with(Cell::get).abs_diff(here);
     let left = (budget + NESTED_STACK).saturating_sub(used).min(ceiling);
@@ -419,9 +430,13 @@ fn stack_budget(depth: usize) -> Result<usize, Error> {
     Ok(left)
 }
 
+/// An inert module's value kept for the run, with the text it was made from ([`kept_module`]).
+type KeptModule = (Arc<str>, Persistent<JsValue<'static>>);
+
 /// Persistents drop before the context, and the context drops before the runtime.
 struct Engine {
-    cache_pressure_check: Cell<u8>,
+    /// The live bytes of this engine's heap, kept by its [`CountingAllocator`].
+    heap_bytes: Rc<Cell<usize>>,
     /// Lists, maps and decimals a running script read by bare name. The script mutates the lists and maps, so
     /// they are written back to the stack at the end of the run and before a host call, when changed.
     tracked: RefCell<HashMap<String, Persistent<JsValue<'static>>>>,
@@ -433,6 +448,9 @@ struct Engine {
     scripts: RefCell<compiled::CompiledScripts>,
     /// Compiled screen units by unit id.
     units: RefCell<super::bounded::BoundedMap<u64, Persistent<Function<'static>>>>,
+    /// The values of inert modules (`ec.resource.script`) given in the outermost run on this thread, by location, with
+    /// the text each was made from; emptied when that run ends. See [`kept_module`].
+    modules: RefCell<HashMap<String, KeptModule>>,
     /// Objects made once per engine, such as the XML actions macros, by name. See [`engine_object`].
     objects: RefCell<HashMap<&'static str, Persistent<Object<'static>>>>,
     /// Ids of the mode runtimes this engine has already run.
@@ -455,13 +473,130 @@ struct Engine {
     runtime: Runtime,
 }
 
+/// Process-wide counts of the script engines, for [`engine_stats`].
+mod counts {
+    use std::sync::atomic::AtomicUsize;
+    pub(super) static STARTED: AtomicUsize = AtomicUsize::new(0);
+    /// Engines started at depth 0: the threads that ran a script.
+    pub(super) static THREADS: AtomicUsize = AtomicUsize::new(0);
+    pub(super) static LIVE: AtomicUsize = AtomicUsize::new(0);
+    pub(super) static LIVE_MAX: AtomicUsize = AtomicUsize::new(0);
+    pub(super) static DEPTH_MAX: AtomicUsize = AtomicUsize::new(0);
+    pub(super) static HEAP: AtomicUsize = AtomicUsize::new(0);
+    pub(super) static HEAP_MAX: AtomicUsize = AtomicUsize::new(0);
+}
+
+/// What the process's script engines have done since it started: engines started and the most alive at once, the
+/// deepest nesting, the QuickJS heaps' live bytes (all engines) now and at their highest, and the scripts compiled and
+/// read from the shared bytecode instead.
+#[derive(Clone, Debug, Default)]
+pub struct EngineStats {
+    pub engines_started: usize,
+    pub threads: usize,
+    pub engines_live: usize,
+    pub engines_live_max: usize,
+    pub depth_max: usize,
+    pub heap_bytes: usize,
+    pub heap_bytes_max: usize,
+    pub compiled: u64,
+    pub shared_reads: u64,
+}
+
+/// [`EngineStats`] of the process.
+pub fn engine_stats() -> EngineStats {
+    use std::sync::atomic::Ordering::Relaxed;
+    EngineStats {
+        engines_started: counts::STARTED.load(Relaxed),
+        threads: counts::THREADS.load(Relaxed),
+        engines_live: counts::LIVE.load(Relaxed),
+        engines_live_max: counts::LIVE_MAX.load(Relaxed),
+        depth_max: counts::DEPTH_MAX.load(Relaxed),
+        heap_bytes: counts::HEAP.load(Relaxed),
+        heap_bytes_max: counts::HEAP_MAX.load(Relaxed),
+        compiled: compiled::compiled_count(),
+        shared_reads: compiled::shared_bytecode_reads(),
+    }
+}
+
+fn add_heap(bytes: usize) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let now = counts::HEAP.fetch_add(bytes, Relaxed) + bytes;
+    counts::HEAP_MAX.fetch_max(now, Relaxed);
+}
+
+fn sub_heap(bytes: usize) {
+    counts::HEAP.fetch_sub(bytes, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// QuickJS's heap on Rust's allocator ([`RustAllocator`]), its live bytes counted, so the engine knows its heap size
+/// without `JS_ComputeMemoryUsage`, which walks every object (4% of a Mantle service call's time when it ran every 16th
+/// script).
+struct CountingAllocator(Rc<Cell<usize>>);
+
+// SAFETY: every call goes to `RustAllocator`, which meets the trait's contract; the count only reads the sizes it gives.
+unsafe impl Allocator for CountingAllocator {
+    fn alloc(&mut self, size: usize) -> *mut u8 {
+        let ptr = RustAllocator.alloc(size);
+        if !ptr.is_null() {
+            // SAFETY: `ptr` was just allocated by `RustAllocator`.
+            let size = unsafe { RustAllocator::usable_size(ptr) };
+            self.0.set(self.0.get() + size);
+            add_heap(size);
+        }
+        ptr
+    }
+
+    fn calloc(&mut self, count: usize, size: usize) -> *mut u8 {
+        let ptr = RustAllocator.calloc(count, size);
+        if !ptr.is_null() {
+            // SAFETY: `ptr` was just allocated by `RustAllocator`.
+            let size = unsafe { RustAllocator::usable_size(ptr) };
+            self.0.set(self.0.get() + size);
+            add_heap(size);
+        }
+        ptr
+    }
+
+    unsafe fn dealloc(&mut self, ptr: *mut u8) {
+        // SAFETY: the caller hands back a pointer this allocator gave, which `RustAllocator` made.
+        let size = unsafe { RustAllocator::usable_size(ptr) };
+        self.0.set(self.0.get().saturating_sub(size));
+        sub_heap(size);
+        // SAFETY: as above.
+        unsafe { RustAllocator.dealloc(ptr) };
+    }
+
+    unsafe fn realloc(&mut self, ptr: *mut u8, new_size: usize) -> *mut u8 {
+        // SAFETY: the caller hands back a pointer this allocator gave, which `RustAllocator` made.
+        let old = unsafe { RustAllocator::usable_size(ptr) };
+        // SAFETY: as above.
+        let moved = unsafe { RustAllocator.realloc(ptr, new_size) };
+        if !moved.is_null() {
+            // SAFETY: `moved` was just allocated by `RustAllocator`.
+            let new = unsafe { RustAllocator::usable_size(moved) };
+            self.0.set((self.0.get() + new).saturating_sub(old));
+            add_heap(new);
+            sub_heap(old);
+        }
+        moved
+    }
+
+    unsafe fn usable_size(ptr: *mut u8) -> usize {
+        // SAFETY: the caller hands a pointer this allocator gave, which `RustAllocator` made.
+        unsafe { RustAllocator::usable_size(ptr) }
+    }
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        counts::LIVE.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 impl Engine {
     /// Reclaim cached code before the hard heap limit interrupts a valid script. Live user values remain rooted.
     fn reclaim_cache_pressure(&self) -> bool {
-        let used = || {
-            let usage = self.runtime.memory_usage();
-            usage.malloc_size.max(usage.memory_used_size)
-        };
+        let used = || i64::try_from(self.heap_bytes.get()).unwrap_or(i64::MAX);
         if used() < CACHE_HEAP_PRESSURE {
             return false;
         }
@@ -476,6 +611,7 @@ impl Engine {
 
     /// Drop the compiled code and the objects kept in this engine, to free its heap.
     fn clear_caches(&self) {
+        self.modules.borrow_mut().clear();
         self.templates.borrow_mut().clear();
         self.scripts.borrow_mut().clear();
         self.units.borrow_mut().clear();
@@ -675,7 +811,8 @@ pub struct EngineMemory {
 
 /// [`EngineMemory`] of this thread's engines, after a collection when `collect`. Not while a script runs on the thread.
 pub fn engine_memory(collect: bool) -> EngineMemory {
-    let engines = ENGINES.with(|engines| engines.borrow().clone());
+    let engines: Vec<Rc<Engine>> =
+        ENGINES.with(|engines| engines.borrow().iter().map(|(_, engine)| Rc::clone(engine)).collect());
     let mut memory = EngineMemory {
         engines: engines.len(),
         ..EngineMemory::default()
@@ -757,6 +894,12 @@ pub fn with_ctx<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Err
     with_context(body)
 }
 
+/// [`with_ctx`] in the thread's spec engine, where the test harness's code and globals are
+/// ([`eval_named_value`]).
+pub fn with_spec_ctx<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Error> {
+    with_engine(EngineKind::Spec, body)
+}
+
 pub(super) fn eval_source<'js, T>(ctx: &Ctx<'js>, source: &str) -> Result<T, Error>
 where
     T: FromJs<'js>,
@@ -790,10 +933,9 @@ fn expand_here(ctx: &Ctx<'_>, template: &str) -> Result<String, Error> {
     expand_in(ctx, template)
 }
 
-/// A script that runs a service that runs a script needs its own runtime: a `Context::with`
-/// cannot be entered again while it is held. Each nesting level gets one, kept for reuse. A chain of Mantle services
-/// from a shipment delivery to a ledger posting nests about 20 deep; the stack budget ([`stack_budget`]) is what stops
-/// runaway recursion, so this only bounds the number of engines.
+/// A script that runs a service that runs a script runs in the same engine ([`with_nested_context`]). A chain of Mantle
+/// services from a shipment delivery to a ledger posting nests about 20 deep; the stack budget ([`stack_budget`]) is
+/// what stops runaway recursion, so this only bounds the nesting.
 const MAX_SCRIPT_DEPTH: usize = 64;
 
 struct DepthGuard;
@@ -805,30 +947,69 @@ impl Drop for DepthGuard {
 }
 
 fn with_context<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Error> {
+    with_engine(EngineKind::Main, body)
+}
+
+/// Which of a thread's engines a script runs in. Every service, screen and action script runs in the main one, nested
+/// ones included ([`with_nested_context`]). The test harness's spec code runs in an engine of its own, so the globals
+/// it defines (`call`, `login`, ...) are not in front of the context stack for the services a spec calls.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EngineKind {
+    Main,
+    Spec,
+}
+
+/// The thread's engine of `kind`, started the first time.
+fn engine_of(kind: EngineKind) -> Result<Rc<Engine>, Error> {
+    if let Some(engine) = ENGINES.with(|engines| {
+        engines
+            .borrow()
+            .iter()
+            .find(|(of, _)| *of == kind)
+            .map(|(_, engine)| Rc::clone(engine))
+    }) {
+        return Ok(engine);
+    }
+    let started = Rc::new(Engine::start()?);
+    if kind == EngineKind::Main {
+        counts::THREADS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    ENGINES.with(|engines| engines.borrow_mut().push((kind, Rc::clone(&started))));
+    Ok(started)
+}
+
+/// The engine of the innermost running script given back when it ends, however it ends.
+struct Running;
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        RUNNING.with(|running| {
+            running.borrow_mut().pop();
+        });
+    }
+}
+
+fn with_engine<R>(kind: EngineKind, body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Error> {
     let depth = DEPTH.with(Cell::get);
     if depth >= MAX_SCRIPT_DEPTH {
         return Err(Error::new("scripts are nested too deeply"));
     }
     let stack = stack_budget(depth)?;
-    let existing = ENGINES.with(|engines| engines.borrow().get(depth).cloned());
-    let engine = match existing {
-        Some(engine) => engine,
-        None => {
-            let started = Rc::new(Engine::start()?);
-            ENGINES.with(|engines| engines.borrow_mut().push(Rc::clone(&started)));
-            started
-        }
-    };
-    // Computing heap usage walks the heap; do it periodically, not for every field expression. The soft limit leaves
-    // 16 MiB for code and values made between checks. The hard limit and its existing error recovery still apply.
-    let check = engine.cache_pressure_check.get();
-    engine.cache_pressure_check.set((check + 1) % 16);
-    if check == 0 {
-        engine.reclaim_cache_pressure();
+    let engine = engine_of(kind)?;
+    let entered = RUNNING.with(|running| running.borrow().iter().any(|held| Rc::ptr_eq(held, &engine)));
+    RUNNING.with(|running| running.borrow_mut().push(Rc::clone(&engine)));
+    let _running = Running;
+    if entered {
+        return with_nested_context(&engine, depth, body);
     }
+    // The heap's live bytes are counted as it allocates ([`CountingAllocator`]), so every entry checks them. The hard
+    // limit and its error recovery still apply.
+    engine.reclaim_cache_pressure();
+    // QuickJS counts the stack from where the runtime is entered, here: the nested scripts this one runs share it.
     engine.runtime.set_max_stack_size(stack);
     let _limit = (depth == 0).then(ScriptLimit::arm);
     DEPTH.with(|current| current.set(depth + 1));
+    counts::DEPTH_MAX.fetch_max(depth + 1, std::sync::atomic::Ordering::Relaxed);
     let _guard = DepthGuard;
     engine.context.with(|ctx| {
         let _run = RunValues {
@@ -842,6 +1023,8 @@ fn with_context<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Err
             ctx.run_gc();
         }
         let flushed = flush_tracked(&ctx, &engine, Flush::End);
+        // the modules kept for this run go with it: the next run makes them again
+        engine.modules.borrow_mut().clear();
         // what the outermost script opened with `send()` and did not read or forward goes with it
         if depth == 0 {
             crate::web::upstream::clear();
@@ -851,6 +1034,67 @@ fn with_context<R>(body: impl FnOnce(&Ctx) -> Result<R, Error>) -> Result<R, Err
             (Err(err), _) | (Ok(_), Err(err)) => Err(err),
         }
     })
+}
+
+/// A script run by a host call of a running script (a service it calls runs another script): in the thread's one
+/// engine and context, entered again through the lock the outermost script's `Context::with` holds
+/// (`Ctx::from_raw`), not in a runtime of its own. Its compiled scripts, objects and heap are the outer one's; its run
+/// state is its own ([`OuterRun`]), what it read written back to its own context frame at its end. A script file's own
+/// declarations are in its function ([`crate::script::parse::file_function`]), so they do not meet the caller's; a
+/// screen mode's render state is given back by its outermost unit's epilogue.
+fn with_nested_context<R>(
+    engine: &Rc<Engine>,
+    depth: usize,
+    body: impl FnOnce(&Ctx) -> Result<R, Error>,
+) -> Result<R, Error> {
+    // SAFETY: `engine` is running on this thread (it is in `RUNNING` below this call), so its outermost
+    // `Context::with` holds the runtime's lock for as long as this call lasts, and the `Ctx` made here does not
+    // outlive it.
+    let ctx = unsafe { Ctx::from_raw(engine.context.as_raw()) };
+    // The caller's run state is set aside as it is, as a runtime of its own would leave it, and given back after: its
+    // tracked values (written to its own context frame at its next host call or its end), its released ones, its
+    // screen unit depth (a render this run makes starts afresh) and its flush in progress.
+    let outer = OuterRun {
+        engine,
+        tracked: engine.tracked.take(),
+        released: engine.released.take(),
+        unit_depth: engine.unit_depth.replace(0),
+        flushing: engine.flushing.replace(false),
+    };
+    DEPTH.with(|current| current.set(depth + 1));
+    counts::DEPTH_MAX.fetch_max(depth + 1, std::sync::atomic::Ordering::Relaxed);
+    let guard = DepthGuard;
+    let result = body(&ctx);
+    let flushed = flush_tracked(&ctx, engine, Flush::End);
+    drop(guard);
+    drop(outer);
+    match (result, flushed) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(err), _) | (Ok(_), Err(err)) => Err(err),
+    }
+}
+
+/// The run state of a script a nested run ([`with_nested_context`]) set aside, given back when it ends, also by an
+/// error or a panic; what the nested run left is dropped.
+struct OuterRun<'a> {
+    engine: &'a Engine,
+    tracked: HashMap<String, Persistent<JsValue<'static>>>,
+    released: HashMap<String, Released>,
+    unit_depth: u32,
+    flushing: bool,
+}
+
+impl Drop for OuterRun<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut tracked) = self.engine.tracked.try_borrow_mut() {
+            *tracked = std::mem::take(&mut self.tracked);
+        }
+        if let Ok(mut released) = self.engine.released.try_borrow_mut() {
+            *released = std::mem::take(&mut self.released);
+        }
+        self.engine.unit_depth.set(self.unit_depth);
+        self.engine.flushing.set(self.flushing);
+    }
 }
 
 /// Write each tracked list and map back to the context stack.
@@ -1018,15 +1262,39 @@ pub(crate) fn in_script() -> bool {
     DEPTH.with(Cell::get) > 0
 }
 
+/// The value an inert module at `location` gave earlier in this outermost run, when made from the same text.
+fn kept_module<'js>(ctx: &Ctx<'js>, location: &str, text: &Arc<str>) -> Option<JsValue<'js>> {
+    let engine = current_engine()?;
+    let modules = engine.modules.borrow();
+    let (kept_text, value) = modules.get(location)?;
+    if !Arc::ptr_eq(kept_text, text) && **kept_text != **text {
+        return None;
+    }
+    value.clone().restore(ctx).ok()
+}
+
+/// Keep an inert module's value for the rest of the outermost run ([`kept_module`]).
+fn keep_module<'js>(ctx: &Ctx<'js>, location: &str, text: Arc<str>, value: &JsValue<'js>) {
+    if let Some(engine) = current_engine() {
+        engine
+            .modules
+            .borrow_mut()
+            .insert(location.to_string(), (text, Persistent::save(ctx, value.clone())));
+    }
+}
+
 /// The engine of the innermost running script.
 fn current_engine() -> Option<Rc<Engine>> {
-    let depth = DEPTH.with(Cell::get);
-    ENGINES.with(|engines| engines.borrow().get(depth.checked_sub(1)?).cloned())
+    RUNNING.with(|running| running.borrow().last().cloned())
 }
 
 impl Engine {
     fn start() -> Result<Self, Error> {
-        let runtime = Runtime::new().map_err(js_error)?;
+        let heap_bytes = Rc::new(Cell::new(0));
+        counts::STARTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let live = counts::LIVE.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+        counts::LIVE_MAX.fetch_max(live, std::sync::atomic::Ordering::Relaxed);
+        let runtime = Runtime::new_with_alloc(CountingAllocator(Rc::clone(&heap_bytes))).map_err(js_error)?;
         runtime.set_memory_limit(MEMORY_LIMIT);
         runtime.set_interrupt_handler(Some(Box::new(|| {
             DEADLINE
@@ -1036,7 +1304,7 @@ impl Engine {
         let context = Context::full(&runtime).map_err(js_error)?;
         let helpers = context.with(|ctx| install_context(&ctx))?;
         Ok(Self {
-            cache_pressure_check: Cell::new(0),
+            heap_bytes,
             tracked: RefCell::new(HashMap::new()),
             released: RefCell::new(HashMap::new()),
             templates: RefCell::new(super::bounded::BoundedMap::with_bytes(
@@ -1051,6 +1319,7 @@ impl Engine {
                 MAX_CACHED_TEMPLATES,
                 MAX_CACHED_UNIT_BYTES,
             )),
+            modules: RefCell::new(HashMap::new()),
             objects: RefCell::new(HashMap::new()),
             runtimes: RefCell::new(std::collections::HashSet::new()),
             unit_depth: Cell::new(0),
@@ -1545,12 +1814,8 @@ fn eval_js<'js, T>(ctx: &Ctx<'js>, source: &str) -> Result<T, Error>
 where
     T: FromJs<'js>,
 {
-    let mut options = EvalOptions::default();
-    options.strict = true;
-    options.global = true;
-    ctx.eval_with_options::<T, _>(source, options)
-        .catch(ctx)
-        .map_err(|caught| Error::new(caught.to_string()))
+    // Compiled once for the process: each engine that starts installs the same host scripts.
+    compiled::eval_shared::<T>(ctx, source).map_err(|err| Error::new(err.message().to_string()))
 }
 
 fn expand_in(ctx: &Ctx<'_>, template: &str) -> Result<String, Error> {
@@ -2050,7 +2315,7 @@ pub fn eval_named_value(source: &str, file_name: &str) -> Result<Value, Error> {
     if source.as_bytes().contains(&0) {
         return Err(Error::new("script source contains a null byte"));
     }
-    with_context(|ctx| {
+    with_engine(EngineKind::Spec, |ctx| {
         let evaluated = compiled::eval_named(ctx, source, file_name)?;
         js_value_to_host(ctx, &evaluated)
     })

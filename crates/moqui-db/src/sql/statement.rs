@@ -104,7 +104,27 @@ pub(crate) fn write_table(
     out.push(&columns.join(", "));
     out.push(" FROM ");
     out.push(&quote_ident(dialect, &entity.table_name));
-    if !shadow.hidden.is_empty() {
+    let pk_types: Vec<&str> = entity
+        .fields
+        .iter()
+        .zip(&shadow.types)
+        .filter(|(field, _)| field.is_pk)
+        .map(|(_, sql_type)| sql_type.as_str())
+        .collect();
+    // Past a few rows, on Postgres, each column goes as one array, unnested: the statement's text and its parameter
+    // count stay the same however many rows the transaction holds.
+    let arrays = dialect.name.starts_with("postgres")
+        && (shadow.rows.len() > SHADOW_ARRAY_AT || shadow.hidden.len() > SHADOW_ARRAY_AT);
+    if arrays && !shadow.hidden.is_empty() {
+        out.push(" WHERE (");
+        out.push(&pk_columns.join(", "));
+        out.push(") NOT IN (SELECT * FROM ");
+        let keys: Vec<Vec<&Value>> = (0..pk_columns.len())
+            .map(|at| shadow.hidden.iter().filter_map(|key| key.get(at)).collect())
+            .collect();
+        unnest(out, &keys, &pk_types)?;
+        out.push(")");
+    } else if !shadow.hidden.is_empty() {
         out.push(" WHERE NOT (");
         for (index, key) in shadow.hidden.iter().enumerate() {
             if key.len() != pk_columns.len() {
@@ -128,7 +148,15 @@ pub(crate) fn write_table(
         }
         out.push(")");
     }
-    for row in &shadow.rows {
+    if arrays && !shadow.rows.is_empty() {
+        out.push(" UNION ALL SELECT * FROM ");
+        let columns_of: Vec<Vec<&Value>> = (0..columns.len())
+            .map(|at| shadow.rows.iter().filter_map(|row| row.get(at)).collect())
+            .collect();
+        let types: Vec<&str> = shadow.types.iter().map(String::as_str).collect();
+        unnest(out, &columns_of, &types)?;
+    }
+    for row in shadow.rows.iter().filter(|_| !arrays) {
         if row.len() != columns.len() {
             return Err(Error::new(format!(
                 "a shadow row of {} has {} values, the entity has {} fields",
@@ -151,6 +179,75 @@ pub(crate) fn write_table(
     }
     out.push(")");
     Ok(())
+}
+
+/// Rows of a shadow past which, on Postgres, it is written as arrays ([`write_table`]).
+const SHADOW_ARRAY_AT: usize = 16;
+
+/// `unnest(CAST(? AS type[]), ...) AS u`: one array parameter per column, `columns[i]` its values.
+fn unnest(out: &mut Writer<'_>, columns: &[Vec<&Value>], types: &[&str]) -> Result<(), Error> {
+    out.push("unnest(");
+    for (at, (values, sql_type)) in columns.iter().zip(types).enumerate() {
+        if at > 0 {
+            out.push(", ");
+        }
+        out.push("CAST(");
+        out.bind(Value::string(array_literal(values)?));
+        out.push(" AS ");
+        out.push(sql_type);
+        out.push("[])");
+    }
+    out.push(") AS shadow_rows");
+    Ok(())
+}
+
+/// A Postgres array literal of `values`, each as its text parameter is sent (`NULL` for a null), quoted.
+fn array_literal(values: &[&Value]) -> Result<String, Error> {
+    let mut text = String::from("{");
+    for (at, value) in values.iter().enumerate() {
+        if at > 0 {
+            text.push(',');
+        }
+        let element = match value {
+            Value::Null => {
+                text.push_str("NULL");
+                continue;
+            }
+            Value::String(string) => string.to_string(),
+            Value::Bool(flag) => flag.to_string(),
+            Value::I32(number) => number.to_string(),
+            Value::I64(number) => number.to_string(),
+            Value::F64(number) if number.is_nan() => "NaN".to_string(),
+            Value::F64(number) if number.is_infinite() && number.is_sign_negative() => "-Infinity".to_string(),
+            Value::F64(number) if number.is_infinite() => "Infinity".to_string(),
+            Value::F64(number) => number.to_string(),
+            Value::Decimal(number) => number.to_string(),
+            Value::Timestamp(stamp) => stamp.to_string(),
+            Value::Date(date) => date.to_string(),
+            Value::Time(time) => time.to_string(),
+            Value::Bytes(bytes) => {
+                let mut hex = String::with_capacity(2 + bytes.len() * 2);
+                hex.push_str("\\x");
+                for byte in bytes.iter() {
+                    hex.push_str(&format!("{byte:02x}"));
+                }
+                hex
+            }
+            Value::List(_) | Value::Map(_) | Value::Object(_) => {
+                return Err(Error::new("a shadow row value must be a scalar"));
+            }
+        };
+        text.push('"');
+        for ch in element.chars() {
+            if ch == '"' || ch == '\\' {
+                text.push('\\');
+            }
+            text.push(ch);
+        }
+        text.push('"');
+    }
+    text.push('}');
+    Ok(text)
 }
 
 /// [`write_table`] in a single-entity select: a shadow takes the table's name as its alias, so the columns read as

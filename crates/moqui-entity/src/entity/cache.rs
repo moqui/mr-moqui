@@ -54,7 +54,7 @@ mod tx;
 use hold::Held;
 pub(crate) use stats::{census_frame, census_measures, end_frame as end_frame_stats};
 pub use stats::{tx_cache_stats, FlushCause, TxCacheStats};
-pub(crate) use tx::flush_for_members;
+pub(crate) use tx::member_shadows;
 use tx::overlay_rows;
 pub(crate) use tx::read_shadows;
 pub use tx::{flush_and_disable, flush_before_sql, register_cache_flush};
