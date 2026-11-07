@@ -244,14 +244,16 @@ pub(crate) fn object_to_host<J: Js>(js: &mut J, object: &ObjectRef) -> JsResult<
         return Ok(Some(HostValue::Object(HostObject(Arc::clone(&list.0.list) as _))));
     }
     // A find stays the find, so a later screen section can read the SQL it ran.
+    // an object whose state went when its script ended throws, as a call of its methods does
     if let Some(held) = js.host_data::<super::OxideHost>(object)? {
-        if held.obj.downcast::<crate::web::multipart::UploadedFile>().is_some()
-            || held.obj.downcast::<crate::script::host::StreamBytes>().is_some()
-            || held.obj.downcast::<moqui_db::sql::Condition>().is_some()
+        let held = held.held(js)?;
+        if held.downcast::<crate::web::multipart::UploadedFile>().is_some()
+            || held.downcast::<crate::script::host::StreamBytes>().is_some()
+            || held.downcast::<moqui_db::sql::Condition>().is_some()
         {
-            return Ok(Some(HostValue::Object(held.obj.clone())));
+            return Ok(Some(HostValue::Object(held)));
         }
-        if let Some(find) = held.obj.downcast::<FindState>().and_then(|state| state.peek()) {
+        if let Some(find) = held.downcast::<FindState>().and_then(|state| state.peek()) {
             return Ok(Some(HostValue::Object(HostObject::new(find))));
         }
     }

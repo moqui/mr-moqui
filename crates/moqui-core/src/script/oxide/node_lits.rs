@@ -35,7 +35,7 @@ pub(crate) fn lit_of(js: &mut impl Js, value: &JsValue) -> JsResult<Arc<NodeLit>
         if let JsValue::Object(held) = js.get_property(object, &key(HELD_LIT)?)? {
             if let Some(node) = js
                 .host_data::<OxideHost>(&held)?
-                .and_then(|held| held.obj.downcast::<NodeLit>())
+                .and_then(|held| held.obj().and_then(|obj| obj.downcast::<NodeLit>()))
             {
                 return Ok(node);
             }

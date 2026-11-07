@@ -64,11 +64,60 @@ pub(crate) trait OxideHooks {
     }
 }
 
-/// The state of a host object on this engine: the table's state and its class.
+/// The state of a host object on this engine: the table's state and its class. The state of a class that holds a
+/// resource ([`host::released_at_run_end`]) is let go when the outermost script on the thread ends
+/// ([`release_run_objects`]), so it does not wait for a collection; a method of the object then throws.
 pub(crate) struct OxideHost {
-    pub(crate) obj: HostObject,
-    #[allow(dead_code)] // not read on this engine yet; the QuickJS binder reads its own
-    pub(crate) class: &'static HostClass,
+    obj: RefCell<Option<HostObject>>,
+    class: &'static HostClass,
+}
+
+impl OxideHost {
+    /// The table's state, or none once let go.
+    pub(crate) fn obj(&self) -> Option<HostObject> {
+        self.obj.borrow().clone()
+    }
+
+    /// The table's state, or the error that its object was let go when its script ended.
+    pub(crate) fn held(&self, js: &mut impl Js) -> JsResult<HostObject> {
+        self.obj().ok_or_else(|| {
+            let name = self.class.name.strip_prefix("host:").unwrap_or(self.class.name);
+            js.throw_error(
+                NativeErrorKind::Type,
+                &format!("this {name} was let go when the script that made it ended"),
+            )
+        })
+    }
+}
+
+thread_local! {
+    /// The objects of this thread's runs whose state goes when the outermost script ends.
+    static RELEASED_AT_END: RefCell<Vec<std::rc::Weak<OxideHost>>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Let go the state of every object of a resource class ([`host::released_at_run_end`]) made since the outermost script
+/// on the thread started, the objects themselves still reachable or not: called when it ends
+/// ([`crate::script::run::enter_depth`]). An upload's view of its spool file, a stream's buffer, an SFTP client (closed
+/// with an error in the log, as Java's `finalize` does) then go now, as QuickJS's count lets them go, not at a
+/// collection that may be far off.
+pub(crate) fn release_run_objects() {
+    let held = RELEASED_AT_END.with(|held| held.try_borrow_mut().map(|mut held| std::mem::take(&mut *held)));
+    let Ok(held) = held else {
+        return;
+    };
+    for object in held {
+        if let Some(object) = object.upgrade() {
+            // taken out before it drops, so a drop that reaches the binder finds the cell free
+            let state = object.obj.borrow_mut().take();
+            drop(state);
+        }
+    }
+}
+
+/// The number of objects whose state goes when the outermost script ends, for the tests.
+#[cfg(test)]
+pub(crate) fn release_pending_for_tests() -> usize {
+    RELEASED_AT_END.with(|held| held.borrow().len())
 }
 
 /// The binder of one runtime: the hooks and the prototypes made so far, by class name.
@@ -275,7 +324,19 @@ fn text(value: &str) -> JsResult<JsValue> {
 /// A new object of `class` over `obj`.
 fn instance(js: &mut impl Js, binder: &Rc<Binder>, obj: HostObject, class: &'static HostClass) -> JsResult<ObjectRef> {
     let proto = prototype(js, binder, class)?;
-    js.new_host_object(OxideHost { obj, class }, Some(&proto))
+    let made = js.new_host_object(
+        OxideHost {
+            obj: RefCell::new(Some(obj)),
+            class,
+        },
+        Some(&proto),
+    )?;
+    if host::released_at_run_end(class) {
+        if let Some(held) = js.host_data::<OxideHost>(&made)? {
+            RELEASED_AT_END.with(|list| list.borrow_mut().push(Rc::downgrade(&held)));
+        }
+    }
+    Ok(made)
 }
 
 fn prototype(js: &mut impl Js, binder: &Rc<Binder>, class: &'static HostClass) -> JsResult<ObjectRef> {
@@ -449,7 +510,7 @@ fn call_method(binder: &Rc<Binder>, method: &'static Method, scope: &mut Scope<'
     let args = convert_args(binder, scope, method.args, &mut callbacks)?;
     let this = scope.this();
     let state = match scope.this_host_data::<OxideHost>()? {
-        Some(held) => Some(held.obj.clone()),
+        Some(held) => Some(held.held(scope)?),
         // an entity value or list, whose prototype is the table's
         None => entities::receiver_state(scope, &this)?,
     };
@@ -604,7 +665,7 @@ fn convert_args(
             (ArgKind::Parameters, _) => Arg::Value(binder.hooks.to_host(scope, &value)?),
             (ArgKind::Thrown, _) => thrown_text(scope, &value)?.map_or(Arg::Missing, Arg::Text),
             (ArgKind::Host, JsValue::Object(object)) => match scope.host_data::<OxideHost>(object)? {
-                Some(held) => Arg::Host(held.obj.clone()),
+                Some(held) => Arg::Host(held.held(scope)?),
                 None => return Err(wrong_type(scope, &value, kind)),
             },
             (ArgKind::Node, _) | (ArgKind::OptNode, JsValue::Object(_)) => Arg::Node(node_lits::lit_of(scope, &value)?),

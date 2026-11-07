@@ -1037,10 +1037,8 @@ fn with_engine<R>(kind: EngineKind, body: impl FnOnce(&Ctx) -> Result<R, Error>)
         let flushed = flush_tracked(&ctx, &engine, Flush::End);
         // the modules kept for this run go with it: the next run makes them again
         engine.modules.borrow_mut().clear();
-        // what the outermost script opened with `send()` and did not read or forward goes with it
-        if depth == 0 {
-            crate::web::upstream::clear();
-        }
+        // what the outermost script opened with `send()` and did not read or forward goes with it, when its depth guard
+        // drops ([`crate::script::run::enter_depth`]), on either engine
         match (result, flushed) {
             (Ok(value), Ok(())) => Ok(value),
             (Err(err), _) | (Ok(_), Err(err)) => Err(err),

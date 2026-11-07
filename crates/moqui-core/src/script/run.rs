@@ -83,7 +83,10 @@ pub(crate) fn depth() -> usize {
 }
 
 /// One level of nesting entered: the depth goes up now and back down when the guard drops. The deepest nesting of the
-/// process is counted for [`crate::script::engine_stats`].
+/// process is counted for [`crate::script::engine_stats`]. When the outermost script on the thread ends, on either
+/// engine, what its scripts held to the end goes: the response bodies opened with `send()` and not read or forwarded
+/// ([`crate::web::upstream::clear`]), and the state of quickjs-oxide's resource objects
+/// ([`crate::script::oxide::bind::release_run_objects`]), which a tracing collector would keep until it ran.
 pub(crate) fn enter_depth(depth: usize) -> DepthGuard {
     DEPTH.with(|current| current.set(depth + 1));
     DEPTH_MAX.fetch_max(depth + 1, std::sync::atomic::Ordering::Relaxed);
@@ -270,7 +273,15 @@ pub(crate) struct DepthGuard;
 
 impl Drop for DepthGuard {
     fn drop(&mut self) {
-        DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+        let left = DEPTH.with(|depth| {
+            let left = depth.get().saturating_sub(1);
+            depth.set(left);
+            left
+        });
+        if left == 0 {
+            crate::web::upstream::clear();
+            crate::script::oxide::bind::release_run_objects();
+        }
     }
 }
 
