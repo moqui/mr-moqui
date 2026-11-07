@@ -381,6 +381,36 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
 - **RegExp interrupt, until the fork rev with f4-regexp-interrupt** (integ/moqui-3): before it, the fork's RegExp
   exec polls no interrupt, so a backtracking pattern runs past the script deadline and
   `script::theme::tests::each_budget` hangs under `script_engine=oxide`.
+- **No `with`, and `eval` is always indirect** (the fork's deviation ledger): a direct `eval` does not see the
+  calling function's names. The test harness's `runInContext` (testkit/server.js) keeps its `with` form on QuickJS;
+  on oxide it runs the source as the body of a function whose parameters are the sandbox's own names
+  (`parse::completion_body` returns its last expression) and writes back what it assigned to them. A function the
+  source made sees the names as they were passed, and its later assignments to them stay in it, where `with` would
+  reach the sandbox.
+- **`settle`** (`assert.rejects`) attaches its handlers and runs jobs until they run (`EngineOps::run_pending_job`),
+  on both engines; QuickJS's form read the promise's state directly, so it now runs one more job for a promise
+  already settled.
+
+### Phase 3: the spec engine, moqui-llm and the devkit
+
+- **The spec engine.** Under `oxide` the test harness's spec engine is a quickjs-oxide runtime of the thread's own
+  (`script/oxide/spec.rs`), for whole scripts (no small-script lockdown), with `ec`, the shims and the bare names as
+  the main runtime has them, and `System` and the helper objects as globals. A spec's host call that may run a
+  script lends the runtime, and the script runs on the thread's main runtime as a run of its own: the conversions
+  follow the innermost runtime entered (`oxide::engine::Active`). `__moquiTestHost` is a host-table class
+  (`testkit/host.rs`), installed the same way on both engines, so the devkit no longer uses rquickjs.
+- **moqui-llm.** OpenUI Lang's parser (`ui/openui.rs`) and the Vue SFC script check (`ui/vue_sfc.rs`) run in a
+  runtime of their own with no `ec` (`ui/standalone.rs`), quickjs-oxide under `oxide`. `ec.llm` was already on the
+  host table.
+- **What stays on rquickjs until Phase 4**, whatever the setting:
+  - `screen/vue_check.rs`: the vendored Vue compiler (`compiler-dom.cjs.js`) in a QuickJS runtime of its own, for
+    Gate 3's check and the server-static compile (and moqui-llm's template check through it).
+  - `tests/browser_libs.rs`: the vendored browser libraries run in QuickJS (the Vue compiler bundle).
+  - `screen/tests/qvt.rs`: a test that runs the precompiled qvue bundle in a QuickJS runtime of its own.
+  - `moqui-host/tests/js_speed.rs`: the benchmark, which measures both engines.
+  - The public functions that hand out an rquickjs `Ctx` or value (`with_ctx`, `with_spec_ctx`, `host_guard`,
+    `facade_of`, `with_ec`, `host_to_js`, `js_to_host`, `text_upload_to_js`): no crate outside moqui-core calls them
+    now; they go with the QuickJS bindings.
 
 ## 8. Testing
 
