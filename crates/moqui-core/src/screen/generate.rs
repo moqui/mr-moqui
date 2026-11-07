@@ -773,4 +773,33 @@ mod tests {
         let oxide = with_script_engine(ScriptEngine::Oxide, widget_vocabulary).unwrap();
         assert_eq!(quickjs, oxide);
     }
+
+    /// `xml` generated in html with the macro module `module` (a source as a mode file is), on QuickJS and on
+    /// quickjs-oxide.
+    fn on_both(module: &str, xml: &str) -> (Result<String, Error>, Result<String, Error>) {
+        use crate::script::engine::{with_script_engine, ScriptEngine};
+        let generate = |engine| {
+            with_script_engine(engine, || {
+                let root = MNode::parse_text("fixture", xml)?;
+                with_module(module, "html", false, |module| generate_body(module, &root, None, "html"))
+            })
+        };
+        (generate(ScriptEngine::Rquickjs), generate(ScriptEngine::Oxide))
+    }
+
+    /// A macro runs with `this` undefined on both engines, as a plain function call.
+    #[test]
+    fn a_macro_runs_with_this_undefined_on_both_engines() {
+        const MODULE: &str = r#"(function (T, S) {
+            "use strict";
+            const macros = {
+                "widgets": (node, children) => children,
+                "probe": function () { return "sri.write(" + JSON.stringify(typeof this) + ");\n"; },
+            };
+            return { macros, opaque: [] };
+        })"#;
+        let (quickjs, oxide) = on_both(MODULE, "<widgets><probe/></widgets>");
+        assert_eq!(quickjs.unwrap(), "sri.write(\"undefined\");\n");
+        assert_eq!(oxide.unwrap(), "sri.write(\"undefined\");\n");
+    }
 }

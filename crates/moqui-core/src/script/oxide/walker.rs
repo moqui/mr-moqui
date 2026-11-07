@@ -67,7 +67,8 @@ const WALK_JS: &str = r#"(function (macros, treeText, missing, fallback, stamped
             combined = "";
             macro = fallback;
         }
-        let source = macros[macro](o, combined);
+        // `this` undefined, as the QuickJS walker calls a macro
+        let source = macros[macro].call(undefined, o, combined);
         if (typeof source !== "string") {
             throw new TypeError("Error converting from js '" + (source === null ? "null" : typeof source) + "' into type 'string'");
         }
