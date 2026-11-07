@@ -69,7 +69,7 @@ along with this software (see the LICENSE.md file). If not, see
         <link url="queueAckMessage" text="Send Ack Message" parameter-map="{systemMessageId:systemMessageId}"
                 condition="systemMessage.isOutgoing == 'N' &amp;&amp; ['SmsgConsumed', 'SmsgRejected', 'SmsgError'].includes(systemMessage.statusId)"/>
         <link url="cancelMessage" text="Cancel Message" parameter-map="{systemMessageId:systemMessageId}"
-                condition="['SmsgProduced', 'SmsgReceived', 'SmsgError', 'SmsgRejected'].includes(systemMessage.statusId)"/>
+                condition="['SmsgProduced', 'SmsgStaged', 'SmsgReceived', 'SmsgError', 'SmsgRejected'].includes(systemMessage.statusId)"/>
 
         <section name="ResetErrorSection" condition="systemMessage.statusId == 'SmsgError'">
             <widgets><link url="resetError" text="Reset from Error" parameter-map="{systemMessageId:systemMessageId}"/></widgets></section>

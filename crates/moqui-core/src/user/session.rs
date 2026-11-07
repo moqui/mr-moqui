@@ -364,6 +364,11 @@ fn bind_presented(
         return Err(Error::new("a web session is already bound"));
     }
     let (id, created) = resolve_id(factory, presented)?;
+    REQUEST_SESSION.with(|slot| {
+        if let Some(request) = slot.borrow_mut().as_mut() {
+            request.made = created;
+        }
+    });
     touch_session(factory, &id);
     install_thread(factory, &id)?;
     if created {
@@ -1706,6 +1711,8 @@ thread_local! {
 struct RequestSession {
     declined: bool,
     started: Option<StartedVisit>,
+    /// The bind made the session for this request: the request brought no live session of its own.
+    made: bool,
 }
 
 /// A `moqui.server.Visit` this request created, with the `moqui.server.Visitor` it created for it, if any.
@@ -1752,6 +1759,12 @@ pub fn decline_session() {
 /// Whether a screen declined a session for this web request ([`decline_session`]).
 pub fn session_declined() -> bool {
     REQUEST_SESSION.with(|slot| slot.borrow().as_ref().is_some_and(|request| request.declined))
+}
+
+/// Whether this web request's session was made for it at the bind, so nothing of an earlier request is in it (no session
+/// cookie came, or the one that came named no live session). False outside a web request.
+pub fn session_made_for_request() -> bool {
+    REQUEST_SESSION.with(|slot| slot.borrow().as_ref().is_some_and(|request| request.made))
 }
 
 fn note_started_visit(visit_id: &str, new_visitor: Option<String>) {

@@ -85,10 +85,22 @@ message PassResult {
 message DownloadMeta {
   string content_type = 1;
   string filename = 2;
-  // The length in bytes, 0 when not known.
+  // The length in bytes of what is sent (the file, or its range), 0 when not known.
   uint64 length = 3;
   // attachment or inline.
   string disposition = 4;
+  // A file that takes byte ranges (a granted Shop download): the frontend answers with Accept-Ranges, and with
+  // status 206 or 416 and Content-Range by the fields below.
+  bool ranged = 5;
+  // The HTTP status of a ranged file's answer: 200 (or 0) the whole file, 206 the range, 416 a range outside the file.
+  uint32 status = 6;
+  // For 206, the first and last byte sent; for 206 and 416, the file's complete length.
+  uint64 range_start = 7;
+  uint64 range_end = 8;
+  uint64 complete_length = 9;
+  // The Cache-Control to answer with; empty is no-store. Only "public, max-age=60" (a public product image) and, for
+  // getShopThemeAsset, "public, max-age=31536000, immutable" (a theme asset by digest) are sent.
+  string cache_control = 10;
 }
 
 message DownloadPart {

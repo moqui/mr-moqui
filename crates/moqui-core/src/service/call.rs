@@ -1473,6 +1473,14 @@ fn run_entity(
         delete_entity(facade, noun, parameters, pk_names)?;
         return Ok(BTreeMap::new());
     }
+    // The audit row of a field reads `{field}_changeReason` from the context (`field_rw::insert_audit`, as Java), so the
+    // reasons passed to the service are in a frame of their own while the record is written (Commerce F63).
+    let reasons: indexmap::IndexMap<String, Value> = parameters
+        .iter()
+        .filter(|(key, value)| key.ends_with(super::validate::CHANGE_REASON) && !is_empty(value))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    let reasons = (!reasons.is_empty()).then(|| crate::script::ContextFrame::push_entries(reasons));
     // A blank form field posts "": as Java's `setFields` with setIfEmpty (`EntityJavaUtil.setFieldsEv`), an empty text is
     // null for every field (a drop-down left empty clears a foreign key, which "" would fail).
     let fields = facade.with_entity(noun, |entity, _, _| {
@@ -1542,6 +1550,8 @@ fn run_entity(
         }
         other => return Err(LibError::new(format!("entity-auto verb {other} is not supported"))),
     }
+    // a nested record takes the reasons passed with it, not its parent's
+    drop(reasons);
     nest(facade, verb, noun, parameters, &record, depth)?;
     let mut out = status_out;
     for pk in pk_names {

@@ -346,10 +346,11 @@ With no component, this runs every component under the runtime that has test/*.s
 subdirectory of it other than client and agent. A spec's name is its file name, unique in its
 component. Specs in a component run in the order named by test/suite.js, then the other *.spec.js
 files by name. Components
-run in the order they load. --spec adds the specs named in dependsOn, in that same order. Each spec
-runs in its own execution context on one database. Any failed feature exits 1. A component's
+run in the order they load, and a spec runs after the specs its dependsOn names, in any component (a
+dependsOn cycle is an error). --spec adds the specs named in dependsOn, and their components. Each
+spec runs in its own execution context on one database. Any failed feature exits 1. A component's
 test/MoquiConf.xml merges after its MoquiConf.xml, in test runs only. A dependsOn name that the
-spec's component lacks is found in the run's other components. A regression spec over 15 seconds is
+spec's component lacks is found in the other components. A regression spec over 15 seconds is
 named at the end of the run: move it to acceptance/ or delete it. A run with no --spec leaves out
 the fixture specs a served client suite of their component names (test/client/suite.js server.specs)
 unless a spec that runs depends on them: the served run makes them.
@@ -363,7 +364,7 @@ unless a spec that runs depends on them: the served run makes them.
 Options:
   --spec Name[,Name]              Specs to run. The name is the file name without .spec.js;
                                   component/Name picks one component's. Specs named in dependsOn
-                                  are included, in suite order.
+                                  are included, from any component, and run first.
   --feature text                  Run features whose names contain this text.
   --acceptance                    Run the acceptance suite, the specs of acceptance/ (other than
                                   client and agent), in place of test/. --spec and dependsOn

@@ -222,18 +222,17 @@ fn client_specs_run_against_a_server_and_a_failure_fails_the_run() {
     assert!(
         text.lines().any(|line| line
             .starts_with("Browser > the login form signs in with fill, click and waitForURL  SKIPPED")
-            && line
-                .ends_with("no browser: --chromium names /nowhere/chromium, which is not a file")),
+            && line.ends_with("no browser: --chromium names /nowhere/chromium, which is not a file")),
         "{text}"
     );
     assert!(
-        text.contains("8 features: 0 passed, 0 failed, 0 ignored, 8 skipped"),
+        text.contains("9 features: 0 passed, 0 failed, 0 ignored, 9 skipped"),
         "{text}"
     );
     let mut strict = no_browser.to_vec();
     strict.push("--fail-on-skip");
     let (text, result) = run_client(&strict);
-    assert_eq!(result, Err("8 skipped, and --fail-on-skip".to_string()), "{text}");
+    assert_eq!(result, Err("9 skipped, and --fail-on-skip".to_string()), "{text}");
 }
 
 fn copy(from: &Path, to: &Path) {

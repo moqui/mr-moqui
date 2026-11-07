@@ -445,6 +445,8 @@ interface MoquiThemeAdapter {
         dependencies: string[];
     };
     engines(): string[];
+    /** Each engine with its renderer version (a new one may render a package differently) and view API versions. */
+    engineInfo(): { id: string; rendererVersion: number; viewApiVersions: number[] }[];
     limits(): Required<MoquiThemeLimits>;
     sanitizeSvg(text: string): string;
     sanitizeRichText(html: string): string;
@@ -920,6 +922,11 @@ interface MoquiServerEc {
         enableAuthz(): void;
         /** Whether authorization is disabled now, by a script or by the caller (a call with `disableAuthz()`, a job); changes nothing. */
         authzDisabled(): boolean;
+        /**
+         * `body()` with no user and authorization off, in a fresh execution context sharing the transaction; the caller's
+         * user and authorization come back after. Only a service's own code may call it (docs/security/Attack-Surface.md).
+         */
+        runAsSystem<T>(body: () => T): T;
         /** No hit of this execution context is counted against a tarpit until `enableTarpit()`. Returns whether it was already disabled. */
         disableTarpit(): boolean;
         enableTarpit(): void;

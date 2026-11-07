@@ -15,7 +15,7 @@
 //! A theme package: its files by path, the manifest, page templates and schemas read from them, snippet includes
 //! assembled, and the checks of `validate` (design-shop §12.2, §12.3, §12.5).
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use moqui_lib::sync::lock;
@@ -38,18 +38,96 @@ const ASSET_EXTENSIONS: &[&str] = &[
     "css", "svg", "png", "jpg", "jpeg", "gif", "webp", "avif", "ico", "woff", "woff2", "ttf", "otf",
 ];
 
-/// The files of a theme, as data. Text files are kept by path; a binary asset (an image, a font) is only named, since
-/// its bytes are the caller's to store and serve.
+/// The files of a theme, as data. Text files are kept by path; a binary asset (an image, a font) is only named, with
+/// its digest, size and type when the caller gives them, since its bytes are the caller's to store and serve by digest
+/// (Shop F55): they are never part of the package a render reads.
 #[derive(Clone, Debug, Default)]
 pub struct Package {
     files: BTreeMap<String, Arc<str>>,
-    binary: BTreeSet<String>,
+    binary: BTreeMap<String, Option<BinaryAsset>>,
     load: Vec<Diagnostic>,
 }
 
+/// A binary asset by reference: `{digest, size, contentType}`. The type is the one its extension names, so a caller
+/// serving the bytes with it serves what the theme's checks allowed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BinaryAsset {
+    /// The digest the caller stores the bytes by (a sha256 hex, for one): letters, digits and `+/=_:-`, at most 128.
+    pub digest: String,
+    pub size: u64,
+    pub content_type: String,
+}
+
+/// The content type of each binary asset extension.
+const BINARY_TYPES: &[(&str, &str)] = &[
+    ("png", "image/png"),
+    ("jpg", "image/jpeg"),
+    ("jpeg", "image/jpeg"),
+    ("gif", "image/gif"),
+    ("webp", "image/webp"),
+    ("avif", "image/avif"),
+    ("ico", "image/x-icon"),
+    ("woff", "font/woff"),
+    ("woff2", "font/woff2"),
+    ("ttf", "font/ttf"),
+    ("otf", "font/otf"),
+];
+
+/// The largest binary asset a reference may name.
+const MAX_BINARY_BYTES: u64 = 16 * 1024 * 1024;
+
+/// One file as given: its text, a binary asset (by reference, or only named), or why the entry is not one.
+enum Entry<'a> {
+    Text(&'a str),
+    Binary(Option<BinaryAsset>),
+    Invalid(String),
+}
+
+impl BinaryAsset {
+    /// `{digest, size, contentType}` of the asset at `path`, checked: the digest's form, the size, and the type its
+    /// extension names.
+    fn from_json(path: &str, value: &Map<String, Json>) -> Result<Self, String> {
+        let digest = value.get("digest").and_then(Json::as_str).unwrap_or_default();
+        if digest.is_empty()
+            || digest.len() > 128
+            || !digest
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=' | '_' | ':' | '-'))
+        {
+            return Err(format!(
+                "`{path}` needs a digest of at most 128 letters, digits and +/=_:-"
+            ));
+        }
+        let Some(size) = value
+            .get("size")
+            .and_then(Json::as_u64)
+            .filter(|size| *size <= MAX_BINARY_BYTES)
+        else {
+            return Err(format!("`{path}` needs a size in bytes, at most {MAX_BINARY_BYTES}"));
+        };
+        let extension = path
+            .rsplit_once('.')
+            .map(|(_, extension)| extension.to_ascii_lowercase())
+            .unwrap_or_default();
+        let Some((_, expected)) = BINARY_TYPES.iter().find(|(known, _)| *known == extension) else {
+            return Err(format!("`{path}` is not a binary asset type"));
+        };
+        let content_type = value.get("contentType").and_then(Json::as_str).unwrap_or_default();
+        if !content_type.eq_ignore_ascii_case(expected) {
+            return Err(format!("`{path}` is {expected}, not `{content_type}`"));
+        }
+        Ok(Self {
+            digest: digest.to_string(),
+            size,
+            content_type: (*expected).to_string(),
+        })
+    }
+}
+
 impl Package {
-    /// A package from `{files: {path: text}}` or `{path: text}`. A path whose value is not text (`{digest, size}`,
-    /// `true`) is a binary asset. A path outside the package layout is left out with an error.
+    /// A package from `{files: {path: text}}` or `{path: text}`. A path whose value is not text is a binary asset:
+    /// `{digest, size, contentType}` by reference (checked; one that does not check is left out with an
+    /// `invalid-asset` error), or `true` only named. A path outside the package layout is left out with an error.
     pub fn from_json(value: &Json) -> Self {
         let files = match value.get("files") {
             Some(Json::Object(files)) => files,
@@ -67,15 +145,25 @@ impl Package {
                 }
             },
         };
-        Self::from_entries(files.iter().map(|(path, value)| (path.as_str(), value.as_str())))
+        Self::from_entries(files.iter().map(|(path, value)| {
+            let entry = match value {
+                Json::String(text) => Entry::Text(text),
+                Json::Object(asset) => match BinaryAsset::from_json(path, asset) {
+                    Ok(asset) => Entry::Binary(Some(asset)),
+                    Err(message) => Entry::Invalid(message),
+                },
+                _ => Entry::Binary(None),
+            };
+            (path.as_str(), entry)
+        }))
     }
 
     /// A package of text files.
     pub fn from_files<'a>(files: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
-        Self::from_entries(files.into_iter().map(|(path, text)| (path, Some(text))))
+        Self::from_entries(files.into_iter().map(|(path, text)| (path, Entry::Text(text))))
     }
 
-    fn from_entries<'a>(entries: impl IntoIterator<Item = (&'a str, Option<&'a str>)>) -> Self {
+    fn from_entries<'a>(entries: impl IntoIterator<Item = (&'a str, Entry<'a>)>) -> Self {
         let mut package = Self::default();
         for (path, text) in entries {
             if package.files.len() + package.binary.len() >= MAX_FILES {
@@ -87,7 +175,7 @@ impl Package {
                 ));
                 break;
             }
-            if let Err(message) = check_path(path, text.is_some()) {
+            if let Err(message) = check_path(path, matches!(text, Entry::Text(_))) {
                 package.load.push(Diagnostic::error(
                     if path.ends_with(".liquid") {
                         "liquid"
@@ -101,18 +189,19 @@ impl Package {
                 continue;
             }
             match text {
-                Some(text) if text.len() > MAX_TEXT_BYTES => package.load.push(Diagnostic::error(
+                Entry::Text(text) if text.len() > MAX_TEXT_BYTES => package.load.push(Diagnostic::error(
                     "budget",
                     path,
                     0,
                     format!("a text file is at most {MAX_TEXT_BYTES} bytes"),
                 )),
-                Some(text) => {
+                Entry::Text(text) => {
                     package.files.insert(path.to_string(), Arc::from(text));
                 }
-                None => {
-                    package.binary.insert(path.to_string());
+                Entry::Binary(asset) => {
+                    package.binary.insert(path.to_string(), asset);
                 }
+                Entry::Invalid(message) => package.load.push(Diagnostic::error("invalid-asset", path, 0, message)),
             }
         }
         package
@@ -123,7 +212,12 @@ impl Package {
     }
 
     pub fn has(&self, path: &str) -> bool {
-        self.files.contains_key(path) || self.binary.contains(path)
+        self.files.contains_key(path) || self.binary.contains_key(path)
+    }
+
+    /// A binary asset's reference, when it was given by one.
+    pub fn binary_asset(&self, path: &str) -> Option<&BinaryAsset> {
+        self.binary.get(path).and_then(Option::as_ref)
     }
 
     /// Every path, text and binary, in order.
@@ -131,7 +225,7 @@ impl Package {
         let mut paths: Vec<&str> = self
             .files
             .keys()
-            .chain(self.binary.iter())
+            .chain(self.binary.keys())
             .map(String::as_str)
             .collect();
         paths.sort_unstable();
@@ -268,7 +362,12 @@ pub(crate) struct Manifest {
     pub required_components: Vec<String>,
     pub styles: Vec<String>,
     pub default_templates: BTreeMap<String, String>,
+    /// The locale whose `locales/<name>.json` texts `t(key)` falls back to: `defaultLocale`, else `en`.
+    pub default_locale: String,
 }
+
+/// The default locale of a theme that names none.
+pub(crate) const DEFAULT_LOCALE: &str = "en";
 
 /// `theme.json` read and checked.
 pub(crate) fn manifest(package: &Package, diagnostics: &mut Vec<Diagnostic>) -> Option<Manifest> {
@@ -339,13 +438,68 @@ pub(crate) fn manifest(package: &Package, diagnostics: &mut Vec<Diagnostic>) -> 
         }
         Some(_) => diagnostics.push(error("defaultTemplates", "defaultTemplates is an object".to_string())),
     }
+    let default_locale = match json.get("defaultLocale") {
+        None | Some(Json::Null) => DEFAULT_LOCALE.to_string(),
+        Some(Json::String(name)) if is_name(name) => name.clone(),
+        Some(_) => {
+            diagnostics.push(error(
+                "defaultLocale",
+                "defaultLocale is the name of a locales/ file, such as en".to_string(),
+            ));
+            DEFAULT_LOCALE.to_string()
+        }
+    };
     Some(Manifest {
         name,
         layout,
         required_components,
         styles,
         default_templates,
+        default_locale,
     })
+}
+
+/// The texts `t(key)` reads for `locale`: the default locale's file, then the locale's language's (`fr` of `fr_CA`),
+/// then the locale's own, each over the one before, so a key falls back from the locale to its language to the default.
+/// A nested object's texts are keyed by their path (`cart.title`); values other than text are left out. A file that
+/// is not there or not an object of texts adds nothing (validation reports it).
+pub(crate) fn texts(package: &Package, locale: Option<&str>, default_locale: &str) -> template::Texts {
+    let mut names = vec![default_locale.to_string()];
+    if let Some(locale) = locale.map(str::trim).filter(|locale| !locale.is_empty()) {
+        let language = locale.split(['_', '-']).next().unwrap_or(locale);
+        names.push(language.to_string());
+        names.push(locale.to_string());
+        // `fr-CA` and `fr_CA` name one locale
+        names.push(locale.replace('-', "_"));
+    }
+    let mut out = template::Texts::new();
+    let mut seen = HashSet::new();
+    for name in names {
+        if !is_name(&name) || !seen.insert(name.clone()) {
+            continue;
+        }
+        if let Ok(Some(Json::Object(map))) = json_file(package, &format!("locales/{name}.json")) {
+            flatten_texts("", &map, &mut out);
+        }
+    }
+    out
+}
+
+fn flatten_texts(prefix: &str, map: &Map<String, Json>, out: &mut template::Texts) {
+    for (key, value) in map {
+        let path = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        match value {
+            Json::String(text) => {
+                out.insert(path, text.clone());
+            }
+            Json::Object(nested) => flatten_texts(&path, nested, out),
+            _ => {}
+        }
+    }
 }
 
 /// A section or block of a page template.

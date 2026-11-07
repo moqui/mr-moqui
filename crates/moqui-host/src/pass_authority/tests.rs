@@ -78,6 +78,74 @@ fn a_reply_and_its_error_envelope_cross_as_sent() {
     assert_eq!(garbled.result.unwrap_err().status, 503);
 }
 
+/// A download's range and Cache-Control cross as sent (Shop F88, F118); what arrives is read again: bounds that do not
+/// agree are a range outside the file, and a Cache-Control other than a public image's, or a theme asset's on its own
+/// download (Shop F55), is dropped (no-store).
+#[test]
+fn a_download_range_and_cache_control_cross_as_sent() {
+    let meta = |ranged, cache_control: Option<&str>| core::DownloadMeta {
+        content_type: "application/pdf".to_string(),
+        filename: "a.pdf".to_string(),
+        length: Some(4),
+        disposition: "attachment".to_string(),
+        ranged,
+        cache_control: cache_control.map(str::to_string),
+    };
+    for sent in [
+        meta(None, None),
+        meta(None, Some(core::PUBLIC_IMAGE_CACHE)),
+        meta(Some(core::Ranged::Whole), None),
+        meta(
+            Some(core::Ranged::Part {
+                start: 2,
+                end: 5,
+                complete: 10,
+            }),
+            None,
+        ),
+        core::DownloadMeta {
+            length: Some(0),
+            ..meta(Some(core::Ranged::Unsatisfiable { complete: 10 }), None)
+        },
+    ] {
+        assert_eq!(meta_from(meta_message(&sent), "getShopProductImage"), sent);
+    }
+    // a theme asset's immutable Cache-Control crosses only on the theme asset download
+    let immutable = meta(None, Some(core::THEME_ASSET_CACHE));
+    assert_eq!(
+        meta_from(meta_message(&immutable), core::THEME_ASSET_OPERATION),
+        immutable
+    );
+    assert_eq!(
+        meta_from(meta_message(&immutable), "getShopProductImage").cache_control,
+        None
+    );
+    let odd = meta_from(
+        DownloadMeta {
+            ranged: true,
+            status: 206,
+            range_start: 5,
+            range_end: 12,
+            complete_length: 10,
+            length: 8,
+            cache_control: "public, max-age=31536000".to_string(),
+            ..DownloadMeta::default()
+        },
+        core::THEME_ASSET_OPERATION,
+    );
+    assert_eq!(odd.ranged, Some(core::Ranged::Unsatisfiable { complete: 10 }));
+    assert_eq!((odd.length, odd.cache_control), (Some(0), None));
+    // an older authority's metadata: no range, no Cache-Control
+    let old = meta_from(
+        DownloadMeta {
+            length: 7,
+            ..DownloadMeta::default()
+        },
+        "getShopProductImage",
+    );
+    assert_eq!((old.ranged, old.length, old.cache_control), (None, Some(7), None));
+}
+
 #[test]
 fn a_direct_call_names_a_client_and_its_secret_and_the_link_is_its_own_client() {
     let direct = Authority {

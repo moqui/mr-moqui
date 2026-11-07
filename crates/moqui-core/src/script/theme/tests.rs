@@ -647,6 +647,42 @@ fn svg_and_css_assets() {
     assert_eq!(sanitize_rich_text("<p onclick=x>a<script>b</script></p>"), "<p>a</p>");
 }
 
+/// IE's `behavior` property is refused only as a property of its own: `scroll-behavior` passes (Shop F131), and
+/// `behavior:` stays refused with whitespace, a comment, an escape or an IE hack around it.
+#[test]
+fn behavior_is_refused_only_as_its_own_property() {
+    let css_errors = |css: &str| {
+        errors(&validate_stone(&[("assets/store.css", Some(css))]))
+            .into_iter()
+            .filter(|error| error.contains("behavior"))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        css_errors("html { scroll-behavior: smooth }\n.a { overscroll-behavior : contain }"),
+        Vec::<String>::new()
+    );
+    for css in [
+        "a { color: red }\n.b { behavior: url(x.htc) }",
+        "a { color: red }\n.b{behaviour :url(x.htc)}",
+        "a { color: red }\n.b { *behavior: url(x.htc) }",
+        "a { color: red }\n.b { _behavior: url(x.htc) }",
+        "a { color: red }\n.b { color: red;behavior: url(x.htc) }",
+        "a { color: red }\n.b { \\62 ehavior: url(x.htc) }",
+        "a { color: red }\n.b { -ms-behavior: url(x.htc) }",
+        "a { color: red }\n.b{-MS-Behavior:url(x.htc)}",
+    ] {
+        let found = css_errors(css);
+        assert!(
+            found
+                .iter()
+                .any(|error| error.starts_with("unsafe-css assets/store.css:2")),
+            "{css}: {found:?}"
+        );
+    }
+    let found = css_errors(".b { beha/**/vior: url(x.htc) }");
+    assert!(found.iter().any(|error| error.starts_with("unsafe-css")), "{found:?}");
+}
+
 /// The errors of the stone package with `changes`, as `code file:line message`, which must include one with `needle`.
 fn refuses(changes: &[(&str, Option<&str>)], needle: &str) {
     let found = errors(&validate_stone(changes));
@@ -772,4 +808,102 @@ fn urls_forms_and_assembled_expressions() {
         sanitize_svg("<svg xmlns=\"http://www.w3.org/1999/xhtml\"><rect/></svg>"),
         "<svg><rect/></svg>"
     );
+}
+
+/// `t(key)` reads the package's `locales/` for the view's locale, falling back to its language and then the default
+/// locale; a key with no text shows as the key, and a text is escaped as any value is (Shop F52).
+#[test]
+fn t_reads_the_locale_texts_with_fallbacks() {
+    let package = Package::from_files([
+        (
+            "theme.json",
+            r#"{"schemaVersion": 1, "name": "T", "engine": "js-fancy", "viewApiVersion": 1, "defaultLocale": "en"}"#,
+        ),
+        ("templates/home.json", r#"{"sections": {"hero": {"type": "hero"}}}"#),
+        ("sections/hero.schema.json", r#"{"settings": []}"#),
+        (
+            "sections/hero.html.fancy-locked",
+            r#"<p>${t("cart.title")}|${t("greeting")}|${t("sale")}|${t("none")}</p>"#,
+        ),
+        (
+            "locales/en.json",
+            r#"{"cart": {"title": "Cart"}, "greeting": "Hello", "sale": "Sale <now>"}"#,
+        ),
+        (
+            "locales/fr.json",
+            r#"{"cart": {"title": "Panier"}, "greeting": "Bonjour"}"#,
+        ),
+        ("locales/fr_CA.json", r#"{"greeting": "Allo"}"#),
+    ]);
+    let html = |locale: Json| {
+        let request = RenderRequest {
+            page_kind: Some("home".into()),
+            view: json!({"locale": locale}),
+            ..RenderRequest::default()
+        };
+        let rendered = render(&package, &request);
+        assert!(rendered.ok, "{:?}", rendered.diagnostics);
+        rendered.html
+    };
+    assert_eq!(html(json!("fr_CA")), "<p>Panier|Allo|Sale &lt;now&gt;|none</p>");
+    assert_eq!(html(json!("fr-CA")), "<p>Panier|Allo|Sale &lt;now&gt;|none</p>");
+    assert_eq!(html(json!("fr")), "<p>Panier|Bonjour|Sale &lt;now&gt;|none</p>");
+    assert_eq!(html(json!("de")), "<p>Cart|Hello|Sale &lt;now&gt;|none</p>");
+    assert_eq!(html(Json::Null), "<p>Cart|Hello|Sale &lt;now&gt;|none</p>");
+    let found = errors(&validate(
+        &Package::from_files([("theme.json", r#"{"defaultLocale": "../x"}"#)]),
+        &ValidateOptions::default(),
+    ));
+    assert!(found.iter().any(|error| error.contains("defaultLocale")), "{found:?}");
+}
+
+/// A binary asset is given by reference, `{digest, size, contentType}`, so its bytes stay out of the package (Shop F55):
+/// it is named for the checks (a CSS `url()`, an `image` setting) and its type must be its extension's. Text is read as
+/// before, so a release that carries an image as base64 text still loads.
+#[test]
+fn binary_assets_are_given_by_digest() {
+    let digest = "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08";
+    let package = Package::from_json(&json!({"files": {
+        "assets/logo.png": {"digest": digest, "size": 1234, "contentType": "image/png"},
+        "assets/font.woff2": true,
+        "assets/old.png": "iVBORw0KGgo=",
+        "assets/fake.png": {"digest": digest, "size": 10, "contentType": "image/svg+xml"},
+        "assets/huge.webp": {"digest": digest, "size": 1u64 << 40, "contentType": "image/webp"},
+        "assets/odd.gif": {"digest": "a b", "size": 1, "contentType": "image/gif"},
+    }}));
+    assert_eq!(
+        package.binary_asset("assets/logo.png"),
+        Some(&BinaryAsset {
+            digest: digest.to_string(),
+            size: 1234,
+            content_type: "image/png".to_string()
+        })
+    );
+    assert!(package.has("assets/logo.png") && package.text("assets/logo.png").is_none());
+    assert!(package.has("assets/font.woff2") && package.binary_asset("assets/font.woff2").is_none());
+    assert_eq!(package.text("assets/old.png"), Some("iVBORw0KGgo="));
+    let refused: Vec<&str> = package
+        .load_diagnostics()
+        .iter()
+        .filter(|diagnostic| diagnostic.code == "invalid-asset")
+        .map(|diagnostic| diagnostic.file.as_str())
+        .collect();
+    assert_eq!(refused, vec!["assets/fake.png", "assets/huge.webp", "assets/odd.gif"]);
+    assert!(!package.has("assets/fake.png"));
+    // a stylesheet may name a binary asset given by reference
+    let root = testdata().join("stone");
+    let mut stone_files = Vec::new();
+    read_dir(&root, &root, &mut stone_files);
+    let mut entries: serde_json::Map<String, Json> = stone_files
+        .into_iter()
+        .map(|(path, text)| (path, json!(text)))
+        .collect();
+    entries.insert("assets/store.css".into(), json!(".a { background: url(logo.png) }"));
+    entries.insert(
+        "assets/logo.png".into(),
+        json!({"digest": digest, "size": 4, "contentType": "image/png"}),
+    );
+    let files = Package::from_json(&json!({ "files": entries }));
+    let validation = validate(&files, &ValidateOptions::default());
+    assert!(validation.ok(), "{:?}", errors(&validation));
 }

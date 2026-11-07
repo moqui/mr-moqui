@@ -116,7 +116,9 @@ of the request is signed in:
 - `authUsername` and `authPassword`.
 
 `ec.user` is that user. A servlet whose answer should carry no session (no cookie, no token, no Visit) calls
-`ec.web.declineSession()` ([Pages without a session](../security/Attack-Surface.md#pages-without-a-session)).
+`ec.web.declineSession()` ([Pages without a session](../security/Attack-Surface.md#pages-without-a-session)). A web script
+cannot call `ec.artifactExecution.runAsSystem` (it is only for a service's own code; [The system
+scope](../security/Attack-Surface.md#the-system-scope)): a servlet that must write as the system calls a service that does.
 
 CORS preflights (`OPTIONS`) are answered before any servlet. A request from an origin CORS does not allow is refused with 401. An origin is its scheme, host and port, all three compared (Java compares the host
 only), so the same host on another port or scheme is another site. The request's own origin is never refused: https

@@ -27,6 +27,9 @@ use super::define::{merge_param, AllowHtml, AutoParams, Check, Include, ParamDef
 use crate::context::Error;
 use crate::entity::EntityFacade;
 
+/// The suffix of a field's audit change reason (`{field}_changeReason`), as the entity audit reads it.
+pub(crate) const CHANGE_REASON: &str = "_changeReason";
+
 pub fn validate(name: &str, parameters: &BTreeMap<String, Value>) -> Result<BTreeMap<String, Value>, Error> {
     let def = super::define::find(name).ok_or_else(|| Error::new(format!("no service named {name}")))?;
     let facade = current_facade();
@@ -90,7 +93,16 @@ pub(crate) fn clean(
         return Err(Error::of_kind(crate::context::ErrorKind::Validation, joined));
     }
     if def.validate_input {
-        params.retain(|name, _| known.contains(name));
+        // An entity-auto service keeps a declared field's `{field}_changeReason`: it is the reason that field's audit
+        // row records (`run_entity`, Commerce F63), and nothing else reads it.
+        let keeps_reason = def.kind == super::define::ServiceKind::EntityAuto;
+        params.retain(|name, _| {
+            known.contains(name)
+                || (keeps_reason
+                    && name
+                        .strip_suffix(CHANGE_REASON)
+                        .is_some_and(|field| known.contains(field)))
+        });
     }
     Ok(params)
 }

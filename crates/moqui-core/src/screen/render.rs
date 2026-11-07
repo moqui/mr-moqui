@@ -451,6 +451,12 @@ impl Drop for ActiveGuard {
     }
 }
 
+/// How many screen renders are in progress on this thread (renders nest: a screen rendered inside a service a render
+/// called). An artifact frame keeps it, so a check can tell code a service runs from a widget of a render begun since.
+pub(crate) fn active_depth() -> usize {
+    ACTIVE.with(|stack| stack.borrow().len())
+}
+
 /// Run `body` with the render in progress on this thread, if there is one.
 pub fn with_current_render<R>(body: impl FnOnce(&RenderState) -> R) -> Option<R> {
     let state = ACTIVE.with(|stack| stack.borrow().last().cloned())?;
@@ -862,7 +868,8 @@ fn add_server_static_header(state: &RenderState) {
 
 /// The qvt family answers a client that builds a component from the text. A merged response is for one user and one
 /// request, so it is never cached, and `X-Moqui-Qvt` names how the client handles the text: `merged-fragment` is a
-/// template with the request's values in it. (A server-static template says `static-template` and caches.)
+/// template with the request's values in it. (A server-static template says `static-template` and caches.) A public
+/// island's component ([`is_public_island`]) is the exception: it is cacheable, so the request makes no session.
 fn add_client_component_headers(state: &RenderState) {
     if !matches!(state.render_mode.as_str(), "qvt" | "qjs" | "qvue") || !web::output_sent() {
         return;
@@ -875,10 +882,31 @@ fn add_client_component_headers(state: &RenderState) {
         }
         return;
     }
+    if is_public_island(state) {
+        // the screen's own Cache-Control stands (its no-store keeps it uncached; a declined session is still dropped)
+        if web::response_header_values("Cache-Control").is_empty() {
+            web::add_header("Cache-Control", super::statics::server_static_cache_control());
+        }
+        return;
+    }
     web::add_header("Cache-Control", "private, no-store");
     if state.render_mode == "qvt" {
         web::add_header("X-Moqui-Qvt", "merged-fragment");
     }
+}
+
+/// Whether a `.qvue` or `.qjs` answer is a public island's component, cacheable as an asset so that loading it makes no
+/// session (impl-shop F72): the screen itself says `server-static` for the mode or declined its session
+/// (`ec.web.declineSession()`), nobody is signed in, and the request brought no session of its own. Anything else (a
+/// signed-in user, a request with a session, a screen that is neither) stays `private, no-store`, and its session is kept.
+fn is_public_island(state: &RenderState) -> bool {
+    let mode = state.render_mode.as_str();
+    let target = &state.url_info.target_screen;
+    // a placeholder screen is server-static by itself (`server_static_auto`), not because it says so
+    matches!(mode, "qvue" | "qjs")
+        && ((!target.server_static_auto && target.is_server_static(mode)) || user::session::session_declined())
+        && user::session::session_made_for_request()
+        && user::session::current_user_id().ok().flatten().is_none()
 }
 
 /// A screen the user got goes on the screen history, newest first, with its query, as Java's `saveScreenHistory`: not a

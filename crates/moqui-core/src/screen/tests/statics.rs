@@ -914,6 +914,9 @@ fn the_report_names_what_a_browser_cannot_do_and_what_the_form_request_repeats()
     assert!(has("sri", "sri.getScreenUrlInstance"), "{text}");
     // the full check: the same widget expression ran with the wrapped ec and was recorded, and the render went on
     assert!(has("wrapped-ec", "ec.entity"), "{text}");
+    // a member an allowed area lacks is recorded as the areas outside are (Commerce F172), not undefined and "not a
+    // function", which would end the render
+    assert!(has("wrapped-ec", "ec.l10n.getAvailableLocales in"), "{text}");
     assert!(!has("full-check", ""), "the render itself did not fail: {text}");
     // always-actions and pre-actions with side effects, which the form request repeats
     assert!(has("side-effect", "always-actions/message"), "{text}");

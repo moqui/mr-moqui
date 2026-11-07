@@ -173,8 +173,12 @@ and `--fail-on-skip` makes that a failure.
 
 A client spec is `<component>/test/client/<Name>.spec.js`. `moqui test` reads only the top level of `test/`, so the two
 sets never mix, and a component can have both. `test/client/suite.js`, `suite(["SpecA", "SpecB"], { server })`, gives
-the order; the other spec files run after it, by name. Each spec gets a default session, and its sessions, sockets,
-pages and browser are closed after `cleanupSpec`.
+the order; the other spec files run after it, by name. Components run after the components their `component.xml`
+`depends-on` names. A run then takes the order of `moqui test`: a spec whose `dependsOn` names a spec later in that
+order (in its own component or another) waits for it, with the specs after it in its `suite.js` chain, and the rest
+keep their places; a `dependsOn` cycle fails the run before any spec runs. With `--serve` this holds among the specs of
+each server, and the servers run in the order of their first components. Each spec gets a default session, and its
+sessions, sockets, pages and browser are closed after `cleanupSpec`.
 
 A process spec, `<component>/test/client/process/<businessProcessId>.spec.js`, tells one business process as a story
 (Chisel's Process Story Diff records it with `--video`). It runs only when named: by `--spec <businessProcessId>` with
@@ -334,14 +338,20 @@ evil.status == 403
 
 ### Browser
 
-`browser.newPage({ user, password, viewport: { width, height }, colorScheme, timeout, problems })` opens a page in a
-browser context of its own, so each page has its own cookies. With `user` it signs in through the form at `/Login`
-(`password` is `moqui` by default) and fails when the page stays there. That is done once a spec for each user and
-password: later pages of the user are given the cookies of that sign-in, so they share its server session, and when the
-first `goto` of one lands on `/Login` (the session ended) it signs in again and goes on. A spec that tests signing in
-opens a page with no `user` and fills the form itself. The viewport is 1440 × 1000 by default;
-`colorScheme` is `light`, `dark` or `no-preference`; `timeout` (seconds) is what the page's actions wait, `--timeout` by
-default. A page opened in a feature closes after it; one opened in `setupSpec` lives for the spec.
+`browser.newPage({ user, password, viewport: { width, height }, colorScheme, reducedMotion, javaScript, timeout, problems })`
+opens a page in a browser context of its own, so each page has its own cookies. With `user` it signs in through the form
+at `/Login` (`password` is `moqui` by default) and fails when the page stays there. That is done once a spec for each
+user and password: later pages of the user are given the cookies of that sign-in, so they share its server session, and
+when the first `goto` of one lands on `/Login` (the session ended) it signs in again and goes on. A spec that tests
+signing in opens a page with no `user` and fills the form itself. The viewport is 1440 × 1000 by default; `colorScheme`
+is `light`, `dark` or `no-preference` and `reducedMotion` is `reduce` or `no-preference` (the media features
+`prefers-color-scheme` and `prefers-reduced-motion`, emulated together); `javaScript: false` turns the page's own scripts
+off once it has signed in (the form at `/Login` signs in with them on, also when it signs in again), for a check of what
+a page does without JavaScript; `timeout` (seconds) is what the page's actions wait, `--timeout` by default. With scripts
+off the harness still evaluates in the page: `evaluate`, `waitFor`, `text()` and the locators work, and their actions
+are input events as before, so a link or a plain form submits as the browser does it; a page's handlers, its Vue client
+and `settle`'s wait for that client are not there. A page opened in a feature closes after it; one opened in
+`setupSpec` lives for the spec.
 
 The spec has one Chromium, started on its first `newPage`, with a temporary profile removed after the spec. When no
 Chromium is found (or `--chromium` names a file that is not there), `newPage` skips the feature, or in `setupSpec` the
@@ -365,6 +375,7 @@ feature.
 | `pdf(name, { landscape })` | Print to PDF into the output directory; `{ path, size, magic }` |
 | `problems()`, `takeProblems()`, `allowProblems(pattern)` | The page's problems so far; take them, so they do not fail the feature; ignore those matching, seen and to come |
 | `setViewport(width, height)`, `close()` | |
+| `setEmulation({ colorScheme, reducedMotion, javaScript })` | Change what `newPage` set; what is not named stays. `javaScript` takes effect for what runs next, so `goto` again for the document to load with or without its scripts |
 
 | Locator | |
 |---|---|

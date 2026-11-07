@@ -425,6 +425,32 @@ fn resource_streams_and_text_filenames() {
     clear_context_stack();
 }
 
+/// `stream.read(offset, max)` reads a window of a resource from an offset (Shop F88's byte ranges): fewer bytes only at
+/// the end, none past it, and a bad offset is an error, not a panic.
+#[test]
+fn resource_stream_reads_a_window() {
+    let context = ExecutionContextFactory::test_context();
+    let _entered = context.enter();
+    clear_context_stack();
+    let dir = std::env::temp_dir().join(format!("moqui-gaps-window-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("digits.txt"), "0123456789").unwrap();
+    set_dir(&dir);
+    holds(
+        r#"(function () {
+            const stream = ec.resource.getLocationReference(dir + "/digits.txt").openStream();
+            const text = (bytes) => String.fromCharCode.apply(null, Array.from(bytes));
+            let refused = false;
+            try { stream.read(-1, 2); } catch (e) { refused = String(e).includes("whole numbers"); }
+            return text(stream.read(3, 4)) === "3456" && text(stream.read(8, 100)) === "89"
+                && stream.read(10, 4).length === 0 && stream.read(0, 0).length === 0
+                && stream.read(0, 1) instanceof Uint8Array && refused;
+        })()"#,
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    clear_context_stack();
+}
+
 fn set_dir(dir: &std::path::Path) {
     crate::script::set_context_name(
         "dir",

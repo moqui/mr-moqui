@@ -23,7 +23,11 @@ mod password;
 mod policy;
 mod preference;
 pub mod session;
+mod system;
 mod visit;
+
+pub use system::as_system;
+pub(crate) use system::system_scope_allowed;
 
 pub(crate) use authz::current_user_groups;
 pub use authz::{authorize, authorize_own, context_entered, group_permits};

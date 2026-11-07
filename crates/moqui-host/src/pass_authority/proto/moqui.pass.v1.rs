@@ -68,12 +68,30 @@ pub struct DownloadMeta {
     pub content_type: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub filename: ::prost::alloc::string::String,
-    /// The length in bytes, 0 when not known.
+    /// The length in bytes of what is sent (the file, or its range), 0 when not known.
     #[prost(uint64, tag = "3")]
     pub length: u64,
     /// attachment or inline.
     #[prost(string, tag = "4")]
     pub disposition: ::prost::alloc::string::String,
+    /// A file that takes byte ranges (a granted Shop download): the frontend answers with Accept-Ranges, and with
+    /// status 206 or 416 and Content-Range by the fields below.
+    #[prost(bool, tag = "5")]
+    pub ranged: bool,
+    /// The HTTP status of a ranged file's answer: 200 (or 0) the whole file, 206 the range, 416 a range outside the file.
+    #[prost(uint32, tag = "6")]
+    pub status: u32,
+    /// For 206, the first and last byte sent; for 206 and 416, the file's complete length.
+    #[prost(uint64, tag = "7")]
+    pub range_start: u64,
+    #[prost(uint64, tag = "8")]
+    pub range_end: u64,
+    #[prost(uint64, tag = "9")]
+    pub complete_length: u64,
+    /// The Cache-Control to answer with; empty is no-store. Only "public, max-age=60" (a public product image) and, for
+    /// getShopThemeAsset, "public, max-age=31536000, immutable" (a theme asset by digest) are sent.
+    #[prost(string, tag = "10")]
+    pub cache_control: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DownloadPart {

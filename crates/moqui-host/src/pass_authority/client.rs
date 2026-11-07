@@ -26,7 +26,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
-use moqui_core::pass_authority::{Call, Download, DownloadMeta, PassError, PassSender, Reply, UploadFile};
+use moqui_core::pass_authority::{Call, Download, PassError, PassSender, Reply, UploadFile};
 use moqui_lib::error::Error;
 use moqui_lib::sync::lock;
 
@@ -257,6 +257,7 @@ impl PassSender for Sender {
     fn download(&self, endpoint: &str, mut call: Call) -> Result<Result<Download, PassError>, Error> {
         let endpoint = parse_endpoint(endpoint)?;
         let direct = Arc::clone(&self.direct);
+        let operation = call.operation.clone();
         let opened = crate::edge::block_on(async move {
             call.client_id = direct_client_id(&endpoint);
             let mut client = Sender::client(direct, &endpoint).await?;
@@ -298,12 +299,7 @@ impl PassSender for Sender {
             }
         });
         Ok(Ok(Download {
-            meta: DownloadMeta {
-                content_type: meta.content_type,
-                filename: meta.filename,
-                length: (meta.length > 0).then_some(meta.length),
-                disposition: meta.disposition,
-            },
+            meta: super::meta_from(meta, &operation),
             reader: Box::new(ChannelReader {
                 receiver,
                 current: Bytes::new(),

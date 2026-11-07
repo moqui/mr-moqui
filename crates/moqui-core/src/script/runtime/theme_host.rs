@@ -21,6 +21,7 @@
 //!         assetUrls, assetBase, allowedOrigins, releaseId, limits})
 //!     -> {ok, html, diagnostics, omitted: [{section, block, reason}], failedRequired, dependencies}
 //! ec.resource.theme.engines()            -> ["js-fancy"]
+//! ec.resource.theme.engineInfo()         -> [{id: "js-fancy", rendererVersion: 1, viewApiVersions: [1]}]
 //! ec.resource.theme.limits()             -> the operator's limits (conf theme-limits)
 //! ec.resource.theme.sanitizeSvg(text)    -> the SVG cleaned to the safe set
 //! ec.resource.theme.sanitizeRichText(html) -> the HTML cleaned to the safe set
@@ -44,6 +45,7 @@ pub(super) fn add_theme<'js>(ctx: &Ctx<'js>, resource: &Object<'js>) -> Result<(
     method!("validate", theme_validate);
     method!("render", theme_render);
     method!("engines", theme_engines);
+    method!("engineInfo", theme_engine_info);
     method!("limits", theme_limits);
     method!("sanitizeSvg", theme_sanitize_svg);
     method!("sanitizeRichText", theme_sanitize_rich_text);
@@ -91,6 +93,10 @@ fn theme_engines(ctx: Ctx<'_>) -> rquickjs::Result<Vec<String>> {
     host_guard(&ctx, || {
         Ok(theme::engine_ids().into_iter().map(str::to_string).collect())
     })
+}
+
+fn theme_engine_info(ctx: Ctx<'_>) -> rquickjs::Result<JsValue<'_>> {
+    host_guard(&ctx, || js_of(&ctx, &theme::engine_info()))
 }
 
 fn theme_limits(ctx: Ctx<'_>) -> rquickjs::Result<JsValue<'_>> {

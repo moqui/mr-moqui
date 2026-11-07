@@ -26,10 +26,10 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Instant;
 
-use moqui_devkit::testkit::{spec_depends_on, suite_order, CaseResult, Failure, Outcome, SpecResult};
+use moqui_devkit::testkit::{spec_depends_on, CaseResult, Failure, Outcome, SpecResult};
 use moqui_lib::error::Error;
 
-use super::{report, suite_tree, DbMode, TestArgs, TestComponent};
+use super::{report, DbMode, TestArgs, TestComponent};
 
 /// One unit: specs that run together, in order, as `(component index, spec index)`.
 #[derive(Debug, Clone, PartialEq)]
@@ -64,16 +64,11 @@ pub(crate) fn units(components: &[TestComponent], acceptance: bool) -> Vec<Unit>
     };
     for (c, component) in components.iter().enumerate() {
         // the suite.js chain: the specs it lists share a unit
-        let mut chain: Vec<usize> = Vec::new();
-        for tree in [suite_tree(false, false), suite_tree(acceptance, false)] {
-            if let Ok(text) = std::fs::read_to_string(component.dir.join(tree).join("suite.js")) {
-                for name in suite_order(&text).unwrap_or_default() {
-                    if let Some(s) = component.specs.iter().position(|spec| spec.name == name) {
-                        chain.push(index_of(c, s));
-                    }
-                }
-            }
-        }
+        let chain: Vec<usize> = super::suite_chains(component, acceptance, false)
+            .into_iter()
+            .flatten()
+            .map(|s| index_of(c, s))
+            .collect();
         for pair in chain.windows(2) {
             join(&mut parent, pair[0], pair[1]);
         }

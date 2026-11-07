@@ -591,6 +591,9 @@ along with this software (see the LICENSE.md file). If not, see
             <parameter name="pageText" allow-html="any"><description>If WikiSpace.allowAnyHtml = Y will be stored as-is, otherwise filtered like parameter.allow-html=safe.</description></parameter>
             <parameter name="sequenceNum" type="Integer"/>
             <parameter name="versionNote"><description>The note of the version this save makes (a named version)</description></parameter>
+            <parameter name="historyUserId"><description>The user a save made as the system is for (a service that checked
+                its caller and writes with ec.artifactExecution.runAsSystem): the WikiPageHistory row and a new page's
+                creator name them. Read only with no user and authorization disabled; otherwise the current user.</description></parameter>
         </in-parameters>
         <out-parameters>
             <parameter name="wikiPageId"/>
@@ -604,6 +607,8 @@ along with this software (see the LICENSE.md file). If not, see
             <if condition="pageName == wikiSpaceId"><set field="pageName" from="null"/></if>
             <if condition="parentPath == wikiSpaceId"><set field="parentPath" from="null"/></if>
             <set field="versionNote" from="versionNote ? String(versionNote).trim().substring(0, 255) : null"/>
+            <!-- who the save is by: the user, or for a save made as the system the user it names (never with a user) -->
+            <set field="historyUserId" from="ec.user.userId || (ec.artifactExecution.authzDisabled() ? (historyUserId || null) : null)"/>
 
             <!-- a page by its id is in its own space, which is the one read, checked and written -->
             <if condition="wikiPageId">
@@ -670,7 +675,7 @@ along with this software (see the LICENSE.md file). If not, see
                     <entity-delete-by-condition entity-name="moqui.resource.wiki.WikiPageAlias">
                         <econdition field-name="wikiSpaceId"/><econdition field-name="aliasPath" from="pagePath || null"/></entity-delete-by-condition>
                     <service-call name="create#moqui.resource.wiki.WikiPage" out-map="createdOut"
-                            in-map="{wikiSpaceId:wikiSpaceId, pagePath:(pagePath || null), parentWikiPageId:newParentId, createdByUserId:ec.user.userId}"/>
+                            in-map="{wikiSpaceId:wikiSpaceId, pagePath:(pagePath || null), parentWikiPageId:newParentId, createdByUserId:historyUserId}"/>
                     <entity-find-one entity-name="moqui.resource.wiki.WikiPage" value-field="wikiPage" cache="false">
                         <field-map field-name="wikiPageId" from="createdOut.wikiPageId"/></entity-find-one>
                     <set field="createdRecord" from="true"/>
@@ -718,7 +723,7 @@ along with this software (see the LICENSE.md file). If not, see
                 }
             </script>
             <if condition="updatedPage">
-                <service-call name="create#moqui.resource.wiki.WikiPageHistory" in-map="{wikiPageId:wikiPageId, userId:ec.user.userId,
+                <service-call name="create#moqui.resource.wiki.WikiPageHistory" in-map="{wikiPageId:wikiPageId, userId:historyUserId,
                         changeDateTime:ec.user.nowTimestamp, versionName:versionName, versionNote:versionNote}"/>
                 <!-- the page's links: a text that cannot be read for links is logged, and the save stands -->
                 <service-call name="org.moqui.impl.WikiServices.index#WikiPageLinks" in-map="{wikiPageId:wikiPageId, pageText:pageText}"/>
@@ -2480,9 +2485,13 @@ along with this software (see the LICENSE.md file). If not, see
                         oldWikiSpaceId: row.oldWikiSpaceId, movedFrom: movedFrom}
                 })
                 const history = ref?.exists && ref.supportsVersion() ? Array.from(ref.getVersionHistory() || []) : []
+                // a version saved as the system has no user of its own: its WikiPageHistory row names who it was for
+                const savedBy = {}
+                for (const row of historyList) if (row.versionName && row.userId && !row.oldPagePath && !(row.versionName in savedBy)) savedBy[row.versionName] = row.userId
+                const versionUser = (version) => version.userId || savedBy[version.versionName] || null
                 versionList = history.map((version, index) => ({versionName: version.versionName, shortName: short(version.versionName),
-                    previousVersionName: version.previousVersionName, versionDate: version.versionDate, userId: version.userId,
-                    userName: userName(version.userId), note: version.note, isCurrent: index === 0,
+                    previousVersionName: version.previousVersionName, versionDate: version.versionDate, userId: versionUser(version),
+                    userName: userName(versionUser(version)), note: version.note, isCurrent: index === 0,
                     isPublished: version.versionName === publishedVersionName, movedFrom: moves[version.versionName] || null}))
             ]]></script>
         </actions>

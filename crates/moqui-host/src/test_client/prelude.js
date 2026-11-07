@@ -373,16 +373,26 @@
             this._host("page.allowProblems", { re: re.source, flags: re.flags });
         }
         setViewport(width, height) { this._host("page.setViewport", { width: Number(width), height: Number(height) }); }
+        // { colorScheme, reducedMotion, javaScript }: what is named changes, the rest stays.
+        setEmulation(opts) {
+            const o = options(opts);
+            this._host("page.setEmulation", { colorScheme: o.colorScheme == null ? null : String(o.colorScheme),
+                reducedMotion: o.reducedMotion == null ? null : String(o.reducedMotion),
+                javaScript: o.javaScript == null ? null : !!o.javaScript });
+        }
         close() { this._host("page.close"); }
     }
     define("browser", Object.freeze({
-        // { user, password, viewport: { width, height }, colorScheme, timeout, problems: { warnings } }; with user, the
-        // page signs in through the form at /Login.
+        // { user, password, viewport: { width, height }, colorScheme, reducedMotion, javaScript, timeout,
+        // problems: { warnings } }; with user, the page signs in through the form at /Login (before javaScript: false
+        // turns the page's scripts off).
         newPage(opts) {
             const o = options(opts);
             const opened = host("browser.newPage", { user: o.user == null ? null : String(o.user),
                 password: o.password == null ? null : String(o.password), viewport: o.viewport || null,
-                colorScheme: o.colorScheme == null ? null : String(o.colorScheme), timeout: timeoutOf(o),
+                colorScheme: o.colorScheme == null ? null : String(o.colorScheme),
+                reducedMotion: o.reducedMotion == null ? null : String(o.reducedMotion),
+                javaScript: o.javaScript == null ? null : !!o.javaScript, timeout: timeoutOf(o),
                 problems: o.problems || null, feature: __moquiTest.caseName || null });
             if (opened.skipped) skip(`no browser: ${opened.skipped}`);
             return new Page(opened.id);

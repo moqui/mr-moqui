@@ -670,8 +670,6 @@ const DENIED_CSS: &[(&str, &str)] = &[
     ("expression(", "expression()"),
     ("javascript:", "a javascript: URL"),
     ("vbscript:", "a vbscript: URL"),
-    ("behavior:", "behavior"),
-    ("behaviour:", "behavior"),
     ("-moz-binding", "-moz-binding"),
     ("</style", "</style>"),
     ("<!--", "<!--"),
@@ -679,6 +677,28 @@ const DENIED_CSS: &[(&str, &str)] = &[
     ("image-set(", "image-set()"),
     ("src(", "src()"),
 ];
+
+/// CSS properties that load a script (IE's `behavior`, the `.htc` binding, and IE 8's prefixed `-ms-behavior`). They
+/// are refused only as a property name of their own: one that does not continue another name, so `scroll-behavior`
+/// passes. The IE hacks `*behavior` and `_behavior` are still refused, as only a letter, digit or `-` before the name
+/// joins it to another.
+const DENIED_CSS_PROPERTIES: &[&str] = &["behavior", "behaviour", "-ms-behavior"];
+
+/// The byte offset in `text` of the first `name:` (whitespace allowed before the colon) that starts a name of its own.
+fn property_at(text: &str, name: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(at) = text[from..].find(name).map(|at| from + at) {
+        from = at + name.len();
+        let joined = text[..at]
+            .chars()
+            .next_back()
+            .is_some_and(|before| before.is_ascii_alphanumeric() || before == '-');
+        if !joined && text[from..].trim_start().starts_with(':') {
+            return Some(at);
+        }
+    }
+    None
+}
 
 /// Check CSS: a stylesheet asset, a `<style>` or a `style` attribute. Comments and escapes are read first, as the CSS
 /// tokenizer reads them. A `url()` must be the page's own origin, an approved one, a raster `data:` image, a `#`
@@ -705,6 +725,21 @@ pub(crate) fn check_css(css: &str, policy: &Policy<'_>, resolve: Option<&dyn Fn(
             ));
         } else if squeezed.contains(needle) {
             found.push(problem(0, "unsafe-css", format!("{what} is not allowed in theme CSS")));
+        }
+    }
+    for name in DENIED_CSS_PROPERTIES {
+        if let Some(at) = property_at(&lower, name) {
+            found.push(problem(
+                line_at(at),
+                "unsafe-css",
+                "behavior is not allowed in theme CSS".to_string(),
+            ));
+        } else if property_at(&squeezed, name).is_some() {
+            found.push(problem(
+                0,
+                "unsafe-css",
+                "behavior is not allowed in theme CSS".to_string(),
+            ));
         }
     }
     let mut index = 0;

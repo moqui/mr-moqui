@@ -187,6 +187,16 @@ impl MessageFacade {
         }
     }
 
+    /// Take in what another context's facade holds (its messages, errors and validation errors), after work done in that
+    /// context on this one's behalf ([`crate::user::as_system`]). Nothing is logged again.
+    pub(crate) fn absorb(&mut self, other: MessageFacade) {
+        self.messages.extend(other.messages);
+        self.message_types.extend(other.message_types);
+        self.added += other.errors.len() as u64;
+        self.errors.extend(other.errors);
+        self.validation_errors.extend(other.validation_errors);
+    }
+
     /// A mark for [`Self::take_errors_since`].
     pub fn error_mark(&self) -> ErrorMark {
         ErrorMark {

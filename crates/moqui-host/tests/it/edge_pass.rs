@@ -79,6 +79,19 @@ const SERVICES: &str = r#"<services>
             } else if (operation === 'getAttachment') {
                 result = {attachment: {filename: 'big.bin'}}
                 download = {location: input.location, contentType: 'application/octet-stream', filename: 'big "one".bin', disposition: 'attachment'}
+            } else if (operation === 'getShopDownload') {
+                // as Mantle's: the file's size and the range asked, or the range refused
+                result = {file: {filename: 'big.bin'}}
+                download = {location: input.location, contentType: 'application/octet-stream', filename: 'big.bin',
+                    disposition: 'attachment', size: 200000, range: input.range || null}
+            } else if (operation === 'getShopProductImage') {
+                result = {file: {filename: 'big.bin'}}
+                download = {location: input.location, contentType: 'image/png', filename: 'big.png', disposition: 'inline',
+                    cacheControl: input.cacheControl}
+            } else if (operation === 'getShopThemeAsset') {
+                result = {file: {filename: 'hero.png'}}
+                download = {location: input.location, contentType: 'image/png', filename: 'hero.png', disposition: 'inline',
+                    cacheControl: input.cacheControl}
             } else if (operation === 'stageAttachment') {
                 result = {size: file.size, name: file.name, contentType: file.contentType, purpose: input.purpose}
             } else {
@@ -104,8 +117,10 @@ const SERVICES: &str = r#"<services>
                 const bytes = response.bytes()
                 let sum = 0
                 if (typeof bytes !== 'string' && bytes) for (let i = 0; i < bytes.length; i++) sum = (sum + bytes[i]) % 1000000007
+                const header = (name) => (response.headerPairs.find(([key]) => key === name) || [])[1] || ''
                 answer = {status: response.statusCode, length: bytes ? bytes.length : 0, sum, error: response.error,
-                    disposition: (response.headerPairs.find(([name]) => name === 'Content-Disposition') || [])[1] || ''}
+                    disposition: header('Content-Disposition'), cacheControl: header('Cache-Control'),
+                    acceptRanges: header('Accept-Ranges'), contentRange: header('Content-Range')}
             } else {
                 answer = client.call(call)
             }
@@ -349,6 +364,66 @@ fn round_trips(gate: &Gate, endpoint: &str, client_id: &str, big: &str) -> Strin
     );
     assert_eq!(missing["status"], 503, "{missing}");
     assert_eq!(missing["error"]["code"], "Unavailable");
+    // a ranged file (Shop F88): only the range is sent, with 206; outside the file 416; whole with Accept-Ranges
+    let ranged = |range: serde_json::Value| {
+        client(
+            gate,
+            endpoint,
+            "download",
+            "getShopDownload",
+            serde_json::json!({"location": "runtime://pass-test/big.bin", "range": range}),
+            "",
+        )
+    };
+    let part = ranged(serde_json::json!({"start": 70_000, "end": 150_001}));
+    assert_eq!(part["status"], 206, "{part}");
+    assert_eq!(part["length"], 80_002, "{part}");
+    assert_eq!(part["sum"], checksum(&big[70_000..=150_001]));
+    assert_eq!(part["contentRange"], "bytes 70000-150001/200000");
+    assert_eq!(part["acceptRanges"], "bytes");
+    assert_eq!(part["cacheControl"], "no-store");
+    let outside = ranged(serde_json::json!({"unsatisfiable": true, "size": 200_000}));
+    assert_eq!(
+        (&outside["status"], &outside["length"], &outside["contentRange"]),
+        (
+            &serde_json::json!(416),
+            &serde_json::json!(0),
+            &serde_json::json!("bytes */200000")
+        ),
+        "{outside}"
+    );
+    let whole = ranged(serde_json::Value::Null);
+    assert_eq!(
+        (&whole["status"], &whole["length"]),
+        (&serde_json::json!(200), &serde_json::json!(big.len()))
+    );
+    assert_eq!(
+        (whole["acceptRanges"].as_str(), whole["contentRange"].as_str()),
+        (Some("bytes"), Some(""))
+    );
+    // a public image's Cache-Control is forwarded (Shop F118), only that exact value; a theme asset's immutable one (F55)
+    // only on the theme asset download
+    let cached = |operation: &str, cache_control: &str| {
+        client(
+            gate,
+            endpoint,
+            "download",
+            operation,
+            serde_json::json!({"location": "runtime://pass-test/big.bin", "cacheControl": cache_control}),
+            "",
+        )["cacheControl"]
+            .clone()
+    };
+    let immutable = "public, max-age=31536000, immutable";
+    assert_eq!(
+        cached("getShopProductImage", "public, max-age=60"),
+        "public, max-age=60"
+    );
+    assert_eq!(cached("getShopProductImage", "public, max-age=31536000"), "no-store");
+    assert_eq!(cached("getShopProductImage", immutable), "no-store");
+    assert_eq!(cached("getShopThemeAsset", immutable), immutable);
+    assert_eq!(cached("getShopThemeAsset", "public, max-age=31536000"), "no-store");
+    assert_eq!(download["cacheControl"], "no-store");
 
     let staged = upload(endpoint, vec![b'x'; 150_000]).unwrap();
     assert_eq!(staged["result"]["size"], 150_000, "{staged}");

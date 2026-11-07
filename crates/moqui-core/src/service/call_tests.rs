@@ -881,6 +881,33 @@ fn an_entity_auto_update_writes_the_fields_passed_and_checks_the_stored_status()
     assert_eq!(read().get("statusId"), Some(&Value::string("SmsgConfirmed")));
 }
 
+/// The framework's staged SystemMessage status (`SmsgStaged`, ServiceEntities.xml): a staged message goes to Consuming
+/// and back, or is cancelled, and goes nowhere else (Commerce F162).
+#[test]
+fn a_staged_system_message_moves_only_by_the_framework_transitions() {
+    let (facade, ctx) = seeded_context(&[]);
+    crate::testing::seed_status_flows(&facade);
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let entity = "moqui.service.message.SystemMessage";
+    let mut row = facade.make_value(entity).unwrap();
+    row.set("systemMessageId", Value::string("ST1"));
+    row.set("statusId", Value::string("SmsgStaged"));
+    row.create(&facade).unwrap();
+    let to = |status: &str| {
+        let params = BTreeMap::from([
+            ("systemMessageId".to_string(), Value::string("ST1")),
+            ("statusId".to_string(), Value::string(status)),
+        ]);
+        super::sync_checked(&format!("update#{entity}"), &params, &super::CallOptions::default())
+    };
+    let err = to("SmsgConsumed").unwrap_err();
+    assert!(err.to_string().contains("Status change not allowed"), "{err}");
+    for status in ["SmsgConsuming", "SmsgStaged", "SmsgCancelled"] {
+        to(status).unwrap_or_else(|err| panic!("to {status}: {err}"));
+    }
+}
+
 #[test]
 fn a_script_service_runs_its_javascript_file_and_optional_chaining_loads() {
     let script = std::env::temp_dir().join(format!("moqui-script-service-{}.js", std::process::id()));
@@ -1391,6 +1418,72 @@ fn entity_auto_parameters_are_the_declared_ones_or_all_for_an_implicit_call() {
         .unwrap()
         .expect("stored");
     assert_eq!(row.get("testMedium").and_then(Value::as_str), Some("declared"));
+}
+
+/// An entity-auto write records the `{field}_changeReason` passed to it on that field's audit row, on create as on
+/// update, and a declared entity-auto service keeps the reason through validation (Commerce F63).
+#[test]
+fn an_entity_auto_write_records_the_change_reason_passed_to_it() {
+    let (facade, ctx) = seeded_context(&[]);
+    facade.set_disable_audit_log(false);
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let entity = "moqui.security.UserAccount";
+    let write = |verb: &str, username: &str, reason: Option<&str>| {
+        let mut params = BTreeMap::from([
+            ("userId".to_string(), Value::string("REASON1")),
+            ("username".to_string(), Value::string(username)),
+        ]);
+        if let Some(reason) = reason {
+            params.insert("username_changeReason".to_string(), Value::string(reason));
+        }
+        sync(&format!("{verb}#{entity}"), &params).unwrap_or_else(|err| panic!("{verb}: {err}"));
+    };
+    write("create", "first", Some("opened by support"));
+    write("update", "second", Some("renamed on request"));
+    write("store", "third", None);
+    let audits = facade
+        .find("moqui.entity.EntityAuditLog")
+        .unwrap()
+        .eq("changedEntityName", Value::string(entity))
+        .eq("changedFieldName", Value::string("username"))
+        .use_cache(false)
+        .list()
+        .unwrap();
+    let reason_of = |username: &str| {
+        let row = audits
+            .iter()
+            .find(|row| row.get("newValueText").and_then(Value::as_str) == Some(username))
+            .unwrap_or_else(|| panic!("an audit row for {username}"));
+        row.get("changeReason").and_then(Value::as_str).map(str::to_string)
+    };
+    assert_eq!(reason_of("first").as_deref(), Some("opened by support"));
+    assert_eq!(reason_of("second").as_deref(), Some("renamed on request"));
+    assert_eq!(reason_of("third"), None, "a reason does not outlive its call");
+
+    let path = write_fixture(
+        "entity-auto-reason",
+        r#"<services>
+                <service verb="update" noun="moqui.security.UserAccount" type="entity-auto">
+                    <in-parameters><auto-parameters include="pk"/><parameter name="username"/></in-parameters>
+                </service>
+            </services>"#,
+    );
+    let (defs, failures) = super::super::define::definitions_in(std::slice::from_ref(&path)).unwrap();
+    assert!(failures.is_empty(), "{failures:?}");
+    let params = BTreeMap::from([
+        ("userId".to_string(), Value::string("REASON1")),
+        ("username".to_string(), Value::string("fourth")),
+        ("username_changeReason".to_string(), Value::string("kept")),
+        ("emailAddress_changeReason".to_string(), Value::string("not declared")),
+        ("other".to_string(), Value::string("dropped")),
+    ]);
+    let cleaned = super::validate::clean(&defs[0], std::borrow::Cow::Borrowed(&params), Some(&facade)).unwrap();
+    assert_eq!(cleaned.get("username_changeReason"), Some(&Value::string("kept")));
+    assert!(
+        !cleaned.contains_key("emailAddress_changeReason") && !cleaned.contains_key("other"),
+        "{cleaned:?}"
+    );
 }
 
 /// Java's `StatusFlowTransitionNotFoundTemplate`, its default text when the seed data is not loaded.
