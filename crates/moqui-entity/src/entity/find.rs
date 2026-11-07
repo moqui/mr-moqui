@@ -724,9 +724,10 @@ impl EntityFind {
             all => Some(Condition::and(all.to_vec())),
         };
         let use_clone = self.use_clone && !self.for_update;
-        // A view in a transaction-cache frame reads the frame's held rows of its members through shadowed tables (or
-        // has them written first).
-        let shadows = cache::view_shadows(&self.facade, &self.entity_name, condition.as_ref())?;
+        // In a transaction-cache frame, a view, and a distinct or having find of an entity the frame holds rows of, read
+        // the frame's held rows through shadowed tables (or have them written first).
+        let aggregate = (self.distinct || !self.having.is_empty()) && !self.for_update;
+        let shadows = cache::read_shadows(&self.facade, &self.entity_name, condition.as_ref(), aggregate)?;
         self.facade
             .with_read_group(&self.entity_name, use_clone, |entity, dialect, model, tx| {
                 let condition = field_rw::encrypt_condition(&self.facade, entity, condition.clone())?;

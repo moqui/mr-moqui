@@ -44,7 +44,7 @@ use crate::model::{
 
 use super::condition::{Column, Condition, FieldRef, LimitOffset, OrderBy, Writer};
 use super::ident::{quote_column, quote_ident, quote_physical_ident};
-use super::statement::{field_sql_type, for_update, SelectOptions, TableShadow};
+use super::statement::{for_update, write_table, SelectOptions, TableShadow};
 use super::{ConditionValues, Statement};
 
 /// View-entity select. See the module notes.
@@ -192,83 +192,7 @@ impl<'a> Renderer<'a> {
 
     /// A member's table, or its [`TableShadow`] as a sub-select of the same columns.
     fn write_table(&self, out: &mut Writer<'_>, entity: &EntityDefinition) -> Result<(), Error> {
-        let Some(shadow) = self
-            .shadows
-            .iter()
-            .find(|shadow| shadow.entity_name == entity.full_name)
-        else {
-            out.push(&quote_physical_ident(self.dialect, &entity.table_name));
-            return Ok(());
-        };
-        let columns: Vec<String> = entity
-            .fields
-            .iter()
-            .map(|field| quote_column(self.dialect, &field.column_name))
-            .collect();
-        let pk_columns: Vec<String> = entity
-            .fields
-            .iter()
-            .filter(|field| field.is_pk)
-            .map(|field| quote_column(self.dialect, &field.column_name))
-            .collect();
-        out.push("(SELECT ");
-        out.push(&columns.join(", "));
-        out.push(" FROM ");
-        out.push(&quote_physical_ident(self.dialect, &entity.table_name));
-        if !shadow.hidden.is_empty() {
-            out.push(" WHERE NOT (");
-            for (index, key) in shadow.hidden.iter().enumerate() {
-                if key.len() != pk_columns.len() {
-                    return Err(Error::new(format!(
-                        "a shadow of {} hides a key of {} values, the entity has {}",
-                        entity.full_name,
-                        key.len(),
-                        pk_columns.len()
-                    )));
-                }
-                out.push(if index == 0 { "(" } else { " OR (" });
-                for (at, (column, value)) in pk_columns.iter().zip(key).enumerate() {
-                    if at > 0 {
-                        out.push(" AND ");
-                    }
-                    out.push(column);
-                    out.push(" = ");
-                    out.bind(value.clone());
-                }
-                out.push(")");
-            }
-            out.push(")");
-        }
-        if !shadow.rows.is_empty() {
-            let types = entity
-                .fields
-                .iter()
-                .map(|field| field_sql_type(self.model, self.dialect, field))
-                .collect::<Result<Vec<_>, _>>()?;
-            for row in &shadow.rows {
-                if row.len() != types.len() {
-                    return Err(Error::new(format!(
-                        "a shadow row of {} has {} values, the entity has {} fields",
-                        entity.full_name,
-                        row.len(),
-                        types.len()
-                    )));
-                }
-                out.push(" UNION ALL SELECT ");
-                for (at, (value, sql_type)) in row.iter().zip(&types).enumerate() {
-                    if at > 0 {
-                        out.push(", ");
-                    }
-                    out.push("CAST(");
-                    out.bind(value.clone());
-                    out.push(" AS ");
-                    out.push(sql_type);
-                    out.push(")");
-                }
-            }
-        }
-        out.push(")");
-        Ok(())
+        write_table(out, entity, self.shadows)
     }
 
     /// A member's table alias. Java writes it unquoted (`ORDER_ITEM OITM`), so the database folds it as it folds any

@@ -1222,6 +1222,65 @@ Next:
    `ShipmentItemSource`): the same shadow as a sub-select of the entity's table.
 3. The shared services (`create#Payment`, `apply#Settlement`, `pack#Shipment`, `ship#OrderPart`), by their callers.
 
+## Round 25: distinct reads and encrypted members shadowed, the shared Mantle services on the cache
+
+Round 24's next steps, after merging the latest mr-mantle (a conflict on `run#Step` and `run#FulfillmentStep`, where
+upstream added `operation` and this branch `transaction="cache"`: both kept) and mr-boss.
+
+1. **A `distinct` or `having` find or count of one entity** the frame holds rows of reads a shadow of its table too
+   (`tx::entity_shadows`; `moqui-db` `write_table` now serves single-entity selects and counts as well as views, the
+   shadow aliased by the table's own name), so `pack#Shipment`'s and `handle#OrderMajorChange`'s distinct reads no
+   longer write early. One `read_shadows` decides for `find::plan`, after a check that this thread holds anything.
+   Where no shadow can be made (a full-text field) the held prefix is written first, as before.
+2. **An encrypted member is shadowed** with its rows as stored: each held row sealed (`field_rw::seal_stored`). Only
+   an encrypted primary key still falls back. `PartyDetail` (Person's `mothersMaidenName`) no longer writes early.
+3. **The shared services on the cache**: `apply#Settlement` (no service calls it), `ship#OrderPart` (only the test
+   order generator), `pack#Shipment` (from `ship#OrderPart` and `complete#ShipmentPack`) and `create#Payment`, whose
+   nine service callers (refunds, internal transfers, financial account disbursements, order and return payments)
+   are payment operations themselves, all held under the census with every spec passing.
+
+Round trips per call in the specs of mr-mantle, mr-boss and mr-pass, the four new services first:
+
+| Service | Calls | Off | Round 24 | Round 25 | Fewer than off | Early flushes | Shadowed reads |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `account.PaymentServices.apply#Settlement` (new) | 30 | 242 | 242 | 122 | 49% | 0.0 | 1.4 |
+| `shipment.ShipmentServices.pack#Shipment` (new) | 44 | 208 | 208 | 167 | 19% | 0.0 | 0.5 |
+| `account.PaymentServices.create#Payment` (new) | 156 | 48 | 48 | 28 | 42% | 0.0 | 0.0 |
+| `shipment.ShipmentServices.ship#OrderPart` (new) | 20 | 395 | 244 | 234 | 41% | 0.0 | 2.7 |
+| `order.ShopCheckoutServices.run#Step` | 172 | 53 | 31 | 28 | 48% | 0.0 | 0.6 |
+| `product.ShopFulfillmentServices.run#FulfillmentStep` | 92 | 50 | 27 | 25 | 49% | 0.0 | 0.0 |
+| `products.CatalogServices.store#ProductPrice` | 136 | 78 | 60 | 59 | 24% | 0.0 | 0.0 |
+| `order.ShopCheckoutServices.select#Payment` | 23 | 86 | 39 | 38 | 56% | 0.0 | 0.0 |
+| `order.ShopCheckoutServices.begin#Checkout` | 26 | 115 | 43 | 43 | 63% | 0.0 | 0.0 |
+| `party.AgreementServices.release#PurchaseAgreement` | 9 | 172 | 65 | 65 | 62% | 0.0 | 0.0 |
+| `work.ProductionServices.record#ProductionQuantity` | 23 | 205 | 128 | 128 | 38% | 0.0 | 0.7 |
+| `product.BomServices.release#BomDraft` | 52 | 156 | 89 | 89 | 43% | 0.0 | 0.0 |
+| `product.SupplyPlanningServices.convert#PlanningSuggestion` | 30 | 113 | 66 | 66 | 41% | 0.0 | 0.0 |
+| `order.ReturnPolicyServices.authorize#Return` | 42 | 53 | 33 | 33 | 39% | 0.0 | 0.0 |
+
+The 45 of Round 23: 324548 waited round trips off, 208234 in Round 24 (36% fewer), 207658 now (36% fewer).
+
+Census 8 (mr-mantle, mr-boss and mr-pass with the cache everywhere): 145,367 transactions, 19 early flushes (913 in
+Census 7 over every component, 4,482 in Census 6), 5,697 reads shadowed, no commit batch failing, the same features
+passing. The 19: 15 `PartyDetail` reads inside `get#DuplicatePairs`, a frame of 2,032 held updates (past the 500 a
+shadow takes, so written first by design), and 4 of the `MoquiChatEvent` data document (`index#ChatEvent`), a view
+built in code (`flush_for_members`).
+
+`cargo test --workspace` failed on moqui-core's `tarpit_locks_and_check_views_are_read_once_until_a_lock_is_written`
+for the second time (Round 22 too): the authorization generation is a process static that other tests move, so a
+lock read between its hits can repeat. The test now allows for the moves of other threads (`moved_here`).
+
+`ProductsMethods` (mr-boss) ran 15.8 s in `./moq test mr-mantle mr-boss mr-pass`, over the 15-second budget: it takes
+2.6 s alone and 5 s in `./moq test-apps`, and every one of its features is slower after Mantle's specs (screen renders
+whose cost grows with the data earlier specs leave). Its time is the data's, not the cache's; not changed here.
+
+Next:
+1. Data documents and REST query views on the same shadows (`flush_for_members`).
+2. A census of the specs with the 49 services on the cache and no census mode, to find the services left whose
+   transactions read most (the next set to mark), now that nothing they do flushes early.
+3. The external-Postgres timing of the Mantle operations (`place#Order`, `apply#Settlement`) with 200 µs of delay, for
+   the time a call saves rather than its round trips.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
@@ -1245,6 +1304,8 @@ Next:
 - A time stamp held in a transaction-cache frame reads back in the frame at the precision the database keeps (Postgres microseconds).
 - On Postgres a view read in a transaction-cache frame no longer writes the held rows first: it reads the member tables with the held rows in place of their stored ones (a sub-select of each), so the held writes still go out at the commit.
 - Mantle's asset reservation, issuance, receipt and physical inventory services, and `cancel#OrderItem` and `reject#OrderItem`, are no longer `no-tx-cache`.
+- A `distinct` or `having` find or count in a transaction-cache frame of an entity it holds rows of reads them in place (Postgres) instead of writing them first; so does a view read of a member with an encrypted field.
+- `create#Payment`, `apply#Settlement`, `pack#Shipment` and `ship#OrderPart` are `transaction="cache"`: `create#Payment` called in another service's transaction turns holding on for the rest of it.
 - SMTP-delivered Inbox mail and its account rules commit together when no email ECA is installed; a failure there stores the message alone and runs the rules after.
 - Mail stored by IMAP and POP3 sync, SMTP delivery and import, and the IMAP flag sync, run in transaction-cache frames; `react#Message`, `edit#Message`, `redact#Message`, `vote#Poll`, `mark#AllRead` and `mark#NotificationsViewed` are `transaction="cache"`, and a redacted message leaves the search index after its commit.
 - `no-tx-cache` turns a frame to read-through (writes go to the database, reads still kept), and a later `cache` call that joins it no longer turns holding back on.

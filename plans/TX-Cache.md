@@ -1,6 +1,6 @@
 # Transaction cache
 
-Status 2026-11-06: Phases 0 to 6 built, 45 application services on the cache (Round 23), and view reads shadowed instead of flushed (Round 24), Phase 6 as a first profiling pass: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G8, D6's commit batch, D2 to D5's reads, S1 to S5 on the cache, a first pass of F1 to F5, and the guide ([Services](../docs/logic/Services.md#transaction-cache)). [Results](#results) has the censuses and the numbers; [Profiling, Rounds 14 to 24](Profiling.md#round-24-view-reads-see-held-rows-without-writing-them) the profiles and the tuning. Each transaction is an `AT_TRANSACTION` telemetry span with the cache's counts ([Monitoring](../docs/tools/Monitoring.md)).
+Status 2026-11-06: Phases 0 to 6 built, 45 application services on the cache (Round 23), view reads shadowed instead of flushed (Round 24), and distinct reads and the shared payment and shipment services (Round 25), Phase 6 as a first profiling pass: the module move, D1's instruments, strict and census modes, the round-trip count, the authorization reads, `tx_cache_speed`, G1 to G8, D6's commit batch, D2 to D5's reads, S1 to S5 on the cache, a first pass of F1 to F5, and the guide ([Services](../docs/logic/Services.md#transaction-cache)). [Results](#results) has the censuses and the numbers; [Profiling, Rounds 14 to 25](Profiling.md#round-25-distinct-reads-and-encrypted-members-shadowed-the-shared-mantle-services-on-the-cache) the profiles and the tuning. Each transaction is an `AT_TRANSACTION` telemetry span with the cache's counts ([Monitoring](../docs/tools/Monitoring.md)).
 
 The transaction cache holds a transaction's writes in memory and writes them all at commit; while it holds them, the transaction's reads see them. Done well, it gives a large speedup for high-volume transactional work and a large cut in database load, without refactoring reusable services and without callers keeping records in hand to avoid re-reading them: a service that reads `OrderItem` again, as each of several services in one operation does, gets it from memory. Moqui Java got real gains from this in a few places. Here the framework is ours to change and services can be reviewed in bulk, so the aim is more: make the cache fast and correct enough that a common transactional service runs from its first write to its commit without touching the database for anything it has already read or written, and its writes go out in one batch.
 
@@ -216,6 +216,11 @@ of services by round trips saved picked the 45 now marked `cache`; across them t
 Every component's specs under the census after view reads were shadowed (Profiling Round 24): 149,966 transactions,
 913 early flushes against 4,482 in Census 6 (view 3,652 to 34; `no-tx-cache` 788, all Mantle's asset services, since
 taken off; selective finds 66; size 25), 4,779 view reads shadowed, the same features passing.
+
+### Census 8 (distinct reads shadowed)
+
+mr-mantle, mr-boss and mr-pass under the census after Round 25: 145,367 transactions, 19 early flushes (15 of a bulk
+frame past the 500 held rows a shadow takes, 4 of a data document), 5,697 reads shadowed.
 
 ### Census 2 (Phase 1)
 

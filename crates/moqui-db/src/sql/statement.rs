@@ -65,6 +65,104 @@ pub struct TableShadow {
     pub hidden: Vec<Vec<Value>>,
     /// Each row the transaction's writes leave, every field in the entity's field order.
     pub rows: Vec<Vec<Value>>,
+    /// The SQL type of each field, in the entity's field order ([`field_sql_type`]), for the casts of `rows`.
+    pub types: Vec<String>,
+}
+
+/// `entity`'s table in a select's `FROM`, or its shadow among `shadows` as a sub-select of the same columns
+/// ([`TableShadow`]).
+pub(crate) fn write_table(
+    out: &mut Writer<'_>,
+    entity: &EntityDefinition,
+    shadows: &[TableShadow],
+) -> Result<(), Error> {
+    let dialect = out.dialect;
+    let Some(shadow) = shadows.iter().find(|shadow| shadow.entity_name == entity.full_name) else {
+        out.push(&quote_ident(dialect, &entity.table_name));
+        return Ok(());
+    };
+    let columns: Vec<String> = entity
+        .fields
+        .iter()
+        .map(|field| quote_column(dialect, &field.column_name))
+        .collect();
+    let pk_columns: Vec<String> = entity
+        .fields
+        .iter()
+        .filter(|field| field.is_pk)
+        .map(|field| quote_column(dialect, &field.column_name))
+        .collect();
+    if shadow.types.len() != columns.len() {
+        return Err(Error::new(format!(
+            "a shadow of {} has {} types, the entity has {} fields",
+            entity.full_name,
+            shadow.types.len(),
+            columns.len()
+        )));
+    }
+    out.push("(SELECT ");
+    out.push(&columns.join(", "));
+    out.push(" FROM ");
+    out.push(&quote_ident(dialect, &entity.table_name));
+    if !shadow.hidden.is_empty() {
+        out.push(" WHERE NOT (");
+        for (index, key) in shadow.hidden.iter().enumerate() {
+            if key.len() != pk_columns.len() {
+                return Err(Error::new(format!(
+                    "a shadow of {} hides a key of {} values, the entity has {}",
+                    entity.full_name,
+                    key.len(),
+                    pk_columns.len()
+                )));
+            }
+            out.push(if index == 0 { "(" } else { " OR (" });
+            for (at, (column, value)) in pk_columns.iter().zip(key).enumerate() {
+                if at > 0 {
+                    out.push(" AND ");
+                }
+                out.push(column);
+                out.push(" = ");
+                out.bind(value.clone());
+            }
+            out.push(")");
+        }
+        out.push(")");
+    }
+    for row in &shadow.rows {
+        if row.len() != columns.len() {
+            return Err(Error::new(format!(
+                "a shadow row of {} has {} values, the entity has {} fields",
+                entity.full_name,
+                row.len(),
+                columns.len()
+            )));
+        }
+        out.push(" UNION ALL SELECT ");
+        for (at, (value, sql_type)) in row.iter().zip(&shadow.types).enumerate() {
+            if at > 0 {
+                out.push(", ");
+            }
+            out.push("CAST(");
+            out.bind(value.clone());
+            out.push(" AS ");
+            out.push(sql_type);
+            out.push(")");
+        }
+    }
+    out.push(")");
+    Ok(())
+}
+
+/// [`write_table`] in a single-entity select: a shadow takes the table's name as its alias, so the columns read as
+/// the table's.
+fn write_from(out: &mut Writer<'_>, entity: &EntityDefinition, shadows: &[TableShadow]) -> Result<(), Error> {
+    let shadowed = shadows.iter().any(|shadow| shadow.entity_name == entity.full_name);
+    write_table(out, entity, shadows)?;
+    if shadowed {
+        out.push(" ");
+        out.push(&quote_ident(out.dialect, &entity.table_name));
+    }
+    Ok(())
 }
 
 /// The column a field name maps to on a plain entity, and whether it is text.
@@ -210,7 +308,7 @@ pub fn select_with(
         out.push(&select_list(entity, dialect, fields));
     }
     out.push(" FROM ");
-    out.push(&quote_ident(dialect, &entity.table_name));
+    write_from(&mut out, entity, &options.shadows)?;
     select_tail(out, entity, dialect, condition, order_by, page, options)
 }
 
@@ -344,7 +442,7 @@ pub fn count_with(
         out.push("SELECT COUNT(*)");
     }
     out.push(" FROM ");
-    out.push(&quote_ident(dialect, &entity.table_name));
+    write_from(&mut out, entity, &options.shadows)?;
     where_clause(&mut out, entity, condition)?;
     if wrapped {
         out.push(") TEMP_NAME");

@@ -56,7 +56,7 @@ pub(crate) use stats::{census_frame, census_measures, end_frame as end_frame_sta
 pub use stats::{tx_cache_stats, FlushCause, TxCacheStats};
 pub(crate) use tx::flush_for_members;
 use tx::overlay_rows;
-pub(crate) use tx::view_shadows;
+pub(crate) use tx::read_shadows;
 pub use tx::{flush_and_disable, flush_before_sql, register_cache_flush};
 
 const LIST_MAX: usize = 10_000;
@@ -607,7 +607,7 @@ pub fn before_selective_find(
         return Ok(None);
     }
     if selective.aggregate {
-        tx::flush_through(facade, &meta.full_name)?;
+        // read by the database with the held rows shadowed, or written first (`find::plan`, `tx::entity_shadows`)
         return Ok(None);
     }
     let page = LimitOffset {
@@ -755,9 +755,7 @@ pub fn before_selective_count(facade: &EntityFacade, entity_name: &str) -> Resul
         // read as `before_find` reads a view
         return Ok(());
     }
-    if tx::holds_entity(facade, &meta.full_name) {
-        tx::flush_through(facade, &meta.full_name)?;
-    }
+    // read by the database with the held rows shadowed, or written first (`find::plan`, `tx::entity_shadows`)
     Ok(())
 }
 

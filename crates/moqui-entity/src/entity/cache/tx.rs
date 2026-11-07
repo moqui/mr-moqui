@@ -888,16 +888,12 @@ const SHADOW_ROWS_MAX: usize = 500;
 
 /// Before a find or count of a view entity in a frame that holds rows of a member that may be in its result: the
 /// shadows of those members' tables (`TableShadow`), so the read sees the held rows with none of them written. Where
-/// a shadow cannot be made (a database other than Postgres, a member with an encrypted or full-text field, more
+/// a shadow cannot be made (a database other than Postgres, a member with a full-text field or an encrypted key, more
 /// than [`SHADOW_ROWS_MAX`] held rows) every held row is written now instead (an early flush, in order, so a child row
 /// follows its parent), as Java's bypass of the transaction cache for a view. A held row may be in the result unless
 /// the view's `condition`, mapped to the member's fields through the view's aliases, surely does not match it, before
 /// or after the write. Empty when nothing held may show.
-pub(crate) fn view_shadows(
-    facade: &EntityFacade,
-    view: &str,
-    condition: Option<&Condition>,
-) -> Result<Vec<TableShadow>, Error> {
+fn view_shadows(facade: &EntityFacade, view: &str, condition: Option<&Condition>) -> Result<Vec<TableShadow>, Error> {
     if TX_HOLD.with(|slot| slot.borrow().is_empty()) {
         return Ok(Vec::new());
     }
@@ -921,7 +917,62 @@ pub(crate) fn view_shadows(
     }
 }
 
-/// The shadow of each of `entities` from the frame's held rows, or `None` where one cannot be made.
+/// The shadows a find or count of `entity_name` reads through: a view's ([`view_shadows`]), or with `aggregate` (a
+/// `distinct` or `having` read) a plain entity's ([`entity_shadows`]). Empty, with no lookup, when this thread holds
+/// no row.
+pub(crate) fn read_shadows(
+    facade: &EntityFacade,
+    entity_name: &str,
+    condition: Option<&Condition>,
+    aggregate: bool,
+) -> Result<Vec<TableShadow>, Error> {
+    if TX_HOLD.with(|slot| slot.borrow().is_empty()) {
+        return Ok(Vec::new());
+    }
+    if super::read_meta(facade, entity_name)?.is_view {
+        view_shadows(facade, entity_name, condition)
+    } else if aggregate {
+        entity_shadows(facade, entity_name)
+    } else {
+        Ok(Vec::new())
+    }
+}
+
+/// Before a `distinct` or `having` find or count of `entity`, which the frame cannot answer from its rows: when the
+/// frame holds rows of the entity, the shadow of its table, so the read sees them with none written. Where a shadow
+/// cannot be made (as for [`view_shadows`]) the held writes up to the entity's last are written first (an early flush,
+/// cause "selective find"). Empty when the frame holds no row of it.
+fn entity_shadows(facade: &EntityFacade, entity: &str) -> Result<Vec<TableShadow>, Error> {
+    if TX_HOLD.with(|slot| slot.borrow().is_empty()) {
+        return Ok(Vec::new());
+    }
+    let tx = facade.transactions_for(entity)?;
+    let Some(token) = tx.frame_token() else {
+        return Ok(Vec::new());
+    };
+    let full_name = super::read_meta(facade, entity)?.full_name.clone();
+    let holds = TX_HOLD.with(|slot| {
+        slot.borrow()
+            .get(&token)
+            .is_some_and(|frame| frame.holds_entity(&full_name))
+    });
+    if !holds {
+        return Ok(Vec::new());
+    }
+    match shadows_of(facade, entity, token, std::slice::from_ref(&full_name))? {
+        Some(shadows) => {
+            stats::note_shadowed(token);
+            Ok(shadows)
+        }
+        None => {
+            flush_through(facade, &full_name)?;
+            Ok(Vec::new())
+        }
+    }
+}
+
+/// The shadow of each of `entities` from the frame's held rows, or `None` where one cannot be made. `view` is the
+/// entity read, whose database decides.
 fn shadows_of(
     facade: &EntityFacade,
     view: &str,
@@ -938,7 +989,7 @@ fn shadows_of(
                     && entity
                         .fields
                         .iter()
-                        .all(|field| !field.encrypt && field.field_type != "text-fts")
+                        .all(|field| !(field.encrypt && field.is_pk) && field.field_type != "text-fts")
             })
         }))
     })?;
@@ -962,8 +1013,14 @@ fn shadows_of(
         let overlay = Overlay::new(Vec::new(), &holds, &meta.pk_fields);
         let (stored, _) = stored_rows(facade, &meta, Some(token), &overlay)?;
         let rows = overlay.apply(&stored)?;
-        let fields: Vec<String> = facade.with_entity(name, |entity, _, _| {
-            Ok(entity.fields.iter().map(|field| field.name.clone()).collect())
+        let (fields, types) = facade.with_entity(name, |entity, dialect, model| {
+            let mut fields = Vec::with_capacity(entity.fields.len());
+            let mut types = Vec::with_capacity(entity.fields.len());
+            for field in &entity.fields {
+                fields.push(field.name.clone());
+                types.push(moqui_db::sql::field_sql_type(model, dialect, field)?);
+            }
+            Ok((fields, types))
         })?;
         let mut seen = HashSet::new();
         let hidden: Vec<Vec<Value>> = holds
@@ -976,19 +1033,31 @@ fn shadows_of(
                     .collect()
             })
             .collect();
-        let rows = rows
-            .iter()
-            .map(|row| {
+        // The rows as stored: an encrypted field's value encrypted, as the table has it.
+        let encrypted = facade.with_entity(name, |entity, _, _| Ok(entity.fields.iter().any(|field| field.encrypt)))?;
+        let mut stored_rows = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let sealed = if encrypted {
+                let plain = FieldMap::clone(&row.fields);
+                std::borrow::Cow::Owned(facade.with_entity(name, |entity, _, _| {
+                    super::super::field_rw::seal_stored(facade, entity, plain)
+                })?)
+            } else {
+                std::borrow::Cow::Borrowed(row.fields.as_ref())
+            };
+            stored_rows.push(
                 fields
                     .iter()
-                    .map(|field| row.fields.get(field.as_str()).cloned().unwrap_or(Value::Null))
-                    .collect()
-            })
-            .collect();
+                    .map(|field| sealed.get(field.as_str()).cloned().unwrap_or(Value::Null))
+                    .collect(),
+            );
+        }
+        let rows = stored_rows;
         shadows.push(TableShadow {
             entity_name: meta.full_name.clone(),
             hidden,
             rows,
+            types,
         });
     }
     Ok(Some(shadows))

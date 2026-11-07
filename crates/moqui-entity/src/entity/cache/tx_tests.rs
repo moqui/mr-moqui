@@ -406,21 +406,10 @@ fn strict_mode_fails_a_frame_that_flushes_early() {
     tx.set_tx_cache_strict(true);
     let held = run(&tx, TransactionAttribute::Cache, || {
         put_enum(&facade, "STRICT", "A", "held");
-        // What an aggregate find does before its query (the test driver cannot run one): the held rows go first.
-        let lookup = super::super::FindLookup {
-            entity_name: ENUM.to_string(),
-            use_cache: None,
-            condition: None,
-            order: Vec::new(),
-            limit: None,
-            offset: None,
-            filtered: false,
-        };
-        let selective = super::super::Selective {
-            aggregate: true,
-            ..Default::default()
-        };
-        super::super::before_selective_find(&facade, &lookup, &selective)?;
+        put(&facade, "moqui.test.TestFts", "testFtsId", "STRICT");
+        // What a distinct find of an entity with a full-text field does before its query (the test driver cannot
+        // run one): its held rows go first.
+        super::super::read_shadows(&facade, "moqui.test.TestFts", None, true)?;
         Ok(())
     });
     tx.set_tx_cache_strict(false);
@@ -548,37 +537,23 @@ fn a_select_field_find_sees_the_frames_held_rows() {
     .unwrap();
 }
 
-/// G1: a distinct find of an entity the frame holds rows of writes the held writes up to that entity's last (an early
-/// flush, cause "selective find") and goes on holding the rest.
+/// G1: a distinct find of an entity the frame holds rows of and cannot shadow (a full-text field) writes the held
+/// writes up to that entity's last (an early flush, cause "selective find") and goes on holding the rest.
 #[test]
 fn a_distinct_find_writes_the_held_prefix_first() {
     let tape = Arc::new(Mutex::new(Vec::new()));
     let facade = testing::open_with_tape(Arc::clone(&tape));
-    let tx = facade.transactions_for(TEST).unwrap();
+    let fts = "moqui.test.TestFts";
+    let tx = facade.transactions_for(fts).unwrap();
     let before = super::super::tx_cache_stats();
     run(&tx, TransactionAttribute::Cache, || {
-        let mut row = facade.make_value(TEST)?;
-        row.set("testId", Value::string("D1"));
-        row.set("testMedium", Value::string("m"));
-        row.create(&facade)?;
+        put(&facade, fts, "testFtsId", "D1");
         put(&facade, TYPE, "enumTypeId", "AFTER");
-        // What the find does before its query (the test driver cannot run a DISTINCT).
-        let lookup = super::super::FindLookup {
-            entity_name: TEST.to_string(),
-            use_cache: None,
-            condition: None,
-            order: Vec::new(),
-            limit: None,
-            offset: None,
-            filtered: false,
-        };
-        let selective = super::super::Selective {
-            aggregate: true,
-            ..Default::default()
-        };
-        assert!(super::super::before_selective_find(&facade, &lookup, &selective)?.is_none());
+        // What the find does before its query (the test driver cannot run a DISTINCT): a full-text field cannot be
+        // shadowed, so the held writes up to the entity's last go first.
+        assert!(super::super::read_shadows(&facade, fts, None, true)?.is_empty());
         assert_eq!(
-            statements(&tape, "INSERT INTO \"test_entity\""),
+            statements(&tape, "INSERT INTO \"test_fts\""),
             1,
             "the prefix is written"
         );
@@ -593,6 +568,42 @@ fn a_distinct_find_writes_the_held_prefix_first() {
     let stats = super::super::tx_cache_stats().since(&before);
     assert_eq!(stats.early_flushes_of(super::FlushCause::SelectiveFind), 1);
     assert!(found(&facade, TYPE, "enumTypeId", "AFTER"));
+}
+
+/// A distinct or having find of an entity the frame holds rows of reads them through a shadow of its table: the held
+/// keys hidden from the stored rows and the rows the frame sees in their place, with nothing written.
+#[test]
+fn a_distinct_find_reads_the_held_rows_through_a_shadow() {
+    let tape = Arc::new(Mutex::new(Vec::new()));
+    let facade = testing::open_with_tape(Arc::clone(&tape));
+    put_enum(&facade, "X1", "A", "stored");
+    let tx = facade.transactions_for(ENUM).unwrap();
+    let before = super::super::tx_cache_stats();
+    run(&tx, TransactionAttribute::Cache, || {
+        put_enum(&facade, "X2", "A", "held");
+        set_enum(&facade, "X1", "description", "changed")?;
+        let shadows = super::super::read_shadows(&facade, ENUM, None, true)?;
+        assert_eq!(shadows.len(), 1);
+        let shadow = &shadows[0];
+        assert_eq!(shadow.entity_name, ENUM);
+        assert_eq!(shadow.hidden, [vec![Value::string("X2")], vec![Value::string("X1")]]);
+        assert_eq!(shadow.rows.len(), 2);
+        assert_eq!(shadow.types.len(), shadow.rows[0].len());
+        assert!(
+            super::super::read_shadows(&facade, ENUM, None, false)?.is_empty(),
+            "a plain find needs none"
+        );
+        assert_eq!(
+            statements(&tape, "INSERT INTO \"enumeration\""),
+            1,
+            "only the stored row's insert"
+        );
+        Ok(())
+    })
+    .unwrap();
+    let stats = super::super::tx_cache_stats().since(&before);
+    assert_eq!(stats.early_flush_count(), 0);
+    assert_eq!(stats.shadowed_reads, 1);
 }
 
 /// G4: a held update of a row that is not there fails, at the commit when the frame knows nothing of the row, and at
@@ -872,6 +883,46 @@ fn a_frame_finds_a_row_by_an_encrypted_field() {
         Ok(())
     })
     .unwrap();
+}
+
+/// An entity with an encrypted field is shadowed too, its rows as the table stores them (the encrypted field sealed),
+/// so a view or distinct read of it writes nothing early.
+#[test]
+fn an_entity_with_an_encrypted_field_is_shadowed_as_stored() {
+    let facade = testing::open();
+    let entity = "moqui.agent.AgentPushConfig";
+    let mut row = facade.make_value(entity).unwrap();
+    row.set("pushConfigId", Value::string("ENC2"));
+    row.set("token", Value::string("a-secret"));
+    row.create(&facade).unwrap();
+    let tx = facade.transactions_for(entity).unwrap();
+    let before = super::super::tx_cache_stats();
+    run(&tx, TransactionAttribute::Cache, || {
+        let mut held = facade.make_value(entity)?;
+        held.set("pushConfigId", Value::string("ENC3"));
+        held.set("token", Value::string("a-secret"));
+        held.create(&facade)?;
+        let shadows = super::super::read_shadows(&facade, entity, None, true)?;
+        assert_eq!(shadows.len(), 1, "shadowed, not written");
+        let token_at = facade.with_entity(entity, |definition, _, _| {
+            Ok(definition
+                .fields
+                .iter()
+                .position(|field| field.name == "token")
+                .unwrap())
+        })?;
+        let sealed = facade.with_entity(entity, |definition, _, _| {
+            let mut plain = crate::entity::FieldMap::default();
+            plain.insert(std::sync::Arc::from("token"), Value::string("a-secret"));
+            super::super::super::field_rw::seal_stored(&facade, definition, plain)
+        })?;
+        assert_eq!(shadows[0].rows[0][token_at], sealed.get("token").cloned().unwrap());
+        Ok(())
+    })
+    .unwrap();
+    let stats = super::super::tx_cache_stats().since(&before);
+    assert_eq!(stats.early_flush_count(), 0);
+    assert_eq!(stats.shadowed_reads, 1);
 }
 
 /// A frame of its own that commits a write under a cache frame on the same thread (a `force-new` call, a probe) makes

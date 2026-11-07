@@ -524,7 +524,8 @@ impl Drop for DirGuard {
     }
 }
 
-/// A view read in a transaction-cache frame sees the frame's held rows through shadowed member tables, on Postgres:
+/// A view read, and a distinct find or count, in a transaction-cache frame sees the frame's held rows through shadowed
+/// tables, on Postgres:
 /// a join of a created, a moved and a deleted row, and a grouped count, minimum and sum, with nothing written before
 /// the commit, and the same rows after it.
 #[test]
@@ -657,6 +658,57 @@ fn a_view_read_sees_the_frames_held_rows_through_shadowed_tables() {
     assert_eq!(seen.2 .1, "125");
     assert_ne!(seen.2 .2, stored_count.2, "the held item is the oldest");
     assert_eq!((ids("SHA"), ids("SHB"), counted()), seen, "the same after the commit");
+
+    // A distinct find and a distinct count of one entity read its held rows through a shadow too.
+    let kinds = || -> (Vec<String>, i64) {
+        let mut kinds: Vec<String> = facade
+            .find(enumeration)
+            .unwrap()
+            .condition(moqui_db::sql::Condition::is_in(
+                "enumId",
+                vec![Value::string("SH1"), Value::string("SH2"), Value::string("SH5")],
+            ))
+            .select_field("enumTypeId")
+            .distinct(true)
+            .list()
+            .unwrap()
+            .values()
+            .iter()
+            .map(|row| {
+                row.get("enumTypeId")
+                    .map(moqui_lib::object::to_plain_string)
+                    .unwrap_or_default()
+            })
+            .collect();
+        kinds.sort();
+        let count = facade
+            .find(enumeration)
+            .unwrap()
+            .eq("enumTypeId", Value::string("SHQ"))
+            .select_field("enumTypeId")
+            .distinct(true)
+            .count()
+            .unwrap();
+        (kinds, count)
+    };
+    let before = moqui_core::entity::cache::tx_cache_stats();
+    let distinct = tx
+        .run(TransactionAttribute::Cache, None, || {
+            put(
+                enumeration,
+                &[("enumId", Value::string("SH5")), ("enumTypeId", Value::string("SHQ"))],
+            );
+            Ok(kinds())
+        })
+        .unwrap();
+    let stats = moqui_core::entity::cache::tx_cache_stats().since(&before);
+    assert_eq!(stats.early_flush_count(), 0, "{stats:?}");
+    assert_eq!(stats.shadowed_reads, 2, "{stats:?}");
+    assert_eq!(
+        distinct,
+        (vec!["SHA".to_string(), "SHB".to_string(), "SHQ".to_string()], 1)
+    );
+    assert_eq!(kinds(), distinct, "the same after the commit");
     drop(facade);
     drop(cluster);
 }
