@@ -448,7 +448,7 @@ impl Active {
     pub(super) fn main_running() -> Option<Rc<OxideEngine>> {
         ENGINE
             .with(|engine| engine.borrow().clone())
-            .filter(|engine| Self::holds(engine))
+            .filter(Self::holds)
     }
 
     /// Whether a runtime other than `engine` has a run in progress on this thread.
