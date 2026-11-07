@@ -48,9 +48,13 @@ impl Host for MoquiHost {
     }
 
     /// The thread's deadline ([`crate::script::DeadlineGuard`], the default limit) passed: the script stops, as the
-    /// QuickJS interrupt handler stops it. So does a script that met what the bindings do not have and caught it
-    /// ([`super::engine::fallback_pending`]): it falls back.
+    /// QuickJS interrupt handler stops it, but not the runtime's start. So does a script that met what the bindings do
+    /// not have and caught it ([`super::engine::fallback_pending`]): it falls back.
     fn interrupt(&mut self) -> bool {
+        // the runtime's own start runs to its end: a script's deadline is for the script ([`super::engine::starting`])
+        if super::engine::starting() {
+            return false;
+        }
         super::engine::fallback_pending()
             || DEADLINE
                 .with(std::cell::Cell::get)

@@ -64,7 +64,7 @@ mod web_host;
 pub(crate) use crate::script::text::ScriptText;
 use compiled::{eval_compiled, eval_compiled_text, MAX_COMPILED_SCRIPTS, MAX_COMPILED_SCRIPT_BYTES};
 use convert::{
-    collection_to_js, converts_with_script, enter_nested, host_ref_to_js, js_bytes, js_caught,
+    collection_to_js, enter_nested, host_ref_to_js, js_bytes, js_caught,
     js_i64, js_matches_host, js_string, js_truthy, js_value_to_host, object_map, optional_text, text_or_empty,
 };
 pub use convert::{host_to_js, js_to_host};
@@ -74,7 +74,7 @@ use entities::{
     atom_name, entity_to_js, install_entity_prototypes, keep_assigned, prototype_has, prototype_member, wrap_find,
     HostEntity, HostList, ScriptList,
 };
-pub(crate) use convert::{temporal_text, MAX_NESTING, SAFE_INTEGER, SET_KEY, TOO_DEEP, WRAP_KEY};
+pub(crate) use convert::{converts_with_script, temporal_text, MAX_NESTING, SAFE_INTEGER, SET_KEY, TOO_DEEP, WRAP_KEY};
 pub(crate) use crate::script::host::rounding_strategy_named as rounding_named;
 pub(crate) use decimal::{arith, decimal_of, decimals_compare, decimals_equal, Arith};
 pub(crate) use entities::{

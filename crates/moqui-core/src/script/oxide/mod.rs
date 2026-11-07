@@ -37,6 +37,7 @@ mod reads;
 mod tracked;
 
 pub(crate) use engine::{
+    start_failed_recently, DID_NOT_START,
     engine_memory, eval_condition, eval_map, eval_text, eval_value, is_lent, release_for_quickjs, run_actions, stats,
     thread_heap_peaks, Outcome,
 };

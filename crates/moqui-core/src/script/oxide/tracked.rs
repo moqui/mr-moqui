@@ -33,7 +33,7 @@ use super::convert::{key, to_host, to_js, Conv};
 use super::decimal::OxDecimal;
 use super::engine::{current, OxideEngine};
 use crate::script::run::STACK;
-use crate::script::runtime::{temporal_text, MAX_NESTING, SET_KEY, WRAP_KEY};
+use crate::script::runtime::{converts_with_script, temporal_text, MAX_NESTING, SET_KEY, WRAP_KEY};
 
 /// What a flush does with the tracked values after writing them back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -97,17 +97,27 @@ pub(super) fn read_name<J: Js>(js: &mut J, name: &str) -> Result<Value, Conv> {
     if let Some(readopted) = readopt(&engine, name) {
         return Ok(readopted);
     }
-    // In place, without a copy of the stack's value: the conversion runs no script and does not reach the stack.
-    let found = STACK.with(|stack| {
+    // In place, without a copy of the stack's value, unless the conversion runs script code (a tools map's wrapper),
+    // which could reach the stack: that value is copied out and converted with the stack free, as QuickJS's
+    // `read_name` does (`converts_with_script`).
+    let kind_of = |value: &HostValue| match value {
+        HostValue::List(_) | HostValue::Map(_) => Some(true),
+        HostValue::Decimal(_) | HostValue::Object(_) => Some(false),
+        _ => None,
+    };
+    let held = STACK.with(|stack| {
         let stack = stack.borrow();
         stack.with_value(name, |value| {
-            let kind = match value {
-                HostValue::List(_) | HostValue::Map(_) => Some(true),
-                HostValue::Decimal(_) | HostValue::Object(_) => Some(false),
-                _ => None,
-            };
-            to_js(js, &engine, value).map(|converted| (converted, kind))
+            if converts_with_script(value) {
+                Err(value.clone())
+            } else {
+                Ok(to_js(js, &engine, value).map(|converted| (converted, kind_of(value))))
+            }
         })
+    });
+    let found = held.map(|held| match held {
+        Ok(converted) => converted,
+        Err(copied) => to_js(js, &engine, &copied).map(|converted| (converted, kind_of(&copied))),
     });
     match found {
         Some(converted) => {
@@ -278,6 +288,67 @@ fn flush_values<J: Js>(js: &mut J, engine: &OxideEngine, mode: Flush) -> Result<
     match first {
         Some(err) => Err(err),
         None => Ok(()),
+    }
+}
+
+/// Whether `value`, a list or map a run that does not write read by name, still holds what the stack holds `held`, for
+/// the debug check of an unflushed run (`engine::check_kept_names`). A tools map is compared by the stack's own keys
+/// only, a member its wrapper made a method left out: the wrapper adds members (a Node's `childNodes` and
+/// `attributes`, a Resource's `size` and `lastModified`, read by a host call), which QuickJS writes back as data at its
+/// end and a later read here makes again, so they are no change of the script's; reading them would call the host.
+pub(super) fn kept_matches<J: Js>(
+    js: &mut J,
+    engine: &OxideEngine,
+    value: &Value,
+    held: &HostValue,
+    depth: usize,
+) -> Result<bool, Conv> {
+    if depth >= MAX_NESTING {
+        return Ok(false);
+    }
+    // a map whose `__wrap` is not a name passes through as itself, its members unread (`convert::to_js`)
+    let wrapped = |entries: &indexmap::IndexMap<String, HostValue>| {
+        matches!(entries.get(WRAP_KEY), Some(HostValue::String(_))) && engine.tools_wrap().is_some()
+    };
+    let passes_through = matches!(held, HostValue::Map(entries) if entries.contains_key(WRAP_KEY) && !wrapped(entries));
+    if !converts_with_script(held) || passes_through {
+        return Ok(to_host(js, engine, value)? == *held);
+    }
+    let Value::Object(object) = value else {
+        return Ok(false);
+    };
+    match held {
+        HostValue::List(items) => {
+            let length = js.get_property(object, &key("length")?)?;
+            if !js.is_array_object(object)? || js.to_number(&length)? != items.len() as f64 {
+                return Ok(false);
+            }
+            for (index, item) in items.iter().enumerate() {
+                let Ok(index) = u32::try_from(index) else {
+                    return Ok(false);
+                };
+                let element = js.get_property(object, &PropertyKey::index(index))?;
+                if !kept_matches(js, engine, &element, item, depth + 1)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        HostValue::Map(entries) => {
+            for (name, item) in entries {
+                let found = js.get_property(object, &key(name)?)?;
+                if let Value::Object(inner) = &found {
+                    if js.as_callable(inner)?.is_some() {
+                        continue;
+                    }
+                }
+                if !kept_matches(js, engine, &found, item, depth + 1)? {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
     }
 }
 

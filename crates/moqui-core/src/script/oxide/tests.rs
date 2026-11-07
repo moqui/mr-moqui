@@ -711,3 +711,129 @@ fn context_is_the_stack_as_on_quickjs() -> Result<(), Error> {
     );
     Ok(())
 }
+
+/// A read-only run that reads a tools map by name: its wrapper's members (a Node's `childNodes` and `attributes`, a
+/// Resource's `size` and `lastModified` getters, read by a host call) are no change of the script's, so the debug check
+/// of the unflushed run notes no changed copy and makes no host call.
+#[test]
+fn a_tools_map_read_by_a_read_only_run_is_not_a_changed_copy() -> Result<(), Error> {
+    clear_context_stack();
+    push_context_frame();
+    let mut reference = indexmap::IndexMap::new();
+    reference.insert("__wrap".to_string(), Value::string("Resource"));
+    reference.insert("location".to_string(), Value::string("component://none/page.md"));
+    reference.insert("fileName".to_string(), Value::string("page.md"));
+    reference.insert("exists".to_string(), Value::Bool(true));
+    reference.insert("file".to_string(), Value::Bool(true));
+    set_context_name("ref", Value::Map(reference))?;
+    let mut kid = indexmap::IndexMap::new();
+    kid.insert("__wrap".to_string(), Value::string("Node"));
+    kid.insert("name".to_string(), Value::string("kid"));
+    let mut node = indexmap::IndexMap::new();
+    node.insert("__wrap".to_string(), Value::string("Node"));
+    node.insert("name".to_string(), Value::string("root"));
+    node.insert("children".to_string(), Value::List(vec![Value::Map(kid)]));
+    set_context_name("node", Value::Map(node))?;
+    set_context_name("nodes", Value::List(vec![crate::script::context_value("node").unwrap()]))?;
+    let copies = super::engine::changed_copies();
+    let calls = crate::script::census::host_calls();
+    assert_eq!(
+        value("ref.getFileName() + ':' + node.first().name + ':' + nodes[0].children('kid').length")?,
+        Value::string("page.md:kid:1")
+    );
+    assert_eq!(crate::script::census::host_calls(), calls, "no stat of the resource");
+    assert_eq!(super::engine::changed_copies(), copies, "no changed copy");
+    Ok(())
+}
+
+/// A runtime that fails to start is a fallback (nothing of the script ran), remembered for the thread so it is not
+/// tried at every script; the router then runs the text on QuickJS.
+#[test]
+fn a_failed_start_falls_back_and_is_not_tried_again_at_once() -> Result<(), Error> {
+    use crate::script::{with_script_engine, ScriptEngine};
+    clear_context_stack();
+    push_context_frame();
+    set_context_name("n", Value::I32(1))?;
+    super::engine::restart_for_tests(true);
+    assert_eq!(fallback("n + 1"), "the quickjs-oxide runtime did not start");
+    super::engine::fail_start_for_tests(false);
+    assert_eq!(fallback("n + 1"), "the quickjs-oxide runtime did not start", "remembered");
+    assert_eq!(
+        with_script_engine(ScriptEngine::SmallOxide, || crate::script::eval_value("n + 2"))?,
+        Value::I32(3),
+        "on QuickJS"
+    );
+    super::engine::restart_for_tests(false);
+    assert_eq!(value("n + 1")?, Value::I32(2));
+    Ok(())
+}
+
+/// The runtime's start is not cut off by a script deadline that has passed (a start nested in a QuickJS script under
+/// its deadline): the interrupt does not stop it while it starts, and the start itself gets through. A script run
+/// during the start (from a shim's host call) is a script again, which the deadline stops.
+#[test]
+fn the_deadline_does_not_stop_the_runtimes_start() {
+    use quickjs_oxide::engine::api::core::Host;
+    super::engine::restart_for_tests(false);
+    let passed = std::time::Instant::now() - std::time::Duration::from_secs(1);
+    crate::script::run::DEADLINE.with(|deadline| deadline.set(Some(passed)));
+    assert!(super::host::MoquiHost.interrupt(), "a script past its deadline stops");
+    let started = {
+        let _starting = super::engine::starting_for_tests();
+        assert!(!super::host::MoquiHost.interrupt(), "the start goes on");
+        super::engine::start_for_tests().map(|_| {
+            // a script nested in the start
+            value("(() => { let n = 0; for (let i = 0; i < 1000000; i++) n++; return n })()")
+        })
+    };
+    crate::script::run::DEADLINE.with(|deadline| deadline.set(None));
+    let nested = started.unwrap_or_else(|err| panic!("the start: {}", err.message()));
+    assert!(nested.is_err(), "the nested script ran past its deadline: {nested:?}");
+}
+
+/// The globals the host shims make on oxide are read-only, as QuickJS makes them: an assignment throws, in sloppy code
+/// too, and the global keeps its value for the later scripts.
+#[test]
+fn the_host_globals_cannot_be_assigned() -> Result<(), Error> {
+    clear_context_stack();
+    push_context_frame();
+    for name in ["EdiHandler", "SftpClient", "__moquiWrap", "ResourceReference"] {
+        let source =
+            format!("(() => {{ try {{ {name} = 1; return 'assigned' }} catch (e) {{ return String(e) }} }})()");
+        let Value::String(got) = value(&source)? else {
+            panic!("{source}: not text");
+        };
+        assert!(got.contains("is a host global and cannot be assigned"), "{name}: {got}");
+        let kind = if name == "ResourceReference" { "object" } else { "function" };
+        assert_eq!(value(&format!("typeof {name}"))?, Value::string(kind), "{name}");
+    }
+    Ok(())
+}
+
+/// A context name the text does not bind is the run's own copy: a function cannot be put on the stack, so
+/// `context.f = fn; f.x = 1` (which the static check lets through) changes no builtin.
+#[test]
+fn a_function_put_in_the_context_is_not_read_back_as_itself() -> Result<(), Error> {
+    clear_context_stack();
+    push_context_frame();
+    let source = "(function() { try { context.f = ''.toString } catch (e) {} try { f.x = 1 } catch (e) {} })()";
+    let _ = super::run_actions(source, hash_text(source), "put_function");
+    assert_eq!(value("typeof ''.toString.x")?, Value::string("undefined"));
+    Ok(())
+}
+
+/// The oxide runtime's start sets the census aside: the host calls its shims make as they install note nothing in the
+/// row of the script that started it.
+#[test]
+fn the_runtimes_start_notes_nothing_in_the_running_scripts_row() {
+    use crate::script::census;
+    use crate::script::engine::EntryKind;
+    let entry = census::begin_for_tests(EntryKind::Condition, 11);
+    let calls = census::host_calls();
+    let noted = census::noted_for_tests();
+    super::engine::restart_for_tests(false);
+    assert!(super::engine::start_for_tests().is_ok());
+    assert_eq!(census::host_calls(), calls, "the start's host calls are not the script's");
+    assert_eq!(census::noted_for_tests(), noted, "no note in the script's row");
+    drop(entry);
+}

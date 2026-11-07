@@ -163,3 +163,18 @@ fn a_census_row_counts_routes_reasons_and_fallbacks() {
     // a fallback is recorded only while the census is on (MOQUI_SCRIPT_CENSUS), which the unit tests leave off
     assert!(row["fallbacks"].is_object());
 }
+
+/// While an engine starts, a host call notes no census row: the shims' install-time calls are not the script's.
+#[test]
+fn the_census_is_set_aside_while_an_engine_starts() {
+    use crate::script::census;
+    let entry = census::begin_for_tests(EntryKind::Condition, 7);
+    assert_eq!(census::noting_row_for_tests(), Some((EntryKind::Condition, 7)));
+    {
+        let _suspended = census::suspend();
+        assert_eq!(census::noting_row_for_tests(), None);
+    }
+    assert_eq!(census::noting_row_for_tests(), Some((EntryKind::Condition, 7)));
+    drop(entry);
+    assert_eq!(census::noting_row_for_tests(), None);
+}

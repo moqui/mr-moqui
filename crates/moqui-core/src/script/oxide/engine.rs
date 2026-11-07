@@ -78,6 +78,26 @@ const TO_NUMBER_JS: &str = r#"Object.defineProperty(globalThis, "toNumber", {
     writable: false, enumerable: true, configurable: false
 })"#;
 
+/// The host globals made read-only once the shims have run, as QuickJS's `FREEZE_HOST_GLOBALS` (`runtime.rs`) makes
+/// them: every global the runtime did not have at its start (`builtins`) becomes a getter of its value with a setter
+/// that throws, in sloppy code too, so one script's assignment does not change it for the later scripts on the thread.
+/// A global defined read-only already (`ec`, `sri`, `toNumber`) is left as it is.
+const FREEZE_HOST_GLOBALS_JS: &str = r#"(function (builtins) {
+    const known = new Set(builtins);
+    for (const name of Object.getOwnPropertyNames(globalThis)) {
+        if (known.has(name) || name === "ec") continue;
+        const held = Object.getOwnPropertyDescriptor(globalThis, name);
+        if (!held.configurable) continue;
+        const value = globalThis[name];
+        Object.defineProperty(globalThis, name, {
+            get() { return value; },
+            set() { throw new TypeError(name + " is a host global and cannot be assigned"); },
+            enumerable: true,
+            configurable: false
+        });
+    }
+})"#;
+
 /// What QuickJS's engine puts under `ec` and on the global object outside the host table, which the host table's shims
 /// extend (`runtime.rs`, `install_ec` and `install_context`): `ec.context`, the context stack's `get` and the two names
 /// a form reads, and the global `sri`, to which the URL shim adds its functions. A text that names either goes to
@@ -265,6 +285,83 @@ thread_local! {
     static ENGINE: RefCell<Option<Rc<OxideEngine>>> = const { RefCell::new(None) };
     /// What the running oxide script met that the bindings do not have, set by a host function before it throws.
     static FALLBACK: Cell<Option<&'static str>> = const { Cell::new(None) };
+    /// When the runtime last failed to start on this thread: it is not tried again for [`START_BACKOFF`].
+    static START_FAILED: Cell<Option<std::time::Instant>> = const { Cell::new(None) };
+    /// Whether the runtime is starting on this thread: the deadline does not stop it ([`starting`]).
+    static STARTING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// How long a thread whose oxide runtime failed to start runs its small scripts on QuickJS before it tries again.
+const START_BACKOFF: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Why a run fell back when the runtime did not start: no fallback of the text's own, so the router does not count it
+/// against the text.
+pub(crate) const DID_NOT_START: &str = "the quickjs-oxide runtime did not start";
+
+/// When a start failure was last logged as an error in this process: once per [`START_BACKOFF`], the rest as debug
+/// lines.
+static START_FAILURE_LOGGED: std::sync::Mutex<Option<std::time::Instant>> = std::sync::Mutex::new(None);
+
+#[cfg(test)]
+thread_local! {
+    static FAIL_START: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether this thread's oxide runtime is starting: its install runs without the script deadline's interrupt (a
+/// nested start under a QuickJS script's deadline would otherwise be cut off part way), and its host calls note no
+/// census row.
+pub(super) fn starting() -> bool {
+    STARTING.with(Cell::get)
+}
+
+/// Whether this thread's runtime failed to start within the last [`START_BACKOFF`]: its small scripts go straight to
+/// QuickJS, before the router hashes, checks or flushes anything for an oxide run.
+pub(crate) fn start_failed_recently() -> bool {
+    START_FAILED.with(Cell::get).is_some_and(|failed| failed.elapsed() < START_BACKOFF)
+}
+
+/// The start of the runtime, from [`engine`] until dropped: no interrupt, the census set aside. It ends what it
+/// began, so it gives back what was there before.
+struct Starting {
+    before: bool,
+    _census: crate::script::census::Suspended,
+}
+
+impl Starting {
+    fn enter() -> Self {
+        Self {
+            before: STARTING.with(|starting| starting.replace(true)),
+            _census: crate::script::census::suspend(),
+        }
+    }
+}
+
+impl Drop for Starting {
+    fn drop(&mut self) {
+        STARTING.with(|starting| starting.set(self.before));
+    }
+}
+
+/// A script run while the runtime starts (from a shim's host call) is a script, with its deadline: the start's
+/// [`STARTING`] is set aside for it, and given back when it ends.
+struct StartSetAside(bool);
+
+impl StartSetAside {
+    fn enter() -> Self {
+        Self(STARTING.with(|starting| starting.replace(false)))
+    }
+}
+
+impl Drop for StartSetAside {
+    fn drop(&mut self) {
+        STARTING.with(|starting| starting.set(self.0));
+    }
+}
+
+/// Set the start's [`STARTING`] for the tests of the interrupt, until dropped.
+#[cfg(test)]
+pub(super) fn starting_for_tests() -> impl Drop {
+    Starting::enter()
 }
 
 /// Whether the running oxide script met what the bindings do not have: a `catch` of the throw must not make side
@@ -279,26 +376,89 @@ pub(super) fn current() -> Option<Rc<OxideEngine>> {
     ENGINE.with(|engine| engine.borrow().clone())
 }
 
+/// This thread's oxide runtime, started if need be. A start that fails is remembered for the thread
+/// ([`START_BACKOFF`]) and logged once for the process; nothing of a script has run then, so its caller falls back.
 fn engine() -> Result<Rc<OxideEngine>, Error> {
     if let Some(engine) = current() {
         return Ok(engine);
     }
-    let did_not_start = |err: RuntimeError| Error::new(format!("the quickjs-oxide runtime did not start: {err}"));
-    let started = Rc::new(OxideEngine::start().map_err(did_not_start)?);
+    if start_failed_recently() {
+        return Err(Error::new(DID_NOT_START));
+    }
+    let starting = Starting::enter();
+    // the host calls a shim makes as it installs are not the running script's
+    let calls = crate::script::census::host_calls();
+    let started = start_engine();
+    crate::script::census::forget_host_calls_since(calls);
+    drop(starting);
+    match started {
+        Ok(started) => {
+            START_FAILED.with(|failed| failed.set(None));
+            Ok(started)
+        }
+        Err(err) => {
+            START_FAILED.with(|failed| failed.set(Some(std::time::Instant::now())));
+            let log_error = {
+                let mut logged = moqui_lib::sync::lock(&START_FAILURE_LOGGED);
+                let due = logged.is_none_or(|at| at.elapsed() >= START_BACKOFF);
+                if due {
+                    *logged = Some(std::time::Instant::now());
+                }
+                due
+            };
+            if log_error {
+                tracing::error!(
+                    error = %err,
+                    "{DID_NOT_START}; small scripts on the thread run on QuickJS, and it is tried again after a minute"
+                );
+            } else {
+                tracing::debug!(error = %err, "{DID_NOT_START}");
+            }
+            Err(Error::new(format!("{DID_NOT_START}: {err}")))
+        }
+    }
+}
+
+fn start_engine() -> Result<Rc<OxideEngine>, RuntimeError> {
+    #[cfg(test)]
+    if FAIL_START.with(Cell::get) {
+        return Err(RuntimeError::Invariant("a start the test fails"));
+    }
+    let (started, builtins) = OxideEngine::start()?;
+    let started = Rc::new(started);
     // the shims call host functions as they install, whose conversions read the thread's engine
     ENGINE.with(|engine| *engine.borrow_mut() = Some(Rc::clone(&started)));
-    let calls = crate::script::census::host_calls();
-    let finished = started.finish_start();
-    crate::script::census::forget_host_calls_since(calls);
-    if let Err(err) = finished {
+    if let Err(err) = started.finish_start(&builtins) {
         ENGINE.with(|engine| *engine.borrow_mut() = None);
-        return Err(did_not_start(err));
+        return Err(err);
     }
     Ok(started)
 }
 
+/// Drop this thread's runtime and its start failure, and make the next start fail or not, for the tests.
+#[cfg(test)]
+pub(super) fn restart_for_tests(fail: bool) {
+    ENGINE.with(|engine| *engine.borrow_mut() = None);
+    START_FAILED.with(|failed| failed.set(None));
+    FAIL_START.with(|failing| failing.set(fail));
+}
+
+/// Make the next start fail or not, keeping a failure already remembered, for the tests.
+#[cfg(test)]
+pub(super) fn fail_start_for_tests(fail: bool) {
+    FAIL_START.with(|failing| failing.set(fail));
+}
+
+/// This thread's runtime, started if need be, for the tests.
+#[cfg(test)]
+pub(super) fn start_for_tests() -> Result<Rc<OxideEngine>, Error> {
+    engine()
+}
+
 impl OxideEngine {
-    fn start() -> Result<Self, RuntimeError> {
+    /// The runtime with `ec` and the helper objects, and the names of its own globals read before the host added any
+    /// (for [`Self::finish_start`]'s freeze of the host's).
+    fn start() -> Result<(Self, ObjectRef), RuntimeError> {
         let options = RuntimeOptions {
             heap: HeapLimits { max_bytes: HEAP_CAP },
             min_heap: MIN_HEAP,
@@ -306,6 +466,11 @@ impl OxideEngine {
         };
         let runtime = quickjs_oxide::engine::api::core::Runtime::with_host(MoquiHost, options);
         let context = runtime.context();
+        // the runtime's own globals, before the host adds its own ([`FREEZE_HOST_GLOBALS_JS`])
+        let builtins = match context.eval("Object.getOwnPropertyNames(globalThis)")? {
+            Value::Object(names) => names,
+            _ => return Err(RuntimeError::Invariant("the builtin names")),
+        };
         let helpers = context.eval(
             "({setPrototype: Set.prototype, objectPrototype: Object.prototype, \
              datePrototype: Date.prototype, getTime: Date.prototype.getTime, arrayFrom: Array.from, error: Error})",
@@ -366,7 +531,7 @@ impl OxideEngine {
         counts::STARTED.fetch_add(1, Relaxed);
         let live = counts::LIVE.fetch_add(1, Relaxed) + 1;
         counts::LIVE_MAX.fetch_max(live, Relaxed);
-        Ok(Self {
+        Ok((Self {
             runtime,
             context,
             protos,
@@ -379,14 +544,14 @@ impl OxideEngine {
             sampled: Cell::new(None),
             tools_wrap: std::cell::OnceCell::new(),
             keys: RefCell::default(),
-        })
+        }, builtins))
     }
 
     /// The rest of the start, once the runtime is the thread's, in QuickJS's order (`runtime.rs`, `install_context`): the
     /// host table's shims over `ec`, `sri` and the helper objects (each tried; any failure fails the start), then the
     /// lockdown, which no shim's code needs, then the bare names last, so a global a shim makes (`EdiHandler`,
     /// `__moquiWrap`) is the global object's own rather than a write to the context stack.
-    fn finish_start(&self) -> Result<(), RuntimeError> {
+    fn finish_start(&self, builtins: &ObjectRef) -> Result<(), RuntimeError> {
         let mut context = self.context.clone();
         super::bind::install_shims(&mut context, &self.protos.helpers, std::rc::Rc::new(EngineHooks))?;
         let global = context.global_object()?;
@@ -399,6 +564,12 @@ impl OxideEngine {
             }
             _ => return Err(RuntimeError::Invariant("the tools shim made no __moquiWrap")),
         }
+        let freeze = match context.eval(FREEZE_HOST_GLOBALS_JS)? {
+            Value::Object(object) => context.as_callable(&object)?,
+            _ => None,
+        }
+        .ok_or(RuntimeError::Invariant("the host globals' freeze"))?;
+        context.call(&freeze, Value::Undefined, &[Value::Object(builtins.clone())])?;
         context.eval(HARDEN_JS)?;
         super::names::install_names(&context)
     }
@@ -669,8 +840,10 @@ fn run<T>(
         ));
     }
     run::stack_budget(depth).map_err(Outcome::Error)?;
-    let engine = engine().map_err(Outcome::Error)?;
+    // nothing of the script has run: it runs on QuickJS
+    let engine = engine().map_err(|_| Outcome::Fallback(DID_NOT_START))?;
     let _tag = EngineTag::Oxide.enter();
+    let _not_starting = StartSetAside::enter();
     let _limit = (depth == 0).then(ScriptLimit::arm);
     let _depth = run::enter_depth(depth);
     let state = RunState::enter(&engine, nested);
@@ -743,10 +916,8 @@ fn check_kept_names(context: &mut Context, engine: &OxideEngine, source: &str) {
         let Some(held) = held.filter(|held| matches!(held, HostValue::List(_) | HostValue::Map(_))) else {
             continue;
         };
-        let Ok(now) = to_host(context, engine, &value) else {
-            continue;
-        };
-        if now != held {
+        // a tools map by the stack's own keys, as QuickJS writes it back ([`super::tracked::kept_matches`])
+        if let Ok(false) = super::tracked::kept_matches(context, engine, &value, &held, 0) {
             CHANGED_COPIES.with(|changed| changed.set(changed.get() + 1));
             tracing::error!(name = %name, script = %source, "a quickjs-oxide expression changed its copy of a context value; QuickJS would have written it back");
         }
