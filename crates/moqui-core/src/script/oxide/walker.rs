@@ -44,8 +44,11 @@ pub(crate) fn on_oxide() -> bool {
 /// result is `{source}`, or how the walk ended: `{missing}` for an element with no macro when there is no fallback,
 /// `{converting}` (the rquickjs name of the value's type) for a macro that did not return a string, `{thrown}` for a
 /// macro that threw (its stack without the walker's frames, as on QuickJS where the walker is Rust). `logged` is the
-/// elements that took the fallback, however the walk ended.
-const WALK_JS: &str = r#"(function (macros, treeText, missing, fallback, stamped) {
+/// elements that took the fallback, however the walk ended. The outer function takes the stamped element names
+/// (`screen::stamp::STAMPED`) once per runtime and gives the walk.
+const WALK_JS: &str = r#"(function (stampedNames) {
+  const stamped = new Set(stampedNames);
+  return function (macros, treeText, missing, fallback) {
     const logged = [];
     const build = (n, parent) => {
         const o = { name: n.name, text: n.text, attrs: n.attrs };
@@ -113,7 +116,7 @@ const WALK_JS: &str = r#"(function (macros, treeText, missing, fallback, stamped
             throw e;
         }
         if (typeof source !== "string") { converting.type = typeName(source); throw converting; }
-        if (typeof o.src === "string" && stamped.includes(name) && source !== "") {
+        if (typeof o.src === "string" && stamped.has(name) && source !== "") {
             source = "sri.stamp(" + JSON.stringify(o.src) + ");\n" + source + "sri.stamp(null);\n";
         }
         o.source = source;
@@ -126,6 +129,7 @@ const WALK_JS: &str = r#"(function (macros, treeText, missing, fallback, stamped
         if (e === converting) return { converting: converting.type, logged };
         return { thrown: e, threw: true, logged };
     }
+  };
 })"#;
 
 /// The file name of [`WALK_JS`] in a stack, which `trim` cuts at.
@@ -158,7 +162,6 @@ thread_local! {
 }
 
 fn callable(context: &Context, source: &str) -> Result<CallableRef, RuntimeError> {
-    let mut context = context.clone();
     let compiled = context.compile_with_options(source, &CompileOptions::new(WALK_FILE))?;
     let Value::Object(object) = context.execute(&compiled)? else {
         return Err(RuntimeError::Invariant("a walker function"));
@@ -166,6 +169,23 @@ fn callable(context: &Context, source: &str) -> Result<CallableRef, RuntimeError
     context
         .as_callable(&object)?
         .ok_or(RuntimeError::Invariant("a walker function"))
+}
+
+/// The walk of [`WALK_JS`], over the stamped element names.
+fn walk_function(context: &Context) -> Result<CallableRef, RuntimeError> {
+    let make = callable(context, WALK_JS)?;
+    let names = crate::screen::stamp::STAMPED
+        .iter()
+        .map(|name| JsString::try_from_utf8(name).map(Value::String))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| RuntimeError::Invariant("a stamped element name"))?;
+    let stamped = context.new_array_from_values(names)?;
+    let Value::Object(walk) = context.call(&make, Value::Undefined, &[Value::Object(stamped)])? else {
+        return Err(RuntimeError::Invariant("the walker function"));
+    };
+    context
+        .as_callable(&walk)?
+        .ok_or(RuntimeError::Invariant("the walker function"))
 }
 
 fn generator() -> Result<Rc<Generator>, Error> {
@@ -176,7 +196,7 @@ fn generator() -> Result<Rc<Generator>, Error> {
     let context = runtime.context();
     let started = (|| -> Result<Generator, RuntimeError> {
         Ok(Generator {
-            walk: callable(&context, WALK_JS)?,
+            walk: walk_function(&context)?,
             options: callable(&context, OPTIONS_JS)?,
             chains: RefCell::new(HashMap::new()),
             compiled: RefCell::new(HashMap::new()),
@@ -330,14 +350,6 @@ fn walk(
 ) -> Result<String, Error> {
     let context = &generator.context;
     let ctx = context.clone();
-    let stamped = ctx
-        .new_array_from_values(
-            crate::screen::stamp::STAMPED
-                .iter()
-                .map(|name| js_text(name))
-                .collect::<Result<Vec<_>, _>>()?,
-        )
-        .map_err(|err| failed(context, err))?;
     let fallback = match fallback {
         Some(fallback) => js_text(fallback)?,
         None => Value::Null,
@@ -347,7 +359,6 @@ fn walk(
         js_text(tree)?,
         js_text(missing)?,
         fallback,
-        Value::Object(stamped),
     ];
     let Value::Object(result) = ctx
         .call(&generator.walk, Value::Undefined, &args)
