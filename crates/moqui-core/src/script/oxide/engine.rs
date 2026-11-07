@@ -924,7 +924,7 @@ pub(super) fn context_for_tests() -> Context {
 /// Whether this thread's oxide runtime is lent by a running host function (`Scope::lend`, the fork's F3a): a script
 /// may then run on it, nested in the running one.
 pub(crate) fn is_lent() -> bool {
-    current().is_some_and(|engine| engine.runtime.is_lent())
+    super::units::in_render_body() || current().is_some_and(|engine| engine.runtime.is_lent())
 }
 
 /// Run `source` on the thread's oxide runtime and give its completion value to `finish`. When the text `writes` (the
@@ -986,6 +986,7 @@ pub(super) fn with_run<T>(
         super::tracked::flush(&mut context, Flush::Release).map_err(|conv| conv_outcome(&mut context, conv))?;
     }
     let state = RunState::enter(&engine, nested);
+    let _render = super::units::set_aside_render_body();
     let mut poisoned = false;
     let mut out_of_memory = false;
     let mut note = |err: &RuntimeError| {

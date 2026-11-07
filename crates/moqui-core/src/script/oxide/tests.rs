@@ -942,6 +942,37 @@ fn web_handlers_run_on_oxide() -> Result<(), Error> {
     Ok(())
 }
 
+/// A top-level render is one run with one deadline: its units run with the depth they are given (back after a unit
+/// that throws), a script between them runs nested in the render, and what a unit wrote by name is on the stack.
+#[test]
+fn a_top_level_render_is_one_run() -> Result<(), Error> {
+    use crate::screen::sri::Runner;
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    let unit = |id: u64, source: &str| crate::screen::generate::Unit {
+        id,
+        source: source.to_string(),
+        runtime: Arc::from(""),
+        runtime_id: 0,
+    };
+    clear_context_stack();
+    push_context_frame();
+    with_script_engine(ScriptEngine::Oxide, || {
+        crate::script::with_screen_runner(|runner| {
+            // the render is the run: one depth, one limit armed at its start
+            assert!(crate::script::run::is_running(crate::script::run::EngineTag::Oxide), "the render's run");
+            assert_eq!(crate::script::run::depth(), 1);
+            runner.run(&unit(u64::MAX - 1, "(function ($depth) { firstDepth = $depth })"))?;
+            let thrown = runner.run(&unit(u64::MAX - 2, "(function ($depth) { sri.pushContext(); throw new Error('unit failed') })"));
+            assert!(thrown.unwrap_err().message().contains("unit failed"));
+            assert_eq!(crate::script::eval_value("firstDepth + 1")?, Value::I32(1), "a script nested in the render");
+            runner.run(&unit(u64::MAX - 3, "(function ($depth) { secondDepth = $depth })"))
+        })?;
+        assert_eq!(crate::script::context_value("firstDepth"), Some(Value::I32(0)));
+        assert_eq!(crate::script::context_value("secondDepth"), Some(Value::I32(0)), "the depth is back after a throw");
+        Ok(())
+    })
+}
+
 /// Review fixes: a Proxy in a tracked value is compared with the stack free; `ec.resource.expression` and `condition`
 /// run strict, as on QuickJS; under the server-static widget check the `ec.resource` texts and screen units are
 /// refused, not run unchecked.

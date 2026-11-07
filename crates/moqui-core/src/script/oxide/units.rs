@@ -101,21 +101,21 @@ impl Runner for OxideRunner {
     }
 }
 
-/// [`crate::script::with_screen_runner`] under `script_engine=oxide`. Inside a running oxide script (a script that
-/// renders a screen) the render is a nested run, its unit depth starting afresh as on QuickJS; at the top level each
-/// unit is a run of its own.
+/// [`crate::script::with_screen_runner`] under `script_engine=oxide`: the render is one run, with one deadline, its
+/// unit depth starting afresh as on QuickJS (nested in a running oxide script, a nested run). Its Rust body holds the
+/// runtime free ([`RenderBody`]), so the units and scripts it runs enter it as runs nested in the render's.
 pub(crate) fn with_screen_runner<R>(body: impl FnOnce(&dyn Runner) -> Result<R, Error>) -> Result<R, Error> {
-    if !run::is_running(EngineTag::Oxide) {
-        return crate::script::engine::cross_into_oxide(true, || body(&RUNNER))?;
-    }
     let mut body = Some(body);
     let mut result = None;
-    let ran = with_run(true, "a screen render", |_, _, _| {
+    let render = |_: &OxideEngine, _: &mut Context, _: &mut dyn FnMut(&RuntimeError)| {
         if let Some(body) = body.take() {
+            // the render's Rust runs with no script on the runtime: its units and scripts enter it as nested runs
+            let _body = RenderBody::enter();
             result = Some(body(&RUNNER));
         }
         Ok(())
-    });
+    };
+    let ran = crate::script::engine::cross_into_oxide(true, || with_run(true, "a screen render", render))?;
     match (ran, result) {
         (_, Some(Err(err))) | (Err(Outcome::Error(err)), _) => Err(err),
         (Err(Outcome::Fallback(reason)), _) => Err(Error::new(format!(
@@ -124,6 +124,44 @@ pub(crate) fn with_screen_runner<R>(body: impl FnOnce(&dyn Runner) -> Result<R, 
         (Ok(()), Some(Ok(value))) => Ok(value),
         (Ok(()), None) => Err(Error::new("the screen render did not run")),
     }
+}
+
+thread_local! {
+    /// Renders whose Rust body is running now with no script on the runtime ([`with_screen_runner`]).
+    static RENDER_BODY: Cell<u32> = const { Cell::new(0) };
+}
+
+/// The Rust body of a top-level render, from [`with_screen_runner`] until dropped. A run started inside it sets it
+/// aside ([`set_aside_render_body`]), since its script holds the runtime.
+struct RenderBody(u32);
+
+impl RenderBody {
+    fn enter() -> Self {
+        Self(RENDER_BODY.with(|body| body.replace(1)))
+    }
+}
+
+impl Drop for RenderBody {
+    fn drop(&mut self) {
+        RENDER_BODY.with(|body| body.set(self.0));
+    }
+}
+
+/// Whether a render's Rust body is running with the runtime free: a script or unit it runs enters the runtime as a
+/// run nested in the render's, as one in a lent host function does.
+pub(super) fn in_render_body() -> bool {
+    RENDER_BODY.with(|body| body.get() > 0)
+}
+
+/// Set aside the render body for a run that is starting, until dropped: its script holds the runtime.
+pub(super) fn set_aside_render_body() -> impl Drop {
+    struct SetAside(u32);
+    impl Drop for SetAside {
+        fn drop(&mut self) {
+            RENDER_BODY.with(|body| body.set(self.0));
+        }
+    }
+    SetAside(RENDER_BODY.with(|body| body.replace(0)))
 }
 
 /// Run a unit in the run that called it: the caller's tracked values released before and its released ones set aside,
