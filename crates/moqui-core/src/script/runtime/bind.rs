@@ -263,6 +263,7 @@ fn trampoline<'js>(
         }
         let mut ops = QuickOps {
             ctx,
+            runner: super::screen_host::CtxRunner { ctx },
             callbacks: Vec::new(),
             thrown: None,
         };
@@ -324,6 +325,7 @@ fn convert_args<'js>(
             ArgKind::Parameters if is_ec_context(ctx, &value)? => Arg::WholeContext,
             ArgKind::Parameters => Arg::Value(js_to_host(ctx, &value)?),
             ArgKind::Host => Arg::Host(Class::<HostNeutral>::from_js(ctx, value)?.try_borrow()?.obj.clone()),
+            ArgKind::Node => Arg::Node(super::screen_host::lit_of(ctx, &value)?),
             ArgKind::OptNode if value.is_object() => Arg::Node(super::screen_host::lit_of(ctx, &value)?),
             ArgKind::OptNode => Arg::Undefined,
         });
@@ -400,6 +402,8 @@ fn throw(ctx: &Ctx<'_>, err: HostError, thrown: Option<JsError>) -> JsError {
 /// [`EngineOps`] of one call on QuickJS: the call's functions, and the exception a callback or a flush left.
 struct QuickOps<'a, 'js> {
     ctx: &'a Ctx<'js>,
+    /// The screen runner of the call ([`EngineOps::screen_runner`]): units run in this context, as the call does.
+    runner: super::screen_host::CtxRunner<'a, 'js>,
     callbacks: Vec<Function<'js>>,
     thrown: Option<JsError>,
 }
@@ -441,6 +445,10 @@ impl EngineOps for QuickOps<'_, '_> {
         }
         self.flush(FlushBefore::Keep)?;
         Ok(context_combined())
+    }
+
+    fn screen_runner(&mut self) -> Result<&dyn crate::screen::sri::Runner, HostError> {
+        Ok(&self.runner)
     }
 
     fn flush(&mut self, mode: FlushBefore) -> Result<(), HostError> {

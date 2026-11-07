@@ -65,7 +65,7 @@ pub(crate) use crate::script::text::ScriptText;
 use compiled::{eval_compiled, eval_compiled_text, MAX_COMPILED_SCRIPTS, MAX_COMPILED_SCRIPT_BYTES};
 use convert::{
     collection_to_js, converts_with_script, enter_nested, host_ref_to_js, js_bytes, js_caught,
-    js_i64, js_matches_host, js_string, js_truthy, js_value_to_host, object_map, optional_text, text_or_empty,
+    js_i64, js_matches_host, js_string, js_truthy, js_value_to_host, object_map, text_or_empty,
 };
 pub use convert::{host_to_js, js_to_host};
 use decimal::HostDecimal;
@@ -82,9 +82,7 @@ pub(crate) use entities::{
 };
 pub use facades::forget_scripts;
 pub use facades::run_script_location;
-use facades::{
-    resource_expand, resource_script, sri_send_redirect_and_stop_render, system_get_property,
-};
+use facades::{resource_expand, resource_script, system_get_property};
 use helpers::install_helpers;
 use native_tools::{tool_to_js, HostTool};
 pub(crate) use screen_host::with_screen_runner;
@@ -1790,11 +1788,6 @@ pub fn host_guard<'js, T>(ctx: &Ctx<'js>, body: impl FnOnce() -> rquickjs::Resul
         Ok(result) => result,
         Err(payload) => Err(Exception::throw_message(ctx, &panic_message(payload))),
     }
-}
-
-/// A function that returns `text`, for the Java getters of an object made for a script.
-fn text_getter<'js>(ctx: &Ctx<'js>, text: String) -> rquickjs::Result<Function<'js>> {
-    Function::new(ctx.clone(), move |ctx: Ctx<'_>| host_guard(&ctx, || Ok(text.clone())))
 }
 
 fn panic_message(payload: Box<dyn Any + Send>) -> String {

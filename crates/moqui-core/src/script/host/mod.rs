@@ -45,6 +45,7 @@ mod screen;
 mod search;
 mod service;
 mod sftp;
+mod sri;
 mod theme;
 mod tools;
 pub(crate) mod upload;
@@ -53,6 +54,8 @@ mod user;
 mod web;
 
 pub(crate) use l10n::rounding_strategy_named;
+#[cfg(test)]
+pub(crate) use sri::{HOLD_EXPECTED as SRI_HOLD_EXPECTED, HOLD_SCRIPT as SRI_HOLD_SCRIPT};
 
 /// How the binder converts one argument. A required kind counts toward the function's `length` and a call with fewer
 /// arguments throws `Error calling function with N argument(s) while M where expected`, as QuickJS's typed functions
@@ -105,7 +108,10 @@ pub enum ArgKind {
     Thrown,
     /// An object of a host class ([`Arg::Host`], its state); anything else throws a `TypeError`.
     Host,
-    /// A screen unit's element literal, optional ([`Arg::Node`]); a value that is not an object is [`Arg::Undefined`].
+    /// A screen unit's element literal ([`Arg::Node`]): the conversion `sri.holdNodeLits` attached to it, else converted
+    /// now; a value that is not an object throws `expected an element object`.
+    Node,
+    /// [`ArgKind::Node`], optional; a value that is not an object is [`Arg::Undefined`].
     OptNode,
 }
 
@@ -124,6 +130,7 @@ impl ArgKind {
                 | Self::Whole
                 | Self::Parameters
                 | Self::Host
+                | Self::Node
         )
     }
 
@@ -136,7 +143,13 @@ impl ArgKind {
             Self::OptNumber | Self::Number => "f64",
             Self::Callback => "function",
             Self::Whole | Self::OptWhole => "i64",
-            Self::Value | Self::OptValue | Self::Context | Self::Thrown | Self::Parameters | Self::OptNode => "value",
+            Self::Value
+            | Self::OptValue
+            | Self::Context
+            | Self::Thrown
+            | Self::Parameters
+            | Self::Node
+            | Self::OptNode => "value",
             Self::Host => "object",
             Self::Texts | Self::OptTexts => "array",
         }
@@ -178,7 +191,7 @@ pub enum Arg {
     Context(Option<indexmap::IndexMap<String, Value>>),
     /// The state of a host object ([`ArgKind::Host`]).
     Host(HostObject),
-    /// An element literal ([`ArgKind::OptNode`]).
+    /// An element literal ([`ArgKind::Node`], [`ArgKind::OptNode`]).
     Node(Arc<crate::screen::sri::NodeLit>),
     /// The strings of an array ([`ArgKind::Texts`]).
     Texts(Vec<String>),
@@ -385,6 +398,12 @@ pub trait EngineOps {
         body();
         Ok(())
     }
+    /// The screen runner of the running engine, for a body that renders (`sri.renderSection`, `sri.renderInlineText`):
+    /// the units and templates it runs are in this engine, in the script that made the call (its unit depth and its
+    /// tracked values), as the call itself is.
+    fn screen_runner(&mut self) -> Result<&dyn crate::screen::sri::Runner, HostError> {
+        Err(HostError::message("screen units do not run on this engine yet"))
+    }
     /// Run the engine's pending jobs until a promise settles (the spec engine's `settle_promise`, Phase 3).
     fn settle(&mut self) -> Result<(), HostError> {
         Err(HostError::message("settling a promise is not supported here"))
@@ -521,7 +540,7 @@ impl Call<'_> {
         }
     }
 
-    /// The element literal of an [`ArgKind::OptNode`] argument.
+    /// The element literal of an [`ArgKind::Node`] or [`ArgKind::OptNode`] argument.
     pub fn node(&self, index: usize) -> Option<&Arc<crate::screen::sri::NodeLit>> {
         match self.arg(index) {
             Arg::Node(node) => Some(node),
@@ -747,7 +766,7 @@ static PATHS: &[Path] = &[
     Path::object("ec.resource.theme", &theme::THEME),
     Path::shim("tools", &tools::SHIM),
     Path::shim("EdiHandler", &edi::SHIM),
-    Path::shim("sri", &urls::SHIM),
+    Path::shim("sri", &sri::SHIM),
     Path::shim("SftpClient", &sftp::SHIM),
 ];
 
@@ -761,6 +780,7 @@ static RETURNED: &[&HostClass] = &[
     &notification::NOTIFICATION,
     &edi::EDI_HANDLER,
     &urls::URL,
+    &sri::NODE_LIT,
     &sftp::SFTP_CLIENT,
     &entities::FIND,
     &entities::LIST,

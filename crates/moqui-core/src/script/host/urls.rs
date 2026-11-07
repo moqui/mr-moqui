@@ -13,44 +13,33 @@
  */
 
 //! URL objects for `sri.buildUrl` and `sri.makeUrlByType`: a [`URL`] object holds a [`UrlInstance`], with the methods
-//! the macros call on a Java `UrlInstance`. The `sri` functions that make one are hidden functions of a shim that puts
-//! them on the global `sri`.
+//! the macros call on a Java `UrlInstance`. The `sri` functions that make one are hidden functions of the `sri` shim
+//! (`sri.rs`), which puts them on the global `sri`.
 
 use std::sync::{Arc, Mutex};
 
 use moqui_lib::object::{HostObject, Value};
 
-use super::{lock_state, method, Call, HostClass, HostError, Ret, Shim};
+use super::{lock_state, method, Call, HostClass, HostError, Method, Ret};
 use crate::screen::urls::{self, UrlInstance};
 use crate::screen::{with_current_render, RenderState};
 
-const SRI_URLS_JS: &str = r#"(function (global, hidden) {
-    const sri = global.sri;
-    for (const name of ["buildUrl", "buildUrlFromTarget", "getScreenUrlInstance", "getCurrentScreenUrl", "makeUrlByType",
-        "isAnchorLink"]) {
-        sri[name] = hidden[name];
-    }
-    Object.defineProperty(sri, "activeInCurrentMenu", { get: hidden.activeInCurrentMenu, enumerable: true });
-})"#;
-
-pub(super) static SHIM: Shim = Shim {
-    js: SRI_URLS_JS,
-    hidden: &[&[
-        method!("sri", "buildUrl", [Text], Keep, build_url),
-        method!("sri", "buildUrlFromTarget", [Text], Keep, build_url_from_target),
-        method!("sri", "getScreenUrlInstance", [], Keep, current_url),
-        method!("sri", "getCurrentScreenUrl", [], Keep, current_url),
-        method!(
-            "sri",
-            "makeUrlByType",
-            [Text, Text, OptNode, OptText],
-            Keep,
-            make_url_by_type
-        ),
-        method!("sri", "isAnchorLink", [OptNode, Host], is_anchor_link),
-        method!("sri", "activeInCurrentMenu", [], Keep, active_in_current_menu),
-    ]],
-};
+/// The `sri` functions that make a URL, which the `sri` shim (`sri.rs`) puts on `sri`.
+pub(super) static SRI_URLS: &[Method] = &[
+    method!("sri", "buildUrl", [Text], Keep, build_url),
+    method!("sri", "buildUrlFromTarget", [Text], Keep, build_url_from_target),
+    method!("sri", "getScreenUrlInstance", [], Keep, current_url),
+    method!("sri", "getCurrentScreenUrl", [], Keep, current_url),
+    method!(
+        "sri",
+        "makeUrlByType",
+        [Text, Text, OptNode, OptText],
+        Keep,
+        make_url_by_type
+    ),
+    method!("sri", "isAnchorLink", [OptNode, Host], is_anchor_link),
+    method!("sri", "activeInCurrentMenu", [], Keep, active_in_current_menu),
+];
 
 /// A URL a link is made from.
 pub(super) static URL: HostClass = HostClass {

@@ -23,15 +23,6 @@ pub(super) fn resource_expand(ctx: Ctx<'_>, template: String) -> rquickjs::Resul
     })
 }
 
-/// `sri.sendRedirectAndStopRender(url)`: the one `sri` method the framework screens call before
-/// slice 2 adds the rest.
-pub(super) fn sri_send_redirect_and_stop_render(ctx: Ctx<'_>, url: String) -> rquickjs::Result<()> {
-    host_guard(&ctx, || {
-        crate::screen::send_redirect_and_stop_render(&url);
-        Ok(())
-    })
-}
-
 /// `ec.resource.script(location)`: run the file in the script's own names and return its value, as Java does: what it
 /// returns, or its last expression statement.
 pub(super) fn resource_script<'js>(ctx: Ctx<'js>, location: String) -> rquickjs::Result<JsValue<'js>> {
