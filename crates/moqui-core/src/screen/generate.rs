@@ -923,9 +923,9 @@ mod tests {
     }
 
     /// Every `widgets` of every framework screen generates the same unit in every built-in mode on both engines, stamped
-    /// and with its forms resolved. Too long for the regression suite in a debug build: `cargo test-slow` runs it.
+    /// and with its forms resolved. Too long for the regression suite in a debug build: `./moq accept-all` runs it.
     #[test]
-    #[ignore = "a sweep of every screen's widgets in every mode: acceptance (cargo test-slow)"]
+    #[ignore = "a sweep of every screen's widgets in every mode: acceptance (./moq accept-all)"]
     fn every_screens_widgets_generate_the_same_on_both_engines() {
         let trees: Vec<(String, MNode)> = screen_widgets()
             .into_iter()
