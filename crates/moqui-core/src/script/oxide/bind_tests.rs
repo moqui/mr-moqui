@@ -117,7 +117,7 @@ fn a_panic_through_the_engine_is_not_caught_as_an_error() -> Result<(), RuntimeE
 
 /// Minimal conversions for the binder's tests on a bare runtime, which has no oxide engine for `oxide::convert`:
 /// null, booleans, numbers, text, lists and maps; a decimal and a time stamp as their text.
-struct BasicConvert;
+pub(super) struct BasicConvert;
 
 impl OxideHooks for BasicConvert {
     fn to_host(&self, scope: &mut Scope<'_>, value: &JsValue) -> JsResult<Value> {
@@ -250,9 +250,9 @@ fn a_tool_is_an_exotic_object_of_its_methods() -> Result<(), RuntimeError> {
     Ok(())
 }
 
-/// Every shim of the host table installs on oxide too, over the table's `ec` and empty helper objects: none fails.
-#[test]
-fn every_host_shim_installs_on_oxide() -> Result<(), RuntimeError> {
+/// A bare runtime with the table's `ec`, what the engine makes outside the table and empty helper objects, and every
+/// shim of the host table installed over them; a shim that fails panics with what it threw.
+pub(super) fn shimmed_runtime() -> Result<(Runtime, Context), RuntimeError> {
     let runtime = Runtime::new();
     let mut context = runtime.context();
     let ec = context.new_object()?;
@@ -277,6 +277,13 @@ fn every_host_shim_installs_on_oxide() -> Result<(), RuntimeError> {
         let thrown = context.to_js_string(&thrown)?.to_utf8_lossy();
         panic!("a shim failed: {thrown}");
     }
+    Ok((runtime, context))
+}
+
+/// Every shim of the host table installs on oxide too, over the table's `ec` and empty helper objects: none fails.
+#[test]
+fn every_host_shim_installs_on_oxide() -> Result<(), RuntimeError> {
+    let (_runtime, context) = shimmed_runtime()?;
     assert_eq!(
         eval_text(
             &context,

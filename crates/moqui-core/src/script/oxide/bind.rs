@@ -545,11 +545,7 @@ fn convert_args(
                 Some(held) => Arg::Host(held.obj.clone()),
                 None => return Err(wrong_type(scope, &value, kind)),
             },
-            // TODO(oxide units): element literals are converted by the screen units' bindings, which are not on this
-            // engine yet
-            (ArgKind::OptNode, JsValue::Object(_)) => {
-                return Err(plain_error(scope, "element literals are not supported on quickjs-oxide yet"))
-            }
+            (ArgKind::Node, _) | (ArgKind::OptNode, JsValue::Object(_)) => Arg::Node(node_lits::lit_of(scope, &value)?),
             (ArgKind::OptNode, _) => Arg::Undefined,
             _ => return Err(wrong_type(scope, &value, kind)),
         });
@@ -793,6 +789,10 @@ impl EngineOps for OxideOps<'_, '_> {
 /// Entity values and lists as host exotic objects whose methods are the table's.
 #[path = "entities.rs"]
 pub(crate) mod entities;
+
+/// Element literals ([`ArgKind::Node`]).
+#[path = "node_lits.rs"]
+mod node_lits;
 
 /// Native tools as host exotic objects.
 #[allow(dead_code)] // the engine makes tool objects once its conversion of host values reaches them
