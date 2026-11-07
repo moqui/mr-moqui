@@ -446,6 +446,27 @@ What `oxide` still shows differently from QuickJS, found by the generation compa
   error's stack names `wrapped_ec` on oxide where QuickJS names `eval_script`.
 - A Set the stack holds is a live JavaScript `Set` under `oxide`, tracked and written back; `small-oxide` still runs such
   a text on QuickJS.
+- What a script holds is let go at a fixed point on both engines, never at a collection. QuickJS frees an object by its
+  count when the script lets it go; quickjs-oxide collects by tracing, so an object can live long after its script.
+  So:
+  - A request owns its spooled uploads (`web/multipart.rs`, `ReleaseAtEnd` in `screen::serve_at`): their files go
+    when the request ends, on both engines, whatever still holds a copy (a script object, a context value, an async
+    service's parameter), and a copy read later fails (`the upload x is no longer available: its request has ended`).
+    Before, a file went with the last copy, so under oxide it stayed until a collection (`no spool file is left`).
+  - When the outermost script on the thread ends (`run::enter_depth`'s guard, either engine), quickjs-oxide lets go the
+    state of each object of a resource class made since it started (`host::released_at_run_end`: `UploadedFile`,
+    `InputStream`, `SftpClient`, `ServiceFuture`; `bind::release_run_objects`), the objects still reachable or not: a
+    stream's buffer of a whole file, an upload's view of its spool file, an SFTP client (closed with an error in the
+    log, as Java's `finalize`), a future's results. A later call of the object's methods, or passing it to the host,
+    throws `this X was let go when the script that made it ended`. QuickJS has let such an object go by then unless a
+    script kept it past its end (on the global object), where it still works; the host's own copies are not touched
+    on either engine.
+  - The response bodies a script opened with `send()` and did not read go when the outermost script ends on both
+    engines; under oxide they had stayed (only QuickJS's run cleared them).
+  - Nothing a script can hold keeps a database connection, a transaction or a lock: an entity list (also
+    `iterator()`) is its rows, read whole; a find is a builder; a `dbresource://` stream reads its chunks per call;
+    transactions are the thread's. An entity list's rows (and other plain values) are memory only and still wait for
+    the collector on oxide; the heap's pressure check does not count them.
 - Error columns: oxide places a call at its `(`, QuickJS at the callee's name.
 - An assignment through a list on the prototype chain (`Object.create(list).x = 1`) defines on the receiver on both
   engines now; oxide's list ignored it, as it ignores one to the list itself.
