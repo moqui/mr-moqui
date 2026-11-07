@@ -361,6 +361,18 @@ proceed in parallel and land in the order the phases need them.
   the bindings' per-call cost (allocations: 0 → 4 for `a`, 11 → 53 for a new map) and compile time for new text, F4's
   work and Phase 3's.
 
+### Engine differences under `oxide` (Phase 3, scripts, modules and screen units)
+
+- `ec.context` on oxide is only `{get, formListFindId, orderByField}`, the members the shims and forms read; QuickJS's
+  object is the same three, but a text that reaches for more of QuickJS's helpers (`ObjectUtilities`,
+  `UserSecurityChecks`, `ResourceReference`) finds nothing on oxide yet.
+- The server-static widget check's wrapper of `ec` is QuickJS's only: under it, a screen unit and
+  `ec.resource.script`, `expand`, `expression` and `condition` are refused on oxide, so the check reports a failed render
+  rather than passing a screen unchecked.
+- A Set the stack holds is a live JavaScript `Set` under `oxide`, tracked and written back; `small-oxide` still runs such
+  a text on QuickJS.
+- Error columns: oxide places a call at its `(`, QuickJS at the callee's name.
+
 ## 8. Testing
 
 - **Unit tests for the bindings.** The tests in `script/` that check binding behaviour (conversions, tracked values,

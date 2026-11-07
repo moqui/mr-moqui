@@ -600,10 +600,11 @@ impl OxideEngine {
         }, builtins))
     }
 
-    /// The rest of the start, once the runtime is the thread's, in QuickJS's order (`runtime.rs`, `install_context`): the
-    /// host table's shims over `ec`, `sri` and the helper objects (each tried; any failure fails the start), then the
-    /// lockdown for small scripts, which no shim's code needs, then the bare names last, so a global a shim makes (`EdiHandler`,
-    /// `__moquiWrap`) is the global object's own rather than a write to the context stack.
+    /// The rest of the start, once the runtime is the thread's, in QuickJS's order (`runtime.rs`,
+    /// `install_context`): the host table's shims over `ec`, `sri` and the helper objects (each tried; any failure
+    /// fails the start), then the lockdown for small scripts, which no shim's code needs, then the bare names last, so
+    /// a global a shim makes (`EdiHandler`, `__moquiWrap`) is the global object's own rather than a write to the
+    /// context stack.
     fn finish_start(&self, builtins: &ObjectRef) -> Result<(), RuntimeError> {
         let mut context = self.context.clone();
         super::bind::install_shims(&mut context, &self.protos.helpers, std::rc::Rc::new(EngineHooks))?;

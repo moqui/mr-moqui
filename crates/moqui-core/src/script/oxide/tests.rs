@@ -975,11 +975,51 @@ fn a_setting_changed_under_a_live_run_does_not_use_its_runtime() {
     assert_eq!(value("underOxide()").unwrap(), Value::Bool(true));
 }
 
+/// `ec.resource` on oxide: an additional-context map is a frame of its own for the text and gone after it; an inert
+/// module's value is the same within a run and made again in the next.
+#[test]
+fn resource_texts_and_modules_on_oxide() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    let ctx = crate::context::ExecutionContextFactory::test_context();
+    let _entered = ctx.enter();
+    let dir = std::env::temp_dir().join(format!("moqui-oxide-modules-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let inert = dir.join("Inert.js");
+    std::fs::write(&inert, "function twice(n) { return n * 2 }\n({twice})\n").unwrap();
+    clear_context_stack();
+    push_context_frame();
+    set_context_name("b", Value::I32(2))?;
+    set_context_name("where", Value::string(inert.to_string_lossy()))?;
+    with_script_engine(ScriptEngine::Oxide, || {
+        crate::script::run_script(
+            "expanded = ec.resource.expand('${a}-${b}', null, {a: 1}); \
+             plain = ec.resource.expandNoL10n('${b}'); \
+             held = ec.resource.condition('a === 1 && b === 2', null, {a: 1}); \
+             valued = ec.resource.expression('a + b', null, {a: 40}); \
+             const one = ec.resource.script(where); \
+             same = one === ec.resource.script(where) && one.twice(2) === 4; \
+             globalThis.keptModule = one",
+        )?;
+        crate::script::run_script("again = ec.resource.script(where) === globalThis.keptModule")?;
+        Ok::<_, Error>(())
+    })?;
+    let read = |name: &str| crate::script::context_value(name);
+    assert_eq!(read("expanded"), Some(Value::string("1-2")));
+    assert_eq!(read("plain"), Some(Value::string("2")));
+    assert_eq!(read("held"), Some(Value::Bool(true)));
+    assert_eq!(read("valued"), Some(Value::I32(42)));
+    assert_eq!(read("a"), None, "the map's frame is gone");
+    assert_eq!(read("same"), Some(Value::Bool(true)), "kept within the run");
+    assert_eq!(read("again"), Some(Value::Bool(false)), "made again in the next run");
+    clear_context_stack();
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
 /// A top-level render is one run with one deadline: its units run with the depth they are given (back after a unit
 /// that throws), a script between them runs nested in the render, and what a unit wrote by name is on the stack.
 #[test]
 fn a_top_level_render_is_one_run() -> Result<(), Error> {
-    use crate::screen::sri::Runner;
     use crate::script::engine::{with_script_engine, ScriptEngine};
     let unit = |id: u64, source: &str| crate::screen::generate::Unit {
         id,
