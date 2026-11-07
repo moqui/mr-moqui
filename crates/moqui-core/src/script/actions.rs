@@ -197,6 +197,9 @@ fn generate(xml: &str) -> Result<String, Error> {
 fn generate_with(xml: &str, debug: bool) -> Result<String, Error> {
     let root = MNode::parse_text("actions", xml)?;
     reject(&root)?;
+    if super::oxide::walker::on_oxide() {
+        return super::oxide::walker::generate_actions(&root, TEMPLATE_SUPPORT, XML_ACTIONS, debug);
+    }
     super::runtime::with_ctx(|ctx| {
         let name = if debug { "xml-actions-debug" } else { "xml-actions" };
         let macros = super::runtime::engine_object(ctx, name, |ctx| load_macros(ctx, debug))?;

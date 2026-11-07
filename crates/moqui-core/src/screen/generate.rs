@@ -262,7 +262,7 @@ pub fn unit_for(ctx: &Ctx<'_>, request: &UnitRequest<'_>) -> Result<Option<Arc<U
     let made = match unit_root(request.def, request.section, request.fail)? {
         Some(root) => match mode_source(request.factory, request.macro_location) {
             Ok(source) => {
-                let loaded = load_mode_source(ctx, &source, request.mode, std::env::var_os(DEBUG_ENV).is_some())?;
+                let loaded = load_module(ctx, &source, request.mode, std::env::var_os(DEBUG_ENV).is_some())?;
                 let resolve = |node: &MNode| -> Result<Option<MNode>, Error> {
                     let name = node.name();
                     if request.mode == super::statics::UNIT_MODE
@@ -302,7 +302,7 @@ pub fn unit_for(ctx: &Ctx<'_>, request: &UnitRequest<'_>) -> Result<Option<Arc<U
                     }
                     Ok(Some(node))
                 };
-                let body = generate_unit_body(ctx, &loaded, &root, Some(&resolve), request.mode).map_err(|err| {
+                let body = generate_unit_body(&loaded, &root, Some(&resolve), request.mode).map_err(|err| {
                     Error::new(format!(
                         "{} {}: {}",
                         request.def.location,
@@ -354,10 +354,10 @@ pub fn unit_for_dynamic_form(
         return Ok(found);
     }
     let source = mode_source(request.factory, request.macro_location)?;
-    let loaded = load_mode_source(ctx, &source, request.mode, std::env::var_os(DEBUG_ENV).is_some())?;
+    let loaded = load_module(ctx, &source, request.mode, std::env::var_os(DEBUG_ENV).is_some())?;
     let root = MNode::new("dynamic-form");
     root.append_node(form.node()?);
-    let body = generate_unit_body(ctx, &loaded, &root, None, request.mode).map_err(|err| {
+    let body = generate_unit_body(&loaded, &root, None, request.mode).map_err(|err| {
         Error::new(format!(
             "{} dynamic form {}: {}",
             request.def.location,
@@ -453,15 +453,73 @@ fn unit_root(def: &ScreenDef, section: &str, fail: bool) -> Result<Option<MNode>
 /// every unit starts and ends with). A unit is a function of `$depth`, how many units it runs inside (0 for the
 /// outermost); a mode keeps the render state of the unit around it in its prelude and gives it back in the epilogue, as
 /// a `try` and its `finally`, so a section rendered inside a form-list cell leaves the list's state as it found it.
+/// Loaded on the thread's QuickJS engine, or under `script_engine=oxide` on its quickjs-oxide generator
+/// (`script::oxide::walker`).
 pub struct ModeModule<'js> {
-    /// `ScreenSupport.js`'s helpers, which collect a unit's element literals (`beginLits`, `endLits`).
-    support: Object<'js>,
-    macros: Object<'js>,
-    opaque: HashSet<String>,
+    engine: ModeEngine<'js>,
     prelude: String,
     epilogue: String,
     runtime: Arc<str>,
     runtime_id: u64,
+}
+
+enum ModeEngine<'js> {
+    QuickJs {
+        ctx: Ctx<'js>,
+        /// `ScreenSupport.js`'s helpers, which collect a unit's element literals (`beginLits`, `endLits`).
+        support: Object<'js>,
+        macros: Object<'js>,
+        opaque: HashSet<String>,
+    },
+    Oxide(crate::script::oxide::walker::ScreenModule),
+}
+
+impl ModeModule<'_> {
+    fn opaque(&self) -> &HashSet<String> {
+        match &self.engine {
+            ModeEngine::QuickJs { opaque, .. } => opaque,
+            ModeEngine::Oxide(module) => &module.opaque,
+        }
+    }
+}
+
+fn runtime_id(runtime: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    runtime.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// [`load_mode_source`], or under `script_engine=oxide` the module on the thread's quickjs-oxide generator.
+fn load_module<'js>(ctx: &Ctx<'js>, source: &str, mode: &str, debug: bool) -> Result<ModeModule<'js>, Error> {
+    if crate::script::oxide::walker::on_oxide() {
+        return load_oxide(source, mode, debug);
+    }
+    load_mode_source(ctx, source, mode, debug)
+}
+
+fn load_oxide<'js>(source: &str, mode: &str, debug: bool) -> Result<ModeModule<'js>, Error> {
+    let module = crate::script::oxide::walker::screen_module(TEMPLATE_SUPPORT, SCREEN_SUPPORT, source, mode, debug)?;
+    Ok(ModeModule {
+        prelude: module.prelude.clone(),
+        epilogue: module.epilogue.clone(),
+        runtime_id: runtime_id(&module.runtime),
+        runtime: Arc::from(module.runtime.as_str()),
+        engine: ModeEngine::Oxide(module),
+    })
+}
+
+/// `body` with the module `source` for `mode` loaded on the engine generation runs on.
+fn with_module<R>(
+    source: &str,
+    mode: &str,
+    debug: bool,
+    body: impl for<'js> FnOnce(&ModeModule<'js>) -> Result<R, Error>,
+) -> Result<R, Error> {
+    if crate::script::oxide::walker::on_oxide() {
+        return body(&load_oxide(source, mode, debug)?);
+    }
+    crate::script::walker_context(|ctx| body(&load_mode_source(ctx, source, mode, debug)?))
 }
 
 fn mode_source(factory: &ExecutionContextFactory, location: &str) -> Result<String, Error> {
@@ -498,20 +556,17 @@ fn load_mode_source<'js>(ctx: &Ctx<'js>, source: &str, mode: &str, debug: bool) 
     let prelude: String = module.get("prelude").unwrap_or_default();
     let epilogue: String = module.get("epilogue").unwrap_or_default();
     let runtime: String = module.get("runtime").unwrap_or_default();
-    let runtime_id = {
-        use std::hash::{Hash, Hasher};
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        runtime.hash(&mut hasher);
-        hasher.finish()
-    };
     Ok(ModeModule {
-        support,
-        macros,
-        opaque: walker::names_of(&opaque)?,
+        engine: ModeEngine::QuickJs {
+            ctx: ctx.clone(),
+            support,
+            macros,
+            opaque: walker::names_of(&opaque)?,
+        },
         prelude,
         epilogue,
+        runtime_id: runtime_id(&runtime),
         runtime: Arc::from(runtime),
-        runtime_id,
     })
 }
 
@@ -520,9 +575,8 @@ fn js_error(err: rquickjs::Error) -> Error {
 }
 
 /// [`generate_body`] for a unit: the element literals are collected for [`make_unit`], so each is made once.
-fn generate_unit_body<'js>(
-    ctx: &Ctx<'js>,
-    module: &ModeModule<'js>,
+fn generate_unit_body(
+    module: &ModeModule<'_>,
     root: &MNode,
     resolve: Option<Resolve<'_>>,
     mode: &str,
@@ -536,26 +590,36 @@ fn generate_unit_body<'js>(
             }
         }
     }
-    let begin: rquickjs::Function = module.support.get("beginLits").map_err(js_error)?;
+    let support = match &module.engine {
+        ModeEngine::QuickJs { support, .. } => support,
+        ModeEngine::Oxide(oxide) => {
+            // the tree is built (forms resolved) before the collection starts
+            let tree = walker::tree_json(root, &oxide.opaque, resolve)?;
+            let (code, lits) = oxide.generate(&tree, mode, true)?;
+            return Ok(UnitBody { code, lits });
+        }
+    };
+    let begin: rquickjs::Function = support.get("beginLits").map_err(js_error)?;
     begin.call::<_, ()>(()).map_err(js_error)?;
-    let _collecting = Collecting(&module.support);
-    let code = generate_body(ctx, module, root, resolve, mode)?;
-    let end: rquickjs::Function = module.support.get("endLits").map_err(js_error)?;
+    let _collecting = Collecting(support);
+    let code = generate_body(module, root, resolve, mode)?;
+    let end: rquickjs::Function = support.get("endLits").map_err(js_error)?;
     let lits: Vec<String> = end.call(()).map_err(js_error)?;
     Ok(UnitBody { code, lits })
 }
 
-fn generate_body<'js>(
-    ctx: &Ctx<'js>,
-    module: &ModeModule<'js>,
-    root: &MNode,
-    resolve: Option<Resolve<'_>>,
-    mode: &str,
-) -> Result<String, Error> {
+fn generate_body(module: &ModeModule<'_>, root: &MNode, resolve: Option<Resolve<'_>>, mode: &str) -> Result<String, Error> {
+    let (ctx, macros) = match &module.engine {
+        ModeEngine::QuickJs { ctx, macros, .. } => (ctx, macros),
+        ModeEngine::Oxide(oxide) => {
+            let tree = walker::tree_json(root, &oxide.opaque, resolve)?;
+            return Ok(oxide.generate(&tree, mode, false)?.0);
+        }
+    };
     let missing = format!("screen macro in {mode}, element");
     let walk = Walk {
-        macros: &module.macros,
-        opaque: &module.opaque,
+        macros,
+        opaque: module.opaque(),
         resolve,
         missing: &missing,
         fallback: Some("@element"),
@@ -576,14 +640,15 @@ pub fn widget_vocabulary() -> Result<(HashSet<String>, HashSet<String>), Error> 
         .find(|(name, _)| *name == "ScreenHtml.js")
         .map(|(_, source)| *source)
         .ok_or_else(|| Error::new("missing built-in module"))?;
-    crate::script::walker_context(|ctx| {
-        let module = load_mode_source(ctx, source, "html", false)?;
-        let names = module
-            .macros
-            .keys::<String>()
-            .collect::<Result<HashSet<String>, _>>()
-            .map_err(|err| Error::new(err.to_string()))?;
-        Ok((names, module.opaque.clone()))
+    with_module(source, "html", false, |module| {
+        let names = match &module.engine {
+            ModeEngine::QuickJs { macros, .. } => macros
+                .keys::<String>()
+                .collect::<Result<HashSet<String>, _>>()
+                .map_err(|err| Error::new(err.to_string()))?,
+            ModeEngine::Oxide(oxide) => oxide.macro_names()?,
+        };
+        Ok((names, module.opaque().clone()))
     })
 }
 
@@ -614,10 +679,7 @@ pub fn generate_xml(mode: &str, xml: &str, debug_comments: bool) -> Result<Strin
         .map(|(_, source)| *source)
         .ok_or_else(|| Error::new("missing built-in module"))?;
     let root = MNode::parse_text("fixture", xml)?;
-    crate::script::walker_context(|ctx| {
-        let module = load_mode_source(ctx, source, mode, debug_comments)?;
-        generate_body(ctx, &module, &root, None, mode)
-    })
+    with_module(source, mode, debug_comments, |module| generate_body(module, &root, None, mode))
 }
 
 /// The complete function source for a tree of widgets, as a unit would run it. For tests.
@@ -645,10 +707,9 @@ pub fn generate_unit_source(mode: &str, xml: &str) -> Result<String, Error> {
         .map(|(_, source)| *source)
         .ok_or_else(|| Error::new("missing built-in module"))?;
     let root = MNode::parse_text("fixture", xml)?;
-    crate::script::walker_context(|ctx| {
-        let module = load_mode_source(ctx, source, mode, false)?;
-        let body = generate_unit_body(ctx, &module, &root, None, mode)?;
-        Ok(make_unit(&module, body)?.source)
+    with_module(source, mode, false, |module| {
+        let body = generate_unit_body(module, &root, None, mode)?;
+        Ok(make_unit(module, body)?.source)
     })
 }
 
@@ -678,5 +739,38 @@ mod tests {
         );
         // Section units are not dropped to make room.
         assert!(generated.unit("text|loc|S|widgets").is_some());
+    }
+
+    /// Generation is a function of the text alone: the widgets of a sample of the framework's and components' screens, forms
+    /// as written, generate the same unit in each built-in mode on QuickJS and on quickjs-oxide.
+    #[test]
+    fn screen_widgets_generate_the_same_on_both_engines() {
+        use crate::script::engine::{with_script_engine, ScriptEngine};
+        let mut compared = 0;
+        // every eighth screen file, so the test stays quick in a debug build
+        for file in crate::script::walker::test_files::component_xml_files("screen").into_iter().step_by(8) {
+            let Ok(root) = MNode::parse_file(&file) else {
+                continue;
+            };
+            let mut widgets = Vec::new();
+            crate::script::walker::test_files::named(&root, "widgets", &mut widgets);
+            for node in widgets {
+                let xml = node.write_string();
+                for mode in ["html", "qvt", "tui"] {
+                    let quickjs = with_script_engine(ScriptEngine::Rquickjs, || generate_unit_source(mode, &xml));
+                    let oxide = with_script_engine(ScriptEngine::Oxide, || generate_unit_source(mode, &xml));
+                    match (&quickjs, &oxide) {
+                        (Ok(quickjs), Ok(oxide)) => assert_eq!(quickjs, oxide, "{} {mode}", file.display()),
+                        (Err(_), Err(_)) => {}
+                        _ => panic!("{} {mode}: {quickjs:?} against {oxide:?}", file.display()),
+                    }
+                }
+                compared += 1;
+            }
+        }
+        assert!(compared > 20, "{compared}");
+        let quickjs = with_script_engine(ScriptEngine::Rquickjs, widget_vocabulary).unwrap();
+        let oxide = with_script_engine(ScriptEngine::Oxide, widget_vocabulary).unwrap();
+        assert_eq!(quickjs, oxide);
     }
 }

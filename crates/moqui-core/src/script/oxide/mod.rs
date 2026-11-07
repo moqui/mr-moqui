@@ -36,6 +36,7 @@ mod names;
 mod reads;
 pub(crate) mod templates;
 mod tracked;
+pub(crate) mod walker;
 
 pub(crate) use engine::{
     engine_memory, eval_condition, eval_map, eval_text, eval_value, is_lent, release_for_quickjs, run_actions, stats,

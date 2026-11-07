@@ -14,6 +14,7 @@
 
 use super::{generate, generate_with, load_macros, run_actions};
 use crate::context::{Error, ExecutionContext, ExecutionContextFactory};
+use moqui_lib::node::MNode;
 use moqui_lib::object::Value;
 
 use crate::entity::{EntityFacade, EntityValue};
@@ -773,4 +774,34 @@ fn an_inert_module_is_kept_for_the_run_and_one_with_a_memo_is_not() {
     }
     clear_context_stack();
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Generation is a function of the text alone, so the actions of the framework's and the components' service files
+/// generate the same script on QuickJS and on quickjs-oxide (`script_engine=oxide`), with and without debug comments.
+#[test]
+fn service_actions_generate_the_same_on_both_engines() {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    let mut compared = 0;
+    use crate::script::walker::test_files::{component_xml_files, named};
+    for file in component_xml_files("service") {
+        let Ok(root) = MNode::parse_file(&file) else {
+            continue;
+        };
+        let mut actions = Vec::new();
+        named(&root, "actions", &mut actions);
+        for node in actions {
+            let xml = node.write_string();
+            for debug in [false, true] {
+                let quickjs = with_script_engine(ScriptEngine::Rquickjs, || generate_with(&xml, debug));
+                let oxide = with_script_engine(ScriptEngine::Oxide, || generate_with(&xml, debug));
+                match (&quickjs, &oxide) {
+                    (Ok(quickjs), Ok(oxide)) => assert_eq!(quickjs, oxide, "{}", file.display()),
+                    (Err(_), Err(_)) => {}
+                    _ => panic!("{}: {quickjs:?} against {oxide:?}", file.display()),
+                }
+            }
+            compared += 1;
+        }
+    }
+    assert!(compared > 100, "{compared}");
 }
