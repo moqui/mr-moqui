@@ -734,6 +734,61 @@ fn kept_shell_providers_follow_their_screens_and_the_session() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A token route's token is its credential: the Visit a request starts records `/<name>/:token` for a request path or a
+/// Referer under the route (token_route.rs), and keeps a path under no route.
+#[test]
+fn a_visit_leaves_out_a_token_routes_token() {
+    let dir = tree("visit-token");
+    let world = world_with(
+        &dir,
+        "<moqui-conf><webapp-list><webapp name=\"webroot\"><token-route name=\"tk\" \
+         screen-location=\"component://none/Shared.xml\" token-service=\"none.check#Token\"/></webapp></webapp-list>\
+         <artifact-execution-facade><artifact-execution type=\"AT_XML_SCREEN\" authz-enabled=\"true\"/>\
+         </artifact-execution-facade></moqui-conf>",
+    );
+    let root = root_of(&dir);
+    const TOKEN: &str = "VisitToken0123456789";
+    let mut post = request("POST", "/savePreference");
+    post.set_header("authorization", basic("plain"));
+    post.set_header("referer", format!("https://example.com/tk/{TOKEN}/files?x=1"));
+    let response = serve_at(&world.factory, post, &root);
+    assert_eq!(response.status, 200, "{}", response.body_text());
+    let mut get = request("GET", &format!("/tk/{TOKEN}"));
+    get.set_header("authorization", basic("other"));
+    get.set_header("referer", "https://example.com/apps/tk/Something12345");
+    serve_at(&world.factory, get, &root);
+    let ctx = world.factory.new_context();
+    let _entered = ctx.enter();
+    let _authz = ctx.disable_authz();
+    let facade = world.factory.entity().unwrap();
+    let visit = |user: &str, field: &str| {
+        facade
+            .find("moqui.server.Visit")
+            .unwrap()
+            .eq("userId", Value::string(user))
+            .list()
+            .unwrap()
+            .iter()
+            .next()
+            .and_then(|visit| visit.get(field).map(moqui_lib::object::to_plain_string))
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        visit("plain", "initialReferrer"),
+        "https://example.com/tk/:token/files?x=1"
+    );
+    assert!(
+        visit("other", "initialRequest").ends_with("/tk/:token"),
+        "{}",
+        visit("other", "initialRequest")
+    );
+    assert_eq!(
+        visit("other", "initialReferrer"),
+        "https://example.com/apps/tk/Something12345"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A request that sets user preferences tells the page in its response: `X-Moqui-Preferences`, the JSON map of what it set,
 /// percent-encoded as `encodeURIComponent`; a request that sets none has no such header.
 #[test]

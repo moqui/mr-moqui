@@ -83,6 +83,7 @@ async fn a_screen_request_has_a_root_span_with_identity_and_health_is_independen
         .layer(axum::middleware::from_fn_with_state(
             super::RequestTelemetry {
                 telemetry: Arc::clone(&telemetry),
+                token_routes: Arc::new(Vec::new),
             },
             super::log_http,
         ));
@@ -119,6 +120,116 @@ async fn a_screen_request_has_a_root_span_with_identity_and_health_is_independen
             .iter()
             .any(|entry| entry.get("url.path").and_then(Value::as_str) == Some("/health")),
         "a health probe writes no request root"
+    );
+    drop(entries);
+    telemetry.shutdown();
+}
+
+/// A token route's token is its credential: the request root records `/i/:token/...` for its path, and for a Referer
+/// and a sign-in step's `returnTo` that hold one; a path under no route is kept.
+#[cfg(feature = "telemetry")]
+#[tokio::test]
+async fn a_token_routes_token_stays_out_of_the_request_root() {
+    use moqui_core::{
+        entity::document::Document,
+        screen::token_route::TokenRoute,
+        telemetry::{Exporter, Resource, Telemetry},
+    };
+    use moqui_lib::{error::Error, object::Value};
+    use tower::ServiceExt as _;
+    #[derive(Default)]
+    struct Capture(std::sync::Mutex<Vec<Document>>);
+    impl Exporter for Capture {
+        fn export(&self, index: &str, documents: Vec<Document>) -> Result<usize, Error> {
+            let count = documents.len();
+            if index == "otel_spans" {
+                self.0.lock().unwrap().extend(documents);
+            }
+            Ok(count)
+        }
+    }
+    let exporter = Arc::new(Capture::default());
+    let telemetry = Arc::new(Telemetry::from_conf(
+        "<moqui-conf><telemetry sample-ratio=\"0\"/></moqui-conf>",
+        Resource::default(),
+    ));
+    telemetry.set_exporter(exporter.clone());
+    let route = TokenRoute {
+        name: "i".into(),
+        screen_location: "component://test/Accept.xml".into(),
+        token_service: "test.check#Token".into(),
+        title: None,
+        post_transition: None,
+    };
+    let app = Router::new()
+        .fallback(|| async { "ok" })
+        .layer(axum::middleware::from_fn_with_state(
+            super::RequestTelemetry {
+                telemetry: Arc::clone(&telemetry),
+                token_routes: Arc::new(move || vec![route.clone()]),
+            },
+            super::log_http,
+        ));
+    const TOKEN: &str = "InviteToken0123456789abcdefXY";
+    for (uri, referer) in [
+        (
+            format!("/i/{TOKEN}/acceptAccount"),
+            format!("https://staff.example.com/i/{TOKEN}"),
+        ),
+        (
+            format!("/Login?returnTo=%2Fi%2F{TOKEN}%2Ffactor&tab=1"),
+            format!("https://staff.example.com/i/{TOKEN}/factor"),
+        ),
+        ("/apps/i/Something12345".to_string(), String::new()),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header("referer", referer)
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        axum::body::to_bytes(response.into_body(), 1024).await.unwrap();
+    }
+    telemetry.flush();
+    let entries = exporter.0.lock().unwrap();
+    let text = format!("{entries:?}");
+    assert!(!text.contains(TOKEN), "no token in the request roots: {text}");
+    let attribute = |entry: &Document, name: &str| -> Option<String> {
+        entry
+            .get(name)
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| match entry.get("attributes") {
+                Some(Value::Map(attributes)) => attributes.get(name).and_then(Value::as_str).map(str::to_string),
+                _ => None,
+            })
+    };
+    let accept = entries
+        .iter()
+        .find(|entry| attribute(entry, "url.path").as_deref() == Some("/i/:token/acceptAccount"))
+        .unwrap_or_else(|| panic!("the route's root: {text}"));
+    assert_eq!(
+        attribute(accept, "http.request.header.referer").as_deref(),
+        Some("https://staff.example.com/i/:token")
+    );
+    let login = entries
+        .iter()
+        .find(|entry| attribute(entry, "url.path").as_deref() == Some("/Login"))
+        .unwrap_or_else(|| panic!("the sign-in root: {text}"));
+    assert_eq!(
+        attribute(login, "url.query").as_deref(),
+        Some("returnTo=/i/:token/factor&tab=1")
+    );
+    assert!(
+        entries
+            .iter()
+            .any(|entry| attribute(entry, "url.path").as_deref() == Some("/apps/i/Something12345")),
+        "a path under no route is kept: {text}"
     );
     drop(entries);
     telemetry.shutdown();
@@ -171,6 +282,7 @@ async fn request_roots_keep_real_errors_and_name_the_page_without_joining_its_tr
         .layer(axum::middleware::from_fn_with_state(
             super::RequestTelemetry {
                 telemetry: Arc::clone(&telemetry),
+                token_routes: Arc::new(Vec::new),
             },
             super::log_http,
         ));
@@ -292,6 +404,7 @@ async fn streamed_request_roots_finish_on_consumption_failure_or_cancellation() 
         .layer(axum::middleware::from_fn_with_state(
             super::RequestTelemetry {
                 telemetry: telemetry.clone(),
+                token_routes: Arc::new(Vec::new),
             },
             super::log_http,
         ));

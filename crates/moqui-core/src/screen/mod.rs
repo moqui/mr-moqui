@@ -131,7 +131,11 @@ pub fn serve_at(factory: &Arc<ExecutionContextFactory>, mut request: WebRequest,
         );
     }
     if let Some(origin) = web::refused_origin(factory, &request) {
-        tracing::warn!("Origin not allowed: {origin} for {} {}", request.method, request.path);
+        tracing::warn!(
+            "Origin not allowed: {origin} for {} {}",
+            request.method,
+            token_route::redact(factory, &request.path)
+        );
         return web::early_error(factory, &request, 401, "Origin not allowed");
     }
     if request.method.eq_ignore_ascii_case("options") {
@@ -203,7 +207,14 @@ fn handle(
         .transpose()?
         .flatten();
     // a visit this request starts (at the bind, or at a login on a session that put it off) records the request
-    let _visit_request = user::session::VisitRequestGuard::set(web::visit_request(request));
+    // with a token route's token left out of its initialRequest and initialReferrer, as out of the request log
+    let mut visit_request = web::visit_request(request);
+    for url in [&mut visit_request.url, &mut visit_request.referrer] {
+        if let std::borrow::Cow::Owned(redacted) = token_route::redact(factory, url) {
+            *url = redacted;
+        }
+    }
+    let _visit_request = user::session::VisitRequestGuard::set(visit_request);
     // A static file under a screen (css, js, an image) is content, not a visit: it starts no Visitor or Visit.
     let just_content =
         ScreenUrlInfo::parse(factory, root, &request.path, 0).is_ok_and(|info| info.file_resource.is_some());

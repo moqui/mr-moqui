@@ -223,6 +223,9 @@ struct WebSlot {
     locale: Option<String>,
     /// Scheme, host, and context path that links start with. Empty for a path-only link.
     base_url: String,
+    /// The path a screen link starts with after the base, under the render's root: a token route's `/<name>/<token>`
+    /// while its screen renders ([`set_link_prefix`]), else empty.
+    link_prefix: String,
     /// Whether the request came over https; None with no request, as for a render from a job.
     secure: Option<bool>,
     /// The request itself and its raw body, for a web script's `request` ([`set_request`]). None with no socket.
@@ -285,6 +288,7 @@ pub(crate) fn install_with(parameters: BTreeMap<String, Value>, base_url: String
             client_ip: String::new(),
             locale: None,
             base_url,
+            link_prefix: String::new(),
             secure: None,
             request: None,
             request_body: bytes::Bytes::new(),
@@ -771,6 +775,45 @@ pub(crate) fn base_url() -> String {
             .map(|web| web.base_url.clone())
             .unwrap_or_default()
     })
+}
+
+/// The path a screen link starts with after the base ([`set_link_prefix`]); empty outside a token route.
+pub(crate) fn link_prefix() -> String {
+    WEB.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|web| web.link_prefix.clone())
+            .unwrap_or_default()
+    })
+}
+
+/// Puts back the link prefix [`set_link_prefix`] replaced.
+pub(crate) struct LinkPrefixGuard {
+    previous: Option<String>,
+}
+
+impl Drop for LinkPrefixGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.take() {
+            WEB.with(|slot| {
+                if let Some(web) = slot.borrow_mut().as_mut() {
+                    web.link_prefix = previous;
+                }
+            });
+        }
+    }
+}
+
+/// Start the request's screen links, transition redirects and form actions with `prefix` (a token route's
+/// `/<name>/<token>`, whose screen is the render's root) until the guard drops. A plain URL and a redirect to a path the
+/// app wrote (`/Login`) are not prefixed. Without a web slot nothing changes.
+pub(crate) fn set_link_prefix(prefix: &str) -> LinkPrefixGuard {
+    let previous = WEB.with(|slot| {
+        slot.borrow_mut()
+            .as_mut()
+            .map(|web| std::mem::replace(&mut web.link_prefix, prefix.trim_end_matches('/').to_string()))
+    });
+    LinkPrefixGuard { previous }
 }
 
 /// Open the response body for a screen render: `Content-Type`, and an empty body that [`write_output`] appends to. The
