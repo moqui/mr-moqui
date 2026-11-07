@@ -474,10 +474,9 @@
     <!-- The transaction cache (services marked transaction="cache" or "force-cache" hold their writes to the commit):
         false turns it off everywhere, those services running as transaction="use" does. -->
     <default-property name="entity_tx_cache" value="true"/>
-    <!-- true: a screen transition's transaction (and a screen's with begin-transaction) holds its writes in the
-        transaction cache, as a service marked transaction="cache" does; false (the default) begins it as
-        transaction="use". Off by default: Mr. Boss's receiving walk (Finish receipt) sees a stale shipment with it on. -->
-    <default-property name="screen_tx_cache" value="false"/>
+    <!-- A screen transition's transaction (and a screen's with begin-transaction) holds its writes in the transaction
+        cache, as a service marked transaction="cache" does; false begins it as transaction="use". -->
+    <default-property name="screen_tx_cache" value="true"/>
     <!-- A module ec.resource.script loads whose top level only declares (functions, constants, other modules) gives the
         same value for the rest of the outermost script run, made once; false makes it again at each load. -->
     <default-property name="script_module_cache" value="true"/>

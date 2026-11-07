@@ -1490,7 +1490,24 @@ fn redact_owned(value: String) -> String {
 /// Whether an attribute, parameter or query name names a secret: the framework's one rule,
 /// [`crate::context::secret_parameter`], which the HTTP log's query redaction uses too.
 pub fn sensitive_key(key: &str) -> bool {
-    crate::context::secret_parameter(key)
+    thread_local! {
+        /// The answer for each key this thread asked about: a span's attribute names are a small set, asked about at
+        /// every attribute, and the rule compares each with several lists. Cleared past 1,024 names.
+        static KNOWN: std::cell::RefCell<std::collections::HashMap<Box<str>, bool, foldhash::fast::RandomState>> =
+            std::cell::RefCell::new(std::collections::HashMap::default());
+    }
+    KNOWN.with(|known| {
+        if let Some(answer) = known.borrow().get(key) {
+            return *answer;
+        }
+        let answer = crate::context::secret_parameter(key);
+        let mut known = known.borrow_mut();
+        if known.len() >= 1024 {
+            known.clear();
+        }
+        known.insert(key.into(), answer);
+        answer
+    })
 }
 
 fn text(document: &Document, key: &str) -> String {

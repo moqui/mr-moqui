@@ -17,8 +17,8 @@
 //! - `fresh`: a scratch runtime (the runtime's `conf` copied, `base-component` and each component linked) with its own
 //!   embedded Postgres, loaded with every data type. Removed when the run ends, unless kept.
 //! - `snapshot`: the same, but the loaded database is dumped to `runtime/save/test-<hash>/moqui.dump`, by a hash of the
-//!   components the load reads and their entity and data files; a later run that loads the same components with the
-//!   same files restores the dump instead of loading.
+//!   components the load reads, their entity and data files and the day; a later run that day that loads the same
+//!   components with the same files restores the dump instead of loading. Snapshots unused for two days are removed.
 //! - `existing`: the runtime's own database as it is, the way `gradle test` ran against a loaded database. Tests change
 //!   its data.
 
@@ -250,8 +250,37 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
         }
         crate::db::embedded::save_db(scratch, &cluster, &dump)?;
         tracing::warn!("Saved the test database to {}", dump.display());
+        prune_snapshots(&runtime.join("save"), &dump);
     }
     Ok(())
+}
+
+/// Remove the test snapshots (`test-*`) not used for two days, other than `kept`'s: a snapshot is of one day
+/// ([`data_hash`]), so those are of days gone. A failure to remove one is logged; the others still go.
+fn prune_snapshots(save: &Path, kept: &Path) {
+    let keep = kept.parent();
+    let Ok(entries) = std::fs::read_dir(save) else {
+        return;
+    };
+    let cutoff = std::time::SystemTime::now() - std::time::Duration::from_secs(2 * 24 * 60 * 60);
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_snapshot = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("test-"));
+        if !is_snapshot || Some(path.as_path()) == keep {
+            continue;
+        }
+        let used = std::fs::metadata(path.join("moqui.dump"))
+            .and_then(|meta| meta.modified())
+            .ok();
+        if used.is_some_and(|used| used < cutoff) {
+            if let Err(err) = std::fs::remove_dir_all(&path) {
+                tracing::warn!(error = %err, path = %path.display(), "could not remove an old test snapshot");
+            }
+        }
+    }
 }
 
 /// A hash of the crate version and of what the load of `scratch` reads: the components a factory on it loads, by name
@@ -259,11 +288,15 @@ fn prepare_database(runtime: &Path, framework: &Path, scratch: &Path, mode: DbMo
 /// instance), and the name, size and change time of each one's entity and data files, which hold the schema and the
 /// data. A snapshot is made again when a file changes or a run loads another set of components: a server on a conf
 /// without the dev components once saved a snapshot that a run with example then restored, without example's tables.
+/// The day is part of the key: the demo data is dated from its load, so a snapshot is good for the day it was made.
 /// The binary is not part of the key, so a relink keeps the snapshots (plans/archive/Test-Reduction.md, "Cheaper
 /// machinery"); after a change to how the binary loads data, remove `runtime/save/test-*`.
 fn data_hash(scratch: &Path, framework: &Path) -> Result<u64, Error> {
     let mut hasher = DefaultHasher::new();
     env!("CARGO_PKG_VERSION").hash(&mut hasher);
+    // The day of the load, local: the demo data is dated from it (a task due today, an invoice ten days overdue), so a
+    // snapshot of yesterday's load reads as a day old to the specs that count on it.
+    jiff::Zoned::now().date().to_string().hash(&mut hasher);
     hash_tree(&framework.join("entity"), &mut hasher);
     hash_tree(&framework.join("data"), &mut hasher);
     let components = moqui_core::context::discover_components(scratch, framework)

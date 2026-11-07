@@ -1222,7 +1222,9 @@ fn push_relationship_member(
             ))
         })
     })?;
-    let target = load_snap(facade, &relationship.related)?;
+    // only the related entity's full name: a snapshot of it (fields, relationships, masters) was 2.8% of a Mantle
+    // service call's time, made for each relationship member of each data document read
+    let target_name = facade.with_entity(&relationship.related, |entity, _, _| Ok(entity.full_name.clone()))?;
     let key_map = relationship
         .key_pairs
         .iter()
@@ -1236,7 +1238,7 @@ fn push_relationship_member(
         join_from_alias: Some(join_from),
         join_optional: optional,
         key_map,
-        ..MemberEntity::new(entity_alias.clone(), target.full_name)
+        ..MemberEntity::new(entity_alias.clone(), target_name)
     });
     for key_value in relationship.key_values {
         conditions.push(Condition::equals(
@@ -1445,8 +1447,8 @@ pub(crate) fn run_code_view(
     order: Vec<OrderBy>,
     page: LimitOffset,
 ) -> Result<Vec<BTreeMap<String, Value>>, Error> {
-    let primary = load_snap(facade, &code.primary_entity)?;
-    let mut members = vec![MemberEntity::new(code.primary_alias.clone(), primary.full_name)];
+    let primary_name = facade.with_entity(&code.primary_entity, |entity, _, _| Ok(entity.full_name.clone()))?;
+    let mut members = vec![MemberEntity::new(code.primary_alias.clone(), primary_name)];
     let mut conditions = Vec::new();
     for (alias, join_from, relationship, optional) in &code.relationships {
         push_relationship_member(

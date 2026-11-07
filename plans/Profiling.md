@@ -1481,6 +1481,33 @@ Next:
    `every`, select lists, the telemetry span's secret check).
 3. OpenTelemetry's attribute set hashing on each metric record (1%).
 
+## Round 30: screen transitions on the cache, the receiving walk's race, and snapshots by day
+
+Round 29's next steps.
+
+1. **The receiving walk's failure was the walk's own race, not stale data.** The census over the Mr. Boss client
+   walks with transitions held showed `closeRemainder`'s transaction holding and committing cleanly, and the failed
+   page's saved text shows the receipt delivered with no "Finish receipt" on it: the walk asserted the dialog gone a
+   moment before it closed (its "Delivered" wait is met by the transition's message). Holding the transition's writes
+   to the commit made the race likelier. The walk now waits for the dialog to go (mr-boss); the client suite passes 3
+   of 3 with transitions held.
+2. **Screen transitions (and `begin-transaction` screens) begin as `cache` by default** (`screen_tx_cache`, true;
+   false begins them as `use`). `./moq test-apps` client walks 17 of 17 with it, `./moq test-framework` every step.
+3. **A data document's code view reads only the names it needs** of its member entities, not a snapshot of each
+   (fields, relationships, masters): 2.8% of the Mantle specs' service calls. A telemetry span's check of an attribute
+   name for a secret is kept per thread by name. The profile after: 7,390 samples under service calls (7,564 in Round
+   29).
+4. **Test snapshots are of a day.** `Tasks`' smart lists (a task due today), and likely `SupportCases`' Today and
+   `AccountingCollections`' overdue days, fail on a snapshot loaded the day before: the demo data is dated from its
+   load. The snapshot key now has the local day, and a snapshot unused for two days is removed when one is saved. Not
+   yet seen in a run: `./moq test-apps` did not rebuild the binary (it ran the one built before this round), so the
+   runs here restored yesterday's snapshot; `runtime/save/test-*` were removed by hand.
+
+Next:
+1. A `./moq test-apps` on a rebuilt binary, to see the day-keyed snapshots and `Tasks` pass; and why `test-apps`
+   kept a binary older than its sources.
+2. Allocation (still the largest: `malloc` and `free`) and `memcmp` in the service calls.
+
 ## Behaviour changes to know
 
 - In a transaction-cache frame (`transaction="cache"`, `force-cache`), a row the frame read is not read again: another transaction's later commit of it is not seen until the frame ends (plans/TX-Cache.md D2). Held writes go to the database at the commit, merged per row; a failure there names the write and the service that held it. `heartbeat#UserStatus`, `mark#Read`, `send#Message`, `update#WikiPage` and `set#MessageFlags` hold their writes now.
@@ -1514,6 +1541,8 @@ Next:
 - A script that runs while another runs on the thread runs in the same script engine and context, not in an engine of its own; its globals are the thread's. A screen mode's outermost unit gives back the render state around it.
 - A module `ec.resource.script` loads whose top level only declares is the same value for the rest of the outermost script run (`script_module_cache`, default true).
 - The test harness's spec code runs in a script engine of its own.
+- Screen transitions' transactions (and `begin-transaction` screens') hold their writes in the transaction cache by default (`screen_tx_cache=false` to begin them as `use`).
+- `moqui test --db snapshot` keys a snapshot by the day too, and removes snapshots unused for two days.
 - SMTP-delivered Inbox mail and its account rules commit together when no email ECA is installed; a failure there stores the message alone and runs the rules after.
 - Mail stored by IMAP and POP3 sync, SMTP delivery and import, and the IMAP flag sync, run in transaction-cache frames; `react#Message`, `edit#Message`, `redact#Message`, `vote#Poll`, `mark#AllRead` and `mark#NotificationsViewed` are `transaction="cache"`, and a redacted message leaves the search index after its commit.
 - `no-tx-cache` turns a frame to read-through (writes go to the database, reads still kept), and a later `cache` call that joins it no longer turns holding back on.
