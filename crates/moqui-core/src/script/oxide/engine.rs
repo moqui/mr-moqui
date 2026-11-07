@@ -1234,11 +1234,11 @@ pub(super) fn with_run<T>(
     let _limit = (depth == 0).then(ScriptLimit::arm);
     let _depth = run::enter_depth(depth);
     let mut context = engine.context.clone();
-    if nested {
-        // the outer run's tracked values written back and released first, as a QuickJS script nested here has them
-        // (`release_for_quickjs`): a host function that lends need not be the binder's, which flushed already
-        super::tracked::flush(&mut context, Flush::Release).map_err(|conv| conv_outcome(&mut context, conv))?;
-    }
+    // A nested run sets the outer run's tracked values aside as they are, as QuickJS's nested run does
+    // (`runtime.rs`, `with_nested_context`): they are written back at the outer run's next flush or its end, to its own
+    // frame. Written back here, they would go to whatever frame the host call left on top (a service's context), and
+    // the outer run would lose them (`setup#UserOrganizationInfo`'s `userOrgIds.push` across an entity find). The
+    // binder flushes before a method that reads or changes the stack, before the call changes it.
     let state = RunState::enter(&engine, nested);
     let _render = super::units::set_aside_render_body();
     let mut poisoned = false;

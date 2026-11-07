@@ -182,9 +182,15 @@ fn a_run_that_would_fall_back_after_a_write_runs_on_quickjs() -> Result<(), Erro
 }
 
 /// A QuickJS script a lent host function runs inside an oxide script reads what the oxide script changed in place,
-/// and the oxide script then reads by name what the QuickJS one wrote.
+/// and the oxide script then reads by name what the QuickJS one wrote. Under the default setting, where `run_script`
+/// runs on QuickJS (under `oxide` it is a nested oxide run, which leaves the outer run's values as they are).
 #[test]
 fn a_quickjs_script_nested_in_oxide_sees_its_changes() -> Result<(), Error> {
+    use crate::script::engine::{with_script_engine, ScriptEngine};
+    with_script_engine(ScriptEngine::Rquickjs, quickjs_script_nested_in_oxide)
+}
+
+fn quickjs_script_nested_in_oxide() -> Result<(), Error> {
     use quickjs_oxide::engine::api::core::{Scope, Value as JsValue};
     clear_context_stack();
     push_context_frame();
