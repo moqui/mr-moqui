@@ -263,6 +263,13 @@ fn locked_down_format_and_localize_are_plain_functions_on() {
     )
     .unwrap();
     assert_eq!(out, "1,234.50 2024-03-05 Hello");
+    // a pattern that is passed must be a string; one left out is none
+    assert_eq!(render_locked_with("${format(5)}", Escape::None, &data).unwrap(), "5");
+    for pattern in ["5", "null", "undefined", "{}"] {
+        let source = format!("${{format(5, {pattern})}}");
+        let err = render_locked_with(&source, Escape::None, &data).expect_err(&source);
+        assert!(err.message().contains("into type 'string'"), "{source}: {}", err.message());
+    }
 }
 
 /// A theme render's `t(key)` texts last only as long as that render, also when it fails: a later locked render on the

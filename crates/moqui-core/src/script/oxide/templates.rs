@@ -20,8 +20,9 @@
 //! - **The snapshot form** (the locked-down renderer) runs in a sandbox runtime of its own on each thread, as on
 //!   QuickJS: no `ec`, no host object, only `format`, `localize`, `t` and the frozen built-ins
 //!   (`template::SANDBOX_LOCKDOWN`), a heap cap and a deadline polled through `Host::interrupt`. quickjs-oxide sets
-//!   its heap cap when a runtime starts, so a theme render's lower memory limit is a sandbox of that cap, kept with
-//!   the default one for the thread's next render at the same cap.
+//!   its heap cap when a runtime starts, so a theme render's lower memory limit runs in a sandbox of that limit
+//!   rounded down to a power of two ([`bucket`]), kept with the default one for the thread's next render at that cap;
+//!   a limit under 1 MiB renders nothing ([`LEAST_HEAP`]).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -68,13 +69,12 @@ pub(crate) fn run_live(function: &str) -> Result<String, Error> {
         ));
     }
     let (call, hash) = CALLS.with(|calls| {
-        let key: Rc<str> = Rc::from(function);
-        if let Some(found) = calls.borrow_mut().get(&key) {
+        if let Some(found) = calls.borrow_mut().get(function) {
             return found;
         }
         let call: Rc<str> = Rc::from(format!("{function}()"));
         let hash = crate::script::text::hash_text(&call);
-        calls.borrow_mut().insert(key, (Rc::clone(&call), hash));
+        calls.borrow_mut().insert(Rc::from(function), (Rc::clone(&call), hash));
         (call, hash)
     });
     let ran = crate::script::engine::cross_into_oxide(true, || super::eval_text(&call, hash, true))?;
@@ -99,10 +99,26 @@ const MAX_FUNCTIONS: usize = 4096;
 const MAX_STATIC: usize = 1024;
 const MAX_STATIC_BYTES: usize = 4 * 1024 * 1024;
 /// Sandboxes kept per thread: the default cap's and the lower caps theme renders asked for most recently.
-const MAX_SANDBOXES: usize = 4;
-/// The heap a sandbox runtime needs to start and run a small template. A lower limit renders nothing, as QuickJS's
-/// least limit of 1 byte fails every allocation.
+const MAX_SANDBOXES: usize = 3;
+/// The heap a sandbox runtime needs to start and run a small template. quickjs-oxide fixes a runtime's heap cap when
+/// it starts and has no call that lowers it for one render, so a limit below this renders nothing on oxide (an
+/// `out of memory` error before the template runs), where QuickJS lowers its limit for the render and fails at the
+/// first allocation past it.
 const LEAST_HEAP: usize = 1024 * 1024;
+
+/// The cap of the sandbox a render with a memory limit of `memory` runs in: the limit rounded down to a power of two,
+/// at most the renderer's own, so a render never gets more than its limit and the thread holds few sandboxes (1, 2,
+/// 4, ... MiB). `None` below [`LEAST_HEAP`].
+fn bucket(memory: usize) -> Option<usize> {
+    let limit = memory.min(template::LOCKED_BUDGET.1);
+    if limit < LEAST_HEAP {
+        return None;
+    }
+    if limit == template::LOCKED_BUDGET.1 {
+        return Some(limit);
+    }
+    Some(1usize << (usize::BITS - 1 - limit.leading_zeros()))
+}
 
 thread_local! {
     static SANDBOXES: RefCell<Vec<Rc<Sandbox>>> = const { RefCell::new(Vec::new()) };
@@ -216,10 +232,26 @@ fn format(scope: &mut Scope<'_>, error: &CallableRef) -> JsResult<Value> {
         Value::Bool(flag) => moqui_lib::object::Value::Bool(flag),
         _ => moqui_lib::object::Value::Null,
     };
-    let pattern = match scope.arg(1) {
-        Value::Undefined | Value::Null => None,
-        Value::String(text) => Some(text.to_utf8_lossy()),
-        other => Some(scope.to_js_string(&other)?.to_utf8_lossy()),
+    // as rquickjs's `Opt<String>`: no pattern when it is not passed, else it must be a string
+    let pattern = if scope.argc() < 2 {
+        None
+    } else {
+        match scope.arg(1) {
+            Value::String(text) => Some(text.to_utf8_lossy()),
+            other => {
+                let kind = match other {
+                    Value::Undefined => "undefined",
+                    Value::Null => "null",
+                    Value::Bool(_) => "bool",
+                    Value::Int(_) => "int",
+                    Value::Float(_) => "float",
+                    Value::Object(_) => "object",
+                    _ => "value",
+                };
+                let message = format!("Error converting from js '{kind}' into type 'string'");
+                return Err(throw_plain(scope, error, &message));
+            }
+        }
     };
     match template::format_snapshot_value(value, pattern.as_deref()) {
         Ok(text) => js_text(&text),
@@ -305,10 +337,10 @@ impl Drop for DeadlineSet {
 ///
 /// The template's own error, `interrupted` past the deadline, or `out of memory` past the cap.
 pub(crate) fn render_locked(compiled: &str, json: &str, deadline: Instant, memory: usize) -> Result<String, Error> {
-    if memory < LEAST_HEAP {
+    let Some(cap) = bucket(memory) else {
         return Err(Error::script("Error: out of memory"));
-    }
-    let sandbox = sandbox(memory)?;
+    };
+    let sandbox = sandbox(cap)?;
     let _deadline = DeadlineSet::new(deadline);
     let mut context = sandbox.context.clone();
     let ran = sandbox.function(compiled).and_then(|function| {
@@ -332,5 +364,50 @@ pub(crate) fn render_locked(compiled: &str, json: &str, deadline: Instant, memor
             }
             Err(runtime_error(&mut context, err))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A lowered limit runs in a sandbox of at most that limit, and nearby limits share one.
+    #[test]
+    fn memory_limits_share_a_few_sandboxes_and_never_get_more_than_asked() {
+        let mib = 1024 * 1024;
+        assert_eq!(bucket(0), None);
+        assert_eq!(bucket(mib - 1), None);
+        assert_eq!(bucket(mib), Some(mib));
+        assert_eq!(bucket(2_000_000), Some(mib));
+        assert_eq!(bucket(3 * mib), Some(2 * mib));
+        assert_eq!(bucket(template::LOCKED_BUDGET.1 - 1), Some(16 * mib));
+        assert_eq!(bucket(usize::MAX), Some(template::LOCKED_BUDGET.1));
+        let deadline = Instant::now() + template::LOCKED_BUDGET.0;
+        let limits = [
+            template::LOCKED_BUDGET.1,
+            2_000_000,
+            1_500_000,
+            3_000_000,
+            5_000_000,
+            9_000_000,
+            2_500_000,
+        ];
+        for memory in limits {
+            let out = render_locked(
+                "(function(){ return function(){ return 'x'; }; })()",
+                "{}",
+                deadline,
+                memory,
+            );
+            assert_eq!(out.unwrap(), "x");
+            let kept = SANDBOXES.with(|cell| cell.borrow().len());
+            assert!(kept <= MAX_SANDBOXES, "{kept}");
+        }
+        let default_kept = SANDBOXES.with(|cell| {
+            cell.borrow()
+                .iter()
+                .any(|sandbox| sandbox.cap == template::LOCKED_BUDGET.1)
+        });
+        assert!(default_kept);
     }
 }
