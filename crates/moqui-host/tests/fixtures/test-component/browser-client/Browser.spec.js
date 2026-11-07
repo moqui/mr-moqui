@@ -161,3 +161,28 @@ feature("a screenshot, a PDF, the viewport and the color scheme", {
         page.close()
     },
 })
+
+// Reduced motion with the color scheme (one emulated-media call), and a page whose own scripts are off after its sign-in:
+// the harness still evaluates and its locators still act; setEmulation changes what it names and keeps the rest.
+feature("reduced motion and a page with its own scripts off", {
+    expect() {
+        const page = browser.newPage({ user: "john.doe", colorScheme: "dark", reducedMotion: "reduce", javaScript: false })
+        page.goto("/qapps/gallery/Dialog").status == 200
+        page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches) == true
+        page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches) == true
+        // the page's scripts did not run, so the Moqui client is not there
+        page.evaluate(() => typeof window.moqui) == "undefined"
+        // with no user the scripts are off from the start; the locators act on the plain form
+        const plain = browser.newPage({ javaScript: false })
+        plain.goto("/Login").status == 200
+        plain.evaluate(() => typeof window.moqui) == "undefined"
+        plain.locator("#login_form [name=username]").fill("someone")
+        plain.getByLabel("Username").value() == "someone"
+        page.setEmulation({ reducedMotion: "no-preference", javaScript: true })
+        page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches) == false
+        page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches) == true
+        page.goto("/qapps/gallery/Dialog")
+        page.evaluate(() => typeof window.moqui) == "object"
+        page.text().includes("Comparison operators")
+    },
+})
