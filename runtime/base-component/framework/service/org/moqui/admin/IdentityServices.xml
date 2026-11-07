@@ -68,7 +68,8 @@ along with this software (see the LICENSE.md file). If not, see
         <description>Ends sessions at once on every server (impl-admin F4): those named by sessionKey (a visit), or with allOthers
             every other session of the account (userId, else the caller's). The caller's own sessions but the current one, or
             with ADMIN_IDENTITY_MANAGE another user's; a session of another account than userId, or another user's without the
-            permission, is refused and counted. Its next request starts over signed out and its notification socket closes at
+            permission, or of an account in a privileged group the caller is not in or holding a sealed permission the caller
+            lacks (bounded delegation), is refused and counted. Its next request starts over signed out and its notification socket closes at
             its next check. Credentials (keys, app passwords) are left: revoke#AccountAccess ends them.</description>
         <in-parameters>
             <parameter name="sessionKeyList" type="List"/>
@@ -105,7 +106,8 @@ along with this software (see the LICENSE.md file). If not, see
             sign-in too), sshKeys, sipDevices (each live SIP engine drops the phone) and agents (the triggers that run as the
             user paused with their cron jobs, the user's open agent runs asked to cancel); kindList narrows them, or one
             credential by credentialKind (accessToken, deviceKey, loginKey, appPassword, sshKey, sipDevice) and credentialId.
-            The account is not disabled (the lifecycle's, P6). Needs ADMIN_IDENTITY_MANAGE; the caller scopes the target and
+            The account is not disabled (the lifecycle's, P6). Needs ADMIN_IDENTITY_MANAGE, and is refused for an account in a
+            privileged group the caller is not in or holding a sealed permission the caller lacks; the caller scopes the target and
             asks for ADMIN_IDENTITY_GLOBAL where the identity is shared. The caller's own credentials are refused here (the
             account's self-service ends them).</description>
         <in-parameters>

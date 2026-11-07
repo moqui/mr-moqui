@@ -11,6 +11,7 @@ const operator = "spec.sessions.operator"
 const operatorId = "SPEC_SES_OPERATOR"
 const viewerId = "SPEC_SES_VIEWER"
 const targetId = "SPEC_SES_TARGET"
+const sealedId = "SPEC_SES_SEALED"
 const visit = n => "SPEC_SES_VISIT_" + n
 
 const make = (entityName, fields) => {
@@ -88,6 +89,20 @@ spec({
         browser(3, targetId, "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0) Safari/604.1")
         browser(4, operatorId, "Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0")
         browser(5, operatorId, "Mozilla/5.0 (X11; Linux x86_64) Chrome/130.0")
+        // an account holding a sealed permission the operator lacks (bounded delegation, review R1)
+        make("moqui.security.UserAccount", {
+            userId: sealedId,
+            username: "spec.sessions.sealed",
+            userFullName: "Spec sealed holder"
+        })
+        make("moqui.security.UserGroup", {userGroupId: "SPEC_SES_SEALED", description: "Spec sealed holders"})
+        make("moqui.security.UserGroupPermission", {
+            userGroupId: "SPEC_SES_SEALED",
+            userPermissionId: "ADMIN_IDENTITY_GLOBAL",
+            fromDate: 0
+        })
+        make("moqui.security.UserGroupMember", {userGroupId: "SPEC_SES_SEALED", userId: sealedId, fromDate: 0})
+        browser(6, sealedId, "Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0")
         // the target's credentials and an agent trigger that runs as the target
         make("moqui.security.UserLoginKey", {
             loginKey: "SPEC_SES_KEY_HASH",
@@ -127,7 +142,9 @@ spec({
             ["moqui.server.HttpSession", {userId: targetId}],
             ["moqui.server.HttpSession", {userId: operatorId}],
             ["moqui.server.Visit", {userId: targetId}],
-            ["moqui.server.Visit", {userId: operatorId}]
+            ["moqui.server.Visit", {userId: operatorId}],
+            ["moqui.server.HttpSession", {userId: sealedId}],
+            ["moqui.server.Visit", {userId: sealedId}]
         ])
             ec.entity.find(entityName).condition(conditions).disableAuthz().deleteAll()
         ec.artifactExecution.enableAuthz()
@@ -194,11 +211,19 @@ feature("revoke#AccountAccess ends another user's sessions, keys, app passwords,
         const refused = as("spec.sessions.viewer", () => invoke(S + "revoke#AccountAccess", {userId: targetId}))
         const self = as(operator, () => invoke(S + "revoke#AccountAccess", {userId: operatorId}))
         const revoked = as(operator, () => invoke(S + "revoke#AccountAccess", {userId: targetId, reason: "Device lost"}))
-        return {refused, self, revoked}
+        const sealed = as(operator, () => ({
+            access: invoke(S + "revoke#AccountAccess", {userId: sealedId}),
+            session: invoke(S + "revoke#Sessions", {sessionKeyList: [visit(6)]})
+        }))
+        return {refused, self, revoked, sealed}
     },
-    then({refused, self, revoked}) {
+    then({refused, self, revoked, sealed}) {
         refused.error.includes("ADMIN_IDENTITY_MANAGE")
         self.error.includes("your account settings")
+        // an account holding a sealed permission the operator lacks is not the operator's to sign out
+        sealed.access.error.includes("ADMIN_IDENTITY_GLOBAL")
+        sealed.session.refusedCount == 1 && sealed.session.sessionCount == 0
+        one("moqui.server.HttpSession", {sessionId: "SPEC_SES_SESSION_6"}) != null
         revoked.error == "" && revoked.failedKinds.length == 0
         revoked.revokedCounts.sessions == 1
         revoked.revokedCounts.loginKeys == 1 && revoked.revokedCounts.appPasswords == 1 && revoked.revokedCounts.sshKeys == 1

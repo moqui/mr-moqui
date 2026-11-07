@@ -202,6 +202,27 @@ function userName(userId) {
     return userNames.get(userId)
 }
 
+// Bounded delegation for an account-wide action on another user (review R1): a user in a privileged group the caller is not
+// in, or holding through a current group a sealed permission the caller lacks, holds access the caller could not be given,
+// so the caller may not change, sign out or take over that account (its sign-in fields, factors, locks, sessions,
+// credentials, Login as). The refusal's reason, or null when the caller may act; an instance administrator holds every one.
+function heldBeyond(userId) {
+    const at = nowMs()
+    const groupIds = rows(MEMBER, {userId})
+        .filter(row => open(row, at))
+        .map(row => row.userGroupId)
+    if (!groupIds.length) return null
+    const privileged = new Set(Array.from(UserSecurityChecks.privilegedGroups()))
+    const sealed = new Set(Array.from(UserSecurityChecks.sealedPermissions()))
+    const group = groupIds.find(groupId => privileged.has(groupId) && !ec.user.isInGroup(groupId))
+    if (group) return "The account is in the privileged group " + group + ", which you are not in"
+    const grants = Array.from(find("moqui.security.UserGroupPermission").condition("userGroupId", "in", groupIds).list()).filter(
+        row => open(row, at) && sealed.has(row.userPermissionId) && !ec.user.hasPermission(row.userPermissionId)
+    )
+    if (grants.length) return "The account holds the sealed permission " + grants[0].userPermissionId + ", which you do not"
+    return null
+}
+
 // find#Sessions: the sessions of an account (its visits, the live ones those with a web session), newest first; for the
 // caller's own account any signed-in user, for another or all accounts ADMIN_IDENTITY_VIEW. A session is named by its visit
 // (sessionKey), never by its cookie or token, and its client by a summary and address.
@@ -269,10 +290,14 @@ function revokeSessions(p) {
     const byUser = new Map()
     let refusedCount = 0
     if (p.allOthers) {
-        const {userId} = target(p, IDENTITY_MANAGE)
+        const {userId, self} = target(p, IDENTITY_MANAGE)
+        const held = self ? null : heldBeyond(userId)
+        if (held) throw new Error(held + ": its sessions are not yours to end")
         byUser.set(userId, null)
     } else {
-        // a visit of another account than the one named, or another user's without the permission, is refused
+        // a visit of another account than the one named, or another user's without the permission or of an account holding
+        // access the caller lacks, is refused
+        const held = new Map()
         for (const visit of Array.from(find(VISIT).condition("visitId", "in", keys).list())) {
             const owner = visit.userId
             if (
@@ -281,6 +306,10 @@ function revokeSessions(p) {
                 (text(p.userId) && owner !== text(p.userId))
             )
                 continue
+            if (owner !== me) {
+                if (!held.has(owner)) held.set(owner, heldBeyond(owner))
+                if (held.get(owner)) continue
+            }
             if (!byUser.has(owner)) byUser.set(owner, [])
             byUser.get(owner).push(visit.visitId)
         }
@@ -448,6 +477,8 @@ function revokeAccountAccess(p) {
     if (userId === me) throw new Error("Your own sign-ins and credentials are ended in your account settings")
     const account = one(ACCOUNT, {userId})
     if (!account) throw new Error("User " + userId + " is not available")
+    const held = heldBeyond(userId)
+    if (held) throw new Error(held + ": revoking its access is refused")
     const reason = text(p.reason).slice(0, 255)
     const single = text(p.credentialKind)
     const kinds = single
@@ -503,6 +534,7 @@ function checkPath(p) {
 const operations = {checkPath, findSessions, revokeSessions, accountCredentials, revokeAccountAccess}
 ;({
     administrationPath,
+    heldBeyond,
     clientSummary,
     execute: (op, parameters) => {
         if (!Object.hasOwn(operations, op)) throw new Error("Unknown identity operation " + op)
