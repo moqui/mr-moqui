@@ -281,6 +281,8 @@ fn resolve_dataset(ec: &ExecutionContext, id: &str, resolve_rows: bool) -> Resul
     if allowed.is_empty() {
         return Err(fail(format!("viewer may not read dataset {id}")));
     }
+    // a business dataset's document is read through that dataset, admitted and filtered (business.rs)
+    business::check_governed(ec, id, body, &allowed)?;
     // The restricted target is used for search, aggregations, facets and document expansion alike.
     let mut predicates = Vec::new();
     if let Some(filter) = body.get("rowFilter") {

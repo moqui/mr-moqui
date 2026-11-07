@@ -237,9 +237,42 @@ pub(super) fn save_pulled(ec: &ExecutionContext, definition: &Json, note: &str) 
     save(ec, definition, note)
 }
 /// Save a definition as the viewer, with the owner, reference and dataset-save checks of `save#Definition`: a business
-/// dataset made or revised by its steward (business.rs).
+/// dataset made or revised by its steward (business.rs), whose operation decides its admission itself.
 pub(super) fn save_owned(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Error> {
-    save(ec, definition, note)
+    save_definition_as(ec, definition, note, true)
+}
+
+/// The documents of every business dataset, shipped or saved, whoever may read it (business.rs `check_governed`). Reads with
+/// authorization off and returns only document ids.
+pub(super) fn business_documents(ec: &ExecutionContext) -> Result<BTreeSet<String>, Error> {
+    Ok(business_datasets(ec)?
+        .into_iter()
+        .filter_map(|(_, body)| body["documentType"].as_str().map(str::to_owned))
+        .collect())
+}
+/// Every business dataset, shipped or saved, whoever may read it, as its id and body (business.rs). Reads with authorization
+/// off and returns no owner or group.
+pub(super) fn business_datasets(ec: &ExecutionContext) -> Result<Vec<(String, Json)>, Error> {
+    let mut out = Vec::new();
+    let mut add = |definition: &Json| {
+        if definition["type"] == "dataset" && super::business::is_business(&definition["body"]) {
+            out.push((text(definition, "id", "").to_owned(), definition["body"].clone()));
+        }
+    };
+    shipped(ec).iter().for_each(&mut add);
+    let saved = internal(ec, || {
+        entity(ec)?
+            .find(ENTITY)?
+            .eq("definitionType", Value::string("dataset"))
+            .list()
+    })?;
+    for row in saved.iter() {
+        match row_json(row) {
+            Ok(definition) => add(&definition),
+            Err(error) => tracing::error!(%error, "invalid report definition, continuing"),
+        }
+    }
+    Ok(out)
 }
 
 /// Every definition that references `id`, shipped or saved, whoever may read it, as its id and body: what a change to a
@@ -282,6 +315,12 @@ pub(super) fn all_referencing(ec: &ExecutionContext, id: &str) -> Result<Vec<(St
 }
 
 fn save(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Error> {
+    save_definition_as(ec, definition, note, false)
+}
+
+/// `owned`: a business dataset's own operation (business.rs), which decides its admission; any other save of a business dataset
+/// whose body changed returns it to review.
+fn save_definition_as(ec: &ExecutionContext, definition: &Json, note: &str, owned: bool) -> Result<Json, Error> {
     let current = viewer()?;
     let id = text(definition, "id", "");
     let kind = text(definition, "type", "");
@@ -369,6 +408,9 @@ fn save(ec: &ExecutionContext, definition: &Json, note: &str) -> Result<Json, Er
         super::alert::validate_rule(ec, &body)?;
     }
     super::alert::validate_shared(kind, &body)?;
+    if kind == "dataset" && !owned {
+        super::business::definition_saved(ec, id, previous.as_ref().map(|previous| &previous["body"]), &body)?;
+    }
     // Owner, group, reference and dataset-admin checks above run with the viewer's rights.
     // Only this storage operation bypasses entity auth; no broad CRUD grant is exposed.
     let _storage = ec.disable_authz();
@@ -681,6 +723,9 @@ pub(super) fn delete(ec: &ExecutionContext, id: &str) -> Result<Json, Error> {
             .delete_all()?;
     }
     row.delete(&facade)?;
+    if definition["type"] == "dataset" {
+        super::business::definition_deleted(ec, id)?;
+    }
     let user = current;
     tracing::info!(target: "moqui.report.audit", user = %user, kind = %text(&definition, "type", ""),
         definition = id, "report definition deleted");

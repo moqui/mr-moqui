@@ -166,11 +166,14 @@ feature("three fixture documents, one on a fed feed and one on a feed never buil
                 authzActionEnumId: "AUTHZA_ALL"
             })
             make("moqui.security.ArtifactGroup", {artifactGroupId: "BDS_READER_DATA", description: "Business datasets spec"})
-            make("moqui.security.ArtifactGroupMember", {
-                artifactGroupId: "BDS_READER_DATA",
-                artifactName: "org.moqui.report.dataset.bds-sales",
-                artifactTypeEnumId: "AT_SERVICE"
-            })
+            // bds-sales, and the ways around it a grant could open by mistake: its document by id, its index, a copy
+            // without the business signal (each refused by the engine, F-P3-6)
+            for (const id of ["bds-sales", types.fed, "index:bds_fixture", "bds-raw"])
+                make("moqui.security.ArtifactGroupMember", {
+                    artifactGroupId: "BDS_READER_DATA",
+                    artifactName: "org.moqui.report.dataset." + id,
+                    artifactTypeEnumId: "AT_SERVICE"
+                })
             make("moqui.security.ArtifactAuthz", {
                 artifactAuthzId: "BDS_READER_DATA",
                 artifactGroupId: "BDS_READER_DATA",
@@ -342,6 +345,11 @@ feature("a field a definition over the dataset uses cannot be removed, nor a fie
             datasetId: "bds-sales",
             fields: [{fieldSeqId: description, remove: true}]
         })
+        // the field the dataset's own row filter reads (groupField enumCode)
+        const scoped = asSteward(R + "store#BusinessDatasetFields", {
+            datasetId: "bds-sales",
+            fields: [{fieldSeqId: fields.find(row => row.fieldPath === "enumCode").fieldSeqId, remove: true}]
+        })
         const stale = asSteward(R + "store#BusinessDatasetFields", {
             datasetId: "bds-sales",
             expectedVersion: version - 1,
@@ -357,13 +365,62 @@ feature("a field a definition over the dataset uses cannot be removed, nor a fie
             fields: [{fieldPath: "enumCode", fieldNameAlias: "scopeCode"}]
         })
         const index = Array.from(added.out?.dataset?.checks || []).find(row => row.check === "index")
-        return {used: used.error || "", stale: stale.error || "", expression: expression.error || "", index}
+        return {
+            used: used.error || "",
+            scoped: scoped.error || "",
+            stale: stale.error || "",
+            expression: expression.error || "",
+            index
+        }
     },
-    then({used, stale, expression, index}) {
+    then({used, scoped, stale, expression, index}) {
         used.includes("bds-panel (description)")
+        scoped.includes("bds-sales (enumCode)")
         stale.includes("changed since it was read")
         expression.includes("not a plain field path")
         !index.passed
         index.message.includes("rebuild")
+    }
+})
+
+feature("the document by id, its index and a copy without the signal reach no reader; a changed definition returns to review", {
+    when() {
+        const query = id => asReader(R + "query#Documents", Object.assign({datasetId: id}, range))
+        dataset("bds-raw", types.fed, {signal: null})
+        const raw = [types.fed, "index:bds_fixture", "bds-raw"].map(id => query(id).error || "")
+        // the steward drops the row filter through save#Definition instead of store#BusinessDataset
+        dataset("bds-sales", types.fed, {})
+        const unbound = query("bds-sales")
+        const status = call(R + "find#BusinessDatasets", {datasetId: "bds-sales"}).datasets[0].status
+        // an encrypted field (AgentRemoteA2a.authJson) through a document of the steward's
+        sys(() => {
+            make("moqui.entity.document.DataDocument", {
+                dataDocumentId: "BdsRemote",
+                indexName: "bds_remote",
+                documentName: "BdsRemote",
+                primaryEntityName: "moqui.agent.AgentRemoteA2a"
+            })
+            make("moqui.entity.document.DataDocumentField", {
+                dataDocumentId: "BdsRemote",
+                fieldSeqId: "01",
+                fieldPath: "remoteId"
+            })
+        })
+        dataset("bds-remote", "BdsRemote", policy)
+        const encrypted = asSteward(R + "store#BusinessDatasetFields", {
+            datasetId: "bds-remote",
+            fields: [{fieldPath: "authJson", fieldNameAlias: "remoteAuth"}]
+        })
+        const kept = sys(() =>
+            ec.entity.find("moqui.entity.document.DataDocumentField").condition("dataDocumentId", "BdsRemote").count()
+        )
+        return {raw, unbound: unbound.error || "", status, encrypted: encrypted.error || "", kept}
+    },
+    then({raw, unbound, status, encrypted, kept}) {
+        raw.every(error => error.includes("a business dataset's document"))
+        unbound.includes("not admitted")
+        status == "review"
+        encrypted.includes("encrypted field")
+        kept == 1
     }
 })

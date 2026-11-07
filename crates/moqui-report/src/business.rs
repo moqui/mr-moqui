@@ -39,8 +39,10 @@ const OPERATORS: &[&str] = &[
 ];
 const FUNCTIONS: &[&str] = &["min", "max", "sum", "avg", "count", "count-distinct", "upper", "lower"];
 
+/// A business dataset is one whose definition says `signal: "business"`, whatever else its body names: a body that says so
+/// without a document is still held to admission (and is never admissible), so the signal alone cannot be dropped to escape it.
 pub(super) fn is_business(body: &Json) -> bool {
-    body["signal"] == "business" && body["documentType"].is_string()
+    body["signal"] == "business"
 }
 
 fn entity(ec: &ExecutionContext) -> Result<moqui_core::entity::EntityFacade, Error> {
@@ -80,12 +82,86 @@ fn row_text(row: Option<&moqui_core::entity::EntityValue>, field: &str) -> Json 
         .map_or(Json::Null, Json::from)
 }
 
-/// The engine's check before a business dataset is read: admitted, or read by its steward.
+/// The engine's check before a business dataset is read: admitted with a registered scope policy still bound (a shipped
+/// definition can change under its admission with a component update), or read by its steward. A business dataset reads its
+/// one document: an index or a service in its body would read past what was admitted, so either is refused to everyone.
 pub(super) fn check_admitted(ec: &ExecutionContext, id: &str, body: &Json) -> Result<(), Error> {
-    if !is_business(body) || admitted(admission_row(ec, id)?.as_ref()) {
+    if !is_business(body) {
+        return Ok(());
+    }
+    if body.get("indexName").is_some_and(|v| !v.is_null()) || body.get("serviceName").is_some_and(|v| !v.is_null()) {
+        return Err(fail(format!(
+            "business dataset {id} reads its document only, not an index or a service"
+        )));
+    }
+    let bound = body["rowFilterService"]
+        .as_str()
+        .map_or(Ok(false), |service| registered_policy(ec, service))?;
+    if bound && admitted(admission_row(ec, id)?.as_ref()) {
         return Ok(());
     }
     steward_of(id).map_err(|_| fail(format!("dataset {id} is not admitted")))
+}
+
+/// The documents business datasets read: a dataset that is not a business one (a DataDocument by its id, an `index:` alias, a
+/// definition without the signal) over one of these reads it without the admission and the row filter, so the engine opens it
+/// only to a holder of that dataset's update artifact, its steward or the system administrator (BOSS impl-insights F-P3-6).
+pub(super) fn check_governed(ec: &ExecutionContext, id: &str, body: &Json, documents: &[String]) -> Result<(), Error> {
+    if is_business(body) || documents.is_empty() {
+        return Ok(());
+    }
+    let governed = definitions::business_documents(ec)?;
+    let Some(document) = documents.iter().find(|document| governed.contains(*document)) else {
+        return Ok(());
+    };
+    steward_of(id).map_err(|_| {
+        fail(format!(
+            "dataset {id} reads {document}, a business dataset's document, without its admission and row filter"
+        ))
+    })
+}
+
+/// A dataset definition saved through `save#Definition` (or copied, restored, imported or pulled): a business dataset whose body
+/// changed, or one saved new over an id whose admission is left from a deleted definition, returns to review, so the source,
+/// time field and scope that were admitted are the ones read. The steward's own operations revise through `store#BusinessDataset`,
+/// which decides admission itself.
+pub(super) fn definition_saved(
+    ec: &ExecutionContext,
+    id: &str,
+    previous: Option<&Json>,
+    body: &Json,
+) -> Result<(), Error> {
+    if previous.is_some_and(|previous| previous == body) {
+        return Ok(());
+    }
+    let Some(mut row) = admission_row(ec, id)? else {
+        return Ok(());
+    };
+    if row.get("admittedDate").is_none_or(Value::is_null) {
+        return Ok(());
+    }
+    let version = row
+        .get("versionNumber")
+        .and_then(moqui_core::user::value_millis)
+        .unwrap_or(0);
+    row.set("admittedDate", Value::Null);
+    row.set("admittedByUserId", Value::Null);
+    row.set("versionNumber", Value::I64(version + 1));
+    let facade = entity(ec)?;
+    metadata(ec, || row.update(&facade))?;
+    tracing::info!(target: "moqui.report.audit", dataset = id, "business dataset definition changed; returned to review");
+    Ok(())
+}
+/// A deleted definition's admission goes with it, so a later definition of the same id starts in review.
+pub(super) fn definition_deleted(ec: &ExecutionContext, id: &str) -> Result<(), Error> {
+    let facade = entity(ec)?;
+    metadata(ec, || {
+        facade
+            .find(ADMISSION)?
+            .eq("datasetId", Value::string(id))
+            .delete_all()
+            .map(|_| ())
+    })
 }
 
 /// The registered scope policies, by their service: `ReportScopePolicy` enumerations, seeded by the domain that owns each.
@@ -456,6 +532,10 @@ pub fn create_business_dataset(
     definitions::save_owned(ec, &definition, "Business dataset created")?;
     let (mut row, creating) = admission_for_update(ec, id, None)?;
     row.set("stewardUserId", Value::string(&user));
+    // a new dataset starts in review, whatever a row of the same id held
+    for field in ["admittedDate", "admittedByUserId", "retiredDate"] {
+        row.set(field, Value::Null);
+    }
     save_admission(ec, &row, creating)?;
     let saved = definitions::read(ec, id)?;
     Ok(output(json!({"dataset": describe(ec, &saved)?})))
@@ -623,7 +703,13 @@ fn consumers_naming(ec: &ExecutionContext, id: &str, names: &BTreeSet<String>) -
         return Ok(Vec::new());
     }
     let mut out = Vec::new();
-    for (definition_id, body) in definitions::all_referencing(ec, id)? {
+    // the business datasets over the same document name their time field and the field their row filter reads: removing or
+    // renaming either would read the wrong rows, or none, once the index is rebuilt
+    let document = definitions::read(ec, id)?["body"]["documentType"].clone();
+    let sharing = definitions::business_datasets(ec)?
+        .into_iter()
+        .filter(|(_, body)| body["documentType"] == document);
+    for (definition_id, body) in sharing.chain(definitions::all_referencing(ec, id)?) {
         let mut found = BTreeSet::new();
         names_in(&body, names, &mut found);
         if !found.is_empty() {
@@ -642,15 +728,45 @@ fn fields_changed(ec: &ExecutionContext, id: &str, expected: Option<i64>) -> Res
     row.set("fieldsChangedDate", moqui_core::user::now_value());
     save_admission(ec, &row, creating)
 }
-/// The document's definition is read afresh and checked after a change, so a path that does not resolve is refused.
+/// The document's definition is read afresh and checked after a change, so a path that does not resolve is refused, and so is
+/// an encrypted entity field anywhere in it: the index would hold it decrypted for every reader of the dataset.
 fn recompile(ec: &ExecutionContext, document: &str) -> Result<(), Error> {
     let _metadata = ec.disable_authz();
     let facade = search::current()?;
     facade.clear_definitions();
     facade
         .mapping(document)
-        .map(|_| ())
-        .map_err(|error| fail(format!("document {document} does not resolve: {error}")))
+        .map_err(|error| fail(format!("document {document} does not resolve: {error}")))?;
+    let entities = entity(ec)?;
+    let info = moqui_core::entity::document::document_info(&entities, document)
+        .map_err(|error| fail(format!("document {document} does not resolve: {error}")))?;
+    let mut encrypted = Vec::new();
+    let mut failure = None;
+    info.walk(|_, node| {
+        for field in node.fields.iter().filter(|field| !field.is_expression) {
+            match entities.with_entity(&node.entity, |definition, _, _| {
+                Ok(definition.field(&field.path_element).is_some_and(|field| field.encrypt))
+            }) {
+                Ok(true) => encrypted.push(format!("{} ({})", field.alias, node.entity)),
+                Ok(false) => {}
+                Err(error) => failure = Some(error),
+            }
+        }
+    });
+    if failure.is_some() || !encrypted.is_empty() {
+        // the refused change rolls back with the service's transaction; the definition read from it must not stay cached
+        facade.clear_definitions();
+    }
+    if let Some(error) = failure {
+        return Err(fail(format!("document {document} does not resolve: {error}")));
+    }
+    if !encrypted.is_empty() {
+        return Err(fail(format!(
+            "an encrypted field is not a dataset field: {}",
+            encrypted.join(", ")
+        )));
+    }
+    Ok(())
 }
 fn next_seq(rows: &[moqui_core::entity::EntityValue], field: &str) -> String {
     let highest = rows

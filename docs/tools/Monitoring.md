@@ -401,7 +401,9 @@ by `crates/moqui-report/src/business.rs` (BOSS impl-insights P3, INS-03):
   all through `REPORT_DATASETS_ADMIN`). Until then a reader's query is refused "dataset … is not admitted", so a panel over it says
   "Not available", never "No data". `store#BusinessDataset` with `admit` admits it only when three checks pass: its document is in
   a registered DataFeed (a `DataFeedDocument` row), the document's index is built (and not older than its last field or condition
-  change), and its `rowFilterService` is a registered scope policy. `find#BusinessDatasets` reports each dataset's state
+  change), and its `rowFilterService` is a registered scope policy. An admitted dataset whose definition no longer binds a
+  registered policy is read only by its steward again, and so is one whose body names an `indexName` or a `serviceName` (a
+  business dataset reads its one document). `find#BusinessDatasets` reports each dataset's state
   (admitted, review, retired, unavailable) and checks live; `validate#BusinessDataset` gives one dataset's checks to its steward.
 - **Scope policies** are services registered as `ReportScopePolicy` enumerations (`enumCode` the service): the framework's
   `ReportUserGroups` (`get#UserGroupRowFilter`, rows whose field is one of the viewer's groups) and Mantle's `MantleOrganization`
@@ -411,14 +413,19 @@ by `crates/moqui-report/src/business.rs` (BOSS impl-insights P3, INS-03):
   reviewed code), any other with the viewer's. Its filter is added before documents, suggestions, value counts, aggregations,
   panel exports and playlists alike, so a dashboard's variables or a query's `ignoreVariables` cannot widen it.
 - **Stewardship.** `create#BusinessDataset` (a dataset over a registered feed's document with a registered policy, owned by the
-  steward, waiting for review), `store#BusinessDataset` (title, time field, policy and parameters of a saved dataset, which return
+  steward, waiting for review; a saved dataset's body changed any other way, by `save#Definition`, a copy, a restore, an import or
+  a git pull, returns it to review, and deleting the definition deletes its admission), `store#BusinessDataset` (title, time field, policy and parameters of a saved dataset, which return
   it to review; a shipped dataset's definition is its component's; steward; admit; retire; `expectedVersion`),
-  `store#BusinessDatasetFields` (plain field paths only, no expression or secret field; unique names; removing or renaming a field
+  `store#BusinessDatasetFields` (plain field paths only, no expression, secret or encrypted entity field; unique names; removing or renaming a field
   any definition over the dataset names is refused with those definitions' names) and `store#BusinessDatasetConditions` (a field of
   the document and an operator of the list, never a post-query expression). `index#BusinessDataset` rebuilds the dataset's
   document of its feed only (`index#DataFeedDocuments` with the document), for its steward, recording the time and count. An
   application grants its readers each dataset's artifact (view) and its documents' `DataDocumentUserGroup` rows; admission does
   not grant.
+- **The document is read through its dataset.** A dataset that is not a business one (a DataDocument by its id, an `index:`
+  alias, a definition without the signal) over a document some business dataset reads is opened only to a holder of that
+  dataset's update artifact (the steward of a saved one, `ADMIN`), so a view grant on such an artifact, by pattern or by mistake,
+  reaches no unfiltered rows.
 - The regression spec is `framework/test/BusinessDatasets.spec.js`.
 
 ## Regressions and incidents
